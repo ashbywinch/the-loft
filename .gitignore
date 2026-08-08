@@ -1,0 +1,55 @@
+# agent/tool state
+.sisyphus/
+.opencode/
+.code-review-graph/
+.logs/
+
+# env/secrets
+.env
+.env.local
+*.keystore
+
+# deps
+.venv/
+venv/
+node_modules/
+
+# caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+app/.eslintcache
+
+# coverage
+.coverage
+htmlcov/
+coverage.xml
+app/coverage/
+
+# build artifacts
+dist/
+*.egg-info/
+
+# IDE/OS
+.vscode/
+.idea/
+.DS_Store
+*.log
+
+# The private dataset — the family archive and its derived projection. Real
+# family content lives in the live archive folder, never in the public repo.
+# The archive-quality evals run locally (data present) and skip in CI (the
+# checkout has no archive) — see docs/testing-standards.md.
+archive/
+app/data/
+
+# The real-letter walkthrough — its value is the real letters, so it stays
+# private (user, 2026-08-08); the design rules it demonstrates live in
+# IMPORT-PRD.md.
+docs/IMPORT-WORKED-EXAMPLE.md
+
+# The interview research records — the value is in the real interviews,
+# so they stay private like the worked example (user, 2026-08-08).
+interviews/

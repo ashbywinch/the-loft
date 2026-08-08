@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# The loft CLI wrapper — the one operator surface (tools/cli.py).
+# `loft publish`, `loft serve`, `loft create-demo`, `loft capture-document`,
+# `loft capture-memory`, `loft gedcom in|out`, `loft eval-memory`.
+#
+# Sources .env (gitignored — the family's keys) so every loft command sees
+# the same environment; shell secrets (the AI key) pass through untouched.
+set -euo pipefail
+cd "$(dirname "$0")"
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+exec uv run python -m tools.cli "$@"

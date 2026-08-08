@@ -353,6 +353,7 @@ summary:focus-visible {
   color: var(--ink);
   margin: 0.35rem 0 0;
   font-size: 0.95rem;
+  white-space: pre-line; /* the narrator's own line breaks survive (verbatim) */
 }
 
 .lede {

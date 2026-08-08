@@ -24,6 +24,10 @@ jobs:
           OPENAI_KEY: ${{ secrets.OPENCODE_GO_THE_LOFT_API_KEY }}
           OPENAI_BASE_URL: https://opencode.ai/zen/go/v1
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # SECURITY + correctness: the config comes from this pinned branch,
+          # never the PR head (a same-repo branch could ship its own
+          # api_base/config and exfiltrate the key) — mirrors omp-config.
+          PR_AGENT_CONFIG_BRANCH: pr-agent-config
       # Fail loud: a silently-failed review reads as a green check.
       - name: Fail loud if no review covers the head commit
         env:

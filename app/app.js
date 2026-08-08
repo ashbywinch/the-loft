@@ -69,7 +69,10 @@ export async function fetchIdentity() {
 }
 
 export async function boot() {
-  const mark = (message) => console.log("[boot]", message);
+  const mark = (message) => {
+    console.log("[boot]", message);
+    window.__loftStage = message; // the visible loading marker repaints with this
+  };
   mark("start");
   const identity = await fetchIdentity();
   mark(identity === null ? "no session — the gate" : identity === NO_API ? "open (no auth server)" : `session for ${identity.email}`);

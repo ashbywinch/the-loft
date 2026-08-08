@@ -3,12 +3,11 @@ custom_llm_provider = "openai"
 api_base = "https://opencode.ai/zen/go/v1"
 
 [config]
-model = "deepseek-v4-flash"  # the zen/go endpoint serves the bare name; the opencode-go/ prefix 401s
+model = "openai/deepseek-v4-flash"
 custom_model_max_tokens = 128000
 max_model_tokens = 128000
 ai_timeout = 1800
 fallback_models = []
-verbosity_level = 3
 repo_context_from_default_branch = false
 repo_context_files = [
     "docs/PRD.md",
@@ -17,15 +16,18 @@ repo_context_files = [
     "docs/writing-documentation.md",
 ]
 
+
 [pr_reviewer]
-incremental = true  # review only the diff since the last review — no full re-reviews per push
+enable_incremental = true
+persistent_comment = true  # update the same review comment instead of posting a new one
 require_tests_review = true
 require_security_review = true
 num_max_findings = 50
-extra_instructions = "Check the PR against each file in repo_context_files. Add a 'Compliance' section per doc, listing any violations found or 'No violations'. Flag violations as findings, not just notes: style and semantic deviations from docs/coding-standards.md (naming, module docstrings, typed signatures, no backward-compat shims, DI over patching, fail-fast with visible errors), test standards (deterministic, behavior not implementation, mirror module paths), documentation conventions (density, the ceiling exception), and product law from docs/PRD.md (the app arranges evidence and never interprets it; no editorialising copy; family-agnostic requirements; the propose/confirm seam; no public sharing)."
+extra_instructions = "Check the PR against each file in repo_context_files. Add a 'Compliance' section per doc, listing any violations found or 'No violations'. Flag violations as findings, not just notes: requirement deviations from docs/PRD.md (a change that violates a stated requirement, constraint, persona, or JTBD is a finding), documentation-standard deviations from docs/writing-documentation.md (docs failing the documentation-quality checklist — context efficiency, density, no-duplication, one topic per file — including that every doc is discoverable from AGENTS.md; skills are exempt from reachability — the harness discovers them (see docs/documentation-structure.md)), and folder-structure deviations from docs/documentation-structure.md (missing or malformed required docs, or a doc that AGENTS.md cannot lead to). The canonical code-repo standards (coding, testing, UX) live in standards/ and are scaffolded into code repos — they do not govern omp-config's own docs, but a PR that edits one must keep it consistent with the rest of the canonical set. A change to a skill or standard must keep the repo self-check (make test) green and mention that the change needs make install + omp restart to take effect."
+
 
 [pr_code_suggestions]
-incremental = true  # suggest only for the code added since the last review
+persistent_comment = true
 
 [github_action_config]
 handle_push_trigger = true

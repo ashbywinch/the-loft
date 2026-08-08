@@ -28,20 +28,13 @@ jobs:
           # never the PR head (a same-repo branch could ship its own
           # api_base/config and exfiltrate the key) — mirrors omp-config.
           PR_AGENT_CONFIG_BRANCH: pr-agent-config
-      # Fail loud: a silently-failed review reads as a green check.
+      # Fail loud: a silently-failed review reads as a green check. The check
+      # matches "## PR Reviewer Guide" comments (the review never contains the
+      # head SHA — v0.41.1 posts it without the marker) or one posted after
+      # the head commit landed.
       - name: Fail loud if no review covers the head commit
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          SHA="${{ github.event.pull_request.head.sha }}"
-          # The review may land as an issue comment or a PR review. Match the
-          # bot's comment by SHA-in-body, and a review by its commit_id — both
-          # scoped to the bot, so a silent failure still fails loud.
-          if ! { gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
-              | jq --arg sha "$SHA" '.[] | select(.user.login == "github-actions[bot]" and (.body | contains($sha))) | .id'
-            gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
-              | jq --arg sha "$SHA" '.[] | select(.user.login == "github-actions[bot]" and .commit_id == $sha) | .id'; } \
-              | grep -q .; then
-            echo "::error::AI review did not post for commit $SHA — the review may have failed silently."
-            exit 1
-          fi
+          SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 tools/check_review_posted.py

@@ -27,7 +27,7 @@ extra_instructions = "Check the PR against each file in repo_context_files. Add 
 
 
 [pr_code_suggestions]
-incremental = true
+persistent_comment = true
 
 [github_action_config]
 handle_push_trigger = true

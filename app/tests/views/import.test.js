@@ -63,6 +63,9 @@ describe("the import review is the chat (2026-08-08, user: the unfinished doc im
     expect(JSON.parse(confirmCalls[0][1].body)).toEqual({ id: "p-judith", relation: "first cousin once removed" });
     expect(bubbles(main).at(-1)).toContain("Quentin Whitlock"); // the conversation moved on
     expect(state.people[0].status).toBeUndefined(); // confirmed
+    const nextChips = [...main.querySelectorAll(".chat-quick .chip")];
+    expect(nextChips.length).toBeGreaterThan(0);
+    expect(nextChips.every((c) => !c.closest(".chat-quick").hidden)).toBe(true); // busy cleared — the next person is answerable
   });
 
   it("dismisses and advances", async () => {

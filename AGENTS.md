@@ -61,18 +61,17 @@ default. Real content never lives in code (`docs/coding-standards.md`).
 - Atomic commits; reference issues with `Fixes #N`.
 - Archive data (scans, sidecars) is committed during dev; on prod it is not committed but regularly backed up (user, 2026-08-03).
 
-## Public releases (2026-08-08, user)
+## Public repo (2026-08-08, user)
 
-- The public repo is **the-loft** (github.com/ashbywinch/the-loft). The
-  private repo (family-history-album) is **frozen**: it keeps its full
-  history but nothing is pushed to it — the `origin` remote is removed, and
-  the release script refuses to run if it is re-added.
-- The ONE release step is `make release`: it runs the full gate (lint +
-  typecheck + pytest + vitest + the no-PII guard), rebuilds the public root
-  commit from the current `prep/public-release` tree (no history), force-
-  pushes ONLY the-loft, and verifies the public main carries exactly this
-  tree. Never push the-loft by hand — `make release` is the only path, so
-  the two sides cannot drift again.
+- The live repo is **the-loft** (github.com/ashbywinch/the-loft); local
+  `main` tracks `loft/main`. The private repo (family-history-album) is
+  **frozen** — it keeps its full history but receives nothing; no local
+  remote points at it.
+- Pushing is a normal `git push`: main is protected (the `build-and-test`
+  check is required, force-pushes and deletions are disabled), so a push
+  runs the full gate — including the no-PII guard — before CI goes green.
+  No rebuild, no force-push, no release step: the public history is clean
+  (it starts at the scrubbed root), so ordinary commits accumulate on it.
 - The phone's view is the LAN server (`make serve`, hub-managed
   `loft-serve`) — restart it after a change; the app is served without a
   build step, so a browser refresh picks up new code.

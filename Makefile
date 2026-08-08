@@ -1,7 +1,7 @@
 # Makefile for The Loft — family history museum web app.
 # Single dev entry point: every dev action goes through make.
 # CI runs exactly: make setup && make lint && make test && make coverage
-.PHONY: help setup serve lint lint-github typecheck test coverage format clean release
+.PHONY: help setup serve lint lint-github typecheck test coverage format clean
 
 PYTHON := .venv/bin/python
 RUFF := .venv/bin/ruff
@@ -34,8 +34,6 @@ setup:
 serve: setup
 	@./loft serve --host 0.0.0.0 --port 8000
 
-release: ## Public release — gate, rebuild the root commit, push ONLY the-loft (the private repo is frozen)
-	@./tools/release.sh
 
 lint: setup
 	@$(RUFF) check tools/ tests/

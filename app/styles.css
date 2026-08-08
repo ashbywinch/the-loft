@@ -956,6 +956,13 @@ summary:focus-visible {
   gap: var(--gap);
 }
 
+/* the inline review chat (the import session) has no fixed-height overlay
+   parent — an auto-height flex column can collapse its messages to zero on
+   some engines (the-loft 2026-08-08: the phone blanked). Give it room. */
+.import-review .chat {
+  min-height: 50vh;
+}
+
 .chat-msgs {
   flex: 1;
   min-height: 0;

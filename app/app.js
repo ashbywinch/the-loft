@@ -69,7 +69,10 @@ export async function fetchIdentity() {
 }
 
 export async function boot() {
+  const mark = (message) => console.log("[boot]", message);
+  mark("start");
   const identity = await fetchIdentity();
+  mark(identity === null ? "no session — the gate" : identity === NO_API ? "open (no auth server)" : `session for ${identity.email}`);
   if (identity === null) {
     // the server says "not signed in" — the archive is private; the app
     // shell stays public so this gate can load (2026-08-06, user)
@@ -80,6 +83,7 @@ export async function boot() {
   try {
     state = await loadData();
     state.me = identity === NO_API ? null : identity;
+    mark(`data loaded (${state.items.length} items, ${state.people.length} people)`);
   } catch (error) {
     // Fail visibly, never a blank page (docs/coding-standards.md: fail fast)
     const root = document.getElementById("app");
@@ -87,7 +91,7 @@ export async function boot() {
       el(
         "div",
         { class: "empty" },
-        "Could not load the archive — the data files may be missing from this deployment. Reload to retry.",
+        `Could not load the archive (data load failed: ${error && error.message}). Reload to retry.`,
       ),
     );
     console.error("boot: failed to load the archive", error);
@@ -95,6 +99,7 @@ export async function boot() {
   }
   const root = document.getElementById("app");
   onRoute((ctx) => {
+    mark(`route "${ctx.name}" → ${ctx.arg ?? ""}`.trim());
     cleanupPlaces(); // views with long-lived resources (the Leaflet map) unhook here
     root.replaceChildren();
     const main = el("main", { class: "view" });
@@ -110,10 +115,11 @@ export async function boot() {
         el(
           "div",
           { class: "empty" },
-          "Something went wrong showing this page — the rest of the archive is still here.",
+          `Something went wrong showing this page (${error && error.message}). The rest of the archive is still here.`,
         ),
       );
     }
     window.scrollTo(0, 0);
   });
+  mark("route wired");
 }

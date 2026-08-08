@@ -459,9 +459,10 @@ def test_relationship_accepts_an_optional_date() -> None:
 
 
 def test_relationship_carries_the_owner_status() -> None:
-    # The status distinguishes the import's proposals from a link the owner
-    # put in themselves (user, 2026-08-08): proposed = awaiting review,
-    # confirmed = the owner's call. A missing status round-trips as absent.
+    # The statuses are strict (2026-08-08, user): proposed = guessed by an
+    # agent; estimated = guessed by a human, in the DB as a guess (GEDCOM's
+    # EST); confirmed = actually confirmed. A missing status round-trips as
+    # absent.
     rel = Relationship.from_dict(
         {
             "a": "p-cecil",
@@ -469,10 +470,10 @@ def test_relationship_carries_the_owner_status() -> None:
             "kind": "parent",
             "label_a": "child",
             "label_b": "parent",
-            "status": "confirmed",
+            "status": "estimated",
         }
     )
-    assert rel.to_dict()["status"] == "confirmed"
+    assert rel.to_dict()["status"] == "estimated"
     plain = Relationship.from_dict({"a": "p-a", "b": "p-b", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"})
     assert "status" not in plain.to_dict()
     with pytest.raises(ValueError):

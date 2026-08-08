@@ -23,7 +23,7 @@ from __future__ import annotations
 import datetime
 import re
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 RELATIONSHIP_KINDS = frozenset({"spouse", "parent", "sibling", "inlaw", "teacher"})
 
@@ -119,11 +119,24 @@ def _parse_dated(value: Any, key: str) -> dict[str, str] | None:
     return out
 
 
-def _status(raw: dict[str, Any]) -> Literal["confirmed", "proposed"]:
+# The record statuses (people, places, orgs, and — since 2026-08-08 —
+# relationships). The vocabulary is GEDCOM-flavoured; the meanings are strict:
+#   confirmed — actually confirmed, by attestation or the owner's verified word.
+#   proposed  — guessed by an AGENT (the import, the AI) — awaiting review.
+#   estimated — guessed by a HUMAN who wants it in the database as a guess
+#               (the owner's own recollection — GEDCOM's EST qualifier, low
+#               confidence). Never promoted to confirmed without a source.
+# "estimated" is the only status a person may give their own guess; agents
+# must not mark their guesses estimated (they get proposed), and nothing
+# reaches confirmed without being confirmed (user, 2026-08-08).
+RECORD_STATUSES = frozenset({"confirmed", "proposed", "estimated"})
+
+
+def _status(raw: dict[str, Any]) -> Literal["confirmed", "proposed", "estimated"]:
     status = str(raw.get("status", "confirmed"))
-    if status not in ("confirmed", "proposed"):
+    if status not in RECORD_STATUSES:
         raise ValueError(f"bad record status: {status!r}")
-    return status  # type: ignore[return-value]
+    return cast(Literal["confirmed", "proposed", "estimated"], status)
 
 
 @dataclass(frozen=True)
@@ -150,7 +163,7 @@ class Person:
     dod: dict[str, str] | None = None
     occupations: tuple[str, ...] = ()
     residence: tuple[dict[str, Any], ...] = ()
-    status: Literal["confirmed", "proposed"] = "confirmed"
+    status: Literal["confirmed", "proposed", "estimated"] = "confirmed"
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Person:
@@ -238,7 +251,7 @@ class Place:
     x: int | None = None
     y: int | None = None
     address: str = ""
-    status: Literal["confirmed", "proposed"] = "confirmed"
+    status: Literal["confirmed", "proposed", "estimated"] = "confirmed"
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Place:
@@ -301,7 +314,7 @@ class Relationship:
     label_a: str
     label_b: str
     date: dict[str, str] | None = None
-    status: Literal["confirmed", "proposed"] | None = None
+    status: Literal["confirmed", "proposed", "estimated"] | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Relationship:
@@ -309,7 +322,7 @@ class Relationship:
         if kind not in RELATIONSHIP_KINDS:
             raise ValueError(f"unknown relationship kind: {kind!r}")
         status = raw.get("status")
-        if status is not None and status not in ("confirmed", "proposed"):
+        if status is not None and status not in RECORD_STATUSES:
             raise ValueError(f"bad relationship status: {status!r}")
         return cls(
             a=_require(raw, "a"),
@@ -403,7 +416,7 @@ class Org:
     address: str = ""
     branch: str = ""
     note: str = ""
-    status: Literal["confirmed", "proposed"] = "confirmed"
+    status: Literal["confirmed", "proposed", "estimated"] = "confirmed"
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Org:

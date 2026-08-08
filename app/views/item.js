@@ -3,6 +3,7 @@
 import { el, header, chip, itemCard } from "../ui.js";
 import { memoriesSection, openDraft } from "../memories.js";
 import { linkMentions } from "../people.js";
+import { renderMarkdown } from "../markdown.js";
 import { assetUrl, catalogued, isMine, published as publishedItems, typeLabel } from "../data.js";
 import { clarificationsFor, evidenceFor, referencedBy } from "../connections.js";
 import { dateLabel, sortByDate, yearOf } from "../date.js";
@@ -102,8 +103,21 @@ export function render(main, ctx, state) {
     const note = isDraft
       ? el("div", { class: "draft-note" }, "Draft transcription — machine-read, not yet verified.")
       : null;
-    const text = el("p", { class: "transcription-text" }, []);
-    text.append(...linkMentions(item.transcription, state.people, state.places));
+    // the transcription is verbatim markdown (a medal card is a table) —
+    // render the structure, then link the mentions inside each piece
+    const text = el("div", { class: "transcription-text" });
+    for (const node of renderMarkdown(item.transcription)) {
+      if (node.tagName === "TABLE") {
+        for (const cell of node.querySelectorAll("th, td")) {
+          cell.replaceChildren(...linkMentions(cell.textContent, state.people, state.places));
+        }
+        text.append(node);
+      } else {
+        const p = el("p", { class: "transcription-text" });
+        p.append(...linkMentions(node.textContent, state.people, state.places));
+        text.append(p);
+      }
+    }
     const body = el("div", { class: "transcription", hidden: true }, [note, text].filter(Boolean));
     const toggle = el(
       "button",

@@ -12,6 +12,36 @@
     <div id="app"></div>
     <script src="vendor/leaflet.js"></script>
     <script src="vendor/leaflet-heat.js"></script>
+    <script>
+      // Boot diagnostics (2026-08-08): a blank #app is a boot failure — the
+      // module graph, the identity check, the data load, or the route render.
+      // A module-graph failure never reaches app.js, so this inline listener
+      // paints the error into #app instead of leaving it blank, and every
+      // failure is logged to the console with the stage. window.__loftBoot
+      // holds the trace for the console.
+      window.__loftBoot = [];
+      const paintBootFailure = (what) => {
+        console.error("[boot]", what);
+        const root = document.getElementById("app");
+        if (root && !root.childElementCount) {
+          root.replaceChildren(
+            Object.assign(document.createElement("div"), {
+              className: "empty",
+              textContent: `The app failed to start (${what}). Reload to retry.`,
+            }),
+          );
+        }
+      };
+      window.addEventListener("error", (event) => {
+        window.__loftBoot.push("error: " + event.message);
+        paintBootFailure(event.message);
+      });
+      window.addEventListener("unhandledrejection", (event) => {
+        const reason = event.reason && (event.reason.message || event.reason) || event.reason;
+        window.__loftBoot.push("rejection: " + reason);
+        paintBootFailure(String(reason));
+      });
+    </script>
     <script type="module">
       import { boot } from "./app.js";
       boot();

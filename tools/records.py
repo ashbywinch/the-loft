@@ -289,7 +289,11 @@ class Place:
 class Relationship:
     """A directed family edge: label_a is what B is to A. The kinds are
     closed — the tree and the person pages branch on them. A spouse edge may
-    carry the marriage date ({date, precision}, the dated-fact shape)."""
+    carry the marriage date ({date, precision}, the dated-fact shape). The
+    optional status distinguishes the import's proposals from a link the
+    owner has put in themselves (user, 2026-08-08): proposed = awaiting
+    review, confirmed = the owner's call. A missing status is an asserted
+    edge with no review seam."""
 
     a: str
     b: str
@@ -297,12 +301,16 @@ class Relationship:
     label_a: str
     label_b: str
     date: dict[str, str] | None = None
+    status: Literal["confirmed", "proposed"] | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Relationship:
         kind = str(raw.get("kind", ""))
         if kind not in RELATIONSHIP_KINDS:
             raise ValueError(f"unknown relationship kind: {kind!r}")
+        status = raw.get("status")
+        if status is not None and status not in ("confirmed", "proposed"):
+            raise ValueError(f"bad relationship status: {status!r}")
         return cls(
             a=_require(raw, "a"),
             b=_require(raw, "b"),
@@ -310,6 +318,7 @@ class Relationship:
             label_a=str(raw.get("label_a", "")),
             label_b=str(raw.get("label_b", "")),
             date=_parse_dated(raw.get("date"), "relationship date"),
+            status=status,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -322,6 +331,8 @@ class Relationship:
         }
         if self.date is not None:
             out["date"] = self.date
+        if self.status is not None:
+            out["status"] = self.status
         return out
 
 

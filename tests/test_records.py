@@ -458,6 +458,29 @@ def test_relationship_accepts_an_optional_date() -> None:
     assert rel.to_dict()["date"] == {"date": "1888-06-20", "precision": "exact"}
 
 
+def test_relationship_carries_the_owner_status() -> None:
+    # The status distinguishes the import's proposals from a link the owner
+    # put in themselves (user, 2026-08-08): proposed = awaiting review,
+    # confirmed = the owner's call. A missing status round-trips as absent.
+    rel = Relationship.from_dict(
+        {
+            "a": "p-cecil",
+            "b": "p-judith",
+            "kind": "parent",
+            "label_a": "child",
+            "label_b": "parent",
+            "status": "confirmed",
+        }
+    )
+    assert rel.to_dict()["status"] == "confirmed"
+    plain = Relationship.from_dict({"a": "p-a", "b": "p-b", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"})
+    assert "status" not in plain.to_dict()
+    with pytest.raises(ValueError):
+        Relationship.from_dict(
+            {"a": "p-a", "b": "p-b", "kind": "spouse", "label_a": "", "label_b": "", "status": "wat"}
+        )
+
+
 def test_relationship_date_precision_is_closed() -> None:
     with pytest.raises(ValueError, match="precision"):
         Relationship.from_dict(

@@ -102,7 +102,7 @@ def export_gedcom(archive: Archive) -> str:
     if people is None or places is None:
         raise RuntimeError("archive needs people and places identity tables")
 
-    confirmed = [p for p in people["people"] if p.get("status") != "proposed"]
+    confirmed = [p for p in people["people"] if p.get("status") in (None, "confirmed")]  # proposed + estimated stay out
     confirmed_ids = {p["id"] for p in confirmed}
     edges = [
         r for r in people.get("relationships") or [] if r.get("a") in confirmed_ids and r.get("b") in confirmed_ids

@@ -20,6 +20,24 @@
       // failure is logged to the console with the stage. window.__loftBoot
       // holds the trace for the console.
       window.__loftBoot = [];
+      // A visible loading marker painted IMMEDIATELY: a white page with no
+      // marker means the page's scripts never ran (a browser-level block),
+      // while a stuck marker shows the last boot stage. The stage is updated
+      // by boot() via window.__loftStage; the timer repaints while the app
+      // is still empty so a hang is visible, not blank.
+      window.__loftStage = "inline script ran";
+      const loading = Object.assign(document.createElement("div"), {
+        id: "boot-loading",
+        textContent: "The Loft — loading…",
+      });
+      document.getElementById("app")?.append(loading);
+      setInterval(() => {
+        const root = document.getElementById("app");
+        const first = root && root.firstElementChild;
+        if (first && first.id === "boot-loading") {
+          loading.textContent = `The Loft — still loading… stage: ${window.__loftStage || "module load"}`;
+        }
+      }, 2000);
       const paintBootFailure = (what) => {
         console.error("[boot]", what);
         const root = document.getElementById("app");

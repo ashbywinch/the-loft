@@ -1,0 +1,43 @@
+name: AI Code Review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+# One review at a time per PR; a newer push cancels the stale run rather than
+# queueing behind it (dependabot bumps and rapid fix pushes never stack).
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  pr-review:
+    runs-on: ubuntu-latest
+    # Dependency bumps are mechanical — don't spend review capacity on them.
+    if: github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: the-pr-agent/pr-agent@v0.41.1 # pin a real release tag — @latest does not resolve
+        id: pr-agent
+        env:
+          OPENAI_KEY: ${{ secrets.OPENCODE_GO_THE_LOFT_API_KEY }}
+          OPENAI_BASE_URL: https://opencode.ai/zen/go/v1
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Fail loud: a silently-failed review reads as a green check.
+      - name: Fail loud if no review covers the head commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHA="${{ github.event.pull_request.head.sha }}"
+          # The review may land as an issue comment or a PR review. Match the
+          # bot's comment by SHA-in-body, and a review by its commit_id — both
+          # scoped to the bot, so a silent failure still fails loud.
+          if ! { gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+              | jq --arg sha "$SHA" '.[] | select(.user.login == "github-actions[bot]" and (.body | contains($sha))) | .id'
+            gh api "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews" \
+              | jq --arg sha "$SHA" '.[] | select(.user.login == "github-actions[bot]" and .commit_id == $sha) | .id'; } \
+              | grep -q .; then
+            echo "::error::AI review did not post for commit $SHA — the review may have failed silently."
+            exit 1
+          fi

@@ -1,0 +1,62 @@
+[project]
+name = "the-loft"
+version = "0.1.0"
+description = "Family history museum web app — a lens over a folder of family artifacts."
+readme = "README.md"
+requires-python = ">=3.14"  # PEP 758: except A, B: is canonical on 3.14 (ruff target py314)
+dependencies = [
+    "python-dateutil>=2.9.0",
+    "dateparser>=1.2.0",
+    "uncertainties>=3.2.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.11.0",
+    "pre-commit>=3.0.0",
+    "basedpyright>=1.39.0",
+    "gedcom7>=0.4.1",  # GEDCOM 7.0 strict-spec validator — the export's parse check (2026-08-05)
+    "google-auth>=2.38.0",  # id_token verification for Google sign-in (2026-08-06)
+    "google-auth-oauthlib>=1.2.1",  # the PKCE authorization-code flow (houses parity)
+    "itsdangerous>=2.2.0",  # signed session cookies
+    "fastapi>=0.115.0",  # the server framework (houses parity, 2026-08-06)
+    "uvicorn>=0.30.0",  # the ASGI server
+]
+
+[build-system]
+requires = ["setuptools>=64.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["tools*"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "N"]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+omit = ["*/__main__.py"]
+
+[tool.basedpyright]
+# config-driven (no subcommand). Scope with `include`, NOT `exclude` — an
+# `exclude` key replaces the implicit .venv/cache exclusions and the scan
+# explodes into site-packages.
+include = ["tools", "tests"]
+# The Archive facade (the aggregate noun) delegates its high-level acts to
+# the implementation modules with function-local imports — archive.py ->
+# projection/demo_data/document_capture/memory -> archive is a deliberate,
+# runtime-safe cycle (the lazy import resolves after module load;
+# 2026-08-06 object-model batch). Don't flag it.
+reportImportCycles = false

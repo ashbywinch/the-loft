@@ -1,0 +1,54 @@
+name: CI
+on:
+  push:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+  pull-requests: write # the coverage comment step needs it
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: npm
+      - name: Fail if family-history-album goes public (real family content)
+        # The private repo carries real letter transcriptions, names and health
+        # history — the privacy posture (PRD F6, TECH-SPEC §7) requires it to
+        # stay private; this makes a public flip fail CI instead of leaking the
+        # archive. The public the-loft ships a scrubbed, dataset-free tree and
+        # is exempt by name.
+        run: |
+          private=$(gh api repos/${{ github.repository }} --jq .private)
+          name=$(gh api repos/${{ github.repository }} --jq .name)
+          if [ "$private" != "true" ] && [ "$name" = "family-history-album" ]; then
+            echo "::error::This repository contains real family content and MUST stay private." >&2
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: make setup
+      - run: make lint-github
+      - run: make test
+      - run: make coverage
+      - name: Coverage summary (Python tools)
+        uses: irongut/CodeCoverageSummary@v1.3.0
+        with:
+          filename: coverage.xml
+          badge: true
+          fail_below_min: true
+          thresholds: '0 90' # floor 0 until real code lands — raise to 80 as tools get tests
+          format: markdown
+          output: both
+      - name: Post coverage comment
+        uses: marocchino/sticky-pull-request-comment@v3
+        if: github.event_name == 'pull_request'
+        with:
+          recreate: true
+          path: code-coverage-results.md

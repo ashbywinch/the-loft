@@ -1,0 +1,18 @@
+# Fast checks only — lint and typecheck, never the full test suite.
+# The same targets CI runs; hooks stay seconds-fast.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.1
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/DetachHead/basedpyright-prek-mirror
+    rev: 1.39.9 # UNPREFIXED tag; the mirror, not the main repo
+    hooks:
+      - id: basedpyright
+        args: [--level, error] # warnings fail by default; errors gate the commit
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks

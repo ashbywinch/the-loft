@@ -1,0 +1,372 @@
+"""Google OAuth for the Loft — the identity seam (2026-08-06, user).
+
+Ported from the houses repo's web/auth.py (the pattern the family already
+runs): the authorization-code flow with PKCE via ``google_auth_oauthlib``,
+the id_token verified by ``google.oauth2``, and a signed session cookie via
+itsdangerous (30 days, survives restarts). The callback URL is the LAN
+address the server prints — Google's OAuth client accepts the registered IP
+callback (houses does the same). The person is resolved server-side from the
+verified email against the archive's people records (Person.email) — the
+identity lives in the DB, never in code (user, 2026-08-06).
+
+Routes (mounted on the Server's handler):
+  GET  /api/auth/login     -> {auth_url} (start the flow)
+  GET  /api/auth/callback  -> session cookie + redirect to the app
+  GET  /api/auth/me        -> {authenticated, email, name, picture, person}
+  POST /api/auth/logout    -> clears the session cookie
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import secrets
+import time
+from datetime import timedelta
+from typing import Any
+from urllib.parse import quote
+
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+
+from tools.archive import Archive
+
+logger = logging.getLogger(__name__)
+
+_SESSION_MAX_AGE = timedelta(days=30)
+
+# In-memory OAuth state store — state_token -> {code_verifier, created_at}.
+# Ephemeral by design: a restart invalidates in-flight logins (houses parity).
+_oauth_states: dict[str, dict[str, Any]] = {}
+_STATE_MAX_AGE_SECONDS = 600
+_STATE_MAX_ENTRIES = 100
+
+COOKIE_NAME = "session"
+
+
+def web_client_id() -> str:
+    return os.environ.get("THE_LOFT_GOOGLE_WEB_CLIENT_ID", "").strip()
+
+
+def web_client_secret() -> str:
+    return os.environ.get("THE_LOFT_GOOGLE_WEB_CLIENT_SECRET", "").strip()
+
+
+def session_secret() -> str:
+    return os.environ.get("THE_LOFT_SESSION_SECRET", "").strip()
+
+
+def public_url() -> str:
+    """The callback base the Google client has registered — the LAN address
+    the server prints by default (houses parity: an IP callback works)."""
+    return os.environ.get("THE_LOFT_PUBLIC_URL", "http://localhost:8000").rstrip("/")
+
+
+def _serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(session_secret(), salt="loft-session")
+
+
+def _client_config() -> dict[str, Any] | None:
+    client_id = web_client_id()
+    if not client_id or not web_client_secret():
+        return None
+    return {
+        "web": {
+            "client_id": client_id,
+            "client_secret": web_client_secret(),
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [f"{public_url()}/api/auth/callback"],
+        }
+    }
+
+
+def _sweep_stale_states() -> None:
+    now = time.time()
+    stale = [k for k, v in _oauth_states.items() if v.get("created_at", 0) < now - _STATE_MAX_AGE_SECONDS]
+    for k in stale:
+        _oauth_states.pop(k, None)
+
+
+def _make_session_cookie(email: str, name: str, picture: str) -> str:
+    return _serializer().dumps({"email": email, "name": name, "picture": picture})
+
+
+def session_user_from_cookie(cookie: str | None) -> dict[str, Any] | None:
+    """The verified session payload from the ``session`` cookie, or None.
+
+    Accepts the raw Cookie header (``session=<payload>; …``) or the bare
+    payload — the serializer must never see the name= prefix (2026-08-06)."""
+    if not cookie:
+        return None
+    if f"{COOKIE_NAME}=" in cookie:
+        for part in cookie.split(";"):
+            name, _, value = part.strip().partition("=")
+            if name == COOKIE_NAME:
+                cookie = value
+                break
+    try:
+        return _serializer().loads(cookie, max_age=int(_SESSION_MAX_AGE.total_seconds()))
+    except BadSignature, SignatureExpired:
+        return None
+
+
+def login_url() -> dict[str, Any]:
+    """Start the flow — {auth_url} for the browser, or an error detail."""
+    from google_auth_oauthlib.flow import Flow
+
+    config = _client_config()
+    if config is None:
+        return {"status": "error", "detail": "Google OAuth is not configured (THE_LOFT_GOOGLE_WEB_CLIENT_ID)"}
+    _sweep_stale_states()
+    state = secrets.token_urlsafe(32)
+    flow = Flow.from_client_config(
+        config,
+        scopes=[
+            "openid",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/userinfo.profile",
+        ],
+    )
+    flow.redirect_uri = f"{public_url()}/api/auth/callback"
+    authorization_url, _ = flow.authorization_url(access_type="online", include_granted_scopes="false", state=state)
+    code_verifier = str(getattr(flow, "code_verifier", "") or "")
+    if not code_verifier:
+        return {"status": "error", "detail": "PKCE code_verifier not generated"}
+    if len(_oauth_states) >= _STATE_MAX_ENTRIES:
+        _sweep_stale_states()
+    if len(_oauth_states) >= _STATE_MAX_ENTRIES:
+        return {"status": "error", "detail": "Too many login attempts, try again"}
+    _oauth_states[state] = {"code_verifier": code_verifier, "created_at": time.time()}
+    return {"status": "ok", "auth_url": authorization_url}
+
+
+def exchange_code(code: str, state: str) -> dict[str, Any] | None:
+    """Verify and consume the callback's code+state; returns the verified
+    id_info ({email, name, picture, email_verified}) or None on any failure."""
+    from google.auth.transport import requests as google_requests
+    from google.oauth2 import id_token
+    from google_auth_oauthlib.flow import Flow
+
+    config = _client_config()
+    if config is None:
+        return None
+    state_data = _oauth_states.pop(state, None)
+    if state_data is None:
+        logger.warning("auth: unknown or replayed OAuth state")
+        return None
+    code_verifier = str(state_data.get("code_verifier", ""))
+    flow = Flow.from_client_config(
+        config,
+        scopes=[
+            "openid",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/userinfo.profile",
+        ],
+    )
+    flow.redirect_uri = f"{public_url()}/api/auth/callback"
+    flow.code_verifier = code_verifier
+    try:
+        flow.fetch_token(code=code)
+        raw = getattr(flow.credentials, "id_token", "")  # the google-auth type misses the property
+        if not raw:
+            raise RuntimeError("no id_token on the exchanged credentials")
+        id_info: dict[str, Any] = dict(id_token.verify_oauth2_token(raw, google_requests.Request(), web_client_id()))
+    except Exception as e:  # noqa: BLE001 — the callback must never 500
+        logger.exception("auth: token exchange failed: %s", e)
+        return None
+    if not id_info.get("email_verified"):
+        logger.warning("auth: unverified email for %s", id_info.get("email"))
+        return None
+    return id_info
+
+
+def person_for_email(archive: Archive, email: str | None) -> str | None:
+    """The archive person whose Person.email matches the verified account —
+    casefolded, the identity lives in the DB (user, 2026-08-06)."""
+    if not email:
+        return None
+    folded = email.casefold()
+    people = archive.get_identity("people")
+    for person in (people or {}).get("people", []):
+        if str(person.get("email", "")).casefold() == folded:
+            return person.get("id")
+    return None
+
+
+def me_payload(archive: Archive, session: dict[str, Any] | None) -> dict[str, Any]:
+    """The /api/auth/me shape — the authenticated identity + the archive
+    person the email maps to (null when the account isn't in the archive)."""
+    if not session:
+        return {"authenticated": False}
+    return {
+        "authenticated": True,
+        "email": session.get("email", ""),
+        "name": session.get("name", ""),
+        "picture": session.get("picture", ""),
+        "person": person_for_email(archive, session.get("email")),
+    }
+
+
+def callback_error_url(error: str) -> str:
+    return f"{public_url()}/?auth_error={quote(error)}"
+
+
+# -- the device flow (houses parity, 2026-08-06) ----------------------------
+# The browser flow's callback can't be a LAN IP (Google won't register one)
+# and the phone can't reach this machine's localhost — so sign-in runs the
+# OAuth device grant: a code shown to the narrator, approved at
+# google.com/device, the id_token minting the session. No redirect URIs at
+# all. The device client is houses' — one family client for the family apps.
+
+_DEVICE_SCOPES = "openid email profile"
+_DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
+_DEVICE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+
+# in-memory device grants: state token -> {device_code, created_at}
+_device_grants: dict[str, dict[str, Any]] = {}
+_DEVICE_GRANT_MAX_AGE = 1800  # google's device codes live ~30 min
+
+# the grace window: a minted session is re-issuable for a short while —
+# the phone's network can lose the poll response (with its Set-Cookie), and
+# the retry must still land the cookie instead of "no such device grant"
+# (2026-08-06: the user approved, the server minted, the phone never got it)
+_recent_sessions: dict[str, dict[str, Any]] = {}
+_SESSION_GRACE_SECONDS = 180
+
+
+def device_client_id() -> str:
+    return os.environ.get("THE_LOFT_GOOGLE_DEVICE_CLIENT_ID", "").strip()
+
+
+def device_client_secret() -> str:
+    return os.environ.get("THE_LOFT_GOOGLE_DEVICE_CLIENT_SECRET", "").strip()
+
+
+def _device_grant_post(url: str, data: dict[str, str]) -> dict[str, Any]:
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    body = urllib.parse.urlencode(data).encode("utf-8")
+    req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            payload = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        # Google's token endpoint answers "authorization_pending" with an
+        # HTTP 428 — the body IS the meaningful payload (2026-08-06)
+        payload = e.read().decode("utf-8")
+    except Exception as e:  # noqa: BLE001 — the endpoint reports the failure
+        raise RuntimeError(f"device grant request failed: {e}") from e
+    # Google's device/code and token endpoints answer JSON
+    try:
+        return json.loads(payload)
+    except ValueError:
+        return dict(urllib.parse.parse_qsl(payload))
+
+
+def start_device_grant() -> dict[str, Any]:
+    """Begin the device grant — {state, user_code, verification_url,
+    interval} for the narrator to approve, or an error detail."""
+    client_id = device_client_id()
+    if not client_id:
+        return {
+            "status": "error",
+            "detail": "the device OAuth client is not configured (THE_LOFT_GOOGLE_DEVICE_CLIENT_ID)",
+        }
+    info = _device_grant_post(
+        _DEVICE_CODE_URL,
+        {"client_id": client_id, "scope": _DEVICE_SCOPES},
+    )
+    device_code = str(info.get("device_code", ""))
+    user_code = str(info.get("user_code", ""))
+    if not device_code or not user_code:
+        return {"status": "error", "detail": "Google did not start the device grant"}
+    state = secrets.token_urlsafe(32)
+    _device_grants[state] = {"device_code": device_code, "created_at": time.time()}
+    logger.info("auth: device grant started (user_code %s, expires in %ss)", user_code, info.get("expires_in", "?"))
+    return {
+        "status": "ok",
+        "state": state,
+        "user_code": user_code,
+        "verification_url": info.get("verification_url", "https://www.google.com/device"),
+        "interval": max(1, int(info.get("interval", 5))),
+    }
+
+
+def minted_session(state: str) -> dict[str, Any] | None:
+    """The session minted for this state, while the grace window holds —
+    the device-complete navigation's source (2026-08-06: the phone's
+    network can reject fetch responses, so the cookie lands on a page
+    navigation instead, houses' proven mechanism)."""
+    recent = _recent_sessions.get(state)
+    if not recent or time.time() - recent.get("_minted_at", 0) >= _SESSION_GRACE_SECONDS:
+        return None
+    return {k: v for k, v in recent.items() if k != "_minted_at"}
+
+
+def poll_device_grant(state: str) -> dict[str, Any]:
+    """Poll Google for the narrator's approval — {status: "pending"} until
+    approved, then {status: "ok", id_info} after the id_token verifies
+    against the device client (a web-flow token must not be replayable)."""
+    grant = _device_grants.get(state)
+    if not grant:
+        # consumed by a mint whose response the phone lost — re-issue the
+        # session so a retry lands the cookie (2026-08-06)
+        recent = _recent_sessions.get(state)
+        if recent and time.time() - recent.get("_minted_at", 0) < _SESSION_GRACE_SECONDS:
+            logger.info("auth: re-issuing the minted session (grace) for %s", recent.get("email"))
+            return {"status": "ok", "id_info": {k: v for k, v in recent.items() if k != "_minted_at"}}
+        return {"status": "error", "detail": "no such device grant"}
+    if time.time() - grant.get("created_at", 0) > _DEVICE_GRANT_MAX_AGE:
+        _device_grants.pop(state, None)
+        return {"status": "error", "detail": "the device grant expired — start again"}
+    token_data: dict[str, str] = {
+        "client_id": device_client_id(),
+        "device_code": str(grant["device_code"]),
+        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+    }
+    if device_client_secret():
+        token_data["client_secret"] = device_client_secret()
+    result = _device_grant_post(_DEVICE_TOKEN_URL, token_data)
+    if result.get("error"):
+        if result["error"] == "authorization_pending":
+            return {"status": "pending"}
+        if result["error"] in ("slow_down", "access_denied", "expired_token"):
+            if result["error"] == "access_denied":
+                _device_grants.pop(state, None)
+            outcome = "pending" if result["error"] == "slow_down" else "error"
+            logger.info("auth: device grant %s (google: %s)", outcome, result["error"])
+            return {"status": outcome, "detail": result["error"]}
+        _device_grants.pop(state, None)
+        logger.warning("auth: device grant error: %s", result["error"])
+        return {"status": "error", "detail": result["error"]}
+    id_token_value = str(result.get("id_token", ""))
+    if not id_token_value:
+        logger.warning("auth: device token response carried no id_token")
+        return {"status": "error", "detail": "no id_token in the device grant response"}
+    _device_grants.pop(state, None)
+    id_info = verify_device_id_token(id_token_value)
+    if id_info is None:
+        logger.warning("auth: device id_token failed verification")
+        return {"status": "error", "detail": "the id_token did not verify"}
+    logger.info("auth: device grant approved by %s", id_info.get("email"))
+    _recent_sessions[state] = {**id_info, "_minted_at": time.time()}
+    return {"status": "ok", "id_info": id_info}
+
+
+def verify_device_id_token(token: str) -> dict[str, Any] | None:
+    """Verify a Google id_token bound to the DEVICE-flow client (houses
+    parity: a browser-leakable web id_token must not mint a session here)."""
+    from google.auth.transport import requests as google_requests
+    from google.oauth2 import id_token as google_id_token
+
+    client_id = device_client_id()
+    if not client_id:
+        return None
+    try:
+        return dict(google_id_token.verify_oauth2_token(token, google_requests.Request(), client_id))
+    except Exception as e:  # noqa: BLE001 — the caller reports the failure
+        logger.warning("auth: device id_token verification failed: %s", e)
+        return None

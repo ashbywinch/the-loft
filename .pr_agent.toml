@@ -1,0 +1,32 @@
+[openai]
+custom_llm_provider = "openai"
+api_base = "https://opencode.ai/zen/go/v1"
+
+[config]
+model = "opencode-go/deepseek-v4-flash"
+custom_model_max_tokens = 128000
+max_model_tokens = 128000
+ai_timeout = 1800
+fallback_models = []
+verbosity_level = 3
+repo_context_from_default_branch = false
+repo_context_files = [
+    "docs/PRD.md",
+    "docs/coding-standards.md",
+    "docs/testing-standards.md",
+    "docs/writing-documentation.md",
+]
+
+[pr_reviewer]
+incremental = true  # review only the diff since the last review — no full re-reviews per push
+require_tests_review = true
+require_security_review = true
+num_max_findings = 50
+extra_instructions = "Check the PR against each file in repo_context_files. Add a 'Compliance' section per doc, listing any violations found or 'No violations'. Flag violations as findings, not just notes: style and semantic deviations from docs/coding-standards.md (naming, module docstrings, typed signatures, no backward-compat shims, DI over patching, fail-fast with visible errors), test standards (deterministic, behavior not implementation, mirror module paths), documentation conventions (density, the ceiling exception), and product law from docs/PRD.md (the app arranges evidence and never interprets it; no editorialising copy; family-agnostic requirements; the propose/confirm seam; no public sharing)."
+
+[pr_code_suggestions]
+incremental = true  # suggest only for the code added since the last review
+
+[github_action_config]
+handle_push_trigger = true
+push_commands = ["/review", "/improve"]

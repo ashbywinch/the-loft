@@ -1,0 +1,8 @@
+# The projection (app/data) and the archive (archive/) are machine-written
+# by the Python toolchain (tools/publish + the archive library) — one
+# formatter only. Prettier must not rewrite them, or every publish churns
+# the diff (2026-08-05: the 1-space sidecars/identity tables are the
+# Python writers' output, not hand code).
+app/data/
+app/coverage/
+archive/

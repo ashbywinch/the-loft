@@ -1,0 +1,2 @@
+# Intentional test fixtures / false positives live here (one per line).
+# Keep this list curated — never silence a real leak.

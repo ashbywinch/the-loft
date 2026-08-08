@@ -111,6 +111,9 @@ function reviewSession(state) {
   };
 
   const advance = () => {
+    chat.setBusy(false); // the success paths never cleared busy — the next
+    // person's chips stayed hidden and the walkthrough dead-ended (bot
+    // review, PR #10, 2026-08-08)
     const pending = proposedPeople(state);
     if (!pending.length) {
       chat.addAssistant("That's everyone — the document import is complete. The tree now shows the confirmed family.");

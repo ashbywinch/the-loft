@@ -344,6 +344,19 @@ def build_app(
     # -- the static app + the data gate ------------------------------------
 
     @app.middleware("http")
+    async def app_shell_no_cache(request: Request, call_next: Any) -> Any:
+        # The app code must never be heuristically cached (2026-08-08: the
+        # phone's browser served a stale index.html for hours — the
+        # instrumentation deployed to the server never reached it, because
+        # StaticFiles sends only ETag/Last-Modified and the browser's
+        # heuristic kept the old shell). The shell + code revalidate every
+        # load; the data assets (the scans) keep the default caching.
+        response = await call_next(request)
+        if not request.url.path.startswith("/data/"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+    @app.middleware("http")
     async def origin_guard(request: Request, call_next: Any) -> Any:
         # CSRF guard for the write APIs (2026-08-03): a page on another
         # origin must not POST to the household server. The app's own

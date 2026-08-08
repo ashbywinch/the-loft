@@ -3,6 +3,7 @@
 import { el, header, itemCard, chip, emptyState } from "../ui.js";
 import { memoriesSection } from "../memories.js";
 import { assetUrl, published } from "../data.js";
+import { renderMarkdown } from "../markdown.js";
 import { aggregate, sortedCounts } from "../connections.js";
 
 export function render(main, _ctx, state) {
@@ -129,7 +130,7 @@ export function reader(main, ctx, state) {
     const asset = item.assets?.[0];
     const nodes = [];
     if (asset) nodes.push(el("img", { class: "reader-img", src: assetUrl(item.id, asset.file), alt: item.title }));
-    if (item.transcription) nodes.push(el("p", { class: "transcription-text" }, item.transcription));
+    if (item.transcription) nodes.push(...renderMarkdown(item.transcription));
     nodes.push(el("a", { class: "reader-open", href: `#/item/${item.id}` }, "Open the item →"));
     body.replaceChildren(...nodes);
     prev.disabled = index === 0;

@@ -557,6 +557,29 @@ summary:focus-visible {
   font-family: var(--serif);
   font-size: 1.02rem;
   line-height: 1.7;
+  /* verbatim primary text: honour the source's own line breaks — the \n in
+     the transcription render as breaks, other whitespace still collapses,
+     long lines wrap (2026-08-08: the breaks were collapsing in the <p>). */
+  white-space: pre-line;
+}
+
+/* a transcription that is a table (a medal index card) keeps its structure
+   (2026-08-08, user) — the markdown renderer emits this shape. */
+.transcription-table {
+  border-collapse: collapse;
+  margin: 0.6rem 0;
+  font-size: 0.92rem;
+}
+.transcription-table th,
+.transcription-table td {
+  border: 1px solid var(--line);
+  padding: 0.3rem 0.55rem;
+  text-align: left;
+  vertical-align: top;
+}
+.transcription-table th {
+  font-weight: 600;
+  background: var(--paper);
 }
 
 .mention {

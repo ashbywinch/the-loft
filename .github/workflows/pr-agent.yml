@@ -11,7 +11,9 @@ jobs:
   pr-review:
     runs-on: ubuntu-latest
     # Dependency bumps are mechanical — don't spend review capacity on them.
-    if: github.actor != 'dependabot[bot]'
+    # The review key lives on the private repo; the public repo has no key,
+    # so the review skips there instead of failing loudly (2026-08-08).
+    if: github.actor != 'dependabot[bot]' && secrets.OPENCODE_GO_THE_LOFT_API_KEY != ''
     permissions:
       contents: read
       pull-requests: write

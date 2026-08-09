@@ -286,10 +286,11 @@ def investigate(
         '{"relevant": true|false, "contradiction": {"found": true|false, '
         '"detail": "<the attested fact that conflicts, or empty>"}, "confidence": '
         '"<definitely|think_so|dont_know|think_not|definitely_not|unclear>", '
-        '"note": "<when relevant, one short sentence — the reason the reviewer believes the '
-        "record. When NOT relevant, the note is ONLY the topic the answer was about — a short "
-        "phrase ('the house on Victoria Avenue') — NEVER the reasoning, NEVER 'the "
-        'reviewer\', NEVER an explanation of why it is off-topic>", "findings": '
+        '"note": "<when relevant, one short sentence — the reason the answer seems right, in '
+        'the family\'s own terms (e.g. "Grandma always said so"). When NOT relevant, the note '
+        "is ONLY the topic the answer was about — a short phrase ('the house on Victoria "
+        "Avenue'). NEVER the reasoning, NEVER the third person ('the reviewer'), NEVER an "
+        'explanation of why it is off-topic>", "findings": '
         '[{"text": "<one short sentence per meaningful thing the tools surfaced, naming the '
         "SPECIFIC document (its title from the tool results) and the fact — with the EXACT "
         "sentence from the document's quotes that attests it, verbatim in quotation marks "
@@ -300,15 +301,17 @@ def investigate(
         "itself (the import is not a document — only the tool results list real items; "
         "if the tools found no document for the point, do not make a finding about it — "
         'and NEVER a bare absence like \\"no record connects X to Y\\": the findings report '
-        'what the records DO show, not what they do not>", '
+        "what the records DO show, not what they do not. A recollection is the family's "
+        '— "Mum\'s recollection", "the recollection" — NEVER "the reviewer\'s">", '
         '"item_id": "<the document id from the tool results>"}, ...], '
         '"question": '
         '"<the genealogist next question to the reviewer, asked the way a hired researcher '
         'would — the provenance when the reviewer cited a source ("did she tell you that '
         'personally?"), the follow-up that would firm up the link; or a short conclusion '
-        "when no question is needed. When the reviewer expresses NO knowledge (confidence "
-        "dont_know), offer the conclusion rather than asking again: \"I'll leave X as the "
-        "import's guess unless you'd like to record what you remember as an estimate.\">\"}"
+        "when no question is needed. When the reviewer expresses NO knowledge and has NO "
+        "lead to follow (confidence dont_know), offer the conclusion rather than asking "
+        "again: \"I'll leave her as she stands unless you'd like to record what you remember "
+        'as an estimate.">"}'
     )
     tool_calls = 0
     trace: list[dict[str, Any]] = []
@@ -370,9 +373,15 @@ def investigate(
                 "raw": raw,
                 "trace": trace,
                 "prompt": base_prompt,
+                # the final user string after the loop's appends — the
+                # completeness property: everything the model produced is
+                # fed back (2026-08-09, user)
+                "final_prompt": user,
             }
         user += (
-            "\n\nThat was neither a tool call nor a valid verdict. To call a tool return "
-            '{"tool": "<name>", "args": {...}}; to conclude return the verdict JSON: ' + verdict
+            "\n\n[your previous answer] "
+            + raw
+            + "\n\nThat was neither a tool call nor the complete verdict. Keep the reasoning "
+            "above and return the complete verdict JSON now: " + verdict
         )
     raise ElicitationError("investigation did not conclude")  # pragma: no cover

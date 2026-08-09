@@ -279,6 +279,7 @@ def investigate(
         'when no question is needed>"}'
     )
     tool_calls = 0
+    trace: list[dict[str, Any]] = []
     for _ in range(MAX_INVESTIGATE_STEPS + 3):  # the digs, plus the verdict and a correction
         try:
             raw = client.chat(prompt, user)
@@ -295,8 +296,14 @@ def investigate(
             raw_args = parsed_dict.get("args")
             args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
             result = _run_tool(tool, args, facts)
+            # the tool call and its deterministic result are part of the
+            # model's reasoning — logged verbatim, never discarded
+            # (2026-08-09: 'why would that stop you logging them correctly?'
+            # — nothing does; the gap was that we didn't)
+            trace.append({"model": raw, "tool": tool, "args": args, "result": result})
             user += f"\n\nTool result ({tool}): {result!r}"
             continue
+        trace.append({"model": raw})
         relevant = str(parsed_dict.get("relevant", "")).strip().lower()
         raw_contradiction = parsed_dict.get("contradiction")
         contradiction: dict[str, Any] = raw_contradiction if isinstance(raw_contradiction, dict) else {}
@@ -324,6 +331,7 @@ def investigate(
                 "findings": [f for f in normalized if f["text"]],
                 "question": str(parsed_dict.get("question", "")).strip(),
                 "raw": raw,
+                "trace": trace,
             }
         user += (
             "\n\nThat was neither a tool call nor a valid verdict. To call a tool return "

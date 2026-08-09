@@ -390,3 +390,39 @@ def test_the_attested_tool_returns_the_sentence_that_mentions_the_person() -> No
     letter = next(r for r in result if r["id"] == "doc-1916-letter")
     assert letter["quotes"] == ["I must tell you that Walter Whitlock was killed in the bombardment on the fifteenth."]
     assert not any("rested at the camp" in q for q in letter["quotes"])  # never the opening
+
+
+def test_a_partial_answer_is_fed_back_verbatim_on_the_correction() -> None:
+    """2026-08-09 (user: "how can it be that you wrote comprehensive evals
+    to make sure our transcript went back verbatim, and now you've found
+    that things were missing"): the transcript-going-back principle has a
+    second surface — INSIDE an investigation, when the harness re-prompts
+    after a partial response, the model's own words must go back too. The
+    eval pinned the cross-turn surface only; the intra-turn correction
+    dropped the model's reasoning, and the second pass flipped its own
+    correct judgment. The correction now feeds the previous answer back
+    verbatim."""
+    partial = (
+        '{"verdict": "uncertain", "reasoning": "The reviewer has no knowledge of Pearl and '
+        'cannot confirm or deny the relationship."}'
+    )
+    verdict = (
+        '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+        '"confidence": "dont_know", "note": "no knowledge", "findings": [], '
+        '"question": "I\'ll leave her as she stands unless you\'d like to record what you remember as an estimate."}'
+    )
+    client = FakeClient([partial, verdict])
+    result = investigate(
+        client,
+        text="I've no idea whether Pearl was Quentin's sister — I never met her.",
+        person=_person(),
+        who="Alex",
+        facts=make_facts(),
+    )
+    # the second call carries the first response verbatim — the model's own
+    # reasoning is its context, exactly as across turns
+    assert partial in client.calls[1][1]
+    assert result["relevant"] == "true"
+    assert result["confidence"] == "dont_know"
+    # and the trace logs the partial answer too — nothing the model said is lost
+    assert any("verdict" in str(step.get("model", "")) for step in result["trace"])

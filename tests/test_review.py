@@ -12,7 +12,7 @@ import pytest
 
 from tools.memory import ElicitationError
 from tools.records import Person, ReviewContext
-from tools.review import investigate
+from tools.review import investigate, steer_message
 
 PEOPLE: list[dict[str, Any]] = [
     {"id": "p-quentin", "name": "Quentin Whitlock", "relation": "brother of Pearl Whitlock"},
@@ -346,3 +346,47 @@ def test_the_tool_calls_are_logged_in_the_trace_and_fed_back() -> None:
     )
     investigate(client2, text="next", person=_person(), who="Alex", facts=make_facts(), history=history)
     assert '"tool": "search_people"' in client2.calls[0][1]  # the tool call is in the model's history
+
+
+def test_the_off_topic_steer_names_the_topic_never_the_reasoning() -> None:
+    """2026-08-09 (user, the transcript's third departure): the steer is
+    the genealogist's return to the claim — it names the topic the answer
+    was about (the note, when it is the topic) and never the model's
+    internal reasoning. The reasoning-shaped note would read as nonsense;
+    the eval's persona guard catches it at the write seam."""
+    person = Person(id="p-pearl", name="Pearl Whitlock", relation="cousin of Quentin Whitlock")
+    steer = steer_message(person, "the house on Victoria Avenue")
+    assert "That's about the house on Victoria Avenue" in steer
+    assert "Pearl Whitlock" in steer
+    assert "do you think the link's right" in steer
+    # the empty-note fallback is a plain redirect — nothing internal leaks
+    fallback = steer_message(person, "")
+    assert "something else" in fallback
+    assert "reviewer" not in fallback
+
+
+def test_the_attested_tool_returns_the_sentence_that_mentions_the_person() -> None:
+    """2026-08-09 (user: "extremely bad at identifying the relevant part of
+    the document to quote when explaining the attestation"): the attested
+    tool returns the sentences that MENTION the person — the quotable
+    attestation — never the document's opening. The model can only quote
+    what the tools surface, so the relevant part must be what they surface."""
+    from tools.review import _run_tool
+
+    facts = make_facts()
+    # the item's mention sits AFTER a long opening — the first 300 chars
+    # would never reach it
+    long_item = {
+        "id": "doc-1916-letter",
+        "title": "Walter Whitlock's letter, Sep 1916",
+        "story": (
+            "The battalion rested at the camp all week and the weather has been fine. "
+            "The mail caught up with us on Tuesday. "
+            "I must tell you that Walter Whitlock was killed in the bombardment on the fifteenth."
+        ),
+    }
+    facts = ReviewContext(people=facts.people, items=facts.items + (long_item,), relationships=facts.relationships)
+    result = _run_tool("attested", {"id": "p-walter"}, facts)
+    letter = next(r for r in result if r["id"] == "doc-1916-letter")
+    assert letter["quotes"] == ["I must tell you that Walter Whitlock was killed in the bombardment on the fifteenth."]
+    assert not any("rested at the camp" in q for q in letter["quotes"])  # never the opening

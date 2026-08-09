@@ -366,15 +366,30 @@ def build_app(
         try:
             # the investigation needs the attested facts the Knowledge
             # conversion drops — the raw people (deaths, relations), the
-            # recorded items' stories, and the family edges — typed as the
-            # ReviewContext (2026-08-09)
+            # recorded items' texts, and the family edges — typed as the
+            # ReviewContext (2026-08-09). The projection carries the
+            # VERBATIM transcription when the item has one (the document
+            # the family sees in the claim and the item page) — the
+            # sidecar's story is the archival summary, a different text
+            # (2026-08-09, user: the model quoted the wrong part of the
+            # document, because it was reading the summary). The people
+            # involvement is the structured match the tools need — the
+            # prose never carries ids
             items: list[dict[str, Any]] = []
             for item_id in archive.item_ids():
                 item = archive.get_item(item_id)
                 if item and item.get("status") == "catalogued":
-                    story = item.get("story") or item.get("transcription") or ""
-                    if story:
-                        items.append({"id": item_id, "title": item.get("title", ""), "story": story})
+                    transcription = archive.read_content(item_id, "transcription.txt") or ""
+                    text = transcription or item.get("story") or ""
+                    if text:
+                        items.append(
+                            {
+                                "id": item_id,
+                                "title": item.get("title", ""),
+                                "story": text,
+                                "people": [p.get("id") for p in item.get("people", []) if isinstance(p, dict)],
+                            }
+                        )
             # the model sees the whole conversation — its own reasoning and
             # speech, verbatim — so a message that re-answers an earlier
             # question is recognised (2026-08-09, user)

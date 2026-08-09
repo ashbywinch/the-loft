@@ -57,7 +57,7 @@ def make_app_data(tmp_path: Path) -> Path:
 
 
 class ServerFixture:
-    def __init__(self, data_dir: Path, store: MemoryStore) -> None:
+    def __init__(self, data_dir: Path, store: MemoryStore, client: Any | None = None) -> None:
         self.store: MemoryStore = store
         self.data_dir: Path = data_dir
         # the identity seam (2026-08-06): the archive's people carry the
@@ -76,7 +76,7 @@ class ServerFixture:
                 "relationships": [],
             },
         )
-        self.server = create_server(store, data_dir, client=None, app_dir=data_dir.parent, host="127.0.0.1", port=0)
+        self.server = create_server(store, data_dir, client=client, app_dir=data_dir.parent, host="127.0.0.1", port=0)
         self.thread: threading.Thread = threading.Thread(target=self.server.run, daemon=True)
         self.thread.start()
         # uvicorn assigns the ephemeral port at startup — wait for it
@@ -617,3 +617,59 @@ def test_deciding_the_last_proposed_person_completes_the_session(server: ServerF
     imports = server.archive.get_identity("imports")
     assert imports is not None
     assert imports["imports"][0]["status"] == "reviewed"  # nothing left pending — the session is done
+
+
+def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -> None:
+    """2026-08-09 (user: "extremely bad at identifying the relevant part of
+    the document to quote when explaining the attestation"): the review's
+    facts must carry the VERBATIM transcription — the text the family sees
+    in the claim and the item page — never the sidecar's archival summary.
+    The projection used to read only the sidecar's story field, so the
+    model could not see the document's own words at all."""
+    _seed_pending(server)
+    seen: dict[str, str] = {}
+
+    class FakeChat:
+        def chat(self, system: str, user: str) -> str:  # noqa: ARG002 — the harness signature
+            seen["user"] = user
+            return (
+                '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+                '"confidence": "think_so", "note": "fine", "findings": [], "question": ""}'
+            )
+
+    # a second server over the same store, with the model client injected
+    # (DI, 2026-08-09) — the fixture's server deliberately runs clientless
+    server2 = ServerFixture(server.data_dir, server.store, client=FakeChat())
+    try:
+        _seed_pending(server2)  # the second init re-seeded the people table
+        server2.archive.save_item(
+            {
+                "id": "doc-2001-email",
+                "title": "The 2001 email",
+                "date": "2001-02-07",
+                "date_precision": "exact",
+                "type": "letter",
+                "status": "catalogued",
+                "people": [{"id": "p-judith", "status": "confirmed"}],
+            },
+            # the summary (the sidecar's story field) and the transcription
+            # (the verbatim capture) are DIFFERENT texts — the review must
+            # read the transcription. The sidecar has no story at all here,
+            # and the prompt still must find the item
+            content={
+                "transcription": (
+                    "The family archive has grown dusty over the years. "
+                    "The notes my aunt left say that Pearl Whitlock was the one who kept the photographs."
+                )
+            },
+        )
+        status, _ = server2.post(
+            "/api/review/text",
+            {"session_id": "import-documents", "person_id": "p-judith", "text": "Grandma used to say so."},
+        )
+        assert status == 200
+        # the model's prompt carries the transcription's own words — never
+        # the summary, and never a bare "no documents" note
+        assert "Pearl Whitlock was the one who kept the photographs" in seen["user"]
+    finally:
+        server2.close()

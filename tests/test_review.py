@@ -244,3 +244,67 @@ def test_the_model_sees_the_whole_conversation_including_its_own_reasoning() -> 
     assert '"relevant": true, "confidence": "think_so"' in prompt  # its earlier reasoning, verbatim
     assert "I've no idea whether she is or not" in prompt  # the latest statement
     assert "re-answering an EARLIER question" in prompt  # the arc is flagged
+
+
+def test_the_history_goes_back_verbatim_byte_for_byte() -> None:
+    """(2026-08-09, user: 'does the exact same text really go back to the
+    model? — makes it cheaper if so, because of caching'): the rendered
+    history is the messages unmodified — quotes, apostrophes, unicode —
+    so the model's prompt-cache can reuse the stable prefix."""
+    from tools.records import Message
+    from tools.review import render_history
+
+    history = (
+        Message(role="user", text="I said: \"hello\" — it's exact, with 'quotes' and a café.", when="2026-08-09"),
+        Message(
+            role="assistant",
+            text="Did Mum tell you?",
+            when="2026-08-09",
+            thinking='{"relevant": true, "note": "exact & verbatim \\"quotes\\""}',
+        ),
+    )
+    rendered = render_history(history)
+    assert "[family] I said: \"hello\" — it's exact, with 'quotes' and a café." in rendered
+    assert '[assistant reasoning] {"relevant": true, "note": "exact & verbatim \\"quotes\\""}' in rendered
+    assert "[assistant] Did Mum tell you?" in rendered
+
+    # the same bytes reach the model's prompt
+    client = FakeClient(
+        [
+            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+            '"confidence": "dont_know", "note": "fine", "findings": [], "question": ""}'
+        ]
+    )
+    investigate(client, text="next", person=_person(), who="Alex", facts=make_facts(), history=history)
+    prompt = client.calls[0][1]
+    assert "[family] I said: \"hello\" — it's exact, with 'quotes' and a café." in prompt
+    assert '[assistant reasoning] {"relevant": true, "note": "exact & verbatim \\"quotes\\""}' in prompt
+
+
+def test_the_previous_prompt_is_the_current_prompts_prefix() -> None:
+    """The caching property (2026-08-09, user: 'the exact same text goes
+    back… cheaper if so, because of caching'): the conversation renders
+    uniformly and sits last, so the previous prompt's exact text is the
+    current prompt's prefix — the model's prompt-cache reuses the whole
+    thing."""
+    from tools.records import Message
+
+    client = FakeClient(
+        [
+            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+            '"confidence": "think_so", "note": "first", "findings": [], "question": ""}',
+            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+            '"confidence": "think_so", "note": "second", "findings": [], "question": ""}',
+        ]
+    )
+    investigate(client, text="first", person=_person(), who="Alex", facts=make_facts(), history=())
+    first_prompt = client.calls[0][1]
+
+    history = (
+        Message(role="user", text="first", when=""),
+        Message(role="assistant", text="Did Mum tell you?", when="", thinking=client.calls[0][0]),
+    )
+    investigate(client, text="second", person=_person(), who="Alex", facts=make_facts(), history=history)
+    second_prompt = client.calls[1][1]
+
+    assert second_prompt.startswith(first_prompt)

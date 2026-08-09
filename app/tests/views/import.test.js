@@ -36,21 +36,34 @@ function stubFetch({
   confidence = "think_so",
   question = "",
   findings = [],
+  message = "",
 } = {}) {
   vi.stubGlobal(
     "fetch",
     vi.fn((url, init) => {
       const body = JSON.parse(init?.body ?? "{}");
       if (url === "/api/review/text") {
+        const auto = findings.length
+          ? `The documents show: ${findings.map((f) => (typeof f === "string" ? f : f.text)).join(" ")}`
+          : "";
         return Promise.resolve({
           ok: true,
-          json: async () => ({ ok: true, relevant, contradiction: { found: contradiction, detail }, confidence, note, question, findings }),
+          json: async () => ({
+            ok: true,
+            relevant,
+            contradiction: { found: contradiction, detail },
+            confidence,
+            note,
+            question,
+            findings,
+            message: message || [auto, question].filter(Boolean).join(" "),
+          }),
         });
       }
       return Promise.resolve({
         ok: true,
         json: async () => {
-          if (body.decision === "delete") return { ok: true, person: { id: body.person_id, gone: true } };
+          if (body.decision === "delete") return { ok: true, person: { id: body.person_id, gone: true }, message: "Done — X is not recorded after all." };
           return {
             ok: true,
             person: {
@@ -58,6 +71,10 @@ function stubFetch({
               name: "X",
               status: body.decision === "estimated" ? "estimated" : body.decision === "pending" ? "proposed" : undefined,
             },
+            message:
+              body.decision === "estimated"
+                ? "Done — I've noted Pearl Whitlock as your recollection."
+                : "Done — Pearl Whitlock is recorded as confirmed.",
           };
         },
       });
@@ -120,8 +137,8 @@ describe("the import review is the chat — one conversation resolves the pendin
     setInput(main, "I read it in the record book.");
     send(main);
     await tick();
-    expect(bubbles(main).at(-2)).toContain("The documents show"); // the digging is said aloud
-    expect(bubbles(main).at(-1)).toBe("Did you see the record yourself?"); // the genealogist's question
+    expect(bubbles(main).at(-1)).toContain("The documents show"); // the digging is said aloud
+    expect(bubbles(main).at(-1)).toContain("Did you see the record yourself?"); // the genealogist's question
     chip(main, "Record as confirmed").click();
     await tick();
     const decided = JSON.parse(decideCall()[1].body);
@@ -194,7 +211,11 @@ describe("the import review is the chat — one conversation resolves the pendin
   });
 
   it("off-topic answers are steered back — never recorded", async () => {
-    stubFetch({ relevant: "false", note: "the house on Victoria Avenue" });
+    stubFetch({
+      relevant: "false",
+      note: "the house on Victoria Avenue",
+      message: "That's about the house on Victoria Avenue — let's come back to Pearl Whitlock: do you think the link's right?",
+    });
     const main = document.createElement("main");
     const state = JSON.parse(JSON.stringify(STATE));
     render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
@@ -208,7 +229,11 @@ describe("the import review is the chat — one conversation resolves the pendin
   });
 
   it("a contradiction with the attested facts surfaces and must be resolved before confirming", async () => {
-    stubFetch({ contradiction: "true", detail: "the war record attests Walter Whitlock died in 1916" });
+    stubFetch({
+      contradiction: "true",
+      detail: "the war record attests Walter Whitlock died in 1916",
+      message: "That doesn't match the records — the war record attests Walter Whitlock died in 1916. Which is right?",
+    });
     const main = document.createElement("main");
     const state = JSON.parse(JSON.stringify(STATE));
     render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
@@ -225,9 +250,12 @@ describe("the import review is the chat — one conversation resolves the pendin
       vi.fn((url, init) => {
         const body = JSON.parse(init?.body ?? "{}");
         if (url === "/api/review/text") {
-          return Promise.resolve({ ok: true, json: async () => ({ ok: true, relevant: "true", contradiction: { found: "false", detail: "" }, confidence: "definitely", note: "the reviewer corrected it", question: "", findings: [] }) });
+          return Promise.resolve({ ok: true, json: async () => ({ ok: true, relevant: "true", contradiction: { found: "false", detail: "" }, confidence: "definitely", note: "the reviewer corrected it", question: "", findings: [], message: "" }) });
         }
-        return Promise.resolve({ ok: true, json: async () => ({ ok: true, person: { id: body.person_id, name: "X" } }) });
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, person: { id: body.person_id, name: "X" }, message: "Done — Pearl Whitlock is recorded as confirmed." }),
+        });
       }),
     );
     setInput(main, "Ah, you're right — it was Walter.");

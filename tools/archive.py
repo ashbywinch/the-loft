@@ -18,9 +18,9 @@ import json
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, final
+from typing import Any, Literal, cast, final
 
-from tools.records import Item, Person, Place, ReviewQueue, Session, is_valid_record_id
+from tools.records import Item, Person, Place, ReviewDecision, ReviewQueue, Session, is_valid_record_id
 from tools.store import FileStore
 
 SIDECAR = "item.json"
@@ -639,19 +639,36 @@ class Archive:
         self.save_identity("imports", imports)
         return len(updated.attempts) - 1
 
-    def record_review_exchange(self, session_id: str, entry: dict[str, Any]) -> None:
-        """Append one exchange to the session's CURRENT attempt (supersede —
-        the imports table never edits). A decision entry advances the resume
-        point; the last decision clears it (Session.record_exchange). The
-        review's record is the durable state a resumed session continues
-        from."""
+    def record_review_message(
+        self, session_id: str, role: str, text: str, when: str, thinking: str | None = None
+    ) -> None:
+        """Append one spoken line to the session's CURRENT attempt — the
+        line the family saw, verbatim, and (for assistant turns) the raw
+        verdict as the thinking (2026-08-09: the transcript is the
+        messages; the model's reasoning goes back to it verbatim on later
+        calls)."""
         imports = self.get_identity("imports")
         if imports is None:
             raise ArchiveError(f"no imports table for session {session_id}")
         session = next((s for s in imports["imports"] if s.get("id") == session_id), None)
         if session is None:
             raise ArchiveError(f"no import session {session_id}")
-        updated = Session.from_dict(session).record_exchange(entry)
+        if role not in ("user", "assistant"):
+            raise ArchiveError(f"unknown message role: {role!r}")
+        updated = Session.from_dict(session).add_message(cast(Literal["user", "assistant"], role), text, when, thinking)
+        imports["imports"] = [updated.to_dict() if s.get("id") == session_id else s for s in imports["imports"]]
+        self.save_identity("imports", imports)
+
+    def record_review_decision(self, session_id: str, decision: ReviewDecision) -> None:
+        """Record a review outcome — it advances the resume point; the last
+        decision clears it (Session.add_decision)."""
+        imports = self.get_identity("imports")
+        if imports is None:
+            raise ArchiveError(f"no imports table for session {session_id}")
+        session = next((s for s in imports["imports"] if s.get("id") == session_id), None)
+        if session is None:
+            raise ArchiveError(f"no import session {session_id}")
+        updated = Session.from_dict(session).add_decision(decision)
         imports["imports"] = [updated.to_dict() if s.get("id") == session_id else s for s in imports["imports"]]
         self.save_identity("imports", imports)
 

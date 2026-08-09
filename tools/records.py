@@ -494,36 +494,102 @@ class OrgsTable:
 
 
 @dataclass(frozen=True)
+class Message:
+    """One line of the review conversation — what the family saw. The
+    assistant's lines also carry their THINKING: the model's raw verdict,
+    verbatim. Both persist, and both go back to the model on every later
+    call — the model always sees the whole conversation including its own
+    reasoning (2026-08-09, user: the flow misunderstood because the model
+    couldn't see that an answer was re-answering an earlier question)."""
+
+    role: Literal["user", "assistant"]
+    text: str
+    when: str
+    thinking: str | None = None  # the raw verdict, assistant turns only
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> Message:
+        role = str(raw.get("role", ""))
+        if role not in ("user", "assistant"):
+            raise ValueError(f"unknown message role: {role!r}")
+        return cls(
+            role=role,
+            text=str(raw.get("text", "")),
+            when=str(raw.get("when", "")),
+            thinking=raw.get("thinking"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"role": self.role, "text": self.text, "when": self.when}
+        if self.thinking is not None:
+            out["thinking"] = self.thinking
+        return out
+
+
+@dataclass(frozen=True)
+class ReviewDecision:
+    """A review's outcome — the person, the disposition, and the basis
+    (2026-08-09; the decision vocabulary is not the status vocabulary:
+    attested / estimated / pending / delete)."""
+
+    person_id: str
+    decision: Literal["attested", "estimated", "pending", "delete"]
+    when: str
+    basis: dict[str, Any] | None = None
+    last: bool = False
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> ReviewDecision:
+        decision = str(raw.get("decision", ""))
+        if decision not in ("attested", "estimated", "pending", "delete"):
+            raise ValueError(f"unknown review decision: {decision!r}")
+        return cls(
+            person_id=_require(raw, "person_id"),
+            decision=decision,  # type: ignore[arg-type]
+            when=str(raw.get("when", "")),
+            basis=raw.get("basis"),
+            last=bool(raw.get("last")),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"person_id": self.person_id, "decision": self.decision, "when": self.when}
+        if self.basis is not None:
+            out["basis"] = self.basis
+        if self.last:
+            out["last"] = True
+        return out
+
+
+@dataclass(frozen=True)
 class Attempt:
-    """One walk of an import review — the transcript and the decisions of
-    that walk, separated so a diagnosis never mixes walks (2026-08-09:
-    the accumulated-mess fix; the storage is attempt-separated). A walk is
-    finished when it has exchanges and its last decision completed the
-    session."""
+    """One walk of an import review — the conversation (the messages the
+    family saw) and the outcomes of that walk, separated so a diagnosis
+    never mixes walks (2026-08-09: the accumulated-mess fix)."""
 
     started: str
-    transcript: tuple[dict[str, Any], ...] = ()
-    decisions: tuple[dict[str, Any], ...] = ()
+    messages: tuple[Message, ...] = ()
+    decisions: tuple[ReviewDecision, ...] = ()
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Attempt:
         return cls(
             started=str(raw.get("started", "")),
-            transcript=tuple(raw.get("transcript") or []),
-            decisions=tuple(raw.get("decisions") or []),
+            messages=tuple(Message.from_dict(m) for m in (raw.get("messages") or [])),
+            decisions=tuple(ReviewDecision.from_dict(d) for d in (raw.get("decisions") or [])),
         )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "started": self.started,
-            "transcript": list(self.transcript),
-            "decisions": list(self.decisions),
+            "messages": [m.to_dict() for m in self.messages],
+            "decisions": [d.to_dict() for d in self.decisions],
         }
 
     @property
     def finished(self) -> bool:
-        """A walk with exchanges whose last decision completed the session."""
-        return bool(self.transcript) and any(d.get("last") for d in self.decisions)
+        """A walk with a conversation whose last decision completed the
+        session."""
+        return bool(self.messages) and any(d.last for d in self.decisions)
 
 
 @dataclass(frozen=True)
@@ -534,7 +600,9 @@ class Session:
     sessions so it's more obvious to fresh agents; extend the API to cover
     them") — the class owns the wire format and the invariants: a new
     attempt starts only when the last is empty or finished; a decision
-    advances the resume point."""
+    advances the resume point. The transcript is the MESSAGES — the
+    assistant's words are server-built and shown verbatim, so a loaded
+    transcript is what the family saw."""
 
     id: str
     title: str
@@ -585,17 +653,24 @@ class Session:
             return replace(self, attempts=self.attempts + (Attempt(started=datetime.datetime.now(UTC).isoformat()),))
         return self
 
-    def record_exchange(self, entry: dict[str, Any]) -> Session:
-        """Append one exchange to the current attempt. A decision entry
-        advances the resume point; the last decision clears it."""
+    def add_message(
+        self, role: Literal["user", "assistant"], text: str, when: str, thinking: str | None = None
+    ) -> Session:
+        """Append one spoken line to the current attempt's conversation —
+        the line the family saw, verbatim. The assistant's lines may carry
+        their raw verdict as the thinking."""
         last = self.current_attempt() or Attempt(started=datetime.datetime.now(UTC).isoformat())
-        transcript = last.transcript + (entry,)
-        decisions = last.decisions + (entry,) if entry.get("kind") == "decision" else last.decisions
-        current = self.current
-        if entry.get("kind") == "decision":
-            current = None if entry.get("last") else entry.get("person_id")
-        updated = replace(last, transcript=transcript, decisions=decisions)
+        updated = replace(last, messages=last.messages + (Message(role=role, text=text, when=when, thinking=thinking),))
         attempts = self.attempts[:-1] + (updated,) if self.attempts else (updated,)
+        return replace(self, attempts=attempts)
+
+    def add_decision(self, decision: ReviewDecision) -> Session:
+        """Record a review outcome — it advances the resume point; the last
+        decision clears it."""
+        last = self.current_attempt() or Attempt(started=datetime.datetime.now(UTC).isoformat())
+        updated = replace(last, decisions=last.decisions + (decision,))
+        attempts = self.attempts[:-1] + (updated,) if self.attempts else (updated,)
+        current = None if decision.last else decision.person_id
         return replace(self, attempts=attempts, current=current)
 
 

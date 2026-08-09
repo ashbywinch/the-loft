@@ -20,7 +20,7 @@ import os
 import socket
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -30,7 +30,7 @@ from tools import auth, memory, review
 from tools.ai_client import AIClient
 from tools.archive import Archive, ArchiveError, split_content
 from tools.memory import ElicitationError, Knowledge
-from tools.records import Person, ReviewContext
+from tools.records import Person, ReviewContext, ReviewDecision
 from tools.store import FileStore
 
 logger = logging.getLogger(__name__)
@@ -261,6 +261,26 @@ def build_app(
             return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
         return {"ok": True}
 
+    @app.post("/api/review/message", response_model=None)
+    def review_message(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+        """Record one of the app's own rendered lines (the opening, the
+        claim) so the transcript is exactly what the family saw (2026-08-09,
+        user: "when you load a given transcript, you see exactly what I
+        saw")."""
+        mine = narrator(request)
+        if mine is None:
+            return JSONResponse({"ok": False, "error": "sign in to review the import"}, status_code=401)
+        session_id = str(body.get("session_id", ""))
+        role = str(body.get("role", ""))
+        text = str(body.get("text", ""))
+        if not session_id or role not in ("user", "assistant") or not text.strip():
+            return JSONResponse({"ok": False, "error": "session_id, role and text are required"}, status_code=400)
+        try:
+            archive.record_review_message(session_id, role, text, datetime.now(UTC).date().isoformat())
+        except ArchiveError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
+        return {"ok": True}
+
     @app.post("/api/review/decide", response_model=None)
     def review_decide(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
         """The import review (2026-08-09, user): one decision per proposed
@@ -288,27 +308,36 @@ def build_app(
         session_id = str(body.get("session_id", ""))
         if not session_id:
             return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
+        # the confirmation names the person — the resolve returns a
+        # gone-marker for a delete, so the name comes from the table first
+        people_table = archive.get_identity("people") or {"people": []}
+        person_name = next(
+            (p.get("name", person_id) for p in people_table["people"] if p["id"] == person_id), person_id
+        )
         try:
             person = archive.resolve_person(person_id, decision, basis)
         except (KeyError, ValueError) as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
-        # the review record — every decision persists on the session's page,
-        # and the resume point follows the queue (2026-08-09)
+        # the review record — the decision and the confirmation message the
+        # family saw, both persisted (2026-08-09: the transcript is the
+        # messages)
+        when = datetime.now(UTC).date().isoformat()
         queue = archive.review_queue()
-        archive.record_review_exchange(
+        archive.record_review_decision(
             session_id,
-            {
-                "kind": "decision",
-                "person_id": person_id,
-                "decision": decision,
-                "basis": basis,
-                "when": datetime.now(UTC).date().isoformat(),
-                "last": not queue.pending,
-            },
+            ReviewDecision(
+                person_id=person_id,
+                decision=cast(Literal["attested", "estimated", "pending", "delete"], decision),
+                when=when,
+                basis=basis,
+                last=not queue.pending,
+            ),
         )
+        message = review.confirmation_message(person_name, decision, basis)
+        archive.record_review_message(session_id, "assistant", message, when)
         archive.refresh_import_status()  # the last pending person completes the session
         archive.publish(data_dir)
-        return {"ok": True, "person": person}
+        return {"ok": True, "person": person, "message": message}
 
     @app.post("/api/review/text", response_model=None)
     def review_text(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
@@ -346,6 +375,12 @@ def build_app(
                     story = item.get("story") or item.get("transcription") or ""
                     if story:
                         items.append({"id": item_id, "title": item.get("title", ""), "story": story})
+            # the model sees the whole conversation — its own reasoning and
+            # speech, verbatim — so a message that re-answers an earlier
+            # question is recognised (2026-08-09, user)
+            session_record = archive.get_review_session(session_id)
+            current_attempt = session_record.current_attempt() if session_record else None
+            history = current_attempt.messages if current_attempt else ()
             result = review.investigate(
                 client,
                 text=text,
@@ -356,31 +391,27 @@ def build_app(
                     items=tuple(items),
                     relationships=tuple(people.get("relationships", [])),
                 ),
+                history=history,
             )
         except ElicitationError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=422)
-        archive.record_review_exchange(
-            session_id,
-            {"kind": "exchange", "role": "user", "text": text, "when": datetime.now(UTC).date().isoformat()},
+        when = datetime.now(UTC).date().isoformat()
+        # the transcript is the MESSAGES — what the family saw (2026-08-09):
+        # the user's words and the assistant's rendered words, built here,
+        # shown verbatim by the app, and stored verbatim. The assistant's
+        # line also carries its THINKING — the model's raw verdict, verbatim
+        # — which goes back to the model on later calls. The note never
+        # reaches the user (it had been leaking into the steer's parens).
+        archive.record_review_message(session_id, "user", text, when)
+        message = (
+            review.steer_message(person, result.get("note") or "")
+            if result.get("relevant") == "false"
+            else f"That doesn't match the records — {result['contradiction'].get('detail')}. Which is right?"
+            if result.get("contradiction", {}).get("found") == "true"
+            else review.assistant_message(result, person)
         )
-        # the assistant's side belongs in the record too — a transcript with
-        # only the user's words can't be diagnosed (2026-08-09, user: "why
-        # do you need me to tell you what the transcript says?")
-        archive.record_review_exchange(
-            session_id,
-            {
-                "kind": "assistant",
-                "response": {
-                    "relevant": result.get("relevant"),
-                    "contradiction": result.get("contradiction"),
-                    "confidence": result.get("confidence"),
-                    "note": result.get("note"),
-                    "findings": result.get("findings"),
-                },
-                "when": datetime.now(UTC).date().isoformat(),
-            },
-        )
-        return {"ok": True, **result}
+        archive.record_review_message(session_id, "assistant", message, when, thinking=result.get("raw"))
+        return {"ok": True, "message": message, **result}
 
     def _drop_from_projection(item_id: str) -> None:
         index_path = data_dir / "index.json"

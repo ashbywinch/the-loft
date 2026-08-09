@@ -205,3 +205,42 @@ def test_model_that_never_concludes_fails_loudly() -> None:
 def test_empty_text_fails_loudly() -> None:
     with pytest.raises(ElicitationError):
         investigate(FakeClient([]), text="  ", person=_person(), who="Alex", facts=make_facts())
+
+
+def test_the_model_sees_the_whole_conversation_including_its_own_reasoning() -> None:
+    """(2026-08-09, user): the flow misunderstood because the model could
+    not see that an answer was re-answering an earlier question — the
+    history (the family's words AND the assistant's previous reasoning,
+    verbatim) is part of every investigation."""
+    client = FakeClient(
+        [
+            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+            '"confidence": "dont_know", '
+            '"note": "the reviewer is re-answering the earlier question", "findings": [], "question": ""}'
+        ]
+    )
+    from tools.records import Message
+
+    history = (
+        Message(
+            role="assistant",
+            text="Did Mum tell you that personally?",
+            when="2026-08-09",
+            thinking='{"relevant": true, "confidence": "think_so"}',
+        ),
+        Message(role="user", text="No, I don't remember.", when="2026-08-09"),
+    )
+    result = investigate(
+        client,
+        text="I've no idea whether she is or not",
+        person=_person(),
+        who="Alex",
+        facts=make_facts(),
+        history=history,
+    )
+    assert result["relevant"] == "true"
+    prompt = client.calls[0][1]
+    assert "Did Mum tell you that personally?" in prompt  # the assistant's own earlier speech
+    assert '"relevant": true, "confidence": "think_so"' in prompt  # its earlier reasoning, verbatim
+    assert "I've no idea whether she is or not" in prompt  # the latest statement
+    assert "re-answering an EARLIER question" in prompt  # the arc is flagged

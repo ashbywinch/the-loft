@@ -308,3 +308,41 @@ def test_the_previous_prompt_is_the_current_prompts_prefix() -> None:
     second_prompt = client.calls[1][1]
 
     assert second_prompt.startswith(first_prompt)
+
+
+def test_the_tool_calls_are_logged_in_the_trace_and_fed_back() -> None:
+    """(2026-08-09, user: 'why would that stop you logging them correctly?'
+    — nothing does: the tool calls and their deterministic results are part
+    of the model's reasoning, logged verbatim in the trace, and the next
+    investigation sees them in its history)."""
+    import json as _json
+
+    from tools.records import Message
+
+    client = FakeClient(
+        [
+            '{"tool": "search_people", "args": {"query": "Walter"}}',
+            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+            '"confidence": "think_so", "note": "fine", "findings": [], "question": ""}',
+        ]
+    )
+    result = investigate(client, text="Walter died in the war", person=_person(), who="Alex", facts=make_facts())
+    trace = result["trace"]
+    assert len(trace) == 2
+    assert trace[0]["tool"] == "search_people"
+    assert trace[0]["result"]  # the deterministic harness output
+    assert trace[1]["model"]  # the final verdict's raw output
+
+    # the next investigation sees the previous trace in its history
+    history = (
+        Message(role="user", text="Walter died in the war", when=""),
+        Message(role="assistant", text="The documents show: ...", when="", thinking=_json.dumps(trace)),
+    )
+    client2 = FakeClient(
+        [
+            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+            '"confidence": "think_so", "note": "fine", "findings": [], "question": ""}'
+        ]
+    )
+    investigate(client2, text="next", person=_person(), who="Alex", facts=make_facts(), history=history)
+    assert '"tool": "search_people"' in client2.calls[0][1]  # the tool call is in the model's history

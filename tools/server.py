@@ -410,7 +410,9 @@ def build_app(
             if result.get("contradiction", {}).get("found") == "true"
             else review.assistant_message(result, person)
         )
-        archive.record_review_message(session_id, "assistant", message, when, thinking=result.get("raw"))
+        archive.record_review_message(
+            session_id, "assistant", message, when, thinking=json.dumps(result.get("trace"), ensure_ascii=False)
+        )
         return {"ok": True, "message": message, **result}
 
     def _drop_from_projection(item_id: str) -> None:

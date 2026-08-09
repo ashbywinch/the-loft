@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { render as home } from "../views/home.js";
 import { render as timeline } from "../views/timeline.js";
-import { render as item } from "../views/item.js";
 import { render as cast, personPage } from "../views/cast.js";
 import { render as tree } from "../views/tree.js";
 import { render as places, placePage } from "../views/places.js";
@@ -70,7 +69,7 @@ describe.skipIf(!hasData)("every view renders on the real projection (2026-08-08
     expect(main.childElementCount).toBeGreaterThan(0); // never a blank render
   });
 
-  it.each([cast, places, stories, importReview])("renders %s detail pages for real ids", (render) => {
+  it.each([cast, places, stories, importReview])("renders %s detail pages for real ids", () => {
     const state = realState();
     const personId = state.people[0]?.id;
     const placeId = state.places[0]?.id;

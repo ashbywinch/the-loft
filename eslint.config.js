@@ -13,5 +13,13 @@ export default [
       globals: { ...globals.browser, L: 'readonly' },
     },
   },
+  // the vitest tests run under node (readFileSync, process.cwd) — the app
+  // code itself stays browser-globals-only
+  {
+    files: ['app/**/*.test.js', 'app/tests/**/*.js'],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+  },
   prettier, // last: disables style rules prettier owns
 ];

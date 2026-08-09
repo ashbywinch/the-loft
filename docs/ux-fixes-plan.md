@@ -127,6 +127,51 @@ Places cards-first.
 - Theme cards say "the collection is still arriving", never "seeded —".
 
 
+## Review-chat walk — the import review session (2026-08-08→09, user, real walk)
+
+**Context**: the user walked the import review chat against the real archive,
+where the draft's proposals had been superseded by their own curation — a
+real first (the review has no model of "the draft was already handled").
+The session: 20 of 29 proposed people confirmed via the free-text path
+(each confirm preceded by an AI kinship resolution); 9 still proposed. Then
+a second pass on the chat's usability itself, ignoring the supersession.
+
+**Findings** (the "blind follow" walk + the usability pass):
+
+| # | Severity | Type | Finding | Status |
+|---|---|---|---|---|
+| R1 | major | DESIGN | **Phantom backlog** — "29 people are still waiting" when every person is already placed; the review can't tell fresh-from-the-import from already-handled | OPEN |
+| R2 | major | DESIGN | **Re-asks what it already knows** — "in what way is she family?" for people whose relation the archive's own table carries ("brother of Pearl Whitlock") | OPEN |
+| R3 | major | DESIGN | **"Is she family?" is the wrong question** — not actionable: the archive records non-family (the teacher, the official), so neither answer determines the record's fate | OPEN |
+| R4 | major | DESIGN | **The status decision is never asked** — the real decision (no further information → add as **estimated, by the narrator's own recollection**, or not) is the app's own status model; the chat only offers confirm (→confirmed, which the user can't honestly claim) or dismiss | OPEN |
+| R5 | major | DESIGN | **No "I don't know" path** — the user had to type it repeatedly; the AI then resolved "I don't know" into a kinship term and the chat confirmed it — sometimes-incorrect content written as the person's relation | OPEN |
+| R6 | major | BUG | **Double-message echo** — "So she's your X. Confirming that." then "X is confirmed — X." — the same content twice; a wrong term gets doubled | OPEN |
+| R7 | major | DESIGN | **No thinking indicator** — the AI's resolution is a silently disabled input | OPEN (spec below) |
+| R8 | major | DESIGN | **Unsatisfying ending** — "That's everyone — the document import is complete…" then dead-end: no summary (how many confirmed/dismissed/already there), no next action | OPEN |
+| R9 | major | DESIGN | **Transcript not recorded → not resumable** — the walk lives in the browser's memory; a refresh restarts at person one; the transcript belongs on the import session's page (the artifact being reviewed) | OPEN |
+| R10 | minor | DESIGN | **Hardcoded "she"** — "Is she family?" for every person, including the men | OPEN |
+| R11 | minor | DESIGN | **Header count never moves** — "29 people awaiting confirmation" renders once and stays 29 through the walk | OPEN |
+| R12 | minor | DESIGN | **Estimated status invisible** — no view renders "estimated"; an estimated person or relationship renders exactly like a confirmed one (the proposed markers key only on "proposed") | OPEN |
+| R13 | minor | DESIGN | **Generic failure line** — "That didn't save — try again?" masks the real errors (the superseded-dismiss path 400s "not proposed") | OPEN |
+| R14 | minor | DESIGN | **Completion claim oversells** — "the tree now shows the confirmed family" when it already did | OPEN |
+
+**The thinking-indicator spec** (researched: Frontend Patterns, metacto, the
+AI-chat UX guides): the indicator goes **in the assistant's message slot** —
+where the reply will appear — not in the input bar. Three animated dots
+(short waits) or "Thinking…" with dots (longer), shown the instant the
+user's message is sent (~300ms, not after the round-trip), replaced by the
+reply in the same slot at the first token. Accessibility: polite live region
+with visually-hidden "Assistant is thinking…", static version under
+`prefers-reduced-motion`; escalate the label after ~2s ("Still thinking —
+this can take a few seconds").
+
+**The through-line**: the flow was designed for a *fresh* import and has no
+model of a superseded draft — the review should reconcile the draft against
+the current table *before* presenting (skip/annotate the already-placed),
+ask the *disposition* question (confirmed by attestation / estimated by the
+narrator's own recollection / not recorded), offer "I don't know" as a
+first-class answer, and end with a summary + a next action.
+
 ## Open judgment call (from the import session)
 
 The 2001 email item carries all 8 places as refs (mentions vs. about). The

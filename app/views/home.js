@@ -70,7 +70,6 @@ export function render(main, _ctx, state) {
     el("section", { class: "hero" }, [
       el("h1", { class: "hero-title" }, "The Loft"),
       el("p", { class: "hero-sub" }, "A family museum, from the boxes in the loft."),
-      el("p", { class: "hero-owner" }, "The Hale family archive."),  // fictional stand-in — the public repo never names the real family
       el(
         "button",
         {

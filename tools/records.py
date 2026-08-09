@@ -23,6 +23,7 @@ from __future__ import annotations
 import datetime
 import re
 from dataclasses import dataclass, replace
+from datetime import UTC
 from typing import Any, Literal, cast
 
 RELATIONSHIP_KINDS = frozenset({"spouse", "parent", "sibling", "inlaw", "teacher"})
@@ -164,6 +165,11 @@ class Person:
     occupations: tuple[str, ...] = ()
     residence: tuple[dict[str, Any], ...] = ()
     status: Literal["confirmed", "proposed", "estimated"] = "confirmed"
+    # The estimated record's basis — {text, by, when}: the reviewer's own
+    # words, the named person who recalled them, and the date. An estimate
+    # without a basis isn't an estimate; the chip renders only what the
+    # dataset carries (user, 2026-08-09).
+    basis: dict[str, str] | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Person:
@@ -183,6 +189,17 @@ class Person:
             email = str(email).strip().lower()
             if not EMAIL_RE.fullmatch(email):
                 raise ValueError(f"invalid email: {email!r}")
+        basis = raw.get("basis")
+        if basis is not None:
+            text = str(basis.get("text", "")).strip()
+            if not text:
+                raise ValueError(f"invalid basis: {basis!r} — the text is required")
+            basis = {
+                "text": text,
+                "by": str(basis.get("by", "")).strip(),
+                "when": str(basis.get("when", "")).strip(),
+                **({"note": str(basis["note"]).strip()} if basis.get("note") else {}),
+            }
         return cls(
             id=record_id,
             name=_require(raw, "name"),
@@ -230,6 +247,8 @@ class Person:
             out["residence"] = [dict(e) for e in self.residence]
         if self.status != "confirmed":
             out["status"] = self.status
+        if self.basis is not None:
+            out["basis"] = dict(self.basis)
         return out
 
 
@@ -472,6 +491,136 @@ class OrgsTable:
 
     def to_dict(self) -> dict[str, Any]:
         return {"orgs": [o.to_dict() for o in self.orgs]}
+
+
+@dataclass(frozen=True)
+class Attempt:
+    """One walk of an import review — the transcript and the decisions of
+    that walk, separated so a diagnosis never mixes walks (2026-08-09:
+    the accumulated-mess fix; the storage is attempt-separated). A walk is
+    finished when it has exchanges and its last decision completed the
+    session."""
+
+    started: str
+    transcript: tuple[dict[str, Any], ...] = ()
+    decisions: tuple[dict[str, Any], ...] = ()
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> Attempt:
+        return cls(
+            started=str(raw.get("started", "")),
+            transcript=tuple(raw.get("transcript") or []),
+            decisions=tuple(raw.get("decisions") or []),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "started": self.started,
+            "transcript": list(self.transcript),
+            "decisions": list(self.decisions),
+        }
+
+    @property
+    def finished(self) -> bool:
+        """A walk with exchanges whose last decision completed the session."""
+        return bool(self.transcript) and any(d.get("last") for d in self.decisions)
+
+
+@dataclass(frozen=True)
+class Session:
+    """An import-review session — the lifecycle at a glance: the status,
+    the resume point (``current``), and one attempt per walk. The archive's
+    sessions' API (2026-08-09, user: "restructure how we store the
+    sessions so it's more obvious to fresh agents; extend the API to cover
+    them") — the class owns the wire format and the invariants: a new
+    attempt starts only when the last is empty or finished; a decision
+    advances the resume point."""
+
+    id: str
+    title: str
+    kind: str = "import-review"
+    status: Literal["pending", "reviewed"] = "pending"
+    current: str | None = None
+    attempts: tuple[Attempt, ...] = ()
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> Session:
+        session_id = _require(raw, "id")
+        if not is_valid_record_id(session_id):
+            raise ValueError(f"invalid record id: {session_id!r}")
+        status = str(raw.get("status", "pending"))
+        if status not in ("pending", "reviewed"):
+            raise ValueError(f"unknown session status: {status!r}")
+        return cls(
+            id=session_id,
+            kind=str(raw.get("kind", "import-review")),
+            title=_require(raw, "title"),
+            status=status,
+            current=raw.get("current"),
+            attempts=tuple(Attempt.from_dict(a) for a in (raw.get("attempts") or [])),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "kind": self.kind,
+            "title": self.title,
+            "status": self.status,
+            "current": self.current,
+            "attempts": [a.to_dict() for a in self.attempts],
+        }
+
+    def current_attempt(self) -> Attempt | None:
+        return self.attempts[-1] if self.attempts else None
+
+    def completed(self) -> Session:
+        """The session is done — nothing left to review."""
+        return replace(self, status="reviewed")
+
+    def start_attempt(self) -> Session:
+        """Begin a new walk — only when the last is empty or finished, so a
+        mid-walk re-render continues the same attempt."""
+        last = self.current_attempt()
+        if last is None or last.finished:
+            return replace(self, attempts=self.attempts + (Attempt(started=datetime.datetime.now(UTC).isoformat()),))
+        return self
+
+    def record_exchange(self, entry: dict[str, Any]) -> Session:
+        """Append one exchange to the current attempt. A decision entry
+        advances the resume point; the last decision clears it."""
+        last = self.current_attempt() or Attempt(started=datetime.datetime.now(UTC).isoformat())
+        transcript = last.transcript + (entry,)
+        decisions = last.decisions + (entry,) if entry.get("kind") == "decision" else last.decisions
+        current = self.current
+        if entry.get("kind") == "decision":
+            current = None if entry.get("last") else entry.get("person_id")
+        updated = replace(last, transcript=transcript, decisions=decisions)
+        attempts = self.attempts[:-1] + (updated,) if self.attempts else (updated,)
+        return replace(self, attempts=attempts, current=current)
+
+
+@dataclass(frozen=True)
+class ReviewContext:
+    """The archive's attested facts the review's investigation reads — the
+    people (deaths, relations), the recorded items' stories, and the
+    family edges. The Knowledge's converted models drop the deaths and the
+    stories, so the investigation reads the raw projection through this
+    type (2026-08-09; coding-standards: groups that travel together are a
+    type)."""
+
+    people: tuple[Person, ...]
+    items: tuple[dict[str, Any], ...]
+    relationships: tuple[dict[str, Any], ...]
+
+
+@dataclass(frozen=True)
+class ReviewQueue:
+    """The review's pending links — the proposed people awaiting a
+    decision, and the already-placed count (the reconcile-first view; the
+    queue never holds resolved people)."""
+
+    pending: tuple[Person, ...]
+    already: int
 
 
 @dataclass(frozen=True)

@@ -195,20 +195,18 @@ def investigate(
     claim = f"the import proposes adding '{person.name}'"
     if person.relation:
         claim += f" — import record: '{person.relation}'"
-    history_text = render_history(history)
+    # the conversation renders uniformly and sits LAST in the prompt — the
+    # static (the reviewer, the claim, the facts, the instructions) comes
+    # before it, so the previous prompt's exact text is the current prompt's
+    # prefix and the model's prompt-cache reuses the whole thing
+    # (2026-08-09, user: 'the exact same text goes back… cheaper if so,
+    # because of caching'). The latest line is part of the same render, so
+    # a message that re-answers an earlier question is seen in context.
+    conversation = render_history(history + (Message(role="user", text=text, when=""),))
     user = "\n\n".join(
         [
             f"Reviewer: {who or 'unknown'}",
             f"The claim under review: {claim}.",
-            (
-                "The conversation so far (verbatim — the family's words and your own previous "
-                "reasoning and replies; the family's latest message may be re-answering an "
-                "EARLIER question of yours that misunderstood them, so consider the whole "
-                f"arc):\n{history_text}"
-                if history_text
-                else ""
-            ),
-            "The reviewer's latest statement:\n" + text,
             "Known family (the archive's attested facts):\n" + _known_facts(facts),
             "The reviewer's statement may carry leads worth checking — follow them with the "
             "tools before concluding. ONLY dig when the statement names people or mentions "
@@ -235,6 +233,15 @@ def investigate(
             "version of an UNVERIFIED import guess (the import's guess is not attested) — "
             "only genuine conflicts with the attested facts. Then answer.",
             _TOOLS_DESC,
+            # the conversation — the growing part — sits LAST so the
+            # previous prompt's exact text is this prompt's prefix (the
+            # prompt-cache reuses it). The family's latest line is part of
+            # the same render: a message that re-answers an earlier
+            # question is seen in the whole arc.
+            "The conversation (verbatim — the family's words and your own previous "
+            "reasoning and replies; the family's latest line may be re-answering an "
+            "EARLIER question of yours that misunderstood them, so consider the whole "
+            f"arc):\n{conversation}",
         ]
     )
     prompt = (

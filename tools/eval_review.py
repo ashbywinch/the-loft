@@ -94,7 +94,23 @@ CASES: list[dict[str, Any]] = [
         "name": "the model digs into the statement and surfaces the attested death",
         "text": "Not sure about the brother link. But I remember Mum saying one of Nora's siblings "
         "died in the war — I think it was Walter.",
-        "expects": {"relevant": "true", "contradiction": "false", "findings_mention": "Walter", "has_question": True},
+        "expects": {
+            "relevant": "true",
+            "contradiction": "false",
+            "findings_mention": "Walter",
+            "findings_quote": "died on 15 September 1916",
+            "has_question": True,
+        },
+    },
+    {
+        "name": "exhausted uncertainty concludes instead of re-asking",
+        "text": "I've no idea whether she was his sister — I never met her.",
+        "expects": {
+            "relevant": "true",
+            "contradiction": "false",
+            "confidence": "dont_know",
+            "question_concludes": True,
+        },
     },
 ]
 
@@ -123,14 +139,23 @@ PERSONA_JARGON = (
     "status",
     "estimated",
     "proposed",
+    # the third-person and the dead-ends the transcript showed (2026-08-09):
+    # the assistant never speaks about the family as "the reviewer", and
+    # never reports a bare absence
+    "the reviewer",
+    "no record connects",
+    "no record of",
+    "cannot confirm",
+    "does not remember",
 )
 
 
 def persona_errors(result: dict[str, Any]) -> list[str]:
     """The genealogist's voice guard: the assistant's words (the question,
-    the note, the findings) never contain the process vocabulary."""
+    the note — which flows into the steer — and the findings) never contain
+    the process vocabulary, the third-person, or a bare absence."""
     errors: list[str] = []
-    fields: list[tuple[str, str]] = [("question", result.get("question", ""))]
+    fields: list[tuple[str, str]] = [("question", result.get("question", "")), ("note", result.get("note", ""))]
     for i, f in enumerate(result.get("findings", [])):
         text = f.get("text", "") if isinstance(f, dict) else str(f)
         fields.append((f"findings[{i}]", text))
@@ -162,8 +187,24 @@ def run_case(client: AIClient, case: dict[str, Any]) -> tuple[bool, list[str]]:
         for f in result.get("findings", [])
     ):
         errors.append(f"findings should mention {wants['findings_mention']}: {result.get('findings')}")
+    if wants.get("findings_quote") and not any(
+        wants["findings_quote"] in (f.get("text", "") if isinstance(f, dict) else str(f))
+        for f in result.get("findings", [])
+    ):
+        errors.append(
+            f"findings should QUOTE the relevant sentence verbatim ({wants['findings_quote']!r} "
+            f"— the document's own words, not a paraphrase): {result.get('findings')}"
+        )
     if wants.get("confidence") and result.get("confidence") != wants["confidence"]:
         errors.append(f"confidence: expected {wants['confidence']}, got {result.get('confidence')}")
+    if wants.get("question_concludes") and not any(
+        word in result.get("question", "")
+        for word in ("leave", "leave her", "leave him", "guess", "estimate", "record", "unless")
+    ):
+        errors.append(
+            "the exhausted 'I don't know' must offer the conclusion (keep the guess / record "
+            f"an estimate), not ask again: {result.get('question')}"
+        )
     if wants.get("no_term") and "term" in result:
         errors.append(f"the check returned a derived term — it must never: {result['term']}")
     errors.extend(persona_errors(result))

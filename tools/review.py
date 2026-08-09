@@ -20,6 +20,23 @@ from tools.records import Message, Person, ReviewContext
 MAX_RESOLVE_ATTEMPTS = 2
 
 
+def _relevant_sentences(text: str, needles: tuple[str, ...], limit: int = 3) -> list[str]:
+    """The sentences of a document that mention any needle — the RELEVANT
+    part to quote, never the opening (2026-08-09, user: the model was
+    "extremely bad at identifying the relevant part of the document to
+    quote when explaining the attestation" — the tools returned the
+    document's first 200-300 characters, so the model could only quote the
+    opening). Returns up to ``limit`` matching sentences, capped in length,
+    or the first content sentence when nothing matches (a fallback, never
+    silence)."""
+    import re
+
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
+    hits = [s for s in sentences if any(n in s for n in needles)]
+    pool = hits or sentences
+    return [s[:300] for s in pool[:limit]]
+
+
 class _Chat(Protocol):
     def chat(self, system: str, user: str) -> str: ...
 
@@ -98,12 +115,20 @@ def _run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:
         }
     if tool == "attested":
         pid = str(args.get("id", ""))
-        needle = f'"{pid}"'
-        return [
-            {"id": it["id"], "title": it["title"], "story": (it.get("story") or it.get("transcription") or "")[:300]}
-            for it in facts.items
-            if needle in it.get("story", "") or needle in it.get("transcription", "")
-        ] or {"note": "no recorded items mention this person"}
+        p = next((x for x in people if x.id == pid), None)
+        # the sentences that MENTION the person — the part that attests
+        # the fact, quotable verbatim (2026-08-09, user) — with the
+        # person's name and first name as the needles. The item's
+        # structured involvement (its people ids) or the prose naming the
+        # person both count — real transcriptions mention names, never ids
+        needles = (p.name, p.name.split()[0]) if p else (pid,)
+        results = []
+        for it in facts.items:
+            text = it.get("story") or it.get("transcription") or ""
+            involved = pid in it.get("people", [])
+            if involved or any(n in text for n in needles):
+                results.append({"id": it["id"], "title": it["title"], "quotes": _relevant_sentences(text, needles)})
+        return results or {"note": "no recorded items mention this person"}
     if tool == "search_items":
         q = str(args.get("query", "")).strip().lower()
         if not q:
@@ -112,7 +137,7 @@ def _run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:
         for it in facts.items:
             text = it.get("story") or it.get("transcription") or ""
             if q in text.lower():
-                hits.append({"id": it["id"], "title": it["title"], "excerpt": text[:200]})
+                hits.append({"id": it["id"], "title": it["title"], "quotes": _relevant_sentences(text, (q,))})
         return hits[:5] or {"note": f"no recorded items mention {q!r}"}
     return {"error": f"unknown tool {tool}"}
 
@@ -261,11 +286,16 @@ def investigate(
         '{"relevant": true|false, "contradiction": {"found": true|false, '
         '"detail": "<the attested fact that conflicts, or empty>"}, "confidence": '
         '"<definitely|think_so|dont_know|think_not|definitely_not|unclear>", '
-        '"note": "<one short sentence — the reason the reviewer believes the record, or what '
-        'the answer is actually about>", "findings": '
+        '"note": "<when relevant, one short sentence — the reason the reviewer believes the '
+        "record. When NOT relevant, the note is ONLY the topic the answer was about — a short "
+        "phrase ('the house on Victoria Avenue') — NEVER the reasoning, NEVER 'the "
+        'reviewer\', NEVER an explanation of why it is off-topic>", "findings": '
         '[{"text": "<one short sentence per meaningful thing the tools surfaced, naming the '
-        'SPECIFIC document (its title from the tool results) and the fact — e.g. "in the '
-        'Whitlock family history email, Pearl is described as a cousin". NEVER "the '
+        "SPECIFIC document (its title from the tool results) and the fact — with the EXACT "
+        "sentence from the document's quotes that attests it, verbatim in quotation marks "
+        "(e.g. \"in the Whitlock family history email, Pearl is described as a cousin: 'Pearl "
+        "was always the clever one.'\"). Quote the relevant sentence — the one that mentions "
+        "the fact — never the document's opening, never a paraphrase. NEVER \"the "
         'records\\", \\"the archive\\", a generic \\"the war record\\", and NEVER the import '
         "itself (the import is not a document — only the tool results list real items; "
         "if the tools found no document for the point, do not make a finding about it — "
@@ -276,7 +306,9 @@ def investigate(
         '"<the genealogist next question to the reviewer, asked the way a hired researcher '
         'would — the provenance when the reviewer cited a source ("did she tell you that '
         'personally?"), the follow-up that would firm up the link; or a short conclusion '
-        'when no question is needed>"}'
+        "when no question is needed. When the reviewer expresses NO knowledge (confidence "
+        "dont_know), offer the conclusion rather than asking again: \"I'll leave X as the "
+        "import's guess unless you'd like to record what you remember as an estimate.\">\"}"
     )
     tool_calls = 0
     trace: list[dict[str, Any]] = []

@@ -127,6 +127,29 @@ describe("the import review is the chat — one conversation resolves the pendin
     expect(link).toBeTruthy(); // the document is linked
   });
 
+  it("the claim quotes the sentence that mentions the person, never the document's opening (2026-08-09, user)", () => {
+    const state = JSON.parse(JSON.stringify(STATE));
+    state.items = [
+      {
+        id: "doc-2001-email",
+        title: "Whitlock family history email, 7 Feb 2001",
+        date: "2001-02-07",
+        type: "document",
+        transcription:
+          "The family archive has grown dusty over the years and I am writing to everyone who might help. " +
+          "The notes my aunt left say that Pearl Whitlock was the one who kept the photographs. " +
+          "Any memories you can share would be very welcome.",
+        people: [{ id: "p-judith", status: "confirmed" }],
+      },
+    ];
+    state.byId = new Map(state.items.map((it) => [it.id, it]));
+    const main = document.createElement("main");
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    const claim = bubbles(main)[1];
+    expect(claim).toContain('"The notes my aunt left say that Pearl Whitlock was the one who kept the photographs."');
+    expect(claim).not.toContain("The family archive has grown dusty"); // the opening is not the attestation
+  });
+
   it('"Definitely" asks how you know, then the link is confirmed on your word', async () => {
     stubFetch({ confidence: "definitely", question: "Did you see the record yourself?", findings: ["in the record book, Pearl Whitlock is named as the cousin"] });
     const main = document.createElement("main");
@@ -313,6 +336,24 @@ describe("the import review is the chat — one conversation resolves the pendin
     const decided = JSON.parse(decideCall()[1].body);
     expect(decided.decision).toBe("estimated");
     expect(decided.basis.text).toContain("Not sure. I think Mum said Nora was some kind of cousin");
+  });
+
+  it('a typed "I don\'t know" concludes — the keep/estimate chips, never a re-ask or confirmation (2026-08-09, the transcript\'s loop)', async () => {
+    stubFetch({ confidence: "dont_know", question: "I'll leave her as the import's guess unless you'd like to record what you remember as an estimate." });
+    const main = document.createElement("main");
+    const state = JSON.parse(JSON.stringify(STATE));
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    setInput(main, "I've no idea whether she was his sister — I never met her.");
+    send(main);
+    await tick();
+    const chips = [...main.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent);
+    expect(chips).toEqual(expect.arrayContaining(["Keep as proposed", "Record as estimated"]));
+    expect(chips).not.toContain("Record as confirmed"); // exhausted uncertainty never confirms
+    chip(main, "Keep as proposed").click();
+    await tick();
+    const decided = JSON.parse(decideCall()[1].body);
+    expect(decided.decision).toBe("pending");
+    expect(state.people[0].status).toBe("proposed"); // untouched
   });
 
   it("the last link completes the session — the ending summarises and offers the tree", async () => {

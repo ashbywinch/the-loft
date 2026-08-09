@@ -104,21 +104,28 @@ function reviewSession(state, session) {
    *  family can see the document's own words versus the notes' summary
    *  (2026-08-09, user: "specify which document… make it very clear
    *  what's a direct quote and what's not… with a link"). The quote is the
-   *  first CONTENT sentence — a captured letter's routing header ("…
-   *  — email, Wed … to Quentin Whitlock, opening 'Hi Pearl'") is metadata,
-   *  never a quote (2026-08-09, user: the claim quoted the email's header). */
-  const quoteFrom = (text) => {
+   *  sentence that MENTIONS the person — the part that attests the fact —
+   *  never the document's first sentence (2026-08-09, user: "extremely bad
+   *  at identifying the relevant part of the document to quote when
+   *  explaining the attestation of the fact in question"); a captured
+   *  letter's routing header ("… — email, Wed … to Quentin Whitlock,
+   *  opening 'Hi Pearl'") is metadata, never a quote. */
+  const quoteFrom = (text, name) => {
     const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
     const headerish = /— (?:email|letter|note|document),|@|opening '|to [A-Z][a-z]+ [A-Z][a-z]+,/;
+    const words = name.split(/\s+/);
+    const mentions =
+      sentences.find((s) => s.length > 20 && words.every((w) => s.includes(w)) && !headerish.test(s)) ??
+      sentences.find((s) => s.length > 20 && s.includes(words[0]) && !headerish.test(s));
     const first = sentences.find((s) => s.length > 20 && !headerish.test(s));
-    return first ? `${first.slice(0, 200).replace(/[.!?]$/, "")}.` : null;
+    return mentions || first ? `${(mentions || first).slice(0, 200).replace(/[.!?]$/, "")}.` : null;
   };
 
   const personSource = (p) => {
     const docs = (state.items ?? []).filter((it) => itemInvolves(it, p.id));
     const doc = [...docs].sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))[0];
     if (!doc) return null;
-    return { id: doc.id, title: doc.title, quote: quoteFrom((doc.transcription || "").trim()) };
+    return { id: doc.id, title: doc.title, quote: quoteFrom((doc.transcription || "").trim(), p.name) };
   };
 
   const askDisposition = (p) => {
@@ -196,18 +203,27 @@ function reviewSession(state, session) {
     const statement = pending?.statement ?? text;
     const provenance = pending?.provenance ? [...pending.provenance, text] : [];
     const negative = pending?.negative ?? (res.confidence === "definitely_not" || res.confidence === "think_not");
+    const dontKnow = res.confidence === "dont_know";
     pendingDecision = { p: person, statement, provenance, negative };
+    // the repeated "I don't know" concludes rather than looping (2026-08-09,
+    // user: the transcript's loop): exhausted uncertainty offers the keep
+    // or the estimate — never re-asks the same question
     chat.setQuickReplies(
-      negative
+      dontKnow
         ? [
-            { label: "Remove it", primary: true, onClick: () => recordDecision(person, "delete") },
-            { label: "Leave it for now", onClick: () => keep(person) },
+            { label: "Keep as proposed", primary: true, onClick: () => keep(person) },
+            { label: "Record as estimated", onClick: () => recordDecision(person, "estimated") },
           ]
-        : [
-            { label: "Record as estimated", primary: true, onClick: () => recordDecision(person, "estimated") },
-            { label: "Record as confirmed", onClick: () => recordDecision(person, "attested") },
-            { label: "Leave it for now", onClick: () => keep(person) },
-          ],
+        : negative
+          ? [
+              { label: "Remove it", primary: true, onClick: () => recordDecision(person, "delete") },
+              { label: "Leave it for now", onClick: () => keep(person) },
+            ]
+          : [
+              { label: "Record as estimated", primary: true, onClick: () => recordDecision(person, "estimated") },
+              { label: "Record as confirmed", onClick: () => recordDecision(person, "attested") },
+              { label: "Leave it for now", onClick: () => keep(person) },
+            ],
     );
   };
 

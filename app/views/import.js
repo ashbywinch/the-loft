@@ -125,22 +125,16 @@ function reviewSession(state, session) {
     person = p;
     pendingDecision = null;
     const source = personSource(p);
+    const claimText = source
+      ? `Next: ${p.name}. ${source.title ? `${source.title} mentions ${p.name}` : `A document mentions ${p.name}`}${source.quote ? ` — it says, "${source.quote}"` : ""}${p.relation ? ` The notes describe ${p.name} as ${personable(p.relation)}.` : ""} Does that fit what you remember?`
+      : p.relation
+        ? `Next: ${p.name}. The notes describe ${p.name} as ${personable(p.relation)}. Does that fit what you remember?`
+        : `Next: ${p.name} — the documents mention them, but the notes don't say how. Does the name ring a bell?`;
     chat.addAssistant(
-      el("div", {}, [
-        `Next: ${p.name}. `,
-        source
-          ? el("span", {}, [
-              source.title ? `${source.title} mentions ${p.name}` : `A document mentions ${p.name}`,
-              source.quote ? ` — it says, "${source.quote}"` : "",
-              p.relation ? ` The notes describe ${p.name} as ${personable(p.relation)}.` : "",
-              ` Does that fit what you remember? `,
-              el("a", { class: "link", href: `#/item/${source.id}` }, "Open it →"),
-            ])
-          : p.relation
-            ? `The notes describe ${p.name} as ${personable(p.relation)}. Does that fit what you remember?`
-            : `The documents mention ${p.name}, but the notes don't say how. Does the name ring a bell?`,
-      ]),
+      source ? el("div", {}, [claimText + " ", el("a", { class: "link", href: `#/item/${source.id}` }, "Open it →")]) : claimText,
     );
+    // the claim is part of the conversation the family saw — record it
+    recordMessage(session.id, "assistant", claimText);
     chat.setQuickReplies([
       { label: "Definitely", primary: true, onClick: () => askText(p, "How do you know?") },
       { label: "I think so", onClick: () => askText(p, "What do you remember that makes you think so?") },
@@ -175,44 +169,25 @@ function reviewSession(state, session) {
       askDisposition(person);
       return;
     }
+    // the assistant's words are built by the server and shown verbatim —
+    // the transcript records exactly what the family saw (2026-08-09: the
+    // steer, the contradiction, the findings, and the question all arrive
+    // as the server's rendered message; the model's internal note never
+    // reaches the user)
+    if (res.message) {
+      chat.addAssistant(res.message);
+    }
     if (res.relevant === "false") {
-      chat.addAssistant(
-        `That's about ${res.note ? `something else (${res.note})` : "something else"} — let's come back to ${person.name}: do you think the link's right?`,
-      );
       chat.setBusy(false);
       pendingDecision = null;
       askDisposition(person);
       return;
     }
     if (res.contradiction?.found === "true") {
-      chat.addAssistant(`That doesn't match the records — ${res.contradiction.detail}. Which is right?`);
       chat.setBusy(false);
       return; // the pending decision stays — the resolution is checked again
     }
     chat.setBusy(false);
-    // the genealogist's response (2026-08-09, user): the digging said in
-    // the documents' terms, the question, and the explicit confirmation —
-    // the reviewer's recollection is never re-asked for, and every
-    // resulting link is confirmed by hand before it is recorded
-    if (res.findings?.length) {
-      chat.addAssistant(
-        el("div", {}, [
-          "The documents show: ",
-          ...res.findings.map((f, i) => {
-            const text = typeof f === "string" ? f : f?.text ?? "";
-            const id = typeof f === "object" ? f?.item_id : null;
-            return el("span", {}, [
-              i ? " " : "",
-              text,
-              id ? ` ${el("a", { class: "link", href: `#/item/${id}` }, "Open →")}` : "",
-            ]);
-          }),
-        ]),
-      );
-    }
-    if (res.question) {
-      chat.addAssistant(res.question);
-    }
     // the first statement is the recollection; later answers (the
     // question's answers, the provenance) accumulate beside it. The
     // disposition's NEGATIVE is captured from the first statement and kept
@@ -248,18 +223,14 @@ function reviewSession(state, session) {
       decision === "attested" || decision === "estimated"
         ? { text: basisText, by: reviewer, when: today, ...(provenance ? { note: provenance } : {}) }
         : null;
-    const ok = await decide(state, session.id, p, decision, basis);
-    if (ok) {
-      if (decision === "attested") {
-        tally.attested += 1;
-        chat.addAssistant(`Done — ${p.name} is recorded as confirmed.`);
-      } else if (decision === "estimated") {
-        tally.estimated += 1;
-        chat.addAssistant(`Done — I've noted ${p.name} as your recollection: '${basisText}'.`);
-      } else {
-        tally.deleted += 1;
-        chat.addAssistant(`Done — ${p.name} is not recorded after all.`);
-      }
+    const result = await decide(state, session.id, p, decision, basis);
+    if (result) {
+      if (decision === "attested") tally.attested += 1;
+      else if (decision === "estimated") tally.estimated += 1;
+      else tally.deleted += 1;
+      // the confirmation is the server's rendered words — shown verbatim,
+      // recorded verbatim (2026-08-09)
+      chat.addAssistant(result === true ? `Done — ${p.name} is recorded.` : result);
       advance();
     } else {
       chat.addAssistant("That didn't save — the server said no. Try again?");
@@ -326,6 +297,7 @@ function reviewSession(state, session) {
   chat.addAssistant(
     `Thanks for coming back — ${pending.length === 1 ? "there's 1 person" : `there are ${pending.length} people`} from the documents I'd like your eyes on${already ? `; everyone else is already in the tree` : ""}.`,
   );
+  recordMessage(session.id, "assistant", `Thanks for coming back — ${pending.length === 1 ? "there's 1 person" : `there are ${pending.length} people`} from the documents I'd like your eyes on${already ? `; everyone else is already in the tree` : ""}.`);
   chat.onSend(sendText);
   askDisposition(first);
   return wrap;
@@ -341,7 +313,7 @@ async function decide(state, sessionId, person, decision, basis = null) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ session_id: sessionId, person_id: person.id, decision, basis }),
     });
-    if (!res.ok) return false;
+    if (!res.ok) return null;
     const body = await res.json();
     const updated = body.person;
     if (updated?.gone) {
@@ -357,11 +329,22 @@ async function decide(state, sessionId, person, decision, basis = null) {
     if (proposedPeople(state).length === 0) {
       state.imports = (state.imports ?? []).map((s) => (s.id === sessionId && s.status === "pending" ? { ...s, status: "reviewed" } : s));
     }
-    return true;
+    // the confirmation's rendered words — shown verbatim, recorded verbatim
+    return body.message ?? true;
   } catch (error) {
     console.error("import review: decide failed", error);
-    return false;
+    return null;
   }
+}
+
+/** Record one of the app's own rendered lines (the claim, the opening) so
+ *  the transcript is exactly what the family saw (2026-08-09). */
+function recordMessage(sessionId, role, text) {
+  fetch("/api/review/message", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: sessionId, role, text }),
+  }).catch(() => {});
 }
 
 /** The free-text check — relevance + contradiction (off-topic answers

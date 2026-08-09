@@ -49,7 +49,7 @@ ITEMS: list[dict[str, Any]] = [
         "id": "item-seascale",
         "title": "The Seascale visit",
         "type": "story",
-        "story": "We visited the Cecil in Seascale once when the children were young; he has died since.",
+        "story": "We visited Walter in Seascale once when the children were young; he has died since.",
     },
 ]
 
@@ -80,7 +80,7 @@ CASES: list[dict[str, Any]] = [
     },
     {
         "name": "the model follows a place lead and reports what the records show",
-        "text": "I don't remember the relationship. But Mum did know a Cecil — we visited him once "
+        "text": "I don't remember the relationship. But Mum did know a Walter — we visited him once "
         "in Seascale when I was young, and he has died since.",
         "expects": {"relevant": "true", "contradiction": "false", "findings_mention": "Seascale", "has_question": True},
     },

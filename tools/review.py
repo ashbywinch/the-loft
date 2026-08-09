@@ -15,7 +15,7 @@ from typing import Any, Protocol
 
 from tools.ai_client import AIClientError, json_object
 from tools.memory import ElicitationError
-from tools.records import Person, ReviewContext
+from tools.records import Message, Person, ReviewContext
 
 MAX_RESOLVE_ATTEMPTS = 2
 
@@ -117,6 +117,56 @@ def _run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:
     return {"error": f"unknown tool {tool}"}
 
 
+def assistant_message(result: dict[str, Any], person: Person) -> str:
+    """The assistant's rendered words for one investigation response — what
+    the family sees, verbatim (2026-08-09, user: "when you load a given
+    transcript, you see exactly what I saw"). The server builds the words;
+    the app shows them unmodified; the record stores them. The model's
+    internal note never surfaces."""
+    parts: list[str] = []
+    if result.get("findings"):
+        parts.append("The documents show: " + " ".join(f["text"] for f in result["findings"]))
+    if result.get("question"):
+        parts.append(result["question"])
+    return " ".join(parts)
+
+
+def confirmation_message(name: str, decision: str, basis: dict[str, Any] | None) -> str:
+    """The assistant's rendered confirmation — the receipt the family sees,
+    in the genealogist's voice (2026-08-09)."""
+    if decision == "attested":
+        return f"Done — {name} is recorded as confirmed."
+    if decision == "estimated":
+        text = (basis or {}).get("text") or "the reviewer's recollection"
+        return f"Done — I've noted {name} as your recollection: '{text}'."
+    if decision == "delete":
+        return f"Done — {name} is not recorded after all."
+    return f"{name} stays as the import's guess for now — we can pick it up later."
+
+
+def steer_message(person: Person, note: str) -> str:
+    """The off-topic steer — the genealogist's words, never the model's
+    internal note (the note was leaking into the parens, 2026-08-09)."""
+    return f"That's about {note or 'something else'} — let's come back to {person.name}: do you think the link's right?"
+
+
+def render_history(messages: tuple[Message, ...]) -> str:
+    """The conversation so far, verbatim — the family's words and the
+    assistant's reasoning and speech, in order — so the model sees the
+    whole arc (2026-08-09, user: the flow misunderstood because the model
+    couldn't see that an answer was re-answering an earlier question; the
+    model needs its own history to do its job)."""
+    lines: list[str] = []
+    for m in messages:
+        if m.role == "user":
+            lines.append(f"[family] {m.text}")
+        else:
+            if m.thinking:
+                lines.append(f"[assistant reasoning] {m.thinking}")
+            lines.append(f"[assistant] {m.text}")
+    return "\n".join(lines)
+
+
 def investigate(
     client: _Chat,
     *,
@@ -124,28 +174,41 @@ def investigate(
     person: Person,
     who: str,
     facts: ReviewContext,
+    history: tuple[Message, ...] = (),
 ) -> dict[str, Any]:
     """The tool-using review of a free-text answer (2026-08-09, user): the
     model can call the archive's read-only lookups to dig into the
-    reviewer's statement — follow the leads ("one of her brothers?
-    One of them died in the war") and surface what the archive already
-    attests — then return the verdict: {relevant, contradiction,
-    confidence, note, findings}. The findings are the digging's results —
-    what the model looked up and learned — shown to the reviewer. The
-    tools are read-only: the decisions stay in the app's flow. The
-    never-derive rule holds — the model reports what it finds, it never
-    invents a kinship."""
+    reviewer's statement — follow the leads and surface what the archive
+    already attests — then return the verdict: {relevant, contradiction,
+    confidence, note, findings, question, raw}. *history* is the
+    conversation so far (the messages, including the model's own previous
+    reasoning), rendered verbatim into the prompt — the model always sees
+    its own history, so a message that re-answers an earlier question is
+    recognised as such. The findings are the digging's results — shown to
+    the reviewer. The tools are read-only: the decisions stay in the app's
+    flow. The never-derive rule holds — the model reports what it finds,
+    it never invents a kinship. ``raw`` is the model's final raw output,
+    stored verbatim as the turn's thinking."""
     text = str(text or "").strip()
     if not text:
         raise ElicitationError("no answer given")
     claim = f"the import proposes adding '{person.name}'"
     if person.relation:
         claim += f" — import record: '{person.relation}'"
+    history_text = render_history(history)
     user = "\n\n".join(
         [
             f"Reviewer: {who or 'unknown'}",
             f"The claim under review: {claim}.",
-            "The reviewer's statement:\n" + text,
+            (
+                "The conversation so far (verbatim — the family's words and your own previous "
+                "reasoning and replies; the family's latest message may be re-answering an "
+                "EARLIER question of yours that misunderstood them, so consider the whole "
+                f"arc):\n{history_text}"
+                if history_text
+                else ""
+            ),
+            "The reviewer's latest statement:\n" + text,
             "Known family (the archive's attested facts):\n" + _known_facts(facts),
             "The reviewer's statement may carry leads worth checking — follow them with the "
             "tools before concluding. ONLY dig when the statement names people or mentions "
@@ -253,6 +316,7 @@ def investigate(
                 "note": str(parsed_dict.get("note", "")).strip(),
                 "findings": [f for f in normalized if f["text"]],
                 "question": str(parsed_dict.get("question", "")).strip(),
+                "raw": raw,
             }
         user += (
             "\n\nThat was neither a tool call nor a valid verdict. To call a tool return "

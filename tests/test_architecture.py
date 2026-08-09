@@ -31,7 +31,8 @@ def test_the_http_layer_routes_data_through_the_archive_api() -> None:
     for call in (
         "archive.resolve_person(",
         "archive.review_queue()",
-        "archive.record_review_exchange(",
+        "archive.record_review_message(",
+        "archive.record_review_decision(",
         "archive.get_identity(",
     ):
         assert call in server, f"the server must route through the Archive API: {call}"

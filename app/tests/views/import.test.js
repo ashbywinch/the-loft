@@ -8,12 +8,15 @@ const STATE = {
     { id: "p-robert", name: "Quentin Whitlock", relation: "unknown", status: "proposed" },
   ],
   relationships: [],
+  items: [],
+  byId: new Map(),
 };
 
 beforeEach(() => {
   vi.unstubAllGlobals();
 });
 
+const tick = () => new Promise((r) => setTimeout(r, 0));
 const chip = (main, label) => [...main.querySelectorAll(".chat-quick .chip")].find((b) => b.textContent === label);
 const bubbles = (main) => [...main.querySelectorAll(".bubble-text")].map((b) => b.textContent);
 const setInput = (main, text) => {
@@ -21,105 +24,313 @@ const setInput = (main, text) => {
   input.value = text;
   input.dispatchEvent(new Event("input"));
 };
+const send = (main) => main.querySelector(".chat-bar .btn-primary").click();
 
-function stubConfirm() {
-  // the confirm echoes the request's id so the state merge replaces the
-  // proposed record and the chat can advance
+/** The text endpoint is scripted per-test; the decide echoes the person
+ *  back so the state merge replaces the record. */
+function stubFetch({
+  relevant = "true",
+  contradiction = "false",
+  detail = "",
+  note = "",
+  confidence = "think_so",
+  question = "",
+  findings = [],
+} = {}) {
   vi.stubGlobal(
     "fetch",
     vi.fn((url, init) => {
       const body = JSON.parse(init?.body ?? "{}");
+      if (url === "/api/review/text") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, relevant, contradiction: { found: contradiction, detail }, confidence, note, question, findings }),
+        });
+      }
       return Promise.resolve({
         ok: true,
-        json: async () => ({ ok: true, person: { id: body.id ?? "p-x", name: "X" } }),
+        json: async () => {
+          if (body.decision === "delete") return { ok: true, person: { id: body.person_id, gone: true } };
+          return {
+            ok: true,
+            person: {
+              id: body.person_id,
+              name: "X",
+              status: body.decision === "estimated" ? "estimated" : body.decision === "pending" ? "proposed" : undefined,
+            },
+          };
+        },
       });
     }),
   );
 }
 
-describe("the import review is the chat (2026-08-08, user: the unfinished doc import is reviewed in one conversation, not a list of review buttons)", () => {
-  it("opens as the review conversation about the first pending person — no list", () => {
+const decideCall = () => fetch.mock.calls.find(([url]) => url === "/api/review/decide");
+
+describe("the import review is the chat — one conversation resolves the pending links (2026-08-08/09)", () => {
+  it("opens naming the exact claim with the four confidence dispositions — no list", () => {
     const main = document.createElement("main");
     render(main, { arg: "import-documents", query: new URLSearchParams() }, STATE);
-    expect(bubbles(main)[0]).toContain("2 people are still waiting");
-    expect(bubbles(main)[1]).toContain("Pearl Whitlock");
-    expect(bubbles(main)[1]).toContain("cousin — researcher");
+    expect(bubbles(main)[0]).toContain("there are 2 people from the documents");
+    expect(bubbles(main)[1]).toContain("Next: Pearl Whitlock. The notes describe Pearl Whitlock as cousin — researcher.");
+    expect(bubbles(main)[1]).toContain("Does that fit what you remember?"); // the options answer this question
     expect(main.querySelectorAll(".cast-card")).toHaveLength(0); // no people list
     expect([...main.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent)).toEqual([
-      "Yes — she's family",
-      "No — dismiss her",
+      "Definitely",
+      "I think so",
+      "I don't know",
+      "Definitely not",
+      "I think not",
     ]);
+    // the standard free-text affordance: the input stays live beside the
+    // chips, and its placeholder names the typing path (2026-08-09)
+    expect(main.querySelector(".chat-bar .field").placeholder).toBe("Or type your own answer…");
   });
 
-  it("confirms with a specific kinship term and advances to the next person", async () => {
-    stubConfirm();
+  it("the claim names the source document, quotes it directly, and links it", () => {
+    const state = JSON.parse(JSON.stringify(STATE));
+    state.items = [
+      {
+        id: "doc-2001-email",
+        title: "Whitlock family history email, 7 Feb 2001",
+        date: "2001-02-07",
+        type: "document",
+        transcription: "I am researching the Whitlock line and would like to make contact. Pearl Whitlock.",
+        people: [{ id: "p-judith", status: "confirmed" }],
+      },
+    ];
+    state.byId = new Map(state.items.map((it) => [it.id, it]));
+    const main = document.createElement("main");
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    const claim = bubbles(main)[1];
+    expect(claim).toContain("Whitlock family history email, 7 Feb 2001 mentions Pearl Whitlock");
+    expect(claim).toContain('"I am researching the Whitlock line and would like to make contact."'); // the direct quote
+    expect(claim).toContain("The notes describe Pearl Whitlock as cousin — researcher."); // the paraphrase, unquoted
+    const link = main.querySelector('.bubble-ai a[href="#/item/doc-2001-email"]');
+    expect(link).toBeTruthy(); // the document is linked
+  });
+
+  it('"Definitely" asks how you know, then the link is confirmed on your word', async () => {
+    stubFetch({ confidence: "definitely", question: "Did you see the record yourself?", findings: ["in the record book, Pearl Whitlock is named as the cousin"] });
     const main = document.createElement("main");
     const state = JSON.parse(JSON.stringify(STATE));
     render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
-    chip(main, "Yes — she's family").click();
-    chip(main, "first cousin once removed").click();
-    await new Promise((r) => setTimeout(r, 0));
-    const confirmCalls = fetch.mock.calls.filter(([url]) => url === "/api/people/confirm");
-    expect(JSON.parse(confirmCalls[0][1].body)).toEqual({ id: "p-judith", relation: "first cousin once removed" });
-    expect(bubbles(main).at(-1)).toContain("Quentin Whitlock"); // the conversation moved on
-    expect(state.people[0].status).toBeUndefined(); // confirmed
+    chip(main, "Definitely").click();
+    expect(bubbles(main).at(-1)).toBe("How do you know?");
+    setInput(main, "I read it in the record book.");
+    send(main);
+    await tick();
+    expect(bubbles(main).at(-2)).toContain("The documents show"); // the digging is said aloud
+    expect(bubbles(main).at(-1)).toBe("Did you see the record yourself?"); // the genealogist's question
+    chip(main, "Record as confirmed").click();
+    await tick();
+    const decided = JSON.parse(decideCall()[1].body);
+    expect(decided.decision).toBe("attested");
+    expect(decided.basis.text).toBe("I read it in the record book.");
+    expect(decided.basis.by).toBe("the reviewer");
+    expect(state.people[0].status).toBeUndefined(); // confirmed — the status dropped
   });
 
-  it("dismisses and advances", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() => Promise.resolve({ ok: true, json: async () => ({ ok: true }) })),
-    );
+  it('"I think so" records the estimate with your own words as the basis', async () => {
+    stubFetch({ question: "Did Mum tell you that personally?" });
     const main = document.createElement("main");
     const state = JSON.parse(JSON.stringify(STATE));
     render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
-    chip(main, "No — dismiss her").click();
-    await new Promise((r) => setTimeout(r, 0));
-    expect(fetch.mock.calls.some(([url, init]) => url === "/api/people/dismiss" && JSON.parse(init.body).id === "p-judith")).toBe(true);
-    expect(bubbles(main).at(-1)).toContain("Quentin Whitlock");
-    expect(state.people).toHaveLength(1);
+    chip(main, "I think so").click();
+    expect(bubbles(main).at(-1)).toBe("What do you remember that makes you think so?");
+    setInput(main, "I think Mum said Nora was a cousin of some kind, via Pearl's brother.");
+    send(main);
+    await tick();
+    chip(main, "Record as estimated").click();
+    await tick();
+    const decided = JSON.parse(decideCall()[1].body);
+    expect(decided.decision).toBe("estimated");
+    expect(decided.basis.text).toBe("I think Mum said Nora was a cousin of some kind, via Pearl's brother.");
+    expect(bubbles(main).some((b) => b.includes("noted Pearl Whitlock as your recollection"))).toBe(true);
+    expect(state.people[0].status).toBe("estimated");
   });
 
-  it("resolves the narrator's own words to a precise term and confirms with it", async () => {
+  it("the provenance answer is kept beside the recollection, never re-asked for", async () => {
+    stubFetch({ question: "Did Mum tell you that personally?" });
+    const main = document.createElement("main");
+    const state = JSON.parse(JSON.stringify(STATE));
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    chip(main, "I think so").click();
+    setInput(main, "I think Mum said Nora was a cousin of some kind.");
+    send(main);
+    await tick();
+    expect(bubbles(main).at(-1)).toBe("Did Mum tell you that personally?"); // the provenance, not a re-ask
+    setInput(main, "Yes, she told me herself.");
+    send(main);
+    await tick();
+    chip(main, "Record as estimated").click();
+    await tick();
+    const decided = JSON.parse(decideCall()[1].body);
+    expect(decided.basis.text).toBe("I think Mum said Nora was a cousin of some kind.");
+    expect(decided.basis.note).toContain("Yes, she told me herself."); // the provenance beside it
+  });
+
+  it("typing your own answer works — the explicit confirmation follows the digging", async () => {
+    stubFetch({
+      confidence: "think_so",
+      findings: ["in the war record, Walter Whitlock is recorded as dying in 1916"],
+      question: "Did Mum tell you that personally?",
+    });
+    const main = document.createElement("main");
+    const state = JSON.parse(JSON.stringify(STATE));
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    // ignore the chips entirely — just type
+    setInput(main, "Not sure about the brother link. But I remember Mum saying one of Nora's siblings died in the war.");
+    send(main);
+    await tick();
+    expect(bubbles(main).some((b) => b.includes("The documents show"))).toBe(true);
+    expect(bubbles(main).some((b) => b.includes("in the war record, Walter Whitlock"))).toBe(true); // the documents' terms
+    chip(main, "Record as estimated").click();
+    await tick();
+    const decided = JSON.parse(decideCall()[1].body);
+    expect(decided.decision).toBe("estimated");
+    expect(decided.basis.text).toContain("Not sure about the brother link");
+    expect(bubbles(main).some((b) => b.includes("noted Pearl Whitlock as your recollection"))).toBe(true);
+  });
+
+  it("off-topic answers are steered back — never recorded", async () => {
+    stubFetch({ relevant: "false", note: "the house on Victoria Avenue" });
+    const main = document.createElement("main");
+    const state = JSON.parse(JSON.stringify(STATE));
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    chip(main, "Definitely").click();
+    setInput(main, "We visited that house every summer.");
+    send(main);
+    await tick();
+    expect(fetch.mock.calls.some(([url]) => url === "/api/review/decide")).toBe(false); // nothing recorded
+    expect(bubbles(main).some((b) => b.includes("the house on Victoria Avenue"))).toBe(true); // the steer names the mismatch
+    expect(bubbles(main).at(-1)).toContain("Pearl Whitlock"); // the claim is re-asked
+  });
+
+  it("a contradiction with the attested facts surfaces and must be resolved before confirming", async () => {
+    stubFetch({ contradiction: "true", detail: "the war record attests Walter Whitlock died in 1916" });
+    const main = document.createElement("main");
+    const state = JSON.parse(JSON.stringify(STATE));
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    chip(main, "Definitely").click();
+    setInput(main, "It was Nora who died in the war, I remember that clearly.");
+    send(main);
+    await tick();
+    expect(fetch.mock.calls.some(([url]) => url === "/api/review/decide")).toBe(false); // nothing recorded yet
+    expect(bubbles(main).some((b) => b.includes("That doesn't match the records"))).toBe(true);
+    expect(bubbles(main).at(-1)).toContain("Which is right?"); // the contradiction is surfaced
+    // the resolution is checked again — the scripted stub now reports clear
     vi.stubGlobal(
       "fetch",
-      vi.fn((url) => {
-        if (url === "/api/review/relate") {
-          return Promise.resolve({ ok: true, json: async () => ({ ok: true, term: "first cousin once removed", note: "Nora's first cousin via Fern" }) });
+      vi.fn((url, init) => {
+        const body = JSON.parse(init?.body ?? "{}");
+        if (url === "/api/review/text") {
+          return Promise.resolve({ ok: true, json: async () => ({ ok: true, relevant: "true", contradiction: { found: "false", detail: "" }, confidence: "definitely", note: "the reviewer corrected it", question: "", findings: [] }) });
         }
-        return Promise.resolve({ ok: true, json: async () => ({ ok: true, person: { id: "p-judith", name: "Pearl Whitlock", relation: "first cousin once removed (Nora's first cousin via Fern)" } }) });
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, person: { id: body.person_id, name: "X" } }) });
       }),
     );
-    const main = document.createElement("main");
-    const state = JSON.parse(JSON.stringify(STATE));
-    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
-    chip(main, "Yes — she's family").click();
-    chip(main, "Something else — I'll say it").click();
-    setInput(main, "She's my mum's cousin on Fern's side.");
-    main.querySelector(".chat-bar .btn-primary").click();
-    await new Promise((r) => setTimeout(r, 0));
-    const relateCall = fetch.mock.calls.find(([url]) => url === "/api/review/relate");
-    expect(JSON.parse(relateCall[1].body)).toEqual({ person_id: "p-judith", text: "She's my mum's cousin on Fern's side." });
-    const confirmCall = fetch.mock.calls.find(([url]) => url === "/api/people/confirm");
-    expect(JSON.parse(confirmCall[1].body).relation).toContain("first cousin once removed");
-    expect(bubbles(main).at(-1)).toContain("Quentin Whitlock"); // still advancing
+    setInput(main, "Ah, you're right — it was Walter.");
+    send(main);
+    await tick();
+    chip(main, "Record as confirmed").click();
+    await tick();
+    expect(fetch.mock.calls.filter(([url]) => url === "/api/review/decide")).toHaveLength(1); // now recorded
+    expect(bubbles(main).some((b) => b.includes("recorded as confirmed"))).toBe(true);
   });
 
-  it("the last person completes the session — the card leaves the front page", async () => {
-    stubConfirm();
+  it('"I don\'t know" keeps the import\'s guess as proposed', async () => {
+    stubFetch();
     const main = document.createElement("main");
     const state = JSON.parse(JSON.stringify(STATE));
     render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
-    // review both pending people
+    chip(main, "I don't know").click();
+    chip(main, "Keep as proposed").click();
+    await tick();
+    const decided = JSON.parse(decideCall()[1].body);
+    expect(decided.decision).toBe("pending");
+    expect(bubbles(main).some((b) => b.includes("stays as the import's guess for now"))).toBe(true);
+    expect(state.people[0].status).toBe("proposed"); // untouched
+  });
+
+  it('"Definitely not" asks for the explanation and offers removal', async () => {
+    stubFetch({ confidence: "definitely_not" });
+    const main = document.createElement("main");
+    const state = JSON.parse(JSON.stringify(STATE));
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    chip(main, "Definitely not").click();
+    expect(bubbles(main).at(-1)).toBe("What makes you say that?");
+    setInput(main, "He was never in the family — a researcher's confusion.");
+    send(main);
+    await tick();
+    chip(main, "Remove it").click();
+    await tick();
+    const decided = JSON.parse(decideCall()[1].body);
+    expect(decided.decision).toBe("delete");
+    expect(bubbles(main).some((b) => b.includes("not recorded after all"))).toBe(true);
+    expect(state.people.some((p) => p.id === "p-judith")).toBe(false); // gone from the state
+  });
+
+  it("an uncertain recollection never dead-ends — the confirmation is offered", async () => {
+    stubFetch({ confidence: "unclear", findings: ["in the record book, the Whitlock cousin line is mentioned"] });
+    const main = document.createElement("main");
+    const state = JSON.parse(JSON.stringify(STATE));
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    setInput(main, "Not sure. I think Mum said Nora was some kind of cousin — via one of Pearl's brothers?");
+    send(main);
+    await tick();
+    expect(bubbles(main).some((b) => b.includes("The documents show"))).toBe(true); // it dug, never dead-ended
+    chip(main, "Record as estimated").click();
+    await tick();
+    const decided = JSON.parse(decideCall()[1].body);
+    expect(decided.decision).toBe("estimated");
+    expect(decided.basis.text).toContain("Not sure. I think Mum said Nora was some kind of cousin");
+  });
+
+  it("the last link completes the session — the ending summarises and offers the tree", async () => {
+    stubFetch({ confidence: "definitely" });
+    const main = document.createElement("main");
+    const state = JSON.parse(JSON.stringify(STATE));
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
     for (const name of ["Pearl Whitlock", "Quentin Whitlock"]) {
-      chip(main, "Yes — she's family").click();
-      chip(main, "first cousin once removed").click();
-      await new Promise((r) => setTimeout(r, 0));
-      expect(bubbles(main).some((b) => b.includes(name) && b.includes("confirmed"))).toBe(true);
+      chip(main, "Definitely").click();
+      setInput(main, `The record attests ${name}.`);
+      send(main);
+      await tick();
+      chip(main, "Record as confirmed").click();
+      await tick();
     }
-    expect(bubbles(main).at(-1)).toContain("That's everyone");
+    expect(bubbles(main).at(-1)).toContain("That's everyone — 2 confirmed");
+    expect([...main.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent)).toContain("See the family tree →");
     expect(state.imports[0].status).toBe("reviewed"); // nothing pending — the home card disappears
-    expect(fetch.mock.calls.filter(([url]) => url === "/api/people/confirm")).toHaveLength(2);
+  });
+
+  it("the session page shows the review record — the decisions so far", () => {
+    const state = JSON.parse(JSON.stringify(STATE));
+    state.imports[0].attempts = [
+      { started: "2026-08-09T00:00:00+00:00", transcript: [], decisions: [] },
+      {
+        started: "2026-08-09T10:00:00+00:00",
+        transcript: [],
+        decisions: [
+          { person_id: "p-judith", decision: "estimated", basis: { text: "Grandma said so", by: "Alex", when: "2026-08-09" }, when: "2026-08-09" },
+        ],
+      },
+    ];
+    state.imports[0].current = "p-robert";
+    const main = document.createElement("main");
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    expect(main.textContent).toContain("The review so far");
+    expect(main.textContent).toContain("Pearl Whitlock — estimated, from Alex's recollection (2026-08-09): 'Grandma said so'.");
+  });
+
+  it("a resumed session continues from the record's resume point", () => {
+    const state = JSON.parse(JSON.stringify(STATE));
+    state.imports[0].attempts = [{ started: "2026-08-09T10:00:00+00:00", transcript: [], decisions: [] }];
+    state.imports[0].current = "p-robert";
+    const main = document.createElement("main");
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    expect(bubbles(main)[1]).toContain("Quentin Whitlock"); // the conversation resumes at the last undecided link
   });
 
   it("shows the finished state when the session has no pending people", () => {

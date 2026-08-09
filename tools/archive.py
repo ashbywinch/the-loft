@@ -20,7 +20,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, final
 
-from tools.records import Item, Person, Place, is_valid_record_id
+from tools.records import Item, Person, Place, ReviewQueue, Session, is_valid_record_id
 from tools.store import FileStore
 
 SIDECAR = "item.json"
@@ -355,6 +355,44 @@ class Archive:
         ]
         self.save_identity("people", table)
 
+    def resolve_person(self, person_id: str, decision: str, basis: dict[str, str] | None = None) -> dict[str, Any]:
+        """The review's four dispositions for a proposed person (user,
+        2026-08-09): the decision vocabulary is NOT the status vocabulary —
+        "confirm" is a status, never an action. ``attested`` -> confirmed
+        (the reviewer's own verified word); ``estimated`` -> the status
+        estimated with the recorded basis {text, by, when} — the reviewer's
+        words, the named person, the date; ``pending`` -> the import's guess
+        stays proposed, nothing changes; ``delete`` -> the person leaves the
+        table. Returns the updated person record (or the unchanged one for
+        pending)."""
+        table = self.get_identity("people")
+        assert table is not None, "archive has no people table"
+        person = next((p for p in table["people"] if p["id"] == person_id), None)
+        if person is None:
+            raise KeyError(f"no person {person_id}")
+        if person.get("status") != "proposed":
+            # the queue never holds resolved people — a stale decision is a
+            # state, not an error: the person stays as they are (2026-08-09)
+            return person
+        if decision == "pending":
+            return person
+        if decision == "delete":
+            self.dismiss_person(person_id)
+            return {"id": person_id, "gone": True}
+        updated = dict(person)
+        if decision == "estimated":
+            if basis is None or not str(basis.get("text", "")).strip():
+                raise ValueError(f"estimated needs a basis: {person_id}")
+            updated["status"] = "estimated"
+            updated["basis"] = basis
+        elif decision == "attested":
+            updated.pop("status", None)  # confirmed records omit the status key
+        else:
+            raise ValueError(f"unknown decision: {decision!r}")
+        table["people"] = [updated if p["id"] == person_id else p for p in table["people"]]
+        self.save_identity("people", table)
+        return updated
+
     def proposed_people(self) -> list[Person]:
         """The queued proposed people — typed records; a corrupt file fails
         loudly (the fail-fast convention), never silently dropped: a skipped
@@ -514,11 +552,21 @@ class Archive:
         imports = self.get_identity("imports")
         if imports is not None and any(s.get("id") == "import-documents" for s in imports["imports"]):
             return
-        record = {
-            "id": "import-documents",
-            "title": "The document import",
-            "status": "pending",
-        }
+        record = Session.from_dict(
+            {
+                "id": "import-documents",
+                "kind": "import-review",
+                "title": "The document import",
+                "status": "pending",
+                # the session's lifecycle at a glance (2026-08-09): current is
+                # the resume point; attempts is one entry per walk of the review
+                # — the transcript and decisions of each walk, separated so a
+                # fresh agent can see what happened in THIS walk versus the
+                # last one (the accumulated-mess fix)
+                "current": None,
+                "attempts": [],
+            }
+        ).to_dict()
         if imports is None:
             self.save_identity("imports", {"imports": [record]})
         else:
@@ -528,7 +576,7 @@ class Archive:
     def refresh_import_status(self) -> None:
         """Complete pending import sessions when nothing is left to review:
         the import's proposals (proposed people) are all confirmed or
-        dismissed, so the session is done."""
+        dismissed, so the session is done (2026-08-07, user)."""
         people = self.get_identity("people")
         pending_people = any(p.get("status") == "proposed" for p in (people or {}).get("people", []))
         if pending_people:
@@ -537,12 +585,75 @@ class Archive:
         if imports is None:
             return
         changed = False
-        for s in imports["imports"]:
+        for i, s in enumerate(imports["imports"]):
             if s.get("status") == "pending":
-                s["status"] = "reviewed"
+                imports["imports"][i] = Session.from_dict(s).completed().to_dict()
                 changed = True
         if changed:
             self.save_identity("imports", imports)
+
+    # -- the sessions API (the archive's slice of the store API, 2026-08-09)
+    # The import session's page carries its review record — the transcript,
+    # the decisions, and the resume point — persisted on the imports table
+    # (user: "all these transcripts should be available from the page of the
+    # artifact being transcribed"; user: "extend the API to cover the
+    # sessions so nobody has to look at the files unless they're working on
+    # the API"). The review flow touches the sessions ONLY through these
+    # methods, and the Session class (tools/records.py) owns the wire
+    # format and the invariants — the write seam validates, never the
+    # callers (coding-standards: enforce at the write seam).
+
+    def review_queue(self) -> ReviewQueue:
+        """The review's queue — the proposed links awaiting a decision and
+        the already-placed count (the reconcile-first view; the queue never
+        holds resolved people). Typed: the queue owns its shape."""
+        people = self.get_identity("people")
+        all_people = tuple(Person.from_dict(p) for p in (people or {}).get("people", []))
+        pending = tuple(p for p in all_people if p.status == "proposed")
+        return ReviewQueue(pending=pending, already=len(all_people) - len(pending))
+
+    def get_review_session(self, session_id: str) -> Session | None:
+        """The session — the lifecycle at a glance (status, current,
+        attempts) — or None when the session doesn't exist. Typed: the
+        Session class is the model (coding-standards: domain concepts are
+        classes)."""
+        imports = self.get_identity("imports")
+        if imports is None:
+            return None
+        session = next((s for s in imports.get("imports", []) if s.get("id") == session_id), None)
+        return Session.from_dict(session) if session else None
+
+    def start_review_attempt(self, session_id: str) -> int:
+        """Begin a new walk of the review — a fresh attempt starts only when
+        the last is empty or finished (Session.start_attempt), so a
+        mid-walk re-render continues the same attempt. Returns the current
+        attempt's index."""
+        imports = self.get_identity("imports")
+        if imports is None:
+            raise ArchiveError(f"no imports table for session {session_id}")
+        session = next((s for s in imports["imports"] if s.get("id") == session_id), None)
+        if session is None:
+            raise ArchiveError(f"no import session {session_id}")
+        updated = Session.from_dict(session).start_attempt()
+        imports["imports"] = [updated.to_dict() if s.get("id") == session_id else s for s in imports["imports"]]
+        self.save_identity("imports", imports)
+        return len(updated.attempts) - 1
+
+    def record_review_exchange(self, session_id: str, entry: dict[str, Any]) -> None:
+        """Append one exchange to the session's CURRENT attempt (supersede —
+        the imports table never edits). A decision entry advances the resume
+        point; the last decision clears it (Session.record_exchange). The
+        review's record is the durable state a resumed session continues
+        from."""
+        imports = self.get_identity("imports")
+        if imports is None:
+            raise ArchiveError(f"no imports table for session {session_id}")
+        session = next((s for s in imports["imports"] if s.get("id") == session_id), None)
+        if session is None:
+            raise ArchiveError(f"no import session {session_id}")
+        updated = Session.from_dict(session).record_exchange(entry)
+        imports["imports"] = [updated.to_dict() if s.get("id") == session_id else s for s in imports["imports"]]
+        self.save_identity("imports", imports)
 
     def capture_memory(
         self,

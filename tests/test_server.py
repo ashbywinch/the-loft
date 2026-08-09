@@ -469,9 +469,13 @@ def _seed_pending(server: ServerFixture) -> None:
     )
 
 
-def test_confirm_person_flips_proposed_to_confirmed(server: ServerFixture) -> None:
+def test_decide_attested_flips_proposed_to_confirmed(server: ServerFixture) -> None:
+    """Attested = the reviewer's own verified word — the status drops, the
+    import's relation text stays untouched (2026-08-09)."""
     _seed_pending(server)
-    status, body = server.post("/api/people/confirm", {"id": "p-judith"})
+    status, body = server.post(
+        "/api/review/decide", {"session_id": "import-documents", "person_id": "p-judith", "decision": "attested"}
+    )
     assert status == 200
     assert body["ok"] is True
     assert "status" not in body["person"]  # confirmed records omit the status key
@@ -479,68 +483,112 @@ def test_confirm_person_flips_proposed_to_confirmed(server: ServerFixture) -> No
     assert table is not None
     person = next(p for p in table["people"] if p["id"] == "p-judith")
     assert "status" not in person
+    assert person.get("relation", "") == ""  # the attested path never rewrites the relation
 
 
-def test_confirm_pins_the_specific_relation_the_review_settled_on(server: ServerFixture) -> None:
-    """The review chat confirms with the resolved kinship (2026-08-08, user:
-    never a bare "cousin") — the person's relation becomes the specific term."""
+def test_decide_estimated_records_the_basis_verbatim(server: ServerFixture) -> None:
+    """Estimated = the reviewer's own words, named + dated (2026-08-09)."""
     _seed_pending(server)
-    relation = "first cousin once removed (Nora's cousin via Fern)"
-    status, body = server.post("/api/people/confirm", {"id": "p-judith", "relation": relation})
+    basis = {"text": "Grandma used to say this was the case.", "by": "Alex", "when": "2026-08-09"}
+    status, body = server.post(
+        "/api/review/decide",
+        {"session_id": "import-documents", "person_id": "p-judith", "decision": "estimated", "basis": basis},
+    )
     assert status == 200
-    assert body["person"]["relation"] == relation
+    assert body["person"]["status"] == "estimated"
+    assert body["person"]["basis"] == basis
     table = server.archive.get_identity("people")
     assert table is not None
-    person = next(p for p in table["people"] if p["id"] == "p-judith")
-    assert person["relation"] == "first cousin once removed (Nora's cousin via Fern)"
+    assert next(p for p in table["people"] if p["id"] == "p-judith")["basis"] == basis
 
 
-def test_confirm_without_a_relation_keeps_the_imports_text(server: ServerFixture) -> None:
+def test_decide_estimated_requires_a_basis(server: ServerFixture) -> None:
     _seed_pending(server)
-    status, body = server.post("/api/people/confirm", {"id": "p-judith"})
+    status, body = server.post(
+        "/api/review/decide", {"session_id": "import-documents", "person_id": "p-judith", "decision": "estimated"}
+    )
+    assert status == 400
+    assert "basis" in body["error"]
+
+
+def test_decide_pending_keeps_the_imports_guess(server: ServerFixture) -> None:
+    """Pending = the import's guess stays proposed, nothing changes."""
+    _seed_pending(server)
+    status, body = server.post(
+        "/api/review/decide", {"session_id": "import-documents", "person_id": "p-judith", "decision": "pending"}
+    )
     assert status == 200
-    assert body["person"].get("relation", "") == ""  # untouched
+    assert body["person"]["status"] == "proposed"  # unchanged
+    table = server.archive.get_identity("people")
+    assert table is not None
+    assert next(p for p in table["people"] if p["id"] == "p-judith")["status"] == "proposed"
 
 
-def test_confirm_requires_a_session(server: ServerFixture) -> None:
+def test_decide_requires_a_session(server: ServerFixture) -> None:
     _seed_pending(server)
-    status, body = server.post("/api/people/confirm", {"id": "p-judith"}, cookie="")
+    status, _ = server.post(
+        "/api/review/decide",
+        {"session_id": "import-documents", "person_id": "p-judith", "decision": "attested"},
+        cookie="",
+    )
     assert status == 401
     table = server.archive.get_identity("people")
     assert table is not None
     assert next(p for p in table["people"] if p["id"] == "p-judith")["status"] == "proposed"  # untouched
 
 
-def test_relate_requires_the_ai(server: ServerFixture) -> None:
+def test_decide_rejects_an_unknown_decision(server: ServerFixture) -> None:
     _seed_pending(server)
-    status, body = server.post("/api/review/relate", {"person_id": "p-judith", "text": "my mum's cousin"})
+    status, _ = server.post(
+        "/api/review/decide", {"session_id": "import-documents", "person_id": "p-judith", "decision": "maybe"}
+    )
+    assert status == 400
+
+
+def test_text_requires_the_ai(server: ServerFixture) -> None:
+    """The free-text relevance check needs the model (2026-08-09)."""
+    _seed_pending(server)
+    status, body = server.post(
+        "/api/review/text",
+        {"session_id": "import-documents", "person_id": "p-judith", "text": "Grandma used to say so."},
+    )
     assert status == 503  # no AI client on this server
     assert "AI isn't configured" in body["error"]
 
 
-def test_relate_requires_a_session(server: ServerFixture) -> None:
+def test_text_requires_a_session(server: ServerFixture) -> None:
     _seed_pending(server)
-    status, body = server.post("/api/review/relate", {"person_id": "p-judith", "text": "cousin"}, cookie="")
+    status, _ = server.post(
+        "/api/review/text",
+        {"session_id": "import-documents", "person_id": "p-judith", "text": "I think so."},
+        cookie="",
+    )
     assert status == 401
 
 
-def test_relate_unknown_person_404s(server: ServerFixture) -> None:
+def test_text_unknown_person_404s(server: ServerFixture) -> None:
     _seed_pending(server)
-    status, body = server.post("/api/review/relate", {"person_id": "p-nope", "text": "cousin"})
+    status, _ = server.post(
+        "/api/review/text", {"session_id": "import-documents", "person_id": "p-nope", "text": "I think so."}
+    )
     assert status == 404
 
 
-def test_relate_requires_person_and_text(server: ServerFixture) -> None:
+def test_text_requires_person_and_text(server: ServerFixture) -> None:
     _seed_pending(server)
-    status, _ = server.post("/api/review/relate", {"person_id": "p-judith", "text": "  "})
+    status, _ = server.post(
+        "/api/review/text", {"session_id": "import-documents", "person_id": "p-judith", "text": "  "}
+    )
     assert status == 400
 
 
-def test_dismiss_removes_the_person_and_their_relationships(server: ServerFixture) -> None:
+def test_decide_delete_removes_the_person_and_their_relationships(server: ServerFixture) -> None:
     _seed_pending(server)
-    status, body = server.post("/api/people/dismiss", {"id": "p-judith"})
+    status, body = server.post(
+        "/api/review/decide", {"session_id": "import-documents", "person_id": "p-judith", "decision": "delete"}
+    )
     assert status == 200
-    assert body["ok"] is True
+    assert body["person"]["gone"] is True
     table = server.archive.get_identity("people")
     assert table is not None
     assert all(p["id"] != "p-judith" for p in table["people"])
@@ -548,15 +596,23 @@ def test_dismiss_removes_the_person_and_their_relationships(server: ServerFixtur
     assert any(p["id"] == "p-robert" for p in table["people"])  # the confirmed person stays
 
 
-def test_dismiss_refuses_a_confirmed_person(server: ServerFixture) -> None:
-    status, body = server.post("/api/people/dismiss", {"id": "p-alex"})
-    assert status == 400
-    assert "not proposed" in body["error"]
-
-
-def test_confirming_the_last_proposed_person_completes_the_session(server: ServerFixture) -> None:
+def test_decide_delete_of_an_already_resolved_person_is_a_state_not_an_error(server: ServerFixture) -> None:
+    """The queue never holds resolved people — a stale delete is a state,
+    not the old "not proposed" 400 (2026-08-09)."""
     _seed_pending(server)
-    status, body = server.post("/api/people/confirm", {"id": "p-judith"})
+    status, body = server.post(
+        "/api/review/decide", {"session_id": "import-documents", "person_id": "p-robert", "decision": "delete"}
+    )
+    assert status == 200
+    assert body["ok"] is True
+    assert body["person"]["id"] == "p-robert"  # unchanged — the confirmed person stays
+
+
+def test_deciding_the_last_proposed_person_completes_the_session(server: ServerFixture) -> None:
+    _seed_pending(server)
+    status, _ = server.post(
+        "/api/review/decide", {"session_id": "import-documents", "person_id": "p-judith", "decision": "attested"}
+    )
     assert status == 200
     imports = server.archive.get_identity("imports")
     assert imports is not None

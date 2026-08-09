@@ -111,6 +111,12 @@ def cmd_eval_memory(args: argparse.Namespace) -> int:
     return eval_main()
 
 
+def cmd_eval_review(args: argparse.Namespace) -> int:
+    from tools.eval_review import main as eval_main
+
+    return eval_main()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="loft", description="The Loft archive tools — one surface.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -154,6 +160,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("eval-memory", help="run the prototype memory-capture evals")
     p.set_defaults(fn=cmd_eval_memory)
+
+    p = sub.add_parser("eval-review", help="run the import-review relevance/contradiction evals")
+    p.set_defaults(fn=cmd_eval_review)
 
     return parser
 

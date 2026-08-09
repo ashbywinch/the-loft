@@ -557,3 +557,58 @@ def test_proposed_operations_reject_path_traversal_ids() -> None:
     # the identity tables are untouched
     assert store.exists("people.json")
     assert not store.exists("people.json.bak")
+
+
+def test_review_attempts_are_walk_separated() -> None:
+    """The sessions' storage (2026-08-09): a fresh attempt starts only when
+    the last is empty or finished — a mid-walk re-render continues the same
+    walk, so the diagnosis never mixes attempts."""
+    from tools.archive import Archive
+    from tools.store import MemoryStore
+
+    archive = Archive(MemoryStore())
+    from tools.records import Session
+
+    archive.save_identity(
+        "imports",
+        {
+            "imports": [
+                Session.from_dict(
+                    {
+                        "id": "import-documents",
+                        "kind": "import-review",
+                        "title": "The document import",
+                        "status": "pending",
+                        "current": None,
+                        "attempts": [],
+                    }
+                ).to_dict()
+            ]
+        },
+    )
+    archive.save_identity("people", {"people": [{"id": "p-a", "name": "A", "status": "proposed"}]})
+
+    assert archive.start_review_attempt("import-documents") == 0  # the first walk
+    assert archive.start_review_attempt("import-documents") == 0  # a mid-walk re-render: same attempt
+    archive.record_review_exchange(
+        "import-documents", {"kind": "exchange", "role": "user", "text": "hello", "when": "2026-08-09"}
+    )
+    archive.record_review_exchange(
+        "import-documents", {"kind": "exchange", "role": "user", "text": "again", "when": "2026-08-09"}
+    )
+    session = archive.get_review_session("import-documents")
+    assert session is not None
+    assert len(session.attempts) == 1
+    assert len(session.attempts[0].transcript) == 2  # the same walk accumulates
+
+    # a finished walk (its last decision completed the session) starts fresh
+    archive.record_review_exchange(
+        "import-documents",
+        {"kind": "decision", "person_id": "p-a", "decision": "pending", "when": "2026-08-09", "last": True},
+    )
+    assert archive.start_review_attempt("import-documents") == 1  # the new walk
+    session = archive.get_review_session("import-documents")
+    assert session is not None
+    assert len(session.attempts) == 2
+    assert session.attempts[1].transcript == ()  # the fresh walk's transcript
+    assert session.current is None  # the last decision cleared the resume point

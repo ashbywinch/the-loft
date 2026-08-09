@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import socket
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,8 +28,9 @@ from fastapi.staticfiles import StaticFiles
 
 from tools import auth, memory, review
 from tools.ai_client import AIClient
-from tools.archive import Archive, split_content
+from tools.archive import Archive, ArchiveError, split_content
 from tools.memory import ElicitationError, Knowledge
+from tools.records import Person, ReviewContext
 from tools.store import FileStore
 
 logger = logging.getLogger(__name__)
@@ -241,50 +243,80 @@ def build_app(
         _drop_from_projection(item_id)
         return {"ok": True}
 
-    @app.post("/api/people/confirm", response_model=None)
-    def confirm_person(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
-        """The import's pending people (2026-08-07, user): confirm one —
-        kept = confirmed, the person becomes family. The archive supersedes
-        and the projection regenerates; the app merges the returned person."""
+    @app.post("/api/review/start", response_model=None)
+    def review_start(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+        """Begin a new walk of the review — the sessions' storage is
+        attempt-separated (2026-08-09): a fresh attempt starts only when
+        the last is empty or finished, so a mid-walk re-render continues
+        the same walk and the diagnosis never mixes attempts."""
         mine = narrator(request)
         if mine is None:
             return JSONResponse({"ok": False, "error": "sign in to review the import"}, status_code=401)
-        person_id = str(body.get("id", ""))
-        if not person_id:
-            return JSONResponse({"ok": False, "error": "no id"}, status_code=400)
+        session_id = str(body.get("session_id", ""))
+        if not session_id:
+            return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
         try:
-            person = archive.confirm_person(person_id, relation=str(body.get("relation", "")) or None)
-        except KeyError as e:
+            archive.start_review_attempt(session_id)
+        except ArchiveError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
+        return {"ok": True}
+
+    @app.post("/api/review/decide", response_model=None)
+    def review_decide(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+        """The import review (2026-08-09, user): one decision per proposed
+        link — attested (→ confirmed, the reviewer's own verified word),
+        estimated (→ estimated with the recorded basis {text, by, when}),
+        pending (→ the import's guess stays proposed), delete (→ gone).
+        The decision vocabulary is NOT the status vocabulary: "confirm" is
+        a status, never an action."""
+        mine = narrator(request)
+        if mine is None:
+            return JSONResponse({"ok": False, "error": "sign in to review the import"}, status_code=401)
+        person_id = str(body.get("person_id", ""))
+        decision = str(body.get("decision", ""))
+        if not person_id or decision not in {"attested", "estimated", "pending", "delete"}:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "person_id and a valid decision (attested/estimated/pending/delete) are required",
+                },
+                status_code=400,
+            )
+        basis = body.get("basis")
+        if basis is not None and not isinstance(basis, dict):
+            return JSONResponse({"ok": False, "error": "basis must be an object"}, status_code=400)
+        session_id = str(body.get("session_id", ""))
+        if not session_id:
+            return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
+        try:
+            person = archive.resolve_person(person_id, decision, basis)
+        except (KeyError, ValueError) as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+        # the review record — every decision persists on the session's page,
+        # and the resume point follows the queue (2026-08-09)
+        queue = archive.review_queue()
+        archive.record_review_exchange(
+            session_id,
+            {
+                "kind": "decision",
+                "person_id": person_id,
+                "decision": decision,
+                "basis": basis,
+                "when": datetime.now(UTC).date().isoformat(),
+                "last": not queue.pending,
+            },
+        )
         archive.refresh_import_status()  # the last pending person completes the session
         archive.publish(data_dir)
         return {"ok": True, "person": person}
 
-    @app.post("/api/people/dismiss", response_model=None)
-    def dismiss_person(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
-        """The import's pending people — dismiss one: dropped = gone, the
-        person and their relationships leave the archive."""
-        mine = narrator(request)
-        if mine is None:
-            return JSONResponse({"ok": False, "error": "sign in to review the import"}, status_code=401)
-        person_id = str(body.get("id", ""))
-        if not person_id:
-            return JSONResponse({"ok": False, "error": "no id"}, status_code=400)
-        try:
-            archive.dismiss_person(person_id)
-        except (KeyError, ValueError) as e:
-            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
-        archive.refresh_import_status()  # the last pending person completes the session
-        archive.publish(data_dir)
-        return {"ok": True, "id": person_id}
-
-    @app.post("/api/review/relate", response_model=None)
-    def relate(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
-        """The import review chat (2026-08-08, user): the narrator's
-        free-text answer to "in what way is she family?" -> ONE specific
-        kinship term from the closed vocabulary, resolved against the known
-        family. The chat confirms with the resolved term — the review never
-        records a bare "cousin"."""
+    @app.post("/api/review/text", response_model=None)
+    def review_text(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+        """The reviewer's free text vs the exact claim under review
+        (2026-08-09): the relevance check — on-topic (the answer addresses
+        the proposed record and is recorded verbatim) or off-topic (the
+        chat names the mismatch and steers back). The model never derives
+        relationships — the reviewer's words are the record or nothing is."""
         mine = narrator(request)
         if mine is None:
             return JSONResponse({"ok": False, "error": "sign in to review the import"}, status_code=401)
@@ -292,16 +324,62 @@ def build_app(
         text = str(body.get("text", ""))
         if not person_id or not text.strip():
             return JSONResponse({"ok": False, "error": "person_id and text are required"}, status_code=400)
-        people = (archive.get_identity("people") or {"people": []})["people"]
-        person = next((p for p in people if p["id"] == person_id), None)
+        session_id = str(body.get("session_id", ""))
+        if not session_id:
+            return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
+        people = archive.get_identity("people") or {"people": []}
+        all_people = tuple(Person.from_dict(p) for p in people["people"])
+        person = next((p for p in all_people if p.id == person_id), None)
         if person is None:
             return JSONResponse({"ok": False, "error": f"no person {person_id}"}, status_code=404)
         if client is None:
             return JSONResponse({"ok": False, "error": "the AI isn't configured on this server"}, status_code=503)
         try:
-            result = review.resolve_relation(client, text=text, person=person, knowledge=knowledge(), who=mine["who"])
+            # the investigation needs the attested facts the Knowledge
+            # conversion drops — the raw people (deaths, relations), the
+            # recorded items' stories, and the family edges — typed as the
+            # ReviewContext (2026-08-09)
+            items: list[dict[str, Any]] = []
+            for item_id in archive.item_ids():
+                item = archive.get_item(item_id)
+                if item and item.get("status") == "catalogued":
+                    story = item.get("story") or item.get("transcription") or ""
+                    if story:
+                        items.append({"id": item_id, "title": item.get("title", ""), "story": story})
+            result = review.investigate(
+                client,
+                text=text,
+                person=person,
+                who=mine["who"],
+                facts=ReviewContext(
+                    people=all_people,
+                    items=tuple(items),
+                    relationships=tuple(people.get("relationships", [])),
+                ),
+            )
         except ElicitationError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=422)
+        archive.record_review_exchange(
+            session_id,
+            {"kind": "exchange", "role": "user", "text": text, "when": datetime.now(UTC).date().isoformat()},
+        )
+        # the assistant's side belongs in the record too — a transcript with
+        # only the user's words can't be diagnosed (2026-08-09, user: "why
+        # do you need me to tell you what the transcript says?")
+        archive.record_review_exchange(
+            session_id,
+            {
+                "kind": "assistant",
+                "response": {
+                    "relevant": result.get("relevant"),
+                    "contradiction": result.get("contradiction"),
+                    "confidence": result.get("confidence"),
+                    "note": result.get("note"),
+                    "findings": result.get("findings"),
+                },
+                "when": datetime.now(UTC).date().isoformat(),
+            },
+        )
         return {"ok": True, **result}
 
     def _drop_from_projection(item_id: str) -> None:

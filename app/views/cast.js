@@ -56,6 +56,14 @@ export function personPage(main, ctx, state) {
       el("p", { class: "card-meta" }, "Proposed — awaiting confirmation. Dates and links here are deductions, not attested record."),
     );
   }
+  if (person.status === "estimated" && person.basis) {
+    // the estimated chip names the person and shows only what the dataset
+    // records — the basis is the reviewer's own words, verbatim (2026-08-09)
+    const { by, when, text } = person.basis;
+    main.append(
+      el("p", { class: "card-meta" }, `Estimated — from ${by}'s recollection${when ? `, ${when}` : ""}: "${text}".`),
+    );
+  }
   const age = (fact) => {
     const years = ageInYears(person.dob, fact);
     return years ? ` (aged ${years.exact ?? `${years.from}–${years.to}`})` : "";

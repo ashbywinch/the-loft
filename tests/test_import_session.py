@@ -23,8 +23,8 @@ def _seeded_scratch(scratch: pathlib.Path) -> Archive:
     production base — so the merge path runs idempotently."""
     archive = Archive(DiskStore(scratch))
     for f in glob.glob("archive/*.json"):
-        if pathlib.Path(f).name == "imports.json":
-            continue  # the point: the import writes the session table
+        if pathlib.Path(f).name.startswith("imports"):
+            continue  # the point: the import writes the session table (all versions — the table may have superseded)
         shutil.copy(f, scratch / pathlib.Path(f).name)
     return archive
 

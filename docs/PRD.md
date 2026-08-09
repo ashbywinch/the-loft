@@ -1,5 +1,15 @@
 # Family History Album — Product Requirements Document
 
+**Purpose.** This document is the product's **requirements and user needs
+only** — what the family needs and why, in the user's terms. It is not an
+implementation document: it does not say how the app is built. The
+mechanics (the data model, the API, the build) live in `docs/TECH-SPEC.md`;
+the slice sequencing lives in `docs/PLAN.md`; the presentation conventions
+in `docs/UI.md`. A requirement earns its place here only when it states a
+user need or a behavior the family experiences. Anything that names a
+technology, a field, or an internal mechanism belongs in TECH-SPEC, not
+here (2026-08-09).
+
 Working title: **The Loft** (approved by the user, 2026-08-02; revisitable before launch).
 
 - **Sequencing:** `PLAN.md` — thin slices, feature inventory, urgency knobs.
@@ -264,6 +274,19 @@ Four doors + the lens:
 - Given the person filter is active, When a marker is tapped, Then the windowed items are filtered by that person.
 - Given the Places heatmap at overview zoom, Then only the heat layer shows — no dots or labels; zooming in reveals dots, then labels, and a lone glowing place is always labelled (2026-08-03).
 
+**F9 — The family reviews what the machine suggests** (2026-08-09, the import-review loop)
+- Given the machine's suggestions awaiting review, When the family opens the review, Then the suggestions are walked one at a time, each about the specific person and relationship — never a question whose answer can't change anything.
+- Given a suggestion, When the family answers with their honest confidence — "I'm sure", "I think so", "I don't know", "I think not", "definitely not" — Then each is handled the way the family means it.
+- Given a recollection, When the family records it as a guess, Then exactly what they said, who said it, and when are kept — never a machine's version of their words, never a suggested reason.
+- Given a statement that conflicts with what the archive already records, When the family makes it, Then the conflict is shown and settled before anything is accepted — the family can be wrong, and the archive catches it.
+- Given a paused review, When the family returns to it, Then their decisions and the conversation are kept, and they can see what has been decided so far.
+- Given a half-remembered statement, When the family shares it, Then the archive connects it to what it already holds and shows them what it found.
+- Given the archive has found something relevant, When the assistant speaks, Then it says what it found in the documents' own terms ("in the war record, X is recorded as…") and tells the family its conclusion or its further questions — the family's words and the archive's evidence are weighed together, never one alone.
+- Given the assistant's conclusion, When it points to resulting links, Then the family confirms each explicitly — recorded as a recollection or as attested — before anything is accepted.
+- Given the family cites a source ("Mum said…", "Grandma used to…"), When the assistant asks about the recollection, Then it asks about the provenance ("did she tell you that personally?") rather than asking what was already said.
+- Given the archive is working, When it is thinking or checking, Then its working is visible — no silent waits.
+- Given a finished review, When it ends, Then it says what changed — accepted, recorded as a guess, kept aside, or removed — and what to do next.
+
 ---
 
 ## 10. The Engagement Layer ("really engaging" = time in the past, spent with feeling)
@@ -292,6 +315,14 @@ Anti-patterns rejected: streaks, badges, leaderboards, push notifications. A fam
 **Themes are the doors, evidence is the room.** With 800+ items, arrangement alone drowns the reader — the app must *actively offer curated themes as the way in* (family-chosen doors: "The music years", "The business years"). Inside a theme, nothing is interpreted — dates, order, facts. **Stories are suggested, not only hand-made:** theme/entity discovery proposes collections from the archive's own patterns; users confirm, edit, or create their own — and every story links its artifacts. **Honesty principle:** the app arranges evidence; it never interprets it — no mood labels, no AI summaries, no "this is when it went wrong". **People testify; the app doesn't.** A narrator's account is testimony from an *actor in the story* — attributed, personal, multi-viewpoint — not editorial; the app presents it as evidence and never reconciles competing accounts into one (§19). **Display priority: facts and the artifact itself come first; the reader's own commentary next; other people's commentary last.** Honesty includes timing: sensitive items live in the archive now and surface when the family decides. **Default is no censorship:** flags are the deliberate exception, never the default; the sensitive-timing decision (doctor's letter and similar) is deferred until the full collection and a working prototype exist (§15.11). And no flattening: the happy photos stay warm, the hard truths stay present, neither erases the other. **Seed content follows the same rule:** theme copy and captions are factual; personal observations are attributed testimony ("The curator: …"), never app prose.
 
 **The machine proposes; the family confirms.** Photo labeling (people, pets, boats) and theme/entity discovery are real asks from the curator — implemented as a *suggestion layer*: models propose labels with `proposed` status, the family accepts with one tap; nothing is asserted unreviewed, and models run locally (letters are intimate — no cloud). The schema ships the seam in v1; the models plug in later.
+
+**Machine guesses are proposed, never published** (2026-08-09). The machine's suggestions exist for the family's review and never reach any public surface — nothing the machine guessed, however plausible, appears where anyone outside the family could see it. The family's review is the only door from a guess to the archive, and the archive's public face never shows a guess.
+
+**The archive never claims more certainty than it has** (2026-08-09). Every record carries how sure the archive is — attested by the record, a family member's recollection, or the machine's guess — and the difference is visible wherever that information appears. A guess is never presented as a fact, a recollection is never presented as attested, and the family can always tell which is which.
+
+**The archive never puts words in the family's mouth** (2026-08-09). It records what the family says, verbatim; it never fills in connections they didn't state. When the family is uncertain, that uncertainty is recorded — the archive's job is to hold their words and the evidence, never to improve on either.
+
+**The assistant reads as a hired genealogist, not a computer** (2026-08-09). Every guided conversation — the review of the machine's suggestions, the capture prompts — reads like a friendly but professional genealogist the family has hired: someone DMing the family member and walking them through the paperwork, asking about the person or document the way a researcher would, and confirming the way a colleague would. The family is always talking to a person, never to a system: raw records, internal notes, and system states never appear in what the assistant says — the assistant speaks the family's language about the family's own archive.
 
 ### The principles, as learned (2026-08-05/06)
 

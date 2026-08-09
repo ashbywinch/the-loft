@@ -147,7 +147,26 @@ export function chatBox({ placeholder = "Write here…" } = {}) {
     scroll();
   }
 
+  /** The thinking indicator (2026-08-09, user): the assistant's slot shows
+   *  three animated dots with a visually-hidden "is thinking" label the
+   *  instant the reviewer sends — never a silently disabled input. A real
+   *  assistant message replaces it in the same slot; the dots pause under
+   *  prefers-reduced-motion (styles.css). */
+  function thinkingIndicator() {
+    return el("div", { class: "bubble bubble-ai thinking", role: "status" }, [
+      el("div", { class: "bubble-who" }, ASSISTANT_NAME),
+      el("div", { class: "bubble-text thinking-dots", "aria-label": `${ASSISTANT_NAME} is thinking` }, [
+        el("span", { class: "dot" }),
+        el("span", { class: "dot" }),
+        el("span", { class: "dot" }),
+      ]),
+    ]);
+  }
+
   function addAssistant(text, label = ASSISTANT_NAME) {
+    // the thinking indicator is the pending reply — a real message replaces
+    // it in the same slot instead of stacking under it (2026-08-09)
+    messages.querySelector(".thinking")?.remove();
     messages.append(
       el("div", { class: "bubble bubble-ai" }, [
         label ? el("div", { class: "bubble-who" }, label) : null,
@@ -158,22 +177,30 @@ export function chatBox({ placeholder = "Write here…" } = {}) {
   }
 
   /** Busy disables typing and sending while the assistant works (reading,
-   *  assessing, saving) — the narrator cannot type over it (user, 2026-08-03). */
+   *  assessing, saving) — the narrator cannot type over it (user, 2026-08-03).
+   *  The thinking indicator appears in the assistant's slot while busy. */
   function setBusy(flag, note = null) {
     busy = flag;
     input.disabled = flag;
     inputRow.classList.toggle("busy", flag);
     updateSend();
     if (flag) quick.hidden = true; // the typing indicator replaces the chips
+    messages.querySelector(".thinking")?.remove();
+    if (flag) messages.append(thinkingIndicator());
     if (flag && note) addAssistant(note);
+    scroll();
   }
 
   // Quick replies are chips between the last message and the input bar —
   // nothing interactive goes below the composer (docs/CHAT-UX.md). Tapping a
   // chip "sends" it, and the suggestions clear like any sent reply; in
   // multi mode (a "who was there" question) chips stay so the narrator can
-  // pick several before the finishing chip.
-  function setQuickReplies(chips, { multi = false } = {}) {
+  // pick several before the finishing chip. The input stays LIVE beside the
+  // chips — the standard pattern (2026-08-09): the placeholder names the
+  // free-text path so it is clear the options can be ignored (research:
+  // Conferbot, Lovable — "always offer a free-text input hint").
+  function setQuickReplies(chips, { multi = false, placeholder = "Or type your own answer…" } = {}) {
+    input.placeholder = placeholder; // the affordance: the options are shortcuts, typing always works
     quick.replaceChildren(
       ...chips.map(({ label, onClick, primary = false }) =>
         el(

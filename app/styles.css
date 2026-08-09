@@ -1024,6 +1024,40 @@ summary:focus-visible {
   margin-bottom: 0.15rem;
 }
 
+/* The thinking indicator — three dots in the assistant's slot, the pending
+   reply (2026-08-09): animated, paused under prefers-reduced-motion. */
+.thinking-dots {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+  min-height: 1.1rem;
+}
+.thinking-dots .dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: thinking-bounce 1.2s infinite ease-in-out;
+}
+.thinking-dots .dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.thinking-dots .dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes thinking-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-0.2rem);
+    opacity: 1;
+  }
+}
+
 .chat-bar {
   display: flex;
   align-items: flex-end;
@@ -1270,6 +1304,9 @@ summary:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;
+  }
+  .thinking-dots .dot {
+    animation: none;
   }
 }
 

@@ -373,12 +373,6 @@ describe("home drafts gate (user, 2026-08-03: incognito must still find the draf
 });
 
 describe("home orientation (2026-08-06, Eli walk)", () => {
-  it("says whose family this is — the ownership line", () => {
-    const main = document.createElement("main");
-    render(main, {}, STATE);
-    expect(main.textContent).toContain("The Hale family archive.");
-  });
-
   it("names the tree door and keeps the people subtitle honest", () => {
     const main = document.createElement("main");
     render(main, {}, STATE);

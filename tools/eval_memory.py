@@ -37,8 +37,35 @@ def load_projection() -> dict[str, list[dict[str, Any]]]:
     }
 
 
+# The elicitation speaks the family's language, never the process's — the
+# hired genealogist's voice (PRD: "the assistant reads as a hired
+# genealogist, not a computer", 2026-08-09; user: "make sure the
+# requirement is in all relevant evals").
+_PROCESS_JARGON = (
+    "session",
+    "interview",
+    "elicitation",
+    "draft",
+    "the system",
+    "the app",
+    "question 1",
+    "input",
+)
+
+
+def _persona_errors(result: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+    for q in result.get("questions", []):
+        text = str(q.get("text", "")).lower()
+        for word in _PROCESS_JARGON:
+            if word in text:
+                errors.append(f"question echoes the process ('{word}'): {q.get('text', '')[:80]}")
+    return errors
+
+
 def contract_errors(result: dict[str, Any]) -> list[str]:
     errors: list[str] = []
+    errors.extend(_persona_errors(result))
     if not isinstance(result.get("title"), str) or not result["title"].strip():
         errors.append("missing title")
     for ex in result.get("extractions", []):

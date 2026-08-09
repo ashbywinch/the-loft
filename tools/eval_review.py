@@ -20,11 +20,12 @@ household's data, and the PII guard never sees a real name.
 
 from __future__ import annotations
 
+import json as _json
 from typing import Any
 
 from tools.ai_client import AIClient, AIClientError
-from tools.records import Person, ReviewContext
-from tools.review import investigate
+from tools.records import Message, Person, ReviewContext
+from tools.review import assistant_message, investigate
 
 PEOPLE: list[dict[str, Any]] = [
     {"id": "p-quentin", "name": "Quentin Whitlock", "relation": "brother of Pearl Whitlock"},
@@ -169,6 +170,42 @@ def run_case(client: AIClient, case: dict[str, Any]) -> tuple[bool, list[str]]:
     return (not errors), errors
 
 
+def check_caching_prefix(client: AIClient) -> list[str]:
+    """The caching cross-check (2026-08-09, user: "have ALL our evals cross
+    check this at the end and fail if there's no match"): a short dedicated
+    conversation runs as one accumulating history, and every turn's prompt
+    must start with the previous turn's exact text — the conversation
+    renders verbatim and grows at the end, so the model's prompt-cache can
+    reuse the prefix. The eval's behavioural cases stay independent — they
+    are separate scenarios, not one conversation."""
+    errors: list[str] = []
+    history: tuple[Message, ...] = ()
+    prev_prompt: str | None = None
+    for text in (
+        "I think Mum said she was a cousin, via one of Pearl's brothers.",
+        "I don't remember more than that.",
+        "That's all I know.",
+    ):
+        result = investigate(client, text=text, person=PERSON, who="Alex", facts=_facts(), history=history)
+        prompt = result.get("prompt", "")
+        if prev_prompt is not None and not prompt.startswith(prev_prompt):
+            errors.append(
+                "the previous prompt is not this prompt's prefix — the caching contract is "
+                "broken (the conversation must render verbatim and grow at the end)"
+            )
+        prev_prompt = prompt
+        history = history + (
+            Message(role="user", text=text, when=""),
+            Message(
+                role="assistant",
+                text=assistant_message(result, PERSON),
+                when="",
+                thinking=_json.dumps(result.get("trace"), ensure_ascii=False),
+            ),
+        )
+    return errors
+
+
 def main() -> int:
     try:
         client = AIClient()
@@ -188,6 +225,17 @@ def main() -> int:
             for error in errors:
                 print(f"  - {error}")
     print(f"{len(CASES) - failures}/{len(CASES)} cases passing")
+
+    # the caching cross-check — the whole suite verifies the prefix
+    # contract at the end (2026-08-09, user)
+    cache_errors = check_caching_prefix(client)
+    if cache_errors:
+        failures += 1
+        print("FAIL caching cross-check")
+        for error in cache_errors:
+            print(f"  - {error}")
+    else:
+        print("PASS caching cross-check (every prompt is the next one's prefix)")
     return 1 if failures else 0
 
 

@@ -280,6 +280,11 @@ def investigate(
     )
     tool_calls = 0
     trace: list[dict[str, Any]] = []
+    # the stable prompt — the static plus the conversation before the
+    # loop's tool dynamics — is the caching prefix: the next call's stable
+    # prompt starts with this one (the tool results are logged in the
+    # trace, not in the prefix)
+    base_prompt = user
     for _ in range(MAX_INVESTIGATE_STEPS + 3):  # the digs, plus the verdict and a correction
         try:
             raw = client.chat(prompt, user)
@@ -332,6 +337,7 @@ def investigate(
                 "question": str(parsed_dict.get("question", "")).strip(),
                 "raw": raw,
                 "trace": trace,
+                "prompt": base_prompt,
             }
         user += (
             "\n\nThat was neither a tool call nor a valid verdict. To call a tool return "

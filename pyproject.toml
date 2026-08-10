@@ -45,6 +45,17 @@ quote-style = "double"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# the real-model evals hit the model API (and tesseract), so they are
+# SKIPPED by default and run only when selected:
+# `pytest -m eval` (all), `-m eval_review`, `-k "arc"` for one piece
+# (2026-08-10, user: use the framework's selection, not custom flags).
+addopts = "-m 'not eval'"
+markers = [
+    "eval: hits the real model API (and tesseract) — run with `pytest -m eval`, never in make test",
+    "eval_review: the import-review evals (tools/eval_review.py)",
+    "eval_memory: the memory-capture evals (tools/eval_memory.py)",
+    "eval_transcription: the transcription-fidelity eval (tools/eval_transcription.py)",
+]
 
 [tool.coverage.run]
 omit = ["*/__main__.py"]

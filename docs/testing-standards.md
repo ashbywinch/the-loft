@@ -1,5 +1,23 @@
 # Testing Standards — The Loft
 
+## Definitions (2026-08-10, user — the vocabulary is strict, one meaning everywhere)
+
+- **Test** — a check that is *deterministic*: same inputs, same result, always, on any machine. No network, no model, no wall-clock.
+- **Eval** — a check that runs deliberately *non-deterministic* code — a real model. An eval costs money and takes time, so the discipline is economy: **never more than one eval covering the same thing** (duplicate coverage is waste); and when the code under test can be run **once** and its output evaluated for several conditions in one go, do that — never recreate the output for each condition.
+- **Tests and evals share the same harness** (pytest, 2026-08-10) for consistency. Both run exactly **once** — a check that would need re-running to go green is flaky, and flakiness is a bug in the check, never a reason to re-run ("we run it once. If it fails we fix it" — user, 2026-08-10). Both **fail fast** — a check that cannot run because needed infra is missing (the API key, tesseract) fails loudly and is **never skipped**: a skipped check would green a suite that never ran (2026-08-05).
+- **Unit test** — a single class or function, with fakes for any dependencies.
+- **Integration test** — a group of related classes together (a class and its dependencies), with fakes for everything outside the set under test.
+- **E2E test** — a process end to end: user input to user output through the series of steps.
+
+Given the definitions, the repo's inventory:
+
+| | Deterministic? | Runs in `make test`? | Examples |
+|---|---|---|---|
+| **Tests** (pytest + vitest) | yes | always | the archive-quality checks (drift guard, description, place-note, story-date, completeness — the older wording called them "evals"; they were always tests) |
+| **Evals** (the `eval` marker in pytest) | no — a real model | **no** — deselected by `addopts -m 'not eval'`, run only with `pytest -m eval` (or `-k` for one piece) | the review cases (each a single conversation turn), the multi-turn arc, the caching prefix check, the memory cases, the transcription pipeline (the one e2e-shaped eval) |
+
+The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-10): most evals are per-turn checks against the model, not end-to-end processes.
+
 ## The split
 
 - `tests/` — Python (pytest) for the tools (`tools/`): import, publish,
@@ -8,12 +26,7 @@
 - `app/tests/` — JS (vitest + happy-dom) for the web app: date handling,
   the router, the index builder, view rendering. Pure functions first; DOM
   only through small view modules.
-- **Organisation: unit / integration / e2e.** Unit tests exercise one
-  function or module in isolation with no API calls; integration tests run
-  a full pipeline with fakes; e2e tests hit real external APIs, one
-  consolidated suite per API, skipped by default (`@pytest.mark.e2e`).
-  Shared infrastructure (fixtures, fakes) is extracted once, not copy-pasted
-  per file.
+- **Organisation: unit / integration / e2e (the definitions above).** Unit tests exercise a single class or function in isolation with fakes for its dependencies; integration tests exercise a group of related classes together (a class and its dependencies), faking everything outside the set under test; e2e tests exercise a process end to end, from user input to user output through the series of steps. The real-model **evals** sit in the same pytest harness, marked `eval`, never in the gate.
 
 ## Rules
 
@@ -59,24 +72,28 @@
 - `make coverage` emits `coverage.xml` (Python, CI gate) and
   `app/coverage/clover.xml` (JS). CI floor starts at 0 until real code lands
   and is raised toward 80 as tools get tests.
-- **Archive-quality evals are part of the gate (2026-08-05/06)** — the
+- **Archive-quality tests are part of the gate (2026-08-05/06)** — the
   archive itself is under test, not just the code: the projection drift
   guard (committed `app/data` ≡ publish of committed archive), the
-  description eval (letters/documents are specific and correspondence-
-  distinct), the place-note eval (no process jargon in notes), the story-date
-  eval (no catalogued story dated by its told day without the narrator's
-  words), and the completeness eval (everything catalogued is visible
+  description check (letters/documents are specific and correspondence-
+  distinct), the place-note check (no process jargon in notes), the story-date
+  check (no catalogued story dated by its told day without the narrator's
+  words), and the completeness check (everything catalogued is visible
   somewhere). A data change that breaks one is a bug, not a test update —
-  unless the *rule* changed, in which case the eval is rewritten with the
+  unless the *rule* changed, in which case the check is rewritten with the
   rule, failing first.
 - **The private dataset never lives in the public repo (2026-08-08).** The
   real family archive (`archive/`) and its derived projection (`app/data/`)
   are gitignored — the public repo carries the code and the synthetic
-  fixtures, never real content. The archive-quality evals therefore run
+  fixtures, never real content. The archive-quality tests therefore run
   **locally** (the dataset is present in the working tree) and **skip in
   CI** (the checkout has no archive): each carries
-  `skipif(not (REPO / "archive" / "people.json").exists())`, and the skip
-  is the contract, not an accident. These same evals are the **integrity
+  `skipif(not (REPO / "archive" / "people.json").exists())` — the one
+  deliberate exception to the fail-fast rule (2026-08-10): a check whose
+  dataset is intentionally absent from the environment is SKIPPED with the
+  reason stated, never a green lie — and never silently. Every evals and
+  other infrastructure gap (the API key, tesseract) FAILS loudly instead.
+  These same tests are the **integrity
   check for the live product** — the deployed instance runs them against
   the real archive on a schedule (see the PRD's weekly integrity check);
   a failure there is family data needing a fix, never a test update.
@@ -119,6 +136,28 @@
 - UX (engagement, legibility) is verified by the D8/D10 observation protocol
   (`DISCOVERY.md`) — there is deliberately no analytics in the product, so
   observation is the substitute, not a test gap.
+
+- **Evals run once and are never flaky (2026-08-10).** The real-model
+  evals (review, memory, transcription) run each case exactly once — never
+  a retry, never a majority-of-runs (the Definitions). The model's judgment
+  varies even at temperature 0, so a case that fails its single run is a
+  REAL failure to fix — the case's scenario, the prompt, or the guard is
+  at fault — and the eval stays red until the behaviour is right (the
+  Seascale stall: the multi-turn arc case caught the live regression and
+  stayed red until the prompt was fixed). A case that would only pass on a
+  re-run is flaky, and flakiness is a bug in the eval, never a reason to
+  re-run. If a case proves genuinely stochastic despite a fair scenario,
+  the fix is to make the scenario unambiguous (anchor the pronouns, name
+  the claim), not to give the case another chance.
+- **Eval economy — no duplicate coverage, one run many conditions
+  (2026-08-10).** No two evals cover the same thing: every eval pins a
+  distinct contract facet, and a new eval that re-exercises ground an
+  existing one covers is a review finding, not an addition. When one run of
+  the code under test produces an output that several conditions must hold,
+  evaluate them all against that one output — never run the code again per
+  condition. (The review cases each exercise a DIFFERENT input, so they
+  need their own run; the persona guard and the feedback property are
+  evaluated on every case's one output.)
 
 - **When a failing test catches a narrow problem, hunt the pattern
   (2026-08-06).** The named case is the symptom, not the whole bug: if one

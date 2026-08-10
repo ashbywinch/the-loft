@@ -56,7 +56,7 @@ class AIClient:
         self._urlopen: Callable[..., Any] = urlopen or urllib.request.urlopen
 
     def chat(self, system: str, user: str) -> str:
-        """One chat completion call; returns the assistant text."""
+        """One text chat completion call; returns the assistant text."""
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -74,6 +74,10 @@ class AIClient:
         # deepseek-v4-flash otherwise spends its whole output budget on
         # reasoning and returns empty content
         payload["thinking"] = {"type": "disabled"}
+        return self._post(payload)
+
+    def _post(self, payload: dict[str, Any]) -> str:
+        """Send one chat-completions request with the retry/backoff loop."""
         body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",

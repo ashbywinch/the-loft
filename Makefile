@@ -1,7 +1,7 @@
 # Makefile for The Loft — family history museum web app.
 # Single dev entry point: every dev action goes through make.
 # CI runs exactly: make setup && make lint && make test && make coverage
-.PHONY: help setup serve lint lint-github typecheck test coverage format clean
+.PHONY: help setup serve lint lint-github typecheck test coverage format clean eval eval-changed
 
 PYTHON := .venv/bin/python
 RUFF := .venv/bin/ruff
@@ -22,6 +22,8 @@ help:
 	@echo "  ${GREEN}make test${NC}         Run tests (lint + typecheck gate; pytest + vitest)"
 	@echo "  ${GREEN}make format${NC}       Auto-fix formatting issues"
 	@echo "  ${GREEN}make coverage${NC}     Run tests with coverage report"
+	@echo "  ${GREEN}make eval${NC}         Run the real-model evals (pytest -m eval — needs the API key; select pieces with -k)"
+	@echo "  ${GREEN}make eval-changed${NC} Run only the evals the current changes affect"
 	@echo "  ${GREEN}make clean${NC}        Remove .venv, node_modules and generated files"
 
 setup:
@@ -56,7 +58,16 @@ coverage: setup
 	@$(NPM) run coverage
 
 eval: setup
-	@$(PYTHON) -m tools.eval_elicitation
+	@$(PYTHON) -m pytest -m eval -q
+
+eval-changed: setup
+	@MARKERS=$$($(PYTHON) tools/affected_evals.py); \
+	if [ "$$MARKERS" = "none" ]; then \
+		echo "no evals affected by the current changes"; \
+	else \
+		echo "running the affected evals ($$MARKERS)"; \
+		$(PYTHON) -m pytest -m "eval and ($$MARKERS)" -q; \
+	fi
 
 format: setup
 	@$(RUFF) check --fix tools/ tests/

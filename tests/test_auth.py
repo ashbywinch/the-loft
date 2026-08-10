@@ -4,7 +4,7 @@ fails honestly when the OAuth client isn't configured."""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -96,14 +96,14 @@ def test_device_grant_round_trip_state(monkeypatch: pytest.MonkeyPatch) -> None:
     assert pending["status"] == "pending"
     # the grant is consumed after a successful token exchange
     auth._device_grants[started["state"]] = {"device_code": "dc-1", "created_at": __import__("time").time()}
-    auth._device_grant_post = lambda url, data: {"id_token": "jwt"}  # type: ignore[assignment]
+    auth._device_grant_post = cast(Any, lambda url, data: {"id_token": "jwt"})
 
     def _fake_verify(token: str) -> dict[str, Any] | None:
         if token != "jwt":
             return None
         return {"email": "alex.hale@example.com", "email_verified": True}
 
-    auth.verify_device_id_token = _fake_verify  # type: ignore[assignment]
+    auth.verify_device_id_token = cast(Any, _fake_verify)
     ok = auth.poll_device_grant(started["state"])
     assert ok["status"] == "ok"
     assert ok["id_info"]["email"] == "alex.hale@example.com"
@@ -133,7 +133,7 @@ def test_minted_session_grace_window(monkeypatch: pytest.MonkeyPatch) -> None:
     def _fake_verify(token: str) -> dict[str, Any] | None:
         return {"email": "alex.hale@example.com", "email_verified": True} if token == "jwt" else None
 
-    auth.verify_device_id_token = _fake_verify  # type: ignore[assignment]
+    auth.verify_device_id_token = cast(Any, _fake_verify)
     started = auth.start_device_grant()
     ok = auth.poll_device_grant(started["state"])
     assert ok["status"] == "ok"

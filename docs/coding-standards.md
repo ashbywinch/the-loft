@@ -310,6 +310,34 @@ good.
 
 - ruff with `select = E,F,I,UP,B,SIM,N`, line-length 120, double quotes.
 - basedpyright, gated inside `make test` on the error count.
+- **A type-checker flag is fixed with a cast only when the cast NARROWS a
+  value the code has already proven (2026-08-10).** The one legitimate
+  shape is validate-then-narrow: the runtime immediately before the cast
+  raised (or returned 400, or exhaustively checked) on any value outside
+  the target set, and the cast tells the type-checker what the check
+  proved — `if status not in RECORD_STATUSES: raise ValueError(...)`, then
+  `cast(Literal[...], status)`. The type model is correct; the static
+  types just cannot see the runtime proof, and the cast must sit adjacent
+  to the proof. **Otherwise fix the type model properly — a cast there is
+  a bodge:**
+  - a cast that *converts* data (a plain dict into a typed record, a
+    wider shape into a narrower one) is a bodge — conversions belong in a
+    domain method (`from_dict`, `from_projection`) at the class's own
+    seam;
+  - a cast whose target contradicts the class's own contract (its
+    docstring, its `__post_init__`, its sanctioned constructors) means
+    the *annotation* is wrong — correct the annotation or use the class's
+    sanctioned entry point, don't cast (the `Knowledge` case: the raw
+    constructor declared `tuple[Person, ...]` while the class documents
+    and implements normalizing the projection's plain dicts; the fix was
+    `Knowledge.from_projection`, the class's own converter);
+  - the tell-tale symptom of a bodge cast: the cast's result type is the
+    SAME as the parameter's declared type yet the error persists — a
+    same-type mismatch is the type-checker saying the model is off, not
+    that a cast will help.
+- **Never `# type: ignore`** — a suppression hides both cases: the code
+  is either already right (then cast it, adjacent to the proof) or wrong
+  (then fix the model). A suppression compiles a lie either way.
 - Flat package layout; type every function signature (`dict[str, Any]`, never
   bare `dict`); each module has a docstring stating its contract.
 - Functions take their dependencies as parameters — never read module-level

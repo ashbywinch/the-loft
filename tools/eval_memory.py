@@ -356,13 +356,18 @@ def run_flow(
     """Run the flow ONCE — the assess stage, exactly once (the production
     call self-corrects internally, so the eval must not repeat it). The
     condition tests verify the single output."""
-    knowledge: Any = flow.knowledge or default_knowledge
+    knowledge = flow.knowledge or default_knowledge
     return assess(
         client,
         anchor=flow.anchor,
         who=flow.who,
         account=flow.account,
-        knowledge=Knowledge(
+        # Knowledge's own conversion point for the projection's plain dicts
+        # — the raw constructor's annotation is loose (it normalizes in
+        # __post_init__); from_projection declares the dict-accepting
+        # contract (2026-08-10: the cast/Any that papered over the
+        # mismatch was a bodge — the class's own seam is the fix)
+        knowledge=Knowledge.from_projection(
             people=knowledge["people"],
             places=knowledge["places"],
             themes=knowledge["themes"],

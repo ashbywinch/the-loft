@@ -55,11 +55,24 @@ export function renderMarkdown(text) {
       continue;
     }
     const para = [];
-    while (i < lines.length && lines[i].trim() !== "" && !PIPE.test(lines[i])) {
+    const paraStart = i;
+    // a pipe-prefixed line that failed the table check is still verbatim
+    // text — include the current line, then stop at the next pipe line
+    // (2026-08-09 review: a line like "| the boat's name |" was silently
+    // dropped — the table branch skipped it, the paragraph loop refused it)
+    while (
+      i < lines.length &&
+      lines[i].trim() !== "" &&
+      (i === paraStart || !PIPE.test(lines[i]))
+    ) {
       para.push(lines[i]);
       i++;
     }
-    if (para.length) nodes.push(el("p", {}, para.join("\n")));
+    // the transcription-text class makes the pre-line CSS apply everywhere
+    // the renderer's paragraphs land, including the reader (2026-08-09
+    // review: stories.js appended bare <p> nodes and the line breaks
+    // collapsed again)
+    if (para.length) nodes.push(el("p", { class: "transcription-text" }, para.join("\n")));
     else i++;
   }
   return nodes;

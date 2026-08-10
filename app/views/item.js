@@ -111,12 +111,13 @@ export function render(main, ctx, state) {
         for (const cell of node.querySelectorAll("th, td")) {
           cell.replaceChildren(...linkMentions(cell.textContent, state.people, state.places));
         }
-        text.append(node);
       } else {
-        const p = el("p", { class: "transcription-text" });
-        p.append(...linkMentions(node.textContent, state.people, state.places));
-        text.append(p);
+        // the renderer's paragraph already carries the transcription-text
+        // class (2026-08-09 review: the reader appended bare <p> nodes and
+        // the pre-line styling never applied) — just link the mentions
+        node.replaceChildren(...linkMentions(node.textContent, state.people, state.places));
       }
+      text.append(node);
     }
     const body = el("div", { class: "transcription", hidden: true }, [note, text].filter(Boolean));
     const toggle = el(

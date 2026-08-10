@@ -335,3 +335,85 @@ def test_residence_with_unknown_place_fails_loud() -> None:
     )
     with pytest.raises(ValueError, match="Nowhere-in-Particular"):
         GedcomDocument.from_text(text, [])
+
+
+def test_estimated_people_and_edges_export_with_their_evidence() -> None:
+    """2026-08-09 (user: "Estimated things should be IN along with the
+    conversation that generated the estimate, so we know what the evidence
+    is for this estimate"): an estimated person and an estimated edge are
+    part of the family record — they export, each annotated with a NOTE
+    carrying the review conversation's recorded basis (who said it, when,
+    their own words). Proposed records still stay out."""
+    archive = make_archive()
+    people = archive.get_identity("people")
+    assert people is not None
+    people["people"] = people["people"] + [
+        {
+            "id": "p-cousin",
+            "name": "Cousin",
+            "status": "estimated",
+            "basis": {"text": "Mum always said she was a cousin.", "by": "Kid", "when": "2026-08-09"},
+        }
+    ]
+    people["relationships"] = people["relationships"] + [
+        {
+            "a": "p-mum",
+            "b": "p-cousin",
+            "kind": "parent",
+            "label_a": "child",
+            "label_b": "parent",
+            "status": "estimated",
+        },
+        {
+            "a": "p-mum",
+            "b": "p-stranger",
+            "kind": "parent",
+            "label_a": "child",
+            "label_b": "parent",
+            "status": "proposed",
+        },
+    ]
+    archive.save_identity("people", people)
+    archive.save_identity(
+        "imports",
+        {
+            "imports": [
+                {
+                    "id": "import-documents",
+                    "title": "The document import",
+                    "status": "pending",
+                    "attempts": [
+                        {
+                            "started": "2026-08-09",
+                            "messages": [],
+                            "decisions": [
+                                {
+                                    "person_id": "p-cousin",
+                                    "decision": "estimated",
+                                    "when": "2026-08-09",
+                                    "basis": {
+                                        "text": "Mum always said she was a cousin.",
+                                        "by": "Kid",
+                                        "when": "2026-08-09",
+                                    },
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        },
+    )
+    text = GedcomDocument.to_text(archive)
+    records = _parse(text)
+    indis = [r for r in records if r.tag == "INDI"]
+    cousin = next(r for r in indis if any(c.tag == "NAME" and c.text == "Cousin" for c in r.children))
+    assert not any(any(c.tag == "NAME" and c.text == "Stranger" for c in r.children) for r in indis)
+    note = next(c.text for c in cousin.children if c.tag == "NOTE")
+    assert 'Estimated — from Kid\'s recollection (2026-08-09): "Mum always said she was a cousin."' in note
+    fams = [r for r in records if r.tag == "FAM"]
+    # the estimated parent edge exports a single-parent FAM with the evidence
+    # note; the proposed edge creates nothing
+    assert len(fams) == 2
+    fam = next(f for f in fams if any(c.tag == "NOTE" and "Estimated" in (c.text or "") for c in f.children))
+    assert "from Kid's recollection" in next(c.text for c in fam.children if c.tag == "NOTE")

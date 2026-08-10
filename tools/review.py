@@ -242,7 +242,13 @@ def investigate(
             "events the archive may attest (a death, a marriage, a place); a statement without "
             "leads — 'Grandma used to say so', 'I vaguely remember' — needs no tool calls: "
             "answer directly. When the reviewer mentions a PLACE or an EVENT (a visit, a "
-            "town, a death), search the items for it — do not stop at the people. An answer that "
+            "town, a death), search the items for it — do not stop at the people. "
+            "When you have ALREADY spoken in this conversation, the reviewer's latest line "
+            "is a NEW statement — it may not answer your earlier question at all: follow "
+            "ITS leads, acknowledge what they said, and NEVER repeat your own earlier "
+            "question verbatim (2026-08-10, the Seascale stall: the reviewer answered "
+            "with a visit to Seascale and the assistant re-asked the identical question). "
+            "An answer that "
             "AGREES or DISAGREES with the claim, expresses "
             "uncertainty about it, or brings in the family facts the reviewer connects to it "
             "(who died, who married whom) IS relevant — the reviewer is answering the question. "
@@ -251,7 +257,12 @@ def investigate(
             "answers to the claim. "
             'An answer about a person\'s WHEREABOUTS or a place ("he was in that house", '
             '"she lived in Marlock") without bearing on the claim is NOT relevant, however '
-            "confident — the reviewer has answered a different question. "
+            "confident — the reviewer has answered a different question. BUT a place or a "
+            "visit the reviewer mentions is still a LEAD first: search the archive for it "
+            "and report what it holds, asking whether it is the same visit — the lead is "
+            "answered even though the disposition is unaffected (2026-08-10, the Seascale "
+            "arc: the model judged the visit 'not relevant' and never searched, so the "
+            "family's lead went unanswered). "
             "And: does the statement CONTRADICT anything the archive attests? The reviewer "
             "names the wrong person for an attested event — e.g. the record says Walter "
             "Whitlock died in 1916 and the reviewer says 'it was Nora who died in the war': "
@@ -306,7 +317,16 @@ def investigate(
         "if the tools found no document for the point, do not make a finding about it — "
         'and NEVER a bare absence like \\"no record connects X to Y\\": the findings report '
         "what the records DO show, not what they do not. A recollection is the family's "
-        '— "Mum\'s recollection", "the recollection" — NEVER "the reviewer\'s">", '
+        '— "Mum\'s recollection", "the recollection" — NEVER "the reviewer\'s". A PERSON '
+        "record is not evidence either: its relation field is the import's guess, never a "
+        "finding (2026-08-10, R2: a robot's note is never an attestation — only items "
+        "with a transcription or story are documents. When the reviewer mentions a PLACE "
+        "or an EVENT and the tools surface an item matching their statement, REPORT it — "
+        "quote the item and ASK whether it is the same visit or person: the archive "
+        "answers the family's lead even when the item does not settle the claim under "
+        "review (2026-08-10, the Seascale arc: the model searched, found the visit, and "
+        "dropped it because it concerned a different person than the claim — the family's "
+        'lead went unanswered)">", '
         '"item_id": "<the document id from the tool results>"}, ...], '
         '"question": '
         '"<the genealogist next question to the reviewer, asked the way a hired researcher '

@@ -1,5 +1,8 @@
-"""Tests for the eval-memory runner (tools/eval_memory): the entry
-point's fail-fast contract — an eval that cannot run must say so loudly."""
+"""Tests for the eval entry surface: the fail-fast contract — an eval that
+cannot run must say so loudly (2026-08-05). The evals now run under pytest
+(2026-08-10, user: use the framework's selection, not custom CLI flags), so
+the contract is pinned through that surface: ``pytest -m eval`` with no API
+key must fail with the message, never skip silently."""
 
 from __future__ import annotations
 
@@ -18,19 +21,19 @@ REPO = Path(__file__).resolve().parent.parent
     reason="app/data not bootstrapped yet (the public tree ships no dataset)",
 )
 def test_eval_fails_fast_without_api_key() -> None:
-    """make eval with no API key must exit non-zero — a silent SKIP hides an
-    eval that never ran (2026-08-05). The env is scrubbed of every key source
-    (LOFT_AI_*, OPENCODE_API_KEY) and the opencode auth file is made
-    unreachable via an empty XDG_DATA_HOME."""
+    """pytest -m eval with no API key must exit non-zero — a silent SKIP
+    hides an eval that never ran (2026-08-05). The env is scrubbed of every
+    key source (LOFT_AI_*, OPENCODE_API_KEY) and the opencode auth file is
+    made unreachable via an empty XDG_DATA_HOME."""
     env = {k: v for k, v in os.environ.items() if not k.startswith(("LOFT_AI_", "OPENCODE_API_KEY"))}
     env["XDG_DATA_HOME"] = str(REPO / ".eval-empty-xdg")
     result = subprocess.run(
-        [sys.executable, "-m", "tools.eval_memory"],
+        [sys.executable, "-m", "pytest", "-m", "eval", "-k", "arc", "-q", "--no-header"],
         capture_output=True,
         text=True,
         env=env,
         cwd=REPO,
-        timeout=60,
+        timeout=180,
     )
     assert result.returncode != 0, f"eval exited 0 without a key — output: {result.stdout}"
     assert "API key" in result.stdout + result.stderr

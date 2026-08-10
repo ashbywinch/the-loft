@@ -14,12 +14,11 @@ rule. The dob cases pin the age/date behaviour (docs/CONTRIBUTIONS.md).
 from __future__ import annotations
 
 import json
-import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from tools.ai_client import AIClient, AIClientError
+from tools.ai_client import AIClient
 from tools.memory import BUCKETS, KINDS, MAX_QUESTIONS, MAX_SUGGESTIONS, Knowledge, assess
 
 REPO = Path(__file__).resolve().parent.parent
@@ -137,180 +136,232 @@ def _real_knowledge_with_dob() -> dict[str, list[dict[str, Any]]]:
 # Cases: the family's own stories and a fictional family
 # ---------------------------------------------------------------------------
 
-CASES: list[dict[str, Any]] = [
-    {
-        "name": "real-boats-links-the-artifacts",
-        "anchor": {"kind": "place", "id": "pl-farndale-wharf", "name": "Iron Wharf, Farndale"},
-        "who": "Alex",
-        "account": "The boats were built on Iron Wharf — Sunlight first in 1980. The yard had a "
-        + "slipway into the creek.",
-        "assert": lambda r: (
-            []
-            if any(m in {"t-the-boats", "object-sunlight"} for m in _matches(r))
-            else ["the boats/Sunlight were not linked — expected a theme or artifact extraction"]
-        ),
-    },
-    {
-        "name": "real-sheppey-extracts-about-entities",
-        "anchor": {"kind": "place", "id": "pl-seagate", "name": "Seagate"},
-        "who": "Alex",
-        "account": "We used to sail around the Isle of Seagate and under the old ford, not the new one. "
-        "Dad built the boats on Iron Wharf and Mum came along sometimes.",
-        "assert": lambda r: (
-            []
-            if any(m in {"pl-seagate", "pl-farndale-wharf", "p-owen", "p-nora", "t-the-boats"} for m in _matches(r))
-            else ["no about-entity from the story was matched"]
-        ),
-    },
-    {
-        "name": "fictional-family-no-overmatch",
-        "knowledge": {
-            "people": [
-                {"id": "p-helena", "name": "Helena Kowalski", "aliases": ["Grandma", "Babcia"]},
-                {"id": "p-jan", "name": "Jan Kowalski", "aliases": ["Janek"]},
-            ],
-            "places": [{"id": "pl-gdansk", "name": "Gdańsk"}, {"id": "pl-dluga", "name": "Ulica Długa"}],
-            "themes": [],
-            "items": [],
-        },
-        "anchor": {"kind": "place", "id": "pl-gdansk", "name": "Gdańsk"},
-        "who": "Marek",
-        "account": "Grandma Helena ran a bakery on Ulica Długa in Gdańsk. We used to visit after school and she "
-        "always gave us fresh poppy-seed cake. Janek helped behind the counter.",
-        "assert": lambda r: (
-            []
-            if any(p in n for n in _extraction_names(r) for p in ("Helena", "Janek", "Jan"))
-            and any(p in n for n in _extraction_names(r) for p in ("Gdańsk", "Długa", "Ulica"))
-            else [f"expected the fictional people and places extracted, got {_extraction_names(r)}"]
-        ),
-    },
-    {
-        "name": "fictional-mention-is-not-a-link",
-        "anchor": {"kind": "theme", "id": "t-the-boats", "name": "The boats"},
-        "who": "Marek",
-        "account": "Aunt Nora from next door brought her famous plum cake to our wedding. It rained, but "
-        "nobody minded, and Dad played the accordion all evening.",
-        "assert": lambda r: (
-            [] if "p-nora" not in _matches(r) else ['"Nora" in a fictional story matched p-nora — about ≠ mention']
-        ),
-    },
-    {
-        "name": "kinship-term-not-an-archive-alias",
-        "knowledge": {
-            "people": [
-                {"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]},
-                {"id": "p-otto", "name": "Otto Nowak", "aliases": ["Dad"]},
-            ],
-            "places": [],
-            "themes": [],
-            "items": [],
-        },
-        "anchor": {"kind": "theme", "id": "t-kowalski-house", "name": "The house"},
-        "who": "Marek",
-        "account": "Dad came with me to see the house we wanted to buy. He said nothing, which is his way.",
-        "assert": lambda r: (
-            []
-            if "p-otto" not in _matches(r)
-            else [
-                "'Dad' defaulted to p-otto — a kinship term is the writer's own "
-                "relative, never an archive-wide alias (2026-08-05)"
-            ]
-        ),
-    },
-    {
-        "name": "age-with-known-dob-is-not-asked",
-        "knowledge": _real_knowledge_with_dob(),
-        "anchor": {"kind": "item", "id": "letter-1990-03-01", "name": "A letter"},
-        "who": "Marek",
-        "account": "I was eight when we moved to the new house.",
-        "assert": lambda r: (
-            []
-            if not any(w in _question_texts(r) for w in _DATE_ASK)
-            else [f"asked for a date despite a known dob + given age: {_question_texts(r)}"]
-        ),
-    },
-    {
-        "name": "age-without-dob-asks-politely",
-        "knowledge": {
-            "people": [{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]}],
-            "places": [],
-            "themes": [],
-            "items": [],
-        },
-        "anchor": {"kind": "item", "id": "letter-1990-03-01", "name": "A letter"},
-        "who": "Marek",
-        "account": "I was eight when we moved to the new house.",
-        "assert": lambda r: (
-            []
-            if any(w in _question_texts(r) for w in _DATE_ASK)
-            else ["no date question asked despite an unknown dob and only an age given"]
-        ),
-    },
-    {
-        "name": "dob-stated-in-account-is-asserted",
-        "knowledge": {
-            "people": [{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]}],
-            "places": [],
-            "themes": [],
-            "items": [],
-        },
-        "anchor": {"kind": "item", "id": "letter-1990-03-01", "name": "A letter"},
-        "who": "Marek",
-        "account": "I was eight when we moved. My DOB is 15/09/1981.",
-        "assert": lambda r: (
-            []
-            if _facts_of_kind(r, "dob") and not any(w in _question_texts(r) for w in _DATE_ASK)
-            else ["expected an asserted dob fact and no date question when dob + age are computable"]
-        ),
-    },
-    {
-        "name": "new-narrator-connection-asked",
-        "knowledge": {
-            "people": [{"id": "p-helena", "name": "Helena Kowalski", "aliases": ["Grandma", "Babcia"]}],
-            "places": [],
-            "themes": [],
-            "items": [],
-        },
-        "anchor": {"kind": "theme", "id": "t-kowalski-wedding", "name": "The wedding"},
-        "who": "Zofia Kowalski",
-        "account": "The wedding was lovely, the cake was poppy seed.",
-        "assert": lambda r: (
-            []
-            if any(w in _question_texts(r) for w in ("connect", "related", "relationship", "family"))
-            else ["no question asks how the new narrator is connected to the family"]
-        ),
-    },
-    {
-        "name": "new-artifact-asked-about",
-        "knowledge": {
-            "people": [{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]}],
-            "places": [],
-            "themes": [],
-            "items": [],
-        },
-        "anchor": {"kind": "theme", "id": "t-kowalski-boats", "name": "The boats"},
-        "who": "Marek",
-        "account": "We sailed on the Kasia, a little yacht Dad rebuilt in the garden.",
-        "assert": lambda r: (
-            []
-            if "kasia" in _question_texts(r)
-            else ["no 'tell me more' question about the newly named artifact (Kasia)"]
-        ),
-    },
+
+class MemoryFlow:
+    """One named memory-capture scenario — the anchor, the narrator, the
+    account. The session fixture runs each flow ONCE (the assess stage —
+    the production call self-corrects internally, so the eval runs it
+    exactly once); the condition tests verify the single output against
+    the flow's ``assert_`` and the shared contract (2026-08-10, user:
+    name the flows, cache the runs, independent tests)."""
+
+    name = ""
+    anchor: dict[str, Any] = {}
+    who = ""
+    account = ""
+    knowledge: dict[str, Any] | None = None  # None = the real archive's projection
+
+    def assert_(self, result: dict[str, Any]) -> list[str]:
+        """The flow's conditions on the output — empty means they all hold."""
+        raise NotImplementedError
+
+
+class RealBoatsLinksFlow(MemoryFlow):
+    name = "real-boats-links-the-artifacts"
+    anchor = {"kind": "place", "id": "pl-farndale-wharf", "name": "Iron Wharf, Farndale"}
+    who = "Alex"
+    account = "The boats were built on Iron Wharf — Sunlight first in 1980. The yard had a slipway into the creek."
+
+    def assert_(self, result: dict[str, Any]) -> list[str]:
+        if any(m in {"t-the-boats", "object-sunlight"} for m in _matches(result)):
+            return []
+        return ["the boats/Sunlight were not linked — expected a theme or artifact extraction"]
+
+
+class RealSheppeyFlow(MemoryFlow):
+    name = "real-sheppey-extracts-about-entities"
+    anchor = {"kind": "place", "id": "pl-seagate", "name": "Seagate"}
+    who = "Alex"
+    account = (
+        "We used to sail around the Isle of Seagate and under the old ford, not the new one. "
+        "Dad built the boats on Iron Wharf and Mum came along sometimes."
+    )
+
+    def assert_(self, result: dict[str, Any]) -> list[str]:
+        if any(m in {"pl-seagate", "pl-farndale-wharf", "p-owen", "p-nora", "t-the-boats"} for m in _matches(result)):
+            return []
+        return ["no about-entity from the story was matched"]
+
+
+class FictionalNoOvermatchFlow(MemoryFlow):
+    name = "fictional-family-no-overmatch"
+    knowledge = {
+        "people": [
+            {"id": "p-helena", "name": "Helena Kowalski", "aliases": ["Grandma", "Babcia"]},
+            {"id": "p-jan", "name": "Jan Kowalski", "aliases": ["Janek"]},
+        ],
+        "places": [{"id": "pl-gdansk", "name": "Gdańsk"}, {"id": "pl-dluga", "name": "Ulica Długa"}],
+        "themes": [],
+        "items": [],
+    }
+    anchor = {"kind": "place", "id": "pl-gdansk", "name": "Gdańsk"}
+    who = "Marek"
+    account = (
+        "Grandma Helena ran a bakery on Ulica Długa in Gdańsk. We used to visit after school and she "
+        "always gave us fresh poppy-seed cake. Janek helped behind the counter."
+    )
+
+    def assert_(self, result: dict[str, Any]) -> list[str]:
+        names = _extraction_names(result)
+        if any(p in n for n in names for p in ("Helena", "Janek", "Jan")) and any(
+            p in n for n in names for p in ("Gdańsk", "Długa", "Ulica")
+        ):
+            return []
+        return [f"expected the fictional people and places extracted, got {names}"]
+
+
+class FictionalMentionNotLinkFlow(MemoryFlow):
+    name = "fictional-mention-is-not-a-link"
+    anchor = {"kind": "theme", "id": "t-the-boats", "name": "The boats"}
+    who = "Marek"
+    account = (
+        "Aunt Nora from next door brought her famous plum cake to our wedding. It rained, but "
+        "nobody minded, and Dad played the accordion all evening."
+    )
+
+    def assert_(self, result: dict[str, Any]) -> list[str]:
+        if "p-nora" not in _matches(result):
+            return []
+        return ['"Nora" in a fictional story matched p-nora — about ≠ mention']
+
+
+class KinshipTermNotAliasFlow(MemoryFlow):
+    name = "kinship-term-not-an-archive-alias"
+    knowledge = {
+        "people": [
+            {"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]},
+            {"id": "p-otto", "name": "Otto Nowak", "aliases": ["Dad"]},
+        ],
+        "places": [],
+        "themes": [],
+        "items": [],
+    }
+    anchor = {"kind": "theme", "id": "t-kowalski-house", "name": "The house"}
+    who = "Marek"
+    account = "Dad came with me to see the house we wanted to buy. He said nothing, which is his way."
+
+    def assert_(self, result: dict[str, Any]) -> list[str]:
+        if "p-otto" not in _matches(result):
+            return []
+        return [
+            "'Dad' defaulted to p-otto — a kinship term is the writer's own "
+            "relative, never an archive-wide alias (2026-08-05)"
+        ]
+
+
+class AgeWithKnownDobNotAskedFlow(MemoryFlow):
+    name = "age-with-known-dob-is-not-asked"
+    knowledge = _real_knowledge_with_dob()
+    anchor = {"kind": "item", "id": "letter-1990-03-01", "name": "A letter"}
+    who = "Marek"
+    account = "I was eight when we moved to the new house."
+
+    def assert_(self, result: dict[str, Any]) -> list[str]:
+        if not any(w in _question_texts(result) for w in _DATE_ASK):
+            return []
+        return [f"asked for a date despite a known dob + given age: {_question_texts(result)}"]
+
+
+class AgeWithoutDobAsksFlow(MemoryFlow):
+    name = "age-without-dob-asks-politely"
+    knowledge = {
+        "people": [{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]}],
+        "places": [],
+        "themes": [],
+        "items": [],
+    }
+    anchor = {"kind": "item", "id": "letter-1990-03-01", "name": "A letter"}
+    who = "Marek"
+    account = "I was eight when we moved to the new house."
+
+    def assert_(self, result: dict[str, Any]) -> list[str]:
+        if any(w in _question_texts(result) for w in _DATE_ASK):
+            return []
+        return ["no date question asked despite an unknown dob and only an age given"]
+
+
+class DobStatedAssertedFlow(MemoryFlow):
+    name = "dob-stated-in-account-is-asserted"
+    knowledge = {
+        "people": [{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]}],
+        "places": [],
+        "themes": [],
+        "items": [],
+    }
+    anchor = {"kind": "item", "id": "letter-1990-03-01", "name": "A letter"}
+    who = "Marek"
+    account = "I was eight when we moved. My DOB is 15/09/1981."
+
+    def assert_(self, result: dict[str, Any]) -> list[str]:
+        if _facts_of_kind(result, "dob") and not any(w in _question_texts(result) for w in _DATE_ASK):
+            return []
+        return ["expected an asserted dob fact and no date question when dob + age are computable"]
+
+
+class NewNarratorConnectionFlow(MemoryFlow):
+    name = "new-narrator-connection-asked"
+    knowledge = {
+        "people": [{"id": "p-helena", "name": "Helena Kowalski", "aliases": ["Grandma", "Babcia"]}],
+        "places": [],
+        "themes": [],
+        "items": [],
+    }
+    anchor = {"kind": "theme", "id": "t-kowalski-wedding", "name": "The wedding"}
+    who = "Zofia Kowalski"
+    account = "The wedding was lovely, the cake was poppy seed."
+
+    def assert_(self, result: dict[str, Any]) -> list[str]:
+        if any(w in _question_texts(result) for w in ("connect", "related", "relationship", "family")):
+            return []
+        return ["no question asks how the new narrator is connected to the family"]
+
+
+class NewArtifactAskedFlow(MemoryFlow):
+    name = "new-artifact-asked-about"
+    knowledge = {
+        "people": [{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]}],
+        "places": [],
+        "themes": [],
+        "items": [],
+    }
+    anchor = {"kind": "theme", "id": "t-kowalski-boats", "name": "The boats"}
+    who = "Marek"
+    account = "We sailed on the Kasia, a little yacht Dad rebuilt in the garden."
+
+    def assert_(self, result: dict[str, Any]) -> list[str]:
+        if "kasia" in _question_texts(result):
+            return []
+        return ["no 'tell me more' question about the newly named artifact (Kasia)"]
+
+
+FLOWS: list[MemoryFlow] = [
+    RealBoatsLinksFlow(),
+    RealSheppeyFlow(),
+    FictionalNoOvermatchFlow(),
+    FictionalMentionNotLinkFlow(),
+    KinshipTermNotAliasFlow(),
+    AgeWithKnownDobNotAskedFlow(),
+    AgeWithoutDobAsksFlow(),
+    DobStatedAssertedFlow(),
+    NewNarratorConnectionFlow(),
+    NewArtifactAskedFlow(),
 ]
 
 
-def run_case(
+def run_flow(
     client: AIClient,
-    case: dict[str, Any],
+    flow: MemoryFlow,
     default_knowledge: dict[str, list[dict[str, Any]]],
-) -> tuple[bool, list[str]]:
-    knowledge = case.get("knowledge", default_knowledge)
-    result = assess(
+) -> dict[str, Any]:
+    """Run the flow ONCE — the assess stage, exactly once (the production
+    call self-corrects internally, so the eval must not repeat it). The
+    condition tests verify the single output."""
+    knowledge: Any = flow.knowledge or default_knowledge
+    return assess(
         client,
-        anchor=case["anchor"],
-        who=case["who"],
-        account=case["account"],
+        anchor=flow.anchor,
+        who=flow.who,
+        account=flow.account,
         knowledge=Knowledge(
             people=knowledge["people"],
             places=knowledge["places"],
@@ -318,36 +369,9 @@ def run_case(
             items=knowledge["items"],
         ),
     )
-    errors = contract_errors(result) + case["assert"](result)
-    if errors:
-        return False, errors
-    return True, []
 
 
-def main() -> int:
-    default_knowledge = load_projection()
-    try:
-        client = AIClient()
-    except AIClientError as e:
-        # fail fast, never a silent skip: an eval that cannot run must say so
-        # loudly (2026-08-05) — a zero exit would green a CI that never ran it
-        print(f"FAIL — no API key: {e}")
-        return 1
-    # one shot per case: the production call self-corrects internally
-    # (assess -> review -> redo), so the eval must run it exactly once
-    failures = 0
-    for case in CASES:
-        ok, errors = run_case(client, case, default_knowledge)
-        if ok:
-            print(f"PASS {case['name']}")
-        else:
-            failures += 1
-            print(f"FAIL {case['name']}")
-            for error in errors:
-                print(f"  - {error}")
-    print(f"{len(CASES) - failures}/{len(CASES)} cases passing")
-    return 1 if failures else 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+def condition_contract(result: dict[str, Any]) -> list[str]:
+    """The shared elicitation contract — every flow's output must satisfy
+    it (the skippability of questions, the persona guard)."""
+    return contract_errors(result)

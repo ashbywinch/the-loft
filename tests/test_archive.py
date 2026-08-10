@@ -608,3 +608,46 @@ def test_review_attempts_are_walk_separated() -> None:
     assert len(session.attempts) == 2
     assert session.attempts[1].messages == ()  # the fresh walk's conversation
     assert session.current is None  # the last decision cleared the resume point
+
+
+def test_identity_saves_serialize_concurrent_writers() -> None:
+    """2026-08-09 (user: the walk died with "Sorry — the assistant
+    couldn't be reached. Try again?" after "refusing to edit existing
+    file: imports-27.json"): the review flow records the user's line and
+    the assistant's line while the app's fire-and-forget message records
+    land — two writers computed the same next version and the append-only
+    store refused the second, killing the whole walk. The write seam now
+    serializes the read-compute-write with the process-wide lock: every
+    writer reads AFTER the previous writer's write, so no collision and no
+    lost update. A retry-on-collision was rejected because re-writing a
+    stale snapshot would silently drop the concurrent writer's change (the
+    DBA critique's F4)."""
+    import threading
+
+    store = MemoryStore()
+    archive = Archive(store)
+    archive.save_identity("imports", {"imports": []})
+    errors: list[Exception] = []
+
+    def writer(prefix: str) -> None:
+        try:
+            for i in range(15):
+                table = archive.get_identity("imports") or {"imports": []}
+                table["imports"] = table["imports"] + [{"id": f"{prefix}-{i}"}]
+                archive.save_identity("imports", table)
+        except Exception as e:  # noqa: BLE001 — the test reports every failure
+            errors.append(e)
+
+    a = threading.Thread(target=writer, args=("a",))
+    b = threading.Thread(target=writer, args=("b",))
+    a.start()
+    b.start()
+    a.join()
+    b.join()
+    assert not errors
+    latest = archive.get_identity("imports")
+    assert latest is not None
+    ids = [r["id"] for r in latest["imports"]]
+    # every write landed exactly once — no collision crash, no lost update
+    assert len(ids) == 30
+    assert all(f"a-{i}" in ids and f"b-{i}" in ids for i in range(15))

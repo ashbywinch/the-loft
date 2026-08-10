@@ -545,7 +545,7 @@ class ReviewDecision:
             raise ValueError(f"unknown review decision: {decision!r}")
         return cls(
             person_id=_require(raw, "person_id"),
-            decision=decision,  # type: ignore[arg-type]
+            decision=cast(Literal["attested", "estimated", "pending", "delete"], decision),
             when=str(raw.get("when", "")),
             basis=raw.get("basis"),
             last=bool(raw.get("last")),

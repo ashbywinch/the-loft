@@ -27,7 +27,7 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 import dateparser
 
@@ -985,7 +985,7 @@ class Fact:
             value=raw.get("value"),
             precision=raw.get("precision"),
             entity=raw.get("entity"),
-            status=status,  # type: ignore[arg-type]
+            status=cast(Literal["confirmed", "proposed"], status),
             source=str(raw.get("source", "")),
         )
 

@@ -73,8 +73,8 @@ function stubFetch({
             },
             message:
               body.decision === "estimated"
-                ? "Done — I've noted Pearl Whitlock as your recollection."
-                : "Done — Pearl Whitlock is recorded as confirmed.",
+                ? "Done — I've recorded Pearl Whitlock as a guess."
+                : "Done — Pearl Whitlock joins the tree as a fact.",
           };
         },
       });
@@ -162,7 +162,7 @@ describe("the import review is the chat — one conversation resolves the pendin
     await tick();
     expect(bubbles(main).at(-1)).toContain("The documents show"); // the digging is said aloud
     expect(bubbles(main).at(-1)).toContain("Did you see the record yourself?"); // the genealogist's question
-    chip(main, "Record as confirmed").click();
+    chip(main, "Record as fact").click();
     await tick();
     const decided = JSON.parse(decideCall()[1].body);
     expect(decided.decision).toBe("attested");
@@ -181,12 +181,12 @@ describe("the import review is the chat — one conversation resolves the pendin
     setInput(main, "I think Mum said Nora was a cousin of some kind, via Pearl's brother.");
     send(main);
     await tick();
-    chip(main, "Record as estimated").click();
+    chip(main, "Record as guess").click();
     await tick();
     const decided = JSON.parse(decideCall()[1].body);
     expect(decided.decision).toBe("estimated");
     expect(decided.basis.text).toBe("I think Mum said Nora was a cousin of some kind, via Pearl's brother.");
-    expect(bubbles(main).some((b) => b.includes("noted Pearl Whitlock as your recollection"))).toBe(true);
+    expect(bubbles(main).some((b) => b.includes("recorded Pearl Whitlock as a guess"))).toBe(true);
     expect(state.people[0].status).toBe("estimated");
   });
 
@@ -203,7 +203,7 @@ describe("the import review is the chat — one conversation resolves the pendin
     setInput(main, "Yes, she told me herself.");
     send(main);
     await tick();
-    chip(main, "Record as estimated").click();
+    chip(main, "Record as guess").click();
     await tick();
     const decided = JSON.parse(decideCall()[1].body);
     expect(decided.basis.text).toBe("I think Mum said Nora was a cousin of some kind.");
@@ -225,19 +225,19 @@ describe("the import review is the chat — one conversation resolves the pendin
     await tick();
     expect(bubbles(main).some((b) => b.includes("The documents show"))).toBe(true);
     expect(bubbles(main).some((b) => b.includes("in the war record, Walter Whitlock"))).toBe(true); // the documents' terms
-    chip(main, "Record as estimated").click();
+    chip(main, "Record as guess").click();
     await tick();
     const decided = JSON.parse(decideCall()[1].body);
     expect(decided.decision).toBe("estimated");
     expect(decided.basis.text).toContain("Not sure about the brother link");
-    expect(bubbles(main).some((b) => b.includes("noted Pearl Whitlock as your recollection"))).toBe(true);
+    expect(bubbles(main).some((b) => b.includes("recorded Pearl Whitlock as a guess"))).toBe(true);
   });
 
   it("off-topic answers are steered back — never recorded", async () => {
     stubFetch({
       relevant: "false",
       note: "the house on Victoria Avenue",
-      message: "That's about the house on Victoria Avenue — let's come back to Pearl Whitlock: do you think the link's right?",
+      message: "That's about the house on Victoria Avenue — let's come back to Pearl Whitlock: does that fit what you remember?",
     });
     const main = document.createElement("main");
     const state = JSON.parse(JSON.stringify(STATE));
@@ -277,30 +277,40 @@ describe("the import review is the chat — one conversation resolves the pendin
         }
         return Promise.resolve({
           ok: true,
-          json: async () => ({ ok: true, person: { id: body.person_id, name: "X" }, message: "Done — Pearl Whitlock is recorded as confirmed." }),
+          json: async () => ({ ok: true, person: { id: body.person_id, name: "X" }, message: "Done — Pearl Whitlock joins the tree as a fact." }),
         });
       }),
     );
     setInput(main, "Ah, you're right — it was Walter.");
     send(main);
     await tick();
-    chip(main, "Record as confirmed").click();
+    chip(main, "Record as fact").click();
     await tick();
     expect(fetch.mock.calls.filter(([url]) => url === "/api/review/decide")).toHaveLength(1); // now recorded
-    expect(bubbles(main).some((b) => b.includes("recorded as confirmed"))).toBe(true);
+    expect(bubbles(main).some((b) => b.includes("joins the tree as a fact"))).toBe(true);
   });
 
-  it('"I don\'t know" keeps the import\'s guess as proposed', async () => {
+  it('"I don\'t know" chats first — only then are the options offered (2026-08-10, user: "don\'t suggest any of these until we\'ve chatted about what they know")', async () => {
     stubFetch();
     const main = document.createElement("main");
     const state = JSON.parse(JSON.stringify(STATE));
     render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
     chip(main, "I don't know").click();
-    chip(main, "Keep as proposed").click();
+    expect(bubbles(main).at(-1)).toBe("What do you remember about them, even a little?"); // chat first, no buttons
+    expect(main.querySelectorAll(".chat-quick .chip")).toHaveLength(0);
+    setInput(main, "Nothing really — I never met her.");
+    send(main);
+    await tick();
+    // only the options that apply: leave it or record what little they know — never fact, never delete
+    expect([...main.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent)).toEqual([
+      "Leave for later",
+      "Record as guess",
+    ]);
+    chip(main, "Leave for later").click();
     await tick();
     const decided = JSON.parse(decideCall()[1].body);
     expect(decided.decision).toBe("pending");
-    expect(bubbles(main).some((b) => b.includes("stays as the import's guess for now"))).toBe(true);
+    expect(bubbles(main).some((b) => b.includes("stays out of the tree for now"))).toBe(true);
     expect(state.people[0].status).toBe("proposed"); // untouched
   });
 
@@ -314,7 +324,7 @@ describe("the import review is the chat — one conversation resolves the pendin
     setInput(main, "He was never in the family — a researcher's confusion.");
     send(main);
     await tick();
-    chip(main, "Remove it").click();
+    chip(main, "Delete").click();
     await tick();
     const decided = JSON.parse(decideCall()[1].body);
     expect(decided.decision).toBe("delete");
@@ -331,15 +341,15 @@ describe("the import review is the chat — one conversation resolves the pendin
     send(main);
     await tick();
     expect(bubbles(main).some((b) => b.includes("The documents show"))).toBe(true); // it dug, never dead-ended
-    chip(main, "Record as estimated").click();
+    chip(main, "Record as guess").click();
     await tick();
     const decided = JSON.parse(decideCall()[1].body);
     expect(decided.decision).toBe("estimated");
     expect(decided.basis.text).toContain("Not sure. I think Mum said Nora was some kind of cousin");
   });
 
-  it('a typed "I don\'t know" concludes — the keep/estimate chips, never a re-ask or confirmation (2026-08-09, the transcript\'s loop)', async () => {
-    stubFetch({ confidence: "dont_know", question: "I'll leave her as the import's guess unless you'd like to record what you remember as an estimate." });
+  it('a typed "I don\'t know" concludes — the leave/guess chips, never a re-ask or fact/delete (2026-08-09, the transcript\'s loop; 2026-08-10 vocabulary)', async () => {
+    stubFetch({ confidence: "dont_know", question: "I'll leave her as she stands unless you'd like to record what you remember as a guess." });
     const main = document.createElement("main");
     const state = JSON.parse(JSON.stringify(STATE));
     render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
@@ -347,9 +357,10 @@ describe("the import review is the chat — one conversation resolves the pendin
     send(main);
     await tick();
     const chips = [...main.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent);
-    expect(chips).toEqual(expect.arrayContaining(["Keep as proposed", "Record as estimated"]));
-    expect(chips).not.toContain("Record as confirmed"); // exhausted uncertainty never confirms
-    chip(main, "Keep as proposed").click();
+    expect(chips).toEqual(expect.arrayContaining(["Leave for later", "Record as guess"]));
+    expect(chips).not.toContain("Record as fact"); // exhausted uncertainty never offers fact
+    expect(chips).not.toContain("Delete");
+    chip(main, "Leave for later").click();
     await tick();
     const decided = JSON.parse(decideCall()[1].body);
     expect(decided.decision).toBe("pending");
@@ -366,10 +377,10 @@ describe("the import review is the chat — one conversation resolves the pendin
       setInput(main, `The record attests ${name}.`);
       send(main);
       await tick();
-      chip(main, "Record as confirmed").click();
+      chip(main, "Record as fact").click();
       await tick();
     }
-    expect(bubbles(main).at(-1)).toContain("That's everyone — 2 confirmed");
+    expect(bubbles(main).at(-1)).toContain("That's everyone — 2 recorded as facts");
     expect([...main.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent)).toContain("See the family tree →");
     expect(state.imports[0].status).toBe("reviewed"); // nothing pending — the home card disappears
   });
@@ -390,7 +401,7 @@ describe("the import review is the chat — one conversation resolves the pendin
     const main = document.createElement("main");
     render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
     expect(main.textContent).toContain("The review so far");
-    expect(main.textContent).toContain("Pearl Whitlock — estimated, from Alex's recollection (2026-08-09): 'Grandma said so'.");
+    expect(main.textContent).toContain("Pearl Whitlock — recorded as a guess, from Alex's recollection (2026-08-09): 'Grandma said so'.");
   });
 
   it("a resumed session continues from the record's resume point", () => {
@@ -415,3 +426,51 @@ describe("the import review is the chat — one conversation resolves the pendin
     expect(main.textContent).toContain("Not found");
   });
 });
+
+
+  it("a kept link is never re-asked this walk — it stays proposed as the resume point (2026-08-10 review)", async () => {
+    stubFetch({ confidence: "dont_know" });
+    const main = document.createElement("main");
+    const state = JSON.parse(JSON.stringify(STATE));
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    chip(main, "I don't know").click();
+    setInput(main, "Nothing, really.");
+    send(main);
+    await tick();
+    chip(main, "Leave for later").click();
+    await tick();
+    // the NEXT link is asked — never the same kept one (the walk used to
+    // re-ask the identical link forever because it stays proposed)
+    expect(bubbles(main).at(-1)).toContain("Quentin Whitlock");
+    expect(state.people[0].status).toBe("proposed"); // untouched — the resume point for a later visit
+  });
+
+  it("a re-render does not duplicate the transcript — the start response's lines are not re-recorded (2026-08-10 review)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url, init) => {
+        const body = JSON.parse(init?.body ?? "{}");
+        if (url === "/api/review/start") {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              ok: true,
+              messages: [
+                "Thanks for coming back — there are 2 people from the documents I'd like your eyes on.",
+                "Next: Pearl Whitlock. The notes describe Pearl Whitlock as cousin — researcher. Does that fit what you remember?",
+              ],
+            }),
+          });
+        }
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true, person: { id: body.person_id, name: "X" } }) });
+      }),
+    );
+    const main = document.createElement("main");
+    const state = JSON.parse(JSON.stringify(STATE));
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    await tick();
+    await tick();
+    // the opening and the resumed claim are already in the attempt — no
+    // message-endpoint call lands for them
+    expect(fetch.mock.calls.filter(([url]) => url === "/api/review/message")).toHaveLength(0);
+  });

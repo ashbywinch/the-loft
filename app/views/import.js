@@ -1,19 +1,25 @@
 /** The import review (user, 2026-08-07) — the review IS the chat (user,
  *  2026-08-08): opening the session's review starts the conversation about
  *  the unfinished doc import and walks through the pending links one at a
- *  time. Each link's EXACT claim is named — "the import proposes Quentin
- *  Whitlock is '…'" — and the reviewer picks a disposition with their
- *  confidence (2026-08-09): Definitely (attested), I think so (estimated),
- *  I don't know (keep pending), Definitely not / I think not (delete). The
- *  positives and the negatives each get a follow-up — "how do you know?"
- *  or "what do you remember?" — and the free text is checked against the
- *  exact claim AND the archive's attested facts: an off-topic answer is
- *  steered back, and a contradiction with the existing data (the
- *  the wrong-person-for-the-attested-event case) is surfaced and resolved before anything is
- *  confirmed. The decision vocabulary is NOT the status vocabulary —
- *  "confirm" is a status, never an action. The conversation is a record:
- *  every decision and exchange persists on the session's page (the API
- *  subset over the store), resumable from the last undecided link. */
+ *  time. Each link's EXACT claim is named — "Next: X. The document mentions
+ *  X — it says, …" — and the reviewer picks a disposition with their
+ *  confidence (2026-08-09): Definitely, I think so, I don't know,
+ *  Definitely not / I think not. The confirmation chips are only offered
+ *  AFTER the chat has gathered what they know, and only the options that
+ *  obviously apply: Record as fact, Record as guess, Leave for later,
+ *  Delete (2026-08-10, user: "don't suggest any of these until we've
+ *  chatted about what they know and excluded any options that obviously
+ *  don't apply" — the chips name the consequence, never the statuses:
+ *  the family never meets proposed/estimated/confirmed). The positives and
+ *  the negatives each get a follow-up — "how do you know?" or "what do you
+ *  remember?" — and the free text is checked against the exact claim AND
+ *  the archive's attested facts: an off-topic answer is steered back, and a
+ *  contradiction with the existing data (the wrong-person-for-the-attested-
+ *  event case) is surfaced and resolved before anything is confirmed. The
+ *  decision vocabulary is NOT the status vocabulary — "confirm" is a
+ *  status, never an action. The conversation is a record: every decision
+ *  and exchange persists on the session's page (the API subset over the
+ *  store), resumable from the last undecided link. */
 
 import { el, header } from "../ui.js";
 import { proposedPeople } from "../data.js";
@@ -61,16 +67,18 @@ export function render(main, ctx, state) {
   );
 }
 
-/** One line of the review record: "Quentin Whitlock — confirmed (9 Aug
- *  2026)" or "— estimated, from Alex's recollection (9 Aug 2026): '…'." */
+/** One line of the review record: "Quentin Whitlock — recorded as a fact
+ *  (9 Aug 2026)" or "— recorded as a guess, from Alex's recollection
+ *  (9 Aug 2026): '…'." — the family's words, never the statuses
+ *  (2026-08-10, user). */
 function decisionLine(name, d) {
   const when = d.when ? ` (${d.when})` : "";
-  if (d.decision === "attested") return `${name} — confirmed${when}.`;
+  if (d.decision === "attested") return `${name} — recorded as a fact${when}.`;
   if (d.decision === "estimated") {
     const basis = d.basis?.text ? `: '${d.basis.text}'` : "";
-    return `${name} — estimated, from ${d.basis?.by ?? "the reviewer"}'s recollection${when}${basis}.`;
+    return `${name} — recorded as a guess, from ${d.basis?.by ?? "the reviewer"}'s recollection${when}${basis}.`;
   }
-  if (d.decision === "pending") return `${name} — kept as proposed${when}.`;
+  if (d.decision === "pending") return `${name} — left for later${when}.`;
   return `${name} — removed${when}.`;
 }
 
@@ -84,6 +92,9 @@ function reviewSession(state, session) {
   let person = null;
   let pendingDecision = null; // {p, decision} while the free text's being checked
   let tally = { attested: 0, estimated: 0, pending: 0, deleted: 0 };
+  // the links decided during THIS walk — a kept link stays proposed in the
+  // table, so the walk must not re-ask it (2026-08-10 review)
+  const decidedIds = new Set();
   const reviewer = state.me?.name ?? "the reviewer";
   const today = new Date().toISOString().slice(0, 10);
 
@@ -141,24 +152,38 @@ function reviewSession(state, session) {
       source ? el("div", {}, [claimText + " ", el("a", { class: "link", href: `#/item/${source.id}` }, "Open it →")]) : claimText,
     );
     // the claim is part of the conversation the family saw — record it
-    recordMessage(session.id, "assistant", claimText);
+    // once per attempt (2026-08-10 review: a re-render must not duplicate
+    // the transcript)
+    recordIfNew("assistant", claimText);
     chat.setQuickReplies([
-      { label: "Definitely", primary: true, onClick: () => askText(p, "How do you know?") },
-      { label: "I think so", onClick: () => askText(p, "What do you remember that makes you think so?") },
+      { label: "Definitely", primary: true, onClick: () => askText(p, "How do you know?", "positive") },
+      { label: "I think so", onClick: () => askText(p, "What do you remember that makes you think so?", "positive") },
       { label: "I don't know", onClick: () => askDontKnow(p) },
-      { label: "Definitely not", onClick: () => askText(p, "What makes you say that?") },
-      { label: "I think not", onClick: () => askText(p, "What makes you think not?") },
+      { label: "Definitely not", onClick: () => askText(p, "What makes you say that?", "negative") },
+      { label: "I think not", onClick: () => askText(p, "What makes you think not?", "negative") },
     ]);
   };
 
   /** The follow-up: the reviewer's own words are the recollection, never
-   *  suggested (2026-08-09). */
-  const askText = (p, question) => {
+   *  suggested (2026-08-09). The disposition (positive / negative /
+   *  dont_know) is captured from the initial chip and kept — a
+   *  question-answer never flips a "Definitely not" into an offer to
+   *  record the link as a fact (2026-08-10, user: the offered options must
+   *  exclude what obviously doesn't apply). */
+  const askText = (p, question, disposition = null) => {
     person = p;
-    pendingDecision = { p, statement: null, provenance: [] };
+    pendingDecision = { p, statement: null, provenance: [], disposition };
     chat.addAssistant(question);
+    chat.setQuickReplies([]); // the question replaces the disposition chips (2026-08-10)
+    recordIfNew("assistant", question); // the questions are part of what the family saw
     chat.swapInput(el("textarea", { class: "field", rows: 2, placeholder: "Say it as you'd tell a family member…" }));
   };
+
+  /** "I don't know" is not a dead end and not a button-push — the
+   *  genealogist first asks what they know, even a little; only then are
+   *  the options offered (2026-08-10, user: "don't suggest any of these
+   *  until we've chatted about what they know"). */
+  const askDontKnow = (p) => askText(p, "What do you remember about them, even a little?", "dont_know");
 
   const sendText = async (text) => {
     if (!person) return;
@@ -197,34 +222,39 @@ function reviewSession(state, session) {
     chat.setBusy(false);
     // the first statement is the recollection; later answers (the
     // question's answers, the provenance) accumulate beside it. The
-    // disposition's NEGATIVE is captured from the first statement and kept
-    // — a question-answer like "no, I don't remember" answers the
-    // genealogist, it does not flip the disposition to removal (2026-08-09)
+    // disposition is captured from the initial chip and kept (2026-08-10)
     const statement = pending?.statement ?? text;
     const provenance = pending?.provenance ? [...pending.provenance, text] : [];
-    const negative = pending?.negative ?? (res.confidence === "definitely_not" || res.confidence === "think_not");
-    const dontKnow = res.confidence === "dont_know";
-    pendingDecision = { p: person, statement, provenance, negative };
-    // the repeated "I don't know" concludes rather than looping (2026-08-09,
-    // user: the transcript's loop): exhausted uncertainty offers the keep
-    // or the estimate — never re-asks the same question
-    chat.setQuickReplies(
-      dontKnow
-        ? [
-            { label: "Keep as proposed", primary: true, onClick: () => keep(person) },
-            { label: "Record as estimated", onClick: () => recordDecision(person, "estimated") },
-          ]
-        : negative
-          ? [
-              { label: "Remove it", primary: true, onClick: () => recordDecision(person, "delete") },
-              { label: "Leave it for now", onClick: () => keep(person) },
-            ]
-          : [
-              { label: "Record as estimated", primary: true, onClick: () => recordDecision(person, "estimated") },
-              { label: "Record as confirmed", onClick: () => recordDecision(person, "attested") },
-              { label: "Leave it for now", onClick: () => keep(person) },
-            ],
-    );
+    const disposition = pending?.disposition ?? null;
+    pendingDecision = { p: person, statement, provenance, disposition };
+    // the confirmation chips name the CONSEQUENCE, in the family's words —
+    // never the statuses (2026-08-10, user). Only the options that
+    // obviously apply are offered: a negative answer never offers "Record
+    // as fact", a "don't know" never offers fact or delete, a definite
+    // answer never offers "Record as guess".
+    const FACT = { label: "Record as fact", onClick: () => recordDecision(person, "attested") };
+    const GUESS = { label: "Record as guess", onClick: () => recordDecision(person, "estimated") };
+    const LEAVE = { label: "Leave for later", onClick: () => keep(person) };
+    const DELETE = { label: "Delete", onClick: () => recordDecision(person, "delete") };
+    const chipsFor = (confidence, disc) => {
+      if (disc === "negative" || confidence === "definitely_not" || confidence === "think_not") {
+        return [{ ...DELETE, primary: true }, LEAVE];
+      }
+      if (disc === "dont_know" || confidence === "dont_know") {
+        return [{ ...LEAVE, primary: true }, GUESS];
+      }
+      switch (confidence) {
+        case "definitely":
+          return [{ ...FACT, primary: true }, LEAVE];
+        case "think_so":
+          return [{ ...GUESS, primary: true }, FACT, LEAVE];
+        default: // unclear — nothing obviously excluded, but a positive start never offers delete
+          return disc === "positive"
+            ? [{ ...LEAVE, primary: true }, GUESS, FACT]
+            : [{ ...LEAVE, primary: true }, GUESS, FACT, DELETE];
+      }
+    };
+    chat.setQuickReplies(chipsFor(res.confidence, disposition));
   };
 
   /** The explicit confirmation (2026-08-09, user): the reviewer confirms
@@ -244,6 +274,7 @@ function reviewSession(state, session) {
       if (decision === "attested") tally.attested += 1;
       else if (decision === "estimated") tally.estimated += 1;
       else tally.deleted += 1;
+      decidedIds.add(p.id); // a kept person stays proposed — the walk must not re-ask them (2026-08-10 review)
       // the confirmation is the server's rendered words — shown verbatim,
       // recorded verbatim (2026-08-09)
       chat.addAssistant(result === true ? `Done — ${p.name} is recorded.` : result);
@@ -255,24 +286,13 @@ function reviewSession(state, session) {
     }
   };
 
-  const askDontKnow = (p) => {
-    person = p;
-    pendingDecision = null;
-    chat.addAssistant(
-      `OK — ${p.name} stays as the import's guess (proposed) until we know more — or record them as estimated with what little you do know?`,
-    );
-    chat.setQuickReplies([
-      { label: "Keep as proposed", primary: true, onClick: () => keep(p) },
-      { label: "Mark estimated", onClick: () => askText(p, "What do you remember that makes you think so?") },
-    ]);
-  };
-
   const keep = async (p) => {
     chat.setBusy(true);
     const ok = await decide(state, session.id, p, "pending");
     if (ok) {
       tally.pending += 1;
-      chat.addAssistant(`${p.name} stays as the import's guess for now — we can pick it up later.`);
+      decidedIds.add(p.id); // still proposed in the table — never re-ask this walk (2026-08-10 review)
+      chat.addAssistant(`${p.name} stays out of the tree for now — we can pick it up later.`);
       advance();
     } else {
       chat.addAssistant("That didn't save — the server said no. Try again?");
@@ -282,14 +302,17 @@ function reviewSession(state, session) {
   };
 
   /** One message per decision, then the next link — or the honest ending
-   *  with a summary and a next action (2026-08-09). */
+   *  with a summary and a next action (2026-08-09). The kept links are
+   *  filtered out of the queue for THIS walk — they stay proposed in the
+   *  table as the session's resume point (2026-08-10 review: the walk
+   *  re-asked the same kept link forever). */
   const advance = () => {
     chat.setBusy(false); // success paths never cleared busy — the next
     // person's chips stayed hidden and the walkthrough dead-ended
-    const pending = proposedPeople(state);
+    const pending = proposedPeople(state).filter((p) => !decidedIds.has(p.id));
     if (!pending.length) {
       chat.addAssistant(
-        `That's everyone — ${tally.attested ? `${tally.attested} confirmed, ` : ""}${tally.estimated ? `${tally.estimated} noted as your recollection, ` : ""}${tally.pending ? `${tally.pending} left as the import's guess, ` : ""}${tally.deleted ? `${tally.deleted} removed` : "and nothing removed"} — the rest were already in the tree, so nothing changed for them.`,
+        `That's everyone — ${tally.attested ? `${tally.attested} recorded as facts, ` : ""}${tally.estimated ? `${tally.estimated} recorded as guesses, ` : ""}${tally.pending ? `${tally.pending} left for later, ` : ""}${tally.deleted ? `${tally.deleted} deleted` : "and nothing deleted"} — the rest were already in the tree, so nothing changed for them.`,
       );
       chat.setQuickReplies([{ label: "See the family tree →", primary: true, onClick: () => location.assign("#/tree") }]);
       return;
@@ -304,16 +327,36 @@ function reviewSession(state, session) {
   const resumeId = session.current;
   const first = resumeId ? pending.find((p) => p.id === resumeId) ?? pending[0] : pending[0];
   // begin the walk — a fresh attempt only when the last one is finished
-  // (2026-08-09: the sessions' storage is attempt-separated)
-  fetch("/api/review/start", {
+  // (2026-08-09: the sessions' storage is attempt-separated). The start
+  // response carries the lines already recorded in the current attempt, so
+  // a re-render records only what's new — the transcript never duplicates
+  // the opening or a claim (2026-08-10 review). Every app-rendered line
+  // waits for this before recording, so the check is never raced
+  let seenLines = new Set();
+  const started = fetch("/api/review/start", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: session.id }),
-  }).catch(() => {});
-  chat.addAssistant(
-    `Thanks for coming back — ${pending.length === 1 ? "there's 1 person" : `there are ${pending.length} people`} from the documents I'd like your eyes on${already ? `; everyone else is already in the tree` : ""}.`,
-  );
-  recordMessage(session.id, "assistant", `Thanks for coming back — ${pending.length === 1 ? "there's 1 person" : `there are ${pending.length} people`} from the documents I'd like your eyes on${already ? `; everyone else is already in the tree` : ""}.`);
+  })
+    .then((r) => r.json())
+    .then((body) => {
+      if (Array.isArray(body?.messages)) seenLines = new Set(body.messages);
+    })
+    .catch(() => {});
+  /** Record one of the app's own rendered lines exactly once per attempt
+   *  (2026-08-10 review: "the persisted transcript then no longer equals
+   *  what the family saw"). */
+  const recordIfNew = (role, text) => {
+    const record = () => {
+      if (seenLines.has(text)) return;
+      seenLines.add(text);
+      recordMessage(session.id, role, text);
+    };
+    started.then(record, record);
+  };
+  const opening = `Thanks for coming back — ${pending.length === 1 ? "there's 1 person" : `there are ${pending.length} people`} from the documents I'd like your eyes on${already ? `; everyone else is already in the tree` : ""}.`;
+  chat.addAssistant(opening);
+  recordIfNew("assistant", opening);
   chat.onSend(sendText);
   askDisposition(first);
   return wrap;

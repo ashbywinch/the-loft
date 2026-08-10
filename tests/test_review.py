@@ -358,7 +358,7 @@ def test_the_off_topic_steer_names_the_topic_never_the_reasoning() -> None:
     steer = steer_message(person, "the house on Victoria Avenue")
     assert "That's about the house on Victoria Avenue" in steer
     assert "Pearl Whitlock" in steer
-    assert "do you think the link's right" in steer
+    assert "does that fit what you remember" in steer
     # the empty-note fallback is a plain redirect — nothing internal leaks
     fallback = steer_message(person, "")
     assert "something else" in fallback

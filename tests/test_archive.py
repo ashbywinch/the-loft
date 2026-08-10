@@ -651,3 +651,54 @@ def test_identity_saves_serialize_concurrent_writers() -> None:
     # every write landed exactly once — no collision crash, no lost update
     assert len(ids) == 30
     assert all(f"a-{i}" in ids and f"b-{i}" in ids for i in range(15))
+
+
+def test_concurrent_message_recording_loses_nothing() -> None:
+    """2026-08-10 review (the lock covered only the version computation,
+    not the read): record_review_message used to read the imports table
+    BEFORE the lock, so two concurrent recordings could both compute from
+    the same snapshot and the second would supersede the first — a lost
+    line in the transcript. The mutation helper now holds the lock across
+    read, mutate, and write."""
+    import threading
+
+    store = MemoryStore()
+    archive = Archive(store)
+    archive.save_identity(
+        "imports",
+        {
+            "imports": [
+                {
+                    "id": "import-documents",
+                    "title": "The document import",
+                    "status": "pending",
+                    "attempts": [{"started": "2026-08-10", "messages": [], "decisions": []}],
+                }
+            ]
+        },
+    )
+    errors: list[Exception] = []
+
+    def writer(prefix: str) -> None:
+        try:
+            for i in range(15):
+                archive.record_review_message("import-documents", "user", f"{prefix}-{i}", "2026-08-10")
+        except Exception as e:  # noqa: BLE001 — the test reports every failure
+            errors.append(e)
+
+    a = threading.Thread(target=writer, args=("a",))
+    b = threading.Thread(target=writer, args=("b",))
+    a.start()
+    b.start()
+    a.join()
+    b.join()
+    assert not errors
+    session = archive.get_review_session("import-documents")
+    assert session is not None
+    attempt = session.current_attempt()
+    assert attempt is not None
+    texts = [m.text for m in attempt.messages]
+    # every recorded line landed exactly once — no collision crash, no lost
+    # update from a stale snapshot
+    assert len(texts) == 30
+    assert all(f"a-{i}" in texts and f"b-{i}" in texts for i in range(15))

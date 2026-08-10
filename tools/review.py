@@ -158,21 +158,25 @@ def assistant_message(result: dict[str, Any], person: Person) -> str:
 
 def confirmation_message(name: str, decision: str, basis: dict[str, Any] | None) -> str:
     """The assistant's rendered confirmation — the receipt the family sees,
-    in the genealogist's voice (2026-08-09)."""
+    in the genealogist's voice, naming the consequence (2026-08-09; the
+    vocabulary is the family's, never the statuses': fact / guess / left
+    for later / delete — user, 2026-08-10)."""
     if decision == "attested":
-        return f"Done — {name} is recorded as confirmed."
+        return f"Done — {name} joins the tree as a fact."
     if decision == "estimated":
-        text = (basis or {}).get("text") or "the reviewer's recollection"
-        return f"Done — I've noted {name} as your recollection: '{text}'."
+        text = (basis or {}).get("text") or "a guess"
+        return f"Done — I've recorded {name} as a guess: '{text}'."
     if decision == "delete":
         return f"Done — {name} is not recorded after all."
-    return f"{name} stays as the import's guess for now — we can pick it up later."
+    return f"{name} stays out of the tree for now — we can pick it up later."
 
 
 def steer_message(person: Person, note: str) -> str:
     """The off-topic steer — the genealogist's words, never the model's
     internal note (the note was leaking into the parens, 2026-08-09)."""
-    return f"That's about {note or 'something else'} — let's come back to {person.name}: do you think the link's right?"
+    return (
+        f"That's about {note or 'something else'} — let's come back to {person.name}: does that fit what you remember?"
+    )
 
 
 def render_history(messages: tuple[Message, ...]) -> str:
@@ -311,7 +315,7 @@ def investigate(
         "when no question is needed. When the reviewer expresses NO knowledge and has NO "
         "lead to follow (confidence dont_know), offer the conclusion rather than asking "
         "again: \"I'll leave her as she stands unless you'd like to record what you remember "
-        'as an estimate.">"}'
+        'as a guess.">"}'
     )
     tool_calls = 0
     trace: list[dict[str, Any]] = []

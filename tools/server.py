@@ -259,7 +259,15 @@ def build_app(
             archive.start_review_attempt(session_id)
         except ArchiveError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
-        return {"ok": True}
+        # the lines already recorded in the current attempt — the app
+        # records its rendered opening/claim only when they're new, so a
+        # mid-walk re-render never duplicates the transcript (2026-08-10
+        # review: "the persisted transcript then no longer equals what the
+        # family saw")
+        session_record = archive.get_review_session(session_id)
+        attempt = session_record.current_attempt() if session_record else None
+        messages = attempt.messages if attempt else ()
+        return {"ok": True, "messages": [m.text for m in messages]}
 
     @app.post("/api/review/message", response_model=None)
     def review_message(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
@@ -308,6 +316,12 @@ def build_app(
         session_id = str(body.get("session_id", ""))
         if not session_id:
             return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
+        # the session must exist BEFORE anything mutates — a stale session id
+        # must not change the archive and then fail (2026-08-10 review:
+        # resolve_person saved the person, then the session lookup raised,
+        # returning 500 with the person already changed)
+        if archive.get_review_session(session_id) is None:
+            return JSONResponse({"ok": False, "error": f"no import session {session_id}"}, status_code=404)
         # the confirmation names the person — the resolve returns a
         # gone-marker for a delete, so the name comes from the table first
         people_table = archive.get_identity("people") or {"people": []}
@@ -380,13 +394,13 @@ def build_app(
                 item = archive.get_item(item_id)
                 if item and item.get("status") == "catalogued":
                     transcription = archive.read_content(item_id, "transcription.txt") or ""
-                    text = transcription or item.get("story") or ""
-                    if text:
+                    item_text = transcription or item.get("story") or ""
+                    if item_text:
                         items.append(
                             {
                                 "id": item_id,
                                 "title": item.get("title", ""),
-                                "story": text,
+                                "story": item_text,
                                 "people": [p.get("id") for p in item.get("people", []) if isinstance(p, dict)],
                             }
                         )

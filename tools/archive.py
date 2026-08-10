@@ -269,25 +269,34 @@ class Archive:
 
     def save_identity(self, name: str, table: dict[str, Any]) -> int:
         """Create or supersede an identity table — the same append-only rule
-        as sidecars: never edits, a change is the next version. The
-        read-compute-write raced when two requests saved concurrently (the
-        review flow records the user's line and the assistant's line while
-        the app's fire-and-forget message records land — 2026-08-09, user:
-        the walk died with "refusing to edit existing file: imports-27.json"
-        when two writers computed the same version). A retry-on-collision
-        would re-write a STALE snapshot and silently drop the concurrent
-        writer's change (the DBA critique's F4) — so instead the process-wide
-        lock serializes the read-compute-write: every writer reads AFTER the
-        previous writer's write, so collisions and lost updates cannot happen
-        between the server's own threads (the only writers of the identity
-        tables). A collision with a foreign process — the CLI writes items,
-        never identity tables — fails loudly rather than losing data. The
-        real fix (a database projection, one transactional writer) is planned
-        in docs/sqlite-projection-plan.md."""
+        as sidecars: never edits, a change is the next version. Callers with
+        a ready-made table use this; callers that READ then modify must use
+        ``_mutate_identity`` instead — the lock here covers only the
+        version computation and the write (2026-08-10 review: a writer that
+        read the table before the lock could still supersede a concurrent
+        writer's change, silently dropping it — the claimed no-lost-update
+        guarantee only holds when the read is inside the lock)."""
         with self._save_lock:
             versions = self._identity_versions(name)
             version = (versions[-1] if versions else 0) + 1
             payload = dict(table)
+            if version > 1:
+                payload["supersedes"] = self._identity_path(name, version - 1)
+            self.store.write_new(self._identity_path(name, version), json.dumps(payload, indent=1, ensure_ascii=False))
+            return version
+
+    def _mutate_identity(self, name: str, mutate: Callable[[dict[str, Any] | None], dict[str, Any]]) -> int:
+        """Atomic read-modify-write of an identity table (2026-08-10
+        review: the lock must span the READ, the mutation, AND the write —
+        a writer that read the table before the lock still supersedes a
+        concurrent writer's change). The caller expresses its intent as a
+        function of the current table; the seam re-reads under the lock,
+        applies, and writes the next version. Returns the version written."""
+        with self._save_lock:
+            table = self.get_identity(name)
+            payload = mutate(table)
+            versions = self._identity_versions(name)
+            version = (versions[-1] if versions else 0) + 1
             if version > 1:
                 payload["supersedes"] = self._identity_path(name, version - 1)
             self.store.write_new(self._identity_path(name, version), json.dumps(payload, indent=1, ensure_ascii=False))
@@ -363,18 +372,21 @@ class Archive:
     def dismiss_person(self, person_id: str) -> None:
         """The import's pending people — dismiss one (dropped = gone): the
         person and their relationships leave the people table (supersede)."""
-        table = self.get_identity("people")
-        assert table is not None, "archive has no people table"
-        person = next((p for p in table["people"] if p["id"] == person_id), None)
-        if person is None:
-            raise KeyError(f"no person {person_id}")
-        if person.get("status") != "proposed":
-            raise ValueError(f"{person_id} is not proposed — dismiss only removes pending people")
-        table["people"] = [p for p in table["people"] if p["id"] != person_id]
-        table["relationships"] = [
-            r for r in table.get("relationships", []) if r.get("a") != person_id and r.get("b") != person_id
-        ]
-        self.save_identity("people", table)
+
+        def apply(table: dict[str, Any] | None) -> dict[str, Any]:
+            assert table is not None, "archive has no people table"
+            person = next((p for p in table["people"] if p["id"] == person_id), None)
+            if person is None:
+                raise KeyError(f"no person {person_id}")
+            if person.get("status") != "proposed":
+                raise ValueError(f"{person_id} is not proposed — dismiss only removes pending people")
+            table["people"] = [p for p in table["people"] if p["id"] != person_id]
+            table["relationships"] = [
+                r for r in table.get("relationships", []) if r.get("a") != person_id and r.get("b") != person_id
+            ]
+            return table
+
+        self._mutate_identity("people", apply)
 
     def resolve_person(self, person_id: str, decision: str, basis: dict[str, str] | None = None) -> dict[str, Any]:
         """The review's four dispositions for a proposed person (user,
@@ -400,19 +412,36 @@ class Archive:
         if decision == "delete":
             self.dismiss_person(person_id)
             return {"id": person_id, "gone": True}
-        updated = dict(person)
-        if decision == "estimated":
-            if basis is None or not str(basis.get("text", "")).strip():
-                raise ValueError(f"estimated needs a basis: {person_id}")
-            updated["status"] = "estimated"
-            updated["basis"] = basis
-        elif decision == "attested":
-            updated.pop("status", None)  # confirmed records omit the status key
-        else:
-            raise ValueError(f"unknown decision: {decision!r}")
-        table["people"] = [updated if p["id"] == person_id else p for p in table["people"]]
-        self.save_identity("people", table)
-        return updated
+        result: dict[str, Any] = {}
+
+        def apply(current: dict[str, Any] | None) -> dict[str, Any]:
+            assert current is not None, "archive has no people table"
+            person = next((p for p in current["people"] if p["id"] == person_id), None)
+            if person is None:
+                raise KeyError(f"no person {person_id}")
+            if person.get("status") != "proposed":
+                # a stale decision is a state, not an error
+                result["person"] = person
+                return current
+            if decision == "pending":
+                result["person"] = person
+                return current
+            updated = dict(person)
+            if decision == "estimated":
+                if basis is None or not str(basis.get("text", "")).strip():
+                    raise ValueError(f"estimated needs a basis: {person_id}")
+                updated["status"] = "estimated"
+                updated["basis"] = basis
+            elif decision == "attested":
+                updated.pop("status", None)  # confirmed records omit the status key
+            else:
+                raise ValueError(f"unknown decision: {decision!r}")
+            current["people"] = [updated if p["id"] == person_id else p for p in current["people"]]
+            result["person"] = updated
+            return current
+
+        self._mutate_identity("people", apply)
+        return result["person"]
 
     def proposed_people(self) -> list[Person]:
         """The queued proposed people — typed records; a corrupt file fails
@@ -603,15 +632,17 @@ class Archive:
         if pending_people:
             return
         imports = self.get_identity("imports")
-        if imports is None:
+        if imports is None or not any(s.get("status") == "pending" for s in imports.get("imports", [])):
             return
-        changed = False
-        for i, s in enumerate(imports["imports"]):
-            if s.get("status") == "pending":
-                imports["imports"][i] = Session.from_dict(s).completed().to_dict()
-                changed = True
-        if changed:
-            self.save_identity("imports", imports)
+
+        def apply(table: dict[str, Any] | None) -> dict[str, Any]:
+            assert table is not None
+            for i, s in enumerate(table["imports"]):
+                if s.get("status") == "pending":
+                    table["imports"][i] = Session.from_dict(s).completed().to_dict()
+            return table
+
+        self._mutate_identity("imports", apply)
 
     # -- the sessions API (the archive's slice of the store API, 2026-08-09)
     # The import session's page carries its review record — the transcript,
@@ -648,17 +679,22 @@ class Archive:
         """Begin a new walk of the review — a fresh attempt starts only when
         the last is empty or finished (Session.start_attempt), so a
         mid-walk re-render continues the same attempt. Returns the current
-        attempt's index."""
-        imports = self.get_identity("imports")
-        if imports is None:
-            raise ArchiveError(f"no imports table for session {session_id}")
-        session = next((s for s in imports["imports"] if s.get("id") == session_id), None)
-        if session is None:
-            raise ArchiveError(f"no import session {session_id}")
-        updated = Session.from_dict(session).start_attempt()
-        imports["imports"] = [updated.to_dict() if s.get("id") == session_id else s for s in imports["imports"]]
-        self.save_identity("imports", imports)
-        return len(updated.attempts) - 1
+        attempt's index. Atomic (2026-08-10 review)."""
+        result: dict[str, int] = {}
+
+        def apply(table: dict[str, Any] | None) -> dict[str, Any]:
+            if table is None:
+                raise ArchiveError(f"no imports table for session {session_id}")
+            session = next((s for s in table["imports"] if s.get("id") == session_id), None)
+            if session is None:
+                raise ArchiveError(f"no import session {session_id}")
+            updated = Session.from_dict(session).start_attempt()
+            result["attempt"] = len(updated.attempts) - 1
+            table["imports"] = [updated.to_dict() if s.get("id") == session_id else s for s in table["imports"]]
+            return table
+
+        self._mutate_identity("imports", apply)
+        return result["attempt"]
 
     def record_review_message(
         self, session_id: str, role: str, text: str, when: str, thinking: str | None = None
@@ -667,31 +703,40 @@ class Archive:
         line the family saw, verbatim, and (for assistant turns) the raw
         verdict as the thinking (2026-08-09: the transcript is the
         messages; the model's reasoning goes back to it verbatim on later
-        calls)."""
-        imports = self.get_identity("imports")
-        if imports is None:
-            raise ArchiveError(f"no imports table for session {session_id}")
-        session = next((s for s in imports["imports"] if s.get("id") == session_id), None)
-        if session is None:
-            raise ArchiveError(f"no import session {session_id}")
+        calls). The read-modify-write is atomic — the read happens inside
+        the lock, after any concurrent writer's (2026-08-10 review)."""
         if role not in ("user", "assistant"):
             raise ArchiveError(f"unknown message role: {role!r}")
-        updated = Session.from_dict(session).add_message(cast(Literal["user", "assistant"], role), text, when, thinking)
-        imports["imports"] = [updated.to_dict() if s.get("id") == session_id else s for s in imports["imports"]]
-        self.save_identity("imports", imports)
+
+        def apply(table: dict[str, Any] | None) -> dict[str, Any]:
+            if table is None:
+                raise ArchiveError(f"no imports table for session {session_id}")
+            session = next((s for s in table["imports"] if s.get("id") == session_id), None)
+            if session is None:
+                raise ArchiveError(f"no import session {session_id}")
+            updated = Session.from_dict(session).add_message(
+                cast(Literal["user", "assistant"], role), text, when, thinking
+            )
+            table["imports"] = [updated.to_dict() if s.get("id") == session_id else s for s in table["imports"]]
+            return table
+
+        self._mutate_identity("imports", apply)
 
     def record_review_decision(self, session_id: str, decision: ReviewDecision) -> None:
         """Record a review outcome — it advances the resume point; the last
-        decision clears it (Session.add_decision)."""
-        imports = self.get_identity("imports")
-        if imports is None:
-            raise ArchiveError(f"no imports table for session {session_id}")
-        session = next((s for s in imports["imports"] if s.get("id") == session_id), None)
-        if session is None:
-            raise ArchiveError(f"no import session {session_id}")
-        updated = Session.from_dict(session).add_decision(decision)
-        imports["imports"] = [updated.to_dict() if s.get("id") == session_id else s for s in imports["imports"]]
-        self.save_identity("imports", imports)
+        decision clears it (Session.add_decision). Atomic (2026-08-10)."""
+
+        def apply(table: dict[str, Any] | None) -> dict[str, Any]:
+            if table is None:
+                raise ArchiveError(f"no imports table for session {session_id}")
+            session = next((s for s in table["imports"] if s.get("id") == session_id), None)
+            if session is None:
+                raise ArchiveError(f"no import session {session_id}")
+            updated = Session.from_dict(session).add_decision(decision)
+            table["imports"] = [updated.to_dict() if s.get("id") == session_id else s for s in table["imports"]]
+            return table
+
+        self._mutate_identity("imports", apply)
 
     def capture_memory(
         self,

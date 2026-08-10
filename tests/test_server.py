@@ -671,5 +671,47 @@ def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -
         # the model's prompt carries the transcription's own words — never
         # the summary, and never a bare "no documents" note
         assert "Pearl Whitlock was the one who kept the photographs" in seen["user"]
+        # AND the reviewer's own words — the loop must never overwrite the
+        # request's text with an item's content (2026-08-10 review, high:
+        # the verdict was computed against the last item's transcription and
+        # that content was persisted as the user's line)
+        assert "Grandma used to say so." in seen["user"]
+        imports = server2.archive.get_identity("imports")
+        assert imports is not None
+        session = next(s for s in imports["imports"] if s.get("id") == "import-documents")
+        messages = session["attempts"][-1]["messages"]
+        user_line = next(m["text"] for m in messages if m["role"] == "user")
+        assert user_line == "Grandma used to say so."  # the transcript holds the user's words, verbatim
     finally:
         server2.close()
+
+
+def test_decide_rejects_a_stale_session_before_any_mutation(server: ServerFixture) -> None:
+    """2026-08-10 review: /api/review/decide resolved and saved the person
+    BEFORE checking the session existed — a stale session_id changed the
+    archive and then returned 500. The session is now validated first:
+    a stale id gets a 404 and the person is untouched."""
+    _seed_pending(server)
+    status, body = server.post(
+        "/api/review/decide",
+        {"session_id": "import-nope", "person_id": "p-judith", "decision": "attested"},
+    )
+    assert status == 404
+    assert "no import session" in body["error"]
+    table = server.archive.get_identity("people")
+    assert table is not None
+    assert next(p for p in table["people"] if p["id"] == "p-judith")["status"] == "proposed"  # untouched
+
+
+def test_start_returns_the_lines_already_recorded_in_the_attempt(server: ServerFixture) -> None:
+    """2026-08-10 review (duplicate transcript on re-render): the start
+    response carries the current attempt's recorded lines, so the app
+    records only what's new — the transcript never duplicates the opening
+    or a claim."""
+    _seed_pending(server)
+    archive = server.archive
+    archive.record_review_message("import-documents", "assistant", "Thanks for coming back.", "2026-08-10")
+    archive.record_review_message("import-documents", "assistant", "Next: Pearl Whitlock.", "2026-08-10")
+    status, body = server.post("/api/review/start", {"session_id": "import-documents"})
+    assert status == 200
+    assert body["messages"] == ["Thanks for coming back.", "Next: Pearl Whitlock."]

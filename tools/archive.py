@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, cast, final
@@ -82,6 +83,11 @@ def split_content(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]
 @final
 class Archive:
     """Domain access to the archive: resolution, supersession, tombstones."""
+
+    # the identity-table write lock (2026-08-09): the server's threads share
+    # one Archive, and save_identity's read-compute-write must be atomic
+    # between them — see save_identity for the full story
+    _save_lock = threading.RLock()
 
     def __init__(self, store: FileStore) -> None:
         self.store: FileStore = store
@@ -263,14 +269,29 @@ class Archive:
 
     def save_identity(self, name: str, table: dict[str, Any]) -> int:
         """Create or supersede an identity table — the same append-only rule
-        as sidecars: never edits, a change is the next version."""
-        versions = self._identity_versions(name)
-        version = (versions[-1] if versions else 0) + 1
-        payload = dict(table)
-        if version > 1:
-            payload["supersedes"] = self._identity_path(name, version - 1)
-        self.store.write_new(self._identity_path(name, version), json.dumps(payload, indent=1, ensure_ascii=False))
-        return version
+        as sidecars: never edits, a change is the next version. The
+        read-compute-write raced when two requests saved concurrently (the
+        review flow records the user's line and the assistant's line while
+        the app's fire-and-forget message records land — 2026-08-09, user:
+        the walk died with "refusing to edit existing file: imports-27.json"
+        when two writers computed the same version). A retry-on-collision
+        would re-write a STALE snapshot and silently drop the concurrent
+        writer's change (the DBA critique's F4) — so instead the process-wide
+        lock serializes the read-compute-write: every writer reads AFTER the
+        previous writer's write, so collisions and lost updates cannot happen
+        between the server's own threads (the only writers of the identity
+        tables). A collision with a foreign process — the CLI writes items,
+        never identity tables — fails loudly rather than losing data. The
+        real fix (a database projection, one transactional writer) is planned
+        in docs/sqlite-projection-plan.md."""
+        with self._save_lock:
+            versions = self._identity_versions(name)
+            version = (versions[-1] if versions else 0) + 1
+            payload = dict(table)
+            if version > 1:
+                payload["supersedes"] = self._identity_path(name, version - 1)
+            self.store.write_new(self._identity_path(name, version), json.dumps(payload, indent=1, ensure_ascii=False))
+            return version
 
     def delete_item(self, item_id: str, reason: str) -> int:
         """Tombstone: supersede with a ``status: deleted`` marker — the old

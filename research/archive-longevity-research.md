@@ -53,7 +53,7 @@ preventing a "digital Dark Age". Their concrete guidance:
 
 ### 1.4 SQLite — the most deliberate long-lived format project in existence
 
-- D. Richard Hipp, *SQLite as an application file format*
+- D. R. Hipp, *SQLite as an application file format*
   (sqlite.org/appfileformat.html) and *Long Term Support*
   (sqlite.org/lts.html): backwards compatible with 2004, bit-identical files
   across 32/64-bit and endiannesses, a stated commitment to support through

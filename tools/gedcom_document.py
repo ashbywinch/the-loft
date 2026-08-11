@@ -179,7 +179,7 @@ def export_gedcom(archive: Archive) -> str:
         fam_of_pair[pair] = fid
         families.append({"id": fid, "a": pair[0], "b": pair[1], "children": [], "marriage": marriage_dates.get(pair)})
         if pair in pair_notes:
-            fam_notes[fid] = pair_notes[pair]
+            fam_notes.setdefault(fid, []).extend(pair_notes[pair])
 
     # Children route by their attested co-parent — the child's other parent
     # edge — never by a parent's current spouse: a multi-married parent's

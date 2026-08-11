@@ -397,7 +397,9 @@ class Archive:
 
         self._mutate_identity("people", apply)
 
-    def resolve_person(self, person_id: str, decision: str, basis: dict[str, str] | None = None) -> dict[str, Any]:
+    def resolve_person(
+        self, person_id: str, decision: str, basis: dict[str, str] | None = None
+    ) -> tuple[dict[str, Any], bool]:
         """The review's four dispositions for a proposed person (user,
         2026-08-09): the decision vocabulary is NOT the status vocabulary —
         "confirm" is a status, never an action. ``attested`` -> confirmed
@@ -405,11 +407,13 @@ class Archive:
         estimated with the recorded basis {text, by, when} — the reviewer's
         words, the named person, the date; ``pending`` -> the import's guess
         stays proposed, nothing changes; ``delete`` -> the person leaves the
-        table. Returns the updated person record (or the unchanged one for
-        pending). The whole read-check-write is atomic — every branch runs
-        inside the lock, so a concurrent decision on the same person cannot
-        make a stale read route a delete into a spurious error (2026-08-11
-        review: the pre-read outside the lock raced)."""
+        table. Returns (the updated person record — or the unchanged one for
+        a no-op —, changed): whether the mutation actually altered the
+        record. The flag is set INSIDE the lock, in the mutation itself, so
+        a concurrent duplicate decision cannot misread it — a post-hoc
+        status comparison raced (a confirmed record omits the status key,
+        so ``None != "proposed"`` read "changed" for a stale duplicate's
+        no-op; 2026-08-11 review). The whole read-check-write is atomic."""
         result: dict[str, Any] = {}
 
         def apply(current: dict[str, Any] | None) -> dict[str, Any]:
@@ -421,9 +425,11 @@ class Archive:
                 # the queue never holds resolved people — a stale decision is a
                 # state, not an error: the person stays as they are (2026-08-09)
                 result["person"] = person
+                result["changed"] = False
                 return current
             if decision == "pending":
                 result["person"] = person
+                result["changed"] = False
                 return current
             if decision == "delete":
                 current["people"] = [p for p in current["people"] if p["id"] != person_id]
@@ -431,6 +437,7 @@ class Archive:
                     r for r in current.get("relationships", []) if r.get("a") != person_id and r.get("b") != person_id
                 ]
                 result["person"] = {"id": person_id, "gone": True}
+                result["changed"] = True
                 return current
             updated = dict(person)
             if decision == "estimated":
@@ -444,10 +451,11 @@ class Archive:
                 raise ValueError(f"unknown decision: {decision!r}")
             current["people"] = [updated if p["id"] == person_id else p for p in current["people"]]
             result["person"] = updated
+            result["changed"] = True
             return current
 
         self._mutate_identity("people", apply)
-        return result["person"]
+        return result["person"], result["changed"]
 
     def proposed_people(self) -> list[Person]:
         """The queued proposed people — typed records; a corrupt file fails

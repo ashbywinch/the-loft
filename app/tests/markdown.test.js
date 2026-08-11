@@ -28,11 +28,24 @@ describe("the transcription markdown renderer (2026-08-08: a medal index card is
     expect(nodes[0].textContent).toBe("just | a | line");
   });
 
-  it("a LEADING pipe line without a separator is still verbatim — never dropped (2026-08-09 review)", () => {
+it("a leading pipe line without a separator is still verbatim — never dropped (2026-08-09 review)", () => {
     const nodes = renderMarkdown("| the boat's name |\n\nA line after.");
     expect(nodes).toHaveLength(2);
     expect(nodes[0].textContent).toBe("| the boat's name |");
     expect(nodes[1].textContent).toBe("A line after.");
+  });
+
+  it("two adjacent tables stay separate — the second is never swallowed (2026-08-11 review)", () => {
+    const md =
+      "| Name | Corps |\n|---|---|\n| BARLOW, Jack | R F A |\n" +
+      "| Name | Rank |\n|---|---|\n| BARLOW, Harry | Pvt |";
+    const nodes = renderMarkdown(md);
+    expect(nodes).toHaveLength(2);
+    expect(nodes[0].tagName).toBe("TABLE");
+    expect(nodes[1].tagName).toBe("TABLE");
+    expect([...nodes[0].querySelectorAll("tbody tr")]).toHaveLength(1);
+    expect([...nodes[1].querySelectorAll("tbody tr")]).toHaveLength(1);
+    expect(nodes[1].querySelector("tbody td").textContent).toBe("BARLOW, Harry"); // its own row, not a body row of table 1
   });
 
   it("the paragraphs carry the transcription-text class so the pre-line styling applies everywhere (2026-08-09 review)", () => {

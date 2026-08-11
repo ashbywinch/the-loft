@@ -47,6 +47,12 @@ export function renderMarkdown(text) {
       const tableLines = [line];
       let j = i + 1;
       while (j < lines.length && PIPE.test(lines[j])) {
+        // a pipe line whose FOLLOWING line is a separator starts a NEW
+        // table — the body stops here so the outer loop picks the next
+        // table up instead of swallowing it (2026-08-11 review: two
+        // adjacent tables merged — the second's header + separator were
+        // consumed as the first's body rows)
+        if (j + 1 < lines.length && /^\s*\|[\s:|-]+\|\s*$/.test(lines[j + 1])) break;
         tableLines.push(lines[j]);
         j++;
       }

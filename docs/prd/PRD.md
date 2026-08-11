@@ -3,9 +3,9 @@
 **Purpose.** This document is the product's **requirements and user needs
 only** — what the family needs and why, in the user's terms. It is not an
 implementation document: it does not say how the app is built. The
-mechanics (the data model, the API, the build) live in `docs/TECH-SPEC.md`;
-the slice sequencing lives in `docs/plans/PLAN.md`; the presentation conventions
-in `docs/UI.md`. A requirement earns its place here only when it states a
+mechanics (the data model, the API, the build) live in `../TECH-SPEC.md`;
+the slice sequencing lives in `../plans/PLAN.md`; the presentation conventions
+in `../UI.md`. A requirement earns its place here only when it states a
 user need or a behavior the family experiences. Anything that names a
 technology, a field, or an internal mechanism belongs in TECH-SPEC, not
 here (2026-08-09).
@@ -139,7 +139,7 @@ The load-bearing tension: **the same screens must serve a young child's wanderin
 | `title` | yes | curator-written, shown large |
 | `date` | yes | exact or approximate |
 | `date_precision` | yes | `exact` / `month` / `year` / `approx` — the timeline respects this |
-| `people[]` | no | person ids → powers Cast pages; links carry a `proposed`/`confirmed` status so the labeling assist can suggest without asserting |
+| `people[]` | no | person ids → powers Cast pages; links carry a `proposed` / `estimated` / `confirmed` status (2026-08-10: the human's guess, recorded verbatim with its basis, is the third status — R9) so the labeling assist can suggest without asserting |
 | `places[]` | no | place names → powers Places + map |
 | `themes[]` | no | story-building material |
 | `source` | no | provenance of provenance: e.g. `Box 3 — "Letters 1966"` |

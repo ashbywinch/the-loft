@@ -442,12 +442,13 @@ def build_app(
                     item_text = transcription or story
                 else:
                     # the metadata pass says "maybe" — settle with a bounded
-                    # first-chunk transcription read before skipping: an
-                    # item whose ONLY mention of the person lives in the
-                    # verbatim text (a draft with no people refs yet) must
-                    # still reach the model — the transcription is the
-                    # evidence, never the summary (2026-08-11 review)
-                    transcription = archive.read_content(item_id, "transcription.txt") or ""
+                    # FIRST-CHUNK transcription read (4 KiB, never the whole
+                    # file) before skipping: an item whose ONLY mention of
+                    # the person lives in the verbatim text (a draft with no
+                    # people refs yet) must still reach the model — the
+                    # transcription is the evidence, never the summary
+                    # (2026-08-11 review)
+                    transcription = archive.read_content_prefix(item_id, "transcription.txt", 4096) or ""
                     if not any(n in transcription for n in needles):
                         continue
                     item_text = transcription

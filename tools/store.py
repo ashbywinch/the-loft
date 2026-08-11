@@ -46,6 +46,13 @@ class FileStore(ABC):
         """Return the file's raw bytes (scans and images are binary)."""
 
     @abstractmethod
+    def read_prefix(self, path: str, limit: int) -> str:
+        """The first ``limit`` BYTES decoded as text — a bounded peek for a
+        cheap content filter (2026-08-11 review: a name check must not
+        read a whole transcription). Raises FileNotFoundError when the
+        file is missing; callers check exists() first."""
+
+    @abstractmethod
     def exists(self, path: str) -> bool:
         """Does the file exist?"""
 
@@ -93,6 +100,14 @@ class DiskStore(FileStore):
         return self._resolve(path).read_bytes()
 
     @override
+    def read_prefix(self, path: str, limit: int) -> str:
+        """A bounded peek: the file's first ``limit`` bytes, decoded. The
+        chunk may cut a multibyte character — errors="replace" is fine for
+        a filter that only checks substring presence."""
+        with self._resolve(path).open("rb") as fh:
+            return fh.read(limit).decode("utf-8", errors="replace")
+
+    @override
     def exists(self, path: str) -> bool:
         return self._resolve(path).exists()
 
@@ -134,6 +149,13 @@ class MemoryStore(FileStore):
     def read_bytes(self, path: str) -> bytes:
         try:
             return self.files[path]
+        except KeyError as exc:
+            raise FileNotFoundError(path) from exc
+
+    @override
+    def read_prefix(self, path: str, limit: int) -> str:
+        try:
+            return self.files[path][:limit].decode("utf-8", errors="replace")
         except KeyError as exc:
             raise FileNotFoundError(path) from exc
 

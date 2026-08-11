@@ -327,24 +327,20 @@ def build_app(
         people_table = archive.get_identity("people") or {"people": []}
         pre_person = next((p for p in people_table["people"] if p["id"] == person_id), None)
         person_name = (pre_person or {}).get("name", person_id)
-        pre_status = (pre_person or {}).get("status")
         try:
-            person, changed = archive.resolve_person(person_id, decision, basis)
+            person, changed, was_proposed = archive.resolve_person(person_id, decision, basis)
         except (KeyError, ValueError) as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
         # a stale decision on an already-resolved person is a state, not an
         # error — and it must not record a false confirmation ("removed"
-        # when nothing was removed; 2026-08-11 review). The changed flag is
-        # set INSIDE the mutation lock, so two concurrent decides cannot
-        # both pass a stale pre-read: the second resolve reports its no-op
-        # truthfully, whatever the pre-read showed (2026-08-11 review).
-        # "pending" is stale too when the person was never proposed — the
-        # queue never holds resolved people, so recording a "kept for
-        # later" decision and message for a confirmed person falsifies the
-        # review record and moves the resume point to a resolved person —
-        # but a keep on a genuinely PROPOSED person is the deliberate
-        # "leave for later" and is recorded.
-        if not changed and (decision != "pending" or pre_status != "proposed"):
+        # when nothing was removed; 2026-08-11 review). Both flags come
+        # from INSIDE the mutation lock: a concurrent decide cannot make a
+        # stale pre-read look live, and a keep's exempted status is itself
+        # reported by the mutation (was the person still proposed when the
+        # lock was taken) — the pre-read status is gone entirely
+        # (2026-08-11 review). A keep on a genuinely PROPOSED person is the
+        # deliberate "leave for later" and is recorded.
+        if not changed and (decision != "pending" or not was_proposed):
             message = f"{person_name} was already resolved — nothing changed."
             return {"ok": True, "person": person, "message": message}
         # the review record — the decision and the confirmation message the

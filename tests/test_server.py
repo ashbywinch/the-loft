@@ -639,6 +639,33 @@ def test_decide_pending_on_an_already_resolved_person_is_stale_too(server: Serve
     assert attempt is None or not attempt.decisions
 
 
+def test_decide_duplicate_delete_on_a_removed_person_is_a_state(server: ServerFixture) -> None:
+    """2026-08-11 review: a second delete (double-tap, two devices) for a
+    person already REMOVED from the table used to 400 ("no person") and
+    the UI showed "That didn't save" for a deletion that had already
+    succeeded. The missing-person case is the already-resolved state —
+    nothing recorded, honest message, nothing written."""
+    _seed_pending(server)
+    status, body = server.post(
+        "/api/review/decide", {"session_id": "import-documents", "person_id": "p-judith", "decision": "delete"}
+    )
+    assert status == 200
+    assert body["person"]["gone"] is True
+    status2, body2 = server.post(
+        "/api/review/decide", {"session_id": "import-documents", "person_id": "p-judith", "decision": "delete"}
+    )
+    assert status2 == 200
+    assert body2["ok"] is True
+    assert body2["message"] == "p-judith was already resolved — nothing changed."
+    assert body2["person"] is None  # the person is gone — no record returned
+    session = server.archive.get_review_session("import-documents")
+    assert session is not None
+    attempt = session.current_attempt()
+    assert attempt is not None
+    # exactly the ONE legitimate delete is recorded — the duplicate added nothing
+    assert [d.decision for d in attempt.decisions] == ["delete"]
+
+
 def test_deciding_the_last_proposed_person_completes_the_session(server: ServerFixture) -> None:
     _seed_pending(server)
     status, _ = server.post(

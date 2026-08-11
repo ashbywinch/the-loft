@@ -408,7 +408,7 @@ class Archive:
 
     def resolve_person(
         self, person_id: str, decision: str, basis: dict[str, str] | None = None
-    ) -> tuple[dict[str, Any], bool]:
+    ) -> tuple[dict[str, Any] | None, bool, bool]:
         """The review's four dispositions for a proposed person (user,
         2026-08-09): the decision vocabulary is NOT the status vocabulary —
         "confirm" is a status, never an action. ``attested`` -> confirmed
@@ -416,29 +416,41 @@ class Archive:
         estimated with the recorded basis {text, by, when} — the reviewer's
         words, the named person, the date; ``pending`` -> the import's guess
         stays proposed, nothing changes; ``delete`` -> the person leaves the
-        table. Returns (the updated person record — or the unchanged one for
-        a no-op —, changed): whether the mutation actually altered the
-        record. The flag is set INSIDE the lock, in the mutation itself, so
-        a concurrent duplicate decision cannot misread it — a post-hoc
-        status comparison raced (a confirmed record omits the status key,
-        so ``None != "proposed"`` read "changed" for a stale duplicate's
-        no-op; 2026-08-11 review). The whole read-check-write is atomic."""
+        table. Returns (the person record — None when a duplicate delete
+        finds the person already gone —, changed, was_proposed): did the
+        mutation alter the record, and was the person still proposed at
+        mutation time. Both flags are set INSIDE the lock, in the mutation
+        itself, so a concurrent duplicate decision cannot misread them — a
+        post-hoc status comparison raced (a confirmed record omits the
+        status key, and the pre-read status was stale for a second
+        concurrent decide; 2026-08-11 review). The whole read-check-write
+        is atomic."""
         result: dict[str, Any] = {}
 
         def apply(current: dict[str, Any] | None) -> dict[str, Any]:
             assert current is not None, "archive has no people table"
             person = next((p for p in current["people"] if p["id"] == person_id), None)
             if person is None:
-                raise KeyError(f"no person {person_id}")
+                # a duplicate delete (double-tap, two devices) finds the
+                # person already removed — that is the already-resolved
+                # state, never an error (2026-08-11 review: it used to 400
+                # and the UI showed "That didn't save" for a deletion that
+                # had already succeeded)
+                result["person"] = None
+                result["changed"] = False
+                result["was_proposed"] = False
+                return current
             if person.get("status") != "proposed":
                 # the queue never holds resolved people — a stale decision is a
                 # state, not an error: the person stays as they are (2026-08-09)
                 result["person"] = person
                 result["changed"] = False
+                result["was_proposed"] = False
                 return current
             if decision == "pending":
                 result["person"] = person
                 result["changed"] = False
+                result["was_proposed"] = True
                 return current
             if decision == "delete":
                 current["people"] = [p for p in current["people"] if p["id"] != person_id]
@@ -447,6 +459,7 @@ class Archive:
                 ]
                 result["person"] = {"id": person_id, "gone": True}
                 result["changed"] = True
+                result["was_proposed"] = True
                 return current
             updated = dict(person)
             if decision == "estimated":
@@ -461,10 +474,11 @@ class Archive:
             current["people"] = [updated if p["id"] == person_id else p for p in current["people"]]
             result["person"] = updated
             result["changed"] = True
+            result["was_proposed"] = True
             return current
 
         self._mutate_identity("people", apply)
-        return result["person"], result["changed"]
+        return result["person"], result["changed"], result["was_proposed"]
 
     def proposed_people(self) -> list[Person]:
         """The queued proposed people — typed records; a corrupt file fails

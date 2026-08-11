@@ -121,5 +121,11 @@ def ocr_pages(pages: list[Path], lang: str = "eng") -> list[str]:
         finally:
             for t in temps:
                 t.unlink(missing_ok=True)
+        if not best_text.strip():
+            # a page that read successfully with ZERO recognized words (a
+            # blank page, an unsupported image type) is a page-level failure
+            # — an empty transcription must reach the import gate as an
+            # error, never as a silently empty string (2026-08-11 review)
+            raise RuntimeError(f"OCR read no text from {page.name} — the page cannot be read")
         out.append(best_text)
     return out

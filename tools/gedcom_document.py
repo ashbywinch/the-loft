@@ -74,11 +74,14 @@ def gedcom_date(value: str, precision: str, date2: str | None = None) -> str:
     return out
 
 
-def _lines(text: str) -> list[str]:
-    """Payload text split into GEDCOM lines with CONT continuations."""
+def _lines(text: str, level: int = 1) -> list[str]:
+    """Payload text split into GEDCOM lines with CONT continuations — the
+    NOTE rides at `level` (1 under an INDI, 2 under an ASSO; 2026-08-11
+    review: a level-1 note under an association attached itself to the
+    person instead)."""
     lines = text.splitlines() or [""]
-    out = [f"1 NOTE {lines[0]}"]
-    out += [f"2 CONT {line}" for line in lines[1:]]
+    out = [f"{level} NOTE {lines[0]}"]
+    out += [f"{level + 1} CONT {line}" for line in lines[1:]]
     return out
 
 
@@ -112,16 +115,17 @@ def _estimate_basis(archive: Archive, person_id: str) -> dict[str, str] | None:
     return None
 
 
-def _estimate_note(basis: dict[str, str] | None) -> list[str]:
+def _estimate_note(basis: dict[str, str] | None, level: int = 1) -> list[str]:
     """The estimate's evidence as a GEDCOM NOTE — the reviewer's own words,
     who said them, and when, so a reader of the export can weigh the guess
-    (2026-08-09, user)."""
+    (2026-08-09, user). The level places the note under its owner: the
+    person (1) or the association it evidences (2)."""
     if basis and basis.get("text"):
         by = str(basis.get("by") or "the family")
         when = str(basis.get("when") or "")
         stamp = f" ({when})" if when else ""
-        return _lines(f'Estimated — from {by}\'s recollection{stamp}: "{basis["text"]}"')
-    return _lines("Estimated — the family's recollection; the basis is not recorded")
+        return _lines(f'Estimated — from {by}\'s recollection{stamp}: "{basis["text"]}"', level)
+    return _lines("Estimated — the family's recollection; the basis is not recorded", level)
 
 
 def export_gedcom(archive: Archive) -> str:
@@ -267,7 +271,9 @@ def export_gedcom(archive: Archive) -> str:
     for edge in edges:
         if edge["kind"] in ("sibling", "inlaw", "teacher"):
             note = (
-                _estimate_note(_estimate_basis(archive, edge["b"]) or _estimate_basis(archive, edge["a"]))
+                # level 2: the evidence attaches to THIS association, not the
+                # person (2026-08-11 review)
+                _estimate_note(_estimate_basis(archive, edge["b"]) or _estimate_basis(archive, edge["a"]), level=2)
                 if edge.get("status") == "estimated"
                 else []
             )

@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from tools.memory import ElicitationError
 from tools.server import create_server
 from tools.store import ImmutableStoreError, MemoryStore
 
@@ -710,6 +711,37 @@ def test_decide_rejects_a_stale_session_before_any_mutation(server: ServerFixtur
     table = server.archive.get_identity("people")
     assert table is not None
     assert next(p for p in table["people"] if p["id"] == "p-judith")["status"] == "proposed"  # untouched
+
+
+def test_review_text_keeps_the_words_when_the_model_call_fails(server: ServerFixture) -> None:
+    """2026-08-11 review: the family's line was recorded only AFTER the
+    model call, so an AI outage (ElicitationError) lost their words from
+    the transcript — the transcript no longer equalled what the family saw
+    (R7/R8). The line now joins the transcript the moment it arrives; the
+    failure returns 422 but the record stands."""
+    _seed_pending(server)
+
+    class FailingChat:
+        def chat(self, system: str, user: str) -> str:  # noqa: ARG002
+            raise ElicitationError("the model is down")
+
+    server2 = ServerFixture(server.data_dir, server.store, client=FailingChat())
+    try:
+        _seed_pending(server2)
+        status, body = server2.post(
+            "/api/review/text",
+            {"session_id": "import-documents", "person_id": "p-judith", "text": "Grandma used to say so."},
+        )
+        assert status == 422
+        assert "model is down" in body["error"]
+        imports = server2.archive.get_identity("imports")
+        assert imports is not None
+        session = next(s for s in imports["imports"] if s.get("id") == "import-documents")
+        messages = session["attempts"][-1]["messages"]
+        user_line = next(m["text"] for m in messages if m["role"] == "user")
+        assert user_line == "Grandma used to say so."  # never lost to the outage
+    finally:
+        server2.close()
 
 
 def test_start_returns_the_lines_already_recorded_in_the_attempt(server: ServerFixture) -> None:

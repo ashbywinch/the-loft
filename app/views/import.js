@@ -251,7 +251,11 @@ function reviewSession(state, session) {
     // recollection, never the original wrong words as the basis
     // (2026-08-11 review)
     const statement = pending?.contradiction ? text : (pending?.statement ?? text);
-    const provenance = pending?.provenance ? [...pending.provenance, text] : [];
+    // the first answer IS the statement; only later replies (the
+    // follow-ups after the recollection) accumulate as provenance — an
+    // empty provenance must not be truthy ([] is truthy in JS, which
+    // duplicated the statement into its own note — 2026-08-11 review)
+    const provenance = pending?.statement ? [...(pending.provenance ?? []), text] : [];
     const disposition = pending?.disposition ?? null;
     pendingDecision = { p: person, statement, provenance, disposition };
     // the confirmation chips name the CONSEQUENCE, in the family's words —

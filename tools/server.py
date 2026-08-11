@@ -327,15 +327,18 @@ def build_app(
         people_table = archive.get_identity("people") or {"people": []}
         pre_person = next((p for p in people_table["people"] if p["id"] == person_id), None)
         person_name = (pre_person or {}).get("name", person_id)
+        pre_status = (pre_person or {}).get("status")
         try:
             person = archive.resolve_person(person_id, decision, basis)
         except (KeyError, ValueError) as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
         # a stale decision on an already-resolved person is a state, not an
         # error — and it must not record a false confirmation ("removed"
-        # when nothing was removed; 2026-08-11 review). Nothing is recorded;
-        # the family gets the honest state.
-        if (pre_person or {}).get("status") != "proposed" and decision != "pending":
+        # when nothing was removed; 2026-08-11 review). The check is based
+        # on the POST-resolve result, so two concurrent decides on the same
+        # person cannot both pass a stale pre-read (2026-08-11 review).
+        changed = bool(person.get("gone")) or person.get("status") != pre_status
+        if not changed and decision != "pending":
             message = f"{person_name} was already resolved — nothing changed."
             return {"ok": True, "person": person, "message": message}
         # the review record — the decision and the confirmation message the
@@ -389,6 +392,12 @@ def build_app(
         if client is None:
             return JSONResponse({"ok": False, "error": "the AI isn't configured on this server"}, status_code=503)
         try:
+            # the family's line joins the transcript the moment it arrives —
+            # the model call must not gate the record (R7/R8: the words are
+            # never lost, and the transcript equals what the family saw —
+            # 2026-08-11 review)
+            when = datetime.now(UTC).date().isoformat()
+            archive.record_review_message(session_id, "user", text, when)
             # the investigation needs the attested facts the Knowledge
             # conversion drops — the raw people (deaths, relations), the
             # recorded items' texts, and the family edges — typed as the

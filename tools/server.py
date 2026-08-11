@@ -612,7 +612,7 @@ def _lan_urls(port: int) -> list[str]:
 
         try:
             addresses = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5).stdout.split()
-        except OSError, subprocess.TimeoutExpired:
+        except (OSError, subprocess.TimeoutExpired):
             addresses = []
     return [f"http://{addr}:{port}" for addr in addresses if not addr.startswith("127.")]
 

@@ -3,7 +3,7 @@ name = "the-loft"
 version = "0.1.0"
 description = "Family history museum web app — a lens over a folder of family artifacts."
 readme = "README.md"
-requires-python = ">=3.14"  # PEP 758: except A, B: is canonical on 3.14 (ruff target py314)
+requires-python = ">=3.14"  # PEP 758 (paren-less except) was accepted but deferred to 3.15 — the parenthesized form is canonical on 3.14
 dependencies = [
     "python-dateutil>=2.9.0",
     "dateparser>=1.2.0",
@@ -33,7 +33,11 @@ build-backend = "setuptools.build_meta"
 include = ["tools*"]
 
 [tool.ruff]
-target-version = "py314"
+# py313, NOT py314: the py314 target follows the PEP 758 draft and strips
+# the parens from `except (A, B):` — but CPython 3.14.x still requires them
+# (2026-08-11: the fail-loud check's paren-less except crashed CI's 3.14.7
+# with SyntaxError while the local 3.14.6 compiled it)
+target-version = "py313"
 line-length = 120
 
 [tool.ruff.lint]

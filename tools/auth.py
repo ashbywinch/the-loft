@@ -107,7 +107,7 @@ def session_user_from_cookie(cookie: str | None) -> dict[str, Any] | None:
                 break
     try:
         return _serializer().loads(cookie, max_age=int(_SESSION_MAX_AGE.total_seconds()))
-    except BadSignature, SignatureExpired:
+    except (BadSignature, SignatureExpired):
         return None
 
 

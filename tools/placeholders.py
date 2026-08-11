@@ -24,7 +24,7 @@ FILLS = {
 
 # A letter asset that isn't page-N (an envelope, a back) — the page parse
 # falls back to 1. Named so the except clause needs no parentheses: ruff
-# format removes them (`except A, B:`), which reads like Python 2.
+# format removes them (`except (A, B):`), which reads like Python 2.
 _PAGE_PARSE_ERRORS = (IndexError, ValueError)
 
 

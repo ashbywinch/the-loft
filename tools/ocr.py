@@ -26,6 +26,7 @@ is the cost of never hallucinating a rotation.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -79,7 +80,9 @@ def _strong_word_count(image: Path, lang: str) -> int:
 
 def _rotate(image: Path, degrees: int) -> Path:
     """Rotate the page with ImageMagick into a temp file (90/180/270)."""
-    tmp = Path(tempfile.mkstemp(suffix=".jpg")[1])
+    fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)  # magick opens the path itself; the fd would leak (2026-08-11 review)
+    tmp = Path(tmp_path)
     result = subprocess.run(
         [MAGICK, str(image), "-rotate", str(degrees), str(tmp)],
         capture_output=True,

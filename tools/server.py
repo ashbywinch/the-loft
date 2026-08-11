@@ -392,6 +392,15 @@ def build_app(
         if client is None:
             return JSONResponse({"ok": False, "error": "the AI isn't configured on this server"}, status_code=503)
         try:
+            # the model sees the whole conversation — its own reasoning and
+            # speech, verbatim — so a message that re-answers an earlier
+            # question is recognised (2026-08-09, user). The history is the
+            # conversation BEFORE this line: the investigation appends the
+            # line itself, so a history that already held it would double
+            # the latest message for the model (2026-08-11 review)
+            session_record = archive.get_review_session(session_id)
+            current_attempt = session_record.current_attempt() if session_record else None
+            history = current_attempt.messages if current_attempt else ()
             # the family's line joins the transcript the moment it arrives —
             # the model call must not gate the record (R7/R8: the words are
             # never lost, and the transcript equals what the family saw —
@@ -408,35 +417,40 @@ def build_app(
             # (2026-08-09, user: the model quoted the wrong part of the
             # document, because it was reading the summary). The people
             # involvement is the structured match the tools need — the
-            # prose never carries ids
+            # prose never carries ids. The FULL text is read only for the
+            # shortlist that can attest this person: the metadata pass (one
+            # sidecar per item, no transcription reads) filters first — at
+            # the 10,000-item design target, reading every transcription
+            # per chat message would be thousands of disk reads (2026-08-11
+            # review)
+            needles = (person.name, person.name.split()[0])
             items: list[dict[str, Any]] = []
             for item_id in archive.item_ids():
                 item = archive.get_item(item_id)
-                if item and item.get("status") == "catalogued":
-                    transcription = archive.read_content(item_id, "transcription.txt") or ""
-                    item_text = transcription or item.get("story") or ""
-                    if item_text:
-                        items.append(
-                            {
-                                "id": item_id,
-                                "title": item.get("title", ""),
-                                "story": item_text,
-                                # Rule L (2026-08-11 review): a draft
-                                # transcription is machine-read and
-                                # unverified — its sentences are never the
-                                # document's own words; the model must know
-                                # which texts are drafts so it never quotes
-                                # one as verified evidence
-                                "transcription_status": item.get("transcription_status"),
-                                "people": [p.get("id") for p in item.get("people", []) if isinstance(p, dict)],
-                            }
-                        )
-            # the model sees the whole conversation — its own reasoning and
-            # speech, verbatim — so a message that re-answers an earlier
-            # question is recognised (2026-08-09, user)
-            session_record = archive.get_review_session(session_id)
-            current_attempt = session_record.current_attempt() if session_record else None
-            history = current_attempt.messages if current_attempt else ()
+                if not item or item.get("status") != "catalogued":
+                    continue
+                involved = person_id in [p.get("id") for p in item.get("people", []) if isinstance(p, dict)]
+                story = str(item.get("story") or "").strip()
+                if not (involved or any(n in story for n in needles)):
+                    continue
+                transcription = archive.read_content(item_id, "transcription.txt") or ""
+                item_text = transcription or story
+                if item_text:
+                    items.append(
+                        {
+                            "id": item_id,
+                            "title": item.get("title", ""),
+                            "story": item_text,
+                            # Rule L (2026-08-11 review): a draft
+                            # transcription is machine-read and
+                            # unverified — its sentences are never the
+                            # document's own words; the model must know
+                            # which texts are drafts so it never quotes
+                            # one as verified evidence
+                            "transcription_status": item.get("transcription_status"),
+                            "people": [p.get("id") for p in item.get("people", []) if isinstance(p, dict)],
+                        }
+                    )
             result = review.investigate(
                 client,
                 text=text,

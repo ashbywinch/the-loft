@@ -397,21 +397,10 @@ class Archive:
         words, the named person, the date; ``pending`` -> the import's guess
         stays proposed, nothing changes; ``delete`` -> the person leaves the
         table. Returns the updated person record (or the unchanged one for
-        pending)."""
-        table = self.get_identity("people")
-        assert table is not None, "archive has no people table"
-        person = next((p for p in table["people"] if p["id"] == person_id), None)
-        if person is None:
-            raise KeyError(f"no person {person_id}")
-        if person.get("status") != "proposed":
-            # the queue never holds resolved people — a stale decision is a
-            # state, not an error: the person stays as they are (2026-08-09)
-            return person
-        if decision == "pending":
-            return person
-        if decision == "delete":
-            self.dismiss_person(person_id)
-            return {"id": person_id, "gone": True}
+        pending). The whole read-check-write is atomic — every branch runs
+        inside the lock, so a concurrent decision on the same person cannot
+        make a stale read route a delete into a spurious error (2026-08-11
+        review: the pre-read outside the lock raced)."""
         result: dict[str, Any] = {}
 
         def apply(current: dict[str, Any] | None) -> dict[str, Any]:
@@ -420,11 +409,19 @@ class Archive:
             if person is None:
                 raise KeyError(f"no person {person_id}")
             if person.get("status") != "proposed":
-                # a stale decision is a state, not an error
+                # the queue never holds resolved people — a stale decision is a
+                # state, not an error: the person stays as they are (2026-08-09)
                 result["person"] = person
                 return current
             if decision == "pending":
                 result["person"] = person
+                return current
+            if decision == "delete":
+                current["people"] = [p for p in current["people"] if p["id"] != person_id]
+                current["relationships"] = [
+                    r for r in current.get("relationships", []) if r.get("a") != person_id and r.get("b") != person_id
+                ]
+                result["person"] = {"id": person_id, "gone": True}
                 return current
             updated = dict(person)
             if decision == "estimated":

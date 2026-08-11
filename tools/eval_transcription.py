@@ -54,13 +54,15 @@ def run_flow() -> dict[str, str]:
     tmp: Path | None = None
     try:
         rotated = Path(tempfile.mkstemp(suffix=".jpg")[1])
-        _ = subprocess.run(
+        tmp = rotated  # assigned before the run so cleanup always happens (2026-08-11 review)
+        result = subprocess.run(
             ["magick", str(TranscriptionFlow.fixture), "-rotate", "90", str(rotated)],
             capture_output=True,
             text=True,
             check=False,
         )
-        tmp = rotated
+        if result.returncode != 0:
+            raise RuntimeError(f"magick rotation failed on {TranscriptionFlow.fixture}: {result.stderr[:200]}")
         outputs["as-scanned"] = ocr_pages([TranscriptionFlow.fixture])[0]
         outputs["rotated-90"] = ocr_pages([rotated])[0]
     finally:

@@ -5,6 +5,7 @@ tombstones, and the proposed-record queue — all through the append-only store
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
@@ -632,9 +633,15 @@ def test_identity_saves_serialize_concurrent_writers() -> None:
     def writer(prefix: str) -> None:
         try:
             for i in range(15):
-                table = archive.get_identity("imports") or {"imports": []}
-                table["imports"] = table["imports"] + [{"id": f"{prefix}-{i}"}]
-                archive.save_identity("imports", table)
+                # the ATOMIC seam — the read must sit inside the lock; the
+                # get_identity-then-save_identity pattern this test used
+                # could lose a concurrent writer's update (2026-08-11 review)
+                def apply(table: dict[str, Any] | None, _i: int = i) -> dict[str, Any]:
+                    current = table or {"imports": []}
+                    current["imports"] = current["imports"] + [{"id": f"{prefix}-{_i}"}]
+                    return current
+
+                archive._mutate_identity("imports", apply)
         except Exception as e:  # noqa: BLE001 — the test reports every failure
             errors.append(e)
 

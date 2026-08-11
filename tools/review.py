@@ -320,7 +320,11 @@ def investigate(
         '— "Mum\'s recollection", "the recollection" — NEVER "the reviewer\'s". A PERSON '
         "record is not evidence either: its relation field is the import's guess, never a "
         "finding (2026-08-10, R2: a robot's note is never an attestation — only items "
-        "with a transcription or story are documents. When the reviewer mentions a PLACE "
+        "with a transcription or story are documents. A DRAFT transcription "
+        "(transcription_status 'draft') is machine-read and UNVERIFIED: its sentences "
+        "are never quoted as the document's own words — quote only verified text, or "
+        "say plainly that the reading is unverified (IMPORT-PRD Rule L). When the "
+        "reviewer mentions a PLACE "
         "or an EVENT and the tools surface an item matching their statement, REPORT it — "
         "quote the item and ASK whether it is the same visit or person: the archive "
         "answers the family's lead even when the item does not settle the claim under "
@@ -337,6 +341,11 @@ def investigate(
         "again: \"I'll leave her as she stands unless you'd like to record what you remember "
         'as a guess.">"}'
     )
+    # the verdict shape must be in the INITIAL prompt — the schema was only
+    # revealed in the correction branch, so every first call was rejected
+    # once before the shape appeared, doubling the cost of every exchange
+    # (2026-08-11 review)
+    prompt = prompt + "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + verdict
     tool_calls = 0
     trace: list[dict[str, Any]] = []
     # the stable prompt — the static plus the conversation before the

@@ -51,7 +51,13 @@ class Disposition:
 ```
 
 The conversation is the queue: `claims: list[Claim]` + `current`. The
-existing `Session`/`Attempt`/`Message` in `tools/records.py` stays the
+queue is **depth-first** (2026-08-10, user: "we should finish bottoming
+out the current claim but then go through Bill and his marriage right
+after that"): a claim's fan-out — the claims its resolution surfaces —
+is worked immediately after the current claim, before the next
+pre-existing claim. The discovered claims push onto the front of the
+queue (a stack); the seeded document claims follow behind. The existing
+`Session`/`Attempt`/`Message` in `tools/records.py` stays the
 transcript; these classes are the flow.
 
 ## Slice 1 — the claim model + identity-first walk

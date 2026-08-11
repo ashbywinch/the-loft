@@ -62,6 +62,15 @@ themselves raise — the family's own words.
   words — "I remember going to work with my mum, she was a tree surgeon"
   attests that mum existed and was a tree surgeon — is not asked about
   those. The conversation asks only the first unanswered phase.
+- **The conversation flows naturally — one claim and its fan-out are
+  bottomed out before the next (2026-08-10).** When a claim's resolution
+  surfaces new claims (Bill's marriage → Bill, and the marriage itself),
+  they are worked immediately after the current claim is bottomed out —
+  not deferred to the end of the queue. The family is not asked about
+  Judith, then Dave, then dragged back to Bill's marriage later: the
+  current claim is finished, then Bill and his marriage are gone through
+  right after it. Discovery is depth-first: the queue works a claim's
+  consequences before the next pre-existing claim.
 - **An unresolved identity still proceeds to disposition.** "I don't know
   who that is" does not end the claim: the document still attests the
   subject existed. The user then chooses add / leave / exclude — the

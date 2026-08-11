@@ -746,20 +746,24 @@ def _deterministic_violations(assessment: dict[str, Any], who: str, knowledge: K
                 if value.lower() not in verbatim and not any(w in verbatim for w in todayish):
                     violations.append(
                         "the events date is the telling day and the narrator never stated it — a "
-                        "fabrication; quote the date from the account itself or ask the narrator a "
-                        "non-skippable question for the events date"
+                        "fabrication; quote the date from the account itself or keep the events "
+                        "date question (skippable — the narrator answers in their own words, and "
+                        "'I don't remember' is a legitimate answer) in the questions"
                     )
                     break
     elif not (ages and (known_dob or dob_in_facts)):
-        # no events date and nothing to derive one from — the narrator must
-        # provide it (the story's date is the events' date, never recorded)
-        if not any(
-            q.get("type") == "date" and q.get("date_kind") == "event" and q.get("skippable") is False
-            for q in assessment.get("questions", [])
-        ):
+        # no events date and nothing to derive one from — the issue must
+        # stay pursued, never forced and never dropped (2026-08-10, user:
+        # every question is skippable, but the flow keeps narrowing the
+        # issue until the narrator answers — even with a "leave it for
+        # now"; a story without a date would otherwise slip through). The
+        # question is skippable: the narrator answers in their own words
+        # or declines, and the item stays undated until a later pass.
+        if not any(q.get("type") == "date" and q.get("date_kind") == "event" for q in assessment.get("questions", [])):
             violations.append(
-                "no events date is established — ask the narrator a non-skippable date "
-                "question for when the events happened"
+                "no events date is established — keep the (skippable) date question for when "
+                "the events happened in the questions; the narrator answers in their own "
+                "words, and declining is allowed, but the issue is not dropped"
             )
     # a new artifact the story names deserves a "tell me more" question —
     # checkable in code from the extractions (item, no match)
@@ -909,7 +913,13 @@ def _validate_assessment(parsed: Any) -> dict[str, Any]:
                 {
                     "text": q["text"].strip(),
                     "why": str(q.get("why", "")),
-                    "skippable": q.get("skippable", True) is not False,
+                    # skippability is the FLOW's guarantee, never the model's
+                    # discretion (2026-08-10, user: every question is
+                    # skippable — the narrator answers in their own words or
+                    # declines, while the flow keeps pursuing the issue): the
+                    # schema's "skippable": true is enforced here, at the
+                    # seam, and the eval's contract pins it
+                    "skippable": True,
                     "suggestions": suggestions,
                     "type": q_type,
                     "date_kind": q.get("date_kind") if q_type == "date" else None,

@@ -598,7 +598,9 @@ def test_decide_delete_removes_the_person_and_their_relationships(server: Server
 
 def test_decide_delete_of_an_already_resolved_person_is_a_state_not_an_error(server: ServerFixture) -> None:
     """The queue never holds resolved people — a stale delete is a state,
-    not the old "not proposed" 400 (2026-08-09)."""
+    not the old "not proposed" 400 (2026-08-09); and it must not record a
+    false confirmation ("removed" when nothing was removed, 2026-08-11
+    review)."""
     _seed_pending(server)
     status, body = server.post(
         "/api/review/decide", {"session_id": "import-documents", "person_id": "p-robert", "decision": "delete"}
@@ -606,6 +608,13 @@ def test_decide_delete_of_an_already_resolved_person_is_a_state_not_an_error(ser
     assert status == 200
     assert body["ok"] is True
     assert body["person"]["id"] == "p-robert"  # unchanged — the confirmed person stays
+    assert body["message"] == "Quentin Whitlock was already resolved — nothing changed."
+    # nothing recorded — the stale delete must not persist a false decision
+    # (the seed's session has no attempts, which is itself the proof)
+    session = server.archive.get_review_session("import-documents")
+    assert session is not None
+    attempt = session.current_attempt()
+    assert attempt is None or not attempt.decisions
 
 
 def test_deciding_the_last_proposed_person_completes_the_session(server: ServerFixture) -> None:

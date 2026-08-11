@@ -236,16 +236,21 @@ function reviewSession(state, session) {
       const GUESS = { label: "Record as a guess", primary: true, onClick: () => recordDecision(person, "estimated") };
       // the statement is kept for the guess's basis, but NO disposition is
       // captured — a reviewer who then resolves the contradiction flows
-      // through the normal confidence-based chips (2026-08-11)
-      pendingDecision = { p: person, statement: text, provenance: [], disposition: null };
+      // through the normal confidence-based chips, and the correction
+      // replaces this text as the statement (2026-08-11)
+      pendingDecision = { p: person, statement: text, provenance: [], disposition: null, contradiction: true };
       chat.setQuickReplies([GUESS, LEAVE, DELETE]);
       return; // the pending decision stays — the resolution is checked again
     }
     chat.setBusy(false);
     // the first statement is the recollection; later answers (the
     // question's answers, the provenance) accumulate beside it. The
-    // disposition is captured from the initial chip and kept (2026-08-10)
-    const statement = pending?.statement ?? text;
+    // disposition is captured from the initial chip and kept (2026-08-10).
+    // A resolution typed after a surfaced contradiction REPLACES the
+    // contradicted text as the statement — the correction is the
+    // recollection, never the original wrong words as the basis
+    // (2026-08-11 review)
+    const statement = pending?.contradiction ? text : (pending?.statement ?? text);
     const provenance = pending?.provenance ? [...pending.provenance, text] : [];
     const disposition = pending?.disposition ?? null;
     pendingDecision = { p: person, statement, provenance, disposition };

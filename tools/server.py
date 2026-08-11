@@ -370,6 +370,11 @@ def build_app(
         session_id = str(body.get("session_id", ""))
         if not session_id:
             return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
+        # the session must exist BEFORE the costly model call — a stale id
+        # must not run the investigation and then 500 in the recording
+        # (2026-08-11 review; the decide endpoint fixed the same shape)
+        if archive.get_review_session(session_id) is None:
+            return JSONResponse({"ok": False, "error": f"no import session {session_id}"}, status_code=404)
         people = archive.get_identity("people") or {"people": []}
         all_people = tuple(Person.from_dict(p) for p in people["people"])
         person = next((p for p in all_people if p.id == person_id), None)
@@ -401,6 +406,13 @@ def build_app(
                                 "id": item_id,
                                 "title": item.get("title", ""),
                                 "story": item_text,
+                                # Rule L (2026-08-11 review): a draft
+                                # transcription is machine-read and
+                                # unverified — its sentences are never the
+                                # document's own words; the model must know
+                                # which texts are drafts so it never quotes
+                                # one as verified evidence
+                                "transcription_status": item.get("transcription_status"),
                                 "people": [p.get("id") for p in item.get("people", []) if isinstance(p, dict)],
                             }
                         )
@@ -432,13 +444,18 @@ def build_app(
         # — which goes back to the model on later calls. The note never
         # reaches the user (it had been leaking into the steer's parens).
         archive.record_review_message(session_id, "user", text, when)
-        message = (
-            review.steer_message(person, result.get("note") or "")
-            if result.get("relevant") == "false"
-            else f"That doesn't match the records — {result['contradiction'].get('detail')}. Which is right?"
-            if result.get("contradiction", {}).get("found") == "true"
-            else review.assistant_message(result, person)
-        )
+        contradiction = result.get("contradiction", {}).get("found") == "true"
+        if contradiction:
+            # the contradiction surfaces before anything else — an off-topic
+            # verdict that also flags one must not let the steer hide it
+            # (2026-08-11 review)
+            message = f"That doesn't match the records — {result['contradiction'].get('detail')}. Which is right?"
+        elif result.get("relevant") == "false":
+            message = review.steer_message(person, result.get("note") or "")
+        else:
+            # never persist an empty assistant line the family never saw
+            # (2026-08-11 review)
+            message = review.assistant_message(result, person).strip() or "Thank you — that's noted."
         archive.record_review_message(
             session_id, "assistant", message, when, thinking=json.dumps(result.get("trace"), ensure_ascii=False)
         )

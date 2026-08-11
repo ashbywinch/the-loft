@@ -136,7 +136,11 @@ function reviewSession(state, session) {
     const docs = (state.items ?? []).filter((it) => itemInvolves(it, p.id));
     const doc = [...docs].sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))[0];
     if (!doc) return null;
-    return { id: doc.id, title: doc.title, quote: quoteFrom((doc.transcription || "").trim(), p.name) };
+    // Rule L (2026-08-11 review): a draft transcription's sentence is
+    // never presented as the document's own words — only verified text is
+    // quoted as "it says"
+    const quote = doc.transcription_status === "draft" ? null : quoteFrom((doc.transcription || "").trim(), p.name);
+    return { id: doc.id, title: doc.title, quote };
   };
 
   const askDisposition = (p) => {
@@ -191,12 +195,17 @@ function reviewSession(state, session) {
     chat.addUser(text);
     chat.setQuickReplies([]);
     chat.setBusy(true);
+    // the opening and the claim must be recorded BEFORE this line — a fast
+    // reviewer could type before the start fetch resolved, and the server
+    // would order the user's line first (2026-08-11 review, R7)
+    await started;
     // the free text is checked against the exact claim AND the attested
     // facts — off-topic answers steer back, contradictions surface and
     // must be resolved before anything is confirmed (2026-08-09)
     const res = await checkText(state, session.id, person, text);
     if (!res) {
       chat.addAssistant("Sorry — the assistant couldn't be reached. Try again?");
+      recordIfNew("assistant", "Sorry — the assistant couldn't be reached. Try again?");
       chat.setBusy(false);
       askDisposition(person);
       return;
@@ -217,6 +226,19 @@ function reviewSession(state, session) {
     }
     if (res.contradiction?.found === "true") {
       chat.setBusy(false);
+      // the contradiction is surfaced; the reviewer is never stuck re-
+      // answering (2026-08-11 review, R4/R6): they can record their
+      // standing disagreement as a guess (their words become the basis),
+      // leave it for later, or delete — "Record as fact" is never offered,
+      // because the evidence disputes the claim
+      const LEAVE = { label: "Leave for later", onClick: () => keep(person) };
+      const DELETE = { label: "Delete", onClick: () => recordDecision(person, "delete") };
+      const GUESS = { label: "Record as a guess", primary: true, onClick: () => recordDecision(person, "estimated") };
+      // the statement is kept for the guess's basis, but NO disposition is
+      // captured — a reviewer who then resolves the contradiction flows
+      // through the normal confidence-based chips (2026-08-11)
+      pendingDecision = { p: person, statement: text, provenance: [], disposition: null };
+      chat.setQuickReplies([GUESS, LEAVE, DELETE]);
       return; // the pending decision stays — the resolution is checked again
     }
     chat.setBusy(false);
@@ -281,6 +303,7 @@ function reviewSession(state, session) {
       advance();
     } else {
       chat.addAssistant("That didn't save — the server said no. Try again?");
+      recordIfNew("assistant", "That didn't save — the server said no. Try again?");
       chat.setBusy(false);
       askDisposition(p);
     }
@@ -296,6 +319,7 @@ function reviewSession(state, session) {
       advance();
     } else {
       chat.addAssistant("That didn't save — the server said no. Try again?");
+      recordIfNew("assistant", "That didn't save — the server said no. Try again?");
       chat.setBusy(false);
       askDisposition(p);
     }
@@ -311,9 +335,9 @@ function reviewSession(state, session) {
     // person's chips stayed hidden and the walkthrough dead-ended
     const pending = proposedPeople(state).filter((p) => !decidedIds.has(p.id));
     if (!pending.length) {
-      chat.addAssistant(
-        `That's everyone — ${tally.attested ? `${tally.attested} recorded as facts, ` : ""}${tally.estimated ? `${tally.estimated} recorded as guesses, ` : ""}${tally.pending ? `${tally.pending} left for later, ` : ""}${tally.deleted ? `${tally.deleted} deleted` : "and nothing deleted"} — the rest were already in the tree, so nothing changed for them.`,
-      );
+      const summary = `That's everyone — ${tally.attested ? `${tally.attested} recorded as facts, ` : ""}${tally.estimated ? `${tally.estimated} recorded as guesses, ` : ""}${tally.pending ? `${tally.pending} left for later, ` : ""}${tally.deleted ? `${tally.deleted} deleted` : "and nothing deleted"} — the rest were already in the tree, so nothing changed for them.`;
+      chat.addAssistant(summary);
+      recordIfNew("assistant", summary); // the ending is part of what the family saw (2026-08-11 review)
       chat.setQuickReplies([{ label: "See the family tree →", primary: true, onClick: () => location.assign("#/tree") }]);
       return;
     }

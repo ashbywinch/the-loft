@@ -442,7 +442,7 @@ def _normalize_date_fact(value: Any, precision: Any) -> tuple[str | None, str | 
                     "PREFER_DATES_FROM": "past",
                 },
             )
-    except ValueError, OverflowError:
+    except (ValueError, OverflowError):
         parsed = None
     if parsed is None:
         return None, None
@@ -501,7 +501,7 @@ def _stable_parse(phrase: str, parsed: datetime) -> bool:
 def _normalize_age_fact(value: Any, precision: Any) -> tuple[int | None, str | None]:
     try:
         age = int(value)
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return None, None
     if not 0 < age < 110:
         return None, None
@@ -575,7 +575,7 @@ def _suggestion_year(s: str) -> int | None:
             phrase,
             settings={"DATE_ORDER": _locale_date_order(), "PREFER_DATES_FROM": "past"},
         )
-    except ValueError, OverflowError:
+    except (ValueError, OverflowError):
         return None
     return parsed.year if parsed else None
 
@@ -604,7 +604,7 @@ def _filter_implausible_suggestions(assessment: dict[str, Any], who: str, knowle
         return assessment
     try:
         dob_year = int(str(dob_value)[:4])
-    except TypeError, ValueError:
+    except (TypeError, ValueError):
         return assessment
     filtered = []
     for q in questions:

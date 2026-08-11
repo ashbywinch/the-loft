@@ -153,7 +153,7 @@ def find_api_key() -> str:
     if auth_path.exists():
         try:
             auth = json.loads(auth_path.read_text(encoding="utf-8"))
-        except OSError, json.JSONDecodeError:
+        except (OSError, json.JSONDecodeError):
             auth = {}
         for hint in AUTH_JSON_PROVIDER_HINTS:
             entry = auth.get(hint)

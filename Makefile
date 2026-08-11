@@ -1,6 +1,9 @@
 # Makefile for The Loft — family history museum web app.
 # Single dev entry point: every dev action goes through make.
-# CI runs exactly: make setup && make lint && make test && make coverage
+# CI runs exactly: make setup && make lint-github && make coverage — the
+# suites run ONCE (inside coverage), never twice (2026-08-11: make test +
+# make coverage both re-ran pytest and vitest in CI). make test stays as
+# the local fast gate.
 .PHONY: help setup serve lint lint-github typecheck test coverage format clean eval eval-changed
 
 PYTHON := .venv/bin/python
@@ -53,7 +56,7 @@ test: setup lint typecheck
 	@$(PYTHON) -m pytest
 	@$(NPM) run test
 
-coverage: setup
+coverage: setup lint typecheck
 	@$(PYTHON) -m pytest --cov=tools --cov-report=term-missing --cov-report=xml
 	@$(NPM) run coverage
 

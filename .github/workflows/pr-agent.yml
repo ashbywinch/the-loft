@@ -16,6 +16,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+      actions: read # the fail-loud check reads the bot's own log for the failure reason
     steps:
       - uses: actions/checkout@v7
       - uses: the-pr-agent/pr-agent@v0.41.1 # pin a real release tag — @latest does not resolve

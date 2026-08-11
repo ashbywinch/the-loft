@@ -18,6 +18,7 @@ in its 1776 spelling (the long-s renders as f: "Courfe").
 
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 from pathlib import Path
@@ -53,7 +54,9 @@ def run_flow() -> dict[str, str]:
     outputs: dict[str, str] = {}
     tmp: Path | None = None
     try:
-        rotated = Path(tempfile.mkstemp(suffix=".jpg")[1])
+        fd, rotated_path = tempfile.mkstemp(suffix=".jpg")
+        os.close(fd)  # the fd would leak (2026-08-11 review)
+        rotated = Path(rotated_path)
         tmp = rotated  # assigned before the run so cleanup always happens (2026-08-11 review)
         result = subprocess.run(
             ["magick", str(TranscriptionFlow.fixture), "-rotate", "90", str(rotated)],

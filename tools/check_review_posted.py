@@ -137,8 +137,12 @@ def main() -> int:
     head_committed_at = commit["commit"]["committer"]["date"]
 
     comments = _get_json(f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments", token)
+    # the review posts with the regular header ("## PR Reviewer Guide") or
+    # the incremental form ("## Incremental PR Reviewer Guide" — the -i
+    # path, 2026-08-11: the first incremental run posted exactly that and
+    # the check missed it, failing a review that had succeeded)
     covered = any(
-        c.get("body", "").startswith("## PR Reviewer Guide")
+        c.get("body", "").startswith(("## PR Reviewer Guide", "## Incremental PR Reviewer Guide"))
         and (sha in c.get("body", "") or c.get("created_at", "") >= head_committed_at)
         for c in comments
     )

@@ -3,7 +3,7 @@
 - **Status:** guidelines (2026-08-03). The one way to style the app: components
   reference semantic tokens only, and new UI goes through the classes below —
   a new component style requires updating this library (the design-system
-  counterpart of the archive library, docs/CHAT-UX.md, docs/MEMORIES.md).
+  counterpart of the archive library, docs/CHAT-UX.md, docs/prd/MEMORIES.md).
 - **Research basis:** primitive → semantic → component tokens; every
   hard-coded value in component CSS is a gap; a pattern library is the
   enforcement point for a vanilla app.

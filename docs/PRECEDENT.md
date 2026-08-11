@@ -1,6 +1,6 @@
 # Precedent Scan Notes (D7) — Family History Album
 
-Companion to `PRD.md` §17, step D7. What exists, what works, what to avoid. Sources at the end. Status: completed 2026-08-02.
+Companion to `prd/PRD.md` §17, step D7. What exists, what works, what to avoid. Sources at the end. Status: completed 2026-08-02.
 
 ## 1. Family-history platforms (Findmypast, Ancestry, FamilySearch)
 

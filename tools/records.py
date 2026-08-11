@@ -422,7 +422,7 @@ class PlacesTable:
 
 @dataclass(frozen=True)
 class Org:
-    """An organisation record — the third identity kind (docs/IMPORT-PRD.md
+    """An organisation record — the third identity kind (docs/prd/IMPORT-PRD.md
     §2.4): institutions the family engaged with (the Ministry of Supply,
     the Halifax Building Society). Same seam as Person/Place: confirmed in
     the identity table or proposed, one type. ``address`` and ``branch``

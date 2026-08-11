@@ -2,8 +2,8 @@
 
 Status: agreed direction (2026-08-10, user). Purpose: this doc is
 requirements and user needs only — the mechanics live in
-`docs/INGEST-PLAN.md`. Related: the app's F9 + the review principles in
-`docs/PRD.md`; the artifact-import rules in `docs/IMPORT-PRD.md`.
+`docs/plans/INGEST-PLAN.md`. Related: the app's F9 + the review principles in
+`docs/prd/PRD.md`; the artifact-import rules in `docs/prd/IMPORT-PRD.md`.
 
 ## The overarching goal
 
@@ -67,7 +67,7 @@ themselves raise — the family's own words.
   surfaces new claims (Bill's marriage → Bill, and the marriage itself),
   they are worked immediately after the current claim is bottomed out —
   not deferred to the end of the queue. The family is not asked about
-  Judith, then Dave, then dragged back to Bill's marriage later: the
+  Pearl, then Dave, then dragged back to Bill's marriage later: the
   current claim is finished, then Bill and his marriage are gone through
   right after it. Discovery is depth-first: the queue works a claim's
   consequences before the next pre-existing claim.
@@ -78,7 +78,7 @@ themselves raise — the family's own words.
   existence attestation.
 - **Discovery.** New entities the family mentions during the conversation
   join the review as their own claims, pre-answered to the degree the
-  family's words attest them ("my cousin Sarah" is identified; "Sarah
+  family's words attest them ("my cousin Pearl" is identified; "Pearl
   wrote the letters" attests an activity). The walk never loses a mention.
 - **Closure.** The review is done when every claim is resolved — populated
   or explicitly excluded. It cannot close while an unresolved claim is

@@ -2,7 +2,7 @@
 
 - **Status:** draft — proposed, review pending (2026-08-05)
 - **Source:** the import-interview session record §9 — interview findings, 2026-08-05 (the import attempt *is* the interview; the record stays private)
-- **Normative home:** `docs/TECH-SPEC.md` §16 (draft). **Parity partner:** `docs/MEMORIES.md` (the story flow)
+- **Normative home:** `docs/TECH-SPEC.md` §16 (draft). **Parity partner:** `docs/prd/MEMORIES.md` (the story flow)
 - **Companions:** the private interview records (family facts) and the private worked-example review (real-import lessons)
 
 ## 1. Purpose
@@ -132,5 +132,5 @@ Given a real scan, the flow:
 - The import-interview session record — §9 (proposed flow) and §10 session log (rulings, 2026-08-05; private)
 - The private interview records — family facts (cast, places, capture conventions)
 - `docs/TECH-SPEC.md` §16 — import flow design (draft; this PRD feeds it)
-- `docs/MEMORIES.md` — the story flow this PRD mirrors
+- `docs/prd/MEMORIES.md` — the story flow this PRD mirrors
 - The private worked-example review — real-import lessons (never guess identity; co-occurrence ≠ relationship; actuality not recurrence)

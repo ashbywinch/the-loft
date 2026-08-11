@@ -1,5 +1,5 @@
 """Tests for the append-only store: the immutable-archive requirement
-(docs/PRD.md, docs/TECH-SPEC.md §3)."""
+(docs/prd/PRD.md, docs/TECH-SPEC.md §3)."""
 
 from __future__ import annotations
 

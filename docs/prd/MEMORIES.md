@@ -1,7 +1,7 @@
 # Story & Fact Capture — "Add your memory"
 
 - **Status:** plan — approved shape (2026-08-03); **slices 0–3 shipped** (read side, capture server, AI elicitation, write path), plus the chat redesign, review toggles, dob-aware dating, artifact links, and the identity correction (`p-alex`; curation is a role, not a person)
-- **Companions:** `PRD.md` §19 (story harvest), `TECH-SPEC.md` §16.9/§16.11/§16.12, `PLAN.md`
+- **Companions:** `PRD.md` §19 (story harvest), `TECH-SPEC.md` §16.9/§16.11/§16.12, `../plans/PLAN.md`
 - **Note:** the §16 sections live on the `phase-1-import-flow` branch; this plan assumes they land.
 
 ## What this is
@@ -174,7 +174,7 @@ like any other (§19.5):
   reference organisations (`orgs[]`) and objects/memorabilia (`items[]` —
   an attested object, a thing the story names) — the same propose/confirm
   refs as people/places, validated at publish. One content model, two
-  capture flows (docs/IMPORT-PRD.md §2.5); the elicitation's extraction
+  capture flows (docs/prd/IMPORT-PRD.md §2.5); the elicitation's extraction
   kinds gain `org`.
 - **A known object family is disambiguated, never guessed (2026-08-06):**
   when an account references a family of known objects without naming one

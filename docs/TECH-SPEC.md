@@ -1,7 +1,7 @@
 # Family History Album — Tech Spec & Architecture
 
-- **Status:** v0.3 — **for review** · §16 Import flow added (PLAN.md Phase 1 draft, 2026-08-02)
-- **Date:** 2026-08-02 · Companion to `PRD.md` v0.5
+- **Status:** v0.3 — **for review** · §16 Import flow added (plans/PLAN.md Phase 1 draft, 2026-08-02)
+- **Date:** 2026-08-02 · Companion to `prd/PRD.md` v0.5
 - **After approval:** prototype with fake content (`tools/fake-data`), per §13.
 
 ---
@@ -112,7 +112,7 @@ archive/
   `reflection: true` (perspective; no events' date — dated by its told day;
   must name people/places refs), never both. The `published()` seam (data.js)
   excludes both from every discovery surface; they render only in their
-  blocks on the pages they attest/mention (see MEMORIES.md).
+  blocks on the pages they attest/mention (see prd/MEMORIES.md).
 - **Evidence flag (2026-08-06):** a found record — a web capture, a
   directory page — is `evidence: true` (non-story types only; must name
   people/places/items refs). It is not a family happening: the `published()`
@@ -279,7 +279,7 @@ Capture: `<input type="file" capture>` or MediaDevices; auto-sequence naming (`l
 | 5 | **Tools language — RESOLVED:** Python (user, 2026-08-02) | — |
 | 6 | **Hosting target** — free static host for the app; archive home = Google Drive free tier | Cloudflare Pages (or Netlify / GitHub Pages) + Drive; nothing paid, nothing self-hosted |
 | 7 | **Working title — RESOLVED:** "The Loft" (user approved, 2026-08-02) | — |
-| 8 | **No PIN on the projection — open by design** (the archive account is the gate) | **SUPERSEDED (2026-08-03, §7/F6):** no public surface at all until accounts land — the projection is family-only; nothing deploys before the F6 gate (PLAN.md) |
+| 8 | **No PIN on the projection — open by design** (the archive account is the gate) | **SUPERSEDED (2026-08-03, §7/F6):** no public surface at all until accounts land — the projection is family-only; nothing deploys before the F6 gate (plans/PLAN.md) |
 | 9 | **Family relationships** — typed edges in `people.json`; person pages show relationship labels; `#/tree` renders generations | **RESOLVED (user, 2026-08-02)** — built in the prototype. **Alignment (2026-08-05):** no genealogy *tooling* (the PRD anti-pattern) is not the same as no object-model standard — **GEDCOM X** is adopted as the object-model reference (person/relationship/agent/event/place/source vocabulary; **residence events replace the place-household field** — the standard's model is better); **date precision extended** with `before`/`after`/`between` so the mapping is lossless; `tools/export-gedcom` targets **GEDCOM 7.0** with a documented one-to-one mapping (excludes proposed links and proposed residence; stories shoehorn as NOTES on the people they reference); **`tools/import-gedcom`** is the inverse (ids recovered via REFN, places by name) and the round-trip is exact — verified by tests and on the real archive; both sides parse-verified with `gedcom7` (strict ABNF grammar) |
 | 10 | **Live system store** — multi-user curation and corpus-scale generation need a real store; the folder stays the durable materialized contract | **RESOLVED (user, 2026-08-03)** — Supabase (Postgres + pgvector); small family-user set; generation on the reviewer's laptop; tenant isolation is a far-future seam (§14), not built |
 
@@ -316,7 +316,7 @@ OCR transcription drafts, photo labeling, theme/entity discovery, TTS — the `p
 
 ## 16. Import flow (capture → archive → app)
 
-**Status:** draft — PLAN.md Phase 1 deliverable, reviewed via the import interview (2026-08-05). The flow is specified in `docs/IMPORT-PRD.md` (rules A–N, questions Q1–Q7, the staged review, the landed model additions); this section stays the normative home and the private worked-example review remains the real-import baseline. Decisions resolved with the reviewer 2026-08-02; family-instance facts live in the private interview records, referenced here.
+**Status:** draft — plans/PLAN.md Phase 1 deliverable, reviewed via the import interview (2026-08-05). The flow is specified in `docs/prd/IMPORT-PRD.md` (rules A–N, questions Q1–Q7, the staged review, the landed model additions); this section stays the normative home and the private worked-example review remains the real-import baseline. Decisions resolved with the reviewer 2026-08-02; family-instance facts live in the private interview records, referenced here.
 
 ### 16.1 The loop
 
@@ -332,7 +332,7 @@ boxes → inbox/<job>/page-*.jpg        (scanner: one job per letter)
 
 ### 16.2 Scanner conventions (resolved, user 2026-08-02)
 
-- **Operator:** the reviewer alone, at home, own pace. Supersedes PLAN.md's brother-scanner-day assumption.
+- **Operator:** the reviewer alone, at home, own pace. Supersedes plans/PLAN.md's brother-scanner-day assumption.
 - **Gear:** an **Epson WorkForce DS-530 II** (planned, 2026-08-03) for letters — duplex, 50-sheet ADF, 600 dpi optical, USB; flatbed-with-slide-adapter for prints + slides; Android phone scan app for odd sizes.
 
 | Requirement | Why |
@@ -381,7 +381,7 @@ boxes → inbox/<job>/page-*.jpg        (scanner: one job per letter)
 ### 16.6 Publish and the phone path
 
 - **Sync:** `tools/upload-drive` mirrors the local archive to the dedicated family account (exists — user, 2026-08-02). Split from import (which §5 bundled) so a dropped connection never loses catalog work.
-- **Publish:** `loft publish` regenerates `app/data` from the local archive (identity tables + sidecars + primary content files — metadata, thumbnails, stories, transcriptions); the static host serves it. Drafts appear in the projection (the owner's drafts surface reads them, 2026-08-03) and are filtered from the archival views by `catalogued()`; tombstoned items never publish. **Hard gate (2026-08-03, review):** the publish path refuses (non-zero exit) to target a public host until F6 accounts exist — the release gate in PLAN.md — so the projection's transcriptions can never leak to a public deployment by accident; the only override is an explicit flag for a family-only host. The gate guards the deploy path; the current `loft publish` targets the local projection only.
+- **Publish:** `loft publish` regenerates `app/data` from the local archive (identity tables + sidecars + primary content files — metadata, thumbnails, stories, transcriptions); the static host serves it. Drafts appear in the projection (the owner's drafts surface reads them, 2026-08-03) and are filtered from the archival views by `catalogued()`; tombstoned items never publish. **Hard gate (2026-08-03, review):** the publish path refuses (non-zero exit) to target a public host until F6 accounts exist — the release gate in plans/PLAN.md — so the projection's transcriptions can never leak to a public deployment by accident; the only override is an explicit flag for a family-only host. The gate guards the deploy path; the current `loft publish` targets the local projection only.
 - **Phone (Slice 2):** Google Identity Services PKCE against the archive account; `files.create/update` for sidecars, `media` upload for captures; the phone writes byte-compatible sidecars (same schema, same fields). Full-res read only when authenticated (§5).
 - **PWA** caches the projection (Slice 6); the whole browsable archive is cacheable.
 

@@ -38,7 +38,7 @@ def test_committed_projection_is_self_describing() -> None:
 def test_2060_readme_contract_is_specified() -> None:
     """The 2060 contract (a README that explains the archive, no credentials)
     is written down in the requirements — the test fails if it drifts."""
-    prd = (REPO / "docs" / "PRD.md").read_text(encoding="utf-8")
+    prd = (REPO / "docs/prd/PRD.md").read_text(encoding="utf-8")
     assert "written for a reader in 2060" in prd
     assert "Recoverable without credentials" in prd or "recoverable without credentials" in prd
     assert "README" in prd

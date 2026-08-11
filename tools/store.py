@@ -1,6 +1,6 @@
 """Append-only file store for the archive.
 
-The archive is immutable by requirement (docs/PRD.md — append-only): a file,
+The archive is immutable by requirement (docs/prd/PRD.md — append-only): a file,
 once written, is never edited or deleted; a change is a new file that
 supersedes it (docs/TECH-SPEC.md §3). This module is the single write path so
 the invariant is enforced, not hoped for. Tests inject ``MemoryStore``, which

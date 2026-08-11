@@ -1,7 +1,7 @@
 # Project Plan — The Loft
 
 - **Status:** v0.1 — approved shape, sequencing open to adjustment
-- **Date:** 2026-08-02 · Companion to `PRD.md` v0.6 and `TECH-SPEC.md` v0.2
+- **Date:** 2026-08-02 · Companion to `../prd/PRD.md` v0.6 and `TECH-SPEC.md` v0.2
 
 ## The urgency
 
@@ -29,7 +29,7 @@ ships something usable that week, on the real collection, not the fake one.
 | Phase | What | State |
 |---|---|---|
 | 0 | Docs (PRD/TECH-SPEC/records), scaffold, prototype with fake data | **Done** |
-| 1 | **Import flow sketch** — design of capture → archive → app (TECH-SPEC §16 + worked example) | **Reviewed via the import interview (2026-08-05)** — the flow spec is `docs/IMPORT-PRD.md`; TECH-SPEC §16 is the normative home |
+| 1 | **Import flow sketch** — design of capture → archive → app (TECH-SPEC §16 + worked example) | **Reviewed via the import interview (2026-08-05)** — the flow spec is `docs/prd/IMPORT-PRD.md`; TECH-SPEC §16 is the normative home |
 | 2 | Slices 1–6, each shippable | After 1 |
 
 ## Feature inventory (prototype → real)
@@ -64,7 +64,7 @@ from fake-data demo to real-archive feature.
 | Sensitive flags | data-only | Slice 5 | field exists; no UI uses it yet |
 | Memory controls (dismiss date/person/memory) | not built | Slice 5 | |
 | Testimony recording (voice / self-record / type) | designed (§19) | Slice 4 | |
-| Browse-side story & fact capture ("Add your memory") | **designed** (`docs/MEMORIES.md`) | Slice 4 | AI-elicited interview; text v1, audio in Slice 4 |
+| Browse-side story & fact capture ("Add your memory") | **designed** (`docs/prd/MEMORIES.md`) | Slice 4 | AI-elicited interview; text v1, audio in Slice 4 |
 | OCR-assisted transcription | not built | Slice 4 | drafts via the propose/confirm seam |
 | Semantic search (embeddings) | not built | Slice 4 | |
 | Street-view cards | **stub** | Slice 6 | embed/static images, graceful offline |
@@ -215,4 +215,4 @@ from his phone, end to end. The backup ritual is documented and run once.
 
 Social feeds, public sharing of any kind, family tree view, the ML models
 themselves (labels, OCR, alt text, and story suggestions plug into the seam
-later). Accounts are Should — mechanism TBD (`PRD.md` §15).
+later). Accounts are Should — mechanism TBD (`../prd/PRD.md` §15).

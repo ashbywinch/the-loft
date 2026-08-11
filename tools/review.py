@@ -32,7 +32,12 @@ def _relevant_sentences(text: str, needles: tuple[str, ...], limit: int = 3) -> 
     import re
 
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
-    hits = [s for s in sentences if any(n in s for n in needles)]
+    # case-insensitive: search_items lowercases its query, so "Seascale"
+    # must still match "seascale" — a case-sensitive match returned the
+    # document's opening sentences instead of the relevant ones, exactly
+    # the failure R2 was written to stop (2026-08-11 review)
+    lower = [s.lower() for s in sentences]
+    hits = [s for s, lowered in zip(sentences, lower, strict=True) if any(n.lower() in lowered for n in needles)]
     pool = hits or sentences
     return [s[:300] for s in pool[:limit]]
 

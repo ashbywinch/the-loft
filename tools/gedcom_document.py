@@ -213,8 +213,10 @@ def export_gedcom(archive: Archive) -> str:
                 # (2026-08-06 review: a child of an unmarried pair vanished)
                 children_of.setdefault(fid, []).append(child)
                 if any((parent, child) in estimated_parent_edges for parent in uniq):
-                    fam_notes[fid] = _estimate_note(
-                        _estimate_basis(archive, child) or _estimate_basis(archive, uniq[0])
+                    # concatenate — a spouse estimate's evidence must not be
+                    # overwritten by the parent edge's (R9; 2026-08-11 review)
+                    fam_notes.setdefault(fid, []).extend(
+                        _estimate_note(_estimate_basis(archive, child) or _estimate_basis(archive, uniq[0]))
                     )
         else:
             single_parent.setdefault(uniq[0], []).append(child)
@@ -225,8 +227,10 @@ def export_gedcom(archive: Archive) -> str:
         fid = f"F{counter}"
         families.append({"id": fid, "a": parent, "b": None, "children": sorted(set(single_parent[parent]))})
         if any((parent, child) in estimated_parent_edges for child in single_parent[parent]):
-            fam_notes[fid] = _estimate_note(
-                _estimate_basis(archive, single_parent[parent][0]) or _estimate_basis(archive, parent)
+            # concatenate — never overwrite a spouse estimate's evidence
+            # (R9; 2026-08-11 review)
+            fam_notes.setdefault(fid, []).extend(
+                _estimate_note(_estimate_basis(archive, single_parent[parent][0]) or _estimate_basis(archive, parent))
             )
 
     # -- assemble the document

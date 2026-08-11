@@ -191,6 +191,15 @@ class Archive:
         path = self.content_path(item_id, filename)
         return self.store.read(path) if self.store.exists(path) else None
 
+    def read_content_prefix(self, item_id: str, filename: str, limit: int) -> str | None:
+        """The item's content file's first ``limit`` bytes decoded, or None
+        when the file doesn't exist — the bounded peek that lets a
+        shortlist filter check a transcription WITHOUT reading the whole
+        file (2026-08-11 review: the review context never full-scans the
+        archive on a chat message)."""
+        path = self.content_path(item_id, filename)
+        return self.store.read_prefix(path, limit) if self.store.exists(path) else None
+
     def read_file_bytes(self, item_id: str, filename: str) -> bytes | None:
         """A content file's raw bytes — scans and images are binary, never
         decoded as text (a JPEG decoded to str and re-encoded corrupts)."""

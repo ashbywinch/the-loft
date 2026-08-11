@@ -1,6 +1,6 @@
 # Discovery Instruments — Family History Album
 
-Companion to `PRD.md` §17. Each instrument is numbered to match the discovery plan (D1–D10). They are templates: use them as-is or adapt, but keep the *record* — filled-in sheets are the raw material for the PRD's v1 scope.
+Companion to `prd/PRD.md` §17. Each instrument is numbered to match the discovery plan (D1–D10). They are templates: use them as-is or adapt, but keep the *record* — filled-in sheets are the raw material for the PRD's v1 scope.
 
 **Cadence note:** D1–D3 should happen within the first two weeks. The curator is the last living narrator (PRD §2); the harvest is time-bound, everything else is not.
 

@@ -3,7 +3,7 @@
 - **Status:** guidelines (2026-08-03). Applies to the story-capture sheet and
   any chat UI the app adds. Backed by `app/chat.js` — new chat functionality
   goes through the library so the layout stays consistent
-  (docs/MEMORIES.md). Research basis: mobile chat-app guidance (bottom
+  (docs/prd/MEMORIES.md). Research basis: mobile chat-app guidance (bottom
   input, left/right bubbles, disabled-while-busy, 44px, contrast); the
   deviations below are the user's explicit product calls.
 

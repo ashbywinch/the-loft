@@ -227,7 +227,7 @@ good.
   assertion exists.** The anti-pattern is a bespoke regex date scraper when
   the answer is "the model asserts what a value is, the library parses it".
   Dates: dateparser (locale-aware) validates values the model asserts — no
-  hand-written date parsers (docs/MEMORIES.md).
+  hand-written date parsers (docs/prd/MEMORIES.md).
 - **Dev is the environment, not the quality bar.** Code written during
   development is the code that ships — production standard from day one; the
   only thing dev changes is where the data lives.

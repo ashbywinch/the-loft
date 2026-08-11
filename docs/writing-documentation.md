@@ -9,7 +9,7 @@ Conventions for documentation in this repo. Full guidance: `skill://write-docume
   table is the answer.
 - **~150–200 line ceiling per doc.** If a doc outgrows it, split it — the
   ceiling is a health check, not a hard limit. **Exception: the canonical
-  requirements document (`docs/PRD.md`) is allowed to exceed it** — a
+  requirements document (`docs/prd/PRD.md`) is allowed to exceed it** — a
   requirements doc is one artifact and splitting it would scatter the
   contract.
 - **Link, don't copy.** One canonical statement of a fact; other docs
@@ -24,15 +24,15 @@ Conventions for documentation in this repo. Full guidance: `skill://write-docume
 
 | Content | File |
 |---|---|
-| Product requirements | `PRD.md` |
+| Product requirements | `prd/PRD.md` |
 | Architecture + decision record | `TECH-SPEC.md` |
-| The story-capture flow spec | `MEMORIES.md` |
-| The artifact-import flow spec | `IMPORT-PRD.md` |
+| The story-capture flow spec | `prd/MEMORIES.md` |
+| The artifact-import flow spec | `prd/IMPORT-PRD.md` |
 | Real-import lessons (worked example) | private — kept out of the public tree |
 | Interview/discovery records + working drafts | `DISCOVERY.md`; session records stay private |
 | Precedent research | `PRECEDENT.md` |
 | UI / chat conventions | `UI.md`, `CHAT-UX.md` |
-| UX loop working log | `ux-fixes-plan.md` |
+| UX loop working log | `plans/ux-fixes-plan.md` |
 | Code/test/doc conventions | `coding-standards.md`, `testing-standards.md`, `writing-documentation.md` |
 
 The routing tables in `AGENTS.md` and `README.md` are the find-it copies for

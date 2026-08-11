@@ -10,7 +10,7 @@ ai_timeout = 1800
 fallback_models = []
 repo_context_from_default_branch = false
 repo_context_files = [
-    "docs/PRD.md",
+    "docs/prd/PRD.md",
     "docs/coding-standards.md",
     "docs/testing-standards.md",
     "docs/writing-documentation.md",
@@ -23,7 +23,7 @@ persistent_comment = true  # update the same review comment instead of posting a
 require_tests_review = true
 require_security_review = true
 num_max_findings = 50
-extra_instructions = "Check the PR against each file in repo_context_files. Add a 'Compliance' section per doc, listing any violations found or 'No violations'. Flag violations as findings, not just notes: requirement deviations from docs/PRD.md (a change that violates a stated requirement, constraint, persona, or JTBD is a finding), documentation-standard deviations from docs/writing-documentation.md (docs failing the documentation-quality checklist — context efficiency, density, no-duplication, one topic per file — including that every doc is discoverable from AGENTS.md; skills are exempt from reachability — the harness discovers them (see docs/documentation-structure.md)), and folder-structure deviations from docs/documentation-structure.md (missing or malformed required docs, or a doc that AGENTS.md cannot lead to). The canonical code-repo standards (coding, testing, UX) live in standards/ and are scaffolded into code repos — they do not govern omp-config's own docs, but a PR that edits one must keep it consistent with the rest of the canonical set. A change to a skill or standard must keep the repo self-check (make test) green and mention that the change needs make install + omp restart to take effect."
+extra_instructions = "Check the PR against each file in repo_context_files. Add a 'Compliance' section per doc, listing any violations found or 'No violations'. Flag violations as findings, not just notes: requirement deviations from docs/prd/PRD.md (a change that violates a stated requirement, constraint, persona, or JTBD is a finding), documentation-standard deviations from docs/writing-documentation.md (docs failing the documentation-quality checklist — context efficiency, density, no-duplication, one topic per file — including that every doc is discoverable from AGENTS.md; skills are exempt from reachability — the harness discovers them (see docs/documentation-structure.md)), and folder-structure deviations from docs/documentation-structure.md (missing or malformed required docs, or a doc that AGENTS.md cannot lead to). The canonical code-repo standards (coding, testing, UX) live in standards/ and are scaffolded into code repos — they do not govern omp-config's own docs, but a PR that edits one must keep it consistent with the rest of the canonical set. A change to a skill or standard must keep the repo self-check (make test) green and mention that the change needs make install + omp restart to take effect."
 
 
 [pr_code_suggestions]

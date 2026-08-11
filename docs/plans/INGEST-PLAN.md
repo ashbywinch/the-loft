@@ -1,7 +1,7 @@
 # The document-ingest review — implementation plan (INGEST-PLAN)
 
 Status: agreed direction (2026-08-10, user). Mechanics for
-`docs/INGEST-PRD.md`; the requirements doc is authoritative. Each slice
+`docs/prd/INGEST-PRD.md`; the requirements doc is authoritative. Each slice
 lands with its evals (the flow-per-phase shape of `tests/test_evals.py`),
 and no eval covers another's ground.
 
@@ -72,8 +72,7 @@ transcript; these classes are the flow.
   the current jump straight to the disposition chips.
 - The quote selection is fixed at the same time: the surfacing quote is
   the document's own sentence that names the subject (page-marker-robust;
-  a routing header counts when the subject appears only there — "From:
-  Robert & Judith Armstrong" is the evidence Judith exists).
+  a routing header counts when the subject appears only there — "From: Walter & Nora Whitlock" is the evidence Walter exists).
 - The AI-generated notes are demoted out of the claim's framing — they are
   never presented as evidence.
 - Evals: the review flows become claims walking their phases; a flow per

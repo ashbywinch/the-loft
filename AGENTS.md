@@ -20,17 +20,17 @@ Instructions for AI agents working in this repo. Humans can read this too.
 
 | Task | Route to |
 |---|---|
-| Product requirements, scope, personas | `docs/PRD.md` |
+| Product requirements, scope, personas | `docs/prd/PRD.md` |
 | Architecture, stack, data model, decisions | `docs/TECH-SPEC.md` |
 |Interview/observation instruments|`docs/DISCOVERY.md`, private session records|
-| The story-capture flow spec ("Add your memory") | `docs/MEMORIES.md` |
-| The artifact-import flow spec + its rules (A–S) | `docs/IMPORT-PRD.md` |
+| The story-capture flow spec ("Add your memory") | `docs/prd/MEMORIES.md` |
+| The artifact-import flow spec + its rules (A–S) | `docs/prd/IMPORT-PRD.md` |
 | Real-import lessons (worked example) | private review doc, not shipped |
 | UI / visual conventions (the pattern library) | `docs/UI.md` |
 | Chat / capture-dialog conventions | `docs/CHAT-UX.md` |
-| UX loop working log (statuses, open items) | `docs/ux-fixes-plan.md` |
+| UX loop working log (statuses, open items) | `docs/plans/ux-fixes-plan.md` |
 | Precedent research | `docs/PRECEDENT.md` |
-| Project plan, slices, urgency | `docs/PLAN.md` |
+| Project plan, slices, urgency | `docs/plans/PLAN.md` |
 | Code conventions | `docs/coding-standards.md` |
 | Test conventions | `docs/testing-standards.md` |
 | Documentation conventions | `docs/writing-documentation.md` |

@@ -673,11 +673,15 @@ def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -
                 )
             },
         )
-        status, _ = server2.post(
+        status, body = server2.post(
             "/api/review/text",
             {"session_id": "import-documents", "person_id": "p-judith", "text": "Grandma used to say so."},
         )
         assert status == 200
+        # the response carries ONLY the UI's fields — the model's raw
+        # output, tool trace, and prompt texts never reach the browser
+        # (R7; 2026-08-11 review)
+        assert set(body) == {"ok", "message", "relevant", "contradiction", "confidence", "note", "findings", "question"}
         # the model's prompt carries the transcription's own words — never
         # the summary, and never a bare "no documents" note
         assert "Pearl Whitlock was the one who kept the photographs" in seen["user"]

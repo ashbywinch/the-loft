@@ -660,6 +660,24 @@ def test_identity_saves_serialize_concurrent_writers() -> None:
     assert all(f"a-{i}" in ids and f"b-{i}" in ids for i in range(15))
 
 
+def test_noop_resolve_writes_no_new_version() -> None:
+    """2026-08-11 review: a stale decision (the person already resolved) or
+    a pending writes NO new people version — byte-identical versions would
+    clutter the append-only chain the PRD describes as the archive's
+    troubleshooting record."""
+    store = MemoryStore()
+    archive = Archive(store)
+    archive.save_identity("people", {"people": [{"id": "p-x", "name": "X"}], "relationships": []})
+    assert len(archive._identity_versions("people")) == 1
+    archive.resolve_person("p-x", "attested", None)  # stale — p-x is not proposed
+    assert len(archive._identity_versions("people")) == 1  # nothing written
+    archive.resolve_person("p-x", "pending", None)
+    assert len(archive._identity_versions("people")) == 1  # pending writes nothing
+    # a real mutation still supersedes
+    archive.save_identity("people", {"people": [{"id": "p-y", "name": "Y"}], "relationships": []})
+    assert len(archive._identity_versions("people")) == 2
+
+
 def test_concurrent_message_recording_loses_nothing() -> None:
     """2026-08-10 review (the lock covered only the version computation,
     not the read): record_review_message used to read the imports table

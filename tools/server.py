@@ -451,14 +451,14 @@ def build_app(
             )
         except ElicitationError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=422)
-        when = datetime.now(UTC).date().isoformat()
         # the transcript is the MESSAGES — what the family saw (2026-08-09):
-        # the user's words and the assistant's rendered words, built here,
-        # shown verbatim by the app, and stored verbatim. The assistant's
-        # line also carries its THINKING — the model's raw verdict, verbatim
-        # — which goes back to the model on later calls. The note never
-        # reaches the user (it had been leaking into the steer's parens).
-        archive.record_review_message(session_id, "user", text, when)
+        # the user's words (recorded BEFORE the call, so an outage never
+        # loses them — 2026-08-11 review) and the assistant's rendered
+        # words, built here, shown verbatim by the app, and stored verbatim.
+        # The assistant's line also carries its THINKING — the model's raw
+        # verdict, verbatim — which goes back to the model on later calls.
+        # The note never reaches the user (it had been leaking into the
+        # steer's parens).
         contradiction = result.get("contradiction", {}).get("found") == "true"
         if contradiction:
             # the contradiction surfaces before anything else — an off-topic

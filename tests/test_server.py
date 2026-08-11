@@ -690,8 +690,11 @@ def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -
         assert imports is not None
         session = next(s for s in imports["imports"] if s.get("id") == "import-documents")
         messages = session["attempts"][-1]["messages"]
-        user_line = next(m["text"] for m in messages if m["role"] == "user")
-        assert user_line == "Grandma used to say so."  # the transcript holds the user's words, verbatim
+        user_lines = [m["text"] for m in messages if m["role"] == "user"]
+        # the transcript holds the user's words verbatim, EXACTLY ONCE —
+        # the record-before-the-call fix must not double them on the
+        # success path (2026-08-11 review: the line recorded twice)
+        assert user_lines == ["Grandma used to say so."]
     finally:
         server2.close()
 

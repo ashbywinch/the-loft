@@ -14,6 +14,7 @@ in 2060 can follow the chain (docs/TECH-SPEC.md §3).
 
 from __future__ import annotations
 
+import copy
 import json
 import re
 import threading
@@ -294,7 +295,15 @@ class Archive:
         applies, and writes the next version. Returns the version written."""
         with self._save_lock:
             table = self.get_identity(name)
+            before = copy.deepcopy(table)
             payload = mutate(table)
+            if payload == before:
+                # a no-op mutation (a stale decision, a pending, an
+                # unchanged record) writes NOTHING — byte-identical versions
+                # would clutter the append-only history the PRD describes as
+                # the archive's troubleshooting record (2026-08-11 review)
+                versions = self._identity_versions(name)
+                return versions[-1] if versions else 0
             versions = self._identity_versions(name)
             version = (versions[-1] if versions else 0) + 1
             if version > 1:

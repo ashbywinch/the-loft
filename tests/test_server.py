@@ -618,6 +618,27 @@ def test_decide_delete_of_an_already_resolved_person_is_a_state_not_an_error(ser
     assert attempt is None or not attempt.decisions
 
 
+def test_decide_pending_on_an_already_resolved_person_is_stale_too(server: ServerFixture) -> None:
+    """2026-08-11 review: a "leave for later" on a confirmed person used to
+    fall through the stale guard and record a false kept-decision —
+    moving the session's resume point to a resolved person and even
+    marking the walk finished. The queue never holds resolved people, so
+    a keep on a never-proposed person is stale like any other decision."""
+    _seed_pending(server)
+    status, body = server.post(
+        "/api/review/decide", {"session_id": "import-documents", "person_id": "p-robert", "decision": "pending"}
+    )
+    assert status == 200
+    assert body["ok"] is True
+    assert body["message"] == "Quentin Whitlock was already resolved — nothing changed."
+    assert body["person"]["id"] == "p-robert"  # the confirmed person stays
+    # nothing recorded — the stale keep must not advance the session
+    session = server.archive.get_review_session("import-documents")
+    assert session is not None
+    attempt = session.current_attempt()
+    assert attempt is None or not attempt.decisions
+
+
 def test_deciding_the_last_proposed_person_completes_the_session(server: ServerFixture) -> None:
     _seed_pending(server)
     status, _ = server.post(
@@ -699,6 +720,53 @@ def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -
         # the record-before-the-call fix must not double them on the
         # success path (2026-08-11 review: the line recorded twice)
         assert user_lines == ["Grandma used to say so."]
+    finally:
+        server2.close()
+
+
+def test_review_reads_transcription_only_mentions(server: ServerFixture) -> None:
+    """2026-08-11 review: the metadata pre-filter must NOT drop an item
+    whose only mention of the person lives in the verbatim transcription
+    (a draft with no people refs and no story yet) — the bounded
+    first-chunk read settles the shortlist, so the model can still attest
+    from the document's own words. The sidecar story alone must never be
+    the item's only window."""
+    _seed_pending(server)
+    seen: dict[str, str] = {}
+
+    class FakeChat:
+        def chat(self, system: str, user: str) -> str:  # noqa: ARG002
+            seen["user"] = user
+            return (
+                '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+                '"confidence": "think_so", "note": "fine", "findings": [], "question": ""}'
+            )
+
+    server2 = ServerFixture(server.data_dir, server.store, client=FakeChat())
+    try:
+        _seed_pending(server2)
+        server2.archive.save_item(
+            {
+                "id": "doc-draft-letter",
+                "title": "A draft letter",
+                "date": "2001-02-07",
+                "date_precision": "exact",
+                "type": "letter",
+                "status": "catalogued",
+                "transcription_status": "draft",
+                # NO people refs, NO sidecar story — the only mention of the
+                # person is inside the transcription text itself
+            },
+            content={"transcription": "The letter says Pearl was the one who kept the photographs."},
+        )
+        status, _ = server2.post(
+            "/api/review/text",
+            {"session_id": "import-documents", "person_id": "p-judith", "text": "Grandma used to say so."},
+        )
+        assert status == 200
+        # the document's own words reached the model — the draft's prose
+        # named the person, and the bounded read did not skip it
+        assert "Pearl was the one who kept the photographs" in seen["user"]
     finally:
         server2.close()
 

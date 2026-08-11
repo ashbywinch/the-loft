@@ -40,6 +40,19 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
   `app/bar.js` → `app/tests/bar.test.js`.
 - **Deterministic, always.** No wall-clock, no network, no order dependence,
   no unseeded randomness. Fake data uses seeded generators.
+- **No fire-and-forget leaks.** An app-under-test that fires fetch calls
+  without awaiting them (a `recordMessage`-style `fetch().catch()`) can
+  keep running after the test ends: a chain still in flight when the next
+  test starts lands on the next test's mock — or, once globals are
+  unstubbed, on the real network (happy-dom resolves relative URLs against
+  `http://localhost:3000`). Every suite drains pending chains until a full
+  macrotask passes with no new call before the next test — condition-based
+  quiescence, never a fixed tick count (2026-08-11: the coverage run's
+  slower istanbul transforms left the "kept link" test's chain in flight
+  and the re-render test saw four phantom message calls + an ECONNREFUSED;
+  the plain `make test` run passed, so the flake only showed under
+  `make coverage` — one more reason CI and the local gate run the SAME
+  command).
 - **Never real timers.** A test must not wait wall-clock: vitest fake timers
   (`vi.useFakeTimers()` + `vi.advanceTimersByTimeAsync`) drive every
   timeout, debounce and interval; a real `setTimeout`/`await sleep` in a

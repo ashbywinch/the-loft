@@ -11,8 +11,12 @@ Instructions for AI agents working in this repo. Humans can read this too.
 ## Testing Rules
 
 - ALWAYS use `make` targets; NEVER construct ad-hoc test commands.
-- CI runs exactly: `make setup && make lint && make test && make coverage`.
-- `make test` depends on `make lint` and `make typecheck` — lint gates test.
+- CI runs exactly: `make setup && make lint-github && make coverage` — the
+  suites run ONCE, inside `make coverage` (2026-08-11: running `make test`
+  AND `make coverage` re-ran pytest + vitest twice, and the second,
+  coverage-instrumented run surfaced a timing flake the first missed).
+- `make test` and `make coverage` both depend on `make lint` and
+  `make typecheck` — lint gates test.
 - Tests must be deterministic: no wall-clock, network, or order dependence
   (see `docs/testing-standards.md`).
 

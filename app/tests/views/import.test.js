@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, vi } from "vitest";
+import { afterEach, describe, expect, it, beforeEach, vi } from "vitest";
 import { render } from "../../views/import.js";
 
 const STATE = {
@@ -14,6 +14,25 @@ const STATE = {
 
 beforeEach(() => {
   vi.unstubAllGlobals();
+});
+
+afterEach(async () => {
+  // The app's fire-and-forget records (recordMessage, decide, checkText)
+  // can outlive a test: a chain still in flight when the next test's
+  // beforeEach unstubs the globals lands on a FOREIGN mock — or on the
+  // real happy-dom fetch, which resolves relative URLs against its
+  // default origin http://localhost:3000 (ECONNREFUSED). 2026-08-11 CI:
+  // under the coverage run's slower istanbul transforms, the "kept link"
+  // test's chain straddled the boundary and the re-render test saw four
+  // phantom message calls. The drain waits until a full macrotask passes
+  // with no new fetch call — condition-based, never a fixed tick count —
+  // and fails loud if the app never settles.
+  for (let i = 0; i < 20; i++) {
+    const before = fetch?.mock?.calls?.length ?? 0;
+    await new Promise((r) => setTimeout(r, 0));
+    if ((fetch?.mock?.calls?.length ?? 0) === before) return;
+  }
+  throw new Error("the app's async work did not settle — a record chain is still in flight");
 });
 
 const tick = () => new Promise((r) => setTimeout(r, 0));

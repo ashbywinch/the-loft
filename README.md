@@ -21,8 +21,8 @@ make test     # lint + typecheck gate, then pytest + vitest
 make coverage # tests with coverage report
 ```
 
-CI runs exactly `make setup && make lint && make test && make coverage` — never
-ad-hoc tool commands (see `AGENTS.md`).
+CI runs exactly `make setup && make lint-github && make coverage` — the suites
+run once, inside `make coverage`; never ad-hoc tool commands (see `AGENTS.md`).
 
 ## Documents
 

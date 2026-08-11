@@ -669,11 +669,12 @@ def test_noop_resolve_writes_no_new_version() -> None:
     archive = Archive(store)
     archive.save_identity("people", {"people": [{"id": "p-x", "name": "X"}], "relationships": []})
     assert len(archive._identity_versions("people")) == 1
-    archive.resolve_person("p-x", "attested", None)  # stale — p-x is not proposed
+    _, changed = archive.resolve_person("p-x", "attested", None)  # stale — p-x is not proposed
+    assert changed is False  # the authoritative in-lock flag reports the no-op (2026-08-11 review)
     assert len(archive._identity_versions("people")) == 1  # nothing written
     archive.resolve_person("p-x", "pending", None)
     assert len(archive._identity_versions("people")) == 1  # pending writes nothing
-    # a real mutation still supersedes
+    # a real mutation still supersedes — and reports the change
     archive.save_identity("people", {"people": [{"id": "p-y", "name": "Y"}], "relationships": []})
     assert len(archive._identity_versions("people")) == 2
 

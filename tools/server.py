@@ -338,7 +338,12 @@ def build_app(
         # on the POST-resolve result, so two concurrent decides on the same
         # person cannot both pass a stale pre-read (2026-08-11 review).
         changed = bool(person.get("gone")) or person.get("status") != pre_status
-        if not changed and decision != "pending":
+        # "pending" is stale too when the person was never proposed — the
+        # queue never holds resolved people, so recording a "kept for
+        # later" decision and message for a confirmed person falsifies the
+        # review record and moves the resume point to a resolved person
+        # (2026-08-11 review)
+        if not changed and (decision != "pending" or pre_status != "proposed"):
             message = f"{person_name} was already resolved — nothing changed."
             return {"ok": True, "person": person, "message": message}
         # the review record — the decision and the confirmation message the
@@ -431,10 +436,20 @@ def build_app(
                     continue
                 involved = person_id in [p.get("id") for p in item.get("people", []) if isinstance(p, dict)]
                 story = str(item.get("story") or "").strip()
-                if not (involved or any(n in story for n in needles)):
-                    continue
-                transcription = archive.read_content(item_id, "transcription.txt") or ""
-                item_text = transcription or story
+                if involved or any(n in story for n in needles):
+                    transcription = archive.read_content(item_id, "transcription.txt") or ""
+                    item_text = transcription or story
+                else:
+                    # the metadata pass says "maybe" — settle with a bounded
+                    # first-chunk transcription read before skipping: an
+                    # item whose ONLY mention of the person lives in the
+                    # verbatim text (a draft with no people refs yet) must
+                    # still reach the model — the transcription is the
+                    # evidence, never the summary (2026-08-11 review)
+                    transcription = archive.read_content(item_id, "transcription.txt") or ""
+                    if not any(n in transcription for n in needles):
+                        continue
+                    item_text = transcription
                 if item_text:
                     items.append(
                         {

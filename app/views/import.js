@@ -246,16 +246,23 @@ function reviewSession(state, session) {
     // the first statement is the recollection; later answers (the
     // question's answers, the provenance) accumulate beside it. The
     // disposition is captured from the initial chip and kept (2026-08-10).
-    // A resolution typed after a surfaced contradiction REPLACES the
-    // contradicted text as the statement — the correction is the
-    // recollection, never the original wrong words as the basis
+    // After a surfaced contradiction the contradicted text STAYS the
+    // statement and the typed correction joins the provenance BESIDE it —
+    // never the other way round: the record is {text: the contradicted
+    // recollection, note: the correction the reviewer settled on}, so the
+    // original words are kept with the evidence that replaced them
     // (2026-08-11 review)
-    const statement = pending?.contradiction ? text : (pending?.statement ?? text);
-    // the first answer IS the statement; only later replies (the
-    // follow-ups after the recollection) accumulate as provenance — an
-    // empty provenance must not be truthy ([] is truthy in JS, which
-    // duplicated the statement into its own note — 2026-08-11 review)
-    const provenance = pending?.statement ? [...(pending.provenance ?? []), text] : [];
+    const statement = pending?.statement ?? text;
+    let provenance;
+    if (pending?.contradiction) {
+      provenance = [...(pending.provenance ?? []), text];
+    } else {
+      // the first answer IS the statement; only later replies (the
+      // follow-ups after the recollection) accumulate as provenance — an
+      // empty provenance must not be truthy ([] is truthy in JS, which
+      // duplicated the statement into its own note — 2026-08-11 review)
+      provenance = pending?.statement ? [...(pending.provenance ?? []), text] : [];
+    }
     const disposition = pending?.disposition ?? null;
     pendingDecision = { p: person, statement, provenance, disposition };
     // the confirmation chips name the CONSEQUENCE, in the family's words —

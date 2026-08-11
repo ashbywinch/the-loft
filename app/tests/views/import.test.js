@@ -287,6 +287,12 @@ describe("the import review is the chat — one conversation resolves the pendin
     chip(main, "Record as fact").click();
     await tick();
     expect(fetch.mock.calls.filter(([url]) => url === "/api/review/decide")).toHaveLength(1); // now recorded
+    const decided = JSON.parse(decideCall()[1].body);
+    // the contradicted words are the basis statement; the typed correction
+    // rides as the note BESIDE them — never the other way round
+    // (2026-08-11 review)
+    expect(decided.basis.text).toBe("It was Nora who died in the war, I remember that clearly.");
+    expect(decided.basis.note).toContain("Ah, you're right — it was Walter.");
     expect(bubbles(main).some((b) => b.includes("joins the tree as a fact"))).toBe(true);
   });
 

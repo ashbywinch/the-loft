@@ -248,9 +248,11 @@ def test_assess_deterministically_redoes_an_age_without_a_date_question() -> Non
 
 def test_assess_deterministically_refuses_a_telling_day_date() -> None:
     """The model must never date the story by the telling day — an event
-    date equal to today is a fabrication, redone into a required date
-    question (2026-08-05: the moment card served a story told this week as
-    '0 years ago this week' because exactly this fabrication won)."""
+    date equal to today is a fabrication, redone into a date question that
+    stays in the conversation (2026-08-05: the moment card served a story
+    told this week as '0 years ago this week' because exactly this
+    fabrication won; 2026-08-10: the question is skippable — the narrator
+    answers in their own words or declines, but the issue is not dropped)."""
     today = date.today().isoformat()
     bad = (
         '{"title": "T", "extractions": [], "facts": [{"kind": "event_date", "entity": null, '
@@ -260,14 +262,14 @@ def test_assess_deterministically_refuses_a_telling_day_date() -> None:
     )
     fixed = (
         '{"title": "T", "extractions": [], "facts": [], "questions": [{"text": "When did this '
-        + 'happen?", "why": "", "skippable": false, "suggestions": [], "type": "date", '
+        + 'happen?", "why": "", "skippable": true, "suggestions": [], "type": "date", '
         + '"date_kind": "event"}]}'
     )
     client = FakeClient(assessor=[bad, fixed], reviewer=['{"violations": []}', '{"violations": []}'])
     result = assess(client, anchor=ANCHOR, who="Alex", account="A story.", knowledge=make_knowledge())
     assert not any(f.get("kind") == "event_date" for f in result["facts"])
     date_q = [q for q in result["questions"] if q.get("type") == "date"]
-    assert date_q and date_q[0]["skippable"] is False
+    assert date_q and date_q[0]["skippable"] is True
     assert "telling day" in client.calls[2][1]  # the deterministic feedback reached the redo
 
 
@@ -289,19 +291,20 @@ def test_assess_accepts_a_narrator_stated_telling_day_date() -> None:
 
 
 def test_assess_requires_a_date_question_when_none_is_established() -> None:
-    """The flow must make the narrator provide the events date: no event
-    date and no computable dob+age -> a non-skippable date question is
-    required (2026-08-05)."""
+    """The flow must keep pursuing the events date: no event date and no
+    computable dob+age -> a date question stays in the questions (2026-08-10,
+    user: every question is skippable — the narrator answers in their own
+    words or leaves it — but the issue is narrowed until they answer)."""
     bad = '{"title": "T", "extractions": [], "facts": [], "questions": []}'
     fixed = (
         '{"title": "T", "extractions": [], "facts": [], "questions": [{"text": "When did this '
-        + 'happen?", "why": "", "skippable": false, "suggestions": [], "type": "date", '
+        + 'happen?", "why": "", "skippable": true, "suggestions": [], "type": "date", '
         + '"date_kind": "event"}]}'
     )
     client = FakeClient(assessor=[bad, fixed], reviewer=['{"violations": []}', '{"violations": []}'])
     result = assess(client, anchor=ANCHOR, who="Alex", account="A story.", knowledge=make_knowledge())
     date_q = [q for q in result["questions"] if q.get("type") == "date"]
-    assert date_q and date_q[0]["skippable"] is False
+    assert date_q and date_q[0]["skippable"] is True
     assert "events date" in client.calls[2][1]
 
 

@@ -488,7 +488,21 @@ def build_app(
         archive.record_review_message(
             session_id, "assistant", message, when, thinking=json.dumps(result.get("trace"), ensure_ascii=False)
         )
-        return {"ok": True, "message": message, **result}
+        # the response carries ONLY what the UI consumes — the model's raw
+        # output, its tool trace, and the prompt texts are the model's
+        # internals, never the family's (R7; 2026-08-11 review: the full
+        # result leaked raw/trace/prompt/final_prompt — and archive quotes
+        # — to the browser on every message)
+        return {
+            "ok": True,
+            "message": message,
+            "relevant": result.get("relevant"),
+            "contradiction": result.get("contradiction", {}),
+            "confidence": result.get("confidence", ""),
+            "note": result.get("note", ""),
+            "findings": result.get("findings", []),
+            "question": result.get("question", ""),
+        }
 
     def _drop_from_projection(item_id: str) -> None:
         index_path = data_dir / "index.json"

@@ -90,6 +90,7 @@ def _rotate(image: Path, degrees: int) -> Path:
         check=False,
     )
     if result.returncode != 0:
+        tmp.unlink(missing_ok=True)  # the caller never sees the path — clean up here (2026-08-11 review)
         raise RuntimeError(f"magick rotation failed on {image}: {result.stderr[:200]}")
     return tmp
 

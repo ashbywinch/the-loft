@@ -1,5 +1,11 @@
 # Testing Standards — The Loft
 
+> **Standard, 2026-08-10** — the Definitions below are the repo's live
+> standard, read by every agent and reviewer working here (they replace the
+> older "eval == e2e" wording). This is a repo document, not a symlinked
+> skill: it takes effect for agents reading the repo immediately — no
+> `make install`, no `omp` restart (2026-08-11, review compliance note).
+
 ## Definitions (2026-08-10, user — the vocabulary is strict, one meaning everywhere)
 
 - **Test** — a check that is *deterministic*: same inputs, same result, always, on any machine. No network, no model, no wall-clock.

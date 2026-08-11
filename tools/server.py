@@ -325,13 +325,19 @@ def build_app(
         # the confirmation names the person — the resolve returns a
         # gone-marker for a delete, so the name comes from the table first
         people_table = archive.get_identity("people") or {"people": []}
-        person_name = next(
-            (p.get("name", person_id) for p in people_table["people"] if p["id"] == person_id), person_id
-        )
+        pre_person = next((p for p in people_table["people"] if p["id"] == person_id), None)
+        person_name = (pre_person or {}).get("name", person_id)
         try:
             person = archive.resolve_person(person_id, decision, basis)
         except (KeyError, ValueError) as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+        # a stale decision on an already-resolved person is a state, not an
+        # error — and it must not record a false confirmation ("removed"
+        # when nothing was removed; 2026-08-11 review). Nothing is recorded;
+        # the family gets the honest state.
+        if (pre_person or {}).get("status") != "proposed" and decision != "pending":
+            message = f"{person_name} was already resolved — nothing changed."
+            return {"ok": True, "person": person, "message": message}
         # the review record — the decision and the confirmation message the
         # family saw, both persisted (2026-08-09: the transcript is the
         # messages)

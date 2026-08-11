@@ -60,7 +60,13 @@ def _known_facts(facts: ReviewContext) -> str:
     for it in facts.items:
         story = (it.get("story") or it.get("transcription") or "").strip()
         if story:
-            lines.append(f"  {it.get('id')} — {it.get('title', '')}: {story[:200]}")
+            # Rule L (2026-08-11 review): a draft transcription is marked —
+            # the model must know which texts are unverified so it never
+            # quotes one as the document's own words
+            draft = (
+                " (DRAFT TRANSCRIPTION — machine-read, unverified)" if it.get("transcription_status") == "draft" else ""
+            )
+            lines.append(f"  {it.get('id')} — {it.get('title', '')}{draft}: {story[:200]}")
     return "\n".join(lines)
 
 
@@ -127,7 +133,14 @@ def _run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:
             text = it.get("story") or it.get("transcription") or ""
             involved = pid in it.get("people", [])
             if involved or any(n in text for n in needles):
-                results.append({"id": it["id"], "title": it["title"], "quotes": _relevant_sentences(text, needles)})
+                results.append(
+                    {
+                        "id": it["id"],
+                        "title": it["title"],
+                        "draft": it.get("transcription_status") == "draft",
+                        "quotes": _relevant_sentences(text, needles),
+                    }
+                )
         return results or {"note": "no recorded items mention this person"}
     if tool == "search_items":
         q = str(args.get("query", "")).strip().lower()
@@ -137,7 +150,14 @@ def _run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:
         for it in facts.items:
             text = it.get("story") or it.get("transcription") or ""
             if q in text.lower():
-                hits.append({"id": it["id"], "title": it["title"], "quotes": _relevant_sentences(text, (q,))})
+                hits.append(
+                    {
+                        "id": it["id"],
+                        "title": it["title"],
+                        "draft": it.get("transcription_status") == "draft",
+                        "quotes": _relevant_sentences(text, (q,)),
+                    }
+                )
         return hits[:5] or {"note": f"no recorded items mention {q!r}"}
     return {"error": f"unknown tool {tool}"}
 
@@ -321,9 +341,10 @@ def investigate(
         "record is not evidence either: its relation field is the import's guess, never a "
         "finding (2026-08-10, R2: a robot's note is never an attestation — only items "
         "with a transcription or story are documents. A DRAFT transcription "
-        "(transcription_status 'draft') is machine-read and UNVERIFIED: its sentences "
-        "are never quoted as the document's own words — quote only verified text, or "
-        "say plainly that the reading is unverified (IMPORT-PRD Rule L). When the "
+        "(the tool results mark drafts with 'draft': true) is machine-read and "
+        "UNVERIFIED: its sentences are never quoted as the document's own words — "
+        "quote only verified text, or say plainly that the reading is unverified "
+        "(IMPORT-PRD Rule L). When the "
         "reviewer mentions a PLACE "
         "or an EVENT and the tools surface an item matching their statement, REPORT it — "
         "quote the item and ASK whether it is the same visit or person: the archive "

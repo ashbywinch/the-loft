@@ -12,7 +12,7 @@ import pytest
 
 from tools.memory import ElicitationError
 from tools.records import Person, ReviewContext
-from tools.review import investigate, steer_message
+from tools.review import investigate, run_tool, steer_message
 
 PEOPLE: list[dict[str, Any]] = [
     {"id": "p-quentin", "name": "Quentin Whitlock", "relation": "brother of Pearl Whitlock"},
@@ -371,8 +371,6 @@ def test_the_attested_tool_returns_the_sentence_that_mentions_the_person() -> No
     tool returns the sentences that MENTION the person — the quotable
     attestation — never the document's opening. The model can only quote
     what the tools surface, so the relevant part must be what they surface."""
-    from tools.review import run_tool
-
     facts = make_facts()
     # the item's mention sits AFTER a long opening — the first 300 chars
     # would never reach it
@@ -434,8 +432,6 @@ def test_the_attested_tool_matches_mentions_case_insensitively() -> None:
     whose only mention is lowercased (OCR text) was silently dropped, so
     the model could conclude no document attests the person. The item
     door now matches the case-insensitive quote semantics."""
-    from tools.review import run_tool
-
     facts = make_facts()
     lower_item = {
         "id": "doc-ocr-letter",

@@ -611,6 +611,29 @@ def test_review_attempts_are_walk_separated() -> None:
     assert session.current is None  # the last decision cleared the resume point
 
 
+def test_ensure_import_session_is_atomic_and_idempotent() -> None:
+    """2026-08-11 review: _ensure_import_session read the imports table,
+    checked, and wrote OUTSIDE the lock — two concurrent cold starts could
+    both compute the same next version and the append-only store would
+    refuse the second, killing the walk. The read-check-write is now
+    atomic under the archive's lock (through the _mutate_identity seam),
+    and a repeat call writes nothing."""
+    archive, _ = make_archive()
+    assert archive.get_review_session("import-documents") is None
+    archive._ensure_import_session()
+    session = archive.get_review_session("import-documents")
+    assert session is not None
+    assert session.status == "pending"
+    assert len(archive._identity_versions("imports")) == 1
+    # a second call (a second capture, a concurrent cold start) writes
+    # NOTHING — no new version, no duplicate session
+    archive._ensure_import_session()
+    assert len(archive._identity_versions("imports")) == 1
+    session = archive.get_review_session("import-documents")
+    assert session is not None
+    assert len(session.attempts) == 0
+
+
 def test_identity_saves_serialize_concurrent_writers() -> None:
     """2026-08-09 (user: the walk died with "Sorry — the assistant
     couldn't be reached. Try again?" after "refusing to edit existing

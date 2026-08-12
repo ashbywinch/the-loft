@@ -23,8 +23,10 @@ FILLS = {
 }
 
 # A letter asset that isn't page-N (an envelope, a back) — the page parse
-# falls back to 1. Named so the except clause needs no parentheses: ruff
-# format removes them (`except (A, B):`), which reads like Python 2.
+# falls back to 1. A shared tuple keeps the except clause short; the
+# py313 target (pyproject.toml) makes ruff PRESERVE parenthesised except
+# clauses, so the old "ruff strips the parens" justification no longer
+# applies (2026-08-11 review).
 _PAGE_PARSE_ERRORS = (IndexError, ValueError)
 
 

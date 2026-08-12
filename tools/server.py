@@ -424,8 +424,16 @@ def build_app(
             # sidecar per item, no transcription reads) filters first — at
             # the 10,000-item design target, reading every transcription
             # per chat message would be thousands of disk reads (2026-08-11
-            # review)
-            needles = (person.name, person.name.split()[0])
+            # review). The metadata pass itself is still a full-archive
+            # sidecar scan per message — O(N) disk reads at that target;
+            # deferred (2026-08-11, user): fine at the current family-
+            # archive scale (~100 items), revisit with a people→items
+            # mention index before the 10,000-item target is real. The
+            # name needles are lowered once and matched against lowered
+            # text — OCR and captured text differ in case, and a
+            # differently-cased mention must not hide the attesting
+            # document (2026-08-11 review)
+            needles = tuple(n.lower() for n in (person.name, person.name.split()[0]))
             items: list[dict[str, Any]] = []
             for item_id in archive.item_ids():
                 item = archive.get_item(item_id)
@@ -433,7 +441,7 @@ def build_app(
                     continue
                 involved = person_id in [p.get("id") for p in item.get("people", []) if isinstance(p, dict)]
                 story = str(item.get("story") or "").strip()
-                if involved or any(n in story for n in needles):
+                if involved or any(n in story.lower() for n in needles):
                     transcription = archive.read_content(item_id, "transcription.txt") or ""
                     item_text = transcription or story
                 else:
@@ -445,7 +453,7 @@ def build_app(
                     # transcription is the evidence, never the summary
                     # (2026-08-11 review)
                     transcription = archive.read_content_prefix(item_id, "transcription.txt", 4096) or ""
-                    if not any(n in transcription for n in needles):
+                    if not any(n in transcription.lower() for n in needles):
                         continue
                     item_text = transcription
                 if item_text:

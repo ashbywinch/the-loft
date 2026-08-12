@@ -11,6 +11,7 @@ never an action (user, 2026-08-09).
 
 from __future__ import annotations
 
+import re
 from typing import Any, Protocol
 
 from tools.ai_client import AIClientError, json_object
@@ -29,8 +30,6 @@ def _relevant_sentences(text: str, needles: tuple[str, ...], limit: int = 3) -> 
     opening). Returns up to ``limit`` matching sentences, capped in length,
     or the first content sentence when nothing matches (a fallback, never
     silence)."""
-    import re
-
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
     # case-insensitive: search_items lowercases its query, so "Seascale"
     # must still match "seascale" — a case-sensitive match returned the
@@ -54,6 +53,13 @@ def _known_facts(facts: ReviewContext) -> str:
     lines = ["People:"]
     for p in facts.people:
         bits = [f"  {p.id} — {p.name}"]
+        # proposed/estimated are guesses, never attested facts — the people
+        # table handed to the review still holds the proposed person under
+        # review, so their import relation must be marked, or the
+        # contradiction check treats the guess as attested (2026-08-11
+        # review: the never-an-unverified-import-guess rule)
+        if p.status != "confirmed":
+            bits.append(f"(status: {p.status})")
         if p.dob:
             bits.append(f"(born {p.dob.get('date')})")
         if p.dod:
@@ -96,10 +102,12 @@ The tool's result will be appended and you may call another. When you have
 enough to answer, return the verdict JSON."""
 
 
-def _run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:
+def run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:
     """The read-only tool harness — the model can look things up but never
     change them (2026-08-09, user: give the AI the API so it can find out
-    the existing situation — the ad-hoc digging conversation)."""
+    the existing situation — the ad-hoc digging conversation). Public and
+    documented so the tests exercise the real harness, never a private
+    symbol (2026-08-11 review: the imports rule)."""
     people = facts.people
     if tool == "search_people":
         q = str(args.get("query", "")).strip().lower()
@@ -108,7 +116,7 @@ def _run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:
         hits = [
             {"id": p.id, "name": p.name, "relation": p.relation}
             for p in people
-            if q in p.name.lower() or q in p.relation.lower()
+            if q in p.name.lower() or q in (p.relation or "").lower()
         ]
         return hits[:10] or {"note": "no matches"}
     if tool == "person":
@@ -131,13 +139,18 @@ def _run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:
         # the fact, quotable verbatim (2026-08-09, user) — with the
         # person's name and first name as the needles. The item's
         # structured involvement (its people ids) or the prose naming the
-        # person both count — real transcriptions mention names, never ids
+        # person both count — real transcriptions mention names, never ids.
+        # Case-insensitive (2026-08-11 review): OCR and captured text
+        # frequently differ in case, and the quote extractor matches
+        # case-insensitively — an item whose only mention is lowercased
+        # must not be silently dropped at the door
         needles = (p.name, p.name.split()[0]) if p else (pid,)
+        lowered = [n.lower() for n in needles]
         results = []
         for it in facts.items:
             text = it.get("story") or it.get("transcription") or ""
             involved = pid in it.get("people", [])
-            if involved or any(n in text for n in needles):
+            if involved or any(n in text.lower() for n in lowered):
                 results.append(
                     {
                         "id": it["id"],
@@ -390,11 +403,20 @@ def investigate(
         if tool:
             tool_calls += 1
             if tool_calls > 4:
-                user += "\n\nNo more tool calls are allowed — conclude with the verdict JSON now."
+                # an over-budget tool-shaped turn is still the model's own
+                # words — logged in the trace AND fed back verbatim, never
+                # discarded (2026-08-11 review: the completeness property —
+                # everything the model produced is fed back and logged)
+                trace.append({"model": raw})
+                user += (
+                    "\n\n[your previous answer] "
+                    + raw
+                    + "\n\nNo more tool calls are allowed — conclude with the verdict JSON now."
+                )
                 continue
             raw_args = parsed_dict.get("args")
             args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
-            result = _run_tool(tool, args, facts)
+            result = run_tool(tool, args, facts)
             # the tool call and its deterministic result are part of the
             # model's reasoning — logged verbatim, never discarded
             # (2026-08-09: 'why would that stop you logging them correctly?'

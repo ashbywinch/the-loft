@@ -93,8 +93,13 @@ function reviewSession(state, session) {
   let pendingDecision = null; // {p, decision} while the free text's being checked
   let tally = { attested: 0, estimated: 0, pending: 0, deleted: 0 };
   // the links decided during THIS walk — a kept link stays proposed in the
-  // table, so the walk must not re-ask it (2026-08-10 review)
-  const decidedIds = new Set();
+  // table, so the walk must not re-ask it (2026-08-10 review). Seeded from
+  // the current attempt's recorded decisions so a mid-walk re-render
+  // (which continues the SAME attempt) never re-asks a link this walk has
+  // already decided; a genuinely new walk still starts fresh (2026-08-11
+  // review)
+  const currentAttempt = session.attempts?.[session.attempts.length - 1];
+  const decidedIds = new Set((currentAttempt?.decisions ?? []).map((d) => d.person_id));
   const reviewer = state.me?.name ?? "the reviewer";
   const today = new Date().toISOString().slice(0, 10);
 
@@ -195,10 +200,13 @@ function reviewSession(state, session) {
     chat.addUser(text);
     chat.setQuickReplies([]);
     chat.setBusy(true);
-    // the opening and the claim must be recorded BEFORE this line — a fast
-    // reviewer could type before the start fetch resolved, and the server
-    // would order the user's line first (2026-08-11 review, R7)
-    await started;
+    // the opening and the claim must be PERSISTED before this line — a
+    // fast reviewer could type before the start fetch resolved, and the
+    // server would order the user's line first (2026-08-11 review, R7).
+    // Wait for the actual record fetches too, so the model's history and
+    // the persisted transcript match exactly what the family saw
+    await Promise.all([started, ...pendingRecords]);
+    pendingRecords.length = 0;
     // the free text is checked against the exact claim AND the attested
     // facts — off-topic answers steer back, contradictions surface and
     // must be resolved before anything is confirmed (2026-08-09)
@@ -234,11 +242,18 @@ function reviewSession(state, session) {
       const LEAVE = { label: "Leave for later", onClick: () => keep(person) };
       const DELETE = { label: "Delete", onClick: () => recordDecision(person, "delete") };
       const GUESS = { label: "Record as a guess", primary: true, onClick: () => recordDecision(person, "estimated") };
-      // the statement is kept for the guess's basis, but NO disposition is
-      // captured — a reviewer who then resolves the contradiction flows
-      // through the normal confidence-based chips, and the correction
-      // replaces this text as the statement (2026-08-11)
-      pendingDecision = { p: person, statement: text, provenance: [], disposition: null, contradiction: true };
+      // the contradicted recollection STAYS the statement — each typed
+      // correction joins the provenance BESIDE it, never replacing the
+      // family's first words (PRD R8, 2026-08-11 review); NO disposition
+      // is captured, so a reviewer who then resolves the contradiction
+      // flows through the normal confidence-based chips
+      pendingDecision = {
+        p: person,
+        statement: pending?.statement ?? text,
+        provenance: pending?.contradiction ? [...(pending.provenance ?? []), text] : [],
+        disposition: null,
+        contradiction: true,
+      };
       chat.setQuickReplies([GUESS, LEAVE, DELETE]);
       return; // the pending decision stays — the resolution is checked again
     }
@@ -363,9 +378,16 @@ function reviewSession(state, session) {
   const pending = proposedPeople(state);
   const already = (state.people?.length ?? 0) - pending.length;
   // a resumed session continues from the last undecided link (the record's
-  // resume point), never from the top
+  // resume point), never from the top — but never onto a link this attempt
+  // has already decided: the resume point IS the last decided person, so a
+  // mid-walk re-render must skip it or it re-asks the very link the walk
+  // answered (2026-08-11 review)
+  const remaining = pending.filter((p) => !decidedIds.has(p.id));
   const resumeId = session.current;
-  const first = resumeId ? pending.find((p) => p.id === resumeId) ?? pending[0] : pending[0];
+  const first =
+    resumeId && remaining.some((p) => p.id === resumeId)
+      ? (remaining.find((p) => p.id === resumeId) ?? remaining[0])
+      : remaining[0];
   // begin the walk — a fresh attempt only when the last one is finished
   // (2026-08-09: the sessions' storage is attempt-separated). The start
   // response carries the lines already recorded in the current attempt, so
@@ -385,15 +407,37 @@ function reviewSession(state, session) {
     .catch(() => {});
   /** Record one of the app's own rendered lines exactly once per attempt
    *  (2026-08-10 review: "the persisted transcript then no longer equals
-   *  what the family saw"). */
+   *  what the family saw"). Returns the record's promise — tracked so the
+   *  free-text check can wait for every record fetch before the server
+   *  reads the history (2026-08-11 review: R7 — the transcript equals
+   *  what the family saw, in order). */
+  const pendingRecords = [];
   const recordIfNew = (role, text) => {
     const record = () => {
-      if (seenLines.has(text)) return;
+      if (seenLines.has(text)) return null;
       seenLines.add(text);
-      recordMessage(session.id, role, text);
+      return recordMessage(session.id, role, text);
     };
-    started.then(record, record);
+    const promise = started.then(record, record);
+    pendingRecords.push(promise);
+    return promise;
   };
+  if (!remaining.length) {
+    // every link was already decided in this walk (a re-render after the
+    // last decision) — the ending is shown, never a re-ask (2026-08-11
+    // review)
+    const decided = currentAttempt?.decisions ?? [];
+    const count = (x) => decided.filter((d) => d.decision === x).length;
+    const attested = count("attested");
+    const estimated = count("estimated");
+    const left = count("pending");
+    const deleted = count("delete");
+    const summary = `That's everyone — ${attested ? `${attested} recorded as facts, ` : ""}${estimated ? `${estimated} recorded as guesses, ` : ""}${left ? `${left} left for later, ` : ""}${deleted ? `${deleted} deleted` : "and nothing deleted"} — the rest were already in the tree, so nothing changed for them.`;
+    chat.addAssistant(summary);
+    recordIfNew("assistant", summary);
+    chat.setQuickReplies([{ label: "See the family tree →", primary: true, onClick: () => location.assign("#/tree") }]);
+    return wrap;
+  }
   const opening = `Thanks for coming back — ${pending.length === 1 ? "there's 1 person" : `there are ${pending.length} people`} from the documents I'd like your eyes on${already ? `; everyone else is already in the tree` : ""}.`;
   chat.addAssistant(opening);
   recordIfNew("assistant", opening);
@@ -437,13 +481,19 @@ async function decide(state, sessionId, person, decision, basis = null) {
 }
 
 /** Record one of the app's own rendered lines (the claim, the opening) so
- *  the transcript is exactly what the family saw (2026-08-09). */
+ *  the transcript is exactly what the family saw (2026-08-09). Returns
+ *  the fetch promise — the callers wait for it before the server reads
+ *  the history (2026-08-11 review, R7). A failed write is LOGGED, never
+ *  silently swallowed: a transcript silently diverging from what the
+ *  family saw breaks R7 (2026-08-11 review, the fail-fast rule). */
 function recordMessage(sessionId, role, text) {
-  fetch("/api/review/message", {
+  return fetch("/api/review/message", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: sessionId, role, text }),
-  }).catch(() => {});
+  }).catch((error) => {
+    console.error("import review: failed to record a transcript line", { role, text }, error);
+  });
 }
 
 /** The free-text check — relevance + contradiction (off-topic answers

@@ -798,6 +798,52 @@ def test_review_reads_transcription_only_mentions(server: ServerFixture) -> None
         server2.close()
 
 
+def test_review_shortlist_matches_mentions_case_insensitively(server: ServerFixture) -> None:
+    """2026-08-11 review: the shortlist filter matched the person's name
+    case-sensitively against story/transcription — an item whose only
+    mention is lowercased (OCR text, an uppercase heading) was silently
+    dropped, and the document became invisible to the investigation. The
+    needles and the compared text are now lowered."""
+    _seed_pending(server)
+    seen: dict[str, str] = {}
+
+    class FakeChat:
+        def chat(self, system: str, user: str) -> str:  # noqa: ARG002
+            seen["user"] = user
+            return (
+                '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+                '"confidence": "think_so", "note": "fine", "findings": [], "question": ""}'
+            )
+
+    server2 = ServerFixture(server.data_dir, server.store, client=FakeChat())
+    try:
+        _seed_pending(server2)
+        server2.archive.save_item(
+            {
+                "id": "doc-lowercase-letter",
+                "title": "A letter",
+                "date": "2001-02-07",
+                "date_precision": "exact",
+                "type": "letter",
+                "status": "catalogued",
+                "transcription_status": "draft",
+                # NO people refs, NO sidecar story — and the only textual
+                # mention of the person is lowercased
+            },
+            content={"transcription": "the notes say pearl was the one who kept the photographs."},
+        )
+        status, _ = server2.post(
+            "/api/review/text",
+            {"session_id": "import-documents", "person_id": "p-judith", "text": "Grandma used to say so."},
+        )
+        assert status == 200
+        # the lowercased mention still reached the model — the document is
+        # not hidden by the case of its own words
+        assert "pearl was the one who kept the photographs" in seen["user"]
+    finally:
+        server2.close()
+
+
 def test_decide_rejects_a_stale_session_before_any_mutation(server: ServerFixture) -> None:
     """2026-08-10 review: /api/review/decide resolved and saved the person
     BEFORE checking the session existed — a stale session_id changed the

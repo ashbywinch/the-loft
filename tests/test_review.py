@@ -371,7 +371,7 @@ def test_the_attested_tool_returns_the_sentence_that_mentions_the_person() -> No
     tool returns the sentences that MENTION the person — the quotable
     attestation — never the document's opening. The model can only quote
     what the tools surface, so the relevant part must be what they surface."""
-    from tools.review import _run_tool
+    from tools.review import run_tool
 
     facts = make_facts()
     # the item's mention sits AFTER a long opening — the first 300 chars
@@ -386,7 +386,7 @@ def test_the_attested_tool_returns_the_sentence_that_mentions_the_person() -> No
         ),
     }
     facts = ReviewContext(people=facts.people, items=facts.items + (long_item,), relationships=facts.relationships)
-    result = _run_tool("attested", {"id": "p-walter"}, facts)
+    result = run_tool("attested", {"id": "p-walter"}, facts)
     letter = next(r for r in result if r["id"] == "doc-1916-letter")
     assert letter["quotes"] == ["I must tell you that Walter Whitlock was killed in the bombardment on the fifteenth."]
     assert not any("rested at the camp" in q for q in letter["quotes"])  # never the opening
@@ -426,3 +426,77 @@ def test_a_partial_answer_is_fed_back_verbatim_on_the_correction() -> None:
     assert result["confidence"] == "dont_know"
     # and the trace logs the partial answer too — nothing the model said is lost
     assert any("verdict" in str(step.get("model", "")) for step in result["trace"])
+
+
+def test_the_attested_tool_matches_mentions_case_insensitively() -> None:
+    """2026-08-11 review: the attested tool matched the person's name
+    case-sensitively while its own quote extractor lowercases — an item
+    whose only mention is lowercased (OCR text) was silently dropped, so
+    the model could conclude no document attests the person. The item
+    door now matches the case-insensitive quote semantics."""
+    from tools.review import run_tool
+
+    facts = make_facts()
+    lower_item = {
+        "id": "doc-ocr-letter",
+        "title": "An OCR'd letter",
+        "story": "the notes my aunt left say pearl was the one who kept the photographs.",
+    }
+    facts = ReviewContext(people=facts.people, items=facts.items + (lower_item,), relationships=facts.relationships)
+    result = run_tool("attested", {"id": "p-pearl"}, facts)
+    assert any(r["id"] == "doc-ocr-letter" for r in result)
+    quotes = next(r for r in result if r["id"] == "doc-ocr-letter")["quotes"]
+    assert quotes == ["the notes my aunt left say pearl was the one who kept the photographs."]
+
+
+def test_known_facts_mark_guess_statuses_never_attested() -> None:
+    """2026-08-11 review: the people table handed to the review still holds
+    the proposed person under review, and their import relation used to be
+    listed as an attested fact with no status — the contradiction check
+    could treat the unverified import guess as attested. Non-confirmed
+    statuses are now marked in the rendered facts."""
+    proposed = Person.from_dict(
+        {"id": "p-nova", "name": "Nova Whitlock", "relation": "cousin of Pearl", "status": "proposed"}
+    )
+    facts = make_facts()
+    facts = ReviewContext(
+        people=facts.people + (proposed,),
+        items=facts.items,
+        relationships=facts.relationships,
+    )
+    client = FakeClient(
+        [
+            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+            '"confidence": "think_so", "note": "Grandma used to say so.", "findings": []}'
+        ]
+    )
+    _ = investigate(client, text="Grandma used to say so.", person=_person(), who="Alex", facts=facts)
+    prompt = client.calls[0][1]
+    assert "Nova Whitlock" in prompt
+    assert "(status: proposed)" in prompt  # the guess is marked, never attested
+
+
+def test_over_budget_tool_calls_are_logged_and_fed_back() -> None:
+    """2026-08-11 review: a tool-shaped response beyond the four-call budget
+    was consumed and discarded — neither logged in the trace nor fed back,
+    so the model's own words for that turn vanished (the completeness
+    property: everything the model produced is fed back and logged). It is
+    now traced and fed back verbatim."""
+    tool = '{"tool": "search_people", "args": {"query": "Walter"}}'
+    over = '{"tool": "search_people", "args": {"query": "Nora"}}'
+    verdict = (
+        '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+        '"confidence": "think_so", "note": "fine", "findings": []}'
+    )
+    client = FakeClient([tool, tool, tool, tool, over, verdict])
+    result = investigate(
+        client,
+        text="Not sure about the brother link.",
+        person=_person(),
+        who="Alex",
+        facts=make_facts(),
+    )
+    assert len(client.calls) == 6  # four digs, the over-budget turn, the verdict
+    # the over-budget turn's own words are in the trace AND fed forward
+    assert any(over in str(step.get("model", "")) for step in result["trace"])
+    assert over in client.calls[5][1]

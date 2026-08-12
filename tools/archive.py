@@ -635,30 +635,35 @@ class Archive:
         self._ensure_import_session()
 
     def _ensure_import_session(self) -> None:
-        """Idempotent: write the pending document-import session once."""
-        imports = self.get_identity("imports")
-        if imports is not None and any(s.get("id") == "import-documents" for s in imports["imports"]):
-            return
-        record = Session.from_dict(
-            {
-                "id": "import-documents",
-                "kind": "import-review",
-                "title": "The document import",
-                "status": "pending",
-                # the session's lifecycle at a glance (2026-08-09): current is
-                # the resume point; attempts is one entry per walk of the review
-                # — the transcript and decisions of each walk, separated so a
-                # fresh agent can see what happened in THIS walk versus the
-                # last one (the accumulated-mess fix)
-                "current": None,
-                "attempts": [],
-            }
-        ).to_dict()
-        if imports is None:
-            self.save_identity("imports", {"imports": [record]})
-        else:
-            imports["imports"] = [s for s in imports["imports"] if s.get("id") != "import-documents"] + [record]
-            self.save_identity("imports", imports)
+        """Idempotent: write the pending document-import session once — the
+        read-check-write is atomic under the archive's lock, so two
+        concurrent cold starts cannot both compute the same next version
+        and kill the walk (2026-08-11 review)."""
+
+        def apply(table: dict[str, Any] | None) -> dict[str, Any]:
+            record = Session.from_dict(
+                {
+                    "id": "import-documents",
+                    "kind": "import-review",
+                    "title": "The document import",
+                    "status": "pending",
+                    # the session's lifecycle at a glance (2026-08-09): current
+                    # is the resume point; attempts is one entry per walk of
+                    # the review — the transcript and decisions of each walk,
+                    # separated so a fresh agent can see what happened in THIS
+                    # walk versus the last one (the accumulated-mess fix)
+                    "current": None,
+                    "attempts": [],
+                }
+            ).to_dict()
+            if table is None:
+                return {"imports": [record]}
+            if any(s.get("id") == "import-documents" for s in table["imports"]):
+                return table  # already present — a no-op writes nothing
+            table["imports"] = [s for s in table["imports"] if s.get("id") != "import-documents"] + [record]
+            return table
+
+        self._mutate_identity("imports", apply)
 
     def refresh_import_status(self) -> None:
         """Complete pending import sessions when nothing is left to review:

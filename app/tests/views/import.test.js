@@ -14,6 +14,7 @@ const STATE = {
 
 beforeEach(() => {
   vi.unstubAllGlobals();
+  vi.useFakeTimers(); // never real timers — every test's independence is visible here (2026-08-11 review)
 });
 
 afterEach(async () => {
@@ -26,16 +27,22 @@ afterEach(async () => {
   // test's chain straddled the boundary and the re-render test saw four
   // phantom message calls. The drain waits until a full macrotask passes
   // with no new fetch call — condition-based, never a fixed tick count —
-  // and fails loud if the app never settles.
-  for (let i = 0; i < 20; i++) {
-    const before = fetch?.mock?.calls?.length ?? 0;
-    await new Promise((r) => setTimeout(r, 0));
-    if ((fetch?.mock?.calls?.length ?? 0) === before) return;
+  // and fails loud if the app never settles. The clock is FAKE, so the
+  // drain advances it deterministically instead of waiting wall-clock
+  // (2026-08-11 review: real timers are a bug in a test).
+  try {
+    for (let i = 0; i < 20; i++) {
+      const before = fetch?.mock?.calls?.length ?? 0;
+      await vi.advanceTimersByTimeAsync(0);
+      if ((fetch?.mock?.calls?.length ?? 0) === before) return;
+    }
+    throw new Error("the app's async work did not settle — a record chain is still in flight");
+  } finally {
+    vi.useRealTimers(); // the next suite runs on the real clock
   }
-  throw new Error("the app's async work did not settle — a record chain is still in flight");
 });
 
-const tick = () => new Promise((r) => setTimeout(r, 0));
+const tick = () => vi.advanceTimersByTimeAsync(0);
 const chip = (main, label) => [...main.querySelectorAll(".chat-quick .chip")].find((b) => b.textContent === label);
 const bubbles = (main) => [...main.querySelectorAll(".bubble-text")].map((b) => b.textContent);
 const setInput = (main, text) => {
@@ -498,4 +505,109 @@ describe("the import review is the chat — one conversation resolves the pendin
     // the opening and the resumed claim are already in the attempt — no
     // message-endpoint call lands for them
     expect(fetch.mock.calls.filter(([url]) => url === "/api/review/message")).toHaveLength(0);
+  });
+
+  it("a mid-walk re-render never re-asks a link this attempt already decided (2026-08-11 review)", async () => {
+    stubFetch();
+    const main = document.createElement("main");
+    const state = JSON.parse(JSON.stringify(STATE));
+    state.imports[0].attempts = [
+      {
+        started: "2026-08-11T10:00:00+00:00",
+        messages: [],
+        decisions: [{ person_id: "p-judith", decision: "pending", when: "2026-08-11" }],
+      },
+    ];
+    state.imports[0].current = "p-judith"; // the resume point IS the link this walk decided
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    await tick();
+    // the next undecided link is asked — never the one the attempt already
+    // left for later (the loop the re-ask used to be)
+    expect(bubbles(main).at(-1)).toContain("Quentin Whitlock");
+    expect(bubbles(main).some((b) => b.includes("Next: Pearl Whitlock"))).toBe(false);
+  });
+
+  it("a re-render after every link was decided ends with the summary — never a re-ask (2026-08-11 review)", async () => {
+    stubFetch();
+    const main = document.createElement("main");
+    const state = JSON.parse(JSON.stringify(STATE));
+    state.imports[0].attempts = [
+      {
+        started: "2026-08-11T10:00:00+00:00",
+        messages: [],
+        decisions: [
+          { person_id: "p-judith", decision: "pending", when: "2026-08-11" },
+          { person_id: "p-robert", decision: "pending", when: "2026-08-11" },
+        ],
+      },
+    ];
+    state.imports[0].current = "p-robert";
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    await tick();
+    expect(bubbles(main).at(-1)).toContain("That's everyone");
+    expect(bubbles(main).at(-1)).toContain("2 left for later");
+    expect([...main.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent)).toContain("See the family tree →");
+  });
+
+  it("a repeated contradiction keeps the first words as the basis — corrections accumulate beside them (2026-08-11 review)", async () => {
+    const answers = [
+      // first check: the contradiction is surfaced
+      { ok: true, relevant: "true", contradiction: { found: "true", detail: "the war record attests Walter Whitlock died in 1916" }, confidence: "definitely", note: "", findings: [], question: "", message: "That doesn't match the records — the war record attests Walter Whitlock died in 1916. Which is right?" },
+      // second check: still contradicting — the first words must survive
+      { ok: true, relevant: "true", contradiction: { found: "true", detail: "the war record attests Walter Whitlock died in 1916" }, confidence: "definitely", note: "", findings: [], question: "", message: "That doesn't match the records — the war record attests Walter Whitlock died in 1916. Which is right?" },
+      // third check: resolved
+      { ok: true, relevant: "true", contradiction: { found: "false", detail: "" }, confidence: "definitely", note: "", findings: [], question: "", message: "" },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url, init) => {
+        const body = JSON.parse(init?.body ?? "{}");
+        if (url === "/api/review/text") {
+          const answer = answers.shift() ?? answers.at(-1);
+          return Promise.resolve({ ok: true, json: async () => answer });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ ok: true, person: { id: body.person_id, name: "X" }, message: "Done — Pearl Whitlock joins the tree as a fact." }),
+        });
+      }),
+    );
+    const main = document.createElement("main");
+    const state = JSON.parse(JSON.stringify(STATE));
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    chip(main, "Definitely").click();
+    setInput(main, "It was Nora who died in the war, I remember that clearly.");
+    send(main);
+    await tick();
+    setInput(main, "No wait — Nora's brother Walter, I think.");
+    send(main);
+    await tick();
+    setInput(main, "Ah, you're right — it was Walter.");
+    send(main);
+    await tick();
+    chip(main, "Record as fact").click();
+    await tick();
+    const decided = JSON.parse(decideCall()[1].body);
+    // the family's FIRST words stay the basis; every correction rides
+    // beside them — never the other way round (PRD R8, 2026-08-11 review)
+    expect(decided.basis.text).toBe("It was Nora who died in the war, I remember that clearly.");
+    expect(decided.basis.note).toContain("No wait — Nora's brother Walter, I think.");
+    expect(decided.basis.note).toContain("Ah, you're right — it was Walter.");
+  });
+
+  it("a failed transcript record is logged, never silently swallowed (2026-08-11 review)", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((url) => {
+        if (url === "/api/review/message") return Promise.reject(new Error("network down"));
+        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+      }),
+    );
+    const main = document.createElement("main");
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, STATE);
+    await tick();
+    await tick();
+    expect(errorSpy.mock.calls.some((c) => String(c[0]).includes("failed to record a transcript line"))).toBe(true);
+    errorSpy.mockRestore();
   });

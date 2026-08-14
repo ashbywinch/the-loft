@@ -1,0 +1,10 @@
+# The gate's system tools — installed by `make setup` into `.conda-tools`
+# (project-local, no sudo, same binary versions on every machine). Only the
+# real-tool tests need these (tesseract for OCR, ImageMagick for rotation);
+# do not grow this env with packages that belong in the uv venv.
+name: loft-tools
+channels:
+  - conda-forge
+dependencies:
+  - tesseract>=5.5
+  - imagemagick>=7.1

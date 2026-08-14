@@ -29,7 +29,43 @@ help:
 	@echo "  ${GREEN}make eval-changed${NC} Run only the evals the current changes affect"
 	@echo "  ${GREEN}make clean${NC}        Remove .venv, node_modules and generated files"
 
-setup:
+# The gate's system-tool contract (coding-standards): a test that needs a
+# system tool gets it from a make target, into the project — never sudo, never
+# a ci.yml step. The OCR/evals tests run the real tesseract + ImageMagick, so
+# this installs them into a micromamba env at .conda-tools (a sibling of .venv):
+# same binary versions on every machine, CI == developer == anyone. Both are
+# real file targets, so make's own timestamp rule does the "already installed"
+# check — the env is rebuilt only when environment.yml (or micromamba) changes.
+CONDA_TOOLS := .conda-tools
+MICROMAMBA := $(HOME)/.local/bin/micromamba
+CONDA_COMPLETE := $(CONDA_TOOLS)/.complete
+
+$(MICROMAMBA):
+	@os=$$(uname -s | tr 'A-Z' 'a-z'); arch=$$(uname -m); \
+	case "$$os-$$arch" in \
+		linux-x86_64) plat=linux-64;; linux-aarch64) plat=linux-aarch64;; \
+		darwin-x86_64) plat=osx-64;; darwin-arm64) plat=osx-arm64;; \
+		*) echo "error: unsupported platform $$os-$$arch for the project tools env"; exit 1;; \
+	esac; \
+	mkdir -p "$(HOME)/.local"; \
+	curl -LsSf "https://micro.mamba.pm/api/micromamba/$$plat/latest" | tar -xj -C "$(HOME)/.local" bin/micromamba \
+		|| { echo "error: micromamba bootstrap failed — re-run make setup"; exit 1; }
+
+$(CONDA_COMPLETE): environment.yml $(MICROMAMBA)
+	@$(MICROMAMBA) create -y -q -p "$(CURDIR)/$(CONDA_TOOLS)" -c conda-forge --file environment.yml \
+		|| { echo "error: the project tools env (tesseract + magick) failed to create — see the output above"; exit 1; }
+	@for tool in tesseract magick; do [ -x "$(CONDA_TOOLS)/bin/$$tool" ] || { echo "error: $$tool not in the project env after the install"; exit 1; }; done
+	@touch $@
+
+.PHONY: install-tools
+install-tools: $(CONDA_COMPLETE)
+
+# The project tools come first, so every make target (tests and the runtime
+# scan/confirm flows alike) uses the pinned versions, not whatever OS/brew
+# happens to be on PATH.
+PATH := $(CURDIR)/$(CONDA_TOOLS)/bin:$(PATH)
+
+setup: install-tools
 	@uv --version >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh
 	@uv sync --locked
 	@if [ ! -d node_modules ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then $(NPM) ci --no-audit --no-fund; fi  # ci stays reproducible; skipped when the lock is unchanged (2026-08-13: a full reinstall on every make call was the suite's fixed 3 s tax)

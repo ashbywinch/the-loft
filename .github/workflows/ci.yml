@@ -11,13 +11,6 @@ permissions:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
-    env:
-      # job-level so the evals step's `if` can see it: a step's own env: is not
-      # in the env context when its condition is evaluated, and the secrets
-      # context in `if:` breaks the workflow LOAD entirely (2026-08-14 — the
-      # evals step's `if: ${{ secrets.LOFT_AI_KEY != '' }}` failed every push
-      # with no build-and-test check at all)
-      LOFT_AI_KEY: ${{ secrets.LOFT_AI_KEY }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -44,11 +37,12 @@ jobs:
       - run: make lint-github
       - run: make coverage # the gate: lint + typecheck + the suites ONCE, instrumented (2026-08-11: make test + make coverage used to run pytest and vitest twice)
       - run: make verify # the archive-quality data checks — the gate keeps them; they skip in CI (no archive in the checkout) and run locally
-      - name: Real-model evals (only when the API key is configured)
-        # without the key they would fail the gate on every push — a secrets
-        # configuration matter, not a code gate (2026-08-13)
+      - name: Real-model evals
+        # runs unconditionally: a missing key FAILS the gate loudly (fail-fast
+        # rule) — never test for key presence, never silently skip (2026-08-14)
         run: make evals
-        if: env.LOFT_AI_KEY != ''
+        env:
+          LOFT_AI_KEY: ${{ secrets.LOFT_AI_KEY }}
       - name: Coverage summary (Python tools)
         uses: irongut/CodeCoverageSummary@v1.3.0
         with:

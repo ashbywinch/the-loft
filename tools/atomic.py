@@ -26,6 +26,13 @@ def atomic_write(path: Path, content: str | bytes) -> None:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
+        # mkstemp creates the temp 0600 and rename preserves it — without this,
+        # every published file silently becomes owner-only (review, 2026-08-14).
+        # Restore the umask-derived mode plain write_bytes used to produce, so
+        # another user (a second account, a sync process) can still read it.
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)
         os.replace(tmp, path)
     except BaseException:
         _ = tmp.unlink(missing_ok=True)

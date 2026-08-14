@@ -12,6 +12,8 @@
 # deps
 .venv/
 venv/
+# the gate's system tools (tesseract + ImageMagick) — project-local, never committed
+.conda-tools/
 node_modules/
 
 # caches

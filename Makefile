@@ -4,6 +4,7 @@
 # suites run ONCE (inside coverage), never twice (2026-08-11: make test +
 # make coverage both re-ran pytest and vitest in CI). make test stays as
 # the local fast gate.
+.PHONY: help setup serve lint lint-github typecheck test coverage format clean eval evals eval-changed verify scan-docs scan-photos adopt ingest confirm
 
 PYTHON := .venv/bin/python
 RUFF := .venv/bin/ruff
@@ -27,6 +28,11 @@ help:
 	@echo "  ${GREEN}make evals${NC}        Run the real-model evals (pytest -m eval — needs the API key; select pieces with -k)"
 	@echo "  ${GREEN}make verify${NC}       Run the archive-quality data checks (pytest -m archive — the drift guard, completeness, no-PII)"
 	@echo "  ${GREEN}make eval-changed${NC} Run only the evals the current changes affect"
+	@echo "  ${GREEN}make scan-docs${NC}    Scan documents from the FF-680W into ~/loft/inbox (ARGS=\"--job …\")"
+	@echo "  ${GREEN}make scan-photos${NC}  Scan photos from the FF-680W into ~/loft/inbox (ARGS=\"--job …\")"
+	@echo "  ${GREEN}make adopt${NC}        Register a user scan folder in the registry in place (ARGS=\"<folder> --label …\")"
+	@echo "  ${GREEN}make ingest${NC}       Orient + raw OCR + model guess for a batch (ARGS=\"<batch-id>\")"
+	@echo "  ${GREEN}make confirm${NC}      User confirmation gate for a batch's guessed text (ARGS=\"<batch-id>\")"
 	@echo "  ${GREEN}make clean${NC}        Remove .venv, node_modules and generated files"
 
 # The gate's system-tool contract (coding-standards): a test that needs a
@@ -118,6 +124,20 @@ format: setup
 	@$(RUFF) format tools/ tests/
 	@$(NPM) run format
 
+scan-docs: setup
+	@$(PYTHON) tools/scan.py docs $(ARGS)
+
+scan-photos: setup
+	@$(PYTHON) tools/scan.py photos $(ARGS)
+
+adopt: setup
+	@$(PYTHON) tools/adopt.py $(ARGS)
+
+ingest: setup
+	@$(PYTHON) tools/pipeline.py process $(ARGS)
+
+confirm: setup
+	@$(PYTHON) tools/pipeline.py review $(ARGS)
 clean:
 	@rm -rf .venv node_modules htmlcov/ app/coverage/
 	@rm -f .coverage coverage.xml

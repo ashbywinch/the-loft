@@ -321,7 +321,8 @@ OCR transcription drafts, photo labeling, theme/entity discovery, TTS — the `p
 ### 16.1 The loop
 
 ```
-boxes → inbox/<job>/page-*.jpg        (scanner: one job per letter)
+boxes → the user's scan area (their folders — adopted by hash, §16.13)
+      → workspace/work/<batch>/ (oriented → raw OCR → OCR guess → confirmed)
       → tools/import  [prompt: date] → archive/assets/<id>/ (sidecars + JPEGs + thumbs)
       → tools/upload-drive            → Google Drive (the archive's home)
       → loft publish                 → app/data projection → static host → phone
@@ -333,25 +334,26 @@ boxes → inbox/<job>/page-*.jpg        (scanner: one job per letter)
 ### 16.2 Scanner conventions (resolved, user 2026-08-02)
 
 - **Operator:** the reviewer alone, at home, own pace. Supersedes plans/PLAN.md's brother-scanner-day assumption.
-- **Gear:** an **Epson WorkForce DS-530 II** (planned, 2026-08-03) for letters — duplex, 50-sheet ADF, 600 dpi optical, USB; flatbed-with-slide-adapter for prints + slides; Android phone scan app for odd sizes.
+- **Gear:** an **Epson FastFoto FF-680W** (2026-08-13) — sheet-fed ADF for letters *and* photos, duplex, 600 dpi optical, WiFi (eSCL) + USB; no flatbed, so 35 mm slides remain uncovered; Android phone scan app for odd sizes.
 
 | Requirement | Why |
 |---|---|
 | Sheet-fed: duplex ADF | letters are written on both sides |
 | Sheet-fed: 300 DPI optical, colour | quality floor (PRD §7); colour chosen over grayscale |
 | Sheet-fed: scan-to-folder | the output shape (per-job PDF or image set) is irrelevant — separators mark letters |
-| Sheet-fed: ADF ≥ 12 pages, USB | 3–5-page letters, duplex → up to 10 pages, laptop connection |
-| Flatbed: A4+ bed, slide adapter, 300+ DPI | hundreds of prints + 35mm slides; no dedicated slide scanner |
+| Sheet-fed: ADF ≥ 12 pages, duplex, WiFi (eSCL) + USB | 3–5-page letters, duplex → up to 10 pages, laptop connection |
+| Prints: photo ADF, 300+ DPI | hundreds of prints feed the FF-680W's photo ADF; 35 mm slides uncovered (no flatbed) |
 | Phone app: per-page JPEG export | odd sizes (airmail, cards) — PRD §7 no-camera amendment (user, 2026-08-02) |
 
 - **Sheet flow (2026-08-03):** the letters are in **stacks** and feed continuously — one letter is not one scan job, and there are **no separator sheets**. The letters carry their own structure: a letter's first page holds the address block, the date and the salutation ("as from: 31 Pinewood Court… Wed 12th Jan. '77… Chère mamie"), and continuation pages are often numbered. Boundaries are therefore a **review pass, not a detection problem**: import concatenates every job in the inbox into one ordered page sequence, walks it letter by letter, and the worksheet prompt confirms where each letter ends — the reviewer has the physical letter in hand, and the structure makes the pass easy. Duplex; sheet order = reading order (page-01 = sheet 1 front, page-02 = sheet 1 back, …). The 50-sheet ADF caps a single feed at ~10–12 letters, so a stack feeds as several sub-jobs — job boundaries are irrelevant. A vision-read boundary *proposal* can join later via the ML seam (Slice 4); the review pass is the Slice 1 mechanism. **No envelopes** in this collection — the letter carries its own address and date (`INTERVIEW.md` addendum) — so envelope-first does not apply here; the ritual still supports it for other families.
 - **Image spec:** 300 DPI colour, JPEG quality ~88. Calibrated on real scans (§16.8): handwritten ink on white compresses to ~1 MB/page — colour is ~3× grayscale and still fits the free tier.
+- **Scan command (2026-08-13):** `make scan-docs ARGS="--label …"` / `make scan-photos ARGS="--label …"` → the user's scan area (`tools/loft_paths.py` `USER_SCAN_AREA` — `<…>/scans/<batch-id>/<batch-id>-NN.jpg`, 300 DPI colour, JPEG q88, label in the registry record) via `tools/scan.py`; the FF-680W is added to the user SANE config (`~/.config/sane/airscan.conf`) by IP because mDNS discovery on the BT Smart Hub is unreliable, and the airscan backend is enabled in the user `dll.conf` (the Ubuntu package ships it disabled). The scanner answers direct eSCL jobs even when discovery/status checks fail — the phone app's "Not Ready but scans work" is that behaviour (2026-08-13).
 - **Odd sizes:** phone scan app → export per-letter page JPEGs into a job folder → the same `tools/import` pipeline.
 
 ### 16.3 tools/import (Python CLI, reviewer-operated)
 
 - `tools/import <inbox> --box "Box — Letters 1977" --type letter` — one box at a time; `--box` becomes `source` and pre-fills the year.
-- **Stages:** ingest → prompt → catalog → **read (machine transcription draft + prompt pre-fills, §16.7)** → thumbs → index. Resumable: processed jobs move to `inbox/done/`; a crash re-runs cleanly. Fail-fast on unreadable images, duplicate IDs, page-count anomalies.
+- **Stages:** ingest → prompt → catalog → **read (machine transcription draft + prompt pre-fills, §16.7)** → thumbs → index. Resumable: processed folders are marked in their sidecars — the inbox folders are never moved (MULTI-DOC-IMPORT-PRD §3.5); a crash re-runs cleanly. Fail-fast on unreadable images, duplicate IDs, page-count anomalies.
 - **The minimal prompt** (per item). The plan's "filename / EXIF / minimal prompt" question resolves to the prompt: filenames carry no dates, and scanner EXIF stamps scan-time, not letter dates — the date is handwritten.
 
 | Prompt field | Behaviour |
@@ -362,7 +364,7 @@ boxes → inbox/<job>/page-*.jpg        (scanner: one job per letter)
 | run defaults | sender + recipient, asked **once per stack** (Nora → Fern for the main run; Dad's boat letters differ); one Enter accepts |
 
 - **IDs:** assigned at import from the prompt date (`letter-1977-01-12-01`, `-02` on same-date collision) or box year alone (`letter-1977-01`); **never renamed afterwards** — later precision refinement updates metadata only (§3, "IDs are stable forever").
-- **Output:** `archive/assets/<id>/item.json` (sidecar, status `draft`) + `page-NN.jpg` + `thumbs/`; `index.json`/`transcripts.json` rebuilt; `check-archive` passes. The local archive lives **outside the repo** (AGENTS.md — scans are never committed), e.g. `~/loft/archive`.
+- **Output:** `archive/assets/<id>/item.json` (sidecar, status `draft`) + `page-NN.jpg` + `thumbs/`; `index.json`/`transcripts.json` rebuilt; `check-archive` passes. The local archive lives **outside the repo** (AGENTS.md — scans are never committed), in our workspace on the 3.7 TB Seagate — the workspace sibling holds registry, work stages, archive and projection (§16.13); the user's scan area (`scans/`) stays theirs.
 
 ### 16.4 The resolution seam (import doing real work)
 
@@ -465,7 +467,7 @@ The two-letter exercise (2026-08-02) taught that linking is a *process*, not a b
 
 **Scan-ahead: the inbox is an append-only drop zone.** Scanning (possibly by someone else) outpaces processing by design. The pipeline is stage-decoupled so nothing blocks the scanner:
 
-- **ingest** — fast, idempotent: normalize pages, hash them, detect new jobs; never modifies the inbox except moving *catalogued* jobs to `done`.
+- **ingest** — fast, idempotent: normalize pages, hash them, detect new jobs; never modifies the inbox — catalogued batches are marked in their sidecars (MULTI-DOC-IMPORT-PRD §3.5).
 - **worksheet** — human-paced: boundaries, dates, defaults, dedupe; resumable mid-stack.
 - **catalog** — atomic sidecar writes (temp + rename).
 - **read** — an async OCR queue: items pending reading sit in the queue and fill in as the backend processes them (batch/rate-aware); status per item `pending → reading → draft`.
@@ -482,5 +484,151 @@ The single-curator assumption is dead — **multiple family members curate** (20
 3. **The generation layer** — embeddings + vector similarity, and the LLM work (stories, themes, bios over the corpus) as **batch, local** jobs — PRD §12: ML runs locally, never third-party cloud processing of family content. Output enters via propose/confirm; the session's honesty rules apply (generated text is proposed, disputed facts omitted, attributed).
 
 **What changes vs §5:** the reading side stays static; the curation/analysis side gains a managed backend. Hosting stays out of the house; "nothing paid" is revisited (free tiers; the family's own account). SQLite remains right for one job: the laptop's local generation batch (read-only analytics over a pulled copy) — as a live multi-user store it is out, single-writer.
+
+### 16.13 The capture pipeline — the two-zone workspace (2026-08-13)
+
+Requirements: `docs/prd/MULTI-DOC-IMPORT-PRD.md` (R1–R9). Supersedes the
+older §16.1/§16.3 conventions of an "inbox" of our job folders: the user's
+scan area is **theirs** (R1) — we adopt its folders by content, never by
+path convention.
+
+**The two zones.** The user's scan area (on the big disk: `scans/` — PhotoScan, and whatever the user creates) is read-only to us. Our workspace is the sibling folder **`Loft`** at the disk root (decided 2026-08-13 — alongside the user's `scans/`, not inside it) holding everything we produce:
+
+```
+Loft/
+  registry/<batch-id>.json         one record per adopted user folder
+  work/<batch-id>/                 derived stages, in trust order
+    oriented/page-NN.jpg           correct way up (Rule J, before any reading)
+    ocr-raw/page-NN.txt            engine OCR, unverified
+    ocr-guess/page-NN.txt          machine draft (transcription_status: draft)
+    ocr-confirmed/page-NN.txt      user-verified; archived on confirmation
+  archive/                         the durable knowledge (confirmed only)
+    assets/<item-id>/              item.json + page-NN.jpg + transcription.txt + thumbs
+    people.json places.json orgs.json themes.json items.json ...
+  projection/                      deployable: reduced-res images + derived JSON
+```
+
+Paths: `tools/loft_paths.py` — `USER_SCAN_AREA` (`scans/`), `WORKSPACE`
+(`Loft/`), `REGISTRY_DIR`, `WORK_DIR`, `ARCHIVE_DIR`, `PROJECTION_DIR`. The
+archive relocated from `scans/Loft/archive/` to `Loft/archive/` (2026-08-13,
+558 files, size-verified). Register-in-place (decided 2026-08-13): adopted
+external folders are hashed where they sit — never copied into the
+workspace; the raw scans stay single-source.
+
+**Registry records.** `registry/<batch-id>.json` (batch id is ours and
+stable; never the user's folder name): `path_last_known`, `fingerprint`
+(sorted page hashes), `label` (curator-entered, free text), `status`
+(`pending → importing → done | superseded`), `boundaries` (item/page
+mapping once decided). The label never appears in the user's folder name.
+
+**Re-association after user reorganisation.** Each run re-verifies every
+registered folder: fingerprint found at a new path → re-link (automatic);
+fingerprint split/merged across folders → semi-automatic with a manual
+fallback; pages added → fingerprint grows, new pages adopted; pages
+removed → flag for review; folder not found → flag; reviewer points or
+supersedes (archive copies remain). Nothing in the user's area is ever
+written.
+
+**Hashes & dedupe (extends §16.10).** Two duplicate kinds, two mechanisms:
+duplicate *file* = exact `sha256`; duplicate *scan* (same document
+re-captured) = `phash` similarity above threshold. Per page: sha256 +
+phash, the phash taken on the **oriented** form so rotation/re-encode does
+not defeat it. Per batch and per item: fingerprint = sorted page hashes
+(batch identity for re-association; item identity for whole-letter
+duplicates). Dedupe runs at adoption and at catalog against the whole
+known universe (user area + work stages + archive). Policy (§16.10):
+exact match → skip silently, first wins; phash match → both candidates to
+the reviewer with observable properties; never auto-delete or auto-merge.
+
+**Raw-file naming — recovery from reorganisation (2026-08-13).** Every raw
+page we produce is named `<batch-id>-NN.jpg` (e.g. `scan-20260813-1850-01.jpg`)
+— the batch id is embedded in every file name. If the user renames the
+folder, any file still says which batch and position it belongs to, so
+re-association can start from names before hashing (the hash fingerprint
+confirms). The work stages (`oriented/page-NN.jpg`, …) keep plain page
+names — they are ours, never reorganised. External files keep their own
+names; adoption hashes them.
+
+**Write-then-rename everywhere.** No component publishes a file a reader
+could see half-written: every produced file (registry records, stage
+outputs, archive sidecars) is written to a temp sibling, flushed, then
+renamed — `tools/atomic.py` `atomic_write`, the one helper, used by the
+store's `write_new` and by every component (2026-08-13). The batch folder
+itself appears atomically (staging dir rename).
+
+### 16.14 The pipeline components (2026-08-13)
+
+The capture pipeline is a chain of components, each owning one stage; the
+**workspace filesystem is the interface between them** — a component reads
+its input stage (the user's folder or a `work/<batch>/` stage dir + the
+registry record) and writes its output stage + the registry status. No
+component calls another; no shared in-memory state; each is independently
+runnable, resumable, and replaceable.
+
+| Component | Input → Output | Status effect |
+|---|---|---|
+| `capture` (tools/scan.py) | scanner → pages in the user area + registry record (label, hashes) | `pending` |
+| `adopt` | an external/preexisting folder → registry record (register-in-place) | `pending` |
+| `orient` | user pages → `work/<batch>/oriented/` (Rule J) | `importing` |
+| `ocr-raw` | oriented pages → `work/<batch>/ocr-raw/` (tesseract) | `importing` |
+| `ocr-guess` | ocr-raw → `work/<batch>/ocr-guess/` (vision model draft) | `importing` |
+| `review` | oriented + ocr-guess → `ocr-confirmed/` + `boundaries` (the IMPORT-PRD flow, user-paced) | `review` |
+| `catalog` | confirmed pages + transcript → `archive/assets/<id>/` (draft items) | `done` |
+| `publish` | archive → `projection/` (reduced-res) | — |
+
+**Parallelism.** Batches are independent; stages within a batch are
+sequential (orient before any reading; ocr-raw before ocr-guess). The
+driver walks the registry and fans out per-batch stage jobs, so capture
+runs while orient/OCR process earlier batches (scan-ahead, §16.11) and the
+user reviews batch *N* while the machine works *N+1*. Each component
+re-runs idempotently (its output stage is a cache; re-running regenerates
+it) and never touches the user's area.
+
+**Content routing (2026-08-13, requirements R10–R12).** Batches are mixed:
+cursive letters, print, photographs, drawings. A `classify` stage runs
+FIRST (before orientation — photos need neither orientation nor OCR): a
+local zero-shot image classifier (open_clip, MobileCLIP-S0) decides
+photo/drawing vs text page; within text, the orientation stage's tesseract
+strong-word density (rotations.json) decides print vs cursive (real data:
+cursive pages 7–58 strong words, the printed reference 1185). Photos and
+drawings are flagged as image items and never transcribed. Orientation and
+OCR run only on text pages.
+
+**The HTR stage uses the field's tooling, not hand-rolled line detection
+(2026-08-13, user: "is there not prior art?").** Cursive pages are read by
+the established historical-document stack — kraken (7.x, PP-OCRv6-based
+models trained on historical handwritten AND printed text) with the orli
+layout model for text-line baselines and reading order. The user's layout
+cases (a corner text box, a `}` joining two lines with an annotation,
+marginal notes, a printed form filled in cursive) are precisely what
+trained layout detection exists for; a projection-based line splitter is
+the naive approach and is not used. The pipeline order becomes:
+`classify → orient (text pages) → route → htr (cursive) / tesseract
+(print) → guess → review`.
+
+**The transcription backend decision (2026-08-14, user: "let's stop
+there, this is good enough").** After an evidence comparison on the
+family's own pages, the default transcription backend for cursive/mixed
+pages is the **vision-language model** (`tools/vlm.py`, the opencode-go
+vision role mimo-v2.5) — not the local TrOCR stack and not a specialist
+OCR API. The evidence on real pages: near-perfect pure-cursive and
+mixed-layout transcription (page-03's callout box, postmark, address and
+salutation all read correctly); ~85% word accuracy on the medal card's
+hardest element (handwritten digits in a dense form); ~11K tokens/page
+(~$2–15 per 1,000 pages at mid-tier rates). The local orli+TrOCR stack
+(segmentation OK, recognition garbage on the test pages) and the
+specialist OCR APIs (Azure Read `tools/ocr_azure.py` — client ready,
+untested on real pages; Transkribus — UI-bound on individual plans,
+~10× the price) remain as alternatives behind the same seam
+(`LOFT_HTR_BACKEND=vlm|local`, env-selected). The per-page VLM output
+is recorded in a sidecar (`ocr-raw/<stem>.vlm.json`, the token usage) so
+re-runs skip transcribed pages and the cost is auditable.
+
+**Scan UX (decided direction).** The capture command identifies the job at
+scan time: `make scan-docs ARGS="--label 'Box 1 — Letters 1977'"`, or a
+prompt when no `--label` is given ("Envelope/pile label — what's written
+on it?"). The label is written into the registry record at scan time
+(never into the folder name) and rides through to the review prompts.
+
 
 **Decisions — RESOLVED (user, 2026-08-03):** managed Postgres + pgvector on **Supabase**; **a small number of family curators** (a simple per-field last-write-wins + audit-log conflict story suffices; the far-future possibility of hosting *other families* that must never see our content is a tenant-isolation seam — the existing contributor-ID namespacing, §14 — and is not built now); the generation batch runs on **the reviewer's laptop**.

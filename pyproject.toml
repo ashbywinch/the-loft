@@ -8,6 +8,10 @@ dependencies = [
     "python-dateutil>=2.9.0",
     "dateparser>=1.2.0",
     "uncertainties>=3.2.3",
+    "open-clip-torch>=2.24",
+    "transformers>=4.44,<5",
+    "sentencepiece>=0.2.2",
+    "protobuf>=7.35.1",
 ]
 
 [dependency-groups]
@@ -23,6 +27,7 @@ dev = [
     "itsdangerous>=2.2.0",  # signed session cookies
     "fastapi>=0.115.0",  # the server framework (houses parity, 2026-08-06)
     "uvicorn>=0.30.0",  # the ASGI server
+    "pillow>=11.0.0",
 ]
 
 [build-system]

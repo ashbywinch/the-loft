@@ -29,9 +29,12 @@ from fastapi.staticfiles import StaticFiles
 from tools import auth, memory, review
 from tools.ai_client import AIClient
 from tools.archive import Archive, ArchiveError, split_content
+from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.memory import ElicitationError, Knowledge
 from tools.records import Person, ReviewContext, ReviewDecision
+from tools.registry import RegistryError
 from tools.store import FileStore
+from tools.sync import Outbox, draft_payloads, record_confirmation, validate_confirmation
 
 logger = logging.getLogger(__name__)
 
@@ -51,11 +54,21 @@ def build_app(
     data_dir: Path,
     client: AIClient | None,
     app_dir: Path,
+    work_dir: Path | None = None,
+    outbox: Outbox | None = None,
+    registry_dir: Path | None = None,
 ) -> FastAPI:
     """The FastAPI app with the store/client/dirs bound (DI for tests)."""
+    if not auth.session_secret():
+        # an empty signing key means forgeable sessions — and the sync write
+        # seam rides the session (2026-08-14 review): refuse to start
+        raise RuntimeError("THE_LOFT_SESSION_SECRET is not set — refusing to start with forgeable sessions")
     archive = Archive(store)
     data_dir = Path(data_dir)
     app_dir = Path(app_dir)
+    work_dir = Path(work_dir) if work_dir else WORK_DIR
+    registry_dir = Path(registry_dir) if registry_dir else REGISTRY_DIR
+    outbox = outbox if outbox is not None else Outbox(WORK_DIR.parent / "sync-outbox")
 
     app = FastAPI(title="The Loft", docs_url=None, redoc_url=None)
 
@@ -602,6 +615,59 @@ def build_app(
                 return JSONResponse({"ok": False, "error": "sign in to read the archive"}, status_code=401)
         return await call_next(request)
 
+    # -- sync (TECH-SPEC §16.15: the backend owns the write seam; the
+    # frontend proposes, the backend records; the outbox is the catch-up) --
+
+    @app.get("/api/sync/batch/{batch_id}/drafts")
+    def sync_drafts(batch_id: str, request: Request) -> Any:
+        """The machine drafts the review surface reads (guesses + boundaries)."""
+        if session_user(request) is None:
+            return JSONResponse({"ok": False, "error": "sign in to read the drafts"}, status_code=401)
+        try:
+            return {"batch_id": batch_id, "documents": draft_payloads(batch_id, work_dir)}
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.post("/api/sync/confirmations")
+    def sync_confirmations(payload: dict[str, Any], request: Request) -> Any:
+        """The backend receiver: validate, record (ocr-confirmed + registry),
+        re-publish the projection. The frontend never writes the archive."""
+        if session_user(request) is None:
+            return JSONResponse({"ok": False, "error": "sign in to send confirmations"}, status_code=401)
+        try:
+            validate_confirmation(payload)
+            text = payload.get("text") if payload.get("status") == "confirmed" else None
+            record_confirmation(
+                str(payload["batch_id"]),
+                int(payload["doc_index"]),
+                payload,
+                text,
+                work_dir=work_dir,
+                registry_dir=registry_dir,
+            )
+        except (TypeError, ValueError, RegistryError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)  # client errors are 4xx, never 500
+        archive.publish(data_dir)
+        return {"ok": True, "batch_id": payload["batch_id"], "doc_index": payload["doc_index"]}
+
+    @app.get("/api/sync/pending")
+    def sync_pending(request: Request) -> Any:
+        """The catch-up: the backend pulls anything the real-time push missed."""
+        if session_user(request) is None:
+            return JSONResponse({"ok": False, "error": "sign in to pull the outbox"}, status_code=401)
+        return {"pending": [{"id": item_id, **payload} for item_id, payload in outbox.pending()]}
+
+    @app.post("/api/sync/pending/received")
+    def sync_received(ids: dict[str, Any], request: Request) -> Any:
+        """The website marks pulled items received — the outbox drains."""
+        if session_user(request) is None:
+            return JSONResponse({"ok": False, "error": "sign in to drain the outbox"}, status_code=401)
+        try:
+            outbox.mark_received([str(item_id) for item_id in ids.get("ids", [])])
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        return {"ok": True}
+
     app.mount("/", StaticFiles(directory=str(app_dir), html=True), name="app")
     return app
 
@@ -632,12 +698,15 @@ def create_server(
     app_dir: Path,
     host: str = "127.0.0.1",
     port: int = 8124,
+    work_dir: Path | None = None,
+    outbox: Outbox | None = None,
+    registry_dir: Path | None = None,
 ) -> Any:
     """Build the uvicorn server with the given store/client/dirs (DI for
     tests). ``Server`` is the running noun; tests drive this one."""
     import uvicorn
 
-    app = build_app(store, data_dir, client, app_dir)
+    app = build_app(store, data_dir, client, app_dir, work_dir=work_dir, outbox=outbox, registry_dir=registry_dir)
     return uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
 
 

@@ -632,3 +632,60 @@ on it?"). The label is written into the registry record at scan time
 
 
 **Decisions — RESOLVED (user, 2026-08-03):** managed Postgres + pgvector on **Supabase**; **a small number of family curators** (a simple per-field last-write-wins + audit-log conflict story suffices; the far-future possibility of hosting *other families* that must never see our content is a tenant-isolation seam — the existing contributor-ID namespacing, §14 — and is not built now); the generation batch runs on **the reviewer's laptop**.
+
+### 16.15 The two-app deployment (2026-08-14, user: "this is really two separate applications")
+
+The system is two applications, one codebase, two deployment profiles. The
+heavyweight offline backend runs at home (where the scanner and the durable
+disk are); the frontend — viewing, transcription verification, and the
+identity-extraction chat — is hosted cheaply in the cloud. The split maps
+onto what already exists: `tools/` is the backend; `app/` + the review/chat
+server is the frontend; `loft publish` is the bridge.
+
+**Backend (home):** the capture pipeline (scan → adopt → classify → orient →
+transcribe → guess), the archive (the durable folder), `loft publish`, and
+the archive's write seam. The scanner and the 3.2 TB disk live here, so the
+pipeline stays close to both.
+
+**Frontend (cloud, cheap):** the static browse surface (the projection) on a
+static host, plus a small API server for the interactive surfaces —
+transcription verification (the review gate) and the identity-extraction
+chat (IMPORT-PRD / INGEST-PRD flows). The family content is accepted in the
+cloud (the local-only mode remains an option, 2026-08-14).
+
+**The sync contract (decided direction): the backend owns the write seam;
+the frontend proposes, the backend records.** The frontend never writes the
+archive. Its confirmed outputs — verified transcriptions, identity
+proposals, document boundaries — POST to the backend's sync API; the
+backend validates them against the model (the `Item`/`Person`/`Place` write
+seam) and appends to the archive (append-only holds in exactly one place),
+then re-publishes the projection. The frontend↔backend link rides Tailscale
+(the pattern this house already uses). Read path: the projection deploys to
+the static host for browse; the interactive flows read the standing
+knowledge (identity tables, work-stage texts) via the backend's API.
+
+Rejected alternatives: the folder-as-sync (Syncthing/cloud bucket — moves
+the append-only discipline to sync-time reconciliation and invites
+conflicts) and the managed-store middle layer as the sync medium (the
+§16.12 direction — right for multi-user *curation* later, too many moving
+parts for today's single-curator volume; the folder stays the durable
+contract either way, and §16.12's materialization path remains the upgrade
+route).
+
+**Pending transcripts and the sync endpoints (2026-08-14).** The machine's
+drafts and the not-yet-approved transcripts live on the frontend, in the
+review surface's store — the backend serves them on demand
+(`GET /api/sync/batch/{id}/drafts`: the ocr-guess texts + boundaries), and
+the frontend keeps its own copy while they await the reviewer. The
+confirmed outputs are pushed in real time to the backend
+(`POST /api/sync/confirmations`): validated against the model, appended to
+the work dir's ocr-confirmed + registry (status `confirmed`), the
+projection re-published. **The catch-up (2026-08-14, user: "a sync
+endpoint on the website for mopups"):** if the real-time push fails (the
+laptop is off), the confirmation stays in the frontend's outbox
+(`tools/sync.py` `Outbox` — atomic, append-only); the backend pulls
+(`GET /api/sync/pending` on the website), appends what it receives, and
+the website marks them received. Nothing confirmed is ever lost to a
+failed push. The transcription-verification UI itself is a separate
+ticket (frontend, third-party review libraries); the seams it consumes
+are these endpoints + the CLI review gate's shared write path.

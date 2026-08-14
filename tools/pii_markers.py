@@ -160,3 +160,23 @@ def family_markers() -> set[str]:
         for record in places.get("places", []):
             markers |= _table_tokens([record]) | _geo_markers(record)
     return markers
+
+
+def file_offenders(text: str, markers: set[str]) -> list[str]:
+    """The markers present in *text* — the identity data that must not ship.
+
+    One shared matcher (the guard and its fast path must agree; 2026-08-14,
+    review: the fast path tested original-case emails against lowercased text,
+    so an uppercase email marker silently bypassed the per-marker scan).
+    Emails compare case-insensitively against the lowercased text; names and
+    places match at word boundaries in the original case.
+    """
+    lowered = text.lower()
+    found: list[str] = []
+    for marker in markers:
+        if "@" in marker:
+            if marker.lower() in lowered:
+                found.append(marker)
+        elif re.search(r"\b" + re.escape(marker) + r"\b", text):
+            found.append(marker)
+    return found

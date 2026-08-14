@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from tools.loft_paths import ARCHIVE_DIR
-from tools.pii_markers import family_markers
+from tools.pii_markers import family_markers, file_offenders
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -32,7 +32,8 @@ def test_no_family_pii_in_tracked_files() -> None:
         ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True
     ).stdout.splitlines()
     # fast path: one compiled alternation per file instead of one re.search
-    # compilation per marker per file (the 30 s hotspot, 2026-08-13)
+    # compilation per marker per file (the 30 s hotspot, 2026-08-13). Emails
+    # compared lowercased — the same case the authoritative scan normalises.
     emails = sorted(m for m in markers if "@" in m)
     words = sorted(m for m in markers if "@" not in m)
     any_marker = re.compile(r"\b(?:" + "|".join(re.escape(m) for m in words) + r")\b")
@@ -44,13 +45,9 @@ def test_no_family_pii_in_tracked_files() -> None:
             continue  # deleted in the working tree
         text = path.read_text(encoding="utf-8", errors="replace")
         lowered = text.lower()
-        if not any_marker.search(text) and not any(e in lowered for e in emails):
+        if not any_marker.search(text) and not any(e.lower() in lowered for e in emails):
             continue
         # an offending file: identify the markers (rare path, so per-marker is fine)
-        for marker in markers:
-            if "@" in marker:
-                if marker.lower() in lowered:
-                    offenders.append(f"{name}: {marker}")
-            elif re.search(r"\b" + re.escape(marker) + r"\b", text):
-                offenders.append(f"{name}: {marker}")
+        for marker in file_offenders(text, markers):
+            offenders.append(f"{name}: {marker}")
     assert not offenders, "family PII in tracked files (the public repo would ship it):\n" + "\n".join(offenders[:40])

@@ -6,14 +6,15 @@ Idempotent: each section skips what already exists.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+from tools.loft_paths import ARCHIVE_DIR
 
 if TYPE_CHECKING:
     from tools.archive import Archive
 
-
-import json
 
 _import_content: dict[str, Any] | None = None
 
@@ -24,7 +25,7 @@ def _import_data() -> dict[str, Any]:
     public repo ships a data-free import (2026-08-08, user)."""
     global _import_content
     if _import_content is None:
-        path = Path(__file__).resolve().parent.parent / "archive" / "import-content.json"
+        path = ARCHIVE_DIR / "import-content.json"
         _import_content = json.loads(path.read_text(encoding="utf-8"))
     assert _import_content is not None
     return _import_content

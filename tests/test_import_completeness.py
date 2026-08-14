@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from tools.document_capture import email_cast, email_edges, record_cast, record_edges
+from tools.loft_paths import ARCHIVE_DIR
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -34,9 +35,10 @@ def _latest(paths: list[Path]) -> Path:
     return best[1]
 
 
-@pytest.mark.skipif(not (REPO / "archive" / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.archive
+@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_live_archive_contains_everything_the_import_declares() -> None:
-    paths = sorted((REPO / "archive").glob("people*.json"))
+    paths = sorted((ARCHIVE_DIR).glob("people*.json"))
     table = json.loads(_latest(paths).read_text(encoding="utf-8"))
     live_ids = {p["id"] for p in table.get("people", [])}
     live_edges = {(r.get("a"), r.get("b"), r.get("kind")) for r in table.get("relationships", [])}

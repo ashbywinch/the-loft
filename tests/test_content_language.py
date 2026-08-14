@@ -13,6 +13,8 @@ from typing import Any
 
 import pytest
 
+from tools.loft_paths import ARCHIVE_DIR
+
 REPO = Path(__file__).resolve().parent.parent
 
 # The process vocabulary that must never reach a visitor. Deliberately
@@ -29,10 +31,10 @@ PROCESS_JARGON = (
 USER_FACING_FIELDS = ("title", "subtitle", "relation", "note", "bio", "description", "source")
 
 FILES = [
-    *sorted((REPO / "archive").glob("people*.json")),
-    *sorted((REPO / "archive").glob("places*.json")),
-    *sorted((REPO / "archive").glob("themes*.json")),
-    *sorted((REPO / "archive" / "assets").glob("*/item*.json")),
+    *sorted((ARCHIVE_DIR).glob("people*.json")),
+    *sorted((ARCHIVE_DIR).glob("places*.json")),
+    *sorted((ARCHIVE_DIR).glob("themes*.json")),
+    *sorted((ARCHIVE_DIR / "assets").glob("*/item*.json")),
 ]
 
 
@@ -52,13 +54,14 @@ def _latest(paths: list[Path]) -> Path:
 def _live_tables() -> list[dict[str, Any]]:
     tables: list[dict[str, Any]] = []
     for name in ("people", "places", "themes"):
-        paths = sorted((REPO / "archive").glob(f"{name}*.json"))
+        paths = sorted((ARCHIVE_DIR).glob(f"{name}*.json"))
         if paths:
             tables.append(json.loads(_latest(paths).read_text(encoding="utf-8")))
     return tables
 
 
-@pytest.mark.skipif(not (REPO / "archive" / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.archive
+@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_no_process_jargon_in_user_facing_archive_text() -> None:
     offenders: list[str] = []
     for table in _live_tables():
@@ -69,7 +72,7 @@ def test_no_process_jargon_in_user_facing_archive_text() -> None:
                 if token in text:
                     offenders.append(f"{table.get('_name', row.get('id'))}: {token}")
     # item sidecars (assets/*/item*.json) — scan only the latest per item
-    for folder in sorted((REPO / "archive" / "assets").iterdir()):
+    for folder in sorted((ARCHIVE_DIR / "assets").iterdir()):
         paths = sorted(folder.glob("item*.json"))
         if not paths:
             continue

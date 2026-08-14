@@ -12,6 +12,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from tools.loft_paths import ARCHIVE_DIR
+
 # aliases that are generic kin terms or initials, not identifiers — "Mum" in
 # a fixture is not family PII; "Nora Voss" is
 _GENERIC_ALIASES = {
@@ -143,12 +145,12 @@ def _geo_markers(record: dict[str, Any]) -> set[str]:
     return markers
 
 
-def family_markers(repo: Path) -> set[str]:
+def family_markers() -> set[str]:
     """Every identifying name, alias, email, place, id, date and coordinate
     from the live dataset."""
     markers: set[str] = set()
-    people_paths = sorted((repo / "archive").glob("people*.json"))
-    places_paths = sorted((repo / "archive").glob("places*.json"))
+    people_paths = sorted(ARCHIVE_DIR.glob("people*.json"))
+    places_paths = sorted(ARCHIVE_DIR.glob("places*.json"))
     if people_paths:
         people = json.loads(_latest(people_paths).read_text(encoding="utf-8"))
         for record in people.get("people", []):

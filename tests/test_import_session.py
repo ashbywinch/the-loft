@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from tools.archive import Archive
+from tools.loft_paths import ARCHIVE_DIR
 from tools.store import DiskStore
 
 REPO = Path(__file__).resolve().parent.parent
@@ -22,14 +23,15 @@ def _seeded_scratch(scratch: pathlib.Path) -> Archive:
     """A scratch archive seeded with the live identity tables — the import's
     production base — so the merge path runs idempotently."""
     archive = Archive(DiskStore(scratch))
-    for f in glob.glob("archive/*.json"):
+    for f in glob.glob(str(ARCHIVE_DIR / "*.json")):
         if pathlib.Path(f).name.startswith("imports"):
             continue  # the point: the import writes the session table (all versions — the table may have superseded)
         shutil.copy(f, scratch / pathlib.Path(f).name)
     return archive
 
 
-@pytest.mark.skipif(not (REPO / "archive" / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.archive
+@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_capture_document_records_the_pending_import_session(tmp_path: pathlib.Path) -> None:
     archive = _seeded_scratch(tmp_path)
     # the seeded scratch has no imports table yet — the import must write it
@@ -43,7 +45,8 @@ def test_capture_document_records_the_pending_import_session(tmp_path: pathlib.P
     assert pending[0]["title"] == "The document import"
 
 
-@pytest.mark.skipif(not (REPO / "archive" / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.archive
+@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_capture_document_is_idempotent_about_the_session(tmp_path: pathlib.Path) -> None:
     archive = _seeded_scratch(tmp_path)
     archive.capture_document(tmp_path / "no-scans")

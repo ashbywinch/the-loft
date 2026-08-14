@@ -313,6 +313,7 @@ good.
   to be replaced without pain.
 - **Boring over clever.** The stack is vanilla by decision; prefer the
   obvious implementation a future keeper can read in any editor.
+- **The gate provisions its own environment; CI runs the same targets, nothing more.** Anything the gate needs — a system tool like tesseract or ImageMagick included — is installed *by a make target*, into the project (a sibling of `.venv`), never assumed preinstalled, never a step in `ci.yml`. CI is exactly `make setup && make lint-github && make coverage && make verify`, and **no other step**. ✗ an "install OCR tooling" step in `ci.yml`, or a `check-tools` target that fails with "run `apt-get install`", both broke this: CI diverged from the developer's machine the moment their package sets differed, and a developer installing by hand got a subtly different tool than CI. The Makefile's `install-tools` target installs tesseract + ImageMagick into `.conda-tools` via micromamba/conda-forge (no `sudo`, no system mutation, same binary versions on every machine). A machine that genuinely cannot install them fails loudly at that step, not in the middle of the suite.
 
 ## Python (`tools/`, `tests/`)
 

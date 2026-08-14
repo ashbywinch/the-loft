@@ -275,7 +275,7 @@ admin view); the affordance stays visible.
 Contributions land **wherever the app stores its info** — locally today, hosted
 later. Locally that is the archive folder: the server writes story sidecars
 (`assets/<id>/item.json`) at the archive path from the one seam
-(`tools/loft_paths.py` — the big disk's `scans/Loft/archive`)
+(`tools/loft_paths.py` — the big disk's `Loft/archive`, a sibling of the user's `scans` folders)
 through the append-only store
 (`tools/store.py`), then refreshes the projection (`app/data`) so the story
 renders. **The story text is primary content**: the save path writes it as a

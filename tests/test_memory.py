@@ -37,8 +37,12 @@ EVENT_DATE = {"kind": "event_date", "text": "1963", "value": "1963", "precision"
 
 
 def make_knowledge(people=PEOPLE, places=PLACES, themes=THEMES, items=ITEMS) -> Knowledge:
-    """The standing knowledge as one object (docs/coding-standards.md)."""
-    return Knowledge(people, places, themes, items)
+    """The standing knowledge as one object (docs/coding-standards.md).
+
+    Built through from_projection — the constructor for plain dicts; the
+    dataclass __init__ itself is typed for records (pyrefly enforces it).
+    """
+    return Knowledge.from_projection(people, places, themes, items)
 
 
 class FakeClient:

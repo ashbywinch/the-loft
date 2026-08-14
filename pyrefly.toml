@@ -1,0 +1,9 @@
+# Pyrefly type-checker config — the engine behind `make typecheck`.
+#
+# Standalone pyrefly.toml: keys are TOP-LEVEL (no [pyrefly] wrapper — that
+# header belongs in pyproject.toml's [tool.pyrefly]).
+#
+# Strictness: the `default` preset, matching the house pattern (houses).
+# Python version, venv and import root are auto-detected from the project
+# layout (pyproject.toml + .venv).
+preset = "default"

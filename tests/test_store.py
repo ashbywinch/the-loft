@@ -57,6 +57,14 @@ def test_disk_store_refuses_to_edit(tmp_path: Path) -> None:
         store.write_new("a.json", "v2")
 
 
+def test_disk_store_write_leaves_no_temp_siblings(tmp_path: Path) -> None:
+    store = DiskStore(tmp_path)
+    store.write_new("a.json", "v1")
+    store.write_new("b.json", "v2")
+    leftovers = [p.name for p in tmp_path.iterdir() if ".tmp" in p.name or p.name.startswith(".")]
+    assert leftovers == []  # write-then-rename: readers never see temp files
+
+
 def test_disk_store_rejects_paths_escaping_the_root(tmp_path: Path) -> None:
     store = DiskStore(tmp_path)
     with pytest.raises(StoreError):

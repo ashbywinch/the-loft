@@ -45,6 +45,7 @@ class AIClient:
         timeout: float = 120.0,
         max_retries: int = 2,
         urlopen: Callable[..., Any] | None = None,
+        _sleep: Callable[[float], None] | None = None,
     ) -> None:
         self.model: str = model or os.environ.get("LOFT_AI_MODEL") or DEFAULT_MODEL
         self.base_url: str = (base_url or os.environ.get("LOFT_AI_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
@@ -54,6 +55,7 @@ class AIClient:
         self.max_retries: int = max_retries
         # injectable for tests
         self._urlopen: Callable[..., Any] = urlopen or urllib.request.urlopen
+        self._sleep: Callable[[float], None] = _sleep or time.sleep
 
     def chat(self, system: str, user: str) -> str:
         """One text chat completion call; returns the assistant text."""
@@ -103,7 +105,7 @@ class AIClient:
                         raise AIClientError(
                             f"model API error {e.code}: {e.read().decode('utf-8', 'replace')[:200]}"
                         ) from e
-                    time.sleep(delay)
+                    self._sleep(delay)
                     delay *= 2
                     attempt += 1
                     continue
@@ -125,7 +127,7 @@ class AIClient:
                 # backoff
                 if attempt >= self.max_retries:
                     raise AIClientError(f"model API request failed: {e!r}") from e
-                time.sleep(delay)
+                self._sleep(delay)
                 delay *= 2
                 attempt += 1
                 continue

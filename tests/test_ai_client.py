@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import io
 import json
-import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -71,13 +70,8 @@ def test_chat_sends_system_user_and_returns_content() -> None:
     assert body["response_format"] == {"type": "json_object"}
 
 
-def test_chat_retries_transient_errors_with_backoff(monkeypatch: MonkeyPatch) -> None:
+def test_chat_retries_transient_errors_with_backoff() -> None:
     sleeps: list[float] = []
-
-    def _sleep(seconds: float) -> None:
-        sleeps.append(seconds)
-
-    monkeypatch.setattr(time, "sleep", _sleep)
     urlopen, _ = make_fake_urlopen(
         [
             http_error(503),
@@ -85,25 +79,21 @@ def test_chat_retries_transient_errors_with_backoff(monkeypatch: MonkeyPatch) ->
             FakeResponse({"choices": [{"message": {"content": "ok"}}]}),
         ]
     )
-    client = AIClient(api_key="k", urlopen=urlopen, max_retries=2)
+    client = AIClient(api_key="k", urlopen=urlopen, max_retries=2, _sleep=sleeps.append)
     assert client.chat("s", "u") == "ok"
     assert sleeps == [2.0, 4.0]
 
 
 def test_chat_gives_up_after_max_retries() -> None:
     urlopen, _ = make_fake_urlopen([http_error(503), http_error(503), http_error(503)])
-    client = AIClient(api_key="k", urlopen=urlopen, max_retries=2)
+    client = AIClient(api_key="k", urlopen=urlopen, max_retries=2, _sleep=lambda _s: None)
     with pytest.raises(AIClientError):
         client.chat("s", "u")
 
 
-def test_chat_retries_without_thinking_param_on_400(monkeypatch: MonkeyPatch) -> None:
-    def _sleep(_seconds: float) -> None:
-        return None
-
-    monkeypatch.setattr(time, "sleep", _sleep)
+def test_chat_retries_without_thinking_param_on_400() -> None:
     urlopen, calls = make_fake_urlopen([http_error(400), FakeResponse({"choices": [{"message": {"content": "ok"}}]})])
-    client = AIClient(api_key="k", urlopen=urlopen, max_retries=0)
+    client = AIClient(api_key="k", urlopen=urlopen, max_retries=0, _sleep=lambda _s: None)
     assert client.chat("s", "u") == "ok"
     assert "thinking" not in calls[1]["body"]  # the fallback must not consume the retry budget
 

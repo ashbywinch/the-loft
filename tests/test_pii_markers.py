@@ -26,11 +26,11 @@ def test_word_marker_matches_at_word_boundaries() -> None:
     assert file_offenders(text, {"Ash"}) == []
 
 
-def test_multiple_markers_reported_in_input_order() -> None:
-    assert file_offenders("Nora Voss — n.voss@post.de", {"n.voss@post.de", "Voss", "Mum"}) == [
-        "n.voss@post.de",
-        "Voss",
-    ]
+def test_multiple_markers_all_reported() -> None:
+    # the matcher iterates a set — which markers are found is the contract,
+    # not the iteration order (CI's PYTHONHASHSEED differs from local)
+    found = file_offenders("Nora Voss — n.voss@post.de", {"n.voss@post.de", "Voss", "Mum"})
+    assert sorted(found) == ["Voss", "n.voss@post.de"]
 
 
 def test_no_markers_is_empty() -> None:

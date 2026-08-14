@@ -82,13 +82,6 @@ format: setup
 	@$(RUFF) format tools/ tests/
 	@$(NPM) run format
 
-	@$(PYTHON) tools/scan.py docs $(ARGS)
-
-	@$(PYTHON) tools/scan.py photos $(ARGS)
-
-
-
-
 clean:
 	@rm -rf .venv node_modules htmlcov/ app/coverage/
 	@rm -f .coverage coverage.xml

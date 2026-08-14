@@ -252,6 +252,14 @@ good.
   written atomically or gated behind success — a failed run never publishes
   a partial result over a good one. Never bulk-clear a surface holding
   manual, user-entered, or curated data.
+- **Files that other code may read are published write-then-rename.** A
+  consumer must never observe a half-written file: every produced file
+  (registry records, stage outputs, archive sidecars) is written to a temp
+  sibling, flushed, then renamed — `tools/atomic.py` `atomic_write`, the one
+  helper, used by the store's `write_new` and by every pipeline component
+  (2026-08-13). ✗ `write_bytes` straight to the target (a reader can see the
+  file mid-write). ✓ temp + `os.replace`; the target appears complete or not
+  at all.
 - **Deterministic checks beat model judgment.** A rule that can be checked in
   code (a narrator not in the cast gets a connection question; a date question
   when the year is computable; a new artifact gets a "tell me more") is
@@ -309,7 +317,8 @@ good.
 ## Python (`tools/`, `tests/`)
 
 - ruff with `select = E,F,I,UP,B,SIM,N`, line-length 120, double quotes.
-- basedpyright, gated inside `make test` on the error count.
+- pyrefly (`pyrefly.toml`, `preset = "default"`), gated inside `make test`
+  on zero errors (2026-08-13, replacing basedpyright).
 - **A type-checker flag is fixed with a cast only when the cast NARROWS a
   value the code has already proven (2026-08-10).** The one legitimate
   shape is validate-then-narrow: the runtime immediately before the cast

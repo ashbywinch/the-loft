@@ -7,11 +7,14 @@ repos:
       - id: ruff
         args: [--fix]
       - id: ruff-format
-  - repo: https://github.com/DetachHead/basedpyright-prek-mirror
-    rev: 1.39.9 # UNPREFIXED tag; the mirror, not the main repo
+  - repo: local
     hooks:
-      - id: basedpyright
-        args: [--level, error] # warnings fail by default; errors gate the commit
+      - id: pyrefly
+        name: pyrefly
+        entry: uv run pyrefly check
+        language: system
+        types: [python]
+        pass_filenames: false # project check — pyrefly needs the whole-project context, not per-file
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1
     hooks:

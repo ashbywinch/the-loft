@@ -11,12 +11,18 @@ Instructions for AI agents working in this repo. Humans can read this too.
 ## Testing Rules
 
 - ALWAYS use `make` targets; NEVER construct ad-hoc test commands.
-- CI runs exactly: `make setup && make lint-github && make coverage` — the
+- CI runs exactly: `make setup && make lint-github && make coverage && make verify` — the
   suites run ONCE, inside `make coverage` (2026-08-11: running `make test`
   AND `make coverage` re-ran pytest + vitest twice, and the second,
   coverage-instrumented run surfaced a timing flake the first missed).
 - `make test` and `make coverage` both depend on `make lint` and
   `make typecheck` — lint gates test.
+- Three pytest selections, never mixed: `make test` = the fast unit gate
+  (excludes `eval` and `archive` markers via addopts); `make verify` = the
+  archive-quality data checks (`-m archive`, skipped in CI — no archive);
+  `make evals` = the real-model evals (`-m eval`, need the API key;
+  CI runs them only when `LOFT_AI_KEY` is configured). Split 2026-08-13
+  (user: `make test` must stay fast).
 - Tests must be deterministic: no wall-clock, network, or order dependence
   (see `docs/testing-standards.md`).
 
@@ -47,7 +53,7 @@ default. Real content never lives in code (`docs/coding-standards.md`).
 
 ## Tool selection
 
-- Python tools: `tools/` — ruff (lint/format), basedpyright (types), pytest.
+- Python tools: `tools/` — ruff (lint/format), pyrefly (types), pytest.
 - Web app: `app/` — vanilla ES modules. NO framework, NO build step, NO runtime
   npm deps (decision recorded in `docs/TECH-SPEC.md` §15). eslint + prettier + vitest
   are dev-only tooling.

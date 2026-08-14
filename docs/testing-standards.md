@@ -91,14 +91,18 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
 - `make coverage` emits `coverage.xml` (Python, CI gate) and
   `app/coverage/clover.xml` (JS). CI floor starts at 0 until real code lands
   and is raised toward 80 as tools get tests.
-- **Archive-quality tests are part of the gate (2026-08-05/06)** — the
-  archive itself is under test, not just the code: the projection drift
+- **Archive-quality tests are part of the gate (2026-08-05/06; split to
+  `make verify` 2026-08-13, user: "make test should take a couple of seconds")** —
+  the archive itself is under test, not just the code: the projection drift
   guard (committed `app/data` ≡ publish of committed archive), the
   description check (letters/documents are specific and correspondence-
   distinct), the place-note check (no process jargon in notes), the story-date
   check (no catalogued story dated by its told day without the narrator's
   words), and the completeness check (everything catalogued is visible
-  somewhere). A data change that breaks one is a bug, not a test update —
+  somewhere). They carry the `archive` marker and run under `make verify`
+  (`pytest -m archive`), excluded from `make test`/`make coverage` by
+  addopts; CI runs `make verify` too (the checks skip there — no archive in
+  the checkout). A data change that breaks one is a bug, not a test update —
   unless the *rule* changed, in which case the check is rewritten with the
   rule, failing first.
 - **The private dataset never lives in the public repo (2026-08-08).** The

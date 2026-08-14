@@ -14,6 +14,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import override
 
+from tools.atomic import atomic_write
+
 
 class StoreError(RuntimeError):
     """Base class for store failures."""
@@ -82,7 +84,7 @@ class DiskStore(FileStore):
         if target.exists():
             raise ImmutableStoreError(f"refusing to edit existing file: {path}")
         target.parent.mkdir(parents=True, exist_ok=True)
-        _ = target.write_bytes(content if isinstance(content, bytes) else content.encode("utf-8"))
+        atomic_write(target, content)  # temp + rename: readers never see a half-written file
 
     @override
     def delete(self, path: str) -> None:

@@ -16,7 +16,7 @@ dev = [
     "pytest-cov>=5.0.0",
     "ruff>=0.11.0",
     "pre-commit>=3.0.0",
-    "basedpyright>=1.39.0",
+    "pyrefly>=1.2.0",
     "gedcom7>=0.4.1",  # GEDCOM 7.0 strict-spec validator — the export's parse check (2026-08-05)
     "google-auth>=2.38.0",  # id_token verification for Google sign-in (2026-08-06)
     "google-auth-oauthlib>=1.2.1",  # the PKCE authorization-code flow (houses parity)
@@ -53,25 +53,15 @@ testpaths = ["tests"]
 # SKIPPED by default and run only when selected:
 # `pytest -m eval` (all), `-m eval_review`, `-k "arc"` for one piece
 # (2026-08-10, user: use the framework's selection, not custom flags).
-addopts = "-m 'not eval'"
+addopts = "-m 'not eval and not archive'"
 markers = [
-    "eval: hits the real model API (and tesseract) — run with `pytest -m eval`, never in make test",
+    "eval: hits the real model API (and tesseract) — run with `pytest -m eval` (make evals), never in make test",
     "eval_review: the import-review evals (tools/eval_review.py)",
     "eval_memory: the memory-capture evals (tools/eval_memory.py)",
     "eval_transcription: the transcription-fidelity eval (tools/eval_transcription.py)",
+    "archive: the archive-quality data checks — run with `pytest -m archive` (make verify), skipped in CI (no archive in the checkout)",
 ]
 
 [tool.coverage.run]
 omit = ["*/__main__.py"]
 
-[tool.basedpyright]
-# config-driven (no subcommand). Scope with `include`, NOT `exclude` — an
-# `exclude` key replaces the implicit .venv/cache exclusions and the scan
-# explodes into site-packages.
-include = ["tools", "tests"]
-# The Archive facade (the aggregate noun) delegates its high-level acts to
-# the implementation modules with function-local imports — archive.py ->
-# projection/demo_data/document_capture/memory -> archive is a deliberate,
-# runtime-safe cycle (the lazy import resolves after module load;
-# 2026-08-06 object-model batch). Don't flag it.
-reportImportCycles = false

@@ -66,7 +66,7 @@ evals: setup
 eval: evals
 
 verify: setup
-	@$(PYTHON) -m pytest -m archive -q  # the archive-quality data checks (drift guard, completeness, descriptions, no-PII, …) — skipped in CI, no archive there
+	@$(PYTHON) -m pytest -m archive -q || [ $$? -eq 5 ]  # exit 5 = nothing selected (pre-B, the markers land later); real failures still fail
 
 eval-changed: setup
 	@MARKERS=$$($(PYTHON) tools/affected_evals.py); \

@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 from tools.archive import Archive
+from tools.loft_paths import ARCHIVE_DIR
 from tools.store import DiskStore
 
 REPO = Path(__file__).resolve().parents[1]
@@ -46,9 +47,10 @@ def _narrator_stated_it(transcript: str, told_day: str) -> bool:
     return told_day in lowered or any(w in lowered for w in TODAYISH)
 
 
-@pytest.mark.skipif(not (REPO / "archive" / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.archive
+@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_no_catalogued_story_is_dated_by_its_told_day() -> None:
-    archive = Archive(DiskStore(REPO / "archive"))
+    archive = Archive(DiskStore(ARCHIVE_DIR))
     offenders = []
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)

@@ -12,16 +12,16 @@ declarations come from the import module itself.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from tools.attestation import attested_edge_gaps
 from tools.document_capture import email_cast, email_edges, record_cast, record_edges
+from tools.loft_paths import ARCHIVE_DIR
 
-ARCHIVE = Path(__file__).resolve().parent.parent / "archive" / "people.json"
+ARCHIVE = ARCHIVE_DIR / "people.json"
 
 
+@pytest.mark.archive
 @pytest.mark.skipif(not ARCHIVE.exists(), reason="archive not bootstrapped yet")
 def test_letter_import_declared_edges_cover_its_attested_links() -> None:
     people = email_cast() + record_cast()
@@ -29,6 +29,7 @@ def test_letter_import_declared_edges_cover_its_attested_links() -> None:
     assert not gaps, "the letter import declares family links without edges:\n" + "\n".join(gaps)
 
 
+@pytest.mark.archive
 @pytest.mark.skipif(not ARCHIVE.exists(), reason="archive not bootstrapped yet")
 def test_declared_edge_endpoints_are_declared_people() -> None:
     """Every endpoint of the import's declared edges must be a declared

@@ -25,6 +25,7 @@ from typing import Any
 import pytest
 
 from tools.archive import Archive
+from tools.loft_paths import ARCHIVE_DIR
 from tools.store import DiskStore
 
 REPO = Path(__file__).resolve().parents[1]
@@ -73,9 +74,10 @@ def catalogued_letters(archive: Archive) -> list[dict[str, Any]]:
     return items
 
 
-@pytest.mark.skipif(not (REPO / "archive" / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.archive
+@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_every_catalogued_letter_has_two_content_signals() -> None:
-    archive = Archive(DiskStore(REPO / "archive"))
+    archive = Archive(DiskStore(ARCHIVE_DIR))
     for item in catalogued_letters(archive):
         description = (item.get("description") or "").strip()
         assert description, f"{item['id']} needs a description"
@@ -84,9 +86,10 @@ def test_every_catalogued_letter_has_two_content_signals() -> None:
         assert len(sigs) >= 2, f"{item['id']} description is not specific: {description!r} (signals: {sigs})"
 
 
-@pytest.mark.skipif(not (REPO / "archive" / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.archive
+@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_letters_within_a_correspondence_are_distinguishable() -> None:
-    archive = Archive(DiskStore(REPO / "archive"))
+    archive = Archive(DiskStore(ARCHIVE_DIR))
     groups: dict[frozenset[str], list[dict[str, Any]]] = {}
     for item in catalogued_letters(archive):
         key = frozenset(_names(item))

@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 from tools.archive import Archive
+from tools.loft_paths import ARCHIVE_DIR
 from tools.store import DiskStore
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -110,26 +111,26 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("publish", help="regenerate the projection (app/data) from the archive")
-    p.add_argument("--archive", default="archive")
+    p.add_argument("--archive", default=str(ARCHIVE_DIR))
     p.add_argument("--data", default="app/data")
     p.set_defaults(fn=cmd_publish)
 
     p = sub.add_parser("serve", help="serve the app (no-cache) with the memory-capture API")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8124)
-    p.add_argument("--archive", default="archive")
+    p.add_argument("--archive", default=str(ARCHIVE_DIR))
     p.add_argument("--data", default="app/data")
     p.add_argument("--app", default=str(ROOT / "app"))
     p.set_defaults(fn=cmd_serve)
 
     p = sub.add_parser("create-demo", help="seed a demo archive with fictional content and publish")
-    p.add_argument("--archive", default="archive")
+    p.add_argument("--archive", default="demo/archive")
     p.add_argument("--data", default="demo/data")
     p.set_defaults(fn=cmd_create_demo)
 
     p = sub.add_parser("capture-document", help="capture the scanned documents (idempotent)")
     p.add_argument("--scans", type=Path, default=Path("/tmp/paseo-attachments-gfNYXK"))
-    p.add_argument("--archive", default="archive")
+    p.add_argument("--archive", default=str(ARCHIVE_DIR))
     p.set_defaults(fn=cmd_capture_document)
 
     p = sub.add_parser("capture-memory", help="capture a narrator's memory from an account (file or -)")
@@ -137,13 +138,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--who", default="")
     p.add_argument("--anchor", default="", help="JSON anchor context (item/person/theme)")
     p.add_argument("--status", default="draft", choices=["draft", "catalogued"])
-    p.add_argument("--archive", default="archive")
+    p.add_argument("--archive", default=str(ARCHIVE_DIR))
     p.set_defaults(fn=cmd_capture_memory)
 
     p = sub.add_parser("gedcom", help="GEDCOM 7.0 interchange — export the confirmed genealogy, or parse a file")
     p.add_argument("action", choices=["export", "import"])
     p.add_argument("file", help="the GEDCOM file to write (export) or read (import)")
-    p.add_argument("--archive", default="archive")
+    p.add_argument("--archive", default=str(ARCHIVE_DIR))
     p.set_defaults(fn=cmd_gedcom)
 
     return parser

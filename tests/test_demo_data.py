@@ -11,9 +11,10 @@ from typing import Any
 import pytest
 
 from tools import demo_data
+from tools.loft_paths import ARCHIVE_DIR
 from tools.pii_markers import family_markers
 
-ARCHIVE = Path(__file__).resolve().parent.parent / "archive" / "people.json"
+ARCHIVE = ARCHIVE_DIR / "people.json"
 
 
 def _all_items() -> list[dict[str, Any]]:
@@ -37,13 +38,13 @@ def _all_text() -> str:
     return " ".join(chunks)
 
 
-@pytest.mark.skipif(not ARCHIVE.exists(), reason="archive not bootstrapped yet")
+@pytest.mark.archive
 @pytest.mark.skipif(not ARCHIVE.exists(), reason="archive not bootstrapped yet")
 def test_demo_content_is_fictional() -> None:
     """The demo never contains the real family's names, places or artifacts —
     a demo instance must never leak anyone's data (user, 2026-08-04)."""
     text = _all_text().lower()
-    for marker in family_markers(ARCHIVE.parent):
+    for marker in family_markers():
         assert not re.search(r"\b" + re.escape(marker) + r"\b", text, re.IGNORECASE), (
             f"real content leaked into the demo: {marker}"
         )
@@ -64,7 +65,7 @@ def test_generated_demo_assets_are_fictional(tmp_path: Path) -> None:
         if path.is_file():
             haystack.append(path.read_text(encoding="utf-8", errors="ignore"))
     joined = " ".join(haystack).lower()
-    for marker in family_markers(ARCHIVE.parent):
+    for marker in family_markers():
         assert not re.search(r"\b" + re.escape(marker) + r"\b", joined, re.IGNORECASE), (
             f"real content leaked into the demo output: {marker}"
         )

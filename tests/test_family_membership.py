@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from tools.document_capture import record_confirmed_family
+from tools.loft_paths import ARCHIVE_DIR
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -32,9 +33,10 @@ def _latest(paths: list[Path]) -> Path:
     return best[1]
 
 
-@pytest.mark.skipif(not (REPO / "archive" / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.archive
+@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_confirmed_family_members_have_family_edges() -> None:
-    paths = sorted((REPO / "archive").glob("people*.json"))
+    paths = sorted((ARCHIVE_DIR).glob("people*.json"))
     table: dict[str, Any] = json.loads(_latest(paths).read_text(encoding="utf-8"))
     edges = [r for r in table.get("relationships", []) if r.get("kind") in FAMILY_KINDS]
     linked = {e["a"] for e in edges} | {e["b"] for e in edges}

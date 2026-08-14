@@ -23,6 +23,8 @@ from typing import Any
 
 import pytest
 
+from tools.loft_paths import ARCHIVE_DIR
+
 REPO = Path(__file__).resolve().parent.parent
 
 # text patterns -> the edge kind the claim asserts. Parent links may name
@@ -64,9 +66,10 @@ def _resolve_candidates(name: str, people: list[dict[str, Any]]) -> list[str]:
     ]
 
 
-@pytest.mark.skipif(not (REPO / "archive" / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.archive
+@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_attested_family_links_have_edges() -> None:
-    paths = sorted((REPO / "archive").glob("people*.json"))
+    paths = sorted((ARCHIVE_DIR).glob("people*.json"))
     table: dict[str, Any] = json.loads(_latest(paths).read_text(encoding="utf-8"))
     people = table.get("people", [])
     edges = [r for r in table.get("relationships", []) if r.get("kind") in ("spouse", "parent", "inlaw")]

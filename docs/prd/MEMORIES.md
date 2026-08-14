@@ -260,7 +260,7 @@ fed back for a bounded redo — never sampling-twice-and-picking. Dates from an
 given age + a known date of birth are computed in deterministic code and
 injected as "derived", so the model is never asked to do the arithmetic.
 The review pass and the evals cover the family's own stories AND a fictional
-family (`tools/eval_elicitation.py`, `make eval`) so nothing is overfit to one
+*family (`tools/eval_elicitation.py`, `make evals`) so nothing is overfit to one
 household. Identity: **no person is special-cased in code** — the narrator
 resolves against the cast like anyone else, and curation is a role anyone can
 hold, not a person record. (The prototype's seed cast happens to include
@@ -274,8 +274,9 @@ admin view); the affordance stays visible.
 
 Contributions land **wherever the app stores its info** — locally today, hosted
 later. Locally that is the archive folder: the server writes story sidecars
-(`assets/<id>/item.json`) at an env-configured archive path (e.g.
-`LOFT_ARCHIVE=~/loft/archive`) through the append-only store
+(`assets/<id>/item.json`) at the archive path from the one seam
+(`tools/loft_paths.py` — the big disk's `scans/Loft/archive`)
+through the append-only store
 (`tools/store.py`), then refreshes the projection (`app/data`) so the story
 renders. **The story text is primary content**: the save path writes it as a
 content file (`story.txt`) the sidecar references — never a sidecar JSON

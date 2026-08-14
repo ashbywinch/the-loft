@@ -27,6 +27,11 @@ REQUIRED_FIELDS = ("batch_id", "doc_index", "pages", "text", "status", "confirme
 
 _BATCH_ID = re.compile(r"^[A-Za-z0-9-]+$")
 
+# page names from boundaries.json become path segments in the drafts read —
+# a charset that excludes every separator and "..", so a hostile entry can't
+# read outside the batch's guess dir (defense-in-depth, review, 2026-08-14)
+_PAGE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
+
 
 def validate_confirmation(payload: dict[str, Any]) -> dict[str, Any]:
     """The confirmation's required shape; raises ValueError with the reason."""
@@ -95,6 +100,10 @@ def record_confirmation(
     precede the guard (2026-08-14 review: write-before-validate)."""
     if not _BATCH_ID.match(batch_id):
         raise ValueError(f"invalid batch id: {batch_id!r}")
+    # load (and so validate the batch was adopted) BEFORE any write — an
+    # unknown batch must fabricate nothing and raise RegistryError -> 4xx,
+    # not leave a stray review-output file behind (review, 2026-08-14).
+    record = load_batch(batch_id, registry_dir)
     if text is not None:
         confirmed_dir = work_dir / batch_id / "ocr-confirmed"
         confirmed_dir.mkdir(parents=True, exist_ok=True)
@@ -102,7 +111,6 @@ def record_confirmation(
         entry: dict[str, Any] = {**document, "status": "confirmed"}
     else:
         entry = {**document, "status": "rejected"}
-    record = load_batch(batch_id, registry_dir)
     boundaries = [b for b in record.get("boundaries") or [] if b.get("pages") != document.get("pages")]
     boundaries.append(entry)
     record["boundaries"] = boundaries
@@ -123,6 +131,9 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
     drafts: list[dict[str, Any]] = []
     for document in boundaries:
         pages = document.get("pages", [])
+        for page in pages:
+            if not _PAGE_NAME.match(page) or ".." in page:
+                raise ValueError(f"unsafe page name in boundaries: {page!r}")
         texts = {
             page: (guess_dir / Path(page).with_suffix(".txt")).read_text(encoding="utf-8")
             for page in pages

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from tools.registry import RegistryError
 from tools.sync import Outbox, draft_payloads, record_confirmation, validate_confirmation
 
 
@@ -102,3 +103,26 @@ def test_record_confirmation_replaces_by_pages(tmp_path: Path) -> None:
     record_confirmation("adopt-0001", 1, {"pages": ["p1.jpg"]}, "v2", work_dir=tmp_path, registry_dir=registry)
     record = json.loads((registry / "adopt-0001.json").read_text(encoding="utf-8"))
     assert len(record["boundaries"]) == 1  # same pages → replaced, not duplicated
+
+
+def test_record_confirmation_rejects_unknown_batch_without_writing(tmp_path: Path) -> None:
+    # a confirmation for a batch the backend never adopted must neither
+    # fabricate a record nor leave a review-output file — RegistryError -> 4xx
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    with pytest.raises(RegistryError):
+        record_confirmation("adopt-9999", 1, {"pages": ["p1.jpg"]}, "text", work_dir=tmp_path, registry_dir=registry)
+    assert not (tmp_path / "adopt-9999" / "ocr-confirmed").exists()  # nothing written for the unknown batch
+
+
+def test_draft_payloads_rejects_unsafe_page_names(tmp_path: Path) -> None:
+    # page names from boundaries.json become path segments — a separator or ".."
+    # must fail closed (defense-in-depth; the pipeline writes only plain names)
+    guess = tmp_path / "adopt-0001" / "ocr-guess"
+    guess.mkdir(parents=True)
+    (guess / "boundaries.json").write_text(json.dumps([{"pages": ["../etc/passwd"]}]), encoding="utf-8")
+    with pytest.raises(ValueError):
+        draft_payloads("adopt-0001", tmp_path)
+    (guess / "boundaries.json").write_text(json.dumps([{"pages": [".."]}]), encoding="utf-8")
+    with pytest.raises(ValueError):
+        draft_payloads("adopt-0001", tmp_path)

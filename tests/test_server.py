@@ -17,6 +17,7 @@ import pytest
 from tools.memory import ElicitationError
 from tools.server import create_server
 from tools.store import ImmutableStoreError, MemoryStore
+from tools.sync import Outbox
 
 
 def make_app_data(tmp_path: Path) -> Path:
@@ -61,6 +62,16 @@ class ServerFixture:
     def __init__(self, data_dir: Path, store: MemoryStore, client: Any | None = None) -> None:
         self.store: MemoryStore = store
         self.data_dir: Path = data_dir
+        # the session secret before any app build — the server refuses to
+        # start without it (2026-08-14 review: forgeable sessions otherwise)
+        import os
+
+        os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
+        # the sync surfaces are bound to tmp dirs, never the real workspace
+        # (2026-08-14 review: the endpoints must not touch the home disk in tests)
+        self.work_dir: Path = data_dir.parent / "work"
+        self.outbox: Outbox = Outbox(data_dir.parent / "outbox")
+        self.registry_dir: Path = data_dir.parent / "registry"
         # the identity seam (2026-08-06): the archive's people carry the
         # verified Google accounts; the capture API resolves the narrator
         # from the session, never from the client
@@ -77,7 +88,21 @@ class ServerFixture:
                 "relationships": [],
             },
         )
-        self.server = create_server(store, data_dir, client=client, app_dir=data_dir.parent, host="127.0.0.1", port=0)
+        # the sync confirmation receiver re-publishes — the store must be
+        # publishable (places/themes present), not just people
+        self.archive.save_identity("places", {"places": [{"id": "pl-marlock", "name": "Marlock"}]})
+        self.archive.save_identity("themes", {"themes": []})
+        self.server = create_server(
+            store,
+            data_dir,
+            client=client,
+            app_dir=data_dir.parent,
+            host="127.0.0.1",
+            port=0,
+            work_dir=self.work_dir,
+            outbox=self.outbox,
+            registry_dir=self.registry_dir,
+        )
         self.thread: threading.Thread = threading.Thread(target=self.server.run, daemon=True)
         self.thread.start()
         # uvicorn assigns the ephemeral port at startup — wait for it
@@ -92,9 +117,6 @@ class ServerFixture:
         else:
             raise RuntimeError("uvicorn did not bind a port")
         # a signed-in session for the capture API — the verified Google account
-        import os
-
-        os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
         from tools import auth
 
         self.cookie = f"{auth.COOKIE_NAME}={auth._make_session_cookie('alex@example.com', 'Alex Hale', '')}"
@@ -904,3 +926,161 @@ def test_start_returns_the_lines_already_recorded_in_the_attempt(server: ServerF
     status, body = server.post("/api/review/start", {"session_id": "import-documents"})
     assert status == 200
     assert body["messages"] == ["Thanks for coming back.", "Next: Pearl Whitlock."]
+
+
+def _seed_sync_batch(fixture: ServerFixture, batch_id: str = "adopt-0001") -> None:
+    """A batch with a guess the drafts endpoint serves, and a registry record
+    the confirmation receiver updates."""
+    import json as _json
+
+    guess = fixture.work_dir / batch_id / "ocr-guess"
+    guess.mkdir(parents=True)
+    (guess / "p1.txt").write_text("Chère Maman.", encoding="utf-8")
+    (guess / "boundaries.json").write_text(
+        _json.dumps([{"pages": ["p1.jpg"], "greeting": "Chère Maman.", "signoff": None}]), encoding="utf-8"
+    )
+    fixture.registry_dir.mkdir(parents=True)
+    (fixture.registry_dir / f"{batch_id}.json").write_text(
+        _json.dumps({"batch_id": batch_id, "path": str(fixture.data_dir), "status": "review", "boundaries": None}),
+        encoding="utf-8",
+    )
+
+
+def test_sync_drafts_requires_a_session(server: ServerFixture) -> None:
+    status, _ = server.get("/api/sync/batch/adopt-0001/drafts")
+    assert status == 401
+
+
+def test_sync_drafts_serves_the_guessed_texts(server: ServerFixture) -> None:
+    import json as _json
+
+    _seed_sync_batch(server)
+    status, raw = server.get("/api/sync/batch/adopt-0001/drafts", cookie=server.cookie)
+    assert status == 200
+    body = _json.loads(raw.decode("utf-8"))
+    assert body["documents"][0]["texts"]["p1.jpg"] == "Chère Maman."
+    assert body["documents"][0]["greeting"] == "Chère Maman."
+
+
+def test_sync_drafts_rejects_a_traversal_batch_id(server: ServerFixture) -> None:
+    _seed_sync_batch(server)
+    # the raw-slash form dies at the router (404); every encoded form
+    # reaches the endpoint and the _BATCH_ID regex rejects it (400) — the
+    # endpoint validation is the real defense for all of them
+    status, _ = server.get("/api/sync/batch/..%252F..%252Fregistry/drafts", cookie=server.cookie)
+    assert status == 400
+
+
+def test_sync_confirmations_requires_a_session(server: ServerFixture) -> None:
+    status, _ = server.post("/api/sync/confirmations", {"batch_id": "adopt-0001"}, cookie="")
+    assert status == 401
+
+
+def test_sync_confirmations_records_and_reports(server: ServerFixture) -> None:
+    _seed_sync_batch(server)
+    status, body = server.post(
+        "/api/sync/confirmations",
+        {
+            "batch_id": "adopt-0001",
+            "doc_index": 1,
+            "pages": ["p1.jpg"],
+            "text": "Chère Maman.",
+            "status": "confirmed",
+            "confirmed_at": "2026-08-14T00:00:00Z",
+        },
+    )
+    assert status == 200
+    assert body["ok"] is True
+    import json as _json
+
+    record = _json.loads((server.registry_dir / "adopt-0001.json").read_text(encoding="utf-8"))
+    assert record["boundaries"][0]["status"] == "confirmed"
+    confirmed = server.work_dir / "adopt-0001" / "ocr-confirmed" / "doc-01.txt"
+    assert confirmed.read_text(encoding="utf-8") == "Chère Maman."
+
+
+def test_sync_confirmations_rejects_a_bad_shape(server: ServerFixture) -> None:
+    status, body = server.post(
+        "/api/sync/confirmations",
+        {"batch_id": "adopt-0001", "doc_index": 1, "pages": [], "text": "x"},
+    )
+    assert status == 400
+
+
+def test_sync_pending_requires_a_session(server: ServerFixture) -> None:
+    status, _ = server.get("/api/sync/pending")
+    assert status == 401
+
+
+def test_sync_pending_catch_up_round_trip(server: ServerFixture) -> None:
+    import json as _json
+
+    item_id = server.outbox.add(
+        {
+            "batch_id": "adopt-0001",
+            "doc_index": 1,
+            "pages": ["p1.jpg"],
+            "text": "Chère Maman.",
+            "status": "confirmed",
+            "confirmed_at": "2026-08-14T00:00:00Z",
+        }
+    )
+    status, raw = server.get("/api/sync/pending", cookie=server.cookie)
+    assert status == 200
+    body = _json.loads(raw.decode("utf-8"))
+    assert [p["id"] for p in body["pending"]] == [item_id]
+    status, _ = server.post("/api/sync/pending/received", {"ids": [item_id]})
+    assert status == 200
+    assert server.outbox.pending() == []
+
+
+def test_sync_confirmations_rejects_a_traversal_batch_id(server: ServerFixture) -> None:
+    # the batch_id arrives in the JSON body — the router cannot help here;
+    # the write path's own validation must reject it before anything lands
+    status, _ = server.post(
+        "/api/sync/confirmations",
+        {
+            "batch_id": "../registry",
+            "doc_index": 1,
+            "pages": ["p1.jpg"],
+            "text": "x",
+            "status": "confirmed",
+            "confirmed_at": "2026-08-14T00:00:00Z",
+        },
+    )
+    assert status == 400
+    assert not (server.registry_dir / "ocr-confirmed").exists()  # nothing written outside the workspace
+
+
+def test_sync_confirmations_rejects_a_non_numeric_doc_index(server: ServerFixture) -> None:
+    _seed_sync_batch(server)
+    status, _ = server.post(
+        "/api/sync/confirmations",
+        {
+            "batch_id": "adopt-0001",
+            "doc_index": "one",
+            "pages": ["p1.jpg"],
+            "text": "x",
+            "status": "confirmed",
+            "confirmed_at": "2026-08-14T00:00:00Z",
+        },
+    )
+    assert status == 400
+
+
+def test_sync_confirmations_rejects_a_non_scalar_doc_index(server: ServerFixture) -> None:
+    """2026-08-14 review: int(doc_index) raises TypeError for non-scalars —
+    a 400 like the ValueError case, never a 500."""
+    _seed_sync_batch(server)
+    status, _ = server.post(
+        "/api/sync/confirmations",
+        {
+            "batch_id": "adopt-0001",
+            "doc_index": ["1"],
+            "pages": ["p1.jpg"],
+            "text": "x",
+            "status": "confirmed",
+            "confirmed_at": "2026-08-14T00:00:00Z",
+        },
+    )
+    assert status == 400

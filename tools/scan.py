@@ -205,7 +205,14 @@ def main(argv: list[str] | None = None) -> int:
         label = args.label
         if not label and sys.stdin.isatty():
             label = input("Envelope/pile label (what's written on it)? blank for none: ").strip()
-        listed = subprocess.run([SCANIMAGE, "-L"], capture_output=True, text=True, check=True, env=_sane_env()).stdout
+        try:
+            listed = subprocess.run(
+                [SCANIMAGE, "-L"], capture_output=True, text=True, check=True, env=_sane_env()
+            ).stdout
+        except (OSError, subprocess.SubprocessError) as exc:
+            # scanimage missing, or SANE misconfigured — the same clean error
+            # the other failure paths give, not a raw traceback (review, 2026-08-14)
+            raise ScanError(f"{SCANIMAGE} -L failed ({exc}) — is the scanner connected and SANE configured?") from exc
         device = args.device or pick_device(parse_devices(listed))
         job_dir = scan_job(device, args.mode, job, inbox=args.inbox, resolution=args.resolution)
         record_path = register_batch(job, job_dir, label)

@@ -11,6 +11,13 @@ permissions:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+    env:
+      # job-level so the evals step's `if` can see it: a step's own env: is not
+      # in the env context when its condition is evaluated, and the secrets
+      # context in `if:` breaks the workflow LOAD entirely (2026-08-14 — the
+      # evals step's `if: ${{ secrets.LOFT_AI_KEY != '' }}` failed every push
+      # with no build-and-test check at all)
+      LOFT_AI_KEY: ${{ secrets.LOFT_AI_KEY }}
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -41,11 +48,7 @@ jobs:
         # without the key they would fail the gate on every push — a secrets
         # configuration matter, not a code gate (2026-08-13)
         run: make evals
-        env:
-          LOFT_AI_KEY: ${{ secrets.LOFT_AI_KEY }}
-        # a step's own env: isn't visible to its `if` — condition on the secrets
-        # context directly, or the evals silently never run (2026-08-14, review)
-        if: ${{ secrets.LOFT_AI_KEY != '' }}
+        if: env.LOFT_AI_KEY != ''
       - name: Coverage summary (Python tools)
         uses: irongut/CodeCoverageSummary@v1.3.0
         with:

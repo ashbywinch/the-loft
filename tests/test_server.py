@@ -92,6 +92,13 @@ class ServerFixture:
         # publishable (places/themes present), not just people
         self.archive.save_identity("places", {"places": [{"id": "pl-marlock", "name": "Marlock"}]})
         self.archive.save_identity("themes", {"themes": []})
+        # the server refuses to start without a session secret (forgeable
+        # sessions, 2026-08-14 review) — the test secret must be set BEFORE
+        # create_server, not after (the old order worked locally only because
+        # the dev shell exports the secret; CI has none, 2026-08-15)
+        import os
+
+        os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
         self.server = create_server(
             store,
             data_dir,

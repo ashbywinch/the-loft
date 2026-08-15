@@ -172,7 +172,9 @@ def _facts() -> ReviewContext:
 # voice (PRD: "the assistant reads as a hired genealogist, not a computer",
 # 2026-08-09; user: "make sure the requirement is in all relevant evals").
 # The family never meets the process vocabulary: no third-person "the user",
-# no "the import", no statuses or internal states, no "link" or "awaiting".
+# no "the import", no statuses or internal states, no "link" or "awaiting" —
+# UNLESS the reviewer used the word themselves: echoing the family's own
+# vocabulary is how they understand you (2026-08-15, user).
 PERSONA_JARGON = (
     "the user's recollection",
     "the import",
@@ -195,14 +197,20 @@ PERSONA_JARGON = (
 )
 
 
-def persona_errors(result: dict[str, Any]) -> list[str]:
+def persona_errors(result: dict[str, Any], reviewer_text: str = "") -> list[str]:
     """The genealogist's voice guard: the assistant's words (the question,
     the findings — and the note, which flows into the steer ONLY when the
     answer is off-topic) never contain the process vocabulary, the
     third-person, or a bare absence. For a relevant answer the note is
     internal reasoning and never surfaces; for an off-topic one it becomes
     the steer's topic, so it must be clean there (2026-08-09, user: the
-    note-as-analysis read as "That's about the reviewer has no idea…")."""
+    note-as-analysis read as "That's about the reviewer has no idea…").
+
+    Vocabulary the reviewer themselves introduced is acceptable — echoing
+    the family's own word is how the genealogist is understood, not a
+    violation (user, 2026-08-15: "it's always acceptable to use vocabulary
+    that the user themselves introduces"). A jargon word the reviewer's
+    statement also contains is allowed in the assistant's reply."""
     errors: list[str] = []
     fields: list[tuple[str, str]] = [("question", result.get("question", ""))]
     if result.get("relevant") != "true":
@@ -212,7 +220,7 @@ def persona_errors(result: dict[str, Any]) -> list[str]:
         fields.append((f"findings[{i}]", text))
     for field, text in fields:
         for word in PERSONA_JARGON:
-            if word in text:
+            if word in text and word not in reviewer_text:
                 errors.append(f"{field} echoes the system ('{word}'): {text[:80]}")
     return errors
 
@@ -305,7 +313,7 @@ def condition_question(flow: ReviewFlow, result: dict[str, Any]) -> str | None:
 
 
 def condition_persona(flow: ReviewFlow, result: dict[str, Any]) -> str | None:
-    errors = persona_errors(result)
+    errors = persona_errors(result, flow.text)
     return "\n".join(errors) if errors else None
 
 

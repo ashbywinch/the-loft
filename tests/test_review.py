@@ -496,3 +496,15 @@ def test_over_budget_tool_calls_are_logged_and_fed_back() -> None:
     # the over-budget turn's own words are in the trace AND fed forward
     assert any(over in str(step.get("model", "")) for step in result["trace"])
     assert over in client.calls[5][1]
+
+
+def test_persona_guard_allows_reviewer_introduced_vocabulary() -> None:
+    # the family never meets the process vocabulary UNLESS they introduced it
+    # themselves — echoing the reviewer's own word aids understanding
+    # (user, 2026-08-15; PRD R1)
+    from tools.eval_review import persona_errors
+
+    result = {"relevant": "true", "question": "Where did the import get that idea — did Pearl ever mention a brother?"}
+    assert persona_errors(result, reviewer_text="I'm fairly sure the import has it right") == []
+    # the same question is a violation when the reviewer never said it
+    assert persona_errors(result)

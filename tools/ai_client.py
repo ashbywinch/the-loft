@@ -53,29 +53,45 @@ class AIClient:
         self.max_tokens: int = max_tokens
         self.timeout: float = timeout
         self.max_retries: int = max_retries
+        # the last response's reasoning — captured so a failed judgment is
+        # diagnosable from its trace (2026-08-14, user: "we should be able
+        # to read the model's thought process to understand why it got it
+        # wrong")
+        self.last_reasoning: str = ""
         # injectable for tests
         self._urlopen: Callable[..., Any] = urlopen or urllib.request.urlopen
         self._sleep: Callable[[float], None] = _sleep or time.sleep
 
-    def chat(self, system: str, user: str) -> str:
-        """One text chat completion call; returns the assistant text."""
+    def chat(self, system: str, user: str, *, thinking: bool = False) -> str:
+        """One text chat completion call; returns the assistant text.
+
+        *thinking* enables the model's reasoning: the review judgments
+        flipped run to run at temperature 0 with it disabled (2026-08-14:
+        the review evals failed 3 of 4 runs), and the reasoning is captured
+        in ``last_reasoning`` so a wrong judgment is diagnosable. Thinking
+        needs output headroom — deepseek-v4-flash at 3000 tokens spent the
+        whole budget reasoning and returned empty content."""
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "max_tokens": self.max_tokens,
+            # thinking needs room for the reasoning plus the JSON verdict;
+            # only used tokens are billed, so the headroom is free when the
+            # model stops early
+            "max_tokens": 16000 if thinking else self.max_tokens,
             # structured output: the API guarantees a syntactically valid JSON
             # response, eliminating truncated/bare-object responses
             "response_format": {"type": "json_object"},
             # deterministic decoding: structured tasks are far more consistent
             # at temperature 0
             "temperature": 0.0,
+            # the model thinks its way to the structured verdict (see the
+            # docstring); a model that rejects the param falls back below
+            # (the 400/422 retry)
+            "thinking": {"type": "enabled" if thinking else "disabled"},
         }
-        # deepseek-v4-flash otherwise spends its whole output budget on
-        # reasoning and returns empty content
-        payload["thinking"] = {"type": "disabled"}
         return self._post(payload)
 
     def _post(self, payload: dict[str, Any]) -> str:
@@ -132,9 +148,11 @@ class AIClient:
                 attempt += 1
                 continue
         try:
-            content = data["choices"][0]["message"]["content"]
+            message = data["choices"][0]["message"]
+            content = message.get("content") or ""
         except (KeyError, IndexError, TypeError) as e:
             raise AIClientError(f"unexpected API response: {json.dumps(data)[:300]}") from e
+        self.last_reasoning = str(message.get("reasoning_content") or message.get("reasoning") or "")
         if not content or not content.strip():
             raise AIClientError("empty response from API")
         return content

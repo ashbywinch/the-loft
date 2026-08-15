@@ -42,7 +42,7 @@ def _relevant_sentences(text: str, needles: tuple[str, ...], limit: int = 3) -> 
 
 
 class _Chat(Protocol):
-    def chat(self, system: str, user: str) -> str: ...
+    def chat(self, system: str, user: str, *, thinking: bool = False) -> str: ...
 
 
 def _known_facts(facts: ReviewContext) -> str:
@@ -290,6 +290,12 @@ def investigate(
             "AGREES or DISAGREES with the claim, expresses "
             "uncertainty about it, or brings in the family facts the reviewer connects to it "
             "(who died, who married whom) IS relevant — the reviewer is answering the question. "
+            "A wrong answer is still an answer: when the reviewer names the wrong person for an "
+            'attested family event — "it was Nora who died in the war" when the record says '
+            "Walter died — the statement IS relevant, mistaken but on-topic (it is about the "
+            "family under review), and the contradiction flag surfaces the mistake. Only a "
+            "statement about something else entirely (a house, a holiday, an unrelated "
+            "person) is NOT relevant. "
             "A statement that opens 'I don't remember' and then brings in what they DO remember "
             "about the person IS relevant — the uncertainty and the recollection are both "
             "answers to the claim. "
@@ -394,7 +400,7 @@ def investigate(
     base_prompt = user
     for _ in range(MAX_INVESTIGATE_STEPS + 3):  # the digs, plus the verdict and a correction
         try:
-            raw = client.chat(prompt, user)
+            raw = client.chat(prompt, user, thinking=True)
             parsed = json_object(raw)
         except AIClientError as e:
             raise ElicitationError(f"investigation failed: {e}") from e
@@ -407,7 +413,7 @@ def investigate(
                 # words — logged in the trace AND fed back verbatim, never
                 # discarded (2026-08-11 review: the completeness property —
                 # everything the model produced is fed back and logged)
-                trace.append({"model": raw})
+                trace.append({"model": raw, "reasoning": getattr(client, "last_reasoning", "")})
                 user += (
                     "\n\n[your previous answer] "
                     + raw
@@ -421,10 +427,18 @@ def investigate(
             # model's reasoning — logged verbatim, never discarded
             # (2026-08-09: 'why would that stop you logging them correctly?'
             # — nothing does; the gap was that we didn't)
-            trace.append({"model": raw, "tool": tool, "args": args, "result": result})
+            trace.append(
+                {
+                    "model": raw,
+                    "reasoning": getattr(client, "last_reasoning", ""),
+                    "tool": tool,
+                    "args": args,
+                    "result": result,
+                }
+            )
             user += f"\n\nTool result ({tool}): {result!r}"
             continue
-        trace.append({"model": raw})
+        trace.append({"model": raw, "reasoning": getattr(client, "last_reasoning", "")})
         relevant = str(parsed_dict.get("relevant", "")).strip().lower()
         raw_contradiction = parsed_dict.get("contradiction")
         contradiction: dict[str, Any] = raw_contradiction if isinstance(raw_contradiction, dict) else {}

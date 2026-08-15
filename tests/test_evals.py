@@ -12,17 +12,24 @@ runs ONCE — the session fixtures cache the outputs — and the condition
 tests verify one condition against the cached output, unaware they share
 the runs. A failure is a failure to fix, never a re-run
 (testing-standards: evals are never flaky).
+
+The memory evals read the archive's projection (``app/data``), so they
+carry the ``archive`` marker like the data checks: they run locally in
+``make verify`` and skip in CI, whose checkout has no archive
+(2026-08-14). The transcription-fidelity eval was removed — the
+transcription backend is the vision model, not the local HTR path
+(user, 2026-08-14).
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 import tools.eval_memory as memory_evals
 import tools.eval_review as review_evals
-import tools.eval_transcription as transcription_evals
 from tools.ai_client import AIClient, AIClientError
 
 
@@ -103,33 +110,25 @@ def memory_outputs(client: AIClient, default_knowledge: dict[str, list[dict[str,
     return {f.name: memory_evals.run_flow(client, f, default_knowledge) for f in memory_evals.FLOWS}
 
 
-@pytest.mark.eval
+@pytest.mark.archive
 @pytest.mark.eval_memory
+@pytest.mark.skipif(
+    not (Path("app/data/people.json")).exists(),
+    reason="projection not built — run `loft publish` (the memory evals read the archive's projection)",
+)
 @pytest.mark.parametrize("flow", memory_evals.FLOWS, ids=lambda f: f.name)
 def test_memory_contract(memory_outputs: dict[str, dict[str, Any]], flow: memory_evals.MemoryFlow) -> None:
     errors = memory_evals.condition_contract(memory_outputs[flow.name])
     assert not errors, "\n".join(errors)
 
 
-@pytest.mark.eval
+@pytest.mark.archive
 @pytest.mark.eval_memory
+@pytest.mark.skipif(
+    not (Path("app/data/people.json")).exists(),
+    reason="projection not built — run `loft publish` (the memory evals read the archive's projection)",
+)
 @pytest.mark.parametrize("flow", memory_evals.FLOWS, ids=lambda f: f.name)
 def test_memory_flow_conditions(memory_outputs: dict[str, dict[str, Any]], flow: memory_evals.MemoryFlow) -> None:
     errors = flow.assert_(memory_outputs[flow.name])
     assert not errors, "\n".join(errors)
-
-
-# -- the transcription flow -------------------------------------------------
-
-
-@pytest.fixture(scope="session")
-def transcription_outputs() -> dict[str, str]:
-    return transcription_evals.run_flow()
-
-
-@pytest.mark.eval
-@pytest.mark.eval_transcription
-@pytest.mark.parametrize("phrase", transcription_evals.TranscriptionFlow.ground_truth)
-@pytest.mark.parametrize("orientation", transcription_evals.TranscriptionFlow.orientations)
-def test_transcription_ground_truth(transcription_outputs: dict[str, str], phrase: str, orientation: str) -> None:
-    assert transcription_evals.condition_ground_truth(transcription_outputs, phrase, orientation) is None

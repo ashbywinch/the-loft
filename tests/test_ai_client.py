@@ -137,3 +137,13 @@ def test_find_api_key_raises_when_missing(monkeypatch: MonkeyPatch, tmp_path: Pa
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     with pytest.raises(AIClientError):
         find_api_key()
+
+
+def test_chat_null_message_is_a_clean_error() -> None:
+    # a provider returning {"choices": [{"message": null}]} must raise the
+    # clean AIClientError, not an AttributeError that escapes as a 500
+    # (2026-08-15 review: the message-capture change regressed this)
+    urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [{"message": None}]})])
+    client = AIClient(api_key="k", urlopen=urlopen)
+    with pytest.raises(AIClientError):
+        client.chat("s", "u")

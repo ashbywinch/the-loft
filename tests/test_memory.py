@@ -54,7 +54,7 @@ class FakeClient:
         self.reviewer: list[str] = list(reviewer or [])
         self.calls: list[tuple[str, str]] = []
 
-    def chat(self, system: str, user: str) -> str:
+    def chat(self, system: str, user: str, *, thinking: bool = False) -> str:
         self.calls.append((system, user))
         if "review pass" in system:
             return self.reviewer.pop(0)

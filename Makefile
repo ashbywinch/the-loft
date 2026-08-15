@@ -110,7 +110,7 @@ eval-changed: setup
 		echo "no evals affected by the current changes"; \
 	else \
 		echo "running the affected evals ($$MARKERS)"; \
-		$(PYTHON) -m pytest -m "eval and ($$MARKERS)" -q; \
+		$(PYTHON) -m pytest -m "(eval or archive) and ($$MARKERS)" -q; \
 	fi
 
 format: setup

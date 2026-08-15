@@ -4,21 +4,23 @@ running the flow. Then the individual tests can remain independent and not
 be aware that they share flow outputs. They just verify the output against
 their condition").
 
-Every eval carries the ``eval`` marker — skipped by default (``addopts -m
-'not eval'`` in pyproject.toml, so ``make test`` never runs it) and
-selected with the framework's own machinery: ``pytest -m eval`` runs
-everything, ``-m eval_review`` one suite, ``-k "arc"`` one flow. Each flow
+The eval suite splits by marker (2026-08-15): the review evals carry
+``eval`` — ``pytest -m eval`` (``make evals``) runs them; the memory
+evals read the archive's projection (``app/data``) and carry ``archive``
+like the data checks, running locally in ``make verify`` and skipping in
+CI, whose checkout has no archive. Both are skipped by default
+(``addopts -m 'not eval and not archive'``, so ``make test`` never runs
+them) and selected per suite with the framework's machinery: ``-m
+eval_review`` one suite, ``-k "arc"`` one flow, and ``make eval-changed``
+selects ``(eval or archive) and (…)`` so a change to the memory module
+still runs the memory evals. Each flow
 runs ONCE — the session fixtures cache the outputs — and the condition
 tests verify one condition against the cached output, unaware they share
 the runs. A failure is a failure to fix, never a re-run
 (testing-standards: evals are never flaky).
 
-The memory evals read the archive's projection (``app/data``), so they
-carry the ``archive`` marker like the data checks: they run locally in
-``make verify`` and skip in CI, whose checkout has no archive
-(2026-08-14). The transcription-fidelity eval was removed — the
-transcription backend is the vision model, not the local HTR path
-(user, 2026-08-14).
+The transcription-fidelity eval was removed — the transcription backend
+is the vision model, not the local HTR path (user, 2026-08-14).
 """
 
 from __future__ import annotations

@@ -148,7 +148,7 @@ class AIClient:
                 attempt += 1
                 continue
         try:
-            message = data["choices"][0]["message"]
+            message = data["choices"][0].get("message") or {}
             content = message.get("content") or ""
         except (KeyError, IndexError, TypeError) as e:
             raise AIClientError(f"unexpected API response: {json.dumps(data)[:300]}") from e

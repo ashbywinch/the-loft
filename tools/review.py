@@ -85,8 +85,8 @@ MAX_INVESTIGATE_STEPS = 6  # the digs plus room for a verdict correction
 
 _TOOLS_DESC = """You can investigate the archive with these READ-ONLY tools:
 
-- search_people({"query": "<name or relation text>"}): people whose name or
-  import record matches, with their ids.
+- search_people({"query": "<name or relation text>"}): people whose name
+  matches, with their ids.
 - person({"id": "<person id>"}): one person's record — dates, relation,
   status.
 - relationships({"id": "<person id>"}): the recorded family edges touching
@@ -259,9 +259,13 @@ def investigate(
     text = str(text or "").strip()
     if not text:
         raise ElicitationError("no answer given")
-    claim = f"the import proposes adding '{person.name}'"
+    claim = f"the family is checking whether {person.name} was related to the family"
     if person.relation:
-        claim += f" — import record: '{person.relation}'"
+        # family language, never the system's — the model echoes the claim's
+        # own words, and the persona rule forbids 'the import'/'proposes'/
+        # 'link' (2026-08-15: the question mirrored 'the import proposes
+        # adding' verbatim — the prompt must not model the jargon it forbids)
+        claim += f" — the record under review says: {person.relation}"
     # the conversation renders uniformly and sits LAST in the prompt — the
     # static (the reviewer, the claim, the facts, the instructions) comes
     # before it, so the previous prompt's exact text is the current prompt's
@@ -388,7 +392,7 @@ def investigate(
         '"question": '
         '"<the genealogist next question to the reviewer, asked the way a hired researcher '
         'would — the provenance when the reviewer cited a source ("did she tell you that '
-        'personally?"), the follow-up that would firm up the link; or a short conclusion '
+        'personally?"), the follow-up that would firm up the connection; or a short conclusion '
         "when no question is needed. When the reviewer expresses NO knowledge and has NO "
         "lead to follow (confidence dont_know), offer the conclusion rather than asking "
         "again: \"I'll leave her as she stands unless you'd like to record what you remember "

@@ -305,15 +305,19 @@ def process(
         for start in range(0, len(raw_texts), GUESS_PAGE_CHUNK):
             flags.extend(guess_pages(raw_texts[start : start + GUESS_PAGE_CHUNK], label, people, places, chat))
         guess_dir.mkdir(parents=True, exist_ok=True)
+        # the model echoes page names — they become file paths; a name
+        # outside the registered set is dropped from the writes AND the
+        # grouping, so boundaries.json never references an untrusted page
+        # (2026-08-15 review: the drop guarded only the writes, and
+        # group_documents still received every flag — the review gate then
+        # crashed on the missing .txt or read outside guess_dir via ../)
+        known_flags = [flag for flag in flags if str(flag["page"]) in text_pages]
         for flag in flags:
             if str(flag["page"]) not in text_pages:
-                # the model echoes page names — they become file paths; a
-                # name outside the registered set is dropped, never written
-                # (2026-08-14 final review: prompt-injected traversal)
                 print(f"guess returned an unknown page {flag['page']!r} — dropped")
-                continue
+        for flag in known_flags:
             atomic_write(guess_dir / Path(str(flag["page"])).with_suffix(".txt"), str(flag["text"]))
-        boundaries = group_documents(flags)
+        boundaries = group_documents(known_flags)
         atomic_write(boundaries_path, json.dumps(boundaries, indent=1, ensure_ascii=False) + "\n")
         print(f"model guess: {len(flags)} page(s), {len(boundaries)} document(s) -> {guess_dir}")
 

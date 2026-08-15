@@ -19,7 +19,7 @@ jobs:
       actions: read # the fail-loud check reads the bot's own log for the failure reason
     steps:
       - uses: actions/checkout@v7
-      - uses: the-pr-agent/pr-agent@v0.41.1 # pin a real release tag — @latest does not resolve
+      - uses: the-pr-agent/pr-agent@v0.42.0 # pin a real release tag — @latest does not resolve
         id: pr-agent
         env:
           OPENAI_KEY: ${{ secrets.OPENCODE_GO_THE_LOFT_API_KEY }}

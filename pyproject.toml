@@ -58,8 +58,7 @@ markers = [
     "eval: hits the real model API (and tesseract) — run with `pytest -m eval` (make evals), never in make test",
     "eval_review: the import-review evals (tools/eval_review.py)",
     "eval_memory: the memory-capture evals (tools/eval_memory.py)",
-    "eval_transcription: the transcription-fidelity eval (tools/eval_transcription.py)",
-    "archive: the archive-quality data checks — run with `pytest -m archive` (make verify), skipped in CI (no archive in the checkout)",
+    "archive: the archive-quality data checks and the memory evals (which read the archive's projection) — run with `pytest -m archive` (make verify), skipped in CI (no archive in the checkout)",
 ]
 
 [tool.coverage.run]

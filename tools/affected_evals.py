@@ -3,7 +3,7 @@ regular use — the neighbour project's pattern, an explicit conservative
 mapping instead of a graph). Prints the pytest marker expression for the
 suites the current changes affect, or ``none``:
 
-    python tools/affected_evals.py        # -> "eval_review" | "eval_review or eval_transcription" | "none"
+    python tools/affected_evals.py        # -> "eval_review" | "eval_review or eval_memory" | "none"
 
 A change to a shared module (tools/ai_client.py) runs every suite that
 imports it. `make eval-changed` turns the expression into
@@ -27,9 +27,6 @@ CHANGED_TO_MARKERS: dict[str, str] = {
     "app/views/import.js": "eval_review",
     "tools/memory.py": "eval_memory",
     "tools/eval_memory.py": "eval_memory",
-    "tools/ocr.py": "eval_transcription",
-    "tools/eval_transcription.py": "eval_transcription",
-    "tests/fixtures/": "eval_transcription",
 }
 
 
@@ -55,8 +52,6 @@ def affected_markers() -> str:
     for f in files:
         if f in CHANGED_TO_MARKERS:
             markers.update(CHANGED_TO_MARKERS[f].split(" or "))
-        elif f.startswith("tests/fixtures/"):
-            markers.update(CHANGED_TO_MARKERS["tests/fixtures/"].split(" or "))
     return " or ".join(sorted(markers)) or "none"
 
 

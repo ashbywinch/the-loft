@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from tools.atomic import atomic_write
 from tools.layout import Detection, build_layout, write_layout
 from tools.registry import RegistryError
 from tools.sync import (
@@ -405,3 +406,72 @@ def test_rotate_page_accepts_desired_zero_rotate_back(tmp_path: Path) -> None:
     layout = json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
     assert layout["rotation"] == 0
     assert rotate_page("adopt-0001", "p1.jpg", 0, tmp_path) is False  # now a true no-op
+
+
+def test_rotate_page_recovers_a_half_rotated_crash(tmp_path: Path) -> None:
+    """A crash between the image swap and the layout write (the pair is not
+    transactional — bot review 2026-08-16) leaves the image rotated with a
+    stale layout. The journal's {from, rotation} lets the next rotate
+    complete the layout BEFORE the delta, so the boxes never misalign."""
+    import json as _json
+
+    batch = tmp_path / "adopt-0001"
+    (batch / "oriented").mkdir(parents=True)
+    (batch / "ocr-guess").mkdir(parents=True)
+    Image.new("RGB", (100, 200), "white").save(batch / "oriented" / "p1.jpg")
+    write_layout(
+        build_layout(
+            "p1.jpg",
+            100,
+            200,
+            "line one",
+            [Detection(box=[0, 100, 50, 120], text="line one", score=0.9, words=[])],
+        ),
+        batch / "ocr-guess" / "p1.layout.json",
+    )
+    assert rotate_page("adopt-0001", "p1.jpg", 1, tmp_path) is True  # 90
+    # simulate the crash: the image is swapped (rotated), the layout is
+    # stale (the OLD dims and rotation), and the journal records the intent
+    layout = _json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
+    layout["width"] = 100
+    layout["height"] = 200
+    layout["rotation"] = 0
+    write_layout(layout, batch / "ocr-guess" / "p1.layout.json")
+    atomic_write(
+        batch / "oriented" / "p1.rotate.json",
+        '{"from": 0, "rotation": 90}\n',
+    )
+    # the next intent to the SAME desired rotation is a no-op — the
+    # recovery already brought the layout to 90 (the image's actual state)
+    assert rotate_page("adopt-0001", "p1.jpg", 1, tmp_path) is False
+    layout = _json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
+    assert layout["rotation"] == 90
+    assert not (batch / "oriented" / "p1.rotate.json").exists()  # the journal is cleaned
+
+
+def test_rotate_page_discards_a_premature_journal(tmp_path: Path) -> None:
+    """A crash BEFORE the image swap leaves the journal written with the
+    image and layout still consistent — the next rotate discards it and
+    proceeds from the layout's real state."""
+    import json as _json
+
+    batch = tmp_path / "adopt-0001"
+    (batch / "oriented").mkdir(parents=True)
+    (batch / "ocr-guess").mkdir(parents=True)
+    Image.new("RGB", (100, 200), "white").save(batch / "oriented" / "p1.jpg")
+    write_layout(
+        build_layout(
+            "p1.jpg",
+            100,
+            200,
+            "line one",
+            [Detection(box=[0, 100, 50, 120], text="line one", score=0.9, words=[])],
+        ),
+        batch / "ocr-guess" / "p1.layout.json",
+    )
+    # the premature journal: the intent never reached the image
+    atomic_write(batch / "oriented" / "p1.rotate.json", '{"from": 0, "rotation": 90}\n')
+    assert rotate_page("adopt-0001", "p1.jpg", 1, tmp_path) is True  # the normal rotate proceeds
+    layout = _json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
+    assert layout["rotation"] == 90
+    assert not (batch / "oriented" / "p1.rotate.json").exists()

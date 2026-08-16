@@ -252,11 +252,18 @@ async function renderBatchList(main, state) {
     return;
   }
   // a batch with nothing left to review (all boundaries confirmed, or the
-  // registry says so) does not belong on the review hub (user 2026-08-16)
+  // registry says so) does not belong on the review hub (user 2026-08-16);
+  // the empty message appears only when there is genuinely no review work
+  // anywhere — state is always the app state object, so `!state` never
+  // fired and the hub rendered blank (bot review, 2026-08-16)
   const open = batches.filter(
     (b) => b.status !== "confirmed" && (b.boundaries ?? []).some((x) => x.status !== "confirmed"),
   );
-  if (!open.length && !state) {
+  const hasWork =
+    open.length > 0 ||
+    (state &&
+      (pendingImports(state).length > 0 || draftItems(state.items).length > 0));
+  if (!hasWork) {
     renderError(main, "No review work waiting — everything is confirmed.");
     return;
   }
@@ -1304,6 +1311,15 @@ async function syncRotations() {
   return delivered;
 }
 
+/** The DESIRED cumulative rotation in quarter-turns (the layout's applied
+ *  rotation in degrees + the reviewer's live view rotation). The result
+ *  CAN be 0 — the rotate-back to the ORIGINAL orientation — which is a
+ *  real intent, not "nothing to do" (bot review, 2026-08-16). Exported
+ *  for tests. */
+export function desiredQuarters(baseDeg, viewRotationDeg) {
+  return (((baseDeg + viewRotationDeg) / 90) % 4 + 4) % 4;
+}
+
 /** Commit the current page's view rotation: the intent is the DESIRED
  *  cumulative (the layout's applied rotation + the reviewer's delta), so
  *  the backend applies an idempotent delta — a retried intent is a no-op.
@@ -1317,8 +1333,13 @@ async function queueRotation(session) {
   const rotation = session.rotation ?? 0;
   if (rotation === 0) return;
   const base = doc.layouts?.[page]?.rotation ?? 0;
-  const quarters = (((base + rotation) / 90) % 4 + 4) % 4;
-  if (quarters === 0) return;
+  const quarters = desiredQuarters(base, rotation);
+  // The desired CAN be 0 — a reviewer over-correcting an already-rotated
+  // page presses back to the original: the base is 90, the view rotation
+  // -90, the desired 0. Dropping it left the page wrongly rotated on the
+  // backend, a reload showed it wrong-way again, and the confirm stayed
+  // blocked by the live rotation (bot review, 2026-08-16). The 0 is a
+  // real intent — the backend applies the delta to return to the original.
   rotateUpsert(batch.batchId, page, quarters);
   const delivered = await syncRotations();
   if (delivered) {
@@ -1710,8 +1731,12 @@ async function confirmNext(session) {
           : "Saved on this device — will sync when the archive's computer is reachable.",
       ),
     );
-  const next = docIndex + 1;
-  if (next < batch.documents.length) {
+  // advance to the next document still awaiting review — the confirmed/
+  // rejected ones stay in the list with their done chips, so a raw
+  // index+1 can land on one and reopen it as a fresh surface (bot
+  // review, 2026-08-16)
+  const next = batch.documents.findIndex((d, i) => i > docIndex && d.status !== "confirmed");
+  if (next !== -1) {
     setTimeout(() => openReview(session.root, batch, next), 1800);
   } else {
     setTimeout(() => renderBatch(session.root, batch.batchId), 2200);

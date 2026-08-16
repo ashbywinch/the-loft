@@ -18,6 +18,7 @@ import {
   outboxAdd,
   outboxDrop,
   outboxPending,
+  desiredQuarters,
   pendingRotationQuarters,
   render,
   rotateDrop,
@@ -439,6 +440,17 @@ describe("the rotation outbox — the orientation fix survives an offline backen
     rotateDrop("adopt-1", "p1.jpg");
     expect(rotatePending()).toEqual([]);
     expect(pendingRotationQuarters("adopt-1", "p1.jpg")).toBe(0);
+  });
+
+  it("desiredQuarters: the rotate-back to the ORIGINAL is a real 0 intent", () => {
+    // a reviewer over-correcting an already-rotated page: the layout is at
+    // 90 and the view is rotated -90 — the desired is 0, which the backend
+    // must receive (bot review, 2026-08-16: dropping it left the page
+    // wrongly rotated and the confirm blocked)
+    expect(desiredQuarters(90, -90)).toBe(0);
+    expect(desiredQuarters(0, 90)).toBe(1);
+    expect(desiredQuarters(90, 180)).toBe(3);
+    expect(desiredQuarters(270, 90)).toBe(0);
   });
 });
 

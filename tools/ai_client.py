@@ -150,7 +150,10 @@ class AIClient:
         try:
             choice = data["choices"][0]
             message = choice.get("message") if isinstance(choice, dict) else None
-            message = message or {}
+            # a choice can be a dict whose message is a non-dict (a string) —
+            # .get on it would raise the uncaught AttributeError the null-
+            # choice guard was meant to prevent (bot review, 2026-08-16)
+            message = message if isinstance(message, dict) else {}
             content = message.get("content") or ""
         except (KeyError, IndexError, TypeError) as e:
             raise AIClientError(f"unexpected API response: {json.dumps(data)[:300]}") from e

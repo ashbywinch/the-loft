@@ -2,6 +2,7 @@ import { identityElement } from "./identity.js";
 import { assetUrl, typeLabel } from "./data.js";
 import { dateLabel } from "./date.js";
 import { decadeBands } from "./connections.js";
+import { goBack } from "./router.js";
 
 /**
  * UI primitives — small DOM helpers and shared components.
@@ -44,11 +45,24 @@ export function esc(text) {
   return div.innerHTML;
 }
 
-export function header(title, state = null) {
-  // the title + the identity, nothing else: the phone's system back (and
-  // the browser's) walks the hash history — a bar button is redundant
-  // (2026-08-06, user). The ⌂ is gone for the same reason.
-  const bar = el("header", { class: "topbar" }, [el("h1", { class: "topbar-title" }, title)]);
+export function header(title, state = null, back = false) {
+  // The title + the identity; a back arrow when the page is a drilled-in
+  // detail (item, import session, person, place, theme, story — walk finding
+  // 6, 2026-08-16). Per the research (PRD §8): the arrow names its
+  // destination when the back goes UP on a deep link ("← Family Tree"),
+  // and stays a plain "←" when it undoes the previous action (the
+  // destination is wherever the user came from, which they know).
+  const bar = el("header", { class: "topbar" }, []);
+  if (back) {
+    bar.append(
+      el(
+        "button",
+        { class: "topbar-back", onclick: () => goBack(), "aria-label": "Back" },
+        back === true ? "←" : `← ${back}`,
+      ),
+    );
+  }
+  bar.append(el("h1", { class: "topbar-title" }, title));
   if (state) bar.append(identityElement(state));
   return bar;
 }

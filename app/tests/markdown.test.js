@@ -57,3 +57,19 @@ it("a leading pipe line without a separator is still verbatim — never dropped 
     expect(renderMarkdown("")).toHaveLength(0);
   });
 });
+
+describe("the inline format conventions — ~~struck~~ and ~underlined~ (2026-08-16)", () => {
+  it("renders the strike and underline as spans, never literal tildes", () => {
+    const nodes = renderMarkdown("a ~~crossed out~~ and ~underlined~ word");
+    const p = nodes[0];
+    expect(p.querySelector(".fmt-struck")?.textContent).toBe("crossed out");
+    expect(p.querySelector(".fmt-underline")?.textContent).toBe("underlined");
+    expect(p.textContent).toBe("a crossed out and underlined word");
+  });
+
+  it("leaves plain text untouched and the newlines intact", () => {
+    const nodes = renderMarkdown("plain ~text~ here\nnext");
+    expect(nodes[0].querySelector(".fmt-underline")?.textContent).toBe("text");
+    expect(nodes[0].textContent).toBe("plain text here\nnext");
+  });
+});

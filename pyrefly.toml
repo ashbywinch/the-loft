@@ -7,3 +7,9 @@
 # Python version, venv and import root are auto-detected from the project
 # layout (pyproject.toml + .venv).
 preset = "default"
+
+# vendored from build-tools @ 5668162 — upstream code, not ours to type-check
+project_excludes = ["tools/code_health.py", "tools/check_records.py", "tools/layout_detect.py"]
+# tools/layout_detect.py runs under .venv-htr (py3.13 — paddleocr lives
+# there); its deps are invisible to the main-venv checker, like the
+# vendored files above.

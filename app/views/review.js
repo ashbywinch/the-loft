@@ -1,0 +1,1733 @@
+/**
+ * The transcription-review surface (TECH-SPEC §16.16 + the locked wireframe,
+ * 2026-08-15): the reviewer checks the machine's drafts against the pages
+ * before they are archived. The page image (a plain <img> in a scaled
+ * layer — the OpenSeadragon viewer was replaced 2026-08-16, see below)
+ * shows the detector's line boxes; the transcription pane shows the VLM's
+ * verbatim lines with the low-confidence words flagged (the transcription
+ * model's own self-report, tools/selfreport.py — a word the model is
+ * unsure of, or that reads oddly in context; the ~~struck~~ words always
+ * flag); a flagged word enters per-line inline editing anchored to the
+ * image (the line's box highlights and the image pans to it). The only gate is confirmation — Confirm & Next records the
+ * corrected document through the sync seam (POST /api/sync/confirmations)
+ * with a localStorage outbox as the catch-up when the backend is
+ * unreachable (TECH-SPEC §16.15: nothing confirmed is ever lost to a
+ * failed push).
+ *
+ * Phone portrait shows a "turn your phone sideways" prompt; phone
+ * landscape splits horizontally (letter full-width on top, words below);
+ * tablet/desktop split vertically (letter left, words right) — the locked
+ * design (VR8, user 2026-08-15).
+ */
+
+import { el } from "../ui.js";
+import { navigate } from "../router.js";
+import { gateScreen } from "../gate.js";
+import { drafts as draftItems, isMine, me, pendingImports, proposedPeople } from "../data.js";
+
+const OUTBOX_KEY = "loft-review-outbox";
+const EDITS_KEY = "loft-review-edits";
+
+// -- the reviewer's edits persist (VR9: bounded and resumable) ----------------
+// The confirmed write happens only on the last page, but the fixes must
+// survive an accidental exit mid-document — per (batch, doc), restored on
+// reopen, cleared once the confirmation lands (walk finding 3, 2026-08-15).
+
+export function loadEdits(batchId, docIndex) {
+  try {
+    const all = JSON.parse(localStorage.getItem(EDITS_KEY) || "{}");
+    return all?.[batchId]?.[String(docIndex)] || {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveEdits(batchId, docIndex, edits) {
+  try {
+    const all = JSON.parse(localStorage.getItem(EDITS_KEY) || "{}");
+    all[batchId] = all[batchId] || {};
+    all[batchId][String(docIndex)] = edits;
+    localStorage.setItem(EDITS_KEY, JSON.stringify(all));
+  } catch {
+    // storage unavailable — the session still holds the edits
+  }
+}
+
+export function clearEdits(batchId, docIndex) {
+  try {
+    const all = JSON.parse(localStorage.getItem(EDITS_KEY) || "{}");
+    delete all?.[batchId]?.[String(docIndex)];
+    localStorage.setItem(EDITS_KEY, JSON.stringify(all));
+  } catch {
+    // nothing to clear
+  }
+}
+
+// -- pure helpers (exported for tests) ----------------------------------------
+
+/** The document's lines still to check: lines carrying a flagged (conf 0)
+ *  word that the reviewer hasn't verified by editing. The review unit is
+ *  the LINE — fixing a line clears all its flags (the walk: one edit
+ *  dropped six red words) — so the count names the work honestly
+ *  (2026-08-15: "254 words" overstated it; the data showed the detector's
+ *  rec model is confidently wrong on cursive, and most word-level flags
+ *  are that second reader's noise). Pages without a layout have nothing to
+ *  check. */
+export function flaggedCount(documents, docIndex, edits) {
+  return flaggedPositions(documents, docIndex, edits).length;
+}
+
+/** The flagged lines of a document in reading order — page order, then
+ *  line order; a line counts once however many of its words are flagged. */
+export function flaggedPositions(documents, docIndex, edits) {
+  const doc = documents[docIndex];
+  const positions = [];
+  for (const page of doc.pages) {
+    const layout = doc.layouts?.[page];
+    if (!layout) continue;
+    const pageEdits = edits[page] || {};
+    for (const line of layout.lines) {
+      if (line.index in pageEdits) continue;
+      if (line.words.some((w) => w.conf === 0)) positions.push({ page, line: line.index });
+    }
+  }
+  return positions;
+}
+
+/** The next flagged line after ``from`` (wrapping); null when there are
+ *  no flags at all. ``from`` is one of the flaggedPositions entries —
+ *  OR a position that was since ACCEPTED (removed from the list): the
+ *  tour then continues AFTER it by order instead of silently restarting
+ *  at the first flag (user 2026-08-16: after an accept, next-flagged
+ *  "restarted at the beginning — nothing moved"). */
+export function nextFlagged(positions, from) {
+  if (!positions.length) return null;
+  if (!from) return positions[0];
+  const idx = positions.findIndex((p) => p.page === from.page && p.line === from.line);
+  if (idx !== -1) return positions[(idx + 1) % positions.length];
+  const next = positions.find(
+    (p) => p.page > from.page || (p.page === from.page && p.line > from.line),
+  );
+  return next || positions[0];
+}
+
+/** The remaining flagged lines per page — the navigation strip's flag dots
+ *  (2026-08-16: the dots make a cross-page "Next flagged" jump visible
+ *  before it happens; the map replaces the hint words). */
+export function flaggedByPage(documents, docIndex, edits) {
+  const byPage = {};
+  for (const { page } of flaggedPositions(documents, docIndex, edits)) {
+    byPage[page] = (byPage[page] || 0) + 1;
+  }
+  return byPage;
+}
+
+/** The corrected text of one page: the layout's verbatim lines with the
+ *  reviewer's edits applied; a page with no layout is its raw guess. */
+export function correctedPageText(doc, page, edits) {
+  const layout = doc.layouts?.[page];
+  if (layout) {
+    const pageEdits = edits[page] || {};
+    return layout.lines.map((l) => pageEdits[l.index] ?? l.text).join("\n");
+  }
+  return doc.texts?.[page] || "";
+}
+
+/** The corrected document text — pages joined with "\n", the same shape
+ *  the CLI review gate confirms (tools/pipeline.py review()). */
+export function correctedDocumentText(doc, edits) {
+  return doc.pages.map((p) => correctedPageText(doc, p, edits)).join("\n");
+}
+
+// -- the outbox (the JS mirror of tools/sync.py Outbox: nothing confirmed
+//    is lost to a failed push) ------------------------------------------------
+
+export function outboxPending() {
+  try {
+    const items = JSON.parse(localStorage.getItem(OUTBOX_KEY) || "[]");
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
+}
+
+export function outboxAdd(payload) {
+  const items = outboxPending();
+  items.push(payload);
+  localStorage.setItem(OUTBOX_KEY, JSON.stringify(items));
+}
+
+export function outboxDrop(payload) {
+  const key = JSON.stringify(payload);
+  localStorage.setItem(
+    OUTBOX_KEY,
+    JSON.stringify(outboxPending().filter((p) => JSON.stringify(p) !== key)),
+  );
+}
+
+async function postConfirmation(payload) {
+  const res = await fetch("/api/sync/confirmations", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`confirmation rejected (${res.status})`);
+}
+
+/** Push a confirmation; on failure it stays in the outbox. The outbox is
+ *  retried on every subsequent confirm and on the batch screen. Returns
+ *  whether the backend recorded it. */
+async function confirmDocument(payload) {
+  try {
+    await postConfirmation(payload);
+  } catch (error) {
+    console.warn("review: push failed — kept in the outbox", error);
+    outboxAdd(payload);
+    return false;
+  }
+  await retryOutbox();
+  return true;
+}
+
+/** Retry the outbox's pending confirmations (the laptop was off); drop
+ *  each item once the backend records it. */
+async function retryOutbox() {
+  for (const item of outboxPending()) {
+    try {
+      await postConfirmation(item);
+      outboxDrop(item);
+    } catch {
+      return; // still unreachable — leave the rest
+    }
+  }
+}
+
+// -- the view -----------------------------------------------------------------
+
+export function render(main, ctx, state) {
+  if (ctx.arg) {
+    // #/review/<batch>/<doc>/<page> — the surface's position lives in the
+    // URL (user 2026-08-16: refreshing the browser must restore the page
+    // you're on, not drop you back to the document list). rest is
+    // [review, <batch>, <doc>, <page>] — the batch is also ctx.arg.
+    const doc = Number(ctx.rest?.[2]);
+    const page = Number(ctx.rest?.[3]);
+    const initial = Number.isInteger(doc) && Number.isInteger(page) ? { doc, page } : null;
+    renderBatch(main, ctx.arg, state, initial);
+  } else {
+    renderBatchList(main, state);
+  }
+}
+
+/** The sign-in gate (the sync APIs are private) — same screen as the
+ *  archive gate so the reviewer knows what to do. */
+function signedOut(main) {
+  main.replaceChildren(gateScreen());
+}
+
+/** An error screen is never a dead end (walk finding 2, 2026-08-16: the
+ *  PhotoScan 400 left Elaine trapped with no navigation — a non-technical
+ *  user cannot be expected to find the browser's back arrow). Every
+ *  failure renders the top bar with a back arrow plus the message. */
+function renderError(main, message, backTarget = "home") {
+  const root = el("div", { class: "rv" }, [
+    el("div", { class: "rv-topbar" }, [
+      el("button", { class: "rv-back", onclick: () => navigate(backTarget) }, "← Home"),
+      el("div", { class: "rv-topbar-titles" }, [el("div", { class: "rv-tt" }, "Review")]),
+    ]),
+    el("div", { class: "rv-note" }, message),
+  ]);
+  main.replaceChildren(root);
+}
+
+async function renderBatchList(main, state) {
+  let batches;
+  try {
+    const res = await fetch("/api/sync/batches", { headers: { Accept: "application/json" } });
+    if (res.status === 401) return signedOut(main);
+    if (!res.ok) throw new Error(`batches (${res.status})`);
+    batches = (await res.json()).batches;
+  } catch (error) {
+    renderError(main, `Could not load the batches (${error.message}).`);
+    return;
+  }
+  // a batch with nothing left to review (all boundaries confirmed, or the
+  // registry says so) does not belong on the review hub (user 2026-08-16)
+  const open = batches.filter(
+    (b) => b.status !== "confirmed" && (b.boundaries ?? []).some((x) => x.status !== "confirmed"),
+  );
+  if (!open.length && !state) {
+    renderError(main, "No review work waiting — everything is confirmed.");
+    return;
+  }
+  main.append(
+    el("div", { class: "rv-topbar" }, [
+      el("button", { class: "rv-back", onclick: () => navigate("home") }, "← Home"),
+      el("div", { class: "rv-topbar-titles" }, [
+        el("div", { class: "rv-tt" }, "Review"),
+      ]),
+    ]),
+  );
+
+  if (open.length) {
+    main.append(el("h2", { class: "rv-section-title" }, "Transcriptions — check the machine's reading of scanned pages"));
+    const list = el("div", { class: "rv-list" });
+    for (const batch of open) {
+      const boundaries = batch.boundaries || [];
+      const confirmed = boundaries.filter((b) => b.status === "confirmed").length;
+      const pages = Object.keys(batch.pages || {}).length;
+      const progress = boundaries.length
+        ? `${confirmed} of ${boundaries.length} confirmed`
+        : `${pages} pages`;
+      const card = el(
+        "button",
+        { class: "rv-card", onclick: () => navigate(`review/${batch.batch_id}`) },
+        [
+          el("div", { class: "rv-card-main" }, [
+            el("div", { class: "rv-card-title" }, batch.label || batch.batch_id),
+            el("div", { class: "rv-card-sub" }, progress),
+          ]),
+          el(
+            "span",
+            { class: "rv-chip" },
+            confirmed && confirmed === boundaries.length ? "Reviewed" : "Awaiting review",
+          ),
+        ],
+      );
+      list.append(card);
+    }
+    main.append(list);
+  }
+
+  // Import sessions — identity extraction from documents (the Judith doc etc.)
+  if (state) {
+    const pending = pendingImports(state);
+    if (pending.length) {
+      const count = proposedPeople(state).length;
+      const note =
+        count === 1
+          ? "1 person from the import is waiting to be confirmed — the tree shows only confirmed family."
+          : `${count} people from the import are waiting to be confirmed — the tree shows only confirmed family.`;
+      main.append(el("h2", { class: "rv-section-title" }, "Import sessions — confirm who belongs in the family tree"));
+      const list = el("div", { class: "rv-list" });
+      pending.forEach((session) => {
+        const card = el(
+          "button",
+          { class: "rv-card", onclick: () => navigate(`import/${session.id}`) },
+          [
+            el("div", { class: "rv-card-main" }, [
+              el("div", { class: "rv-card-title" }, session.title || "Import session"),
+              el("div", { class: "rv-card-sub" }, note),
+            ]),
+            el("span", { class: "rv-chip" }, "Awaiting review"),
+          ],
+        );
+        list.append(card);
+      });
+      main.append(list);
+    }
+  }
+
+  // Drafts — unfinished stories (user, 2026-08-16: "Drafts ARE review work")
+  if (state) {
+    const allDrafts = draftItems(state.items);
+    const signedIn = me(state);
+    const shown = signedIn ? allDrafts.filter((d) => isMine(d, state)) : allDrafts;
+    if (shown.length) {
+      const label = signedIn ? "Your unfinished stories" : "Unfinished stories";
+      main.append(el("h2", { class: "rv-section-title" }, `${label} — pick up where you left off`));
+      const list = el("div", { class: "rv-list" });
+      shown.forEach((d) => {
+        const title = d.title || d.text?.slice(0, 60) || "Untitled";
+        const card = el(
+          "button",
+          { class: "rv-card", onclick: () => navigate(`/item/${d.id}`) },
+          [
+            el("div", { class: "rv-card-main" }, [
+              el("div", { class: "rv-card-title" }, title),
+              el("div", { class: "rv-card-sub" }, "Click to continue this story"),
+            ]),
+            el("span", { class: "rv-chip" }, "Draft"),
+          ],
+        );
+        list.append(card);
+      });
+      main.append(list);
+    }
+  }
+}
+
+/** The batch's document cards — the wireframe's VIEW 1 with real data. */
+async function renderBatch(main, batchId, state, initial = null) {
+  let data;
+  try {
+    const res = await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/drafts`, {
+      headers: { Accept: "application/json" },
+    });
+    if (res.status === 401) return signedOut(main);
+    if (!res.ok) throw new Error(`drafts (${res.status})`);
+    data = await res.json();
+  } catch (error) {
+    renderError(main, `Could not load the drafts (${error.message}).`);
+    return;
+  }
+  await retryOutbox();
+  const delivered = await syncRotations();
+  if (delivered) {
+    // a queued rotation was delivered — the backend started the re-read;
+    // refetch so the processing state (and the rework-page skip) is current
+    try {
+      const fresh = await (
+        await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/drafts`, {
+          headers: { Accept: "application/json" },
+        })
+      ).json();
+      if (Array.isArray(fresh.documents)) data = fresh;
+    } catch {
+      // best-effort — the next visit refreshes
+    }
+  }
+  const documents = data.documents || [];
+  const confirmed = documents.filter((d) => d.status === "confirmed").length;
+  const root = el("div", { class: "rv" }, [
+    el("div", { class: "rv-topbar" }, [
+      el("button", { class: "rv-back", onclick: () => navigate("review") }, "← Review"),
+      el("div", { class: "rv-topbar-titles" }, [
+        el("div", { class: "rv-tt" }, data.label || batchId),
+        el("div", { class: "rv-ts" }, `${confirmed} of ${documents.length} in this batch confirmed`),
+      ]),
+    ]),
+  ]);
+  main.replaceChildren(root);
+  if (!documents.length) {
+    root.append(el("div", { class: "rv-note" }, "This batch has no text documents to review."));
+    root.append(el("button", { class: "rv-btn", onclick: () => renderBatchList(root, state) }, "← Back to review"));
+    return;
+  }
+  // a URL with the surface's position (a refresh) restores it directly
+  if (initial) {
+    const { doc, page } = initial;
+    if (Number.isInteger(doc) && doc >= 0 && doc < documents.length) {
+      const session = makeSession({ batchId, label: data.label, documents, processing: data.processing || {} }, doc);
+      session.pageIndex = Math.min(Math.max(page, 0), documents[doc].pages.length - 1);
+      renderSurface(root, session);
+      return;
+    }
+  }
+  // Confirmed and rejected documents are not listed — the review list is
+  // the work still to do (user 2026-08-16: "if it WAS confirmed it
+  // shouldn't be listed"). The original documents index is kept for the
+  // confirmation payload (the CLI gate's 1-based boundaries order).
+  const awaiting = documents
+    .map((doc, i) => ({ doc, i }))
+    .filter(({ doc }) => doc.status !== "confirmed" && doc.status !== "rejected");
+  if (!awaiting.length) {
+    root.append(
+      el("div", { class: "rv-note" }, `All ${documents.length} document${documents.length === 1 ? "" : "s"} in this batch ${documents.length === 1 ? "is" : "are"} confirmed.`),
+    );
+    return;
+  }
+  const list = el("div", { class: "rv-list" });
+  awaiting.forEach(({ doc, i }, n) => {
+    const chip = el("span", { class: "rv-chip" }, "Awaiting review");
+    // the hint that makes a document identifiable: its greeting, or the
+    // first line of its first page — never the technical page ids
+    // (walk finding 6, 2026-08-15)
+    const hint =
+      doc.greeting ||
+      (doc.pages[0] && doc.texts?.[doc.pages[0]]
+        ? doc.texts[doc.pages[0]].split("\n").find((l) => l.trim())?.trim().slice(0, 48)
+        : null);
+    const card = el(
+      "button",
+      {
+        class: "rv-card",
+        onclick: () => openReview(root, { batchId, label: data.label, documents, processing: data.processing || {} }, i),
+      },
+      [
+        el("div", { class: "rv-card-main" }, [
+          el("div", { class: "rv-card-title" }, `Document ${n + 1} of ${awaiting.length}`),
+          el("div", { class: "rv-card-sub" }, `${doc.pages.length} pages${hint ? ` · begins “${hint}”` : ""}`),
+        ]),
+        chip,
+      ],
+    );
+    list.append(card);
+  });
+  root.append(list);
+}
+
+// -- the review surface -------------------------------------------------------
+
+/** The surface's position lives in the URL (#/review/<batch>/<doc>/<page>)
+ * so the browser refresh restores the page you're on (user 2026-08-16:
+ * refreshing must never drop you back to a different page). replaceState
+ * keeps the flips in-place (fast, selection preserved) while making the
+ * position refreshable. */
+function syncSurfaceUrl(session) {
+  if (!session?.batch?.batchId) return;
+  const target = `#/review/${session.batch.batchId}/${session.docIndex}/${session.pageIndex}`;
+  if (location.hash !== target) history.replaceState(null, "", target);
+}
+
+function makeSession(batch, docIndex) {
+  return {
+    batch,
+    docIndex,
+    pageIndex: 0,
+    edits: loadEdits(batch.batchId, docIndex), // page -> {lineIndex: correctedText} — resumable (VR9)
+    selLine: null, // selected transcription line (or null)
+    editing: null, // line index in edit mode (or null)
+    from: null, // last-visited flag position
+    root: null, // the rv DOM root (filled by renderSurface)
+    txBody: null, // the transcription pane body
+    imgBox: null, // the page-image pane (filled by openViewer)
+    layer: null, // the transform-scaled layer: the <img> + the line boxes
+    img: null, // the page <img>
+    imgSize: null, // {w, h} — the image's natural size, once loaded
+    view: null, // the visible rectangle in display px {x, y, width, height}
+    overlays: [], // the line-box overlay elements
+    contentTop: 0, // the writing's first line-box top (rot 0) — the band anchor
+    resizer: null, // the pane resize observer (re-fit when it becomes visible)
+    userMoved: false, // the reviewer has panned/zoomed — stop auto-fitting
+    lastFitSize: null, // the pane size the initial view fitted against
+    baseRotation: 0, // the backend's applied rotation for the current page
+    rotation: 0, // the current page's view rotation (the reviewer's delta)
+    syncLock: false, // the dual-pane link's feedback lock
+    processingTimer: null, // the poll while the backend re-reads the page
+  };
+}
+
+function openReview(main, batch, docIndex) {
+  renderSurface(main, makeSession(batch, docIndex));
+}
+
+function docTitle(doc) {
+  if (doc.greeting) return doc.greeting;
+  if (doc.pages[0]) {
+    const first = doc.texts?.[doc.pages[0]]?.split("\n").find((l) => l.trim())?.trim().slice(0, 48);
+    if (first) return first;
+  }
+  return doc.pages[0] || "Document";
+}
+
+function renderSurface(main, session) {
+  const { batch, docIndex } = session;
+  const doc = batch.documents[docIndex];
+  if (!doc) {
+    renderError(main, "No more documents in this batch.");
+    return;
+  }
+  const page = doc.pages[session.pageIndex];
+  // The page's orientation: the backend's applied rotation (the layout's
+  // "rotation") plus the reviewer's correction. A page CHANGE loads the
+  // pending intent from the outbox (the reviewer's committed fix, restored
+  // whether or not the sync has delivered it); a re-render of the SAME
+  // page keeps the live value (the presses are uncommitted until the next
+  // navigation — 2026-08-16: front and back end are different boxes; the
+  // backend may be off).
+  session.baseRotation = doc.layouts?.[page]?.rotation ?? 0;
+  // a page being reworked on the backend must not be shown — land on the
+  // next available page instead (user 2026-08-16: "it shouldn't have
+  // shown me it at all once we'd established that it needed rework")
+  if (isReworking(batch, page)) {
+    // land on the next available page after this one — never backward
+    // (a wrap would loop the confirm on a doc whose tail is all reworking)
+    const next = nextAvailableAfter(doc, batch, session.pageIndex);
+    if (next !== -1) {
+      session.pageIndex = next;
+      session.selLine = null;
+      session.editing = null;
+      renderSurface(main, session);
+      return;
+    }
+    // the rest of the document is being reworked — show this page's
+    // fixing note
+  }
+  if (session.lastPage !== page) {
+    session.lastPage = page;
+    // The display rotation is the reviewer's correction RELATIVE to the
+    // file as served: a pending intent is the desired absolute (minus the
+    // backend's applied rotation); no pending intent means the file is
+    // already the truth — display it as-is.
+    const pendingQ = pendingRotationQuarters(batch.batchId, page);
+    session.rotation =
+      pendingQ > 0 ? (((pendingQ * 90 - session.baseRotation) % 360) + 360) % 360 : 0;
+  }
+  // the count and the dots exclude the rework pages — their flags will
+  // change when the backend re-reads them
+  const positions = availablePositions(session);
+  const toCheck = positions.length;
+
+  const root = el("div", { class: "rv" });
+  // One bar for the whole chrome: back, the document's name, and BOTH
+  // sequences as chips (2026-08-16: the count chip was the extraneous
+  // piece — the same count is already on the Next-flagged badge and the
+  // page dots; the document boundary and the cross-page jump are visible
+  // before any press, so nothing needs explaining).
+  const topbar = el("div", { class: "rv-topbar" }, [
+    el("button", { class: "rv-back", onclick: async () => { acceptEdit(session); await queueRotation(session); renderBatch(root, batch.batchId); } }, `← ${batch.label || "Documents"}`),
+    el("div", { class: "rv-topbar-titles" }, [
+      el("div", { class: "rv-tt" }, docTitle(doc)),
+    ]),
+  ]);
+  // the page chips' flag dots come from the AVAILABLE positions — a
+  // rework page shows the fixing state instead (its flags will change)
+  const flagsByPage = {};
+  for (const { page: p } of positions) flagsByPage[p] = (flagsByPage[p] || 0) + 1;
+  const docGroup = el("div", { class: "rv-navgroup" });
+  batch.documents.forEach((d, i) => {
+    const cls =
+      "rv-navchip rv-navchip--doc" +
+      (i === docIndex ? " rv-navchip--cur" : "") +
+      (d.status === "confirmed" ? " rv-navchip--done" : "");
+    docGroup.append(
+      el(
+        "button",
+        {
+          class: cls,
+          onclick: async () => {
+            acceptEdit(session);
+            await queueRotation(session);
+            openReview(root, batch, i);
+          },
+          title: d.greeting || `Document ${i + 1}`,
+          "aria-label": `Document ${i + 1}${d.status === "confirmed" ? ", confirmed" : ""}`,
+        },
+        d.status === "confirmed" ? "✓" : String(i + 1),
+      ),
+    );
+  });
+  const pageGroup = el("div", { class: "rv-navgroup" });
+  doc.pages.forEach((p, i) => {
+    const remaining = flagsByPage[p] || 0;
+    const reworking = isReworking(batch, p);
+    const cls =
+      "rv-navchip" +
+      (i === session.pageIndex ? " rv-navchip--cur" : "") +
+      (reworking ? " rv-navchip--fixing" : remaining ? " rv-navchip--flag" : "");
+    pageGroup.append(
+      el(
+        "button",
+        {
+          class: cls,
+          onclick: async () => {
+            acceptEdit(session);
+            await queueRotation(session);
+            session.pageIndex = i;
+            session.selLine = null;
+            session.editing = null;
+            renderSurface(session.root, session);
+          },
+          title: `Page ${i + 1}${remaining ? ` — ${remaining} ${remaining === 1 ? "line" : "lines"} to check` : ""}`,
+          "aria-label": `Page ${i + 1}${remaining ? `, ${remaining} lines to check` : ""}`,
+        },
+        String(i + 1),
+      ),
+    );
+  });
+  topbar.append(docGroup, el("div", { class: "rv-navsep" }), pageGroup);
+
+  const rotate = el("div", { class: "rv-rotate" }, [
+    el("div", { class: "rv-rotate-icon" }, "↻"),
+    el("h2", {}, "Turn your phone sideways"),
+    el("p", {}, "The review screen works in landscape — the letter image needs the width."),
+  ]);
+
+  const imgPane = el("div", { class: "rv-imgpane" });
+  const imgBox = el("div", { class: "rv-imgbox" });
+  imgPane.append(imgBox);
+  // the ONLY floating control: the rotate press (the zoom buttons are gone
+  // — fingers pinch, and the buttons got in the way, user 2026-08-16). The
+  // rotate turns the VIEW instantly and queues the correction (the DESIRED
+  // rotation, no image) — it commits on navigation and syncs when the
+  // archive's computer is reachable (the arbiter cannot read cursive — an
+  // upside-down page passes review; the fix must correct the pipeline's
+  // data, not just the view)
+  const zoomControls = el("div", { class: "rv-zoom" }, [
+    el("button", { class: "rv-zoom-btn", onclick: () => rotatePage(session), title: "Turn the page" }, "↻"),
+  ]);
+  imgPane.append(zoomControls);
+  imgPane.append(
+    el(
+      "div",
+      { class: "rv-legend" },
+      "Red words are ones the machine wasn't sure of. Check them against the letter and fix them if they're wrong.",
+    ),
+  );
+
+  const txBody = el("div", { class: "rv-txb" });
+  const txPane = el("div", { class: "rv-txpane" }, [txBody]);
+  const split = el("div", { class: "rv-split" }, [imgPane, txPane]);
+  // the dual-pane link (user, 2026-08-16): scrolling the words pans the
+  // picture so they stay matched (the reverse runs inside renderView)
+  txBody.addEventListener("scroll", () => syncImageFromTx(session));
+  // clicking AWAY from a line accepts the open edit (user, 2026-08-16: one
+  // click edits, a click away accepts — the line's own click handles
+  // itself and stops propagation)
+  txBody.addEventListener("click", (e) => {
+    if (e.target.closest(".rv-line")) return;
+    acceptEdit(session);
+  });
+  imgPane.addEventListener("click", () => acceptEdit(session));
+
+  // The orientation fix's async half: while the backend re-reads the page's
+  // text on the corrected image, the document is greyed with a note and the
+  // confirm is blocked — the old text was read from the wrong-way page and
+  // is unreliable (2026-08-16: page-02's first line read "At last venture
+  // this form is the building of a" vs the corrected page's "A new venture
+  // this term is the holding of a"). The reviewer navigates on; a poll
+  // refreshes the page when the re-read lands.
+  const pageState = (batch.processing || {})[page];
+  const serverNote = pageState === "transcribing"
+    ? "Fixing this page's text — it was read before the page's orientation was fixed. You can review another document meanwhile."
+    : pageState === "failed"
+      ? "Couldn't re-read this page's text — the reading model was unreachable. The text below was read before the orientation fix and may be wrong."
+      : null;
+  if (serverNote) {
+    txPane.prepend(el("div", { class: "rv-note rv-note--fixing" }, serverNote));
+  }
+  session.pageProcessing = pageState;
+
+  const fcBadge = el("span", { class: "rv-fc" }, String(toCheck));
+  const nextBtn = el("button", { class: "rv-fn", onclick: () => jumpNextFlag(session) }, [fcBadge, " Next flagged ↓"]);
+  // the honest label: only the LAST page's press confirms — earlier pages
+  // just advance (walk finding 3, 2026-08-15); the page rail is the pager
+  const isLastPage = session.pageIndex === doc.pages.length - 1;
+  const confirmBtn = el(
+    "button",
+    { class: "rv-btn rv-btn--primary", onclick: () => confirmNext(session), disabled: session.pageProcessing === "transcribing" },
+    isLastPage ? "✓ Confirm & Next →" : "Next page →",
+  );
+  const actionBar = el("div", { class: "rv-txa" }, [
+    nextBtn,
+    el("div", { class: "rv-txa-right" }, [confirmBtn]),
+  ]);
+
+  root.append(topbar, rotate, split, actionBar);
+  main.replaceChildren(root);
+
+  session.root = root;
+  session.txBody = txBody;
+  session.fcBadge = fcBadge;
+  session.confirmBtn = confirmBtn;
+  session.fixingNote = null;
+  syncSurfaceUrl(session);
+  session.nextBtn = nextBtn;
+  currentSession = session;
+  updateFixingState(session);
+
+  // the poll: while the backend re-reads this page's text, refresh when the
+  // re-read lands (the old transcription is replaced, the stale edits
+  // cleared, the flags recomputed from the new self-report)
+  clearInterval(session.processingTimer);
+  session.processingTimer = null;
+  if (pageState === "transcribing") {
+    session.processingTimer = setInterval(async () => {
+      try {
+        const data = await (
+          await fetch(`/api/sync/batch/${encodeURIComponent(batch.batchId)}/drafts`, {
+            headers: { Accept: "application/json" },
+          })
+        ).json();
+        if ((data.processing || {})[page] || !Array.isArray(data.documents)) return;
+        delete session.edits[page];
+        saveEdits(batch.batchId, docIndex, session.edits);
+        session.from = null;
+        session.batch.documents = data.documents;
+        session.batch.processing = data.processing || {};
+        renderSurface(session.root, session);
+      } catch {
+        // backend unreachable — retry next tick
+      }
+    }, 5000);
+  }
+
+  renderTx(session);
+  openViewer(session, imgBox);
+}
+
+// -- the page-image viewer: a plain <img> in a transform-scaled layer --------
+// (2026-08-16: OpenSeadragon 6.1.0's tile pipeline never renders in the
+// headless browsers verification uses, and the surface only exercises a
+// fraction of it — a band of one jpeg, pinned boxes, drag-pan, three zoom
+// buttons. The plain viewer paints in ANY browser — an <img> and a CSS
+// transform — so a screenshot can verify the actual pixels. The view is a
+// rectangle in DISPLAY pixels: the rotated image's own axes, so rotation
+// turns the image AND the boxes together.)
+
+/** The rotation's display frame: display = R·original + (ox, oy), the
+ *  image's rotated bounding box in display px (dw × dh). 90° multiples. */
+export function displayFrame(rotation, w, h) {
+  switch (((rotation % 360) + 360) % 360) {
+    case 90:
+      return { a: 0, b: 1, c: -1, d: 0, ox: h, oy: 0, dw: h, dh: w };
+    case 180:
+      return { a: -1, b: 0, c: 0, d: -1, ox: w, oy: h, dw: w, dh: h };
+    case 270:
+      return { a: 0, b: -1, c: 1, d: 0, ox: 0, oy: w, dw: h, dh: w };
+    default:
+      return { a: 1, b: 0, c: 0, d: 1, ox: 0, oy: 0, dw: w, dh: h };
+  }
+}
+
+/** A line box (original px [x0, y0, x1, y1]) → its bounding rect in the
+ *  display frame. */
+export function boxToDisplay(frame, box) {
+  const xs = [frame.a * box[0] + frame.c * box[1] + frame.ox, frame.a * box[2] + frame.c * box[3] + frame.ox];
+  const ys = [frame.b * box[0] + frame.d * box[1] + frame.oy, frame.b * box[2] + frame.d * box[3] + frame.oy];
+  return { x: Math.min(...xs), y: Math.min(...ys), width: Math.abs(xs[1] - xs[0]), height: Math.abs(ys[1] - ys[0]) };
+}
+
+/** The band's anchor: the writing's top in page px — the first line box,
+ *  or (when the content association found no boxes — page-02's cursive
+ *  defeats the rec model) the detector's first unmatched line: its
+ *  geometry is real even though no confident text anchor exists
+ *  (tools/layout.py: "their geometry is real; a confident text anchor is
+ *  not"). 0 when nothing is known (a blank page). */
+export function bandAnchor(layout) {
+  const boxTops = (layout?.lines || []).filter((l) => l.box).map((l) => l.box[1]);
+  if (boxTops.length) return Math.min(...boxTops);
+  const detTops = (layout?.unmatched || []).map((u) => u.box?.[1]).filter((y) => y !== undefined);
+  return detTops.length ? Math.min(...detTops) : 0;
+}
+
+/** Half the topmost box's height: the margin the band anchor and pan floor
+ *  need so the page's FIRST line is reachable, not clipped. The rec's
+ *  detection boxes sit a fraction of a line BELOW the true ink tops (the
+ *  top line is often merged into the next line's taller box — page-05's
+ *  first line had no box at all, its ink 83px above the topmost box;
+ *  page-02's cursive first line is 60px below its ink), so an anchor at
+ *  the topmost box's own top clips the first line and the pan floor hides
+ *  it entirely (user 2026-08-16: "the image won't let me scroll up at
+ *  all"). Half a line covers the observed shifts; the writing still
+ *  dominates the view above it. */
+export function bandMargin(layout) {
+  const boxes = (layout?.lines || []).filter((l) => l.box);
+  if (!boxes.length) return 0;
+  const top = boxes.reduce((a, b) => (a.box[1] <= b.box[1] ? a : b));
+  return (top.box[3] - top.box[1]) / 2;
+}
+
+/** The view that shows ``rect`` (display px) in a pane: the rect fills one
+ *  dimension, the pane's aspect rules the other (fitBounds semantics). */
+export function fitRect(paneW, paneH, rect) {
+  const paneAspect = paneW / paneH;
+  const rectAspect = rect.width / rect.height;
+  if (rectAspect >= paneAspect) {
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.width / paneAspect };
+  }
+  return { x: rect.x, y: rect.y, width: rect.height * paneAspect, height: rect.height };
+}
+
+/** Zoom the view by ``k`` around the pane point (cx, cy) — the image point
+ *  under the cursor stays put. The visible width is clamped to
+ *  [1/8, 8]× the image's display width (OSD's maxZoomPixelRatio 8). */
+export function zoomView(view, k, paneW, paneH, cx, cy, imgW) {
+  const s = paneW / view.width;
+  const ix = view.x + cx / s;
+  const iy = view.y + cy / s;
+  const width = Math.min(Math.max(view.width / k, imgW / 8), imgW * 8);
+  const height = (width * paneH) / paneW;
+  const s2 = paneW / width;
+  return { x: ix - cx / s2, y: iy - cy / s2, width, height };
+}
+
+/** Paint the current view: the layer's transform maps original-image points
+ *  to the pane with the view's rectangle at the pane's origin. */
+function renderView(session) {
+  const { imgBox, layer, view, rotation, imgSize } = session;
+  if (!view || !imgSize || !layer) return;
+  const paneW = imgBox.clientWidth;
+  const paneH = imgBox.clientHeight;
+  if (!paneW || !paneH) return;
+  const s = paneW / view.width;
+  const f = displayFrame(rotation, imgSize.w, imgSize.h);
+  layer.style.transform = `translate(${(f.ox - view.x) * s}px, ${(f.oy - view.y) * s}px) scale(${s}) rotate(${rotation}deg)`;
+  syncTxFromImage(session); // the dual-pane link: the words follow the picture
+}
+
+function paneScale(session) {
+  return session.imgBox.clientWidth / session.view.width;
+}
+
+function fitBounds(session, rect) {
+  const imgBox = session.imgBox;
+  session.view = fitRect(imgBox.clientWidth, imgBox.clientHeight, rect);
+  renderView(session);
+}
+
+/** The page-image pane: the plain <img> with the detector's line boxes as
+ *  absolutely-positioned guides inside a transform-scaled layer
+ *  (2026-08-16: replaces OpenSeadragon — see the block comment above). */
+function openViewer(session, imgBox) {
+  const { batch, docIndex, pageIndex } = session;
+  const doc = batch.documents[docIndex];
+  const page = doc.pages[pageIndex];
+  const layout = doc.layouts?.[page] || null;
+
+  session.resizer?.disconnect();
+  session.imgBox = imgBox;
+  session.layer = null;
+  session.img = null;
+  session.imgSize = null;
+  session.view = null;
+  session.overlays = [];
+  session.contentTop = 0;
+  session.userMoved = false;
+
+  const layer = el("div", { class: "rv-layer" });
+  const img = el("img", { class: "rv-page", alt: "" });
+  layer.append(img);
+  imgBox.append(layer);
+  session.layer = layer;
+  session.img = img;
+
+  img.onload = () => {
+    session.imgSize = { w: img.naturalWidth, h: img.naturalHeight };
+    // The layer's coordinate system is IMAGE pixels: it must be explicitly
+    // sized to the image, or the absolute-position shrink-to-fit caps it at
+    // the pane width and the transform scales it AGAIN — the letter renders
+    // at pane×scale px, a 5× sliver pushed off-pane (walk finding, 2026-08-16:
+    // ElaineWalksReview2 measured the rendered <img> at 95×173px in a
+    // 491×595px pane — "the letter's not there"). The phone's "still not
+    // visible" was this, all along.
+    layer.style.width = `${img.naturalWidth}px`;
+    layer.style.height = `${img.naturalHeight}px`;
+    if (layout) {
+      layout.lines.forEach((line) => {
+        if (!line.box) return;
+        // a positional box (2026-08-16: the content association found no
+        // text anchor — the fallback assigned the next unmatched detection
+        // in reading order) renders dashed: the geometry is real, the line
+        // alignment is approximate — the reviewer must see the difference
+        const box = el("div", { class: "rv-lb" + (line.box_source === "positional" ? " rv-lb--pos" : "") });
+        box.dataset.line = String(line.index);
+        box.style.left = `${line.box[0]}px`;
+        box.style.top = `${line.box[1]}px`;
+        box.style.width = `${line.box[2] - line.box[0]}px`;
+        box.style.height = `${line.box[3] - line.box[1]}px`;
+        layer.append(box);
+        session.overlays.push(box);
+      });
+      session.overlays.forEach((box) => {
+        box.classList.toggle("rv-lb--sel", box.dataset.line === String(session.selLine));
+      });
+      // the page's writing starts at the first line box — the initial band
+      // anchors there (the top margin is blank, user 2026-08-16); a page
+      // whose content association found no boxes anchors at the detector's
+      // first line instead (page-02 — the rec model cannot read its cursive).
+      // The anchor gets a HALF-LINE margin: the rec's detection boxes sit
+      // below the true ink tops (page-05's first line "piano-practising
+      // facilities. At the" had NO box — its ink starts 83px above the
+      // topmost box; page-02's is 60px above), so without the margin the
+      // first line's top is clipped and the pan floor hides it entirely —
+      // the image "wouldn't let me scroll up at all" (user 2026-08-16).
+      session.contentTop = bandAnchor(layout) - bandMargin(layout);
+    }
+    if (session.selLine !== null) {
+      initialView(session, session.contentTop);
+      // the transcription pane is already scrolled to the selected line —
+      // align the image to it (the dual-pane link, same zoom)
+      syncImageFromTx(session);
+    } else {
+      initialView(session, session.contentTop);
+    }
+  };
+  img.onerror = () => {
+    layer.remove();
+    imgBox.append(el("div", { class: "rv-note" }, "Could not load the page image."));
+  };
+  img.src = `/api/sync/batch/${encodeURIComponent(batch.batchId)}/page/${encodeURIComponent(page)}`;
+
+  // The pane is HIDDEN while portrait shows the rotate prompt — a fit at
+  // open measures a 0-sized pane and lands wrong (the letter becomes a
+  // microscopic strip, user 2026-08-16). Re-fit when the pane resizes to a
+  // genuinely visible size, but never fight the reviewer's own pans/zooms
+  // after that.
+  session.resizer = new ResizeObserver(() => {
+    if (session.selLine !== null || session.userMoved) return;
+    if (imgBox.clientHeight <= 0) return;
+    const size = [imgBox.clientWidth, imgBox.clientHeight];
+    if (session.lastFitSize && size[0] === session.lastFitSize[0] && size[1] === session.lastFitSize[1]) return;
+    if (session.imgSize) initialView(session, session.contentTop ?? 0);
+  });
+  session.resizer.observe(imgBox);
+
+  // Drag to pan, pinch to zoom — pointer events give the persona's touch
+  // and the tester's mouse the same path (touch-action: none keeps the
+  // browser from hijacking the pan into a scroll). The move/up listeners
+  // live on window so the drag survives the pointer leaving the pane —
+  // and the flow works where pointer capture is flaky (2026-08-16: the
+  // verification browser drops the move/up stream after a capture call).
+  const pointers = new Map();
+  let dragStart = null;
+  let pinchStart = null;
+  const onMove = (e) => {
+    if (!pointers.has(e.pointerId) || !session.view) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1 && dragStart) {
+      const s = paneScale(session);
+      session.view.x = dragStart.view.x - (e.clientX - dragStart.x) / s;
+      session.view.y = dragStart.view.y - (e.clientY - dragStart.y) / s;
+      clampView(session); // never pan into the margins (user 2026-08-16)
+      session.userMoved = true;
+      renderView(session);
+    } else if (pointers.size === 2 && pinchStart && session.imgSize) {
+      const [a, b] = [...pointers.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      const k = pinchStart.dist ? dist / pinchStart.dist : 1;
+      const rect = imgBox.getBoundingClientRect();
+      const cx = (a.x + b.x) / 2 - rect.left;
+      const cy = (a.y + b.y) / 2 - rect.top;
+      const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+      session.view = zoomView(session.view, k, imgBox.clientWidth, imgBox.clientHeight, cx, cy, f.dw);
+      clampView(session); // never zoom off the page's edges
+      pinchStart = { dist, view: { ...session.view } };
+      session.userMoved = true;
+      renderView(session);
+    }
+  };
+  const onUp = (e) => {
+    pointers.delete(e.pointerId);
+    dragStart = null;
+    pinchStart = null;
+    if (!pointers.size) {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    }
+  };
+  const onDown = (e) => {
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 1) {
+      dragStart = { view: { ...session.view }, x: e.clientX, y: e.clientY };
+      pinchStart = null;
+    } else if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      dragStart = null;
+      pinchStart = { dist: Math.hypot(a.x - b.x, a.y - b.y) };
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  };
+  imgBox.addEventListener("pointerdown", onDown);
+  // clicking the image's text opens that line's edit (user 2026-08-16:
+  // "the edit box should open if I click on the corresponding text on the
+  // image"); a click on empty image (a margin) accepts the open edit. The
+  // click after a real drag is suppressed by the browser (a moved drag is
+  // not a click).
+  imgBox.addEventListener("click", (e) => {
+    e.stopPropagation(); // the imgPane's click-away must not fight this
+    if (!session.view || !session.imgSize) return;
+    const rect = imgBox.getBoundingClientRect();
+    const s = paneScale(session);
+    const imageX = session.view.x + (e.clientX - rect.left) / s;
+    const imageY = session.view.y + (e.clientY - rect.top) / s;
+    // the click must land INSIDE a line's box (x and y) — a click on the
+    // blank margin is a click-away, not a selection (user 2026-08-16)
+    const layout = doc.layouts?.[page];
+    let idx = null;
+    if (layout) {
+      const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+      for (const line of layout.lines) {
+        if (!line.box) continue;
+        const r = boxToDisplay(f, line.box);
+        if (imageX >= r.x && imageX <= r.x + r.width && imageY >= r.y && imageY <= r.y + r.height) {
+          idx = line.index;
+          break;
+        }
+      }
+    }
+    if (idx !== null) startEdit(session, idx);
+    else acceptEdit(session);
+  });
+}
+
+/** The line whose box's display-y range contains (or sits just below) the
+ *  image y — the image-pane-to-transcription mapping (the dual-pane link's
+ *  pure half, 2026-08-16). Exported for tests. */
+export function lineIndexForY(layout, rotation, imgSize, y) {
+  const f = displayFrame(rotation, imgSize.w, imgSize.h);
+  let firstBelow = null;
+  for (const line of layout.lines) {
+    if (!line.box) continue;
+    const rect = boxToDisplay(f, line.box);
+    if (y >= rect.y && y <= rect.y + rect.height) return line.index;
+    if (rect.y >= y && (firstBelow === null || rect.y < firstBelow)) firstBelow = line.index;
+  }
+  return firstBelow;
+}
+
+/** The transcription scrolled — pan the image so the top visible line's
+ *  box sits near the pane's top, at the SAME zoom (user, 2026-08-16: the
+ *  panes should show roughly the same text at once; and selecting must
+ *  never zoom). */
+function syncImageFromTx(session) {
+  if (session.syncLock || !session.view || !session.imgSize) return;
+  const txb = session.txBody;
+  if (!txb) return;
+  const { batch, docIndex, pageIndex } = session;
+  const doc = batch.documents[docIndex];
+  const page = doc.pages[pageIndex];
+  const layout = doc.layouts?.[page];
+  if (!layout) return;
+  // the top visible line: the first whose CONTENT position crosses the
+  // scroll — offsetTop is root-relative, scrollTop is content-relative,
+  // so subtract the pane's own root offset (2026-08-16: comparing them
+  // raw picked a line ~6 rows off on the phone — the panes drifted apart)
+  const base = txb.offsetTop;
+  let topEl = null;
+  for (const el of txb.querySelectorAll(".rv-line")) {
+    const contentPos = el.offsetTop - base;
+    if (contentPos + el.offsetHeight > txb.scrollTop) {
+      topEl = el;
+      break;
+    }
+  }
+  const line = layout.lines.find((l) => l.index === Number(topEl?.dataset.index));
+  if (!line?.box) return;
+  const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+  const rect = boxToDisplay(f, line.box);
+  const margin = session.imgBox.clientHeight * 0.08;
+  const y = Math.min(Math.max(rect.y - margin, 0), Math.max(f.dh - session.view.height, 0));
+  if (Math.abs(session.view.y - y) < 4) return;
+  // a LARGE movement (a selection jump, the initial align) eases out —
+  // never a dislocating leap (P18); the per-event scroll-follow steps are
+  // small and the 60fps scroll events smooth them, so the transition only
+  // lags the follow (2026-08-16)
+  if (Math.abs(session.view.y - y) > 150) {
+    session.layer.classList.add("rv-layer--smooth");
+    setTimeout(() => session.layer?.classList.remove("rv-layer--smooth"), 220);
+  }
+  session.syncLock = true;
+  session.view.y = y;
+  renderView(session);
+  session.syncLock = false;
+}
+
+/** The image view moved — scroll the transcription so the line at the
+ *  view's top is near the pane's top (the dual-pane link's other half).
+ *  DIRECT, not smooth: the image drag is direct manipulation and must
+ *  track 1:1 (P18 — no dislocating moves). The sync guard is held until
+ *  the NEXT frame so the programmatic scroll's own events cannot re-trigger
+ *  the image-side sync and fight the drag (2026-08-16: the guard cleared
+ *  too early — the panes ping-ponged, "jumps about disconcertingly" — the
+ *  established dual-pane pattern: isSyncing + requestAnimationFrame). */
+function syncTxFromImage(session) {
+  if (session.syncLock || !session.view || !session.imgSize) return;
+  const txb = session.txBody;
+  if (!txb) return;
+  const { batch, docIndex, pageIndex } = session;
+  const doc = batch.documents[docIndex];
+  const page = doc.pages[pageIndex];
+  const layout = doc.layouts?.[page];
+  if (!layout) return;
+  const idx = lineIndexForY(layout, session.rotation, session.imgSize, session.view.y);
+  if (idx === null) return;
+  const el = txb.querySelector(`[data-index="${idx}"]`);
+  if (!el) return;
+  const delta = el.getBoundingClientRect().top - txb.getBoundingClientRect().top;
+  if (Math.abs(delta) < 4) return;
+  session.syncLock = true;
+  txb.scrollTop += delta - 8; // a small breathing room at the pane's top
+  requestAnimationFrame(() => {
+    session.syncLock = false;
+  });
+}
+
+/** Clamp the view to the content's bounds — a pan can never scroll off
+ *  into the blank top margin (user, 2026-08-16: "it allows me to scroll
+ *  off the top"). The y-floor is the writing's top (the band anchor); the
+ *  rotated views' floor is the page's own top. */
+function clampView(session) {
+  if (!session.view || !session.imgSize) return;
+  const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+  session.view.x = Math.min(Math.max(session.view.x, 0), Math.max(f.dw - session.view.width, 0));
+  const floor = session.rotation % 180 === 0 ? Math.max(session.contentTop ?? 0, 0) : 0;
+  session.view.y = Math.min(Math.max(session.view.y, floor), Math.max(f.dh - session.view.height, floor));
+}
+
+/** The whole page back in view — the initial fit and the pane-resize
+ *  re-fit (the Fit button is gone, user 2026-08-16 — fingers pinch). The
+ *  band is pane-aware: on a short pane (the phone) it fits the letter's
+ *  WIDTH — the readable view; on a tall pane the whole page. The content
+ *  band is a rot-0 notion — after a rotation, fit the whole page. */
+function fitPage(session, { markMoved = true } = {}) {
+  if (!session.imgSize) return;
+  if (markMoved) session.userMoved = true;
+  const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+  const imgBox = session.imgBox;
+  const paneAspect = imgBox.clientWidth / Math.max(imgBox.clientHeight, 1);
+  if (session.rotation % 180 === 0 && paneAspect > (f.dw / f.dh) * 1.5) {
+    // the band whose WIDTH is the page's width and whose aspect matches the
+    // pane — fitBounds fits both dims, so the page fills the pane's width
+    const visibleH = f.dw / paneAspect;
+    // anchor the band at the writing, clamping to the page bounds
+    const bandTop = Math.min(Math.max(session.contentTop ?? 0, 0), Math.max(f.dh - visibleH, 0));
+    fitBounds(session, { x: 0, y: bandTop, width: f.dw, height: visibleH });
+  } else {
+    fitBounds(session, { x: 0, y: 0, width: f.dw, height: f.dh });
+  }
+}
+
+/** Turn the page 90° — a LOCAL view rotation, committed later (2026-08-16:
+ *  the front and back end are different boxes and the backend may be off,
+ *  so the press never waits on it: the view rotates instantly, and the
+ *  correction — the DESIRED rotation, not the image — queues on
+ *  navigation and syncs when the backend is reachable. Multiple presses
+ *  coalesce (the intent is the final rotation, so a half-corrected first
+ *  press never triggers a reprocess), and a wrong correction is just
+ *  another intent the backend applies as a delta. */
+function rotatePage(session) {
+  if (!session.imgSize) return;
+  session.userMoved = true;
+  session.rotation = ((session.rotation ?? 0) + 90) % 360;
+  // re-fit the view for the rotated frame — the view rect lives in the
+  // previous frame's coordinates, and rendering it through the new frame
+  // drew the page in the wrong place, unreadable (user 2026-08-16: "it's
+  // not drawn in the right place after I rotate it")
+  fitPage(session, { markMoved: false });
+  updateFixingState(session);
+}
+
+/** The in-place fixing state: the waiting note + the confirm gate follow
+ *  the LIVE rotation (the presses are uncommitted until the next
+ *  navigation) and the backend's reprocess state — no re-render needed. */
+function updateFixingState(session) {
+  const waiting = (session.rotation ?? 0) !== 0;
+  const fixing = waiting || session.pageProcessing === "transcribing";
+  if (session.confirmBtn) session.confirmBtn.disabled = fixing;
+  const note = session.fixingNote;
+  if (waiting && !note) {
+    session.fixingNote = el(
+      "div",
+      { class: "rv-note rv-note--fixing" },
+      "The page's fix is waiting to reach the archive's computer — the text below was read before the fix.",
+    );
+    session.root.querySelector(".rv-txpane")?.prepend(session.fixingNote);
+  } else if (!waiting && note) {
+    note.remove();
+    session.fixingNote = null;
+  }
+}
+
+// -- the rotation outbox (the JS mirror of the sync seam: a correction is
+//    never lost to an offline backend) ---------------------------------------
+
+/** A page being reworked on the backend: its orientation fix is queued
+ *  (the local outbox) or its transcription re-read is in flight — it must
+ *  not appear in the review flow until the backend has updated it (user
+ *  2026-08-16: "it shouldn't have shown me it at all once we'd established
+ *  that it needed rework on the back end"). */
+export function isReworking(batch, page) {
+  return (
+    pendingRotationQuarters(batch?.batchId, page) > 0 ||
+    (batch?.processing || {})[page] === "transcribing"
+  );
+}
+
+/** The flagged positions the reviewer can act on — the rework pages'
+ *  positions are excluded (their flags will change when the backend
+ *  re-reads them). */
+function availablePositions(session) {
+  return flaggedPositions(session.batch.documents, session.docIndex, session.edits).filter(
+    (p) => !isReworking(session.batch, p.page),
+  );
+}
+
+/** The next available page index strictly AFTER ``from`` (never backward —
+ *  a wrap would loop the confirm on a doc whose tail is all reworking);
+ *  -1 when the rest of the document is being reworked. */
+function nextAvailableAfter(doc, batch, from) {
+  for (let i = from + 1; i < doc.pages.length; i++) {
+    if (!isReworking(batch, doc.pages[i])) return i;
+  }
+  return -1;
+}
+
+const ROTATE_KEY = "loft-review-rotates";
+
+export function rotatePending() {
+  try {
+    const items = JSON.parse(localStorage.getItem(ROTATE_KEY) || "[]");
+    return Array.isArray(items) ? items : [];
+  } catch {
+    return [];
+  }
+}
+
+export function rotateUpsert(batchId, page, quarters) {
+  const items = rotatePending().filter((p) => !(p.batch_id === batchId && p.page === page));
+  items.push({ batch_id: batchId, page, quarters });
+  localStorage.setItem(ROTATE_KEY, JSON.stringify(items));
+}
+
+export function rotateDrop(batchId, page) {
+  localStorage.setItem(
+    ROTATE_KEY,
+    JSON.stringify(rotatePending().filter((p) => !(p.batch_id === batchId && p.page === page))),
+  );
+}
+
+/** The pending DESIRED cumulative rotation (quarter-turns) for a page. */
+export function pendingRotationQuarters(batchId, page) {
+  const item = rotatePending().find((p) => p.batch_id === batchId && p.page === page);
+  return item ? item.quarters % 4 : 0;
+}
+
+/** Push the queued corrections to the backend (the fast rotation applies
+ *  there; the slow re-transcription runs as its async job). Drop each
+ *  intent once the backend records it. Returns whether anything was
+ *  delivered. */
+async function syncRotations() {
+  let delivered = false;
+  for (const item of rotatePending()) {
+    try {
+      const res = await fetch(
+        `/api/sync/batch/${encodeURIComponent(item.batch_id)}/page/${encodeURIComponent(item.page)}/rotate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ quarters: item.quarters }),
+        },
+      );
+      if (!res.ok) throw new Error(`rotate rejected (${res.status})`);
+      rotateDrop(item.batch_id, item.page);
+      delivered = true;
+    } catch {
+      return delivered; // backend unreachable — leave the rest queued
+    }
+  }
+  return delivered;
+}
+
+/** Commit the current page's view rotation: the intent is the DESIRED
+ *  cumulative (the layout's applied rotation + the reviewer's delta), so
+ *  the backend applies an idempotent delta — a retried intent is a no-op.
+ *  A delivered intent is followed by a drafts refetch so the surface picks
+ *  up the reprocess state (the grey-out note) and the corrected layout. */
+async function queueRotation(session) {
+  const { batch, docIndex, pageIndex } = session;
+  const doc = batch.documents[docIndex];
+  if (!doc) return;
+  const page = doc.pages[pageIndex];
+  const rotation = session.rotation ?? 0;
+  if (rotation === 0) return;
+  const base = doc.layouts?.[page]?.rotation ?? 0;
+  const quarters = (((base + rotation) / 90) % 4 + 4) % 4;
+  if (quarters === 0) return;
+  rotateUpsert(batch.batchId, page, quarters);
+  const delivered = await syncRotations();
+  if (delivered) {
+    try {
+      const data = await (
+        await fetch(`/api/sync/batch/${encodeURIComponent(batch.batchId)}/drafts`, {
+          headers: { Accept: "application/json" },
+        })
+      ).json();
+      if (Array.isArray(data.documents)) {
+        session.batch.documents = data.documents;
+        session.batch.processing = data.processing || {};
+      }
+    } catch {
+      // the refetch is best-effort — the next visit refreshes
+    }
+  }
+}
+
+/** The default view: on a short pane (the phone's horizontal split) the
+ *  whole-page fit is a keyhole — fit the letter's WIDTH to the pane so a
+ *  readable band shows and the reviewer pans vertically (walk finding 8,
+ *  2026-08-15). The band is positioned at the page's CONTENT, not its top —
+ *  a scanned page's top margin is blank, and the first fit showed empty
+ *  paper (user 2026-08-16: "I don't see any of the actual document").
+ *  Tall panes keep the whole page in view. Records the pane size it fitted
+ *  against, so the resize handler can tell a real change from noise. */
+function initialView(session, contentTop = 0) {
+  if (!session.imgSize) return;
+  session.lastFitSize = [session.imgBox.clientWidth, session.imgBox.clientHeight];
+  session.contentTop = contentTop;
+  fitPage(session, { markMoved: false });
+}
+
+/** Highlight the line's box and the transcription line; the box list is
+ *  re-rendered by the caller when the surface is static. */
+function syncSelection(session, lineIndex) {
+  session.selLine = lineIndex;
+  session.editing = null;
+  session.overlays.forEach((box) => {
+    box.classList.toggle("rv-lb--sel", box.dataset.line === String(lineIndex));
+  });
+}
+
+/** Accept the open edit — the user's model (2026-08-16): one click edits,
+ *  a click away ACCEPTS; there is no separate save button. */
+function acceptEdit(session) {
+  if (session.editing === null) return;
+  const input = session.txBody?.querySelector(".rv-wfi");
+  if (input) {
+    applyEdit(session, session.editing, input.value);
+  } else {
+    session.editing = null;
+    renderTx(session);
+  }
+}
+
+/** One click on a line enters edit mode (user, 2026-08-16 — no separate
+ *  select-then-edit): the prior edit, if any, accepts first. The line's
+ *  box stays highlighted and the dual-pane link keeps its image region in
+ *  view at the same zoom (never a surprise zoom). */
+function startEdit(session, lineIndex) {
+  if (session.editing !== null && session.editing !== lineIndex) acceptEdit(session);
+  syncSelection(session, lineIndex);
+  session.editing = lineIndex;
+  renderTx(session);
+}
+
+/** Apply the line's corrected text — the line is now verified (its flags
+ *  stop counting), the fix persists (resumable, VR9), and the flag tour
+ *  continues AFTER this line (walk finding 2, 2026-08-15). */
+function applyEdit(session, lineIndex, text) {
+  const { batch, docIndex, pageIndex } = session;
+  const doc = batch.documents[docIndex];
+  const page = doc.pages[pageIndex];
+  const layout = doc.layouts?.[page] || null;
+  session.edits[page] = { ...(session.edits[page] || {}), [lineIndex]: text };
+  session.from = { page, line: lineIndex }; // the tour continues AFTER this line (finding 2)
+  saveEdits(batch.batchId, docIndex, session.edits);
+  session.editing = null;
+  session.selLine = lineIndex;
+  const toCheck = availablePositions(session).length;
+  session.fcBadge.textContent = String(toCheck);
+  session.nextBtn.disabled = toCheck === 0;
+  renderTx(session);
+  // The accept ADVANCES the review: a line down, eased, so the next
+  // content comes into view — the reviewer never reads a line whose
+  // original they can't see. The advance fires whenever the accepted line
+  // is NOT the top visible row (a line above it is still in view): three
+  // rows visible and the SECOND is ticked → scroll up a line so the next
+  // line becomes the middle row and the image (through the dual-pane
+  // link) shows its original centered (user 2026-08-16: "if I can see
+  // three rows of transcription and I tick the second one, it should
+  // scroll up a line, with nice animation and ease"). A TOP-row accept
+  // holds — the next line is already the second row. Without any of this
+  // the browser's scroll-anchoring (the edit row shrinks on accept)
+  // drifted the view UP (user 2026-08-16, earlier).
+  // The advance fires ONLY when the next line continues physically BELOW:
+  // the page's marginal notes sit far ABOVE the reading order (line 28's
+  // box at y2725 vs line 27's at y4142) — advancing to one yanked the
+  // image "WAY up to quite near the beginning again" (user 2026-08-16).
+  // A note's accept holds the view instead; the reviewer scrolls on.
+  requestAnimationFrame(() => {
+    const txb = session.txBody;
+    const el = txb?.querySelector(".rv-line--sel");
+    if (!txb || !el) return;
+    const tRect = txb.getBoundingClientRect();
+    const above = txb.querySelector(`.rv-line[data-index="${Number(el.dataset.index) - 1}"]`);
+    const hasLineAbove = above ? above.getBoundingClientRect().bottom > tRect.top : false;
+    if (!hasLineAbove) return; // the accepted line is the top visible row — hold
+    const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+    const current = layout?.lines.find((l) => l.index === Number(el.dataset.index));
+    const next = layout?.lines.find((l) => l.index === Number(el.dataset.index) + 1);
+    const curTop = current?.box ? boxToDisplay(f, current.box).y : null;
+    const nextTop = next?.box ? boxToDisplay(f, next.box).y : null;
+    if (nextTop === null || curTop === null || nextTop < curTop) return; // the next line is above — hold
+    txb.scrollBy({ top: el.offsetHeight + 8, behavior: "smooth" });
+  });
+}
+
+/** Mark a flagged line as CHECKED without changing its text — the line is
+ *  verified (its flags stop counting) and the verbatim text stays in the
+ *  confirmation (user, 2026-08-16: a line can be fine even with red
+ *  squiggles on it). The shared verified path: the edit is the line's own
+ *  text. */
+function applyMarkedFine(session, lineIndex) {
+  const { batch, docIndex, pageIndex } = session;
+  const doc = batch.documents[docIndex];
+  const page = doc.pages[pageIndex];
+  const layout = doc.layouts?.[page];
+  const line = layout?.lines.find((l) => l.index === lineIndex);
+  if (!line) return;
+  applyEdit(session, lineIndex, line.text);
+}
+
+/** Wrap the input's selection in a format marker (~~ strike, ~ underline)
+ *  and keep the selection on the wrapped text — the edit row's format
+ *  buttons (2026-08-16). With no selection, drop the markers at the cursor
+ *  with the cursor between them. */
+function wrapSelection(input, marker) {
+  const s = input.selectionStart;
+  const e = input.selectionEnd;
+  const text = input.value;
+  if (e > s) {
+    input.value = text.slice(0, s) + marker + text.slice(s, e) + marker + text.slice(e);
+    input.selectionStart = s + marker.length;
+    input.selectionEnd = e + marker.length;
+  } else {
+    input.value = text.slice(0, s) + marker + marker + text.slice(s);
+    input.selectionStart = input.selectionEnd = s + marker.length;
+  }
+  input.focus();
+}
+
+/** Render a token with its ~~struck~~ spans as line-through text — the
+ *  VLM marks crossed-out words with tildes; the reviewer must see them as
+ *  crossed out, not literal tildes (walk finding 5, 2026-08-15). */
+/** Exported for tests: the format split of a token — ~~struck~~ (the
+ *  crossed-out words) and ~underlined~ (underlined in the letter, user
+ *  2026-08-16) — the surface renders them, never literal tildes. */
+export function formatParts(text) {
+  const parts = [];
+  const re = /~~([^~]+)~~|~([^~]+)~/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push({ text: text.slice(last, m.index), kind: null });
+    parts.push({ text: m[1] ?? m[2], kind: m[1] !== undefined ? "struck" : "underlined" });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last), kind: null });
+  if (!parts.length) parts.push({ text, kind: null });
+  return parts;
+}
+
+/** The ~~struck~~-only split (the flagged word buttons — an underlined
+ *  word inside a flag is vanishingly rare). Kept for its tests. */
+export function strikeParts(text) {
+  return formatParts(text).map((p) => ({ text: p.text, struck: p.kind === "struck" }));
+}
+
+function wordNode(word, { flagged, onclick }) {
+  const children = formatParts(word).map((p) =>
+    p.kind === "struck"
+      ? el("span", { class: "rv-struck" }, p.text)
+      : p.kind === "underlined"
+        ? el("span", { class: "rv-underlined" }, p.text)
+        : p.text,
+  );
+  return flagged ? el("button", { class: "rv-wc", onclick }, children) : el("span", {}, children);
+}
+
+/** Render the transcription pane: verbatim lines, flagged words, the
+ *  selected line highlighted, the editing line as an input. The scroll
+ *  position survives the re-render — replacing the children resets it,
+ *  which drifted the panes apart until the next scroll re-aligned them
+ *  (user 2026-08-16: "the two views got out of sync somehow"). */
+function renderTx(session) {
+  const { batch, docIndex, pageIndex } = session;
+  const doc = batch.documents[docIndex];
+  const page = doc.pages[pageIndex];
+  const layout = doc.layouts?.[page] || null;
+  const pageEdits = session.edits[page] || {};
+  const txb = session.txBody;
+  const savedScroll = txb?.scrollTop ?? 0;
+
+  session.txBody.replaceChildren();
+  const lines = layout
+    ? layout.lines
+    : (doc.texts?.[page] || "").split("\n").filter(Boolean).map((text, i) => ({ index: i, text, box: null, words: [] }));
+
+  lines.forEach((line) => {
+    const corrected = pageEdits[line.index];
+    const shown = corrected ?? line.text;
+    const sel = session.selLine === line.index ? " rv-line--sel" : "";
+    const hasFlags = line.words.some((w) => w.conf === 0) && corrected === undefined;
+    // one dense row: the text + the actions — no number gutter (the line
+    // numbers ate screen real estate for nothing, user 2026-08-16: "why?")
+    const lineEl = el("div", { class: `rv-line${sel}` });
+    lineEl.dataset.index = String(line.index); // the dual-pane link's anchor
+
+    if (session.editing === line.index) {
+      const input = el("input", {
+        class: "rv-wfi",
+        value: shown,
+        // enterkeyhint "done": the mobile keyboard's action key becomes
+        // Done, which dismisses the keyboard (user 2026-08-16: "no get rid
+        // of keyboard button on the keyboard — is that a setting?")
+        enterkeyhint: "done",
+        onkeydown: (e) => {
+          if (e.key === "Enter") applyEdit(session, line.index, input.value);
+          else if (e.key === "Escape") {
+            // the one way OUT without accepting — the edit is discarded
+            session.editing = null;
+            renderTx(session);
+          }
+        },
+      });
+      lineEl.append(el("div", { class: "rv-wfw" }, [input]));
+
+      // The format controls live IN the edit row — no floating menu
+      // (2026-08-16: the platform's edit menu — cut/copy/paste/select-all —
+      // appears on selection and cannot be suppressed or extended; a second
+      // popup duplicating it was wrong — "two popups looking slightly
+      // different"). The row adds what the platform cannot: the strike and
+      // underline conventions. They apply to the current selection; with no
+      // selection they drop the markers at the cursor.
+      const strikeBtn = el("button", {
+        class: "rv-fmtbtn rv-fmtbtn--row",
+        title: "Strike through the selection (~~word~~)",
+        onclick: (e) => { e.stopPropagation(); wrapSelection(input, "~~"); },
+      }, "S̶");
+      const underBtn = el("button", {
+        class: "rv-fmtbtn rv-fmtbtn--row",
+        title: "Underline the selection (~word~)",
+        onclick: (e) => { e.stopPropagation(); wrapSelection(input, "~"); },
+      }, "U");
+      input.after(strikeBtn, underBtn);
+      input.focus();
+    } else {
+      const textEl = el("span", { class: "rv-lt" });
+      // An edited line shows the reviewer's OWN corrected text — the red
+      // words are gone (the line is verified). The layout's word buttons
+      // render only for lines the reviewer hasn't touched (walk finding 4,
+      // 2026-08-16: the fix was stored but never displayed — "did it save
+      // or not?").
+      if (corrected !== undefined) {
+        textEl.append(...formatParts(shown).map((p) =>
+          p.kind === "struck"
+            ? el("span", { class: "rv-struck" }, p.text)
+            : p.kind === "underlined"
+              ? el("span", { class: "rv-underlined" }, p.text)
+              : p.text,
+        ));
+      } else if (line.words.length) {
+        line.words.forEach((word, wi) => {
+          const node = wordNode(word.word, {
+            flagged: word.conf === 0,
+            onclick: (e) => {
+              e.stopPropagation(); // the line's own click would select and cancel the edit
+              startEdit(session, line.index);
+            },
+          });
+          textEl.append(node, wi < line.words.length - 1 ? " " : "");
+        });
+      } else {
+        textEl.append(...formatParts(shown).map((p) =>
+          p.kind === "struck"
+            ? el("span", { class: "rv-struck" }, p.text)
+            : p.kind === "underlined"
+              ? el("span", { class: "rv-underlined" }, p.text)
+              : p.text,
+        ));
+      }
+      lineEl.append(textEl);
+      // "mark this line fine" — a checked line with red squiggles needs no
+      // text change (user, 2026-08-16): the verbatim text counts as verified
+      if (hasFlags) {
+        lineEl.append(
+          el("button", {
+            class: "rv-ok-btn",
+            title: "Mark this line as fine",
+            onclick: (e) => {
+              e.stopPropagation();
+              applyMarkedFine(session, line.index);
+            },
+          }, "✓"),
+        );
+      }
+      // every line is clickable — one click enters edit (user, 2026-08-16);
+      // clicking the already-editing line's own input must not re-render
+      lineEl.addEventListener("click", () => {
+        if (session.editing === line.index) return;
+        startEdit(session, line.index);
+      });
+    }
+    session.txBody.append(lineEl);
+  });
+  // restore the scroll — a re-render of the same content must not move the
+  // reader (P18: no dislocating moves); the selected line's scrollIntoView
+  // below overrides it only when the SELECTION changed (an edit-accept of
+  // the same line must not yank the view back to it)
+  if (savedScroll > 0 && txb.scrollHeight > savedScroll) txb.scrollTop = savedScroll;
+  if (session.selLine !== null && session.selLine !== session.lastSelRendered) {
+    session.txBody.querySelector(".rv-line--sel")?.scrollIntoView({ block: "nearest" });
+  }
+  session.lastSelRendered = session.selLine;
+}
+
+/** Jump to the next flagged word (across pages), opening its line for
+ *  editing; wraps when the document is done. */
+async function jumpNextFlag(session) {
+  acceptEdit(session);
+  await queueRotation(session);
+  const positions = availablePositions(session);
+  const pos = nextFlagged(positions, session.from);
+  if (!pos) return;
+  session.from = pos;
+  const { batch } = session;
+  const doc = batch.documents[session.docIndex];
+  session.pageIndex = doc.pages.indexOf(pos.page);
+  session.selLine = pos.line;
+  session.editing = pos.line;
+  renderSurface(session.root, session);
+}
+
+/** Confirm & Next: the last page confirms the document through the sync
+ *  seam (outbox fallback), then moves on; earlier pages just advance. The
+ *  confirmation is blocked while the page's orientation fix is in flight
+ *  (the text would be the stale pre-fix reading). */
+async function confirmNext(session) {
+  const { batch, docIndex } = session;
+  const doc = batch.documents[docIndex];
+  const page = doc.pages[session.pageIndex];
+  const pageState = (batch.processing || {})[page];
+  if (pageState === "transcribing" || (session.rotation ?? 0) !== 0) return;
+  acceptEdit(session);
+  await queueRotation(session);
+  if (session.pageIndex < doc.pages.length - 1) {
+    // advance to the next AVAILABLE page — a page being reworked on the
+    // backend is skipped (the reviewer must get past it to the next one,
+    // user 2026-08-16)
+    const next = nextAvailableAfter(doc, batch, session.pageIndex);
+    session.pageIndex = next === -1 ? session.pageIndex + 1 : next;
+    session.selLine = null;
+    session.editing = null;
+    renderSurface(session.root, session);
+    return;
+  }
+  const payload = {
+    batch_id: batch.batchId,
+    doc_index: docIndex + 1, // 1-based, matches the CLI gate
+    pages: doc.pages,
+    text: correctedDocumentText(doc, session.edits),
+    status: "confirmed",
+    confirmed_at: new Date().toISOString(),
+  };
+  const pushed = await confirmDocument(payload);
+  if (pushed) clearEdits(batch.batchId, docIndex);
+  doc.status = "confirmed";
+  session.root
+    .querySelector(".rv-txa")
+    ?.replaceChildren(
+      el(
+        "div",
+        { class: "rv-note rv-note--ok" },
+        pushed
+          ? `Document ${docIndex + 1} of ${batch.documents.length} saved to the family archive.`
+          : "Saved on this device — will sync when the archive's computer is reachable.",
+      ),
+    );
+  const next = docIndex + 1;
+  if (next < batch.documents.length) {
+    setTimeout(() => openReview(session.root, batch, next), 1800);
+  } else {
+    setTimeout(() => renderBatch(session.root, batch.batchId), 2200);
+  }
+}
+
+// -- the view's own wiring (app.js calls cleanup before each route) -----------
+
+let currentSession = null; // the live surface (cleanup disconnects its observer)
+
+export function cleanup() {
+  // the pane's ResizeObserver and the reprocess poll are the only
+  // long-lived resources — the DOM itself is discarded by the router's
+  // replaceChildren (2026-08-16: the OpenSeadragon viewer is gone; a plain
+  // <img> needs no teardown)
+  clearInterval(currentSession?.processingTimer);
+  currentSession?.resizer?.disconnect();
+  currentSession = null;
+}

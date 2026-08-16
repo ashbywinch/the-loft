@@ -5,6 +5,7 @@ import { memoriesSection } from "../memories.js";
 import { assetUrl, published } from "../data.js";
 import { renderMarkdown } from "../markdown.js";
 import { aggregate, sortedCounts } from "../connections.js";
+import { canGoBackInApp } from "../router.js";
 
 export function render(main, _ctx, state) {
   main.append(header("Themes", state));
@@ -41,7 +42,7 @@ export function themePage(main, ctx, state) {
     main.append(header("Themes", state), el("p", { class: "empty" }, "Not found."));
     return;
   }
-  main.append(header(theme.title, state));
+  main.append(header(theme.title, state, canGoBackInApp() ? true : "Themes"));
   main.append(el("p", { class: "story lede" }, theme.subtitle));
   if (theme.note) {
     main.append(
@@ -108,7 +109,7 @@ export function reader(main, ctx, state) {
     ? theme.items.map((entry) => ({ entry, item: state.byId.get(entry.id) })).filter((r) => r.item)
     : [];
   if (!theme || rows.length < 2) {
-    main.append(header("Stories"), el("p", { class: "empty" }, "Not enough items to read yet."));
+    main.append(header("Stories", state, canGoBackInApp() ? true : "Stories"), el("p", { class: "empty" }, "Not enough items to read yet."));
     return;
   }
 

@@ -11,6 +11,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
+# vendored from build-tools @ 5668162 (and the .venv-htr-only stage) —
+# upstream/foreign-interpreter code, not subject to this repo's module
+# contract; the same set ruff and pyrefly exclude
+VENDORED = {"code_health.py", "check_records.py", "layout_detect.py"}
+
 
 def test_every_tools_module_has_a_docstring() -> None:
     """docs/coding-standards.md: every public module gets a docstring
@@ -20,7 +25,7 @@ def test_every_tools_module_has_a_docstring() -> None:
     missing = [
         path.name
         for path in sorted((REPO / "tools").glob("*.py"))
-        if not path.read_text(encoding="utf-8").lstrip().startswith(('"""', "'''"))
+        if path.name not in VENDORED and not path.read_text(encoding="utf-8").lstrip().startswith(('"""', "'''"))
     ]
     assert not missing, f"tools modules missing a docstring: {missing}"
 

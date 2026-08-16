@@ -39,7 +39,8 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | Real-import lessons (worked example) | private review doc, not shipped |
 | UI / visual conventions (the pattern library) | `docs/UI.md` |
 | Chat / capture-dialog conventions | `docs/CHAT-UX.md` |
-| UX loop working log (statuses, open items) | `docs/plans/ux-fixes-plan.md` |
+|UX loop working log (statuses, open items)|`docs/plans/ux-fixes-plan.md`|
+|Design decisions with rationale (the register)|`docs/plans/design-decisions.md`|
 | Precedent research | `docs/PRECEDENT.md` |
 | Project plan, slices, urgency | `docs/plans/PLAN.md` |
 | Code conventions | `docs/coding-standards.md` |
@@ -83,9 +84,6 @@ default. Real content never lives in code (`docs/coding-standards.md`).
   runs the full gate — including the no-PII guard — before CI goes green.
   No rebuild, no force-push, no release step: the public history is clean
   (it starts at the scrubbed root), so ordinary commits accumulate on it.
-- The phone's view is the LAN server (`make serve`, hub-managed
-  `loft-serve`) — restart it after a change; the app is served without a
-  build step, so a browser refresh picks up new code.
 
 ## Secrets
 

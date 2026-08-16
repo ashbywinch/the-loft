@@ -4,7 +4,7 @@
 
 import { el, header, chip, decadeList, itemCard } from "../ui.js";
 import { memoriesSection } from "../memories.js";
-import { navigate } from "../router.js";
+import { navigate , canGoBackInApp } from "../router.js";
 import { aggregate, artifacts as artifactsOf, evidenceFor, personAtPlace, refDateFor, reflectionsFor, sortedCounts, windowFromQuery } from "../connections.js";
 import { yearOf } from "../date.js";
 import { catalogued, published } from "../data.js";
@@ -492,7 +492,7 @@ export function placePage(main, ctx, state) {
       item.places.some((p) => p.id === place.id && p.people?.includes(personFilter)),
     );
   const personName = personFilter ? (state.people.find((p) => p.id === personFilter)?.name ?? personFilter) : null;
-  main.append(header(place.name, state));
+  main.append(header(place.name, state, canGoBackInApp() ? true : "Places"));
   main.append(el("p", { class: "story lede" }, place.note));
 
   const agg = aggregate(allItems);

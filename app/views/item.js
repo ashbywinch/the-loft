@@ -7,6 +7,7 @@ import { renderMarkdown } from "../markdown.js";
 import { assetUrl, catalogued, isMine, published as publishedItems, typeLabel } from "../data.js";
 import { clarificationsFor, evidenceFor, referencedBy } from "../connections.js";
 import { dateLabel, sortByDate, yearOf } from "../date.js";
+import { canGoBackInApp } from "../router.js";
 
 export function render(main, ctx, state) {
   const item = state.byId.get(ctx.arg);
@@ -19,7 +20,7 @@ export function render(main, ctx, state) {
   // the title and the unverified words never render for a visitor
   // (reviewer, 2026-08-03)
   const mine = item.status === "draft" && isMine(item, state);
-  main.append(header(mine || item.status !== "draft" ? item.title : "Unfinished story", state));
+  main.append(header(mine || item.status !== "draft" ? item.title : "Unfinished story", state, canGoBackInApp() ? true : "Home"));
   // the description is the "what is this" line — under the title, above the
   // scan and the transcription (2026-08-05); a draft's words never render
   // for anyone but its narrator, same gate as the title (review, 2026-08-07)

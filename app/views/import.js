@@ -25,6 +25,7 @@ import { el, header } from "../ui.js";
 import { proposedPeople } from "../data.js";
 import { chatBox } from "../chat.js";
 import { itemInvolves } from "../connections.js";
+import { canGoBackInApp } from "../router.js";
 
 export function render(main, ctx, state) {
   const session = (state.imports ?? []).find((s) => s.id === ctx.arg);
@@ -32,7 +33,7 @@ export function render(main, ctx, state) {
     main.append(header("The import", state), el("p", { class: "empty" }, "Not found."));
     return;
   }
-  main.append(header(session.title, state));
+  main.append(header(session.title, state, canGoBackInApp() ? true : "Review"));
   const pending = proposedPeople(state);
   // the transcript lives on the page of the artifact being reviewed — this
   // walk's decisions so far, named and dated (2026-08-09: the storage is
@@ -59,10 +60,15 @@ export function render(main, ctx, state) {
     );
     return;
   }
+  const countEl = el(
+    "h2",
+    { class: "block-title" },
+    `${pending.length} ${pending.length === 1 ? "link" : "links"} awaiting a decision`,
+  );
   main.append(
     el("section", { class: "block import-pending" }, [
-      el("h2", { class: "block-title" }, `${pending.length} ${pending.length === 1 ? "link" : "links"} awaiting a decision`),
-      reviewSession(state, session),
+      countEl,
+      reviewSession(state, session, countEl),
     ]),
   );
 }
@@ -84,7 +90,7 @@ function decisionLine(name, d) {
 
 // -- the review conversation — one chat walks the whole session --------------
 
-function reviewSession(state, session) {
+function reviewSession(state, session, countEl) {
   const chat = chatBox();
   const wrap = el("div", { class: "import-review" });
   wrap.append(chat.node);
@@ -328,9 +334,15 @@ function reviewSession(state, session) {
       else if (decision === "estimated") tally.estimated += 1;
       else tally.deleted += 1;
       decidedIds.add(p.id); // a kept person stays proposed — the walk must not re-ask them (2026-08-10 review)
+      // the count follows the SERVER's truth — a "leave for later" person
+      // stays proposed and still awaits, an estimated/attested one leaves
+      // the queue (user 2026-08-16: the count must always be accurate)
+      if (result.pending !== null && countEl) {
+        countEl.textContent = `${result.pending} ${result.pending === 1 ? "link" : "links"} awaiting a decision`;
+      }
       // the confirmation is the server's rendered words — shown verbatim,
       // recorded verbatim (2026-08-09)
-      chat.addAssistant(result === true ? `Done — ${p.name} is recorded.` : result);
+      chat.addAssistant(result.message === true ? `Done — ${p.name} is recorded.` : result.message);
       advance();
     } else {
       chat.addAssistant("That didn't save — the server said no. Try again?");
@@ -346,6 +358,9 @@ function reviewSession(state, session) {
     if (ok) {
       tally.pending += 1;
       decidedIds.add(p.id); // still proposed in the table — never re-ask this walk (2026-08-10 review)
+      if (ok.pending !== null && countEl) {
+        countEl.textContent = `${ok.pending} ${ok.pending === 1 ? "link" : "links"} awaiting a decision`;
+      }
       chat.addAssistant(`${p.name} stays out of the tree for now — we can pick it up later.`);
       advance();
     } else {
@@ -365,6 +380,10 @@ function reviewSession(state, session) {
     chat.setBusy(false); // success paths never cleared busy — the next
     // person's chips stayed hidden and the walkthrough dead-ended
     const pending = proposedPeople(state).filter((p) => !decidedIds.has(p.id));
+    // NOTE: the "N links awaiting a decision" count is NOT updated here —
+    // it follows the server's post-decision truth from the decide response
+    // (a left-for-later person still awaits; the client's stale projection
+    // would guess wrong — user 2026-08-16)
     if (!pending.length) {
       const summary = `That's everyone — ${tally.attested ? `${tally.attested} recorded as facts, ` : ""}${tally.estimated ? `${tally.estimated} recorded as guesses, ` : ""}${tally.pending ? `${tally.pending} left for later, ` : ""}${tally.deleted ? `${tally.deleted} deleted` : "and nothing deleted"} — the rest were already in the tree, so nothing changed for them.`;
       chat.addAssistant(summary);
@@ -472,8 +491,11 @@ async function decide(state, sessionId, person, decision, basis = null) {
     if (proposedPeople(state).length === 0) {
       state.imports = (state.imports ?? []).map((s) => (s.id === sessionId && s.status === "pending" ? { ...s, status: "reviewed" } : s));
     }
-    // the confirmation's rendered words — shown verbatim, recorded verbatim
-    return body.message ?? true;
+    // the confirmation's rendered words — shown verbatim, recorded verbatim;
+    // the server's accurate remaining count rides along (user 2026-08-16:
+    // the count must always be accurate — the client's projection is stale
+    // until reload)
+    return { message: body.message ?? true, pending: typeof body.pending === "number" ? body.pending : null };
   } catch (error) {
     console.error("import review: decide failed", error);
     return null;

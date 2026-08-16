@@ -6,6 +6,7 @@ import { aggregate, clarificationsFor, evidenceFor, itemDateFor, reflectionsFor,
 import { ageInYears, dateLabel } from "../date.js";
 import { catalogued, published } from "../data.js";
 import { buildTree, defaultFocus, familyIds, narratorId } from "./tree.js";
+import { canGoBackInApp } from "../router.js";
 
 export function render(main, _ctx, state) {
   main.append(header("Family Tree", state));
@@ -48,7 +49,7 @@ export function personPage(main, ctx, state) {
   const items = catalogued(state.items)
     .filter((item) => itemInvolves(item, person.id))
     .sort((a, b) => itemDateFor(a, person).localeCompare(itemDateFor(b, person)));
-  main.append(header(person.name, state));
+  main.append(header(person.name, state, canGoBackInApp() ? true : "Family Tree"));
   if (person.status === "proposed") {
     // a proposed person's facts are a proposal, not attested record — the
     // page is the review surface, so they render, visibly marked (2026-08-06)

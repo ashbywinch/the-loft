@@ -112,6 +112,7 @@ def memory_outputs(client: AIClient, default_knowledge: dict[str, list[dict[str,
     return {f.name: memory_evals.run_flow(client, f, default_knowledge) for f in memory_evals.FLOWS}
 
 
+@pytest.mark.eval
 @pytest.mark.archive
 @pytest.mark.eval_memory
 @pytest.mark.skipif(
@@ -124,6 +125,7 @@ def test_memory_contract(memory_outputs: dict[str, dict[str, Any]], flow: memory
     assert not errors, "\n".join(errors)
 
 
+@pytest.mark.eval
 @pytest.mark.archive
 @pytest.mark.eval_memory
 @pytest.mark.skipif(

@@ -65,6 +65,31 @@ def test_disk_store_write_leaves_no_temp_siblings(tmp_path: Path) -> None:
     assert leftovers == []  # write-then-rename: readers never see temp files
 
 
+def test_atomic_write_publishes_the_umask_derived_mode(tmp_path: Path) -> None:
+    # the published file must be readable by other users (a second account,
+    # a sync process) — owner-only (0600, mkstemp's default) broke that
+    # (review, 2026-08-14), and the os.umask() dance that fixed it raced
+    # with concurrent writers (review, 2026-08-15: a zeroed process umask
+    # publishes 0o666 in an intimate archive). The kernel-umask mode at
+    # creation is both.
+    from tools.atomic import atomic_write
+
+    target = tmp_path / "a.json"
+    atomic_write(target, "v1")
+    mode = target.stat().st_mode & 0o777
+    assert mode == 0o666 & ~_current_umask()
+    assert mode != 0o600  # never owner-only
+    assert mode != 0o666  # and never world-writable
+
+
+def _current_umask() -> int:
+    import os
+
+    umask = os.umask(0)
+    os.umask(umask)
+    return umask
+
+
 def test_disk_store_rejects_paths_escaping_the_root(tmp_path: Path) -> None:
     store = DiskStore(tmp_path)
     with pytest.raises(StoreError):

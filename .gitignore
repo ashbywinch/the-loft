@@ -58,3 +58,7 @@ docs/IMPORT-WORKED-EXAMPLE.md
 # The interview research records — the value is in the real interviews,
 # so they stay private like the worked example (user, 2026-08-08).
 interviews/
+
+# The review wireframes — real family letters, never pushed (user,
+# 2026-08-16); the public repo ships only the design rules they informed.
+docs/wireframes/

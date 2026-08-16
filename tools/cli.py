@@ -17,6 +17,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import Any
 
 from tools.archive import Archive
 from tools.loft_paths import ARCHIVE_DIR
@@ -36,9 +37,63 @@ def cmd_publish(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_serve(args: argparse.Namespace) -> int:
+def serve_app() -> Any:
+    """The uvicorn factory for --reload (2026-08-16: make serve always
+    auto-reloads the backend on source changes). The reloader re-imports
+    this module and calls the factory fresh in a subprocess — the server's
+    configuration travels via the environment the CLI set before running."""
+    import os
+
     from tools.ai_client import AIClient, AIClientError
-    from tools.server import Server
+    from tools.server import build_app
+
+    try:
+        client = AIClient()  # the capture API needs the key; absent -> the API 503s
+    except AIClientError:
+        client = None
+    return build_app(
+        DiskStore(Path(os.environ["LOFT_ARCHIVE"])),
+        Path(os.environ["LOFT_DATA"]),
+        client,
+        Path(os.environ["LOFT_APP"]),
+    )
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    import os
+
+    from tools.ai_client import AIClient, AIClientError
+    from tools.server import Server, _lan_urls
+
+    if args.reload:
+        # auto-reload: uvicorn needs the app as an import string + factory —
+        # the config rides the environment into the reloader's subprocess
+        os.environ["LOFT_ARCHIVE"] = str(args.archive)
+        os.environ["LOFT_DATA"] = str(args.data)
+        os.environ["LOFT_APP"] = str(args.app)
+        import uvicorn
+
+        if args.host == "0.0.0.0":
+            for url in _lan_urls(args.port):
+                print(f"Serving {args.app} at {url} (no-cache, reload on)")
+        else:
+            print(f"Serving {args.app} on {args.host}:{args.port} (no-cache, reload on)")
+        uvicorn.run(
+            "tools.cli:serve_app",
+            factory=True,
+            reload=True,
+            # Watch only the backend source — the whole-repo watch scans and
+            # reloads on .venv/conda-tools churn, and uvicorn's reload-exclude
+            # patterns can't match mid-path dirs (Path.match is right-aligned;
+            # absolute patterns are rejected outright, 2026-08-16). Narrow
+            # roots are the honest fix: tools/ + tests/ are all the backend
+            # has; the frontend is served without a build step.
+            reload_dirs=[str(ROOT / "tools"), str(ROOT / "tests")],
+            host=args.host,
+            port=args.port,
+            log_level="info",
+        )
+        return 0
 
     try:
         client = AIClient()  # the capture API needs the key; absent -> the API 503s
@@ -121,6 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--archive", default=str(ARCHIVE_DIR))
     p.add_argument("--data", default="app/data")
     p.add_argument("--app", default=str(ROOT / "app"))
+    p.add_argument("--reload", action="store_true", help="auto-reload the backend on source changes (make serve)")
     p.set_defaults(fn=cmd_serve)
 
     p = sub.add_parser("create-demo", help="seed a demo archive with fictional content and publish")

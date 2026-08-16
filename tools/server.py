@@ -14,16 +14,18 @@ narrator from it — never from a client-claimed name.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
 import socket
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from tools import auth, memory, review
@@ -32,9 +34,21 @@ from tools.archive import Archive, ArchiveError, split_content
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.memory import ElicitationError, Knowledge
 from tools.records import Person, ReviewContext, ReviewDecision
-from tools.registry import RegistryError
+from tools.registry import RegistryError, list_batches, load_batch
 from tools.store import FileStore
-from tools.sync import Outbox, draft_payloads, record_confirmation, validate_confirmation
+from tools.sync import (
+    BATCH_ID,
+    Outbox,
+    demote_stale_jobs,
+    draft_payloads,
+    page_job_state,
+    record_confirmation,
+    reprocess_page_transcription,
+    rotate_page,
+    safe_page_name,
+    set_page_job,
+    validate_confirmation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -375,7 +389,10 @@ def build_app(
         archive.record_review_message(session_id, "assistant", message, when)
         archive.refresh_import_status()  # the last pending person completes the session
         archive.publish(data_dir)
-        return {"ok": True, "person": person, "message": message}
+        # the accurate remaining count — the server's post-decision truth
+        # (the client's projection is stale until reload; the count must
+        # always be right, user 2026-08-16)
+        return {"ok": True, "person": person, "message": message, "pending": len(queue.pending)}
 
     @app.post("/api/review/text", response_model=None)
     def review_text(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
@@ -618,15 +635,96 @@ def build_app(
     # -- sync (TECH-SPEC §16.15: the backend owns the write seam; the
     # frontend proposes, the backend records; the outbox is the catch-up) --
 
+    @app.get("/api/sync/batches")
+    def sync_batches(request: Request) -> Any:
+        """Every adopted batch, newest first — the review surface's batch
+        list (the batch label + status ride the registry record)."""
+        if session_user(request) is None:
+            return JSONResponse({"ok": False, "error": "sign in to read the batches"}, status_code=401)
+        try:
+            return {"batches": list_batches(registry_dir)}
+        except RegistryError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
     @app.get("/api/sync/batch/{batch_id}/drafts")
     def sync_drafts(batch_id: str, request: Request) -> Any:
-        """The machine drafts the review surface reads (guesses + boundaries)."""
+        """The machine drafts the review surface reads (guesses + boundaries
+        + layout, TECH-SPEC §16.16), with the registry's per-document
+        review status merged in (the registry is the status' home — the
+        guess stage's boundaries.json never changes after review)."""
         if session_user(request) is None:
             return JSONResponse({"ok": False, "error": "sign in to read the drafts"}, status_code=401)
         try:
-            return {"batch_id": batch_id, "documents": draft_payloads(batch_id, work_dir)}
+            record = load_batch(batch_id, registry_dir)
+            by_pages = {tuple(b.get("pages", [])): b.get("status", "review") for b in (record.get("boundaries") or [])}
+            documents = []
+            for document in draft_payloads(batch_id, work_dir):
+                documents.append(
+                    {
+                        **document,
+                        "status": by_pages.get(tuple(document.get("pages", [])), "review"),
+                    }
+                )
+            return {
+                "batch_id": batch_id,
+                "label": record.get("label"),
+                "documents": documents,
+                "processing": page_job_state(batch_id, work_dir),
+            }
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
+        except RegistryError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+
+    @app.get("/api/sync/batch/{batch_id}/page/{page}")
+    def sync_page(batch_id: str, page: str, request: Request) -> Any:
+        """The oriented page image the review surface renders (auth-gated
+        like the drafts; batch id and page name become path segments —
+        validated by the sync contract's guard, 2026-08-15)."""
+        if session_user(request) is None:
+            return JSONResponse({"ok": False, "error": "sign in to read the pages"}, status_code=401)
+        if not BATCH_ID.match(batch_id) or not safe_page_name(page):
+            return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
+        image = work_dir / batch_id / "oriented" / page
+        if not image.is_file():
+            return JSONResponse({"error": "no such page"}, status_code=404)
+        return FileResponse(image)
+
+    @app.post("/api/sync/batch/{batch_id}/page/{page}/rotate")
+    def sync_rotate_page(batch_id: str, page: str, request: Request, body: dict[str, Any] | None = None) -> Any:
+        """The reviewer's orientation fix (2026-08-16). The intent is the
+        DESIRED cumulative rotation in quarter-turns — no image travels, the
+        backend has it (the front and back end are different boxes). The
+        fast rotation (image + box remap) applies synchronously; the slow
+        re-transcription runs as the async job, the page marked
+        "transcribing" in the drafts payload meanwhile — the surface greys
+        the document with a note and the reviewer navigates on."""
+        if session_user(request) is None:
+            return JSONResponse({"ok": False, "error": "sign in to fix pages"}, status_code=401)
+        quarters = 1
+        if body and isinstance(body.get("quarters"), int) and 1 <= body["quarters"] <= 4:
+            quarters = body["quarters"]
+        try:
+            rotated = rotate_page(batch_id, page, quarters, work_dir)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        if not rotated:
+            return {"ok": True, "batch_id": batch_id, "page": page, "processing": False}
+        set_page_job(batch_id, page, "transcribing", work_dir)
+
+        def _job() -> None:
+            try:
+                people = [str(p["name"]) for p in _read_projection("people.json", "people") if p.get("name")]
+                places = [str(p["name"]) for p in _read_projection("places.json", "places") if p.get("name")]
+                label = None
+                with contextlib.suppress(RegistryError):
+                    label = load_batch(batch_id, registry_dir).get("label")
+                reprocess_page_transcription(batch_id, page, work_dir, people=people, places=places, label=label)
+            except Exception:
+                logger.exception("reprocess failed for %s/%s", batch_id, page)
+
+        threading.Thread(target=_job, daemon=True).start()
+        return {"ok": True, "batch_id": batch_id, "page": page, "processing": True}
 
     @app.post("/api/sync/confirmations")
     def sync_confirmations(payload: dict[str, Any], request: Request) -> Any:
@@ -739,6 +837,10 @@ class Server:
         """Run until interrupted — the surface the `loft serve` command starts."""
         import uvicorn
 
+        # a previous run's reprocess threads died with the process — any page
+        # left "transcribing" demotes to "failed" (its text is stale; the
+        # warning shows, never a silent half-done page, 2026-08-16)
+        demote_stale_jobs(WORK_DIR)
         app = build_app(self.store, self.data_dir, self.client, self.app_dir)
         if self.host == "0.0.0.0":
             for url in _lan_urls(self.port):

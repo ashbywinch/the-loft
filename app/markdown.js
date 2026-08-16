@@ -33,6 +33,35 @@ function renderTable(lines) {
   return table;
 }
 
+/** The inline format split — ~~struck~~ (crossed-out in the letter) and
+ *  ~underlined~ (underlined in the letter, 2026-08-16) — the review's
+ *  format conventions, rendered for the archive. Text nodes only, never
+ *  HTML (the renderer's injection rule). */
+function inlineParts(text) {
+  const parts = [];
+  const re = /~~([^~]+)~~|~([^~]+)~/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) parts.push({ text: text.slice(last, m.index), kind: null });
+    parts.push({ text: m[1] ?? m[2], kind: m[1] !== undefined ? "struck" : "underlined" });
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push({ text: text.slice(last), kind: null });
+  if (!parts.length) parts.push({ text, kind: null });
+  return parts;
+}
+
+function inlineNodes(text) {
+  return inlineParts(text).map((p) =>
+    p.kind === "struck"
+      ? el("span", { class: "fmt-struck" }, p.text)
+      : p.kind === "underlined"
+        ? el("span", { class: "fmt-underline" }, p.text)
+        : p.text,
+  );
+}
+
 /** Markdown -> DOM nodes: a pipe table (header + |---| separator + body)
  *  becomes a <table>; everything else stays a <p> with the newlines intact
  *  (the pre-line CSS renders them). The separator row is what marks a table,
@@ -78,7 +107,7 @@ export function renderMarkdown(text) {
     // the renderer's paragraphs land, including the reader (2026-08-09
     // review: stories.js appended bare <p> nodes and the line breaks
     // collapsed again)
-    if (para.length) nodes.push(el("p", { class: "transcription-text" }, para.join("\n")));
+    if (para.length) nodes.push(el("p", { class: "transcription-text" }, inlineNodes(para.join("\n"))));
     else i++;
   }
   return nodes;

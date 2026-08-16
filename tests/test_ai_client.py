@@ -105,6 +105,15 @@ def test_chat_rejects_malformed_response() -> None:
         client.chat("s", "u")
 
 
+def test_chat_rejects_null_choice_cleanly() -> None:
+    # a provider returning "choices": [null] must raise the clean
+    # AIClientError, not an AttributeError (review, 2026-08-15)
+    urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [None]})])
+    client = AIClient(api_key="k", urlopen=urlopen)
+    with pytest.raises(AIClientError, match="empty response"):
+        client.chat("s", "u")
+
+
 def test_json_object_tolerates_fences() -> None:
     assert json_object('```json\n{"a": 1}\n```') == {"a": 1}
     assert json_object('Here you go: {"a": 1} — done') == {"a": 1}

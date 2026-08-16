@@ -19,6 +19,7 @@ import base64
 import json
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from tools.ai_client import DEFAULT_BASE_URL, find_api_key
 
@@ -26,7 +27,57 @@ VLM_SYSTEM = (
     "You transcribe scanned family documents verbatim. Rules: the document's own "
     "words, nothing added, nothing removed — fix nothing, summarize nothing, invent "
     "nothing. Keep the line structure. For printed text and handwriting alike. "
-    "Unreadable words: transcribe your best literal guess."
+    "Unreadable words: transcribe your best literal guess. "
+    "Formatting that matters — keep the markers, they are content: a word the "
+    "writer CROSSED OUT is marked ~~word~~ (double tildes either side); a word the "
+    "writer UNDERLINED is marked ~word~ (single tildes either side, the in-house "
+    "sibling of the strike convention — markdown has no standard underline). "
+    'Return ONLY JSON: {"lines": [{"text": "the line verbatim", "box": '
+    "[x0, y0, x1, y1]}]} — one entry per line IN READING ORDER, top to bottom. "
+    '"box" is the line\'s bounding box in NORMALIZED coordinates 0-1000 '
+    "(fractions of the image's width and height, times 1000); it must enclose "
+    "every glyph of that line, nothing else."
+)
+
+
+def transcription_system_with_context(
+    *,
+    people: list[str] | None = None,
+    places: list[str] | None = None,
+    label: str | None = None,
+    previous_page: str | None = None,
+) -> str:
+    """The verbatim-transcription system prompt plus the context that helps
+    the model READ: the family's known names (a familiar name is read
+    correctly, not guessed letter-by-letter), the places, the pile's label,
+    and the previous page's text for continuity (user, 2026-08-15: "whatever
+    useful context we have to help it guess better")."""
+    lines = [VLM_SYSTEM]
+    if people or places:
+        lines.append(
+            "Context to help you read — known family people: "
+            f"{', '.join(people) if people else 'none'}. "
+            f"Known places: {', '.join(places) if places else 'none'}. "
+            "Use these spellings when the writing matches them."
+        )
+    if label:
+        lines.append(f"This page belongs to the pile: {label!r}.")
+    if previous_page:
+        lines.append(f"The previous page of this document read:\n---\n{previous_page}\n---")
+    return "\n".join(lines)
+
+
+SELFREPORT_SYSTEM = (
+    "You transcribed a scanned handwritten letter. Below is your transcription, "
+    "one line per numbered line. Mark the words you are LEAST sure about — where "
+    "the handwriting was hard to read — AND any word that does not make sense in "
+    "the context of the rest of the document: a word that reads oddly, breaks the "
+    "sentence, or looks like a misreading is a great candidate (a transcription "
+    "error often survives because the misread word still looks word-like). "
+    "Context that helps: known family people: {people}. Known places: {places}. "
+    'Return ONLY JSON: {{"unsure": [{{"line": <line number>, "word": "the '
+    'word exactly as transcribed"}}]}}. If everything reads confidently, the '
+    "list is short or empty."
 )
 
 
@@ -43,24 +94,80 @@ _MIME_BY_SUFFIX = {
 }
 
 
+def parse_transcription_response(text: str) -> tuple[str, dict[int, list[float]] | None]:
+    """The vision model's transcription response — the JSON format the
+    system prompt requests (lines with normalized boxes) or the plain-text
+    format (a model that did not follow the instruction). Returns
+    (transcription, boxes): the transcription lines joined with newlines
+    (the .txt content), and the per-line boxes keyed by the line index in
+    NORMALIZED 0-1000 units (the layout pass converts to the image's
+    pixels). Empty lines are skipped — the .txt's own split skips them
+    too, so the indexes stay aligned. ``boxes`` is None when the model
+    returned no usable geometry (the pipeline falls back to the detector's
+    association — 2026-08-16: the geometry must come from the model that
+    can READ the cursive, not the rec engine that merges/misses its
+    lines)."""
+    try:
+        data = _extract_json(text)
+    except VlmError:
+        return text.strip(), None
+    if not isinstance(data, dict):
+        return text.strip(), None
+    entries = data.get("lines")
+    if not isinstance(entries, list):
+        return text.strip(), None
+    texts: list[str] = []
+    boxes: dict[int, list[float]] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            return text.strip(), None
+        t = entry.get("text")
+        if not isinstance(t, str) or not t.strip():
+            continue  # blank lines carry no box — the .txt split skips them too
+        i = len(texts)
+        texts.append(t)
+        b = entry.get("box")
+        if (
+            isinstance(b, list) and len(b) == 4 and all(isinstance(v, (int, float)) and v == v for v in b)  # not NaN
+        ):
+            boxes[i] = [float(v) for v in b]
+    # Sanity: the model's boxes COLLAPSE at the page's bottom edge (page-05's
+    # last four lines came back as a 9px sliver at y4633-4642, 2026-08-16) —
+    # any box smaller than a third of the median line height is degenerate;
+    # the line falls back to the detector's association.
+    if boxes:
+        heights = sorted(b[3] - b[1] for b in boxes.values())
+        median_h = heights[len(heights) // 2]
+        if median_h > 0:
+            boxes = {i: b for i, b in boxes.items() if b[3] - b[1] >= median_h / 3}
+    return "\n".join(texts), (boxes or None)
+
+
 def transcribe_image_vlm(
     image: Path,
     *,
     model: str = "mimo-v2.5",
     system: str = VLM_SYSTEM,
+    user_text: str | None = None,
     base_url: str = DEFAULT_BASE_URL,
     api_key: str | None = None,
     timeout: float = 300.0,
 ) -> tuple[str, dict[str, int]]:
-    """One multimodal call; returns (text, token usage) — the cost measure."""
+    """One multimodal call; returns (text, token usage) — the cost measure.
+    ``user_text`` rides the user message alongside the image (the
+    self-report pass hands the model its own transcription with line
+    numbers to review)."""
     key = api_key or find_api_key()
     mime = _MIME_BY_SUFFIX.get(image.suffix.lower(), "application/octet-stream")
     data_url = f"data:{mime};base64," + base64.b64encode(image.read_bytes()).decode("ascii")
+    user_content: list[dict[str, Any]] = [{"type": "image_url", "image_url": {"url": data_url}}]
+    if user_text:
+        user_content.append({"type": "text", "text": user_text})
     payload = {
         "model": model,
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user", "content": [{"type": "image_url", "image_url": {"url": data_url}}]},
+            {"role": "user", "content": user_content},
         ],
         "temperature": 0,
     }
@@ -85,3 +192,57 @@ def transcribe_image_vlm(
     except (KeyError, IndexError, TypeError) as exc:
         raise VlmError(f"unexpected vision response: {json.dumps(body)[:300]}") from exc
     return text, usage
+
+
+def selfreport_words(
+    image: Path,
+    guess_text: str,
+    *,
+    people: list[str] | None = None,
+    places: list[str] | None = None,
+    transcribe: Any = None,
+) -> list[dict[str, Any]]:
+    """The transcription model's own doubt (user, 2026-08-15): which of its
+    words is it least sure of, or that read oddly in context — the flag
+    source that replaces the noisy cross-reader agreement. ``transcribe``
+    is the injectable seam (transcribe_image_vlm shape). The guess text is
+    numbered so the model can cite exact lines; the returned list is
+    validated (int lines, string words)."""
+    numbered = "\n".join(f"{i + 1}| {line}" for i, line in enumerate(guess_text.split("\n")))
+    system = SELFREPORT_SYSTEM.format(
+        people=", ".join(people) if people else "none",
+        places=", ".join(places) if places else "none",
+    )
+    call = transcribe if transcribe is not None else transcribe_image_vlm
+    text, _usage = call(image, system=system, user_text=f"Your transcription:\n{numbered}")
+    data = _extract_json(text)
+    unsure = data.get("unsure", []) if isinstance(data, dict) else []
+    validated: list[dict[str, Any]] = []
+    for entry in unsure:
+        if not isinstance(entry, dict):
+            continue
+        line = entry.get("line")
+        word = entry.get("word")
+        if isinstance(line, int) and isinstance(word, str) and word.strip():
+            validated.append({"line": line, "word": word.strip()})
+    return validated
+
+
+def _extract_json(text: str) -> Any:
+    """The model's JSON, tolerating a code-fence wrapper (the probe wrapped
+    its answer in ```json … ```)."""
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.split("\n", 1)[-1]
+        if stripped.endswith("```"):
+            stripped = stripped[:-3]
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        start, end = stripped.find("{"), stripped.rfind("}")
+        if start >= 0 and end > start:
+            try:
+                return json.loads(stripped[start : end + 1])
+            except json.JSONDecodeError:
+                pass
+        raise VlmError(f"self-report returned no JSON: {text[:300]}") from None

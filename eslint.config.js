@@ -10,7 +10,7 @@ export default [
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'module',
-      globals: { ...globals.browser, L: 'readonly' },
+      globals: { ...globals.browser, L: 'readonly', OpenSeadragon: 'readonly' },
     },
   },
   // the vitest tests run under node (readFileSync, process.cwd) — the app

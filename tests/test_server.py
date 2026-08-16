@@ -509,6 +509,10 @@ def test_decide_attested_flips_proposed_to_confirmed(server: ServerFixture) -> N
     assert status == 200
     assert body["ok"] is True
     assert "status" not in body["person"]  # confirmed records omit the status key
+    # the response carries the server's accurate remaining count — the
+    # client's projection is stale until reload, so the count comes from
+    # here (user 2026-08-16: the count must always be accurate)
+    assert body["pending"] == 0  # the seed's only proposed person is now decided
     table = server.archive.get_identity("people")
     assert table is not None
     person = next(p for p in table["people"] if p["id"] == "p-judith")
@@ -1014,6 +1018,51 @@ def test_sync_confirmations_rejects_a_bad_shape(server: ServerFixture) -> None:
     assert status == 400
 
 
+def test_sync_batches_requires_a_session(server: ServerFixture) -> None:
+    status, _ = server.get("/api/sync/batches")
+    assert status == 401
+
+
+def test_sync_batches_lists_the_adopted_batches(server: ServerFixture) -> None:
+    import json as _json
+
+    _seed_sync_batch(server)
+    (server.registry_dir / "adopt-0002.json").write_text(
+        _json.dumps({"batch_id": "adopt-0002", "status": "review", "arrived_at": "2026-08-15T00:00:00Z"}),
+        encoding="utf-8",
+    )
+    status, raw = server.get("/api/sync/batches", cookie=server.cookie)
+    assert status == 200
+    body = _json.loads(raw.decode("utf-8"))
+    ids = [b["batch_id"] for b in body["batches"]]
+    assert ids == ["adopt-0002", "adopt-0001"]  # newest first
+
+
+def test_sync_page_requires_a_session(server: ServerFixture) -> None:
+    status, _ = server.get("/api/sync/batch/adopt-0001/page/p1.jpg")
+    assert status == 401
+
+
+def test_sync_page_serves_the_oriented_image(server: ServerFixture) -> None:
+    _seed_sync_batch(server)
+    oriented = server.work_dir / "adopt-0001" / "oriented"
+    oriented.mkdir(parents=True)
+    (oriented / "p1.jpg").write_bytes(b"\xff\xd8fake-jpeg-bytes")
+    status, raw = server.get("/api/sync/batch/adopt-0001/page/p1.jpg", cookie=server.cookie)
+    assert status == 200
+    assert raw == b"\xff\xd8fake-jpeg-bytes"
+
+
+def test_sync_page_rejects_unknown_and_unsafe_names(server: ServerFixture) -> None:
+    _seed_sync_batch(server)
+    status, _ = server.get("/api/sync/batch/adopt-0001/page/nope.jpg", cookie=server.cookie)
+    assert status == 404
+    status, _ = server.get("/api/sync/batch/adopt-0001/page/..%252Fetc%252Fpasswd", cookie=server.cookie)
+    assert status == 400  # the endpoint's own guard rejects every encoded form that reaches it
+    status, _ = server.get("/api/sync/batch/..%252Fregistry/page/p1.jpg", cookie=server.cookie)
+    assert status == 400
+
+
 def test_sync_pending_requires_a_session(server: ServerFixture) -> None:
     status, _ = server.get("/api/sync/pending")
     assert status == 401
@@ -1091,3 +1140,21 @@ def test_sync_confirmations_rejects_a_non_scalar_doc_index(server: ServerFixture
         },
     )
     assert status == 400
+
+
+def test_serve_app_factory_builds_from_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The uvicorn factory for --reload (2026-08-16: make serve always
+    auto-reloads): the server's configuration travels via the environment
+    the CLI set, so the reloader's subprocess can rebuild the app fresh on
+    every source change."""
+    app_data = make_app_data(tmp_path)
+    (tmp_path / "archive").mkdir()
+    monkeypatch.setenv("THE_LOFT_SESSION_SECRET", "test-secret")
+    monkeypatch.setenv("LOFT_ARCHIVE", str(tmp_path / "archive"))
+    monkeypatch.setenv("LOFT_DATA", str(app_data))
+    monkeypatch.setenv("LOFT_APP", str(tmp_path))
+
+    from tools.cli import serve_app
+
+    app = serve_app()
+    assert any(getattr(route, "path", None) == "/api/health" for route in app.routes)

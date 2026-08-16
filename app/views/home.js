@@ -3,8 +3,6 @@
 import { el, header, itemCard, sectionTitle } from "../ui.js";
 import { monthDayDistance, sortByRecorded } from "../date.js";
 import { drafts, isMine, me, pendingImports, proposedPeople, published } from "../data.js";
-import { openDraft, storyCard } from "../memories.js";
-import { signInSheet } from "../signin.js";
 
 function todayMoment(items) {
   const now = new Date();
@@ -66,6 +64,75 @@ export function render(main, _ctx, state) {
     ["letters", "Letters", "The written archive from the loft."],
   ];
 
+  // Build the doors section, then add the review door asynchronously
+  const doorGrid = el("div", { class: "door-grid" });
+  const doorSection = el("section", {}, [sectionTitle("The doors"), doorGrid]);
+  doors.map(([route, label, note]) =>
+    doorGrid.append(
+      el("a", { class: "door", href: `#/${route}` }, [
+        el("span", { class: "door-label" }, label),
+        el("span", { class: "door-note" }, note),
+      ]),
+    ),
+  );
+  // The review door appears when there are batches awaiting review — a
+  // different use case from browsing (user, 2026-08-15), but the same app
+  // and the same auth. The fetch is fire-and-forget: a 401 means the user
+  // isn't signed in (no review to show), and an empty response means no
+  // work to do.
+  let reviewSection = null;
+  (async () => {
+    try {
+      const res = await fetch("/api/sync/batches", { headers: { Accept: "application/json" } });
+      if (!res.ok) return;
+      const data = await res.json();
+      const pending = (data.batches || []).filter((b) => b.status !== "confirmed");
+      if (!pending.length && !pendingImports(state).length) return;
+      const docCount = pending.reduce(
+        (n, b) => n + ((b.boundaries || []).filter((x) => x.status !== "confirmed").length),
+        0,
+      );
+      const importSessions = pendingImports(state);
+      const importCount = importSessions.length;
+      const allDrafts = drafts(state.items);
+      const signedIn = me(state);
+      const myDrafts = signedIn ? allDrafts.filter((d) => isMine(d, state)).length : allDrafts.length;
+      let note = "";
+      const parts = [];
+      if (docCount) parts.push(`${docCount} document${docCount === 1 ? "" : "s"}`);
+      if (importCount) parts.push(`${importCount} import${importCount === 1 ? "" : "s"}`);
+      if (myDrafts) parts.push(`${myDrafts} draft${myDrafts === 1 ? "" : "s"}`);
+      note = parts.join(" + ") + " to review";
+      if (!parts.length && importSessions.length) {
+        const people = proposedPeople(state).length;
+        note = `${people} identit${people === 1 ? "y" : "ies"} to confirm (import session)`;
+      }
+      reviewSection = el("section", { class: "block review-promo" }, [
+        el(
+          "a",
+          { class: "review-card", href: "#/review" },
+          [
+            el("div", { class: "review-card-icon" }, "✓"),
+            el("div", { class: "review-card-main" }, [
+              el("div", { class: "review-card-title" }, "Review"),
+              el("div", { class: "review-card-note" }, note),
+            ]),
+          ],
+        ),
+      ]);
+      // insert between the hero/moment/draft area and the doors
+      const heroSection = main.querySelector(".hero");
+      const doorSection = main.querySelector(".door-grid")?.parentElement;
+      if (heroSection && doorSection) {
+        main.insertBefore(reviewSection, doorSection);
+      } else {
+        main.append(reviewSection);
+      }
+    } catch {
+      // server unreachable — no review section, the browse surface still works
+    }
+  })();
+
   main.append(
     el("section", { class: "hero" }, [
       el("h1", { class: "hero-title" }, "The Loft"),
@@ -83,21 +150,7 @@ export function render(main, _ctx, state) {
       ),
     ]),
     ...(moment ? [moment] : []),
-    ...draftBlock(state),
-    ...proposedBlock(state),
-    el("section", {}, [
-      sectionTitle("The doors"),
-      el(
-        "div",
-        { class: "door-grid" },
-        doors.map(([route, label, note]) =>
-          el("a", { class: "door", href: `#/${route}` }, [
-            el("span", { class: "door-label" }, label),
-            el("span", { class: "door-note" }, note),
-          ]),
-        ),
-      ),
-    ]),
+    doorSection,
     el("section", {}, [
       sectionTitle("Search the archive"),
       el(
@@ -140,62 +193,9 @@ export function render(main, _ctx, state) {
  *  among the archival views. Once logins exist, this follows the login. A
  *  fresh window (no remembered narrator) is asked who they are first — the
  *  drafts are claimed by name, so incognito can still find them. */
-function draftBlock(state) {
-  const all = drafts(state.items);
-  if (!all.length) return [];
-  const signedIn = me(state);
-  const mine = signedIn ? all.filter((d) => isMine(d, state)) : [];
-  const section = el("section", { class: "block" });
-  const cards = (list) =>
-    el(
-      "div",
-      { class: "card-grid" },
-      list.map((d) =>
-        el("div", { class: "draft-card" }, [
-          storyCard(state, d),
-          el("button", { class: "btn btn-primary", onclick: () => openDraft(state, d) }, "Continue this story"),
-        ]),
-      ),
-    );
-  if (!signedIn) {
-    // the drafts are the narrator's, and the narrator IS the signed-in
-    // identity — no name claims (2026-08-06, user: google auth, no hackery)
-    section.append(
-      sectionTitle("Unfinished stories — sign in to see yours"),
-      el("p", { class: "story" }, "There are stories left mid-flight. They belong to the person who told them."),
-      el("div", { class: "drafts-gate" }, [
-        el(
-          "button",
-          { class: "btn btn-primary", onclick: signInSheet },
-          "Sign in with Google",
-        ),
-      ]),
-    );
-    return [section];
-  }
-  if (!mine.length) return [];
-  const name = state.people.find((p) => p.id === signedIn.person)?.name ?? signedIn.name;
-  section.append(sectionTitle(`Your unfinished stories, ${name} — pick up where you left off`), cards(mine));
-  return [section];
-}
+
 
 /** The unfinished import session (user, 2026-08-07): the front page shows
  *  the session the import left behind — never the pending people list
  *  itself. The review (confirm/dismiss) lives at #/import/<id>. Visible
  *  only to the signed-in owner. */
-function proposedBlock(state) {
-  const pending = pendingImports(state);
-  if (!pending.length || !me(state)) return [];
-  const count = proposedPeople(state).length;
-  const note =
-    count === 1
-      ? "1 person from the import is waiting to be confirmed — the tree shows only confirmed family."
-      : `${count} people from the import are waiting to be confirmed — the tree shows only confirmed family.`;
-  return pending.map((session) =>
-    el("section", { class: "block import-pending" }, [
-      sectionTitle(session.title),
-      el("p", { class: "memories-note" }, note),
-      el("a", { class: "btn btn-primary", href: `#/import/${session.id}` }, "Review the import"),
-    ]),
-  );
-}

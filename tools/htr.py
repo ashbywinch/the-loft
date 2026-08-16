@@ -19,6 +19,7 @@ for cursive pages.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -53,7 +54,7 @@ def segment_page(image: Path, orli: Path = ORLI_MODEL, kraken: str = KRAKEN) -> 
     try:
         if scale < 1.0:
             fd, tmp_name = tempfile.mkstemp(suffix=".jpg")
-            _ = tmp_name  # PIL opens the path itself
+            os.close(fd)  # PIL opens the path itself — the fd must not leak (review, 2026-08-15)
             scaled_path = Path(tmp_name)
             img.save(scaled_path, quality=95)
             run_image = scaled_path
@@ -184,7 +185,12 @@ def htr_pages(pages: list[tuple[str, Path]], raw_dir: Path) -> None:
     try:
         for name, image in pages:
             out = raw_dir / Path(name).with_suffix(".txt")
-            if out.with_suffix(".segment.json").exists():
+            # the segment cache is written BEFORE the recognition output —
+            # a crash in between leaves it present with no .txt, and a skip
+            # keyed on the cache would permanently skip the page (review,
+            # 2026-08-15: the page's transcription silently never lands).
+            # htr_page reuses the cached segment, so the resume is cheap.
+            if out.exists():
                 print(f"htr: {name} already done — reusing")
                 continue
             htr_page(image, out, _segment=segment_page, _transcribe=transcribe)
@@ -197,24 +203,50 @@ def htr_pages_vlm(
     pages: list[tuple[str, Path]],
     raw_dir: Path,
     transcribe: Any = None,
+    *,
+    people: list[str] | None = None,
+    places: list[str] | None = None,
+    label: str | None = None,
 ) -> None:
     """The vision-model backend (the 2026-08-14 decision): each page in,
     verbatim text out, token usage recorded in a sidecar so re-runs skip
     transcribed pages and the cost is auditable. ``transcribe`` is the
-    injectable seam (transcribe_image_vlm shape) for tests."""
-    from tools.vlm import transcribe_image_vlm
+    injectable seam (transcribe_image_vlm shape). The system prompt carries
+    the context that helps the model READ — the family's known names and
+    places (a familiar name is read correctly, not guessed letter-by-letter),
+    the pile's label, and the previous page's text for continuity (user,
+    2026-08-15: "whatever useful context we have to help it guess better")."""
+    from tools.vlm import parse_transcription_response, transcribe_image_vlm, transcription_system_with_context
 
     call = transcribe if transcribe is not None else transcribe_image_vlm
+    previous: str | None = None
     for name, image in pages:
         out = raw_dir / Path(name).with_suffix(".txt")
         marker = out.with_suffix(".vlm.json")
         if marker.exists():
             print(f"vlm: {name} already done — reusing")
+            if out.exists():
+                previous = out.read_text(encoding="utf-8")  # keep the continuity current
             continue
         print(f"vlm: {name} transcribing…", flush=True)
-        text, usage = call(image)
-        atomic_write(out, text)
-        atomic_write(marker, json.dumps(usage, ensure_ascii=False))
+        system = transcription_system_with_context(people=people, places=places, label=label, previous_page=previous)
+        text, usage = call(image, system=system)
+        plain, boxes = parse_transcription_response(text)
+        atomic_write(out, plain)
+        marker_data: dict[str, Any] = dict(usage)
+        if boxes is not None:
+            # the VLM's own line geometry (normalized 0-1000) — the layout
+            # pass uses it instead of the rec association, which cannot read
+            # cursive (2026-08-16: the rec merges lines into tall boxes and
+            # misses the top line entirely — the VLM that READ the page can
+            # anchor each line it transcribed). Only the entries with boxes
+            # ride along; a page without geometry keeps the old fallback.
+            lines_out = []
+            for i in sorted(boxes):
+                lines_out.append({"text": plain.split("\n")[i], "box": boxes[i]})
+            marker_data["lines"] = lines_out
+        atomic_write(marker, json.dumps(marker_data, ensure_ascii=False))
+        previous = plain
         print(f"vlm: {name} -> {out.name} ({usage.get('total_tokens', 0)} tokens)")
 
 

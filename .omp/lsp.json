@@ -11,6 +11,12 @@
       "args": ["lsp"],
       "fileTypes": [".py"],
       "rootMarkers": ["pyrefly.toml", "pyproject.toml", ".git"]
+    },
+    "code-health": {
+      "command": ".venv/bin/python",
+      "args": ["tools/code_health_lsp.py"],
+      "fileTypes": [".py"],
+      "rootMarkers": ["pyproject.toml", ".git"]
     }
   }
 }

@@ -17,6 +17,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -285,7 +286,10 @@ def process(
     if cursive:
         cursive_pages = [(name, oriented_dir / name) for name in cursive]
         if os.environ.get("LOFT_HTR_BACKEND", "vlm") == "vlm":
-            htr_pages_vlm(cursive_pages, raw_dir)
+            people, places = _standing_knowledge()
+            with contextlib.suppress(PipelineError):
+                label = load_batch(batch_id, registry_dir).get("label")
+            htr_pages_vlm(cursive_pages, raw_dir, people=people, places=places, label=label)
         else:
             htr_pages(cursive_pages, raw_dir)
 
@@ -319,6 +323,12 @@ def process(
             atomic_write(guess_dir / Path(str(flag["page"])).with_suffix(".txt"), str(flag["text"]))
         boundaries = group_documents(known_flags)
         atomic_write(boundaries_path, json.dumps(boundaries, indent=1, ensure_ascii=False) + "\n")
+        # seed the registry record with the full boundaries so the review
+        # surface's batch list shows the correct pending count (the registry
+        # is the status' home; the guess stage's boundaries.json is the
+        # pipeline's output, never the registry — 2026-08-15)
+        record["boundaries"] = boundaries
+        atomic_write(record_path(batch_id, registry_dir), json.dumps(record, indent=1, ensure_ascii=False) + "\n")
         print(f"model guess: {len(flags)} page(s), {len(boundaries)} document(s) -> {guess_dir}")
 
     _update_status(record, batch_id, STATUS_REVIEW, registry_dir)

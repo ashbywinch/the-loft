@@ -1582,3 +1582,466 @@ summary:focus-visible {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* -- the transcription review surface (2026-08-15, locked wireframe) -- */
+.rv {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  font-family: var(--serif);
+}
+.rv-title { font-size: 1.3rem; padding: var(--gap-lg); }
+.rv-note { padding: var(--gap-lg); color: var(--muted); font-size: 0.95rem; }
+.rv-topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-lg);
+  padding: var(--gap) var(--gap-lg);
+  background: var(--card);
+  border-bottom: 1px solid var(--line);
+  min-height: 52px;
+  flex-shrink: 0;
+}
+.rv-back {
+  border: none;
+  background: none;
+  font-size: 1.2rem;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 4px 8px;
+  /* the merged bar (2026-08-16) is back + title + both chip rows on one
+     line — the back label and the title must give way on narrow phones */
+  max-width: 32%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 1;
+}
+.rv-topbar-titles { flex: 1; min-width: 0; }
+.rv-tt { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-ts { font-size: 0.82rem; color: var(--muted); }
+.rv-chip {
+  display: inline-block;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  font-family: var(--serif);
+}
+.rv-chip--ok { background: #e3efe3; color: #3a6a3a; }
+.rv-chip--rej { background: #fce8e8; color: #a33; }
+.rv-list { display: flex; flex-direction: column; gap: var(--gap); padding: var(--gap) var(--gap-lg); }
+.rv-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: var(--gap) var(--gap-lg);
+  background: var(--card);
+  border: none;
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow);
+  cursor: pointer;
+  font-family: var(--serif);
+  text-align: left;
+  color: var(--ink);
+}
+.rv-card-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rv-card-title { font-weight: 600; }
+.rv-card-sub { font-size: 0.85rem; color: var(--muted); }
+.rv-rotate { display: none; flex-direction: column; align-items: center; justify-content: center; flex: 1; text-align: center; padding: var(--gap-lg); }
+.rv-rotate-icon { font-size: 4rem; color: var(--accent); animation: rv-hint 2s ease-in-out infinite; }
+@keyframes rv-hint { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(90deg); } }
+.rv-rotate p { font-size: 0.92rem; color: var(--muted); max-width: 280px; }
+.rv-split { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.rv-imgpane {
+  flex: 0 0 48%;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  min-width: 0;
+  border-right: 1px solid var(--line);
+  position: relative; /* anchors the zoom controls to the image pane */
+}
+.rv-imgbox {
+  flex: 1;
+  min-height: 0;
+  position: relative; /* the scaled layer's containing block */
+  overflow: hidden;
+  touch-action: none; /* a drag pans the letter — never scrolls the page */
+  cursor: grab;
+  background: var(--paper);
+}
+.rv-imgbox:active { cursor: grabbing; }
+/* The navigation chips live in the TOP bar (2026-08-16: one bar for the
+   whole chrome — back, title, and both sequences; the separate strip row
+   and the redundant count chip are gone). Content-sized, not stretched:
+   horizontal real estate is used minimally. */
+.rv-topbar .rv-navgroup { flex-shrink: 0; }
+.rv-navgroup { display: flex; align-items: center; gap: 4px; }
+.rv-navsep { width: 1px; height: 18px; background: var(--line); flex-shrink: 0; }
+.rv-navchip {
+  min-width: 26px;
+  height: 26px;
+  padding: 0 5px;
+  border: 1.5px solid var(--line);
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 0.78rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+}
+.rv-navchip--doc { border-radius: 7px; }
+.rv-navchip--cur { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 700; }
+.rv-navchip--done { border-color: #5a8a5a; color: #3a6a3a; background: #e3efe3; }
+/* a page being reworked on the backend — its chip pulses amber and is not
+   part of the review flow until the re-read lands (2026-08-16) */
+.rv-navchip--fixing { border-color: #b8860b; color: #6b5310; background: #fdf3e3; }
+.rv-navchip--fixing::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #b8860b;
+  border: 1.5px solid var(--card);
+  animation: rv-pulse 1.2s ease-in-out infinite;
+}
+@keyframes rv-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+/* the flag dot: a page with lines still to check — visible before the
+   "Next flagged" button moves there (walk finding 4, 2026-08-16) */
+.rv-navchip--flag::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #c44;
+  border: 1.5px solid var(--card);
+}
+.rv-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+.rv-page { display: block; width: 100%; height: 100%; }
+/* the dual-pane link's direct pans ease out briefly — a jump would
+   dislocate the reader's position (ux-standards P18, 2026-08-16); the
+   class is applied only during the link's programmatic pans, never while
+   the finger drags */
+.rv-layer--smooth { transition: transform 180ms ease-out; }
+.rv-legend {
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: var(--card);
+  border-top: 1px solid var(--line);
+}
+.rv-txpane { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.rv-txb {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--gap) var(--gap-lg);
+  /* the accept's re-render shrinks the edit row — the browser's scroll
+     anchoring would drift the view UP and the link would follow the image
+     to earlier text (user 2026-08-16). The restore + the accept-advance
+     own the position. */
+  overflow-anchor: none;
+}
+.rv-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px var(--gap);
+  border-radius: var(--r-md);
+  margin-bottom: 1px;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+}
+.rv-line:hover { background: var(--paper); }
+.rv-line--sel { background: var(--accent-soft); border-left-color: var(--accent); }
+.rv-lt { flex: 1; min-width: 0; font-size: 0.88rem; line-height: 1.3; }
+/* "✓" — mark a flagged line as checked without editing it (user,
+   2026-08-16: a line can be fine even with red squiggles) */
+.rv-ok-btn {
+  border: 1px solid #5a8a5a;
+  background: #e3efe3;
+  color: #3a6a3a;
+  border-radius: 50%;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  line-height: 1;
+  font-family: var(--serif);
+  cursor: pointer;
+}
+.rv-wc {
+  background: rgba(204, 68, 68, 0.18);
+  border: none;
+  /* the spell-check convention: a wavy red underline reads as "this word
+     is doubtful" at rest, not only in edit (walk finding 5, 2026-08-16) */
+  text-decoration: underline wavy #c44 1.5px;
+  text-underline-offset: 3px;
+  padding: 0 3px;
+  border-radius: 2px;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+.rv-wc:hover { background: rgba(204, 68, 68, 0.26); }
+.rv-wfw {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--card);
+  border: 2px solid #c44;
+  border-radius: var(--r-md);
+  padding: 2px 4px;
+  width: 100%; /* the edit row always fills the line — the inline-flex
+                 shrink-to-fit was sizing the input to half the line,
+                 seemingly at random (user 2026-08-16) */
+}
+.rv-wfi {
+  flex: 1;
+  min-width: 0; /* let the flexbox do the sizing — width:100% inside an
+                   auto container was the half-width bug's other half */
+  border: none;
+  border-radius: var(--r-sm);
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 0.95rem;
+  color: var(--ink);
+  background: var(--paper);
+  outline: none;
+}
+.rv-wfi:focus { box-shadow: 0 0 0 2px var(--accent); }
+/* the edit row's format buttons — the strike and underline conventions
+   live in the row, not a floating menu: the platform's edit menu already
+   covers cut/copy/paste/select-all and cannot be extended, and a second
+   popup duplicating it was the wrong answer (2026-08-16). Visible
+   buttons — a bare text glyph was invisible on the phone (user: "I don't
+   see them"). */
+.rv-fmtbtn--row {
+  border: 1.5px solid var(--line);
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 0.95rem;
+  width: 40px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+.rv-fmtbtn--row:active { background: var(--paper); }
+.rv-underlined { text-decoration: underline; text-underline-offset: 2px; }
+/* the archive's inline format rendering (app/markdown.js): the review's
+   format conventions — ~~struck~~ and ~underlined~ — display in the item
+   pages, not as literal tildes (2026-08-16) */
+.fmt-struck { text-decoration: line-through; }
+.fmt-underline { text-decoration: underline; }
+.rv-txa {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap);
+  padding: var(--gap) var(--gap-lg);
+  border-top: 1px solid var(--line);
+  background: var(--card);
+  flex-shrink: 0;
+}
+.rv-txa-right { display: flex; gap: var(--gap); }
+.rv-fn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: var(--control-h);
+  padding: 0 16px;
+  border: 2px solid #c44;
+  border-radius: 999px;
+  background: rgba(204, 68, 68, 0.06);
+  color: #c44;
+  font-family: var(--serif);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.rv-fn:disabled { opacity: 0.4; cursor: default; }
+.rv-fc {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border-radius: 50%;
+  background: #c44;
+  color: var(--on-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.rv-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--control-h);
+  padding: 0 var(--gap-lg);
+  border: none;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 0.88rem;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+}
+.rv-btn--primary { background: var(--accent); color: var(--on-accent); }
+.rv-lb {
+  position: absolute;
+  border: 1.5px solid var(--line);
+  border-radius: 3px;
+  background: rgba(180, 85, 45, 0.06);
+  /* The boxes must pass drags through to the pane — a box that swallows
+     the pointer blocks panning exactly where the reviewer grabs the letter
+     (user 2026-08-16). Selection happens on the transcription lines (the
+     walk's actual behaviour); the boxes are visual guides. */
+  pointer-events: none;
+}
+.rv-lb--sel { border-color: var(--accent); background: rgba(180, 85, 45, 0.16); border-width: 2px; }
+/* a positional box (box_source: "positional" — the fallback's reading-order
+   assignment): real geometry, approximate line alignment — dashed so the
+   reviewer reads the provenance at a glance (2026-08-16) */
+.rv-lb--pos { border-style: dashed; background: rgba(180, 85, 45, 0.03); }
+
+/* Phone portrait: the rotate prompt instead of the surface — and the
+   topbar simplifies to back + title (the chip/subtitle make a silly
+   three-column header, user 2026-08-16) */
+@media (max-width: 500px) and (orientation: portrait) {
+  .rv-rotate { display: flex; }
+  .rv-split, .rv-txa, .rv-navgroup, .rv-ts { display: none; }
+  .rv-back { font-size: 1rem; }
+}
+/* Phone landscape: horizontal split — letter full width on top */
+@media (max-height: 500px) and (orientation: landscape) {
+  .rv-split { flex-direction: column; }
+  .rv-imgpane { flex: 0 0 48%; border-right: none; border-bottom: 1px solid var(--line); }
+  .rv-txpane { border-left: none; }
+  .rv-topbar { min-height: 36px; padding: 4px var(--gap-lg); }
+  .rv-ts { display: none; }
+  .rv-legend { display: none; }
+  .rv-txa { flex-wrap: wrap; justify-content: center; }
+  .rv-wfi { min-width: 100px; }
+}
+
+/* -- review surface: the 2026-08-15 walk's fixes -- */
+.rv-zoom {
+  position: absolute;
+  bottom: calc(var(--gap) + 34px);
+  right: var(--gap);
+  display: flex;
+  gap: 6px;
+  z-index: 6;
+}
+.rv-zoom-btn {
+  min-width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--ink);
+  font-family: var(--serif);
+  font-size: 0.85rem;
+  font-weight: 600;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+.rv-zoom-btn:active { transform: scale(0.95); }
+.rv-struck { text-decoration: line-through; opacity: 0.75; }
+.rv-card--done { cursor: default; }
+.rv-note--ok { color: #3a6a3a; font-weight: 600; }
+/* the orientation fix's grey-out: the page's text is being re-read on the
+   corrected image — the reviewer must know the old text is unreliable and
+   that navigating on is fine (2026-08-16) */
+.rv-note--fixing {
+  background: #fdf3e3;
+  border-left: 3px solid #b8860b;
+  color: #6b5310;
+  padding: 8px 12px;
+  font-size: 0.85rem;
+  border-radius: 0 var(--r-md) var(--r-md) 0;
+  margin: 0 var(--gap-lg) var(--gap-sm);
+}
+.rv-btn:disabled { opacity: 0.4; cursor: default; transform: none; }
+@media (max-height: 500px) and (orientation: landscape) {
+  .rv-zoom { bottom: var(--gap); }
+  .rv-zoom-btn { min-width: 36px; height: 36px; font-size: 0.8rem; }
+}
+
+/* -- the review door on the home page (user, 2026-08-15) -- */
+.door--review { border-left: 4px solid var(--accent); }
+
+/* -- the unified review hub (user, 2026-08-15: "yes single review hub") -- */
+.rv-section-title {
+  font-size: 0.95rem;
+  color: var(--muted);
+  font-weight: 400;
+  padding: var(--gap-lg) var(--gap-lg) var(--gap-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* -- the review promo card above the doors (user, 2026-08-16) -- */
+.review-promo { padding: var(--gap-lg); }
+.review-card {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-lg);
+  padding: var(--gap-lg);
+  background: var(--accent);
+  color: var(--on-accent);
+  border-radius: var(--r-lg);
+  text-decoration: none;
+  box-shadow: var(--shadow);
+}
+.review-card-icon {
+  font-size: 1.8rem;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255,255,255,.2);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.review-card-title { font-size: 1.2rem; font-weight: 600; }
+.review-card-note { font-size: 0.9rem; opacity: .85; margin-top: 4px; }
+
+/* -- the top-bar back arrow (walk finding 6, 2026-08-16) -- */
+.topbar-back {
+  border: none;
+  background: none;
+  font-size: 1.2rem;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 4px 8px 4px 0;
+  line-height: 1;
+}

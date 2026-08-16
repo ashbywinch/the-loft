@@ -19,6 +19,7 @@ import { render as letters } from "./views/letters.js";
 import { render as search } from "./views/search.js";
 import { render as curator } from "./views/curator.js";
 import { render as importReview } from "./views/import.js";
+import { render as review, cleanup as cleanupReview } from "./views/review.js";
 
 const ROUTES = {
   home,
@@ -37,6 +38,7 @@ const ROUTES = {
   search,
   curator,
   import: importReview,
+  review,
 };
 
 /** The identity at boot (2026-08-06): null = unknown, {authenticated:
@@ -101,9 +103,10 @@ export async function boot() {
     return;
   }
   const root = document.getElementById("app");
-  onRoute((ctx) => {
+  onRoute((ctx, revisit) => {
     mark(`route "${ctx.name}" → ${ctx.arg ?? ""}`.trim());
     cleanupPlaces(); // views with long-lived resources (the Leaflet map) unhook here
+    cleanupReview(); // the review surface's pane observer (same rationale)
     root.replaceChildren();
     const main = el("main", { class: "view" });
     root.append(main);
@@ -122,7 +125,11 @@ export async function boot() {
         ),
       );
     }
-    window.scrollTo(0, 0);
+    // On a browser back/forward REVISIT the browser restores the scroll
+    // position itself — forcing scrollTo(0,0) would land the user at the top
+    // of a long list instead of where they were (PRD §8, 2026-08-16; Baymard
+    // product-list refinding; MFA11y: don't fight restoration).
+    if (!revisit) window.scrollTo(0, 0);
   });
   mark("route wired");
 }

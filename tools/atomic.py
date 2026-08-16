@@ -11,7 +11,6 @@ that the target appears complete or not at all.
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 
 
@@ -19,20 +18,29 @@ def atomic_write(path: Path, content: str | bytes) -> None:
     """Write ``content`` to ``path`` atomically (temp sibling + fsync + rename)."""
     data = content.encode("utf-8") if isinstance(content, str) else content
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    tmp = Path(tmp_name)
+    # O_EXCL + 0o666: the kernel applies the current umask atomically at
+    # creation, so the published file keeps the umask-derived mode WITHOUT
+    # the process-global os.umask() dance — which zeroed the process umask
+    # for a window, letting a concurrent file creation publish 0o666
+    # (world-readable) in an archive of intimate family letters (review,
+    # 2026-08-14/15: two bots flagged the race).
+    tmp = None
+    fd = -1
+    for _ in range(8):
+        candidate = path.parent / f".{path.name}.{os.urandom(8).hex()}.tmp"
+        try:
+            fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            tmp = candidate
+            break
+        except FileExistsError:
+            continue
+    if tmp is None or fd < 0:
+        raise FileExistsError(f"could not create a unique temp sibling for {path}")
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
-        # mkstemp creates the temp 0600 and rename preserves it — without this,
-        # every published file silently becomes owner-only (review, 2026-08-14).
-        # Restore the umask-derived mode plain write_bytes used to produce, so
-        # another user (a second account, a sync process) can still read it.
-        umask = os.umask(0)
-        os.umask(umask)
-        os.chmod(tmp, 0o666 & ~umask)
         os.replace(tmp, path)
     except BaseException:
         _ = tmp.unlink(missing_ok=True)

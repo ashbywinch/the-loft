@@ -664,6 +664,56 @@ then re-publishes the projection. The frontend↔backend link rides Tailscale
 the static host for browse; the interactive flows read the standing
 knowledge (identity tables, work-stage texts) via the backend's API.
 
+**The user's requirements (2026-08-16):**
+
+*R1 — Live updates.* The user sees their confirmed transcriptions reflected
+on the site immediately — the projection re-publishes as part of the
+write seam, so the static browse surface picks up the new content on the
+next load.
+
+*R2 — No data loss.* A review confirmation survives a connectivity loss or
+server crash: the browser stores it in a localStorage outbox before the
+POST, and on every subsequent page load the outbox is retried. Mid-typing
+edits are also persisted to localStorage per (batch, document) — VR9
+resumability. The maximum window of loss is the text currently in an
+unfocused input field (a few characters, not a whole line).
+
+*R3 — At-least-once delivery.* The review confirmation is pushed to the
+archive ASAP (the browser POSTs on "Confirm & Next"); if the server is
+unreachable the outbox retries on every subsequent load. On reconnect
+the confirmation arrives within one page load.
+
+*R4 — Idempotency.* Duplicate confirmations are harmless: the write seam
+(`record_confirmation`) replaces by pages (boundaries are identified by
+their page set; ocr-confirmed/<doc>.txt is an atomic overwrite). A
+duplicate POST produces the same final registry state.
+
+*R5 — Long-outage resilience.* The frontend (cloud) also maintains a
+**server-side Outbox** (`tools/sync.py` `Outbox`) backed by the filesystem
+— atomic per entry, survives process restarts. When the home backend is
+off (laptop shut, home server offline), cloud-hosted confirmations land
+in this server-side Outbox. The home backend pulls them when it comes
+back (`GET /api/sync/pending` on the cloud), records them, and marks them
+received. Currently (single-server deployment) the server-side Outbox
+exists but is not populated — the confirmations route records directly
+because frontend and backend are the same process. For the two-app
+deployment, the cloud profile stores in the Outbox instead, and the home
+runs `loft sync-pull <cloud-url>` to drain it. The browser's localStorage
+outbox bridges shorter outages (the cloud itself unreachable) and is the
+primary resilience for the single-server deployment; the server-side
+Outbox is the cloud's resilience for the two-app topology.
+
+**Current implementation (2026-08-16, single-server):**
+- Browser confirms → POST /api/sync/confirmations → record_confirmation
+  (validated, atomic, idempotent) → archive.publish. The projection
+  updates immediately. ✓ R1, R3, R4.
+- On POST failure (server off): the browser's localStorage outbox keeps the
+  confirmation; retried on every page load. ✓ R2 (max loss: the unfocused
+  input buffer — a few chars).
+- The server-side Outbox is unwired until the two-app split; for the
+  single-server the browser outbox is sufficient (there is no cloud↔home
+  hop). ✓ R5 — when the single server is off there is no other server.
+
 Rejected alternatives: the folder-as-sync (Syncthing/cloud bucket — moves
 the append-only discipline to sync-time reconciliation and invites
 conflicts) and the managed-store middle layer as the sync medium (the
@@ -689,3 +739,170 @@ the website marks them received. Nothing confirmed is ever lost to a
 failed push. The transcription-verification UI itself is a separate
 ticket (frontend, third-party review libraries); the seams it consumes
 are these endpoints + the CLI review gate's shared write path.
+
+### 16.16 The transcription-validation review surface (2026-08-15, spike-resolved)
+
+**Decision (2026-08-15): the reviewer's alignment and confidence come from a
+real text-detection network, not the transcription model.** The VLM
+transcribes the words; PaddleOCR's detector supplies the geometry. The spike
+proved the mechanism on the live pages (page-03 of adopt-20260813-201004):
+40 detected line boxes, all containing real text (ink check); per-line
+recognition confidence spanning 0.60–1.00; per-word boxes via
+`return_word_box=True`.
+
+**Amendment (2026-08-15, user-approved): the FLAG SOURCE is the
+transcription model's own self-report, not the cross-reader agreement.**
+Full-batch data showed the detector's rec model garbles every cursive line
+(75–90% of lines flagged, rec confidence high throughout — confidently
+wrong), so cross-reader disagreement carried almost no discriminative
+information. One extra VLM call per page (`tools/selfreport.py`, ~17k
+tokens) has the model review its own numbered transcription and mark the
+words it is least sure of, or that read oddly in context — page-01: 3
+flagged words vs the cross-reader's 154. The ~~struck~~ markers (crossed-out
+words the VLM left in) always flag. The cross-reader agreement remains the
+fallback when no self-report has run, and its per-line data stays in the
+layout payload. The transcription prompt also carries the standing
+knowledge (people/places), the pile label, and the previous page's text to
+help it read (user, 2026-08-15).
+
+**Why not the alternatives (spike evidence, 2026-08-15):**
+
+| Candidate | Result |
+|---|---|
+| The VLM's own bboxes/confidence (mimo-v2.5, Qwen2.5-VL, Gemini 3.7) | Hallucinated — boxes crop to blank pixels, positions drift between calls, confidence is uniform 0.9–0.99 |
+| Horizontal ink projection | Merges the dense handwriting — page-01 segments into 6 bands with a median height of 330px |
+| kraken segment (D-FINE model) | Upstream registry gap — `DFINEModel is not in model registry` (same class as the PP-OCRv6 recognition gap documented in §16.14) |
+| kraken legacy `.mlmodel` | Recognition-only (CTCLoss), no segmentation |
+| Azure Document Intelligence | Unavailable — no subscription yet (account verification passes; no subscription in the tenant drop-down) |
+
+**The layout pass.** Per batch, after orientation (§16.14), run PaddleOCR
+(PP-OCRv5 mobile det, `enable_mkldnn=False` — the oneDNN/PIR path crashes on
+this CPU; `use_doc_orientation_classify/use_doc_unwarping/use_textline_orientation`
+all off; `return_word_box=True`) on each oriented page → line boxes, per-line
+rec text + score, per-word boxes. **Coordinate scaling:** the engine resizes
+pages over 4000px on the long side — the returned coordinates are in the
+resized space and must be scaled back to the original oriented image before
+storing. The layout JSON (`layout.json` per page, written atomically) sits
+beside the guess stage's `ocr-guess/`; the confirmation/review seams are
+unchanged (§16.15).
+
+**The association (content-based, not positional).** The VLM and PaddleOCR
+read the page in different orders (the spike: PaddleOCR placed the
+letterhead/address after the P.S. block; the VLM read the body first), so
+line boxes map to VLM transcription lines by **best text similarity** of
+their normalized texts (PaddleOCR's rec text is noisy on cursive — that
+noise *is* the confidence signal, so the matcher must tolerate it: word-set
+overlap above a threshold wins, ties broken by reading order). Within a
+matched pair, the per-word flags come from the model's self-report
+(amendment above); the rec text's per-word agreement stays in the payload
+as data. Word boxes without a confident line match are still carried (their
+geometry is real) with a line confidence of 0.
+
+**The front-end surface (VR1/VR4 of the review PRD).** The drafts payload
+(`draft_payloads`, §16.15) gains the per-page layout: each transcription
+line's box + per-word confidence. The review view renders the page image
+(with the boxes as selectable regions) beside the transcription; selecting a
+line highlights its box and vice versa (VR1); low-confidence words are
+visually flagged (VR4). The reviewer's corrections edit the VLM text — the
+boxes stay anchored to the page geometry, not to the corrected words.
+
+**The viewer (2026-08-15: OpenSeadragon; 2026-08-16: replaced with a plain
+`<img>`).** The page-image pane is a plain `<img>` inside a
+transform-scaled layer (one `translate(...) scale(...) rotate(...)`; the
+line boxes are absolutely-positioned children of the same layer, so they
+stay pinned through pan/zoom/rotation by construction). The view is a
+rectangle in display pixels (the rotated image's axes); drag-pan, pinch and
+the Fit/−/+ buttons update it; the initial view is a width-fit band anchored
+at the writing's first line box (the scanned top margin is blank) or the
+detector's first unmatched line on a page whose content association found
+no boxes. OpenSeadragon 6.1.0 was chosen first (BSD-3, zero-dependency
+vanilla, native overlays, deep-zoom for the high-res scans) but removed
+2026-08-16: the surface exercises only a fraction of it (one jpeg, no
+pyramids), and its 2026-08-06 build's tile pipeline never rendered in the
+verification browsers — the render was unverifiable, which the
+perceptual-success standard (ux-standards P15) forbids. The plain `<img>`
+decodes and paints in any browser, so a screenshot or a canvas pixel-read
+can verify the actual pixels; the deep-zoom pyramid stays a future step.
+The transcription pane, confidence flags, and confirm/reject controls are
+our vanilla code. The full transcription apps from the research
+(eScriptorium, FromThePage) are rejected: different stacks (Django+Vue,
+Rails+IIIF) contradicting the vanilla decision; Transkribus is proprietary.
+
+**The orientation fix (2026-08-16).** The orientation arbiter cannot read
+cursive, so an upside-down handwritten page passes review as "correctly
+oriented" — and a transcription read from the wrong-way page is unreliable
+(page-02's first line read "At last venture this form is the building of
+a" before the fix vs "A new venture this term is the holding of a" after —
+two independent readers agree on the corrected reading). The review's ↻
+press is therefore a PIPELINE correction, not a view toggle, and it is
+built for the sync's reality (the front end and back end are different
+boxes; the backend may be off; no image travels — it is never uploaded, the
+backend has it):
+
+- **The press is local first**: the view rotates instantly; the intent is
+  the DESIRED cumulative rotation in quarter-turns, queued in a
+  localStorage outbox (the same offline seam as the confirmations) and
+  committed on navigation — multiple presses coalesce (a half-corrected
+  first press never triggers a reprocess), and a wrong correction is just
+  another intent.
+- **The backend applies an idempotent delta**: the layout records the
+  cumulative applied rotation ("rotation"), the intent is the desired
+  absolute, so a retried intent is a no-op and offline queues cannot
+  over-rotate on redelivery.
+- **The fast half is synchronous**: the image rotates (a rigid box remap,
+  no re-OCR) — the corrected page shows immediately.
+- **The slow half is the async job**: the page's text is re-read by the
+  vision model on the corrected image (the old reading is stale), the
+  self-report re-runs, the layout rebuilds. The drafts payload carries a
+  per-page job state; the surface greys the document with a note, blocks
+  the confirm, and polls — the reviewer navigates on meanwhile. A server
+  restart mid-job demotes the page to "failed" (the stale text stays
+  visible WITH the warning — never a silent half-done page). The stale
+  local edits for the re-read page are cleared on completion.
+
+**The navigation model (2026-08-16).** The review surface shows two nested
+sequences — pages inside a document, documents inside the batch — as ONE
+compact strip under the top bar: the batch's documents as numbered chips
+(✓ confirmed) and the current document's pages as numbered chips (the
+current page filled; a red dot marks pages with lines still to check). Tap
+a chip to navigate. The strip replaces the top-bar subtitle and the
+Prev/Next page buttons: the document boundary is visible before the last
+page, and a cross-page "Next flagged" jump is visible before it happens
+(the flag dot shows where it lands). Numbers and status marks only — no
+added words (prior art: spatial page maps — CHI space-filling thumbnails;
+per-page review status — FromThePage). Flagged words render with a wavy red
+underline (the spell-check convention) at rest, not only in edit.
+
+**The correction interaction (2026-08-15, grounded in the prior art).** The
+reviewer's correction model follows Trove/Transkribus: **per-line inline
+editing anchored to the image**. Selecting a transcription line enters edit
+on that line (the text becomes directly editable in place) while the line's
+box stays highlighted on the image — the image pane keeps the current line's
+region in view (auto-pan/zoom to the box), so the reviewer compares the
+line's letters against the original while typing. The flagged low-confidence
+words are the entry points (WordCheck-style): the reviewer can jump to the
+next flagged word. Trove's per-line +/− (split/merge lines) applies where
+the detector merged two lines (§16.16 open item). Corrections change only
+the edited line's words; confirming publishes the corrected text (§16.15).
+
+**The phone posture (2026-08-15).** The phone review is **landscape-only**:
+portrait shows a "turn your phone" prompt. The landscape phone uses a
+**horizontal split** — the letter image spans the full landscape width on
+top (a phone turned sideways is close to the original document's width, so
+the handwriting renders near its real size), the editable transcription
+fills the bottom pane, and the action bar is sticky (never clipped). The
+tablet keeps the vertical split (image left, text right — it has the
+width for both at good size). Rationale: one split-pane design across
+tablet and phone-landscape instead of a second stacked mobile layout
+(VR8, user 2026-08-15).
+
+**Open items (2026-08-15):**
+- Det-only config: the recognition model loads alongside the detector (the
+  pipeline's default) — a det-only invocation halves the load; the rec model
+  is needed anyway for the cross-reader confidence, so it may stay.
+- Line-splitting: the median box height (93px at the resized scale) suggests
+  some boxes merge two tightly-spaced lines — a per-box re-split pass on
+  over-tall boxes (the ink projection can split within a box where the VLM
+  projection failed globally).
+- The Azure subscription, once it exists, is the cloud fallback for the
+  same mechanism (real boxes + confidence, handwriting-capable).

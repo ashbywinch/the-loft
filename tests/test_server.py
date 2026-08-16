@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from tools.memory import ElicitationError
-from tools.server import create_server
+from tools.server import ServerConfig, create_server
 from tools.store import ImmutableStoreError, MemoryStore
 from tools.sync import Outbox
 
@@ -100,15 +100,17 @@ class ServerFixture:
 
         os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
         self.server = create_server(
-            store,
-            data_dir,
-            client=client,
-            app_dir=data_dir.parent,
+            ServerConfig(
+                store,
+                data_dir,
+                client=client,
+                app_dir=data_dir.parent,
+                work_dir=self.work_dir,
+                outbox=self.outbox,
+                registry_dir=self.registry_dir,
+            ),
             host="127.0.0.1",
             port=0,
-            work_dir=self.work_dir,
-            outbox=self.outbox,
-            registry_dir=self.registry_dir,
         )
         self.thread: threading.Thread = threading.Thread(target=self.server.run, daemon=True)
         self.thread.start()
@@ -1142,21 +1144,24 @@ def test_sync_confirmations_rejects_a_non_scalar_doc_index(server: ServerFixture
     assert status == 400
 
 
-def test_serve_app_factory_builds_from_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_serve_app_factory_builds_from_the_environment(tmp_path: Path) -> None:
     """The uvicorn factory for --reload (2026-08-16: make serve always
     auto-reloads): the server's configuration travels via the environment
     the CLI set, so the reloader's subprocess can rebuild the app fresh on
     every source change."""
     app_data = make_app_data(tmp_path)
     (tmp_path / "archive").mkdir()
-    monkeypatch.setenv("THE_LOFT_SESSION_SECRET", "test-secret")
-    monkeypatch.setenv("LOFT_ARCHIVE", str(tmp_path / "archive"))
-    monkeypatch.setenv("LOFT_DATA", str(app_data))
-    monkeypatch.setenv("LOFT_APP", str(tmp_path))
 
     from tools.cli import serve_app
 
-    app = serve_app()
+    app = serve_app(
+        _env={
+            "THE_LOFT_SESSION_SECRET": "test-secret",
+            "LOFT_ARCHIVE": str(tmp_path / "archive"),
+            "LOFT_DATA": str(app_data),
+            "LOFT_APP": str(tmp_path),
+        }
+    )
     assert any(getattr(route, "path", None) == "/api/health" for route in app.routes)
 
 

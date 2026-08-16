@@ -29,13 +29,24 @@ FILLS = {
 # applies (2026-08-11 review).
 _PAGE_PARSE_ERRORS = (IndexError, ValueError)
 
+# The ruled-paper look's SVG geometry (tuned once): 11 hand-written lines,
+# the first at y=40, 22px apart; each line's gentle wave starts 40px in and
+# steps 10px every 3 lines.
+_RULED_LINE_COUNT = 11
+_FIRST_LINE_Y = 40
+_LINE_SPACING = 22
+_WAVE_X_BASE = 40
+_WAVE_X_STEP = 10
+_WAVE_CYCLE_LINES = 3
+
 
 def svg_paper(page_no: int, n_pages: int) -> str:
     """A letter page: paper with hand-written-looking lines."""
     lines = "\n".join(
-        f'<path d="M24 {40 + i * 22} q {40 + (i % 3) * 10} -6 220 -2" '
+        f'<path d="M24 {_FIRST_LINE_Y + i * _LINE_SPACING} '
+        f'q {_WAVE_X_BASE + (i % _WAVE_CYCLE_LINES) * _WAVE_X_STEP} -6 220 -2" '
         f'stroke="#8a7a63" stroke-width="2.4" fill="none" stroke-linecap="round" opacity="0.55"/>'
-        for i in range(11)
+        for i in range(_RULED_LINE_COUNT)
     )
     return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 420">
   <rect width="320" height="420" rx="6" fill="#f3ead6"/>
@@ -84,6 +95,15 @@ def svg_object(label: str, year: str) -> str:
     )
 
 
+def _letter_page_no(filename: str) -> int:
+    """The page number in a 'letter-03.jpg' asset name, or 1 for non-page
+    letter assets (envelopes, backs)."""
+    try:
+        return int(filename.split("-")[1].split(".")[0])
+    except _PAGE_PARSE_ERRORS:
+        return 1
+
+
 def asset_svg(item: dict[str, Any], filename: str) -> str:
     """The stand-in for one missing asset of *item* — the shape follows the
     item's type, the label comes from the item's own data: a ``demo`` field
@@ -93,10 +113,7 @@ def asset_svg(item: dict[str, Any], filename: str) -> str:
     real family's artifact ids, baking content into code)."""
     label = html.escape(str(item.get("demo") or item["title"]), quote=True)
     if item["type"] == "letter":
-        try:
-            page_no = int(filename.split("-")[1].split(".")[0])
-        except _PAGE_PARSE_ERRORS:
-            page_no = 1  # non-page letter assets (envelopes, backs) fall back
+        page_no = _letter_page_no(filename)
         return svg_paper(page_no, len(item["assets"]))
     if item["type"] == "object":
         return svg_object(label, item["date"])
@@ -136,9 +153,3 @@ class PlaceholderAvatar:
     @staticmethod
     def svg(initials: str, hue: str) -> str:
         return svg_avatar(initials, hue)
-
-
-def placeholder_for(item: dict[str, Any], filename: str) -> str:
-    """The stand-in class for one missing asset of *item* — the object-model
-    dispatch (asset_svg's factory role, named for the family it belongs to)."""
-    return asset_svg(item, filename)

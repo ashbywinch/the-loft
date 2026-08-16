@@ -22,14 +22,32 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+from functools import partial
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+
 from tools.atomic import atomic_write
+from tools.vlm import parse_transcription_response, transcribe_image_vlm, transcription_system_with_context
 
 KRAKEN = str(Path(__file__).resolve().parent.parent / ".venv-htr" / "bin" / "kraken")
 ORLI_MODEL = Path.home() / ".local/share/htrmopo/c690cc12-0cf5-59dd-af71-69cdef2392b2/orli_base.safetensors"
 TROCR_MODEL = "microsoft/trocr-small-handwritten"
+
+# Line-box geometry (the crop bounds derived from each line's baseline): the
+# box spans the gap to the NEXT baseline — clamped to sane heights, split
+# 60% above / 40% below the baseline; the last line (no next baseline) gets
+# a default gap. Crops pad the box 8px each side.
+DEFAULT_LINE_GAP = 60  # px below the last line's baseline
+MIN_LINE_GAP = 20.0
+MAX_LINE_GAP = 200.0
+GAP_ABOVE_BASELINE = 0.6  # share of the gap above the baseline
+GAP_BELOW_BASELINE = 0.4  # share of the gap below the baseline
+CROP_PADDING = 8  # px of margin around each line crop
+ERROR_SNIPPET_CHARS = 200  # chars of model output shown in HtrError messages
 
 
 class HtrError(RuntimeError):
@@ -40,10 +58,6 @@ def segment_page(image: Path, orli: Path = ORLI_MODEL, kraken: str = KRAKEN) -> 
     """Run kraken+orli on one page; returns the JSON line records (baselines),
     coordinates in the ORIGINAL image space (the page is downscaled to orli's
     trained input range for speed, and the baselines are remapped back)."""
-    import tempfile
-
-    from PIL import Image
-
     img = Image.open(image).convert("RGB")
     target_width = 1920.0  # orli's trained width; the quality-limiting dimension for horizontal text
     scale = 1.0
@@ -74,12 +88,12 @@ def segment_page(image: Path, orli: Path = ORLI_MODEL, kraken: str = KRAKEN) -> 
     stdout = result.stdout
     start = stdout.find("{")
     if start < 0:
-        raise HtrError(f"kraken segment returned no JSON for {image.name}: {stdout[:200]!r}")
+        raise HtrError(f"kraken segment returned no JSON for {image.name}: {stdout[:ERROR_SNIPPET_CHARS]!r}")
     try:
         payload, _ = json.JSONDecoder().raw_decode(stdout[start:])  # trailing progress text allowed
     except json.JSONDecodeError as exc:
         raise HtrError(
-            f"kraken segment returned malformed JSON for {image.name}: {stdout[start : start + 200]!r}"
+            f"kraken segment returned malformed JSON for {image.name}: {stdout[start : start + ERROR_SNIPPET_CHARS]!r}"
         ) from exc
     lines = payload.get("lines", [])
     if scale < 1.0:
@@ -109,23 +123,21 @@ def line_boxes(lines: list[dict[str, Any]]) -> list[tuple[int, int, int, int]]:
     entries.sort(key=lambda e: e["y"])
     boxes: list[tuple[int, int, int, int]] = []
     for i, entry in enumerate(entries):
-        next_y = entries[i + 1]["y"] if i + 1 < len(entries) else entry["y"] + 60
-        gap = max(20.0, min(200.0, next_y - entry["y"]))
-        top = entry["y"] - 0.6 * gap
-        bottom = entry["y"] + 0.4 * gap
+        next_y = entries[i + 1]["y"] if i + 1 < len(entries) else entry["y"] + DEFAULT_LINE_GAP
+        gap = max(MIN_LINE_GAP, min(MAX_LINE_GAP, next_y - entry["y"]))
+        top = entry["y"] - GAP_ABOVE_BASELINE * gap
+        bottom = entry["y"] + GAP_BELOW_BASELINE * gap
         boxes.append((int(entry["x0"]), int(top), int(entry["x1"]), int(bottom)))
     return boxes
 
 
 def crop_lines(image: Path, boxes: list[tuple[int, int, int, int]]) -> list[Any]:
     """The line images (PIL), padded 8px each side, in reading order."""
-    from PIL import Image
-
     img = Image.open(image).convert("RGB")
     crops: list[Any] = []
     for x0, y0, x1, y1 in boxes:
-        left, top = max(0, x0 - 8), max(0, y0 - 8)
-        right, bottom = min(img.width, x1 + 8), min(img.height, y1 + 8)
+        left, top = max(0, x0 - CROP_PADDING), max(0, y0 - CROP_PADDING)
+        right, bottom = min(img.width, x1 + CROP_PADDING), min(img.height, y1 + CROP_PADDING)
         if right > left and bottom > top:
             crops.append(img.crop((left, top, right, bottom)))
     return crops
@@ -161,8 +173,6 @@ def htr_page(image: Path, out_path: Path, *, _segment: Any = None, _transcribe: 
     if _transcribe is not None:
         text = _transcribe(crops)
     else:
-        from transformers import TrOCRProcessor, VisionEncoderDecoderModel
-
         processor = TrOCRProcessor.from_pretrained(TROCR_MODEL)
         model = VisionEncoderDecoderModel.from_pretrained(TROCR_MODEL)
         try:
@@ -175,10 +185,6 @@ def htr_page(image: Path, out_path: Path, *, _segment: Any = None, _transcribe: 
 
 def htr_pages(pages: list[tuple[str, Path]], raw_dir: Path) -> None:
     """HTR each (name, page-image) pair into raw_dir/<stem>.txt, in order."""
-    from functools import partial
-
-    from transformers import TrOCRProcessor, VisionEncoderDecoderModel
-
     processor = TrOCRProcessor.from_pretrained(TROCR_MODEL)
     model = VisionEncoderDecoderModel.from_pretrained(TROCR_MODEL)
     transcribe = partial(transcribe_lines, processor=processor, model=model)
@@ -199,6 +205,9 @@ def htr_pages(pages: list[tuple[str, Path]], raw_dir: Path) -> None:
         del processor, model  # the 3.14 main venv shares RAM with everything else; drop the weights promptly
 
 
+# shape; the extra params (transcribe seam, people/places/label context) belong to this backend alone; a stage-inputs
+# type would be ceremony for one use
+# lucidlint: ignore long-param-list the VLM backend's stage inputs — htr_pages takes only (pages, raw_dir), a disjoint
 def htr_pages_vlm(
     pages: list[tuple[str, Path]],
     raw_dir: Path,
@@ -216,8 +225,6 @@ def htr_pages_vlm(
     places (a familiar name is read correctly, not guessed letter-by-letter),
     the pile's label, and the previous page's text for continuity (user,
     2026-08-15: "whatever useful context we have to help it guess better")."""
-    from tools.vlm import parse_transcription_response, transcribe_image_vlm, transcription_system_with_context
-
     call = transcribe if transcribe is not None else transcribe_image_vlm
     previous: str | None = None
     for name, image in pages:
@@ -241,10 +248,7 @@ def htr_pages_vlm(
             # misses the top line entirely — the VLM that READ the page can
             # anchor each line it transcribed). Only the entries with boxes
             # ride along; a page without geometry keeps the old fallback.
-            lines_out = []
-            for i in sorted(boxes):
-                lines_out.append({"text": plain.split("\n")[i], "box": boxes[i]})
-            marker_data["lines"] = lines_out
+            marker_data["lines"] = [{"text": plain.split("\n")[i], "box": boxes[i]} for i in sorted(boxes)]
         atomic_write(marker, json.dumps(marker_data, ensure_ascii=False))
         previous = plain
         print(f"vlm: {name} -> {out.name} ({usage.get('total_tokens', 0)} tokens)")

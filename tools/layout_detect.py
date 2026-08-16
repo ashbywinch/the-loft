@@ -25,6 +25,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from paddleocr import PaddleOCR
+from PIL import Image
+
 from tools.layout import build_layout, load_vlm_boxes, write_layout
 from tools.loft_paths import WORK_DIR
 
@@ -73,8 +76,6 @@ def _bbox(poly: list[Any]) -> list[float]:
 def detect_page(engine: Any, image: Path) -> dict[str, Any]:
     """The raw detection output for one page: lines + per-word boxes in the
     original image's pixels."""
-    from PIL import Image
-
     with Image.open(image) as im:
         width, height = im.size
     first = engine.predict(input=str(image), return_word_box=True)[0]
@@ -85,10 +86,8 @@ def detect_page(engine: Any, image: Path) -> dict[str, Any]:
     _assert_original_space(polys, width, height)
     detections = []
     for i, poly in enumerate(polys):
-        words_out: list[dict[str, Any]] = []
         regions = word_regions[i] if word_regions is not None and i < len(word_regions) else []
-        for region in regions:
-            words_out.append({"box": _bbox(region)})
+        words_out: list[dict[str, Any]] = [{"box": _bbox(region)} for region in regions]
         detections.append(
             {
                 "box": _bbox(poly),
@@ -164,8 +163,6 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
 
 
 def main(argv: list[str] | None = None) -> int:
-    from paddleocr import PaddleOCR
-
     parser = argparse.ArgumentParser(prog="layout_detect", description="The layout pass per batch")
     parser.add_argument("batch_id")
     parser.add_argument("pages", nargs="*", help="optional page names to limit the pass")

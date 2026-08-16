@@ -21,6 +21,7 @@ and the diff-token-cap marker — the check's failure message names the
 reason instead of "may have failed silently".
 """
 
+import http
 import json
 import os
 import re
@@ -58,7 +59,9 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     (401 InvalidAuthenticationInfo, 2026-08-11). Stop at the 302 and fetch
     the signed Location bare."""
 
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
+    @staticmethod
+    # lucidlint: ignore long-param-list the urllib HTTPRedirectHandler protocol fixes this signature
+    def redirect_request(req, fp, code, msg, headers, newurl):
         return None
 
 
@@ -83,7 +86,7 @@ def _job_log(repo: str, token: str) -> str | None:
         try:
             return _OPENER.open(req).read().decode("utf-8", errors="replace")
         except HTTPError as e:
-            if e.code != 302:
+            if e.code != http.HTTPStatus.FOUND:
                 raise
             return urllib.request.urlopen(e.headers["Location"]).read().decode("utf-8", errors="replace")
     except (HTTPError, KeyError, ValueError):
@@ -103,10 +106,18 @@ def _bot_failure_reason(repo: str, token: str) -> str:
     bot_lines = [ln for ln in log.splitlines() if '"text"' in ln]
     if not bot_lines:
         return "the bot's step produced no log output"
+    reason = _size_reason(bot_lines) or _error_marker_reason(bot_lines)
+    if reason:
+        return reason
+    # no markers — say where the bot's output stopped
+    last = next((line for line in reversed(bot_lines) if line.strip()), "")
+    return f"the bot's last output before going silent: {last.split('\t')[-1][:200]}"
 
-    # the size signal first — a review that died right after pruning is a
-    # PR that outgrew the bot's review budget (2026-08-11: the model call
-    # produced nothing immediately after "Tokens: 144757 ... pruning diff")
+
+def _size_reason(bot_lines: list[str]) -> str | None:
+    """The size signal first — a review that died right after pruning is a
+    PR that outgrew the bot's review budget (2026-08-11: the model call
+    produced nothing immediately after "Tokens: 144757 ... pruning diff")."""
     for ln in bot_lines:
         m = _SIZE_RE.search(ln)
         if m:
@@ -114,17 +125,17 @@ def _bot_failure_reason(repo: str, token: str) -> str:
                 f"the PR's cumulative diff is {m.group(1)} tokens — over the bot's "
                 f"{m.group(2)}-token review cap; the review died after pruning the diff"
             )
+    return None
 
-    # the swallowed-exception seam: the traceback the bot logged and hid
+
+def _error_marker_reason(bot_lines: list[str]) -> str | None:
+    """The swallowed-exception seam: the traceback the bot logged and hid."""
     for i, ln in enumerate(bot_lines):
         if any(mark in ln for mark in _ERROR_MARKERS):
             tail = [line for line in bot_lines[i : i + _TRACEBACK_TAIL] if line.strip()]
             snippet = " | ".join(line.split("\t")[-1][:200] for line in tail[:4])
             return f"the bot logged an error before dying: {snippet}"
-
-    # no markers — say where the bot's output stopped
-    last = next((line for line in reversed(bot_lines) if line.strip()), "")
-    return f"the bot's last output before going silent: {last.split(chr(9))[-1][:200]}"
+    return None
 
 
 def main() -> int:

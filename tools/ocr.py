@@ -38,6 +38,10 @@ TESSERACT = "tesseract"
 MAGICK = "magick"
 ROTATIONS = (0, 90, 180, 270)
 STRONG_CONFIDENCE = 60  # the arbiter's threshold — a word tesseract clearly recognizes
+# The tesseract TSV layout (--psm 6 tsv output): word-level rows have 12
+# columns; the per-word confidence is column 10 (0-based).
+TSV_COLUMN_COUNT = 12
+TSV_CONFIDENCE_COLUMN = 10
 
 
 class OrientedPage(TypedDict):
@@ -79,10 +83,10 @@ def _strong_word_count(image: Path, lang: str) -> int:
     strong = 0
     for line in result.stdout.splitlines()[1:]:  # skip the header
         fields = line.split("\t")
-        if len(fields) < 12 or fields[0] != "5":  # word-level rows carry the confidence
+        if len(fields) < TSV_COLUMN_COUNT or fields[0] != "5":  # word-level rows carry the confidence
             continue
         try:
-            if float(fields[10]) >= STRONG_CONFIDENCE:
+            if float(fields[TSV_CONFIDENCE_COLUMN]) >= STRONG_CONFIDENCE:
                 strong += 1
         except ValueError:
             continue

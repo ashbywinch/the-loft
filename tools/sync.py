@@ -14,6 +14,7 @@ Nothing confirmed is ever lost to a failed push.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from typing import Any
 from PIL import Image, ImageOps
 
 from tools.atomic import atomic_write
+from tools.htr import htr_pages_vlm
 from tools.layout import (
     build_layout,
     layout_detections,
@@ -32,6 +34,9 @@ from tools.layout import (
 )
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.registry import load_batch, record_path
+from tools.vlm import selfreport_words
+
+logger = logging.getLogger(__name__)
 
 REQUIRED_FIELDS = ("batch_id", "doc_index", "pages", "text", "status", "confirmed_at")
 
@@ -43,6 +48,13 @@ BATCH_ID = re.compile(r"^[A-Za-z0-9-]+$")
 # `~` is allowed: phone export duplicates arrive as "name~2.jpg" (the
 # PhotoScan batch, 2026-08-16 — the guard must not reject real scans).
 _PAGE_NAME = re.compile(r"^[A-Za-z0-9._~-]+$")
+
+# Rotation degrees — the reviewer's orientation corrections are quarter
+# turns of the page; layouts record the cumulative rotation in degrees CW,
+# so the recovery/delta arithmetic works in degrees.
+FULL_ROTATION_DEGREES = 360
+QUARTER_TURN_DEGREES = 90
+QUARTERS_PER_TURN = FULL_ROTATION_DEGREES // QUARTER_TURN_DEGREES  # 4 quarter-turns per full rotation
 
 
 def validate_confirmation(payload: dict[str, Any]) -> dict[str, Any]:
@@ -93,10 +105,9 @@ class Outbox:
     def pending(self) -> list[tuple[str, dict[str, Any]]]:
         if not self.directory.is_dir():
             return []
-        items: list[tuple[str, dict[str, Any]]] = []
-        for path in sorted(self.directory.glob("*.json")):
-            items.append((path.stem, json.loads(path.read_text(encoding="utf-8"))))
-        return items
+        return [
+            (path.stem, json.loads(path.read_text(encoding="utf-8"))) for path in sorted(self.directory.glob("*.json"))
+        ]
 
     def mark_received(self, item_ids: list[str]) -> None:
         for item_id in item_ids:
@@ -105,6 +116,8 @@ class Outbox:
             (self.directory / f"{item_id}.json").unlink(missing_ok=True)
 
 
+# The sync write seam's identity + optional dirs — a single call site,
+# lucidlint: ignore long-param-list no repeated group
 def record_confirmation(
     batch_id: str,
     doc_index: int,
@@ -180,6 +193,58 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
     return drafts
 
 
+# lucidlint: ignore long-param-list a single crash-recovery call site — the paths are the caller's locals
+def _recover_crashed_layout(
+    journal_path: Path,
+    layout: dict[str, Any],
+    layout_path: Path,
+    image_path: Path,
+    page: str,
+    work_dir: Path,
+    batch_id: str,
+) -> dict[str, Any]:
+    """Complete a half-rotated crash from the journal — rebuild the layout to
+    the recorded intent so the boxes never silently misalign. An unreadable
+    journal abandons recovery (logged) and the stale layout stands; the
+    caller computes the delta from it."""
+    try:
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        intended = int(journal.get("rotation", 0)) % FULL_ROTATION_DEGREES
+        stale = int(journal.get("from", 0)) % FULL_ROTATION_DEGREES
+        if int(layout.get("rotation", 0)) % FULL_ROTATION_DEGREES == stale:
+            image = ImageOps.exif_transpose(Image.open(image_path))
+            if image.width == int(layout.get("width", 0)) and image.height == int(layout.get("height", 0)):
+                # the crash happened BEFORE the image swap — the journal
+                # is premature, the layout is still consistent
+                journal_path.unlink(missing_ok=True)
+            else:
+                # the image IS rotated — recover the layout to the intent
+                recovery = (intended - stale) % FULL_ROTATION_DEGREES
+                if recovery:
+                    steps = recovery // QUARTER_TURN_DEGREES
+                    detections = rotate_detections(layout_detections(layout), steps, image.width, image.height)
+                    vlm_text = "\n".join(line["text"] for line in layout.get("lines", []))
+                    selfreport_path = work_dir / batch_id / "ocr-guess" / Path(page).with_suffix(".selfreport.json")
+                    selfreport = (
+                        json.loads(selfreport_path.read_text(encoding="utf-8")) if selfreport_path.exists() else None
+                    )
+                    layout = build_layout(
+                        layout.get("page", page),
+                        image.width,
+                        image.height,
+                        vlm_text,
+                        detections,
+                        selfreport=selfreport,
+                    )
+                    layout["rotation"] = intended
+                    write_layout(layout, layout_path)
+    except (OSError, json.JSONDecodeError, ValueError) as e:
+        logger.warning("sync: unreadable rotation journal %s — recovery abandoned: %s", journal_path, e)
+        journal_path.unlink(missing_ok=True)
+        return layout
+    return layout
+
+
 def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool:
     """Apply a reviewer's orientation correction: rotate the oriented page
     clockwise by ``quarters`` × 90° and re-anchor its layout in place
@@ -197,7 +262,7 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
     page."""
     if not BATCH_ID.match(batch_id) or not safe_page_name(page):
         raise ValueError("invalid batch or page name")
-    quarters = int(quarters) % 4
+    quarters = int(quarters) % QUARTERS_PER_TURN
     image_path = work_dir / batch_id / "oriented" / page
     layout_path = work_dir / batch_id / "ocr-guess" / Path(page).with_suffix(".layout.json")
     if not image_path.is_file():
@@ -212,56 +277,22 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
     # delta is computed, so the boxes never silently misalign.
     journal_path = work_dir / batch_id / "oriented" / f"{Path(page).stem}.rotate.json"
     if journal_path.exists():
-        try:
-            journal = json.loads(journal_path.read_text(encoding="utf-8"))
-            intended = int(journal.get("rotation", 0)) % 360
-            stale = int(journal.get("from", 0)) % 360
-            if int(layout.get("rotation", 0)) % 360 == stale:
-                image = ImageOps.exif_transpose(Image.open(image_path))
-                if image.width == int(layout.get("width", 0)) and image.height == int(layout.get("height", 0)):
-                    # the crash happened BEFORE the image swap — the journal
-                    # is premature, the layout is still consistent
-                    journal_path.unlink(missing_ok=True)
-                else:
-                    # the image IS rotated — recover the layout to the intent
-                    recovery = (intended - stale) % 360
-                    if recovery:
-                        steps = recovery // 90
-                        detections = rotate_detections(layout_detections(layout), steps, image.width, image.height)
-                        vlm_text = "\n".join(line["text"] for line in layout.get("lines", []))
-                        selfreport_path = work_dir / batch_id / "ocr-guess" / Path(page).with_suffix(".selfreport.json")
-                        selfreport = (
-                            json.loads(selfreport_path.read_text(encoding="utf-8"))
-                            if selfreport_path.exists()
-                            else None
-                        )
-                        layout = build_layout(
-                            layout.get("page", page),
-                            image.width,
-                            image.height,
-                            vlm_text,
-                            detections,
-                            selfreport=selfreport,
-                        )
-                        layout["rotation"] = intended
-                        write_layout(layout, layout_path)
-        except (OSError, json.JSONDecodeError, ValueError):
-            journal_path.unlink(missing_ok=True)
+        layout = _recover_crashed_layout(journal_path, layout, layout_path, image_path, page, work_dir, batch_id)
     # the cumulative rotation the page already carries — the intent is the
     # DESIRED total, so the delta is what we apply now. The desired CAN be
     # 0 (a reviewer rotating the wrong way back to the original) — the
     # delta is the no-op check, not the desired itself (2026-08-16: the
     # early return on quarters==0 silently ignored the rotate-back).
-    current = int(layout.get("rotation", 0)) % 360
-    delta = (quarters * 90 - current) % 360
+    current = int(layout.get("rotation", 0)) % FULL_ROTATION_DEGREES
+    delta = (quarters * QUARTER_TURN_DEGREES - current) % FULL_ROTATION_DEGREES
     if delta == 0:
         # the recovery may have just completed the layout from a crash —
         # the journal's job is done either way (2026-08-16)
         journal_path.unlink(missing_ok=True)
         return False
-    steps = delta // 90
+    steps = delta // QUARTER_TURN_DEGREES
     image = ImageOps.exif_transpose(Image.open(image_path))
-    rotated = image.rotate(-90 * steps, expand=True)  # clockwise
+    rotated = image.rotate(-QUARTER_TURN_DEGREES * steps, expand=True)  # clockwise
     rotated.info.pop("exif", None)
     detections = rotate_detections(layout_detections(layout), steps, image.width, image.height)
     selfreport_path = work_dir / batch_id / "ocr-guess" / Path(page).with_suffix(".selfreport.json")
@@ -275,7 +306,7 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
         detections,
         selfreport=selfreport,
     )
-    new_layout["rotation"] = (current + delta) % 360
+    new_layout["rotation"] = (current + delta) % FULL_ROTATION_DEGREES
     tmp = image_path.with_name(image_path.name + ".tmp")
     rotated.save(tmp, format=image.format or "JPEG")
     # the journal lands BEFORE the image swap: a crash mid-rotate leaves a
@@ -336,6 +367,7 @@ def demote_stale_jobs(work_dir: Path) -> None:
                 set_page_job(batch_id, page, "failed", work_dir)
 
 
+# lucidlint: ignore long-param-list the reprocess gate's identity + injectable seams — a single call site
 def reprocess_page_transcription(
     batch_id: str,
     page: str,
@@ -365,9 +397,6 @@ def reprocess_page_transcription(
     if not image_path.is_file() or not layout_path.is_file():
         raise ValueError(f"no such page or layout: {page}")
     try:
-        from tools.htr import htr_pages_vlm
-        from tools.vlm import selfreport_words
-
         # the corrected image + the remapped detections (the fast rotation
         # already rebuilt the layout — its lines carry the current boxes)
         layout = json.loads(layout_path.read_text(encoding="utf-8"))
@@ -405,6 +434,7 @@ def reprocess_page_transcription(
         new_layout["rotation"] = layout.get("rotation", 0)
         write_layout(new_layout, layout_path)
         set_page_job(batch_id, page, None, work_dir)
+    # lucidlint: ignore broad-except the stage's terminal boundary — mark failed on ANY error, then re-raise
     except Exception:
         set_page_job(batch_id, page, "failed", work_dir)
         raise

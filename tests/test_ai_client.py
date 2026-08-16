@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from pytest import MonkeyPatch
 
 from tools.ai_client import AIClient, AIClientError, find_api_key, json_object
 
@@ -124,28 +123,22 @@ def test_json_object_rejects_missing_json() -> None:
         json_object("no json here")
 
 
-def test_find_api_key_prefers_environment(monkeypatch: MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENCODE_API_KEY", "env-key")
-    assert find_api_key() == "env-key"
+def test_find_api_key_prefers_environment() -> None:
+    assert find_api_key(_env={"OPENCODE_API_KEY": "env-key"}) == "env-key"
 
 
-def test_find_api_key_reads_opencode_auth(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
-    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+def test_find_api_key_reads_opencode_auth(tmp_path: Path) -> None:
     auth_dir = tmp_path / ".local" / "share" / "opencode"
     auth_dir.mkdir(parents=True)
     _ = (auth_dir / "auth.json").write_text(
         json.dumps({"opencode-go": {"type": "api", "key": "auth-key"}}), encoding="utf-8"
     )
-    assert find_api_key() == "auth-key"
+    assert find_api_key(_env={}, _home=tmp_path) == "auth-key"
 
 
-def test_find_api_key_raises_when_missing(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+def test_find_api_key_raises_when_missing(tmp_path: Path) -> None:
     with pytest.raises(AIClientError):
-        find_api_key()
+        find_api_key(_env={}, _home=tmp_path)
 
 
 def test_chat_null_message_is_a_clean_error() -> None:

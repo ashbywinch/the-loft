@@ -26,8 +26,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from types import MappingProxyType
 
 from PIL import Image
 
@@ -42,7 +44,7 @@ JPEG_QUALITY = 88
 ADF_SOURCE = "ADF Duplex"  # the FF-680W's single sheet-fed ADF handles letters and photos
 MODES = ("docs", "photos")
 # per-mode source: one line here if a future device exposes a photo-specific source
-SOURCE_BY_MODE = {"docs": ADF_SOURCE, "photos": ADF_SOURCE}
+SOURCE_BY_MODE: Mapping[str, str] = MappingProxyType({"docs": ADF_SOURCE, "photos": ADF_SOURCE})
 SCAN_SOURCE = "epson-ff680w"
 
 _DEVICE_LINE = re.compile(r"^device `([^']+)' is a ")
@@ -103,6 +105,8 @@ def ensure_job_dir(inbox: Path, job: str) -> Path:
     return job_dir
 
 
+# inbox/resolution are environment defaults, _scanimage/_env are test seams
+# lucidlint: ignore long-param-list a single production call site — device/mode/job are the job's identity,
 def scan_job(
     device: str,
     mode: str,

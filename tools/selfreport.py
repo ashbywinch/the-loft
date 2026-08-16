@@ -15,14 +15,13 @@ Usage: python -m tools.selfreport <batch_id> [page ...]
 
 from __future__ import annotations
 
-import argparse
 import concurrent.futures
 import json
 import sys
 from pathlib import Path
 
 from tools.atomic import atomic_write
-from tools.loft_paths import WORK_DIR
+from tools.selfreport_driver import run_cli
 from tools.vlm import selfreport_words
 
 REPORT_NAME = "selfreport.json"
@@ -74,12 +73,13 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path) -> in
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="selfreport", description="The flag pass per batch")
-    parser.add_argument("batch_id")
-    parser.add_argument("pages", nargs="*", help="optional page names to limit the pass")
-    parser.add_argument("--work-dir", type=Path, default=WORK_DIR)
-    args = parser.parse_args(argv)
-    return run_batch(args.batch_id, args.pages or None, args.work_dir)
+    return run_cli(
+        argv,
+        prog="selfreport",
+        description="The flag pass per batch",
+        pages_help="optional page names to limit the pass",
+        runner=run_batch,
+    )
 
 
 if __name__ == "__main__":

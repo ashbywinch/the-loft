@@ -33,8 +33,6 @@ PEOPLE: list[dict[str, Any]] = [
     {"id": "p-nora", "name": "Nora Whitlock"},
     {"id": "p-walter", "name": "Walter Whitlock", "dod": {"date": "1916-09-15", "precision": "exact"}},
 ]
-PLACES: list[dict[str, Any]] = []
-THEMES: list[dict[str, Any]] = []
 RELATIONSHIPS: list[dict[str, Any]] = [
     {"a": "p-walter", "b": "p-nora", "kind": "sibling", "label_a": "sibling", "label_b": "sibling"},
 ]
@@ -148,7 +146,7 @@ class ExhaustedUncertaintyFlow(ReviewFlow):
     question_concludes = True
 
 
-FLOWS: list[ReviewFlow] = [
+FLOWS: tuple[ReviewFlow, ...] = (
     OnTopicFlow(),
     OffTopicFlow(),
     WrongPersonContradictionFlow(),
@@ -157,7 +155,7 @@ FLOWS: list[ReviewFlow] = [
     ImportGuessNotContradictionFlow(),
     DigsToDeathFlow(),
     ExhaustedUncertaintyFlow(),
-]
+)
 
 
 def _facts() -> ReviewContext:
@@ -211,18 +209,18 @@ def persona_errors(result: dict[str, Any], reviewer_text: str = "") -> list[str]
     violation (user, 2026-08-15: "it's always acceptable to use vocabulary
     that the user themselves introduces"). A jargon word the reviewer's
     statement also contains is allowed in the assistant's reply."""
-    errors: list[str] = []
     fields: list[tuple[str, str]] = [("question", result.get("question", ""))]
     if result.get("relevant") != "true":
         fields.append(("note", result.get("note", "")))
     for i, f in enumerate(result.get("findings", [])):
         text = f.get("text", "") if isinstance(f, dict) else str(f)
         fields.append((f"findings[{i}]", text))
-    for field, text in fields:
-        for word in PERSONA_JARGON:
-            if word in text and word not in reviewer_text:
-                errors.append(f"{field} echoes the system ('{word}'): {text[:80]}")
-    return errors
+    return [
+        f"{field} echoes the system ('{word}'): {text[:80]}"
+        for field, text in fields
+        for word in PERSONA_JARGON
+        if word in text and word not in reviewer_text
+    ]
 
 
 def _feedback_errors(result: dict[str, Any]) -> list[str]:
@@ -255,6 +253,7 @@ def run_flow(client: AIClient, flow: ReviewFlow) -> dict[str, Any]:
     return investigate(client, text=flow.text, person=PERSON, who="Alex", facts=_facts())
 
 
+# lucidlint: ignore strewing the condition functions are the eval's dispatch table BY DESIGN
 def condition_relevant(flow: ReviewFlow, result: dict[str, Any]) -> str | None:
     if result.get("relevant") != flow.relevant:
         return f"relevant: expected {flow.relevant}, got {result.get('relevant')}"
@@ -312,18 +311,21 @@ def condition_question(flow: ReviewFlow, result: dict[str, Any]) -> str | None:
     return None
 
 
-def condition_persona(flow: ReviewFlow, result: dict[str, Any]) -> str | None:
-    errors = persona_errors(result, flow.text)
+def _join_errors(errors: list[str]) -> str | None:
+    """One finding string from a list of errors — None when clean."""
     return "\n".join(errors) if errors else None
+
+
+def condition_persona(flow: ReviewFlow, result: dict[str, Any]) -> str | None:
+    return _join_errors(persona_errors(result, flow.text))
 
 
 def condition_feedback(flow: ReviewFlow, result: dict[str, Any]) -> str | None:
-    errors = _feedback_errors(result)
-    return "\n".join(errors) if errors else None
+    return _join_errors(_feedback_errors(result))
 
 
 # every condition, in the order the condition tests run them
-REVIEW_CONDITIONS: list[tuple[str, Any]] = [
+REVIEW_CONDITIONS: tuple[tuple[str, Any], ...] = (
     ("relevance", condition_relevant),
     ("contradiction", condition_contradiction),
     ("confidence", condition_confidence),
@@ -332,7 +334,7 @@ REVIEW_CONDITIONS: list[tuple[str, Any]] = [
     ("the question", condition_question),
     ("the persona guard", condition_persona),
     ("the feedback property", condition_feedback),
-]
+)
 
 
 class MultiTurnArcFlow:

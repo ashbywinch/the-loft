@@ -28,4 +28,6 @@ def _no_outbound_network(request: pytest.FixtureRequest, monkeypatch: pytest.Mon
             raise OSError(f"network access blocked in tests (host={host!r})")
         real_connect(self, address)
 
+    # The network guard is test infrastructure, not a dependency fake —
+    # lucidlint: ignore monkeypatch DI cannot block sockets
     monkeypatch.setattr(socket.socket, "connect", guarded_connect)

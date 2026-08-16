@@ -6,7 +6,7 @@ with rationale"). The detailed records — the problems, the walks, the
 evidence — live in `docs/plans/ux-fixes-plan.md`; this register is the
 one-line memory: the decision, why, and where. The standards that govern the
 UX process (and the reviewer rules) live in omp-config (`skill://ux-process`,
-`docs/ux-standards.md`).
+docs/ux-standards.md).
 
 | Date | Decision | Rationale | Detail |
 |---|---|---|---|

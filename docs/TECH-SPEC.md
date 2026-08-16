@@ -616,10 +616,10 @@ mixed-layout transcription (page-03's callout box, postmark, address and
 salutation all read correctly); ~85% word accuracy on the medal card's
 hardest element (handwritten digits in a dense form); ~11K tokens/page
 (~$2–15 per 1,000 pages at mid-tier rates). The local orli+TrOCR stack
-(segmentation OK, recognition garbage on the test pages) and the
-specialist OCR APIs (Azure Read `tools/ocr_azure.py` — client ready,
-untested on real pages; Transkribus — UI-bound on individual plans,
-~10× the price) remain as alternatives behind the same seam
+stack (segmentation OK, recognition garbage on the test pages) and the
+specialist OCR APIs (Azure Read — removed as dead code 2026-08-16, never
+referenced; Transkribus — UI-bound on individual plans, ~10× the price)
+remain as alternatives behind the same seam
 (`LOFT_HTR_BACKEND=vlm|local`, env-selected). The per-page VLM output
 is recorded in a sidecar (`ocr-raw/<stem>.vlm.json`, the token usage) so
 re-runs skip transcribed pages and the cost is auditable.

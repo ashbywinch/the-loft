@@ -23,23 +23,59 @@ import logging
 import os
 import secrets
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections.abc import Callable, Mapping
 from datetime import timedelta
 from typing import Any
 from urllib.parse import quote
 
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
+from google.oauth2 import id_token as google_id_token
+from google_auth_oauthlib.flow import Flow
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
 from tools.archive import Archive
 
 logger = logging.getLogger(__name__)
 
-_SESSION_MAX_AGE = timedelta(days=30)
+SESSION_MAX_AGE = timedelta(days=30)
 
-# In-memory OAuth state store — state_token -> {code_verifier, created_at}.
-# Ephemeral by design: a restart invalidates in-flight logins (houses parity).
-_oauth_states: dict[str, dict[str, Any]] = {}
-_STATE_MAX_AGE_SECONDS = 600
-_STATE_MAX_ENTRIES = 100
+# The OAuth state token's entropy (32 bytes -> 43 url-safe chars) and the
+# device-grant poll interval fallback (seconds) when Google omits it.
+_STATE_TOKEN_BYTES = 32
+_DEFAULT_DEVICE_POLL_INTERVAL = 5
+
+
+class AuthState:
+    """The in-flight login state — web OAuth states, device grants, and
+    recently-minted sessions. Ephemeral by design: a restart invalidates
+    in-flight logins (houses parity). The invariants (max ages, max
+    entries, the sweep) live here, never in the callers."""
+
+    STATE_MAX_AGE_SECONDS = 600
+    STATE_MAX_ENTRIES = 100
+    DEVICE_GRANT_MAX_AGE = 1800  # google's device codes live ~30 min
+    SESSION_GRACE_SECONDS = 180
+
+    def __init__(self) -> None:
+        self.oauth_states: dict[str, dict[str, Any]] = {}
+        self.device_grants: dict[str, dict[str, Any]] = {}
+        self.recent_sessions: dict[str, dict[str, Any]] = {}
+
+    def sweep_stale_states(self) -> None:
+        """Drop the web OAuth states older than the max age."""
+        now = time.time()
+        stale = [k for k, v in self.oauth_states.items() if v.get("created_at", 0) < now - self.STATE_MAX_AGE_SECONDS]
+        for k in stale:
+            self.oauth_states.pop(k, None)
+
+
+# The process's one in-flight login store — the auth functions read and
+# mutate it, never a module global dict (ephemeral: a restart clears it).
+_auth_state = AuthState()
 
 COOKIE_NAME = "session"
 
@@ -52,8 +88,9 @@ def web_client_secret() -> str:
     return os.environ.get("THE_LOFT_GOOGLE_WEB_CLIENT_SECRET", "").strip()
 
 
-def session_secret() -> str:
-    return os.environ.get("THE_LOFT_SESSION_SECRET", "").strip()
+def session_secret(_env: Mapping[str, str] | None = None) -> str:
+    env = os.environ if _env is None else _env
+    return env.get("THE_LOFT_SESSION_SECRET", "").strip()
 
 
 def public_url() -> str:
@@ -81,13 +118,6 @@ def _client_config() -> dict[str, Any] | None:
     }
 
 
-def _sweep_stale_states() -> None:
-    now = time.time()
-    stale = [k for k, v in _oauth_states.items() if v.get("created_at", 0) < now - _STATE_MAX_AGE_SECONDS]
-    for k in stale:
-        _oauth_states.pop(k, None)
-
-
 def _make_session_cookie(email: str, name: str, picture: str) -> str:
     return _serializer().dumps({"email": email, "name": name, "picture": picture})
 
@@ -106,20 +136,18 @@ def session_user_from_cookie(cookie: str | None) -> dict[str, Any] | None:
                 cookie = value
                 break
     try:
-        return _serializer().loads(cookie, max_age=int(_SESSION_MAX_AGE.total_seconds()))
+        return _serializer().loads(cookie, max_age=int(SESSION_MAX_AGE.total_seconds()))
     except (BadSignature, SignatureExpired):
         return None
 
 
 def login_url() -> dict[str, Any]:
     """Start the flow — {auth_url} for the browser, or an error detail."""
-    from google_auth_oauthlib.flow import Flow
-
     config = _client_config()
     if config is None:
         return {"status": "error", "detail": "Google OAuth is not configured (THE_LOFT_GOOGLE_WEB_CLIENT_ID)"}
-    _sweep_stale_states()
-    state = secrets.token_urlsafe(32)
+    _auth_state.sweep_stale_states()
+    state = secrets.token_urlsafe(_STATE_TOKEN_BYTES)
     flow = Flow.from_client_config(
         config,
         scopes=[
@@ -133,25 +161,21 @@ def login_url() -> dict[str, Any]:
     code_verifier = str(getattr(flow, "code_verifier", "") or "")
     if not code_verifier:
         return {"status": "error", "detail": "PKCE code_verifier not generated"}
-    if len(_oauth_states) >= _STATE_MAX_ENTRIES:
-        _sweep_stale_states()
-    if len(_oauth_states) >= _STATE_MAX_ENTRIES:
+    if len(_auth_state.oauth_states) >= AuthState.STATE_MAX_ENTRIES:
+        _auth_state.sweep_stale_states()
+    if len(_auth_state.oauth_states) >= AuthState.STATE_MAX_ENTRIES:
         return {"status": "error", "detail": "Too many login attempts, try again"}
-    _oauth_states[state] = {"code_verifier": code_verifier, "created_at": time.time()}
+    _auth_state.oauth_states[state] = {"code_verifier": code_verifier, "created_at": time.time()}
     return {"status": "ok", "auth_url": authorization_url}
 
 
 def exchange_code(code: str, state: str) -> dict[str, Any] | None:
     """Verify and consume the callback's code+state; returns the verified
     id_info ({email, name, picture, email_verified}) or None on any failure."""
-    from google.auth.transport import requests as google_requests
-    from google.oauth2 import id_token
-    from google_auth_oauthlib.flow import Flow
-
     config = _client_config()
     if config is None:
         return None
-    state_data = _oauth_states.pop(state, None)
+    state_data = _auth_state.oauth_states.pop(state, None)
     if state_data is None:
         logger.warning("auth: unknown or replayed OAuth state")
         return None
@@ -172,7 +196,8 @@ def exchange_code(code: str, state: str) -> dict[str, Any] | None:
         if not raw:
             raise RuntimeError("no id_token on the exchanged credentials")
         id_info: dict[str, Any] = dict(id_token.verify_oauth2_token(raw, google_requests.Request(), web_client_id()))
-    except Exception as e:  # noqa: BLE001 — the callback must never 500
+    # lucidlint: ignore broad-except the auth boundary must never 500 (the noqa explains the why)
+    except Exception as e:  # noqa: BLE001  # the callback must never 500
         logger.exception("auth: token exchange failed: %s", e)
         return None
     if not id_info.get("email_verified"):
@@ -223,17 +248,6 @@ _DEVICE_SCOPES = "openid email profile"
 _DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
 _DEVICE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
-# in-memory device grants: state token -> {device_code, created_at}
-_device_grants: dict[str, dict[str, Any]] = {}
-_DEVICE_GRANT_MAX_AGE = 1800  # google's device codes live ~30 min
-
-# the grace window: a minted session is re-issuable for a short while —
-# the phone's network can lose the poll response (with its Set-Cookie), and
-# the retry must still land the cookie instead of "no such device grant"
-# (2026-08-06: the user approved, the server minted, the phone never got it)
-_recent_sessions: dict[str, dict[str, Any]] = {}
-_SESSION_GRACE_SECONDS = 180
-
 
 def device_client_id() -> str:
     return os.environ.get("THE_LOFT_GOOGLE_DEVICE_CLIENT_ID", "").strip()
@@ -244,38 +258,42 @@ def device_client_secret() -> str:
 
 
 def _device_grant_post(url: str, data: dict[str, str]) -> dict[str, Any]:
-    import urllib.error
-    import urllib.parse
-    import urllib.request
-
     body = urllib.parse.urlencode(data).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            payload = resp.read().decode("utf-8")
+            return _parse_grant_response(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         # Google's token endpoint answers "authorization_pending" with an
         # HTTP 428 — the body IS the meaningful payload (2026-08-06)
-        payload = e.read().decode("utf-8")
-    except Exception as e:  # noqa: BLE001 — the endpoint reports the failure
+        return _parse_grant_response(e.read().decode("utf-8"))
+    # lucidlint: ignore broad-except the auth boundary wraps and re-raises (the noqa explains the why)
+    except Exception as e:  # noqa: BLE001  # the endpoint reports the failure
         raise RuntimeError(f"device grant request failed: {e}") from e
-    # Google's device/code and token endpoints answer JSON
+
+
+def _parse_grant_response(payload: str) -> dict[str, Any]:
+    """Google's device/code and token endpoints answer JSON, or form-encoded
+    on error — the 428 body is `error=authorization_pending&...`."""
     try:
         return json.loads(payload)
     except ValueError:
         return dict(urllib.parse.parse_qsl(payload))
 
 
-def start_device_grant() -> dict[str, Any]:
+def start_device_grant(
+    _post: Callable[[str, dict[str, str]], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Begin the device grant — {state, user_code, verification_url,
-    interval} for the narrator to approve, or an error detail."""
+    interval} for the narrator to approve, or an error detail. ``_post`` is
+    the injectable Google HTTP seam for tests (DI, never monkeypatch)."""
     client_id = device_client_id()
     if not client_id:
         return {
             "status": "error",
             "detail": "the device OAuth client is not configured (THE_LOFT_GOOGLE_DEVICE_CLIENT_ID)",
         }
-    info = _device_grant_post(
+    info = (_post or _device_grant_post)(
         _DEVICE_CODE_URL,
         {"client_id": client_id, "scope": _DEVICE_SCOPES},
     )
@@ -283,15 +301,15 @@ def start_device_grant() -> dict[str, Any]:
     user_code = str(info.get("user_code", ""))
     if not device_code or not user_code:
         return {"status": "error", "detail": "Google did not start the device grant"}
-    state = secrets.token_urlsafe(32)
-    _device_grants[state] = {"device_code": device_code, "created_at": time.time()}
+    state = secrets.token_urlsafe(_STATE_TOKEN_BYTES)
+    _auth_state.device_grants[state] = {"device_code": device_code, "created_at": time.time()}
     logger.info("auth: device grant started (user_code %s, expires in %ss)", user_code, info.get("expires_in", "?"))
     return {
         "status": "ok",
         "state": state,
         "user_code": user_code,
         "verification_url": info.get("verification_url", "https://www.google.com/device"),
-        "interval": max(1, int(info.get("interval", 5))),
+        "interval": max(1, int(info.get("interval", _DEFAULT_DEVICE_POLL_INTERVAL))),
     }
 
 
@@ -300,27 +318,26 @@ def minted_session(state: str) -> dict[str, Any] | None:
     the device-complete navigation's source (2026-08-06: the phone's
     network can reject fetch responses, so the cookie lands on a page
     navigation instead, houses' proven mechanism)."""
-    recent = _recent_sessions.get(state)
-    if not recent or time.time() - recent.get("_minted_at", 0) >= _SESSION_GRACE_SECONDS:
+    recent = _auth_state.recent_sessions.get(state)
+    if not recent or time.time() - recent.get("_minted_at", 0) >= AuthState.SESSION_GRACE_SECONDS:
         return None
     return {k: v for k, v in recent.items() if k != "_minted_at"}
 
 
-def poll_device_grant(state: str) -> dict[str, Any]:
+def poll_device_grant(
+    state: str,
+    _post: Callable[[str, dict[str, str]], dict[str, Any]] | None = None,
+    _verify: Callable[[str], dict[str, Any] | None] | None = None,
+) -> dict[str, Any]:
     """Poll Google for the narrator's approval — {status: "pending"} until
     approved, then {status: "ok", id_info} after the id_token verifies
-    against the device client (a web-flow token must not be replayable)."""
-    grant = _device_grants.get(state)
+    against the device client (a web-flow token must not be replayable).
+    ``_post``/``_verify`` are the injectable Google seams for tests."""
+    grant = _auth_state.device_grants.get(state)
     if not grant:
-        # consumed by a mint whose response the phone lost — re-issue the
-        # session so a retry lands the cookie (2026-08-06)
-        recent = _recent_sessions.get(state)
-        if recent and time.time() - recent.get("_minted_at", 0) < _SESSION_GRACE_SECONDS:
-            logger.info("auth: re-issuing the minted session (grace) for %s", recent.get("email"))
-            return {"status": "ok", "id_info": {k: v for k, v in recent.items() if k != "_minted_at"}}
-        return {"status": "error", "detail": "no such device grant"}
-    if time.time() - grant.get("created_at", 0) > _DEVICE_GRANT_MAX_AGE:
-        _device_grants.pop(state, None)
+        return _grant_grace_reissue(state)
+    if time.time() - grant.get("created_at", 0) > AuthState.DEVICE_GRANT_MAX_AGE:
+        _auth_state.device_grants.pop(state, None)
         return {"status": "error", "detail": "the device grant expired — start again"}
     token_data: dict[str, str] = {
         "client_id": device_client_id(),
@@ -329,44 +346,69 @@ def poll_device_grant(state: str) -> dict[str, Any]:
     }
     if device_client_secret():
         token_data["client_secret"] = device_client_secret()
-    result = _device_grant_post(_DEVICE_TOKEN_URL, token_data)
+    result = (_post or _device_grant_post)(_DEVICE_TOKEN_URL, token_data)
     if result.get("error"):
-        if result["error"] == "authorization_pending":
-            return {"status": "pending"}
-        if result["error"] in ("slow_down", "access_denied", "expired_token"):
-            if result["error"] == "access_denied":
-                _device_grants.pop(state, None)
-            outcome = "pending" if result["error"] == "slow_down" else "error"
-            logger.info("auth: device grant %s (google: %s)", outcome, result["error"])
-            return {"status": outcome, "detail": result["error"]}
-        _device_grants.pop(state, None)
-        logger.warning("auth: device grant error: %s", result["error"])
-        return {"status": "error", "detail": result["error"]}
+        return _grant_error_response(state, result)
+    return _complete_grant(state, result, _verify)
+
+
+def _grant_grace_reissue(state: str) -> dict[str, Any]:
+    """A grant consumed by a mint whose response the phone lost — re-issue
+    the session so a retry lands the cookie (2026-08-06)."""
+    recent = _auth_state.recent_sessions.get(state)
+    if recent and time.time() - recent.get("_minted_at", 0) < AuthState.SESSION_GRACE_SECONDS:
+        logger.info("auth: re-issuing the minted session (grace) for %s", recent.get("email"))
+        return {"status": "ok", "id_info": {k: v for k, v in recent.items() if k != "_minted_at"}}
+    return {"status": "error", "detail": "no such device grant"}
+
+
+def _grant_error_response(state: str, result: dict[str, Any]) -> dict[str, Any]:
+    """The device grant's error outcomes — pending while Google waits,
+    slow_down asks for a slower poll, access_denied/expired_token end the
+    grant."""
+    if result["error"] == "authorization_pending":
+        return {"status": "pending"}
+    if result["error"] in ("slow_down", "access_denied", "expired_token"):
+        if result["error"] == "access_denied":
+            _auth_state.device_grants.pop(state, None)
+        outcome = "pending" if result["error"] == "slow_down" else "error"
+        logger.info("auth: device grant %s (google: %s)", outcome, result["error"])
+        return {"status": outcome, "detail": result["error"]}
+    _auth_state.device_grants.pop(state, None)
+    logger.warning("auth: device grant error: %s", result["error"])
+    return {"status": "error", "detail": result["error"]}
+
+
+def _complete_grant(
+    state: str,
+    result: dict[str, Any],
+    _verify: Callable[[str], dict[str, Any] | None] | None,
+) -> dict[str, Any]:
+    """The approved grant's finish: verify the id_token against the device
+    client (a web-flow token must not be replayable) and mint the session."""
     id_token_value = str(result.get("id_token", ""))
     if not id_token_value:
         logger.warning("auth: device token response carried no id_token")
         return {"status": "error", "detail": "no id_token in the device grant response"}
-    _device_grants.pop(state, None)
-    id_info = verify_device_id_token(id_token_value)
+    _auth_state.device_grants.pop(state, None)
+    id_info = (_verify or verify_device_id_token)(id_token_value)
     if id_info is None:
         logger.warning("auth: device id_token failed verification")
         return {"status": "error", "detail": "the id_token did not verify"}
     logger.info("auth: device grant approved by %s", id_info.get("email"))
-    _recent_sessions[state] = {**id_info, "_minted_at": time.time()}
+    _auth_state.recent_sessions[state] = {**id_info, "_minted_at": time.time()}
     return {"status": "ok", "id_info": id_info}
 
 
 def verify_device_id_token(token: str) -> dict[str, Any] | None:
     """Verify a Google id_token bound to the DEVICE-flow client (houses
     parity: a browser-leakable web id_token must not mint a session here)."""
-    from google.auth.transport import requests as google_requests
-    from google.oauth2 import id_token as google_id_token
-
     client_id = device_client_id()
     if not client_id:
         return None
     try:
         return dict(google_id_token.verify_oauth2_token(token, google_requests.Request(), client_id))
-    except Exception as e:  # noqa: BLE001 — the caller reports the failure
+    # lucidlint: ignore broad-except the auth boundary reports and returns None (the noqa explains the why)
+    except Exception as e:  # noqa: BLE001  # the caller reports the failure
         logger.warning("auth: device id_token verification failed: %s", e)
         return None

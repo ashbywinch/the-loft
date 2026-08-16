@@ -15,12 +15,19 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import uvicorn
+
+from tools.ai_client import AIClient, AIClientError
 from tools.archive import Archive
+from tools.gedcom_document import GedcomDocument
 from tools.loft_paths import ARCHIVE_DIR
+from tools.server import Server, ServerConfig, build_app, lan_urls
 from tools.store import DiskStore
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -30,51 +37,62 @@ def _archive(archive_dir: str) -> Archive:
     return Archive(DiskStore(Path(archive_dir)))
 
 
-def cmd_publish(args: argparse.Namespace) -> int:
-    archive = _archive(args.archive)
-    archive.publish(Path(args.data))
-    print(f"published {args.archive} -> {args.data}")
+def _publish_and_report(archive: Archive, archive_dir: str, data_dir: str, verb: str) -> int:
+    """Publish the projection to *data_dir* and print the outcome — the
+    shared publish+print tail of the publish and create-demo commands."""
+    archive.publish(Path(data_dir))
+    print(f"{verb} {archive_dir} -> {data_dir}")
     return 0
 
 
-def serve_app() -> Any:
+def cmd_publish(args: argparse.Namespace) -> int:
+    return _publish_and_report(_archive(args.archive), args.archive, args.data, "published")
+
+
+def cmd_create_demo(args: argparse.Namespace) -> int:
+    archive = _archive(args.archive)
+    archive.create_demo()  # the demo's own projection, never app/data by surprise
+    return _publish_and_report(archive, args.archive, args.data, "seeded demo archive")
+
+
+def _capture_client() -> AIClient | None:
+    """The capture client when an API key exists — the capture API needs the
+    key; absent, the server serves without capture (visible, never silent)."""
+    try:
+        return AIClient()
+    except AIClientError as e:
+        print(f"serve: no capture client ({e}) — serving the app only")
+        return None
+
+
+def serve_app(_env: Mapping[str, str] | None = None) -> Any:
     """The uvicorn factory for --reload (2026-08-16: make serve always
     auto-reloads the backend on source changes). The reloader re-imports
     this module and calls the factory fresh in a subprocess — the server's
-    configuration travels via the environment the CLI set before running."""
-    import os
-
-    from tools.ai_client import AIClient, AIClientError
-    from tools.server import build_app
-
-    try:
-        client = AIClient()  # the capture API needs the key; absent -> the API 503s
-    except AIClientError:
-        client = None
+    configuration travels via the environment the CLI set before running.
+    ``_env`` is the injectable seam for tests; None reads the process env."""
+    env = os.environ if _env is None else _env
+    client = _capture_client()
     return build_app(
-        DiskStore(Path(os.environ["LOFT_ARCHIVE"])),
-        Path(os.environ["LOFT_DATA"]),
-        client,
-        Path(os.environ["LOFT_APP"]),
+        ServerConfig(
+            DiskStore(Path(env["LOFT_ARCHIVE"])),
+            Path(env["LOFT_DATA"]),
+            client,
+            Path(env["LOFT_APP"]),
+        ),
+        _env=env,
     )
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    import os
-
-    from tools.ai_client import AIClient, AIClientError
-    from tools.server import Server, _lan_urls
-
     if args.reload:
         # auto-reload: uvicorn needs the app as an import string + factory —
         # the config rides the environment into the reloader's subprocess
         os.environ["LOFT_ARCHIVE"] = str(args.archive)
         os.environ["LOFT_DATA"] = str(args.data)
         os.environ["LOFT_APP"] = str(args.app)
-        import uvicorn
-
         if args.host == "0.0.0.0":
-            for url in _lan_urls(args.port):
+            for url in lan_urls(args.port):
                 print(f"Serving {args.app} at {url} (no-cache, reload on)")
         else:
             print(f"Serving {args.app} on {args.host}:{args.port} (no-cache, reload on)")
@@ -95,27 +113,17 @@ def cmd_serve(args: argparse.Namespace) -> int:
         )
         return 0
 
-    try:
-        client = AIClient()  # the capture API needs the key; absent -> the API 503s
-    except AIClientError as e:
-        print(f"serve: no capture client ({e}) — serving the app only")
-        client = None
+    client = _capture_client()
     Server(
-        DiskStore(Path(args.archive)),
-        Path(args.data),
-        client,
-        Path(args.app),
+        ServerConfig(
+            DiskStore(Path(args.archive)),
+            Path(args.data),
+            client,
+            Path(args.app),
+        ),
         host=args.host,
         port=args.port,
     ).serve()
-    return 0
-
-
-def cmd_create_demo(args: argparse.Namespace) -> int:
-    archive = _archive(args.archive)
-    archive.create_demo()
-    archive.publish(Path(args.data))  # the demo's own projection, never app/data by surprise
-    print(f"seeded demo archive {args.archive} -> {args.data}")
     return 0
 
 
@@ -125,8 +133,6 @@ def cmd_capture_document(args: argparse.Namespace) -> int:
 
 
 def cmd_capture_memory(args: argparse.Namespace) -> int:
-    from tools.ai_client import AIClient, AIClientError
-
     account = sys.stdin.read() if args.account == "-" else Path(args.account).read_text(encoding="utf-8")
     try:
         client = AIClient()
@@ -145,8 +151,6 @@ def cmd_capture_memory(args: argparse.Namespace) -> int:
 
 
 def cmd_gedcom(args: argparse.Namespace) -> int:
-    from tools.gedcom_document import GedcomDocument
-
     archive = _archive(args.archive)
     if args.action == "export":
         Path(args.file).write_text(GedcomDocument.to_text(archive), encoding="utf-8")

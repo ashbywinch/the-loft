@@ -23,6 +23,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+import open_clip
+import torch
+from PIL import Image
+
 from tools.atomic import atomic_write
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.registry import RegistryError, load_batch
@@ -47,8 +51,6 @@ def _load_clip() -> tuple[Any, Any, Any]:
     return is NOT the tokenizer for MobileCLIP (a second Compose); the
     tokenizer comes from get_tokenizer. The boundary is treated as untyped —
     the live acceptance test exercises it."""
-    import open_clip  # heavy import — only when the stage actually runs
-
     model, preprocess, _ = open_clip.create_model_and_transforms("MobileCLIP-S2", pretrained="datacompdr")
     tokenizer = open_clip.get_tokenizer("MobileCLIP-S2")
     return model, preprocess, tokenizer
@@ -70,8 +72,6 @@ def classify_pages(
 
 def zero_shot_classifier() -> Callable[[Path], tuple[str, dict[str, float]]]:
     """The CLIP zero-shot classifier bound to CONTENT_PROMPTS (local, CPU)."""
-    import torch
-
     model, preprocess, tokenizer = _load_clip()
     model.eval()
     labels = sorted(CONTENT_PROMPTS)
@@ -81,8 +81,6 @@ def zero_shot_classifier() -> Callable[[Path], tuple[str, dict[str, float]]]:
         text_features /= text_features.norm(dim=-1, keepdim=True)
 
     def classify(image_path: Path) -> tuple[str, dict[str, float]]:
-        from PIL import Image
-
         with torch.no_grad():
             image = preprocess(Image.open(image_path).convert("RGB")).unsqueeze(0)
             image_features = model.encode_image(image)

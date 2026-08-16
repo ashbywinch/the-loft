@@ -53,13 +53,12 @@ _PROCESS_JARGON = (
 
 
 def _persona_errors(result: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
-    for q in result.get("questions", []):
-        text = str(q.get("text", "")).lower()
-        for word in _PROCESS_JARGON:
-            if word in text:
-                errors.append(f"question echoes the process ('{word}'): {q.get('text', '')[:80]}")
-    return errors
+    return [
+        f"question echoes the process ('{word}'): {q.get('text', '')[:80]}"
+        for q in result.get("questions", [])
+        for word in _PROCESS_JARGON
+        if word in str(q.get("text", "")).lower()
+    ]
 
 
 def contract_errors(result: dict[str, Any]) -> list[str]:
@@ -67,6 +66,9 @@ def contract_errors(result: dict[str, Any]) -> list[str]:
     errors.extend(_persona_errors(result))
     if not isinstance(result.get("title"), str) or not result["title"].strip():
         errors.append("missing title")
+    # three distinct conditional validation messages per iteration — a comprehension
+    # would need a None-sentinel tuple, which is harder to read than the loop
+    # lucidlint: ignore loop-pipeline three conditional messages per iteration, sentinel-tuple comprehension
     for ex in result.get("extractions", []):
         if ex.get("kind") not in KINDS:
             errors.append(f"extraction kind not in {KINDS}: {ex!r}")
@@ -77,6 +79,9 @@ def contract_errors(result: dict[str, Any]) -> list[str]:
     questions = result.get("questions", [])
     if len(questions) > MAX_QUESTIONS:
         errors.append(f"more than {MAX_QUESTIONS} questions")
+    # two distinct conditional validation messages per iteration plus a derived local
+    # (suggestions) — a comprehension would need a None-sentinel tuple
+    # lucidlint: ignore loop-pipeline two conditional messages per iteration plus a derived local
     for q in questions:
         if q.get("skippable") is not True:
             errors.append(f"question not skippable: {q!r}")
@@ -100,6 +105,22 @@ def _question_texts(result: dict[str, Any]) -> str:
 
 def _facts_of_kind(result: dict[str, Any], kind: str) -> list[dict[str, Any]]:
     return [f for f in result.get("facts", []) if f.get("kind") == kind]
+
+
+def _expect_linked(expected: set[str], result: dict[str, Any], message: str) -> list[str]:
+    """The common link assertion: at least one expected id must be matched.
+    Empty means the condition holds."""
+    if any(m in expected for m in _matches(result)):
+        return []
+    return [message]
+
+
+def _expect_not_linked(disallowed: str, result: dict[str, Any], message: str) -> list[str]:
+    """The mention-vs-link guard: the disallowed id must NOT be matched.
+    Empty means the condition holds."""
+    if disallowed in _matches(result):
+        return [message]
+    return []
 
 
 # date-seeking phrasing ("when you moved" inside another question is not one)
@@ -151,7 +172,8 @@ class MemoryFlow:
     account = ""
     knowledge: dict[str, Any] | None = None  # None = the real archive's projection
 
-    def assert_(self, result: dict[str, Any]) -> list[str]:
+    @staticmethod
+    def assert_(result: dict[str, Any]) -> list[str]:
         """The flow's conditions on the output — empty means they all hold."""
         raise NotImplementedError
 
@@ -162,10 +184,13 @@ class RealBoatsLinksFlow(MemoryFlow):
     who = "Alex"
     account = "The boats were built on Iron Wharf — Sunlight first in 1980. The yard had a slipway into the creek."
 
-    def assert_(self, result: dict[str, Any]) -> list[str]:
-        if any(m in {"t-the-boats", "object-sunlight"} for m in _matches(result)):
-            return []
-        return ["the boats/Sunlight were not linked — expected a theme or artifact extraction"]
+    @staticmethod
+    def assert_(result: dict[str, Any]) -> list[str]:
+        return _expect_linked(
+            {"t-the-boats", "object-sunlight"},
+            result,
+            "the boats/Sunlight were not linked — expected a theme or artifact extraction",
+        )
 
 
 class RealSheppeyFlow(MemoryFlow):
@@ -177,10 +202,13 @@ class RealSheppeyFlow(MemoryFlow):
         "Dad built the boats on Iron Wharf and Mum came along sometimes."
     )
 
-    def assert_(self, result: dict[str, Any]) -> list[str]:
-        if any(m in {"pl-seagate", "pl-farndale-wharf", "p-owen", "p-nora", "t-the-boats"} for m in _matches(result)):
-            return []
-        return ["no about-entity from the story was matched"]
+    @staticmethod
+    def assert_(result: dict[str, Any]) -> list[str]:
+        return _expect_linked(
+            {"pl-seagate", "pl-farndale-wharf", "p-owen", "p-nora", "t-the-boats"},
+            result,
+            "no about-entity from the story was matched",
+        )
 
 
 class FictionalNoOvermatchFlow(MemoryFlow):
@@ -201,7 +229,8 @@ class FictionalNoOvermatchFlow(MemoryFlow):
         "always gave us fresh poppy-seed cake. Janek helped behind the counter."
     )
 
-    def assert_(self, result: dict[str, Any]) -> list[str]:
+    @staticmethod
+    def assert_(result: dict[str, Any]) -> list[str]:
         names = _extraction_names(result)
         if any(p in n for n in names for p in ("Helena", "Janek", "Jan")) and any(
             p in n for n in names for p in ("Gdańsk", "Długa", "Ulica")
@@ -219,10 +248,13 @@ class FictionalMentionNotLinkFlow(MemoryFlow):
         "nobody minded, and Dad played the accordion all evening."
     )
 
-    def assert_(self, result: dict[str, Any]) -> list[str]:
-        if "p-nora" not in _matches(result):
-            return []
-        return ['"Nora" in a fictional story matched p-nora — about ≠ mention']
+    @staticmethod
+    def assert_(result: dict[str, Any]) -> list[str]:
+        return _expect_not_linked(
+            disallowed="p-nora",
+            result=result,
+            message='"Nora" in a fictional story matched p-nora — about ≠ mention',
+        )
 
 
 class KinshipTermNotAliasFlow(MemoryFlow):
@@ -240,13 +272,16 @@ class KinshipTermNotAliasFlow(MemoryFlow):
     who = "Marek"
     account = "Dad came with me to see the house we wanted to buy. He said nothing, which is his way."
 
-    def assert_(self, result: dict[str, Any]) -> list[str]:
-        if "p-otto" not in _matches(result):
-            return []
-        return [
-            "'Dad' defaulted to p-otto — a kinship term is the writer's own "
-            "relative, never an archive-wide alias (2026-08-05)"
-        ]
+    @staticmethod
+    def assert_(result: dict[str, Any]) -> list[str]:
+        return _expect_not_linked(
+            disallowed="p-otto",
+            result=result,
+            message=(
+                "'Dad' defaulted to p-otto — a kinship term is the writer's own "
+                "relative, never an archive-wide alias (2026-08-05)"
+            ),
+        )
 
 
 class AgeWithKnownDobNotAskedFlow(MemoryFlow):
@@ -256,7 +291,8 @@ class AgeWithKnownDobNotAskedFlow(MemoryFlow):
     who = "Marek"
     account = "I was eight when we moved to the new house."
 
-    def assert_(self, result: dict[str, Any]) -> list[str]:
+    @staticmethod
+    def assert_(result: dict[str, Any]) -> list[str]:
         if not any(w in _question_texts(result) for w in _DATE_ASK):
             return []
         return [f"asked for a date despite a known dob + given age: {_question_texts(result)}"]
@@ -274,7 +310,8 @@ class AgeWithoutDobAsksFlow(MemoryFlow):
     who = "Marek"
     account = "I was eight when we moved to the new house."
 
-    def assert_(self, result: dict[str, Any]) -> list[str]:
+    @staticmethod
+    def assert_(result: dict[str, Any]) -> list[str]:
         if any(w in _question_texts(result) for w in _DATE_ASK):
             return []
         return ["no date question asked despite an unknown dob and only an age given"]
@@ -292,7 +329,8 @@ class DobStatedAssertedFlow(MemoryFlow):
     who = "Marek"
     account = "I was eight when we moved. My DOB is 15/09/1981."
 
-    def assert_(self, result: dict[str, Any]) -> list[str]:
+    @staticmethod
+    def assert_(result: dict[str, Any]) -> list[str]:
         if _facts_of_kind(result, "dob") and not any(w in _question_texts(result) for w in _DATE_ASK):
             return []
         return ["expected an asserted dob fact and no date question when dob + age are computable"]
@@ -310,7 +348,8 @@ class NewNarratorConnectionFlow(MemoryFlow):
     who = "Zofia Kowalski"
     account = "The wedding was lovely, the cake was poppy seed."
 
-    def assert_(self, result: dict[str, Any]) -> list[str]:
+    @staticmethod
+    def assert_(result: dict[str, Any]) -> list[str]:
         if any(w in _question_texts(result) for w in ("connect", "related", "relationship", "family")):
             return []
         return ["no question asks how the new narrator is connected to the family"]
@@ -328,13 +367,14 @@ class NewArtifactAskedFlow(MemoryFlow):
     who = "Marek"
     account = "We sailed on the Kasia, a little yacht Dad rebuilt in the garden."
 
-    def assert_(self, result: dict[str, Any]) -> list[str]:
+    @staticmethod
+    def assert_(result: dict[str, Any]) -> list[str]:
         if "kasia" in _question_texts(result):
             return []
         return ["no 'tell me more' question about the newly named artifact (Kasia)"]
 
 
-FLOWS: list[MemoryFlow] = [
+FLOWS: tuple[MemoryFlow, ...] = (
     RealBoatsLinksFlow(),
     RealSheppeyFlow(),
     FictionalNoOvermatchFlow(),
@@ -345,7 +385,7 @@ FLOWS: list[MemoryFlow] = [
     DobStatedAssertedFlow(),
     NewNarratorConnectionFlow(),
     NewArtifactAskedFlow(),
-]
+)
 
 
 def run_flow(

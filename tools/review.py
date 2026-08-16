@@ -12,6 +12,7 @@ never an action (user, 2026-08-09).
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from typing import Any, Protocol
 
 from tools.ai_client import AIClientError, json_object
@@ -42,6 +43,8 @@ def _relevant_sentences(text: str, needles: tuple[str, ...], limit: int = 3) -> 
 
 
 class _Chat(Protocol):
+    # instance method using self
+    # lucidlint: ignore detached-method protocol seam declaration — AIClient and test doubles implement it as an
     def chat(self, system: str, user: str, *, thinking: bool = False) -> str: ...
 
 
@@ -82,6 +85,8 @@ def _known_facts(facts: ReviewContext) -> str:
 
 
 MAX_INVESTIGATE_STEPS = 6  # the digs plus room for a verdict correction
+VERDICT_AND_CORRECTION_TURNS = 3  # the loop's turns beyond the digs: the verdict, a correction, and slack
+MAX_TOOL_CALLS = 4  # the investigation's tool-call budget before the model must conclude
 
 _TOOLS_DESC = """You can investigate the archive with these READ-ONLY tools:
 
@@ -108,76 +113,98 @@ def run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:
     the existing situation — the ad-hoc digging conversation). Public and
     documented so the tests exercise the real harness, never a private
     symbol (2026-08-11 review: the imports rule)."""
-    people = facts.people
     if tool == "search_people":
-        q = str(args.get("query", "")).strip().lower()
-        if not q:
-            return {"error": "query required"}
-        hits = [
-            {"id": p.id, "name": p.name, "relation": p.relation}
-            for p in people
-            if q in p.name.lower() or q in (p.relation or "").lower()
-        ]
-        return hits[:10] or {"note": "no matches"}
+        return _tool_search_people(args, facts.people)
     if tool == "person":
-        pid = str(args.get("id", ""))
-        p = next((x for x in people if x.id == pid), None)
-        return (
-            {"id": p.id, "name": p.name, "relation": p.relation, "status": p.status}
-            if p
-            else {"error": f"no person {pid}"}
-        )
+        return _tool_person(args, facts.people)
     if tool == "relationships":
-        pid = str(args.get("id", ""))
-        return [r for r in facts.relationships if r.get("a") == pid or r.get("b") == pid] or {
-            "note": "no recorded relationships"
-        }
+        return _tool_relationships(args, facts)
     if tool == "attested":
-        pid = str(args.get("id", ""))
-        p = next((x for x in people if x.id == pid), None)
-        # the sentences that MENTION the person — the part that attests
-        # the fact, quotable verbatim (2026-08-09, user) — with the
-        # person's name and first name as the needles. The item's
-        # structured involvement (its people ids) or the prose naming the
-        # person both count — real transcriptions mention names, never ids.
-        # Case-insensitive (2026-08-11 review): OCR and captured text
-        # frequently differ in case, and the quote extractor matches
-        # case-insensitively — an item whose only mention is lowercased
-        # must not be silently dropped at the door
-        needles = (p.name, p.name.split()[0]) if p else (pid,)
-        lowered = [n.lower() for n in needles]
-        results = []
-        for it in facts.items:
-            text = it.get("story") or it.get("transcription") or ""
-            involved = pid in it.get("people", [])
-            if involved or any(n in text.lower() for n in lowered):
-                results.append(
-                    {
-                        "id": it["id"],
-                        "title": it["title"],
-                        "draft": it.get("transcription_status") == "draft",
-                        "quotes": _relevant_sentences(text, needles),
-                    }
-                )
-        return results or {"note": "no recorded items mention this person"}
+        return _tool_attested(args, facts)
     if tool == "search_items":
-        q = str(args.get("query", "")).strip().lower()
-        if not q:
-            return {"error": "query required"}
-        hits = []
-        for it in facts.items:
-            text = it.get("story") or it.get("transcription") or ""
-            if q in text.lower():
-                hits.append(
-                    {
-                        "id": it["id"],
-                        "title": it["title"],
-                        "draft": it.get("transcription_status") == "draft",
-                        "quotes": _relevant_sentences(text, (q,)),
-                    }
-                )
-        return hits[:5] or {"note": f"no recorded items mention {q!r}"}
+        return _tool_search_items(args, facts)
     return {"error": f"unknown tool {tool}"}
+
+
+def _tool_search_people(args: dict[str, Any], people: Sequence[Person]) -> Any:
+    """People whose name or recorded relation contains the query."""
+    q = str(args.get("query", "")).strip().lower()
+    if not q:
+        return {"error": "query required"}
+    hits = [
+        {"id": p.id, "name": p.name, "relation": p.relation}
+        for p in people
+        if q in p.name.lower() or q in (p.relation or "").lower()
+    ]
+    return hits[:10] or {"note": "no matches"}
+
+
+def _tool_person(args: dict[str, Any], people: Sequence[Person]) -> Any:
+    """One person's record — dates, relation, status."""
+    pid = str(args.get("id", ""))
+    p = next((x for x in people if x.id == pid), None)
+    return (
+        {"id": p.id, "name": p.name, "relation": p.relation, "status": p.status} if p else {"error": f"no person {pid}"}
+    )
+
+
+def _tool_relationships(args: dict[str, Any], facts: ReviewContext) -> Any:
+    """The recorded family edges touching that person."""
+    pid = str(args.get("id", ""))
+    return [r for r in facts.relationships if r.get("a") == pid or r.get("b") == pid] or {
+        "note": "no recorded relationships"
+    }
+
+
+def _tool_attested(args: dict[str, Any], facts: ReviewContext) -> Any:
+    """The recorded items that mention the person — their attested facts.
+    The sentences that MENTION the person are the part that attests the
+    fact, quotable verbatim (2026-08-09, user) — with the person's name
+    and first name as the needles. The item's structured involvement (its
+    people ids) or the prose naming the person both count — real
+    transcriptions mention names, never ids. Case-insensitive (2026-08-11
+    review): OCR and captured text frequently differ in case, and the
+    quote extractor matches case-insensitively — an item whose only
+    mention is lowercased must not be silently dropped at the door."""
+    pid = str(args.get("id", ""))
+    p = next((x for x in facts.people if x.id == pid), None)
+    needles = (p.name, p.name.split()[0]) if p else (pid,)
+    lowered = [n.lower() for n in needles]
+    results = []
+    for it in facts.items:
+        text = it.get("story") or it.get("transcription") or ""
+        involved = pid in it.get("people", [])
+        if involved or any(n in text.lower() for n in lowered):
+            results.append(
+                {
+                    "id": it["id"],
+                    "title": it["title"],
+                    "draft": it.get("transcription_status") == "draft",
+                    "quotes": _relevant_sentences(text, needles),
+                }
+            )
+    return results or {"note": "no recorded items mention this person"}
+
+
+def _tool_search_items(args: dict[str, Any], facts: ReviewContext) -> Any:
+    """The recorded items whose text mentions the query — follow a place
+    or an event the reviewer brings up (a visit, a town, a death)."""
+    q = str(args.get("query", "")).strip().lower()
+    if not q:
+        return {"error": "query required"}
+    hits = []
+    for it in facts.items:
+        text = it.get("story") or it.get("transcription") or ""
+        if q in text.lower():
+            hits.append(
+                {
+                    "id": it["id"],
+                    "title": it["title"],
+                    "draft": it.get("transcription_status") == "draft",
+                    "quotes": _relevant_sentences(text, (q,)),
+                }
+            )
+    return hits[:5] or {"note": f"no recorded items mention {q!r}"}
 
 
 def assistant_message(result: dict[str, Any], person: Person) -> str:
@@ -224,6 +251,9 @@ def render_history(messages: tuple[Message, ...]) -> str:
     couldn't see that an answer was re-answering an earlier question; the
     model needs its own history to do its job)."""
     lines: list[str] = []
+    # branching append: user vs assistant, and the assistant also emits a conditional
+    # reasoning line — a comprehension would need sentinel tuples
+    # lucidlint: ignore loop-pipeline branching append with a conditional second line
     for m in messages:
         if m.role == "user":
             lines.append(f"[family] {m.text}")
@@ -234,6 +264,8 @@ def render_history(messages: tuple[Message, ...]) -> str:
     return "\n".join(lines)
 
 
+# the reviewer identity, the facts context, the history — a parameter object would add ceremony at the DI boundary
+# lucidlint: ignore long-param-list the investigation's inputs — the client seam, the answer, the person under review,
 def investigate(
     client: _Chat,
     *,
@@ -416,7 +448,7 @@ def investigate(
     # prompt starts with this one (the tool results are logged in the
     # trace, not in the prefix)
     base_prompt = user
-    for _ in range(MAX_INVESTIGATE_STEPS + 3):  # the digs, plus the verdict and a correction
+    for _ in range(MAX_INVESTIGATE_STEPS + VERDICT_AND_CORRECTION_TURNS):  # the digs, plus the verdict and a correction
         try:
             raw = client.chat(prompt, user, thinking=True)
             parsed = json_object(raw)
@@ -426,7 +458,7 @@ def investigate(
         tool = str(parsed_dict.get("tool", "") or "").strip()
         if tool:
             tool_calls += 1
-            if tool_calls > 4:
+            if tool_calls > MAX_TOOL_CALLS:
                 # an over-budget tool-shaped turn is still the model's own
                 # words — logged in the trace AND fed back verbatim, never
                 # discarded (2026-08-11 review: the completeness property —
@@ -457,44 +489,62 @@ def investigate(
             user += f"\n\nTool result ({tool}): {result!r}"
             continue
         trace.append({"model": raw, "reasoning": getattr(client, "last_reasoning", "")})
-        relevant = str(parsed_dict.get("relevant", "")).strip().lower()
-        raw_contradiction = parsed_dict.get("contradiction")
-        contradiction: dict[str, Any] = raw_contradiction if isinstance(raw_contradiction, dict) else {}
-        found = str(contradiction.get("found", "")).strip().lower()
-        confidence = str(parsed_dict.get("confidence", "")).strip().lower()
-        if (
-            relevant in ("true", "false")
-            and found in ("true", "false")
-            and confidence in ("definitely", "think_so", "dont_know", "think_not", "definitely_not", "unclear")
-        ):
-            findings = parsed_dict.get("findings")
-            normalized = []
-            for f in findings if isinstance(findings, list) else []:
-                if isinstance(f, dict):
-                    normalized.append(
-                        {"text": str(f.get("text", "")).strip(), "item_id": str(f.get("item_id", "")).strip() or None}
-                    )
-                else:
-                    normalized.append({"text": str(f).strip(), "item_id": None})
-            return {
-                "relevant": relevant,
-                "contradiction": {"found": found, "detail": str(contradiction.get("detail", ""))},
-                "confidence": confidence,
-                "note": str(parsed_dict.get("note", "")).strip(),
-                "findings": [f for f in normalized if f["text"]],
-                "question": str(parsed_dict.get("question", "")).strip(),
-                "raw": raw,
-                "trace": trace,
-                "prompt": base_prompt,
-                # the final user string after the loop's appends — the
-                # completeness property: everything the model produced is
-                # fed back (2026-08-09, user)
-                "final_prompt": user,
-            }
+        result = _verdict_result(parsed_dict, raw, user, trace, base_prompt)
+        if result is not None:
+            return result
         user += (
             "\n\n[your previous answer] "
             + raw
             + "\n\nThat was neither a tool call nor the complete verdict. Keep the reasoning "
             "above and return the complete verdict JSON now: " + verdict
         )
-    raise ElicitationError("investigation did not conclude")  # pragma: no cover
+    # pragma: no cover  # defensive: the bounded loop must conclude
+    raise ElicitationError("investigation did not conclude")
+
+
+def _verdict_result(
+    parsed_dict: dict[str, Any],
+    raw: str,
+    user: str,
+    trace: list[dict[str, Any]],
+    base_prompt: str,
+) -> dict[str, Any] | None:
+    """The verdict JSON when the model's turn is a complete verdict —
+    normalized findings, the trace and the final prompt attached
+    (completeness). None when the turn is neither a tool call nor a
+    complete verdict — the caller feeds it back for a correction."""
+    relevant = str(parsed_dict.get("relevant", "")).strip().lower()
+    raw_contradiction = parsed_dict.get("contradiction")
+    contradiction: dict[str, Any] = raw_contradiction if isinstance(raw_contradiction, dict) else {}
+    found = str(contradiction.get("found", "")).strip().lower()
+    confidence = str(parsed_dict.get("confidence", "")).strip().lower()
+    if (
+        relevant in ("true", "false")
+        and found in ("true", "false")
+        and confidence in ("definitely", "think_so", "dont_know", "think_not", "definitely_not", "unclear")
+    ):
+        findings = parsed_dict.get("findings")
+        normalized = [
+            (
+                {"text": str(f.get("text", "")).strip(), "item_id": str(f.get("item_id", "")).strip() or None}
+                if isinstance(f, dict)
+                else {"text": str(f).strip(), "item_id": None}
+            )
+            for f in (findings if isinstance(findings, list) else [])
+        ]
+        return {
+            "relevant": relevant,
+            "contradiction": {"found": found, "detail": str(contradiction.get("detail", ""))},
+            "confidence": confidence,
+            "note": str(parsed_dict.get("note", "")).strip(),
+            "findings": [f for f in normalized if f["text"]],
+            "question": str(parsed_dict.get("question", "")).strip(),
+            "raw": raw,
+            "trace": trace,
+            "prompt": base_prompt,
+            # the final user string after the loop's appends — the
+            # completeness property: everything the model produced is
+            # fed back (2026-08-09, user)
+            "final_prompt": user,
+        }
+    return None

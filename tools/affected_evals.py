@@ -48,10 +48,7 @@ def affected_markers() -> str:
         files += result.stdout.splitlines()
     result = subprocess.run(["git", "diff", "--name-only", _git_base()], capture_output=True, text=True)
     files += result.stdout.splitlines()
-    markers: set[str] = set()
-    for f in files:
-        if f in CHANGED_TO_MARKERS:
-            markers.update(CHANGED_TO_MARKERS[f].split(" or "))
+    markers = {m for f in files if f in CHANGED_TO_MARKERS for m in CHANGED_TO_MARKERS[f].split(" or ")}
     return " or ".join(sorted(markers)) or "none"
 
 

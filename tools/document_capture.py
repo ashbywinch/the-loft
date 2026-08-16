@@ -6,6 +6,7 @@ Idempotent: each section skips what already exists.
 
 from __future__ import annotations
 
+import functools
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -16,27 +17,13 @@ if TYPE_CHECKING:
     from tools.archive import Archive
 
 
-_import_content: dict[str, Any] | None = None
-
-
+@functools.cache
 def _import_data() -> dict[str, Any]:
-    """The import's declared content. The real family data lives in the
-    gitignored archive (archive/import-content.json), never in code — the
-    public repo ships a data-free import (2026-08-08, user)."""
-    global _import_content
-    if _import_content is None:
-        path = ARCHIVE_DIR / "import-content.json"
-        _import_content = json.loads(path.read_text(encoding="utf-8"))
-    assert _import_content is not None
-    return _import_content
-
-
-def _spouse(a: str, b: str) -> dict[str, str]:
-    return {"a": a, "b": b, "kind": "spouse", "label_a": "spouse", "label_b": "spouse"}
-
-
-def _parent(parent: str, child: str) -> dict[str, str]:
-    return {"a": parent, "b": child, "kind": "parent", "label_a": "child", "label_b": "parent"}
+    """The import's declared content, read once per process. The real family
+    data lives in the gitignored archive (archive/import-content.json), never
+    in code — the public repo ships a data-free import (2026-08-08, user)."""
+    path = ARCHIVE_DIR / "import-content.json"
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def email_cast() -> list[dict[str, Any]]:
@@ -51,43 +38,60 @@ def email_edges() -> list[dict[str, Any]]:
 
 
 def capture_document(archive: Archive, scans: Path) -> None:
+    # the 2001 family-history email (doc-2001-02-07): cast + places enter the
+    # tables as proposed, then the printed email item with its page scans —
+    # each section is idempotent and skips what already exists
+    _capture_email_people(archive)
+    _capture_email_places(archive)
+    _capture_email_item(archive, scans)
 
-    # -- people: the email's cast, proposed, in the table ------------------
+
+def _capture_email_people(archive: Archive) -> None:
+    """The email's cast into the people table as proposed, plus the
+    corrections it brings to existing records and the declared family
+    edges — one supersede."""
     people_table = archive.get_identity("people")
     assert people_table is not None, "archive has no people table"
     if any(p["id"] == _import_data()["email"]["first_person_id"] for p in people_table["people"]):
         print("note: email people already in the table — skipping")
-    else:
-        new_people = email_cast()
-        for person in new_people:
-            people_table["people"].append({**person, "status": "proposed", "years": "—"})
+        return
+    new_people = email_cast()
+    people_table["people"].extend({**person, "status": "proposed", "years": "—"} for person in new_people)
 
-        # corrections the email brings to existing records
-        by_id = {p["id"]: p for p in people_table["people"]}
-        for person_id, fields in _import_data()["email"]["corrections"].items():
-            by_id[person_id].update({k: v for k, v in fields.items() if not k.startswith("_")})
+    # corrections the email brings to existing records
+    by_id = {p["id"]: p for p in people_table["people"]}
+    # the by_id values ARE the people-table rows — the update mutates them in place, so a
+    # comprehension would be a side-effecting expression, not a pure collection build
+    # lucidlint: ignore loop-pipeline in-place mutation of shared rows, not a pure build
+    for person_id, fields in _import_data()["email"]["corrections"].items():
+        by_id[person_id].update({k: v for k, v in fields.items() if not k.startswith("_")})
 
-        # the family edges
-        relations = email_edges()
-        existing_edges = {(r.get("a"), r.get("b"), r.get("kind")) for r in people_table.get("relationships") or []}
-        new_edges = [r for r in relations if (r["a"], r["b"], r["kind"]) not in existing_edges]
-        people_table["relationships"] = list(people_table.get("relationships") or []) + new_edges
-        archive.save_identity("people", people_table)
-        print(f"people superseded: +{len(new_people)} proposed, +{len(new_edges)} edges")
+    # the family edges
+    relations = email_edges()
+    existing_edges = {(r.get("a"), r.get("b"), r.get("kind")) for r in people_table.get("relationships") or []}
+    new_edges = [r for r in relations if (r["a"], r["b"], r["kind"]) not in existing_edges]
+    people_table["relationships"] = list(people_table.get("relationships") or []) + new_edges
+    archive.save_identity("people", people_table)
+    print(f"people superseded: +{len(new_people)} proposed, +{len(new_edges)} edges")
 
-    # -- places: proposed, coordinates marked for verification (Rule O) ----
+
+def _capture_email_places(archive: Archive) -> None:
+    """The email's places — proposed, coordinates marked for verification
+    (Rule O)."""
     places_table = archive.get_identity("places")
     assert places_table is not None, "archive has no places table"
     if any(p["id"] == _import_data()["email"]["first_place_id"] for p in places_table["places"]):
         print("note: email places already present — skipping")
-    else:
-        new_places = _import_data()["email"]["places"]
+        return
+    new_places = _import_data()["email"]["places"]
+    places_table["places"] = list(places_table["places"]) + new_places
+    archive.save_identity("places", places_table)
+    print(f"places superseded: +{len(new_places)} proposed")
 
-        places_table["places"] = list(places_table["places"]) + new_places
-        archive.save_identity("places", places_table)
-        print(f"places superseded: +{len(new_places)} proposed")
 
-    # -- the item ------------------------------------------------------------
+def _capture_email_item(archive: Archive, scans: Path) -> None:
+    """The printed email item itself — saved with its corrected
+    transcription and the five page scans when present."""
     if archive.get_item("doc-2001-02-07") is not None:
         print("note: doc-2001-02-07 already exists — skipping")
         return
@@ -113,24 +117,13 @@ def capture_document(archive: Archive, scans: Path) -> None:
 # -- the interview demo's documents (the first captures) --------------------
 
 
-def _refs(people: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """Item refs to the record's people — one per record id."""
-    return [{"id": str(p["id"]), "status": "proposed"} for p in people]
-
-
-def _parent_edge(parent: str, child: str) -> dict[str, str]:
-    return {"a": parent, "b": child, "kind": "parent", "label_a": "child", "label_b": "parent"}
-
-
-def _spouse_edge(a: str, b: str) -> dict[str, str]:
-    return {"a": a, "b": b, "kind": "spouse", "label_a": "spouse", "label_b": "spouse"}
-
-
 def record_proposed() -> list[dict[str, Any]]:
     """The record book's proposed people — loaded from the dataset."""
     return _import_data()["record"]["proposed"]
 
 
+# The import-completeness/import-edges evals (tests/test_import_completeness.py,
+# tests/test_import_edges.py) compare the declared cast against the live archive.
 def record_cast() -> list[dict[str, Any]]:
     """The record book's declared people — proposed plus the confirmed cast."""
     return record_proposed() + _import_data()["record"]["cast"]
@@ -141,41 +134,39 @@ def record_edges() -> list[dict[str, Any]]:
     return _import_data()["record"]["edges"]
 
 
+# The family-membership eval (tests/test_family_membership.py) checks confirmed family
+# members are never stranded without an edge.
 def record_confirmed_family() -> list[str]:
     """The people the user confirmed as family (2026-08-06) — data, not code."""
     return list(_import_data()["record"]["confirmed_family"])
 
 
 def capture_demo_documents(archive: Archive, scans: Path) -> None:
+    """The interview demo's documents — the first captures: the record
+    book's people, the orgs table, the family houses' addresses, and the
+    six items. Idempotent — each section skips what already exists."""
+    _capture_demo_orgs(archive)
+    _capture_demo_people(archive, record_proposed())
+    _capture_demo_places(archive)
+    _capture_demo_items(archive)
 
-    # the record book's people — used by the people supersede and the items
-    proposed = record_proposed()
 
-    # -- the orgs identity table (confirmed at import review) ---------------
+def _capture_demo_orgs(archive: Archive) -> None:
+    """The orgs identity table (confirmed at import review)."""
     if archive.get_identity("orgs") is None:
         archive.save_identity("orgs", {"orgs": _import_data()["record"]["orgs"]})
     else:
         print("note: orgs table already present — skipping")
 
-    # -- people: confirmed cast additions + the record's proposed people and
-    #    relationships, one supersede. Proposed people are table people with
-    #    status proposed; the table resolves regardless of status -----------
+
+def _capture_demo_people(archive: Archive, proposed: list[dict[str, Any]]) -> None:
+    """Confirmed cast additions + the record's proposed people and
+    relationships, one supersede. Proposed people are table people with
+    status proposed; the table resolves regardless of status."""
     table = archive.get_identity("people")
     assert table is not None, "archive has no people table"
     by_id = {p["id"]: p for p in table["people"]}
-    changed = False
-
-    def add_fields(person_id: str, **fields: object) -> None:
-        by_id[person_id].update(fields)
-
-    for person_id, patch in _import_data()["record"]["patches"].items():
-        add_fields(person_id, **patch.get("fields", {}))
-        extra = patch.get("aliases", [])
-        if extra:
-            by_id[person_id]["aliases"] = sorted(set(by_id[person_id]["aliases"]) | set(extra))
-    if _import_data()["record"]["stacey"]["id"] not in by_id:
-        table["people"].append(_import_data()["record"]["stacey"])
-        changed = True
+    changed = _apply_record_patches(table, by_id)
 
     # the record book's people — status proposed, in the table
     for person in proposed:
@@ -196,22 +187,45 @@ def capture_demo_documents(archive: Archive, scans: Path) -> None:
     else:
         print("note: people table already up to date — skipping")
 
-    # -- places: address on the family houses -------------------------------
-    # (household moved to Person.residence — the GEDCOM-aligned seam; a
-    # `household` key on a place is silently dropped by the Place model,
-    # 2026-08-06 review)
+
+def _apply_record_patches(table: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> bool:
+    """The record's field/alias patches on existing people, plus the
+    confirmed Stacey record when absent; True when the table changed."""
+    changed = False
+
+    def add_fields(person_id: str, **fields: object) -> None:
+        by_id[person_id].update(fields)
+
+    for person_id, patch in _import_data()["record"]["patches"].items():
+        add_fields(person_id, **patch.get("fields", {}))
+        extra = patch.get("aliases", [])
+        if extra:
+            by_id[person_id]["aliases"] = sorted(set(by_id[person_id]["aliases"]) | set(extra))
+    if _import_data()["record"]["stacey"]["id"] not in by_id:
+        table["people"].append(_import_data()["record"]["stacey"])
+        changed = True
+    return changed
+
+
+def _capture_demo_places(archive: Archive) -> None:
+    """The address on the family houses. (Household moved to
+    Person.residence — the GEDCOM-aligned seam; a `household` key on a
+    place is silently dropped by the Place model, 2026-08-06 review.)"""
     places = archive.get_identity("places")
     assert places is not None, "archive has no places table"
     pl_by_id = {p["id"]: p for p in places["places"]}
     if _import_data()["record"]["first_place_id"] in pl_by_id:
         print(f"note: {_import_data()['record']['first_place_id']} already present — skipping places")
-    else:
-        place_patch = _import_data()["record"]["place_patch"]
-        pl_by_id[place_patch["id"]]["address"] = place_patch["address"]
-        places["places"].append(_import_data()["record"]["bushey"])
-        archive.save_identity("places", places)
+        return
+    place_patch = _import_data()["record"]["place_patch"]
+    pl_by_id[place_patch["id"]]["address"] = place_patch["address"]
+    places["places"].append(_import_data()["record"]["bushey"])
+    archive.save_identity("places", places)
 
-    # -- the items -----------------------------------------------------------
+
+def _capture_demo_items(archive: Archive) -> None:
+    """The record book's six items, saved with their corrected
+    transcriptions."""
     targets = {
         "letter-1949-02-04",
         "letter-1949-01-27",
@@ -223,8 +237,8 @@ def capture_demo_documents(archive: Archive, scans: Path) -> None:
     present = sorted(targets & set(archive.item_ids()))
     if present:
         print(f"note: items already imported ({', '.join(present)}) — skipping the item section")
-    else:
-        for item in _import_data()["record"]["items"]:
-            content = item.pop("_content", None)
-            archive.save_item(item, content=content)
-        print(f"record items imported ({len(_import_data()['record']['items'])})")
+        return
+    for item in _import_data()["record"]["items"]:
+        content = item.pop("_content", None)
+        archive.save_item(item, content=content)
+    print(f"record items imported ({len(_import_data()['record']['items'])})")

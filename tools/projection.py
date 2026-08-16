@@ -14,7 +14,7 @@ from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from tools.archive import CONTENT_FILES
+from tools.records import CONTENT_FILES
 
 if TYPE_CHECKING:
     from tools.archive import Archive
@@ -129,6 +129,9 @@ def people_projection(archive: Archive) -> dict[str, Any]:
     table = identity(archive, "people")
     known = {p["id"] for p in table["people"]}
     by_name: dict[str, list[dict[str, Any]]] = {}
+    # setdefault group-by in one pass keeps first-seen key order; a dict comprehension
+    # cannot group without an O(n²) rescan or sorted+groupby changing the key order
+    # lucidlint: ignore loop-pipeline setdefault group-by — no one-pass dict comprehension
     for person in table["people"]:
         by_name.setdefault(person["name"].strip().lower(), []).append(person)
     for person in archive.proposed_people():
@@ -212,6 +215,7 @@ def asset_contents(archive: Archive, items: list[dict[str, Any]]) -> dict[str, d
     return out
 
 
+# lucidlint: ignore long-param-list a single call site — a parameter object would add a type for one use
 def _validate_refs(
     items: list[dict[str, Any]],
     people_ids: set[str],
@@ -237,66 +241,99 @@ def _validate_refs(
         "orgs": org_ids,
         "items": item_ids,
     }
-    # extraction kinds use the singular; a match is the same promise as a
-    # link, so it must resolve in the same projection sets. "org" joined
-    # with the story-flow parity (2026-08-05).
-    extraction_kinds = {"person": "people", "place": "places", "theme": "themes", "item": "items", "org": "orgs"}
     for item in items:
         if item.get("status") != "catalogued":
             continue
-        for kind in ("people", "places", "themes", "orgs", "items"):
-            for ref in item.get(kind) or []:
-                rid = ref.get("id")
-                if not rid:
-                    continue
-                if rid not in known[kind]:
-                    raise DeriveError(f"{item['id']} links {rid}, which is not in the published projection")
-                if kind == "items" and ref.get("status") == "confirmed":
-                    target = by_id.get(rid)
-                    if target is None or target.get("status") != "catalogued":
-                        state = "missing from the archive" if target is None else "still a draft"
-                        raise DeriveError(
-                            f"{item['id']} confirms a link to {rid}, which is {state} — "
-                            "catalogue the artifact or downgrade the link to proposed"
-                        )
-        comment_on = item.get("comment_on")
-        if comment_on:
-            # the anchor a story comments on is a link too — a draft or
-            # tombstoned target is invisible to every visitor but the owner
-            # (2026-08-05 bot review, importance 7)
-            if comment_on not in item_ids:
-                raise DeriveError(f"{item['id']} comments on {comment_on}, which is not in the published projection")
-            target = by_id.get(comment_on)
-            if target is None or target.get("status") != "catalogued":
-                state = "missing from the archive" if target is None else "still a draft"
-                raise DeriveError(
-                    f"{item['id']} comments on {comment_on}, which is {state} — "
-                    "catalogue the artifact or remove the comment link"
+        _check_kind_refs(item, known, by_id)
+        _check_comment(item, by_id, item_ids)
+        _check_extractions(item, known, by_id)
+    _check_theme_items(themes, by_id)
+
+
+def _check_kind_refs(item: dict[str, Any], known: dict[str, set[str]], by_id: dict[str, dict[str, Any]]) -> None:
+    """The item's people/places/themes/orgs/items refs — each must resolve
+    in the published projection. A confirmed ref to a draft (or missing)
+    target is dangling even though the item exists (2026-08-05:
+    story-2026-08-03-05 confirmed a draft object-sb-mirosa)."""
+    for kind in ("people", "places", "themes", "orgs", "items"):
+        for ref in item.get(kind) or []:
+            rid = ref.get("id")
+            if not rid:
+                continue
+            if rid not in known[kind]:
+                raise DeriveError(f"{item['id']} links {rid}, which is not in the published projection")
+            if kind == "items" and ref.get("status") == "confirmed":
+                _require_catalogued(
+                    rid,
+                    by_id,
+                    subject=item["id"],
+                    action="confirms a link to",
+                    remedy="catalogue the artifact or downgrade the link to proposed",
                 )
-        for extraction in (item.get("chat") or {}).get("extractions") or []:
-            if extraction.get("on") is False:
-                continue  # the reviewer unticked it — excluded content is not a link
-            match = extraction.get("match")
-            if not match:
-                continue  # an unresolved extraction (kinship filter) is honest output
-            table_name = extraction_kinds.get(str(extraction.get("kind") or ""), "")
-            known_ids = known.get(table_name, set())
-            if match not in known_ids:
-                raise DeriveError(
-                    f"{item['id']} extraction {extraction.get('name')!r} matches {match}, "
-                    "which is not in the published projection"
-                )
-            if extraction.get("kind") == "item":
-                # an item match is the same dangling class as a confirmed
-                # ref: a draft target is invisible to every reader but its
-                # owner (2026-08-05 review)
-                target = by_id.get(match)
-                if target is None or target.get("status") != "catalogued":
-                    state = "missing from the archive" if target is None else "still a draft"
-                    raise DeriveError(
-                        f"{item['id']} extraction {extraction.get('name')!r} matches {match}, "
-                        f"which is {state} — catalogue the artifact or clear the match"
-                    )
+
+
+def _check_comment(item: dict[str, Any], by_id: dict[str, dict[str, Any]], item_ids: set[str]) -> None:
+    """The anchor a story comments on is a link too — a draft or tombstoned
+    target is invisible to every visitor but the owner (2026-08-05 bot
+    review, importance 7)."""
+    comment_on = item.get("comment_on")
+    if comment_on:
+        if comment_on not in item_ids:
+            raise DeriveError(f"{item['id']} comments on {comment_on}, which is not in the published projection")
+        _require_catalogued(
+            comment_on,
+            by_id,
+            subject=item["id"],
+            action="comments on",
+            remedy="catalogue the artifact or remove the comment link",
+        )
+
+
+def _check_extractions(item: dict[str, Any], known: dict[str, set[str]], by_id: dict[str, dict[str, Any]]) -> None:
+    """The item's extraction matches — same promise as a link, so each must
+    resolve in the same projection sets; an item match is the same dangling
+    class as a confirmed ref (2026-08-05 review). Extraction kinds use the
+    singular; "org" joined with the story-flow parity (2026-08-05)."""
+    extraction_kinds = {"person": "people", "place": "places", "theme": "themes", "item": "items", "org": "orgs"}
+    for extraction in (item.get("chat") or {}).get("extractions") or []:
+        if extraction.get("on") is False:
+            continue  # the reviewer unticked it — excluded content is not a link
+        match = extraction.get("match")
+        if not match:
+            continue  # an unresolved extraction (kinship filter) is honest output
+        table_name = extraction_kinds.get(str(extraction.get("kind") or ""), "")
+        known_ids = known.get(table_name, set())
+        if match not in known_ids:
+            raise DeriveError(
+                f"{item['id']} extraction {extraction.get('name')!r} matches {match}, "
+                "which is not in the published projection"
+            )
+        if extraction.get("kind") == "item":
+            _require_catalogued(
+                match,
+                by_id,
+                subject=item["id"],
+                action=f"extraction {extraction.get('name')!r} matches",
+                remedy="catalogue the artifact or clear the match",
+            )
+
+
+def _require_catalogued(
+    target_id: str, by_id: dict[str, dict[str, Any]], subject: str, action: str, remedy: str
+) -> None:
+    """A link's target must be a catalogued item — a draft artifact is
+    hidden from everyone but its owner, so a confirmed link to a draft (or
+    missing) target is dangling even though the item exists."""
+    target = by_id.get(target_id)
+    if target is not None and target.get("status") == "catalogued":
+        return
+    state = "missing from the archive" if target is None else "still a draft"
+    raise DeriveError(f"{subject} {action} {target_id}, which is {state} — {remedy}")
+
+
+def _check_theme_items(themes: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> None:
+    """A theme record's curated items list must resolve too — a tombstoned
+    letter left in a theme is a dangling card (2026-08-05)."""
     for theme in themes.get("themes") or []:
         for entry in theme.get("items") or []:
             eid = entry.get("id")

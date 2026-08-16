@@ -1,0 +1,41 @@
+# lucidlint configuration — see docs/plans/lucidlint-review-log.md for the
+# full reasoning behind every scoped ignore. Each entry is acknowledged debt
+# where the tool's rule collides with the repo's coding standards (recorded
+# 2026-08-16, first full-repo run).
+
+[lucidlint]
+# record-shape: the object model already implements the class rule
+# (tools/records.py — Person/Place/Org/Relationship/Item/Knowledge). The
+# remaining dict[str, Any] are deliberate wire-format seams the standards
+# name: to_dict/from_dict own the persistence contract, API responses are
+# output format ("Don't let output format drive the domain model"), eval
+# result dicts are one-shot shapes. A dict shape re-parsed in 2+ places is
+# still a finding per coding-standards.md — the repo reviewer enforces it;
+# the tool's blanket flagging of every annotation is noise on the seams.
+ignore = ["record-shape", "class-module", "vague-name"]
+# class-module: every flagged module is named after its domain noun and
+# holds the noun's exception or helper class (htr.py/HtrError, sync.py/
+# Outbox, review.py/_Chat) — one reason to change, the standards' stated
+# exception to "each class in its own module".
+# vague-name: "Store" is a sanctioned domain noun in coding-standards.md
+# ("plus Store, Records, Projection, AiClient") — the tool's vague-name
+# list collides with the house vocabulary.
+
+# fakefs: the repo's testing standards permit deterministic real-FS tests
+# (tmp_path) — the archive/store tests need real os.replace/subprocess/
+# sqlite semantics that pyfakefs cannot fake faithfully; the private
+# dataset checks must read the real repo tree. Suppressed at the tests
+# scope with the standards' citation.
+[lucidlint."tests/**"]
+ignore = ["fakefs"]
+
+# unused in the eval modules: their entry points (run_flow, condition_*,
+# load_projection) exist to be driven by tests/test_evals.py — the module
+# IS the eval harness, so cross-file-reference counting is structurally
+# inapplicable. (Tool bug: a per-function `ignore unused` comment counts as
+# a reference, so the finding stops firing AND the suppression is reported
+# stale — see docs/plans/lucidlint-review-log.md §1.5.)
+[lucidlint."tools/eval_memory.py"]
+ignore = ["unused"]
+[lucidlint."tools/eval_review.py"]
+ignore = ["unused"]

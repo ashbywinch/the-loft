@@ -50,6 +50,15 @@ from tools.projection import resolved_items
 
 MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"]
 
+# ISO-8601 fixed widths and dash positions, used to tell the date forms
+# apart before the GEDCOM reorder: "YYYY-MM-DD" is 10 chars with dashes at
+# 4 and 7; "YYYY-MM" is 7 chars with the dash at 4.
+ISO_DATE_LEN = 10  # YYYY-MM-DD
+ISO_YEAR_MONTH_LEN = 7  # YYYY-MM
+YEAR_MONTH_DASH = 4  # the "-" between year and month in both forms
+MONTH_DAY_DASH = 7  # the "-" between month and day in the full form
+DAY_MONTH_YEAR_PARTS = 3  # "D MON YYYY" splits into day, month, year
+
 
 def gedcom_date(value: str, precision: str, date2: str | None = None) -> str:
     """ISO date + our precision -> a GEDCOM 7 DATE payload.
@@ -59,9 +68,9 @@ def gedcom_date(value: str, precision: str, date2: str | None = None) -> str:
     between -> BET <date> AND <date2>. Granularity is the date's form,
     never uncertainty; never a fake exact date."""
     out = value
-    if len(value) == 10 and value[4] == "-" and value[7] == "-":  # YYYY-MM-DD
+    if len(value) == ISO_DATE_LEN and value[YEAR_MONTH_DASH] == "-" and value[MONTH_DAY_DASH] == "-":  # YYYY-MM-DD
         out = f"{int(value[8:10])} {MONTHS[int(value[5:7]) - 1]} {value[0:4]}"
-    elif len(value) == 7 and value[4] == "-":  # YYYY-MM
+    elif len(value) == ISO_YEAR_MONTH_LEN and value[YEAR_MONTH_DASH] == "-":  # YYYY-MM
         out = f"{MONTHS[int(value[5:7]) - 1]} {value[0:4]}"
     if precision == "approx":
         return f"ABT {out}"
@@ -140,6 +149,47 @@ def export_gedcom(archive: Archive) -> str:
     if people is None or places is None:
         raise RuntimeError("archive needs people and places identity tables")
 
+    exported_ids, edges, place_names, by_id, xref = _export_set(people, places)
+
+    families, fam_notes = _family_units(edges, archive)
+    notes_by_person = _story_notes(archive, exported_ids)
+    associations = _associations(edges, archive)
+
+    # -- assemble the document
+    lines: list[str] = [
+        "0 HEAD",
+        "1 SOUR the-loft-export",
+        "2 VERS 0.1",
+        "1 GEDC",
+        "2 VERS 7.0",
+        "2 FORM LINEAGE-LINKED",
+        "1 CHAR UTF-8",
+    ]
+    for fam in families:
+        lines += _family_lines(fam, by_id, xref, fam_notes)
+
+    for pid in sorted(exported_ids):
+        lines += _person_lines(
+            person=by_id[pid],
+            pid=pid,
+            xref=xref,
+            place_names=place_names,
+            notes=notes_by_person.get(pid, []),
+            associations=associations.get(pid, []),
+            archive=archive,
+        )
+
+    lines.append("0 TRLR")
+    return "\n".join(lines) + "\n"
+
+
+def _export_set(
+    people: dict[str, Any], places: dict[str, Any]
+) -> tuple[set[str], list[dict[str, Any]], dict[str, str], dict[str, dict[str, Any]], dict[str, str]]:
+    """The confirmed/estimated people and edges that leave the archive —
+    proposed records stay out (2026-08-09 review) — plus the lookup maps:
+    exported ids, edges, place names, people by id, and the deterministic
+    xref ids (sorted order, documented mapping)."""
     exported = [p for p in people["people"] if p.get("status") in (None, "confirmed", "estimated")]
     exported_ids = {p["id"] for p in exported}
     edges = [
@@ -151,11 +201,34 @@ def export_gedcom(archive: Archive) -> str:
     ]
     place_names = {p["id"]: p.get("name", p["id"]) for p in places["places"]}
     by_id = {p["id"]: p for p in exported}
-
-    # deterministic id assignment: sorted order, documented mapping
     xref = {pid: f"P{i}" for i, pid in enumerate(sorted(exported_ids), start=1)}
+    return exported_ids, edges, place_names, by_id, xref
 
-    # -- family structure first (spouse pairs + their children), then emit
+
+def _family_units(edges: list[dict[str, Any]], archive: Archive) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
+    """The FAM records: spouse pairs + their children, then single-parent
+    FAMS. Returns (families, fam_notes) — an estimated edge's evidence
+    rides on the FAM it created."""
+    pairs, marriage_dates, pair_notes = _spouse_pairs(edges, archive)
+    families, fam_of_pair, fam_notes, counter = _pair_families(pairs, marriage_dates, pair_notes)
+    parent_of, estimated_parent_edges = _parent_edges(edges)
+    children_of, single_parent, fam_notes, counter = _route_children(
+        parent_of, fam_of_pair, families, fam_notes, counter, estimated_parent_edges, archive
+    )
+    for fam in families:
+        fam["children"] = sorted(set(children_of.get(fam["id"], [])))
+    families, fam_notes, _ = _single_parent_families(
+        single_parent, estimated_parent_edges, families, fam_notes, counter, archive
+    )
+    return families, fam_notes
+
+
+def _spouse_pairs(
+    edges: list[dict[str, Any]], archive: Archive
+) -> tuple[set[tuple[str, str]], dict[tuple[str, str], dict[str, str]], dict[tuple[str, str], list[str]]]:
+    """The spouse edges -> the sorted pairs, their marriage dates, and the
+    estimate evidence notes (a dated marriage exports as 1 MARR, 2026-08-06;
+    an estimated edge's evidence rides the FAM it created)."""
     pairs: set[tuple[str, str]] = set()
     marriage_dates: dict[tuple[str, str], dict[str, str]] = {}
     pair_notes: dict[tuple[str, str], list[str]] = {}
@@ -168,9 +241,20 @@ def export_gedcom(archive: Archive) -> str:
                 marriage_dates[pair] = edge["date"]  # a dated marriage exports as 1 MARR (2026-08-06)
             if edge.get("status") == "estimated":
                 pair_notes[pair] = _estimate_note(_estimate_basis(archive, b) or _estimate_basis(archive, a))
+    return pairs, marriage_dates, pair_notes
 
+
+def _pair_families(
+    pairs: set[tuple[str, str]],
+    marriage_dates: dict[tuple[str, str], dict[str, str]],
+    pair_notes: dict[tuple[str, str], list[str]],
+) -> tuple[list[dict[str, Any]], dict[tuple[str, str], str], dict[str, list[str]], int]:
+    """The spouse-pair FAM records, in sorted-pair order: one FAM per pair,
+    keyed by pair for the child routing. Returns (families, fam_of_pair,
+    fam_notes, counter) — the FAM counter is shared with the later
+    single-parent records so ids stay assignment-ordered."""
     fam_of_pair: dict[tuple[str, str], str] = {}
-    fam_notes: dict[str, list[str]] = {}  # an estimated edge's evidence rides on the FAM it created
+    fam_notes: dict[str, list[str]] = {}  # an estimated edge's evidence rides the FAM it created
     families: list[dict[str, Any]] = []  # {id, spouse_a, spouse_b, children, marriage?}
     counter = 0
     for pair in sorted(pairs):
@@ -180,13 +264,14 @@ def export_gedcom(archive: Archive) -> str:
         families.append({"id": fid, "a": pair[0], "b": pair[1], "children": [], "marriage": marriage_dates.get(pair)})
         if pair in pair_notes:
             fam_notes.setdefault(fid, []).extend(pair_notes[pair])
+    return families, fam_of_pair, fam_notes, counter
 
-    # Children route by their attested co-parent — the child's other parent
-    # edge — never by a parent's current spouse: a multi-married parent's
-    # earlier marriage's children would be silently misattributed to the
-    # last spouse (2026-08-06 review). A child with two attested parents
-    # goes to their FAM (creating it when the parents have no spouse edge);
-    # one parent edge falls back to a single-parent FAM.
+
+def _parent_edges(
+    edges: list[dict[str, Any]],
+) -> tuple[dict[str, list[str]], set[tuple[str, str]]]:
+    """The parent edges -> child -> parents, and the estimated
+    (parent, child) pairs whose evidence rides the FAM."""
     parent_of: dict[str, list[str]] = {}
     estimated_parent_edges: set[tuple[str, str]] = set()  # (parent, child) — the evidence rides the FAM
     for edge in edges:
@@ -194,7 +279,27 @@ def export_gedcom(archive: Archive) -> str:
             parent_of.setdefault(edge["b"], []).append(edge["a"])
             if edge.get("status") == "estimated":
                 estimated_parent_edges.add((edge["a"], edge["b"]))
+    return parent_of, estimated_parent_edges
 
+
+# through; a state object would add a type for one use
+# lucidlint: ignore long-param-list a single call site — the routing state (families/fam_notes/counter) is threaded
+def _route_children(
+    parent_of: dict[str, list[str]],
+    fam_of_pair: dict[tuple[str, str], str],
+    families: list[dict[str, Any]],
+    fam_notes: dict[str, list[str]],
+    counter: int,
+    estimated_parent_edges: set[tuple[str, str]],
+    archive: Archive,
+) -> tuple[dict[str, list[str]], dict[str, list[str]], dict[str, list[str]], int]:
+    """Route each child to its attested co-parents' FAM: children by their
+    attested co-parent edge — never by a parent's current spouse: a
+    multi-married parent's earlier marriage's children would be silently
+    misattributed to the last spouse (2026-08-06 review). A child with two
+    attested parents goes to their FAM (creating it when the parents have
+    no spouse edge); one parent edge falls back to a single-parent FAM.
+    Returns (children_of, single_parent, fam_notes, counter)."""
     children_of: dict[str, list[str]] = {}
     single_parent: dict[str, list[str]] = {}
     for child, parents in sorted(parent_of.items()):
@@ -220,45 +325,57 @@ def export_gedcom(archive: Archive) -> str:
                     )
         else:
             single_parent.setdefault(uniq[0], []).append(child)
-    for fam in families:
-        fam["children"] = sorted(set(children_of.get(fam["id"], [])))
+    return children_of, single_parent, fam_notes, counter
+
+
+# a state object would add a type for one use
+# lucidlint: ignore long-param-list a single call site — the FAM state (families/fam_notes/counter) is threaded through;
+def _single_parent_families(
+    single_parent: dict[str, list[str]],
+    estimated_parent_edges: set[tuple[str, str]],
+    families: list[dict[str, Any]],
+    fam_notes: dict[str, list[str]],
+    counter: int,
+    archive: Archive,
+) -> tuple[list[dict[str, Any]], dict[str, list[str]], int]:
+    """The single-parent FAM records — the children whose other parent is
+    unconfirmed — with the estimated edges' evidence notes appended
+    (concatenate — never overwrite a spouse estimate's evidence, R9;
+    2026-08-11 review)."""
     for parent in sorted(single_parent):
         counter += 1
         fid = f"F{counter}"
         families.append({"id": fid, "a": parent, "b": None, "children": sorted(set(single_parent[parent]))})
         if any((parent, child) in estimated_parent_edges for child in single_parent[parent]):
-            # concatenate — never overwrite a spouse estimate's evidence
-            # (R9; 2026-08-11 review)
             fam_notes.setdefault(fid, []).extend(
                 _estimate_note(_estimate_basis(archive, single_parent[parent][0]) or _estimate_basis(archive, parent))
             )
+    return families, fam_notes, counter
 
-    # -- assemble the document
-    lines: list[str] = [
-        "0 HEAD",
-        "1 SOUR the-loft-export",
-        "2 VERS 0.1",
-        "1 GEDC",
-        "2 VERS 7.0",
-        "2 FORM LINEAGE-LINKED",
-        "1 CHAR UTF-8",
-    ]
-    for fam in families:
-        lines.append(f"0 @{fam['id']}@ FAM")
-        lines.append(f"1 {_role(by_id[fam['a']], 0)} @{xref[fam['a']]}@")
-        if fam["b"] is not None:
-            lines.append(f"1 {_role(by_id[fam['b']], 1)} @{xref[fam['b']]}@")
-        if fam.get("marriage"):
-            # a dated spouse edge exports as a MARR event — the date is
-            # attested data, never dropped on export (2026-08-06 review)
-            marriage = fam["marriage"]
-            lines.append("1 MARR")
-            date_payload = gedcom_date(marriage["date"], marriage.get("precision", "exact"), marriage.get("date2"))
-            lines.append(f"2 DATE {date_payload}")
-        lines += [f"1 CHIL @{xref[c]}@" for c in fam["children"]]
-        lines += fam_notes.get(fam["id"], [])  # an estimated edge's evidence (2026-08-09, user)
 
-    # stories -> NOTE on each exported person they reference (the shoehorn)
+def _family_lines(
+    fam: dict[str, Any], by_id: dict[str, dict[str, Any]], xref: dict[str, str], fam_notes: dict[str, list[str]]
+) -> list[str]:
+    """The GEDCOM lines for one FAM record."""
+    lines = [f"0 @{fam['id']}@ FAM"]
+    lines.append(f"1 {_role(by_id[fam['a']], 0)} @{xref[fam['a']]}@")
+    if fam["b"] is not None:
+        lines.append(f"1 {_role(by_id[fam['b']], 1)} @{xref[fam['b']]}@")
+    if fam.get("marriage"):
+        # a dated spouse edge exports as a MARR event — the date is
+        # attested data, never dropped on export (2026-08-06 review)
+        marriage = fam["marriage"]
+        lines.append("1 MARR")
+        date_payload = gedcom_date(marriage["date"], marriage.get("precision", "exact"), marriage.get("date2"))
+        lines.append(f"2 DATE {date_payload}")
+    lines += [f"1 CHIL @{xref[c]}@" for c in fam["children"]]
+    lines += fam_notes.get(fam["id"], [])  # an estimated edge's evidence (2026-08-09, user)
+    return lines
+
+
+def _story_notes(archive: Archive, exported_ids: set[str]) -> dict[str, list[str]]:
+    """The catalogued stories' verbatim text as NOTES on each exported
+    person they reference (the shoehorn)."""
     notes_by_person: dict[str, list[str]] = {}
     for story in resolved_items(archive):
         if story.get("type") != "story" or story.get("status") != "catalogued":
@@ -270,7 +387,13 @@ def export_gedcom(archive: Archive) -> str:
             rid = ref.get("id")
             if rid in exported_ids:
                 notes_by_person.setdefault(rid, []).append(text)
+    return notes_by_person
 
+
+def _associations(edges: list[dict[str, Any]], archive: Archive) -> dict[str, list[tuple[str, str, list[str]]]]:
+    """The non-family edges (sibling/inlaw/teacher) as ASSO records keyed
+    by the subject person; an estimated edge's evidence attaches to the
+    association, not the person (2026-08-11 review)."""
     associations: dict[str, list[tuple[str, str, list[str]]]] = {}
     for edge in edges:
         if edge["kind"] in ("sibling", "inlaw", "teacher"):
@@ -282,41 +405,66 @@ def export_gedcom(archive: Archive) -> str:
                 else []
             )
             associations.setdefault(edge["a"], []).append((edge["b"], edge["kind"], note))
+    return associations
 
-    for pid in sorted(exported_ids):
-        person = by_id[pid]
-        lines.append(f"0 @{xref[pid]}@ INDI")
-        lines.append(f"1 REFN {pid}")  # the archive id — the round-trip seam for the importer
-        lines.append(f"1 NAME {person['name']}")
-        for alias in person.get("aliases") or []:
-            lines.append(f"1 NAME {alias}")
-        if person.get("dob"):
-            dob = person["dob"]
-            lines += ["1 BIRT", f"2 DATE {gedcom_date(dob['date'], dob.get('precision', 'exact'), dob.get('date2'))}"]
-        if person.get("dod"):
-            dod = person["dod"]
-            lines += ["1 DEAT", f"2 DATE {gedcom_date(dod['date'], dod.get('precision', 'exact'), dod.get('date2'))}"]
-        for occupation in person.get("occupations") or []:
-            lines.append(f"1 OCCU {occupation}")
-        for residence in person.get("residence") or []:
-            if residence.get("status") == "proposed":
-                continue  # nothing unconfirmed leaves the archive
-            lines += ["1 RESI", f"2 DATE FROM {residence.get('from', '')} TO {residence.get('to', '')}"]
-            place = residence.get("place")
-            if place in place_names:
-                lines.append(f"2 PLAC {place_names[place]}")
-        for note in sorted(set(notes_by_person.get(pid, []))):
-            lines += _lines(note)
-        if person.get("status") == "estimated":
-            # the estimate's evidence rides on the person — their own words,
-            # who said them, and when (2026-08-09, user)
-            lines += _estimate_note(person.get("basis") or _estimate_basis(archive, pid))
-        for other, kind, note in sorted(associations.get(pid, [])):
-            label = "in-law" if kind == "inlaw" else kind
-            lines += [f"1 ASSO @{xref[other]}@", f"2 RELA {label}"] + note
 
-    lines.append("0 TRLR")
-    return "\n".join(lines) + "\n"
+# a type for one use
+# lucidlint: ignore long-param-list a single call site (export_gedcom's per-person loop) — a parameter object would add
+def _person_lines(
+    person: dict[str, Any],
+    pid: str,
+    xref: dict[str, str],
+    place_names: dict[str, str],
+    notes: list[str],
+    associations: list[tuple[str, str, list[str]]],
+    archive: Archive,
+) -> list[str]:
+    """The GEDCOM lines for one INDI record."""
+    lines = [f"0 @{xref[pid]}@ INDI"]
+    lines.append(f"1 REFN {pid}")  # the archive id — the round-trip seam for the importer
+    lines.append(f"1 NAME {person['name']}")
+    lines += [f"1 NAME {alias}" for alias in person.get("aliases") or []]
+    if person.get("dob"):
+        dob = person["dob"]
+        lines += ["1 BIRT", f"2 DATE {gedcom_date(dob['date'], dob.get('precision', 'exact'), dob.get('date2'))}"]
+    if person.get("dod"):
+        dod = person["dod"]
+        lines += ["1 DEAT", f"2 DATE {gedcom_date(dod['date'], dod.get('precision', 'exact'), dod.get('date2'))}"]
+    lines += [f"1 OCCU {occupation}" for occupation in person.get("occupations") or []]
+    lines += _residence_lines(person, place_names)
+    for note in sorted(set(notes)):
+        lines += _lines(note)
+    if person.get("status") == "estimated":
+        # the estimate's evidence rides on the person — their own words,
+        # who said them, and when (2026-08-09, user)
+        lines += _estimate_note(person.get("basis") or _estimate_basis(archive, pid))
+    lines += _association_lines(associations, xref)
+    return lines
+
+
+def _residence_lines(person: dict[str, Any], place_names: dict[str, str]) -> list[str]:
+    """The person's RESI event lines — a proposed residence never leaves
+    the archive; the place name resolves from the export's place set."""
+    lines: list[str] = []
+    for residence in person.get("residence") or []:
+        if residence.get("status") == "proposed":
+            continue  # nothing unconfirmed leaves the archive
+        lines += ["1 RESI", f"2 DATE FROM {residence.get('from', '')} TO {residence.get('to', '')}"]
+        place = residence.get("place")
+        if place in place_names:
+            lines.append(f"2 PLAC {place_names[place]}")
+    return lines
+
+
+def _association_lines(associations: list[tuple[str, str, list[str]]], xref: dict[str, str]) -> list[str]:
+    """The ASSO record lines for one person's non-family edges (sibling /
+    in-law / teacher) — an estimated edge's evidence rides the association
+    (2026-08-11 review)."""
+    lines: list[str] = []
+    for other, kind, note in sorted(associations):
+        label = "in-law" if kind == "inlaw" else kind
+        lines += [f"1 ASSO @{xref[other]}@", f"2 RELA {label}"] + note
+    return lines
 
 
 MONTH_NUMBERS = {
@@ -366,7 +514,7 @@ def _iso(value: str) -> str:
     """'7 JAN 1871' -> '1871-01-07'; 'JAN 1871' -> '1871-01'; '1871' stays."""
     value = value.strip()
     parts = value.split()
-    if len(parts) == 3 and parts[1].upper() in MONTH_NUMBERS:
+    if len(parts) == DAY_MONTH_YEAR_PARTS and parts[1].upper() in MONTH_NUMBERS:
         return f"{parts[2]}-{MONTH_NUMBERS[parts[1].upper()]:02d}-{int(parts[0]):02d}"
     if len(parts) == 2 and parts[0].upper() in MONTH_NUMBERS:
         return f"{parts[1]}-{MONTH_NUMBERS[parts[0].upper()]:02d}"
@@ -380,60 +528,9 @@ def import_gedcom(text: str, places: list[dict[str, Any]]) -> dict[str, Any]:
     records = gedcom7.loads(text)
     place_ids = {str(p.get("name", "")).strip(): p["id"] for p in places}
 
-    people: dict[str, dict[str, Any]] = {}
-    associations: dict[str, list[tuple[str, str]]] = {}
-    families: list[dict[str, Any]] = []
-    xref_to_refn: dict[str, str] = {}
-
-    for record in records:
-        if record.tag == "INDI":
-            person: dict[str, Any] = {"id": "", "name": "", "aliases": [], "status": "confirmed"}
-            for child in record.children:
-                if child.tag == "REFN":
-                    person["id"] = child.text.strip()
-                    xref_to_refn[record.xref] = person["id"]
-                elif child.tag == "NAME":
-                    text_value = child.text.strip()
-                    if not person["name"]:
-                        person["name"] = text_value
-                    elif text_value and text_value not in person["aliases"]:
-                        person["aliases"].append(text_value)
-                elif child.tag == "BIRT":
-                    person["dob"] = _fact_date(child)
-                elif child.tag == "DEAT":
-                    person["dod"] = _fact_date(child)
-                elif child.tag == "OCCU" and child.text.strip():
-                    person.setdefault("occupations", []).append(child.text.strip())
-                elif child.tag == "RESI":
-                    person.setdefault("residence", []).append(_residence(child, place_ids))
-                elif child.tag == "ASSO":
-                    associations.setdefault(record.xref, []).append((child.pointer, _rela_kind(child)))
-            if person["id"]:
-                people[person["id"]] = person
-        elif record.tag == "FAM":
-            members = {c.tag: c.pointer for c in record.children if c.tag in ("HUSB", "WIFE")}
-            children = [c.pointer for c in record.children if c.tag == "CHIL"]
-            marriage = None
-            for child in record.children:
-                if child.tag == "MARR":
-                    marriage = _fact_date(child)  # a dated marriage survives the round-trip (2026-08-06)
-            families.append({**members, "children": children, "marriage": marriage})
-
-    edges: list[dict[str, str]] = []
-    for fam in families:
-        if "HUSB" in fam and "WIFE" in fam:
-            edge: dict[str, str] = {"a": fam["HUSB"], "b": fam["WIFE"], "kind": "spouse"}
-            if fam.get("marriage"):
-                edge["date"] = fam["marriage"]
-            edges.append(edge)
-        parents = [fam.get("HUSB"), fam.get("WIFE")]
-        parents = [p for p in parents if p]
-        for child in fam["children"]:
-            for parent in parents:
-                edges.append({"a": parent, "b": child, "kind": "parent"})
-    for xref, rels in associations.items():
-        for other, kind in rels:
-            edges.append({"a": xref, "b": other, "kind": kind})
+    people, associations, xref_to_refn = _parse_people(records, place_ids)
+    families = _parse_families(records)
+    edges = _build_edges(families, associations)
 
     def refn(xref: str) -> str:
         return xref_to_refn.get(xref, xref)
@@ -447,6 +544,97 @@ def import_gedcom(text: str, places: list[dict[str, Any]]) -> dict[str, Any]:
         key=lambda e: (e["a"], e["kind"], e["b"]),
     )
     return {"people": sorted(people.values(), key=lambda p: p["id"]), "relationships": relationships}
+
+
+def _parse_people(
+    records: list[Any], place_ids: dict[str, str]
+) -> tuple[dict[str, dict[str, Any]], dict[str, list[tuple[str, str]]], dict[str, str]]:
+    """The INDI records -> (people, associations, xref_to_refn): each
+    person's REFN is its archive id (the round-trip seam for the exporter),
+    with NAME aliases beyond the first, BIRT/DEAT dates, occupations,
+    residence events and ASSO edges keyed by the record's xref."""
+    people: dict[str, dict[str, Any]] = {}
+    associations: dict[str, list[tuple[str, str]]] = {}
+    xref_to_refn: dict[str, str] = {}
+    for record in records:
+        if record.tag != "INDI":
+            continue
+        person, assoc_edges = _parse_person(record, place_ids)
+        # per-xref bucket append — a setdefault group-by; a comprehension would
+        # need a side-effecting expression or an O(n²) rescan
+        # lucidlint: ignore loop-pipeline setdefault group-by, not a pure collection build
+        for other, kind in assoc_edges:
+            associations.setdefault(record.xref, []).append((other, kind))
+        if person["id"]:
+            xref_to_refn[record.xref] = person["id"]
+            people[person["id"]] = person
+    return people, associations, xref_to_refn
+
+
+def _parse_person(record: Any, place_ids: dict[str, str]) -> tuple[dict[str, Any], list[tuple[str, str]]]:
+    """One INDI record -> the person's wire shape (id from REFN, aliases
+    beyond the first, BIRT/DEAT dates, occupations, residence events with
+    place ids matched by name) plus its ASSO edges (other-xref, kind)."""
+    person: dict[str, Any] = {"id": "", "name": "", "aliases": [], "status": "confirmed"}
+    assoc_edges: list[tuple[str, str]] = []
+    for child in record.children:
+        if child.tag == "REFN":
+            person["id"] = child.text.strip()
+        elif child.tag == "NAME":
+            text_value = child.text.strip()
+            if not person["name"]:
+                person["name"] = text_value
+            elif text_value and text_value not in person["aliases"]:
+                person["aliases"].append(text_value)
+        elif child.tag == "BIRT":
+            person["dob"] = _fact_date(child)
+        elif child.tag == "DEAT":
+            person["dod"] = _fact_date(child)
+        elif child.tag == "OCCU" and child.text.strip():
+            person.setdefault("occupations", []).append(child.text.strip())
+        elif child.tag == "RESI":
+            person.setdefault("residence", []).append(_residence(child, place_ids))
+        elif child.tag == "ASSO":
+            assoc_edges.append((child.pointer, _rela_kind(child)))
+    return person, assoc_edges
+
+
+def _parse_families(records: list[Any]) -> list[dict[str, Any]]:
+    """The FAM records -> wire families: spouse members, children, and a
+    dated marriage survives the round-trip (2026-08-06)."""
+    families: list[dict[str, Any]] = []
+    for record in records:
+        if record.tag != "FAM":
+            continue
+        members = {c.tag: c.pointer for c in record.children if c.tag in ("HUSB", "WIFE")}
+        children = [c.pointer for c in record.children if c.tag == "CHIL"]
+        marriage = None
+        for child in record.children:
+            if child.tag == "MARR":
+                marriage = _fact_date(child)
+        families.append({**members, "children": children, "marriage": marriage})
+    return families
+
+
+def _build_edges(
+    families: list[dict[str, Any]], associations: dict[str, list[tuple[str, str]]]
+) -> list[dict[str, str]]:
+    """The FAM and ASSO records -> archive relationship edges: a two-parent
+    FAM is a spouse edge (a dated marriage rides it, 2026-08-06), each
+    child gets a parent edge per member, and every ASSO becomes a
+    sibling/inlaw/teacher edge."""
+    edges: list[dict[str, str]] = []
+    for fam in families:
+        if "HUSB" in fam and "WIFE" in fam:
+            edge: dict[str, str] = {"a": fam["HUSB"], "b": fam["WIFE"], "kind": "spouse"}
+            if fam.get("marriage"):
+                edge["date"] = fam["marriage"]
+            edges.append(edge)
+        parents = [fam.get("HUSB"), fam.get("WIFE")]
+        parents = [p for p in parents if p]
+        edges.extend({"a": parent, "b": child, "kind": "parent"} for child in fam["children"] for parent in parents)
+    edges.extend({"a": xref, "b": other, "kind": kind} for xref, rels in associations.items() for other, kind in rels)
+    return edges
 
 
 def _fact_date(record: Any) -> dict[str, str] | None:

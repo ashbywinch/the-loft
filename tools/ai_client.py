@@ -15,7 +15,7 @@ import os
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, final
 
@@ -36,6 +36,9 @@ class AIClientError(RuntimeError):
 class AIClient:
     """Chat completions against an OpenAI-compatible endpoint (JSON out)."""
 
+    # — production constructs AIClient() bare or with a single max_tokens override (cli.py, pipeline.py); a config
+    # object would be ceremony for one non-default construction site
+    # lucidlint: ignore long-param-list the params are optional-with-defaults config plus the urlopen/_sleep test seams
     def __init__(
         self,
         model: str | None = None,
@@ -163,22 +166,29 @@ class AIClient:
         return content
 
 
-def find_api_key() -> str:
-    """Return the model API key from the environment or opencode's auth file."""
-    env_key = os.environ.get("OPENCODE_API_KEY")
+def find_api_key(_env: Mapping[str, str] | None = None, _home: Path | None = None) -> str:
+    """Return the model API key from the environment or opencode's auth file.
+    ``_env``/``_home`` are the injectable seams for tests (DI, never
+    monkeypatch); None falls back to the process environment."""
+    env = os.environ if _env is None else _env
+    home = Path.home() if _home is None else _home
+    env_key = env.get("OPENCODE_API_KEY")
     if env_key:
         return env_key
 
     if os.name == "nt":
-        base = Path(os.environ.get("APPDATA", "")) / "opencode"
+        base = Path(env.get("APPDATA", "")) / "opencode"
     else:
-        data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share")
+        data_home = env.get("XDG_DATA_HOME") or str(home / ".local/share")
         base = Path(data_home) / "opencode"
     auth_path = base / "auth.json"
     if auth_path.exists():
         try:
             auth = json.loads(auth_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        # An unreadable auth file means "no stored keys" — logged here;
+        # lucidlint: ignore swallow the caller still raises when no key exists
+        except (OSError, json.JSONDecodeError) as e:
+            logger.warning("ai_client: ignoring unreadable auth file %s: %s", auth_path, e)
             auth = {}
         for hint in AUTH_JSON_PROVIDER_HINTS:
             entry = auth.get(hint)

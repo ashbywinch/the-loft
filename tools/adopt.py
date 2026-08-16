@@ -78,6 +78,25 @@ def register_adopted(
     pages = {str(p.relative_to(folder)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
     fingerprint = sorted(pages.values())
 
+    match = _match_fingerprint(fingerprint, folder, registry_dir)
+    if match is not None:
+        return match
+
+    # content changed (pages added/removed in the SAME pile): update its
+    # record rather than silently duplicate it. Confirmed transcriptions
+    # are NEVER auto-cleared: the change is flagged for a manual review.
+    best = _find_same_pile(fingerprint, folder, registry_dir)
+    if best is not None:
+        _overlap, record_path, record = best
+        return _apply_content_changed(record_path, record, pages, fingerprint, folder, work_dir)
+
+    return _register_new(folder, label, source, pages, fingerprint, registry_dir)
+
+
+def _match_fingerprint(fingerprint: list[str], folder: Path, registry_dir: Path) -> tuple[Path, str] | None:
+    """An exact fingerprint match: already-registered (same path) or
+    re-associated — the folder moved and its content matched an existing
+    record (R4: reorganising costs us work, never data)."""
     for record_path, record in _existing_records(registry_dir):
         if record.get("fingerprint") == fingerprint:
             old_path = str(record.get("path", ""))
@@ -86,14 +105,16 @@ def register_adopted(
             record["path"] = str(folder)  # re-association: the folder moved
             atomic_write(record_path, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
             return record_path, "re-associated"
+    return None
 
-    # content changed (pages added/removed in the SAME pile): update its
-    # record rather than silently duplicate it. A path-matching record is
-    # the same pile outright; a path-MISMATCHED record with a LARGE hash
-    # overlap is the same pile moved AND changed (a small overlap is a
-    # duplicate-scan case, not the same pile — never hijacked). Confirmed
-    # transcriptions are NEVER auto-cleared: the change is flagged for a
-    # manual review instead.
+
+def _find_same_pile(
+    fingerprint: list[str], folder: Path, registry_dir: Path
+) -> tuple[int, Path, dict[str, Any]] | None:
+    """The content-changed candidate: a path-matching record is the same
+    pile outright; a path-MISMATCHED record with a LARGE hash overlap is
+    the same pile moved AND changed (a small overlap is a duplicate-scan
+    case, not the same pile — never hijacked)."""
     resolved_folder = str(folder.resolve())
     fp_set = set(fingerprint)
 
@@ -114,29 +135,51 @@ def register_adopted(
             same_pile = overlap >= max(1, len(fp_set) // 2) and overlap >= max(1, len(record_fp) // 2)
             if same_pile and (best is None or overlap > best[0]):
                 best = (overlap, record_path, record)
-    if best is not None:
-        _overlap, record_path, record = best
-        batch_id = str(record["batch_id"])
-        if not _BATCH_ID.match(batch_id):
-            raise AdoptionError(f"record has an unsafe batch id: {batch_id!r}")  # the rmtree path below
-        record["pages"] = pages
-        record["fingerprint"] = fingerprint
-        record["path"] = str(folder)  # the pile moved — record its new home
-        record["status"] = "pending"
-        record["content_changed"] = True
-        confirmed = [b for b in (record.get("boundaries") or []) if b.get("status") == "confirmed"]
-        if confirmed:
-            # the only copy of confirmed transcriptions lives here — keep it;
-            # the operator reviews what changed before any reprocess
-            atomic_write(record_path, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
-            return record_path, "content-changed"
-        record["boundaries"] = None
-        atomic_write(record_path, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
-        stale_work = work_dir / batch_id
-        if stale_work.exists():
-            shutil.rmtree(stale_work)  # our workspace, no confirmed content — the stages regenerate
-        return record_path, "content-changed"
+    return best
 
+
+# parameter object would add a type for one use
+# lucidlint: ignore long-param-list a single call site — the updated record's fields are the caller's locals; a
+def _apply_content_changed(
+    record_path: Path,
+    record: dict[str, Any],
+    pages: dict[str, str],
+    fingerprint: list[str],
+    folder: Path,
+    work_dir: Path,
+) -> tuple[Path, str]:
+    """Update the same-pile record: the new hashes, the pile's new home,
+    and the flag for a manual review. Confirmed transcriptions are NEVER
+    auto-cleared — the only copy lives in the registry record (the operator
+    reviews what changed before any reprocess); without them the
+    regenerable work stages are cleared."""
+    batch_id = str(record["batch_id"])
+    if not _BATCH_ID.match(batch_id):
+        raise AdoptionError(f"record has an unsafe batch id: {batch_id!r}")  # the rmtree path below
+    record["pages"] = pages
+    record["fingerprint"] = fingerprint
+    record["path"] = str(folder)  # the pile moved — record its new home
+    record["status"] = "pending"
+    record["content_changed"] = True
+    confirmed = [b for b in (record.get("boundaries") or []) if b.get("status") == "confirmed"]
+    if confirmed:
+        atomic_write(record_path, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
+        return record_path, "content-changed"
+    record["boundaries"] = None
+    atomic_write(record_path, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
+    stale_work = work_dir / batch_id
+    if stale_work.exists():
+        shutil.rmtree(stale_work)  # our workspace, no confirmed content — the stages regenerate
+    return record_path, "content-changed"
+
+
+# object would add a type for one use
+# lucidlint: ignore long-param-list a single call site — the new record's fields are the caller's locals; a parameter
+def _register_new(
+    folder: Path, label: str, source: str, pages: dict[str, str], fingerprint: list[str], registry_dir: Path
+) -> tuple[Path, str]:
+    """A fresh record for an unknown pile — new batch id, registered in
+    place, nothing of the user's folder touched."""
     record = {
         "batch_id": f"adopt-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S-%f')}",
         "path": str(folder),

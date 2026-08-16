@@ -5,12 +5,13 @@ a demo archive from this module, then publishes the projection.
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from tools.archive import Archive, split_content
-from tools.placeholders import asset_svg, initials_of, svg_avatar
+from tools.records import split_content
+
+if TYPE_CHECKING:
+    from tools.archive import Archive
 
 # The demo default is a dedicated folder, never the real projection — a bare
 # run must not be able to clobber app/data with fictional content (2026-08-04
@@ -132,7 +133,7 @@ PLACES: list[dict[str, Any]] = [
         "x": 42,
         "y": 48,
         "lat": 52.1,
-        "lng": -1.4,
+        "lng": -1.4,  # lucidlint: ignore magic-number demo longitude — invented geography data, not a computed constant
         "precision": "town",
     },
     {
@@ -142,7 +143,7 @@ PLACES: list[dict[str, Any]] = [
         "x": 58,
         "y": 55,
         "lat": 52.3,
-        "lng": -1.1,
+        "lng": -1.1,  # lucidlint: ignore magic-number demo longitude — invented geography data, not a computed constant
         "precision": "town",
     },
     {
@@ -152,7 +153,7 @@ PLACES: list[dict[str, Any]] = [
         "x": 61,
         "y": 62,
         "lat": 52.32,
-        "lng": -1.05,
+        "lng": -1.05,  # lucidlint: ignore magic-number demo longitude — invented geography data, data, not a constant
         "precision": "town",
     },
     {
@@ -162,7 +163,7 @@ PLACES: list[dict[str, Any]] = [
         "x": 55,
         "y": 50,
         "lat": 52.29,
-        "lng": -1.12,
+        "lng": -1.12,  # lucidlint: ignore magic-number demo longitude — invented geography data, data, not a constant
         "precision": "town",
     },
     {
@@ -172,7 +173,7 @@ PLACES: list[dict[str, Any]] = [
         "x": 63,
         "y": 66,
         "lat": 52.33,
-        "lng": -1.02,
+        "lng": -1.02,  # lucidlint: ignore magic-number demo longitude — invented geography data, data, not a constant
         "precision": "region",
     },
 ]
@@ -210,7 +211,7 @@ THEMES: list[dict[str, Any]] = [
 # --------------------------------------------------------------------------
 # Demo items — letters, photos, objects, stories. All invented.
 # --------------------------------------------------------------------------
-LETTERS: list[dict[str, Any]] = [
+LETTERS: tuple[dict[str, Any], ...] = (
     {
         "id": "letter-1963-03-14",
         "type": "letter",
@@ -257,9 +258,9 @@ LETTERS: list[dict[str, Any]] = [
         ],
         "created": "2026-08-04",
     },
-]
+)
 
-PHOTOS: list[dict[str, Any]] = [
+PHOTOS: tuple[dict[str, Any], ...] = (
     {
         "id": "photo-picnic",
         "type": "photo",
@@ -293,9 +294,9 @@ PHOTOS: list[dict[str, Any]] = [
         "assets": [{"kind": "photo", "file": "boats.svg", "caption": "The yard"}],
         "created": "2026-08-04",
     },
-]
+)
 
-OBJECTS: list[dict[str, Any]] = [
+OBJECTS: tuple[dict[str, Any], ...] = (
     {
         "id": "object-the-dinghy",
         "type": "object",
@@ -330,9 +331,9 @@ OBJECTS: list[dict[str, Any]] = [
         "assets": [{"kind": "photo", "file": "yard.svg", "caption": "The slipway"}],
         "created": "2026-08-04",
     },
-]
+)
 
-DOCUMENTS: list[dict[str, Any]] = [
+DOCUMENTS: tuple[dict[str, Any], ...] = (
     {
         "id": "doc-the-receipt",
         "type": "document",
@@ -351,10 +352,10 @@ DOCUMENTS: list[dict[str, Any]] = [
         "status": "catalogued",
         "assets": [],
         "created": "2026-08-04",
-    }
-]
+    },
+)
 
-STORIES: list[dict[str, Any]] = [
+STORIES: tuple[dict[str, Any], ...] = (
     {
         "id": "story-the-move",
         "type": "story",
@@ -411,28 +412,9 @@ STORIES: list[dict[str, Any]] = [
         "assets": [],
         "created": "2026-08-04",
     },
-]
+)
 
-ALL_ITEMS: list[dict[str, Any]] = LETTERS + PHOTOS + OBJECTS + DOCUMENTS + STORIES
-
-
-def write_assets(items: list[dict[str, Any]], out: Path) -> None:
-    """Placeholder images for the demo (the real archive's scans never come
-    here) + people avatars."""
-    assets = out / "assets"
-    if assets.exists():
-        shutil.rmtree(assets)
-    assets.mkdir(parents=True)
-    for item in items:
-        folder = assets / item["id"]
-        folder.mkdir(parents=True)
-        for asset in item["assets"]:
-            (folder / asset["file"]).write_text(asset_svg(item, asset["file"]), encoding="utf-8")
-    for person in PEOPLE:
-        (assets / f"avatar-{person['id']}.svg").write_text(
-            svg_avatar(initials_of(person["name"]), person["hue"]),
-            encoding="utf-8",
-        )
+ALL_ITEMS: tuple[dict[str, Any], ...] = LETTERS + PHOTOS + OBJECTS + DOCUMENTS + STORIES
 
 
 def create_demo(archive: Archive) -> None:

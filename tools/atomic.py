@@ -13,6 +13,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+# Temp-sibling naming: retry a few times with fresh entropy — a collision
+# means another writer grabbed the name (O_EXCL makes it visible, never
+# dangerous); a new file is created 0o666 so the kernel applies the process
+# umask at creation (see atomic_write's note below).
+TEMP_NAME_ATTEMPTS = 8
+TEMP_NAME_RANDOM_BYTES = 8
+NEW_FILE_MODE = 0o666
+
 
 def atomic_write(path: Path, content: str | bytes) -> None:
     """Write ``content`` to ``path`` atomically (temp sibling + fsync + rename)."""
@@ -26,10 +34,10 @@ def atomic_write(path: Path, content: str | bytes) -> None:
     # 2026-08-14/15: two bots flagged the race).
     tmp = None
     fd = -1
-    for _ in range(8):
-        candidate = path.parent / f".{path.name}.{os.urandom(8).hex()}.tmp"
+    for _ in range(TEMP_NAME_ATTEMPTS):
+        candidate = path.parent / f".{path.name}.{os.urandom(TEMP_NAME_RANDOM_BYTES).hex()}.tmp"
         try:
-            fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+            fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, NEW_FILE_MODE)
             tmp = candidate
             break
         except FileExistsError:
@@ -42,6 +50,8 @@ def atomic_write(path: Path, content: str | bytes) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
+    # then re-raises
+    # lucidlint: ignore broad-except BaseException guarantees temp cleanup on EVERY exit path (incl. KeyboardInterrupt),
     except BaseException:
         _ = tmp.unlink(missing_ok=True)
         raise

@@ -205,6 +205,48 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
     if not layout_path.is_file():
         raise ValueError(f"no layout for {page} — the layout pass must run before a rotate")
     layout = json.loads(layout_path.read_text(encoding="utf-8"))
+    # A crash between the image swap and the layout write leaves the image
+    # rotated while the layout still carries the old rotation and boxes —
+    # the pair is not transactional (bot review, 2026-08-16). The journal
+    # records the intent; the next rotate completes the layout BEFORE the
+    # delta is computed, so the boxes never silently misalign.
+    journal_path = work_dir / batch_id / "oriented" / f"{Path(page).stem}.rotate.json"
+    if journal_path.exists():
+        try:
+            journal = json.loads(journal_path.read_text(encoding="utf-8"))
+            intended = int(journal.get("rotation", 0)) % 360
+            stale = int(journal.get("from", 0)) % 360
+            if int(layout.get("rotation", 0)) % 360 == stale:
+                image = ImageOps.exif_transpose(Image.open(image_path))
+                if image.width == int(layout.get("width", 0)) and image.height == int(layout.get("height", 0)):
+                    # the crash happened BEFORE the image swap — the journal
+                    # is premature, the layout is still consistent
+                    journal_path.unlink(missing_ok=True)
+                else:
+                    # the image IS rotated — recover the layout to the intent
+                    recovery = (intended - stale) % 360
+                    if recovery:
+                        steps = recovery // 90
+                        detections = rotate_detections(layout_detections(layout), steps, image.width, image.height)
+                        vlm_text = "\n".join(line["text"] for line in layout.get("lines", []))
+                        selfreport_path = work_dir / batch_id / "ocr-guess" / Path(page).with_suffix(".selfreport.json")
+                        selfreport = (
+                            json.loads(selfreport_path.read_text(encoding="utf-8"))
+                            if selfreport_path.exists()
+                            else None
+                        )
+                        layout = build_layout(
+                            layout.get("page", page),
+                            image.width,
+                            image.height,
+                            vlm_text,
+                            detections,
+                            selfreport=selfreport,
+                        )
+                        layout["rotation"] = intended
+                        write_layout(layout, layout_path)
+        except (OSError, json.JSONDecodeError, ValueError):
+            journal_path.unlink(missing_ok=True)
     # the cumulative rotation the page already carries — the intent is the
     # DESIRED total, so the delta is what we apply now. The desired CAN be
     # 0 (a reviewer rotating the wrong way back to the original) — the
@@ -213,6 +255,9 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
     current = int(layout.get("rotation", 0)) % 360
     delta = (quarters * 90 - current) % 360
     if delta == 0:
+        # the recovery may have just completed the layout from a crash —
+        # the journal's job is done either way (2026-08-16)
+        journal_path.unlink(missing_ok=True)
         return False
     steps = delta // 90
     image = ImageOps.exif_transpose(Image.open(image_path))
@@ -233,8 +278,16 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
     new_layout["rotation"] = (current + delta) % 360
     tmp = image_path.with_name(image_path.name + ".tmp")
     rotated.save(tmp, format=image.format or "JPEG")
+    # the journal lands BEFORE the image swap: a crash mid-rotate leaves a
+    # recoverable trail (the next rotate completes the layout) instead of a
+    # silently misaligned page (bot review, 2026-08-16)
+    atomic_write(
+        journal_path,
+        json.dumps({"from": current, "rotation": new_layout["rotation"]}, ensure_ascii=False) + "\n",
+    )
     tmp.replace(image_path)
     write_layout(new_layout, layout_path)
+    journal_path.unlink(missing_ok=True)
     return True
 
 

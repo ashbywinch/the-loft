@@ -135,7 +135,10 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
     if not oriented_dir.is_dir():
         print(f"layout: no oriented dir for batch {batch_id!r}", file=sys.stderr)
         return 1
-    pages = [p for p in sorted(oriented_dir.glob("page-*.jpg"))]
+    # all jpgs, not just page-*: phone-export duplicates arrive as names
+    # like "1782635795946-5f7905a9~2.jpg" (the PhotoScan batch, 2026-08-16)
+    # and must not be silently skipped by the layout pass
+    pages = [p for p in sorted(oriented_dir.glob("*.jpg"))]
     if page_names:
         wanted = set(page_names)
         pages = [p for p in pages if p.name in wanted]

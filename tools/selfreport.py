@@ -57,7 +57,7 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path) -> in
     if not guess_dir.is_dir() or not oriented_dir.is_dir():
         print(f"selfreport: no guess/oriented dirs for batch {batch_id!r}", file=sys.stderr)
         return 1
-    pages = [p for p in sorted(oriented_dir.glob("page-*.jpg"))]
+    pages = [p for p in sorted(oriented_dir.glob("*.jpg"))]  # all names, not just page-* (the phone-export duplicates)
     if page_names:
         wanted = set(page_names)
         pages = [p for p in pages if p.name in wanted]

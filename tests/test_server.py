@@ -1158,3 +1158,33 @@ def test_serve_app_factory_builds_from_the_environment(tmp_path: Path, monkeypat
 
     app = serve_app()
     assert any(getattr(route, "path", None) == "/api/health" for route in app.routes)
+
+
+def test_sync_rotate_accepts_the_desired_zero(server: ServerFixture) -> None:
+    """A rotate-back intent (the desired cumulative 0) must not default to
+    an unintended +90 (bot review, 2026-08-16)."""
+    import json as _json
+
+    from PIL import Image
+
+    from tools.layout import Detection, build_layout, write_layout
+
+    _seed_sync_batch(server)
+    oriented = server.work_dir / "adopt-0001" / "oriented"
+    oriented.mkdir(parents=True)
+    Image.new("RGB", (100, 200), "white").save(oriented / "p1.jpg")
+    write_layout(
+        build_layout(
+            "p1.jpg",
+            100,
+            200,
+            "Chère Maman.",
+            [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
+        ),
+        server.work_dir / "adopt-0001" / "ocr-guess" / "p1.layout.json",
+    )
+    status, body = server.post("/api/sync/batch/adopt-0001/page/p1.jpg/rotate", {"quarters": 0})
+    assert status == 200
+    assert body["processing"] is False  # the desired 0 with nothing rotated is a no-op, never a +90
+    layout = _json.loads((server.work_dir / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
+    assert layout.get("rotation", 0) == 0  # the layout carries no rotation until a rotate applies one

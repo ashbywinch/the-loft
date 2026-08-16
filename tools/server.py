@@ -702,7 +702,10 @@ def build_app(
         if session_user(request) is None:
             return JSONResponse({"ok": False, "error": "sign in to fix pages"}, status_code=401)
         quarters = 1
-        if body and isinstance(body.get("quarters"), int) and 1 <= body["quarters"] <= 4:
+        # 0 is a real intent: the reviewer's rotate-back to the ORIGINAL
+        # orientation (the UI's % 4 range) — rejecting it defaulted to a
+        # wrong +90 (bot review, 2026-08-16)
+        if body and isinstance(body.get("quarters"), int) and 0 <= body["quarters"] <= 3:
             quarters = body["quarters"]
         try:
             rotated = rotate_page(batch_id, page, quarters, work_dir)

@@ -26,9 +26,12 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 from tools.ai_client import AIClient, AIClientError
 from tools.atomic import atomic_write
 from tools.classify import route, run_classify
+from tools.grouping import score_boundaries
 from tools.htr import htr_pages, htr_pages_vlm
 from tools.layout_stage import run_layout as layout_stage_run
 from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR
@@ -73,32 +76,6 @@ def _standing_knowledge(archive_dir: Path = ARCHIVE_DIR) -> tuple[list[str], lis
             if name:
                 places.append(name)
     return sorted(set(people)), sorted(set(places))
-
-
-def group_documents(flags: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Group per-page boundary flags into documents.
-
-    A page with ``starts_document`` opens a letter (greeting); one with
-    ``ends_document`` closes it (sign-off). A page with neither belongs to
-    the current document; a page with both is a single-page document. An
-    unclosed run at the end stays one open document (the model may have
-    missed the sign-off — the reviewer sees it).
-    """
-    documents: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-    for flag in flags:
-        if current is None or flag.get("starts_document"):
-            current = {
-                "pages": [],
-                "greeting": flag.get("greeting") if flag.get("starts_document") else None,
-                "signoff": None,
-            }
-            documents.append(current)
-        current["pages"].append(str(flag.get("page", "")))
-        if flag.get("ends_document"):
-            current["signoff"] = flag.get("signoff")
-            current = None
-    return documents
 
 
 def _guess_prompt(
@@ -264,7 +241,18 @@ def process(
     if boundaries_path.exists():
         print("guess already present — reusing")
     else:
-        _run_guess(text_pages, raw_dir, guess_dir, boundaries_path, record, batch_id, registry_dir, archive_dir, client)
+        _run_guess(
+            text_pages,
+            raw_dir,
+            guess_dir,
+            boundaries_path,
+            record,
+            batch_id,
+            registry_dir,
+            archive_dir,
+            classify,
+            client,
+        )
 
     # 6. layout stage (VR14 — every text page gets line boxes + per-word
     # confidence; VR15 — the multi-orientation pages get the combined
@@ -390,11 +378,15 @@ def _run_guess(
     batch_id: str,
     registry_dir: Path,
     archive_dir: Path,
+    classify: dict[str, Any],
     client: Callable[[str, str], str] | None,
 ) -> None:
     """The model guess on the TEXT pages only (chunked past PAGE_LIMIT — a
     multi-page document spanning a chunk boundary is split, a noted
-    limitation; postcards and letters within a chunk group correctly)."""
+    limitation; postcards and letters within a chunk group correctly),
+    then the grouping scorer over the FULL page sequence (photos
+    included) — the duplex/paper/page-number evidence the model never
+    sees decides the boundaries (tools/grouping.py, 2026-08-17)."""
     raw_texts = [(name, (raw_dir / Path(name).with_suffix(".txt")).read_text(encoding="utf-8")) for name in text_pages]
     label = str(record.get("label", ""))
     people, places = _standing_knowledge(archive_dir)
@@ -409,16 +401,34 @@ def _run_guess(
     # the model echoes page names — they become file paths; a name
     # outside the registered set is dropped from the writes AND the
     # grouping, so boundaries.json never references an untrusted page
-    # (2026-08-15 review: the drop guarded only the writes, and
-    # group_documents still received every flag — the review gate then
-    # crashed on the missing .txt or read outside guess_dir via ../)
+    # (2026-08-15 review: the drop guarded only the writes, and the
+    # old group_documents still received every flag — the review gate
+    # then crashed on the missing .txt or read outside guess_dir via ../)
     known_flags = [flag for flag in flags if str(flag["page"]) in text_pages]
     for flag in flags:
         if str(flag["page"]) not in text_pages:
             print(f"guess returned an unknown page {flag['page']!r} — dropped")
     for flag in known_flags:
         atomic_write(guess_dir / Path(str(flag["page"])).with_suffix(".txt"), str(flag["text"]))
-    boundaries = group_documents(known_flags)
+    # the grouping scorer (2026-08-17): the full page sequence, the
+    # classify kinds, the paper sizes, and the corrected texts feed the
+    # evidence hierarchy — duplex sides > paper size > page numbers >
+    # the model's flags. Photo pages enter the documents (the postcard's
+    # picture side is page 1 of its document, acceptance 21).
+    folder = Path(str(record.get("path", "")))
+    dims: dict[str, tuple[int, int]] = {}
+    for rel in sorted(record.get("pages", {})):
+        with Image.open(folder / rel) as im:
+            dims[rel] = im.size
+    flags_by_page = {str(flag["page"]): flag for flag in known_flags}
+    texts = {str(flag["page"]): flag.get("text") for flag in known_flags}
+    boundaries = score_boundaries(
+        sorted(record.get("pages", {})),
+        {page: str(entry.get("kind", "text")) for page, entry in classify.items()},
+        dims,
+        texts,
+        flags_by_page,
+    )
     atomic_write(boundaries_path, json.dumps(boundaries, indent=1, ensure_ascii=False) + "\n")
     # seed the registry record with the full boundaries so the review
     # surface's batch list shows the correct pending count (the registry
@@ -561,7 +571,9 @@ def _confirm_documents(
             write_line(f"document {index} rejected")
             continue
         text = "\n".join(
-            (guess_dir / Path(p).with_suffix(".txt")).read_text(encoding="utf-8") for p in document["pages"]
+            (guess_dir / Path(p).with_suffix(".txt")).read_text(encoding="utf-8")
+            for p in document["pages"]
+            if (guess_dir / Path(p).with_suffix(".txt")).exists()
         )
         if answer == "e":
             text = _read_multiline("paste the corrected text, '.' alone ends:\n", line)

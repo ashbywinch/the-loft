@@ -10,48 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from tools.pipeline import _guess_prompt, apply_routes, group_documents, guess_pages, review
+from tools.pipeline import _guess_prompt, apply_routes, guess_pages, review
 from tools.registry import RegistryError
 
 
 def _flag(page: str, starts: bool = False, ends: bool = False, **extra: object) -> dict[str, object]:
     return {"page": page, "starts_document": starts, "ends_document": ends, **extra}
-
-
-def test_group_documents_single_letter_across_three_pages() -> None:
-    flags = [
-        _flag("p1.jpg", starts=True, greeting="Dear Mum,"),
-        _flag("p2.jpg"),
-        _flag("p3.jpg", ends=True, signoff="Love, Zelda"),
-    ]
-    docs = group_documents(flags)
-    assert len(docs) == 1
-    assert docs[0]["pages"] == ["p1.jpg", "p2.jpg", "p3.jpg"]
-    assert docs[0]["greeting"] == "Dear Mum,"
-    assert docs[0]["signoff"] == "Love, Zelda"
-
-
-def test_group_documents_two_letters_in_one_batch() -> None:
-    flags = [
-        _flag("p1.jpg", starts=True),
-        _flag("p2.jpg", ends=True),
-        _flag("p3.jpg", starts=True),
-        _flag("p4.jpg", ends=True),
-    ]
-    docs = group_documents(flags)
-    assert [d["pages"] for d in docs] == [["p1.jpg", "p2.jpg"], ["p3.jpg", "p4.jpg"]]
-
-
-def test_group_documents_single_page_letter() -> None:
-    docs = group_documents([_flag("p1.jpg", starts=True, ends=True)])
-    assert docs[0]["pages"] == ["p1.jpg"]
-
-
-def test_group_documents_no_flags_is_one_open_document() -> None:
-    docs = group_documents([_flag("p1.jpg"), _flag("p2.jpg")])
-    assert len(docs) == 1
-    assert docs[0]["pages"] == ["p1.jpg", "p2.jpg"]
-    assert docs[0]["signoff"] is None  # unclosed — the reviewer sees it
 
 
 def test_apply_routes_routes_text_by_density_and_skips_images() -> None:

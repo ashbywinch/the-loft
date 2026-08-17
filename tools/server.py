@@ -715,6 +715,13 @@ def build_app(
             return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
         image = work_dir / batch_id / "oriented" / page
         if not image.is_file():
+            # a photo/drawing page skips orientation entirely (2026-08-17:
+            # the grouping scorer puts the postcard's picture side into its
+            # document — the review surface must still see the image)
+            record = load_batch(batch_id, registry_dir)
+            raw = Path(str(record.get("path", ""))) / page
+            if raw.is_file():
+                return FileResponse(raw)
             return JSONResponse({"error": "no such page"}, status_code=404)
         return FileResponse(image)
 

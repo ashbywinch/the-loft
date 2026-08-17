@@ -543,6 +543,71 @@ def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
     assert all(w["conf"] == 0.0 for w in by_text["HERNSPETH"]["words"])
 
 
+def test_dedupe_drops_fragment_duplicates_by_content() -> None:
+    """The fragment extras (2026-08-17 — the real postcard's 'HOUSE,' next
+    to 'HERNSPETH HOUSE,' and 'Printed' next to 'Printed in Great
+    Britain'): a short line whose tokens are a strict subset of another
+    line's is the same text read as a fragment — dropped even when the
+    mirror passes' remaps landed its box elsewhere (the box-overlap rule
+    alone misses them)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                0,
+                [
+                    {"text": "Printed in Great Britain", "box": [100, 100, 500, 140], "score": 0.98, "words": []},
+                    {
+                        "text": "Printed",
+                        "box": [600, 300, 700, 340],
+                        "score": 0.97,
+                        "words": [],
+                    },  # the fragment, far away
+                ],
+            ),
+            (
+                270,
+                [
+                    {"text": "HERNSPETH HOUSE,", "box": [100, 500, 200, 900], "score": 0.99, "words": []},
+                    {"text": "HOUSE,", "box": [400, 500, 500, 900], "score": 0.95, "words": []},  # the fragment
+                ],
+            ),
+        ],
+    )
+    texts = [ln["text"] for ln in layout["lines"]]
+    assert "Printed" not in texts
+    assert "HOUSE," not in texts
+    assert "Printed in Great Britain" in texts
+    assert "HERNSPETH HOUSE," in texts
+
+
+def test_dedupe_never_drops_the_anchored_report_lines() -> None:
+    """The box-overlap dedupe is for the REC extras — the anchored lines
+    are the model's authoritative transcription, and its estimated boxes
+    can overlap between DISTINCT lines (2026-08-17: the eval caught
+    'POST CARD.' being dropped when the model's 180° box overlapped a
+    longer line's box)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [],
+        report_lines=[
+            {"text": "POST CARD.", "box": [100, 100, 900, 140], "degrees": 0},
+            {"text": "ONLY THE ADDRESS TO BE WRITTEN HERE.", "box": [100, 101, 900, 160], "degrees": 0},
+        ],
+    )
+    texts = [ln["text"] for ln in layout["lines"]]
+    assert "POST CARD." in texts  # a real line survives even when its box overlaps
+    assert "ONLY THE ADDRESS TO BE WRITTEN HERE." in texts
+
+
 def test_multi_layout_orders_zero_first_then_next_directions() -> None:
     """The combined layout shows the 0° lines first, then each next
     direction, each line carrying the orientation it was read at (VR15)."""

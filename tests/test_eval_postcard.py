@@ -65,7 +65,10 @@ def _seed_batch(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def _assert_contracts(registry: Path, work: Path) -> None:
-    """The review contracts the pipeline must satisfy (VR14/VR15)."""
+    """The review contracts the pipeline must satisfy (VR14/VR15) — the
+    assertions the review experience actually depends on (2026-08-17: the
+    faults the user hit — the rec's fragments as the transcription, the
+    words without text, the fragment extras — must fail this eval)."""
     record = load_batch(BATCH, registry_dir=registry)
     # acceptance 21: the two sides are ONE document, the picture side first
     docs = [b for b in record.get("boundaries", []) if b.get("pages")]
@@ -79,12 +82,34 @@ def _assert_contracts(registry: Path, work: Path) -> None:
     assert back_layout is not None, "the back's layout is missing"
     lines = back_layout.get("lines", [])
     assert lines, "the layout has no lines"
-    # VR14: every line has a box, and the box holds the words it claims —
-    # the lines are the MODEL's transcription (not the rec's fragments)
-    assert all(line.get("box") for line in lines), "a line has no bounding box"
+    # VR14: every line has a box that is sane and inside the image, and
+    # every WORD carries its text — a word without text renders blank
+    # (the reproduced fault)
+    width, height = back_layout.get("width", 0), back_layout.get("height", 0)
+    for line in lines:
+        box = line.get("box")
+        assert box and box[2] > box[0] and box[3] > box[1], f"degenerate box: {line['text'][:20]}"
+        assert box[2] <= width and box[3] <= height, f"box outside the image: {line['text'][:20]}"
+        assert line.get("words") and all(w.get("word") for w in line["words"]), (
+            f"a word lacks text: {line['text'][:20]}"
+        )
+    # the transcription is the MODEL's — the printed header present, and
+    # the engine CONFIRMED it (the rec content-agreed — the cross-reader)
     texts = [line["text"] for line in lines]
     assert any("POST CARD" in t for t in texts), f"the model's header missing: {texts[:6]}"
+    confirmed = {line["text"] for line in lines if line.get("conf") == 1.0}
+    assert any("POST CARD" in t for t in confirmed), f"the header was not confirmed: {sorted(confirmed)[:5]}"
     assert any("lesson" in t or "arranged" in t for t in texts), f"the message missing: {texts[:8]}"
+    # no fragment extras: a short line whose tokens are a strict subset of
+    # another line's is the same text read as a fragment (the mirror
+    # passes' rec) — dropped by the dedupe (the real postcard's 'HOUSE,')
+    from tools.layout import words
+
+    token_sets = {t: set(words(t)) for t in texts}
+    for a in texts:
+        ta = token_sets[a]
+        if 0 < len(ta) <= 2 and any(ta < token_sets[b] for b in texts if b != a):
+            raise AssertionError(f"fragment extra survived: {a!r}")
     # VR15: more than one orientation — the vertical message at its own
     orientations = {line.get("orientation") for line in lines}
     assert len(orientations) >= 2, f"expected 0° + a vertical direction, got {orientations}"

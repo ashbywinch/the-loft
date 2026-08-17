@@ -486,19 +486,49 @@ def _richness(line: dict[str, Any]) -> tuple[int, float]:
     return sum(1 for ch in line["text"] if ch.isalpha()), float(line["conf"])
 
 
+def _drop_fragment_subsets(lines: list[dict[str, Any]], keep: list[bool]) -> None:
+    """The fragment-subset rule (2026-08-17): a SHORT line (<=2 tokens)
+    whose tokens are a strict subset of another line's is the same text
+    read as a fragment — the mirror passes' rec reading a piece of an
+    anchored line ('HOUSE,' next to 'HERNSPETH HOUSE,') — dropped even
+    when its box landed elsewhere."""
+    token_sets = [set(words(line["text"])) for line in lines]
+    for i in range(len(lines)):
+        if not keep[i]:
+            continue
+        ta = token_sets[i]
+        if not (0 < len(ta) <= 2):
+            continue
+        for j in range(len(lines)):
+            if i == j or not keep[j]:
+                continue
+            if ta < token_sets[j]:
+                keep[i] = False
+                break
+
+
 def dedupe_regions(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop the weaker readings of the same physical region across
-    orientations: a line is kept only when no other line overlaps its box
-    with a strictly richer reading. Ties keep the earlier line. The
-    survivors keep their index — the caller re-indexes after."""
+    orientations. The anchored lines (the model's authoritative
+    transcription) are never dropped — its estimated boxes can overlap
+    between DISTINCT lines, so the box-overlap rule applies only to the
+    rec extras (2026-08-17: the eval caught 'POST CARD.' being dropped
+    when the model's 180° box overlapped a longer line's box). The
+    fragment-subset rule (a short line whose tokens are a subset of
+    another's) applies to all. The survivors keep their index — the
+    caller re-indexes after."""
     keep = [True] * len(lines)
+    anchored = {i for i, line in enumerate(lines) if line.get("box_source") in ("vlm", "vlm-unconfirmed")}
     for i, a in enumerate(lines):
+        if i in anchored:
+            continue
         for j, b in enumerate(lines):
             if i == j or not keep[i] or not keep[j]:
                 continue
             if _box_overlap(a["box"], b["box"]) > _DEDUPE_OVERLAP and _richness(b) > _richness(a):
                 keep[i] = False
                 break
+    _drop_fragment_subsets(lines, keep)
     return [line for line, k in zip(lines, keep, strict=True) if k]
 
 

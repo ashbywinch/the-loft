@@ -53,6 +53,16 @@ GUESS_PAGE_CHUNK = 5  # the guess re-emits each page's corrected text; the OUTPU
 AMBIGUITY_RATIO = 0.25  # the second-best rotation's share of the winner
 AMBIGUITY_FLOOR = 5  # ...and it must clear this many strong words outright
 
+# The guess model (2026-08-17): the default chat model (deepseek-v4-flash)
+# reasons UNBOUNDED on the correction tasks — reproduced: 12K then 24K
+# tokens of pure reasoning, finish_reason "length", zero content, the
+# guess stage failed with "empty response from API". The vision model
+# (mimo-v2.5, the pipeline's proven model — it completes the same prompt
+# with finish_reason "stop") is the completing choice on this endpoint;
+# the thinking-disable/budget params are ignored by the endpoint, so the
+# model must simply be one that answers.
+GUESS_MODEL = "mimo-v2.5"
+
 STATUS_PROCESSING = "importing"
 STATUS_REVIEW = "review"
 STATUS_CONFIRMED = "confirmed"
@@ -390,7 +400,7 @@ def _run_guess(
     raw_texts = [(name, (raw_dir / Path(name).with_suffix(".txt")).read_text(encoding="utf-8")) for name in text_pages]
     label = str(record.get("label", ""))
     people, places = _standing_knowledge(archive_dir)
-    chat = client if client is not None else AIClient(max_tokens=12000).chat
+    chat = client if client is not None else AIClient(model=GUESS_MODEL, max_tokens=12000, timeout=300.0).chat
     flags: list[dict[str, Any]] = []
     # each iteration calls guess_pages — a model inference with side effects — and extends
     # with its result; a comprehension would bury the side-effecting call inside an expression

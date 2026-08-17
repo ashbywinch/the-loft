@@ -385,6 +385,10 @@ async function renderBatch(main, batchId, state, initial = null) {
     return;
   }
   await retryOutbox();
+  // safely attempt any owed reorientations (the display never reads the
+  // delivery state, so this cannot reorient a page the reviewer didn't
+  // press — VR10 AC13); fire-and-forget: the batch list renders now
+  void deliverOwed();
   const documents = data.documents || [];
   const confirmed = documents.filter((d) => d.status === "confirmed").length;
   const root = el("div", { class: "rv" }, [
@@ -1361,6 +1365,40 @@ async function queueRotation(session) {
   } catch {
     // backend unreachable — acked unchanged, so it stays owed and the next
     // commit retries (idempotent backend makes a duplicate delivery a no-op)
+  }
+}
+
+/** Deliver every OWED reorientation to the backend (the reliable half of
+ *  the rotate seam): one attempt whenever the app opens a batch list, ack
+ *  on success, leave owed on failure (retried next open/commit). Outbound
+ *  only — it never feeds the display, so it cannot reorient anything. It is
+ *  safe BECAUSE an entry exists only for a page the reviewer actually
+ *  pressed (VR10 AC13): a page with no stored desired owes nothing, so a
+ *  stale value cannot be replayed. */
+export async function deliverOwed() {
+  let m = {};
+  try {
+    const stored = JSON.parse(localStorage.getItem(ORIENT_KEY) || "{}");
+    if (stored && typeof stored === "object") m = stored;
+  } catch {
+    // corrupt storage — nothing owned
+  }
+  for (const [key, s] of Object.entries(m)) {
+    if (!s || s.desired == null || s.desired === s.acked) continue; // not owed
+    const sep = key.indexOf("|");
+    const batchId = key.slice(0, sep);
+    const page = key.slice(sep + 1);
+    try {
+      const res = await fetch(
+        `/api/sync/batch/${encodeURIComponent(batchId)}/page/${encodeURIComponent(page)}/rotate`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quarters: s.desired }) },
+      );
+      if (!res.ok) throw new Error(`rotate rejected (${res.status})`);
+      // acknowledge ONLY the delivery — the display keeps reading `desired`
+      saveOrientation(batchId, page, { desired: s.desired, acked: s.desired });
+    } catch {
+      // backend unreachable — leave owed; retried on the next open/commit
+    }
   }
 }
 

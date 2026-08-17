@@ -19,6 +19,7 @@ import {
   outboxDrop,
   outboxPending,
   deltaOfDesired,
+  deliverOwed,
   orientationState,
   render,
   saveEdits,
@@ -453,6 +454,52 @@ describe("the reviewer's orientation — { desired, acked } per page, set only b
     // the desired never reverts when the backend catches up — the delta
     // just goes to zero
     expect(deltaOfDesired(1, 90)).toBe(0);
+  });
+
+  it("deliverOwed posts each owed reorientation and acks it without touching the display", async () => {
+    saveOrientation("adopt-1", "p1.jpg", { desired: 2, acked: 0 }); // pressed twice, not yet delivered
+    const calls = [];
+    const fetchMock = vi.fn(async (url, opts) => {
+      calls.push([url, opts]);
+      return { ok: true };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await deliverOwed();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe("/api/sync/batch/adopt-1/page/p1.jpg/rotate");
+    expect(JSON.parse(calls[0][1].body)).toEqual({ quarters: 2 });
+    // acked — nothing owed; the display's desired is untouched
+    expect(orientationState("adopt-1", "p1.jpg")).toEqual({ desired: 2, acked: 2 });
+  });
+
+  it("deliverOwed can never replay a page the reviewer didn't press — nothing owned, nothing posted", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await deliverOwed();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("deliverOwed leaves an owed rotation alone when the backend is unreachable", async () => {
+    saveOrientation("adopt-1", "p1.jpg", { desired: 1, acked: 0 }); // owed
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("network down");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await deliverOwed();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    // still owed — acked unchanged, retried on the next open/commit
+    expect(orientationState("adopt-1", "p1.jpg")).toEqual({ desired: 1, acked: 0 });
   });
 });
 

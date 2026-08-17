@@ -49,6 +49,14 @@ ENGINE = dict(
     use_doc_unwarping=False,
     use_textline_orientation=False,
     enable_mkldnn=False,
+    # The engine's peak memory scales with the detection input AREA — the
+    # 8GB laptop OOM-killed the layout stage on the full-res phone scans
+    # (3500px) with the default 4000px limit (2026-08-17, repeated kills
+    # at model load + first prediction). 2000px bounds the peak ~4x; the
+    # engine resizes internally and maps the boxes back to the input
+    # image's pixels, so the layout geometry is unchanged — the
+    # coordinate assertion below guards that mapping.
+    text_det_limit_side_len=2000,
 )
 
 # Tolerances for the coordinate-space assertion: the engine maps detections

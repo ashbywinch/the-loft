@@ -59,9 +59,12 @@ def make_app_data(tmp_path: Path) -> Path:
 
 
 class ServerFixture:
-    def __init__(self, data_dir: Path, store: MemoryStore, client: Any | None = None) -> None:
+    def __init__(
+        self, data_dir: Path, store: MemoryStore, client: Any | None = None, _reprocess: Any | None = None
+    ) -> None:
         self.store: MemoryStore = store
         self.data_dir: Path = data_dir
+        self._reprocess: Any | None = _reprocess
         # the session secret before any app build — the server refuses to
         # start without it (2026-08-14 review: forgeable sessions otherwise)
         import os
@@ -111,6 +114,7 @@ class ServerFixture:
             ),
             host="127.0.0.1",
             port=0,
+            _reprocess=_reprocess,
         )
         self.thread: threading.Thread = threading.Thread(target=self.server.run, daemon=True)
         self.thread.start()
@@ -1193,3 +1197,42 @@ def test_sync_rotate_accepts_the_desired_zero(server: ServerFixture) -> None:
     assert body["processing"] is False  # the desired 0 with nothing rotated is a no-op, never a +90
     layout = _json.loads((server.work_dir / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
     assert layout.get("rotation", 0) == 0  # the layout carries no rotation until a rotate applies one
+
+
+def test_sync_reread_retries_a_failed_re_read_without_reorienting(tmp_path: Path) -> None:
+    """PRD VR10 AC14 — a failed re-read can be retried without touching the
+    orientation: the reread route clears the failed state, marks the page
+    transcribing, and re-runs the reprocess over the CURRENT image. The
+    reprocess is stubbed so the test never calls the reading model."""
+    import json as _json
+
+    from PIL import Image
+
+    from tools.layout import Detection, build_layout, write_layout
+    from tools.sync import page_job_state, set_page_job
+
+    fixture = ServerFixture(make_app_data(tmp_path), MemoryStore(), _reprocess=lambda b, p: None)
+    _seed_sync_batch(fixture)
+    oriented = fixture.work_dir / "adopt-0001" / "oriented"
+    oriented.mkdir(parents=True)
+    Image.new("RGB", (100, 200), "white").save(oriented / "p1.jpg")
+    layout_path = fixture.work_dir / "adopt-0001" / "ocr-guess" / "p1.layout.json"
+    write_layout(
+        build_layout(
+            "p1.jpg",
+            100,
+            200,
+            "Chère Maman.",
+            [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
+        ),
+        layout_path,
+    )
+    set_page_job("adopt-0001", "p1.jpg", "failed", fixture.work_dir)
+    status, body = fixture.post("/api/sync/batch/adopt-0001/page/p1.jpg/reread", {})
+    assert status == 200
+    assert body["processing"] is True
+    # the failed state is cleared to transcribing (the re-read is in flight)
+    assert page_job_state("adopt-0001", fixture.work_dir)["p1.jpg"] == "transcribing"
+    # a reread never re-orients — the rotation is untouched
+    layout = _json.loads(layout_path.read_text(encoding="utf-8"))
+    assert layout.get("rotation", 0) == 0

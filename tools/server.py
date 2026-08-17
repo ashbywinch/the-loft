@@ -21,7 +21,7 @@ import os
 import socket
 import subprocess
 import threading
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -91,6 +91,7 @@ class ServerConfig:
 def build_app(
     config: ServerConfig,
     _env: Mapping[str, str] | None = None,
+    _reprocess: Callable[[str, str], None] | None = None,
 ) -> FastAPI:
     """The FastAPI app with the store/client/dirs bound (DI for tests).
     ``_env`` overrides the process environment for the build-time checks
@@ -717,6 +718,31 @@ def build_app(
             return JSONResponse({"error": "no such page"}, status_code=404)
         return FileResponse(image)
 
+    def _reprocess_page(batch_id: str, page: str) -> None:
+        """Re-run a page's transcription in a background thread — the async
+        half of the rotate and re-read routes (one way through the reprocess
+        seam). The reprocess owns the page's job state itself: it clears it
+        on success, marks it failed on error."""
+
+        def _job() -> None:
+            try:
+                people = [
+                    str(p["name"]) for p in _read_projection(filename="people.json", key="people") if p.get("name")
+                ]
+                places = [
+                    str(p["name"]) for p in _read_projection(filename="places.json", key="places") if p.get("name")
+                ]
+                label = None
+                with contextlib.suppress(RegistryError):
+                    label = load_batch(batch_id, registry_dir).get("label")
+                reprocess_page_transcription(batch_id, page, work_dir, people=people, places=places, label=label)
+            # The background thread's terminal handler — logger.exception
+            # lucidlint: ignore swallow is the observable surface; the thread ends
+            except Exception:
+                logger.exception("reprocess failed for %s/%s", batch_id, page)
+
+        threading.Thread(target=_job, daemon=True).start()
+
     @app.post("/api/sync/batch/{batch_id}/page/{page}/rotate")
     def sync_rotate_page(batch_id: str, page: str, request: Request, body: dict[str, Any] | None = None) -> Any:
         """The reviewer's orientation fix (2026-08-16). The intent is the
@@ -741,25 +767,21 @@ def build_app(
         if not rotated:
             return {"ok": True, "batch_id": batch_id, "page": page, "processing": False}
         set_page_job(batch_id, page, "transcribing", work_dir)
+        (_reprocess or _reprocess_page)(batch_id, page)
+        return {"ok": True, "batch_id": batch_id, "page": page, "processing": True}
 
-        def _job() -> None:
-            try:
-                people = [
-                    str(p["name"]) for p in _read_projection(filename="people.json", key="people") if p.get("name")
-                ]
-                places = [
-                    str(p["name"]) for p in _read_projection(filename="places.json", key="places") if p.get("name")
-                ]
-                label = None
-                with contextlib.suppress(RegistryError):
-                    label = load_batch(batch_id, registry_dir).get("label")
-                reprocess_page_transcription(batch_id, page, work_dir, people=people, places=places, label=label)
-            # The background thread's terminal handler — logger.exception
-            # lucidlint: ignore swallow is the observable surface; the thread ends
-            except Exception:
-                logger.exception("reprocess failed for %s/%s", batch_id, page)
-
-        threading.Thread(target=_job, daemon=True).start()
+    @app.post("/api/sync/batch/{batch_id}/page/{page}/reread")
+    def sync_reread_page(batch_id: str, page: str, request: Request) -> Any:
+        """Retry a page's re-read after its last one failed (the reading
+        model was unreachable): clear the failed state, mark transcribing,
+        and re-run the reprocess over the CURRENT image. Orientation is
+        untouched — this only re-runs OCR (2026-08-16, PRD VR10 AC14)."""
+        if session_user(request) is None:
+            return JSONResponse({"ok": False, "error": "sign in to re-read pages"}, status_code=401)
+        if not BATCH_ID.match(batch_id) or not safe_page_name(page):
+            return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
+        set_page_job(batch_id, page, "transcribing", work_dir)
+        (_reprocess or _reprocess_page)(batch_id, page)
         return {"ok": True, "batch_id": batch_id, "page": page, "processing": True}
 
     @app.post("/api/sync/confirmations")
@@ -836,10 +858,12 @@ def create_server(
     config: ServerConfig,
     host: str = "127.0.0.1",
     port: int = 8124,
+    _reprocess: Callable[[str, str], None] | None = None,
 ) -> Any:
     """Build the uvicorn server with the given config (DI for tests).
-    ``Server`` is the running noun; tests drive this one."""
-    app = build_app(config)
+    ``Server`` is the running noun; tests drive this one. ``_reprocess`` is
+    the injectable reprocess seam (tests stub it to avoid the real model)."""
+    app = build_app(config, _reprocess=_reprocess)
     return uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
 
 

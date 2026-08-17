@@ -18,13 +18,11 @@ import {
   outboxAdd,
   outboxDrop,
   outboxPending,
-  desiredQuarters,
-  pendingRotationQuarters,
+  deltaOfDesired,
+  orientationState,
   render,
-  rotateDrop,
-  rotatePending,
-  rotateUpsert,
   saveEdits,
+  saveOrientation,
   strikeParts,
   zoomView,
 } from "../../views/review.js";
@@ -417,40 +415,44 @@ describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)",
   });
 });
 
-describe("the rotation outbox — the orientation fix survives an offline backend", () => {
+describe("the reviewer's orientation — { desired, acked } per page, set only by ↻ (VR10)", () => {
   beforeEach(() => localStorage.clear());
 
-  it("upserts one intent per page — the latest wins (multiple presses coalesce, 2026-08-16)", () => {
-    rotateUpsert("adopt-1", "p1.jpg", 2);
-    rotateUpsert("adopt-1", "p1.jpg", 3);
-    expect(rotatePending()).toEqual([{ batch_id: "adopt-1", page: "p1.jpg", quarters: 3 }]);
-    expect(pendingRotationQuarters("adopt-1", "p1.jpg")).toBe(3);
+  it("deltaOfDesired shows the reviewer's desired orientation on top of the served image", () => {
+    // desired absolute minus the backend's applied rotation — deterministic
+    expect(deltaOfDesired(0, 0)).toBe(0); // settled page, never rotated
+    expect(deltaOfDesired(1, 0)).toBe(90); // one press from upright
+    expect(deltaOfDesired(1, 90)).toBe(0); // backend already caught up
+    expect(deltaOfDesired(2, 0)).toBe(180); // two presses
+    expect(deltaOfDesired(0, 90)).toBe(270); // rotate-back to the ORIGINAL
   });
 
-  it("different pages keep their own intents", () => {
-    rotateUpsert("adopt-1", "p1.jpg", 1);
-    rotateUpsert("adopt-1", "p2.jpg", 2);
-    expect(rotatePending().length).toBe(2);
-    expect(pendingRotationQuarters("adopt-1", "p1.jpg")).toBe(1);
-    expect(pendingRotationQuarters("adopt-1", "p2.jpg")).toBe(2);
+  it("a page never pressed has no stored state — the display falls back to the backend orientation", () => {
+    expect(orientationState("adopt-1", "p1.jpg")).toBeNull();
+    // a never-pressed page shows the file as-is, whatever the backend's
+    // applied rotation — a stale legacy entry cannot reorient it
+    expect(deltaOfDesired(0, 90)).toBe(270); // base 90, nothing pressed → the file's own orientation
   });
 
-  it("drops the intent once the backend records it", () => {
-    rotateUpsert("adopt-1", "p1.jpg", 1);
-    rotateDrop("adopt-1", "p1.jpg");
-    expect(rotatePending()).toEqual([]);
-    expect(pendingRotationQuarters("adopt-1", "p1.jpg")).toBe(0);
+  it("persists the reviewer's desired per page, independently of the backend", () => {
+    saveOrientation("adopt-1", "p1.jpg", { desired: 1, acked: 0 }); // pressed, not yet delivered
+    expect(orientationState("adopt-1", "p1.jpg")).toEqual({ desired: 1, acked: 0 });
   });
 
-  it("desiredQuarters: the rotate-back to the ORIGINAL is a real 0 intent", () => {
-    // a reviewer over-correcting an already-rotated page: the layout is at
-    // 90 and the view is rotated -90 — the desired is 0, which the backend
-    // must receive (bot review, 2026-08-16: dropping it left the page
-    // wrongly rotated and the confirm blocked)
-    expect(desiredQuarters(90, -90)).toBe(0);
-    expect(desiredQuarters(0, 90)).toBe(1);
-    expect(desiredQuarters(90, 180)).toBe(3);
-    expect(desiredQuarters(270, 90)).toBe(0);
+  it("different pages keep their own orientation", () => {
+    saveOrientation("adopt-1", "p1.jpg", { desired: 1, acked: 0 });
+    saveOrientation("adopt-1", "p2.jpg", { desired: 2, acked: 2 });
+    expect(orientationState("adopt-1", "p1.jpg")).toEqual({ desired: 1, acked: 0 });
+    expect(orientationState("adopt-1", "p2.jpg")).toEqual({ desired: 2, acked: 2 });
+  });
+
+  it("acknowledging a delivery sets acked = desired — nothing owed thereafter", () => {
+    saveOrientation("adopt-1", "p1.jpg", { desired: 1, acked: 0 });
+    saveOrientation("adopt-1", "p1.jpg", { desired: 1, acked: 1 });
+    expect(orientationState("adopt-1", "p1.jpg")).toEqual({ desired: 1, acked: 1 });
+    // the desired never reverts when the backend catches up — the delta
+    // just goes to zero
+    expect(deltaOfDesired(1, 90)).toBe(0);
   });
 });
 

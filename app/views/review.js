@@ -1208,7 +1208,19 @@ function rotatePage(session) {
   const base = session.desired ?? baseQuarters(session.baseRotation);
   session.desired = (base + 1) % 4;
   session.rotation = deltaOfDesired(session.desired, session.baseRotation);
-  saveOrientation(batchId, page, { desired: session.desired, acked: session.acked });
+  // The view-only rotate rule (VR15, 2026-08-17): a desired orientation
+  // the pipeline already READ rotates the view only — nothing owed, no
+  // re-read queued. An uncovered orientation is the signal the first pass
+  // missed something: the correction stays owed (acked unchanged) and the
+  // backend re-reads it (the second pass does better).
+  const doc = session.batch.documents[session.docIndex];
+  const covered = doc?.orientations?.[page];
+  if (isOrientationCovered(covered, session.baseRotation, session.desired)) {
+    session.acked = session.desired;
+    saveOrientation(batchId, page, { desired: session.desired, acked: session.desired });
+  } else {
+    saveOrientation(batchId, page, { desired: session.desired, acked: session.acked });
+  }
   // re-fit the view for the rotated frame — the view rect lives in the
   // previous frame's coordinates, and rendering it through the new frame
   // drew the page in the wrong place, unreadable (user 2026-08-16: "it's
@@ -1249,6 +1261,21 @@ function currentPage(session) {
 /** The backend's applied rotation as whole quarter-turns (0-3). */
 function baseQuarters(baseDeg) {
   return Math.round(baseDeg / 90) % 4;
+}
+
+/** Whether the pipeline has already READ the page at the reviewer's
+ *  DESIRED orientation — the view-only rotate rule (2026-08-17, VR15):
+ *  the covered set is the layout's per-line orientations, relative to
+ *  the served image; the desired is absolute quarter-turns, so the set
+ *  shifts by the backend's applied rotation. A covered rotate changes
+ *  only the view (no queued re-read); an uncovered one queues the old
+ *  path — the reviewer's rotate is the signal the first pass missed an
+ *  orientation. A page with no layout (no entry) covers nothing. */
+export function isOrientationCovered(covered, baseDeg, desiredQuarters) {
+  if (!Array.isArray(covered) || covered.length === 0) return false;
+  const base = baseQuarters(baseDeg);
+  const absolute = new Set(covered.map((deg) => (Math.round(deg / 90) + base) % 4));
+  return absolute.has(desiredQuarters);
 }
 
 /** The CSS rotation (degrees) that shows the reviewer's DESIRED orientation

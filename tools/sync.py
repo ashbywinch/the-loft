@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -28,13 +29,13 @@ from tools.layout import (
     build_layout,
     layout_detections,
     load_layout,
-    load_vlm_boxes,
     rotate_detections,
     write_layout,
 )
+from tools.layout_stage import run_layout
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.registry import load_batch, record_path
-from tools.vlm import selfreport_words
+from tools.vlm import orientation_report, selfreport_words
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +190,27 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
             for page in pages
             if (guess_dir / Path(page).with_suffix(".layout.json")).exists()
         }
-        drafts.append({"batch_id": batch_id, "pages": pages, "texts": texts, "layouts": layouts, **document})
+        # the orientations the pipeline already read on each page (VR15,
+        # 2026-08-17): the distinct per-line orientations from the layout.
+        # The reviewer's rotate to a covered orientation is view-only — no
+        # queued re-read. A page with a layout but no per-line orientations
+        # was read at the image's upright (0); a page with no layout has
+        # nothing covered (any rotate queues the old path).
+        orientations = {
+            page: sorted({int(line.get("orientation", 0)) for line in layouts[page].get("lines", [])})
+            for page in pages
+            if page in layouts
+        }
+        drafts.append(
+            {
+                "batch_id": batch_id,
+                "pages": pages,
+                "texts": texts,
+                "layouts": layouts,
+                "orientations": orientations,
+                **document,
+            }
+        )
     return drafts
 
 
@@ -375,6 +396,8 @@ def reprocess_page_transcription(
     *,
     transcribe: Any = None,
     selfreport: Any = None,
+    orientation_report_fn: Callable[[Path], list[dict[str, Any]]] | None = None,
+    layout_runner: Callable[[str, Path, list[str] | None], None] | None = None,
     people: list[str] | None = None,
     places: list[str] | None = None,
     label: str | None = None,
@@ -385,7 +408,12 @@ def reprocess_page_transcription(
     page-02's first line read "At last venture this form is the building
     of a" vs the corrected page's "A new venture this term is the holding
     of a"). Runs as the backend's async job after the fast rotation; the
-    page's job state marks it while it runs. ``transcribe``/``selfreport``
+    page's job state marks it while it runs. The second pass does better
+    (2026-08-17): the reviewer's rotate IS the signal the first pass
+    missed an orientation, so the orientation report re-runs on the
+    corrected image and the layout stage rebuilds the layout with FRESH
+    detections — never the old remapped boxes.
+    ``transcribe``/``selfreport``/``orientation_report_fn``/``layout_runner``
     are the injectable seams for tests. On failure the page is marked
     "failed" — the stale text stays visible with the warning, never a
     silent wrong answer."""
@@ -397,13 +425,10 @@ def reprocess_page_transcription(
     if not image_path.is_file() or not layout_path.is_file():
         raise ValueError(f"no such page or layout: {page}")
     try:
-        # the corrected image + the remapped detections (the fast rotation
-        # already rebuilt the layout — its lines carry the current boxes)
         layout = json.loads(layout_path.read_text(encoding="utf-8"))
-        detections = layout_detections(layout)
         # force the re-read: drop the markers the pipeline's skip logic uses
         raw_dir = guess_dir
-        for suffix in (".txt", ".vlm.json", ".selfreport.json"):
+        for suffix in (".txt", ".vlm.json", ".selfreport.json", ".orientation.json"):
             (raw_dir / Path(page).with_suffix(suffix)).unlink(missing_ok=True)
         htr_pages_vlm(
             [(page, image_path)],
@@ -421,18 +446,22 @@ def reprocess_page_transcription(
         )
         report_path = raw_dir / Path(page).with_suffix(".selfreport.json")
         atomic_write(report_path, json.dumps(report, ensure_ascii=False, indent=1) + "\n")
-        vlm_boxes = load_vlm_boxes(raw_dir / Path(page).with_suffix(".vlm.json"))
-        new_layout = build_layout(
-            layout.get("page", page),
-            layout.get("width", 0),
-            layout.get("height", 0),
-            new_text,
-            detections,
-            selfreport=report,
-            vlm_boxes=vlm_boxes,
-        )
-        new_layout["rotation"] = layout.get("rotation", 0)
-        write_layout(new_layout, layout_path)
+        # the fresh orientation report on the CORRECTED image — a
+        # multi-direction report writes the sidecar the layout stage reads
+        report_fn = orientation_report_fn if orientation_report_fn is not None else orientation_report
+        hints = report_fn(image_path)
+        degrees = {int(h.get("degrees")) for h in hints if h.get("degrees") in (0, 90, 180, 270)}
+        if len(degrees) >= 2:
+            atomic_write(
+                raw_dir / Path(page).with_suffix(".orientation.json"),
+                json.dumps(hints, ensure_ascii=False) + "\n",
+            )
+        runner = layout_runner if layout_runner is not None else run_layout
+        runner(batch_id, work_dir, [page])
+        new_layout = load_layout(layout_path)
+        if "rotation" in layout:
+            new_layout["rotation"] = layout.get("rotation", 0)
+            write_layout(new_layout, layout_path)
         set_page_job(batch_id, page, None, work_dir)
     # lucidlint: ignore broad-except the stage's terminal boundary — mark failed on ANY error, then re-raise
     except Exception:

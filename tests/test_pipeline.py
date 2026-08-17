@@ -190,3 +190,81 @@ def test_review_photo_only_batch_confirms_nothing(tmp_path: Path) -> None:
     lines: list[str] = []
     review(batch, registry_dir=registry, work_dir=tmp_path / "work", readline=lambda _p: "r\n", write_line=lines.append)
     assert any("no text pages" in line for line in lines)
+
+
+def test_ambiguous_rotations_flags_the_postcard_split() -> None:
+    """The postcard's scores {0: 16, 90: 4, 180: 7, 270: 9} — the 270°
+    text carries a meaningful share of the winner's strong words — is
+    multi-orientation; a clean page's losers near zero are not (VR15)."""
+    from tools.pipeline import _ambiguous_rotations
+
+    assert _ambiguous_rotations({"0": 16, "90": 4, "180": 7, "270": 9})
+    assert _ambiguous_rotations({"0": 16, "90": 4, "180": 7, "270": 9}) is True
+    assert not _ambiguous_rotations({"0": 100, "90": 0, "180": 0, "270": 0})
+    assert not _ambiguous_rotations({"0": 100, "90": 3, "180": 0, "270": 0})  # below the floor
+    assert not _ambiguous_rotations({})
+
+
+def test_orientation_hints_skip_single_dominant_pages(tmp_path: Path) -> None:
+    """The vision-model report is NOT called for a page the arbiter
+    already shows as single-direction — the conditional keeps the cost
+    off the common case (2026-08-17)."""
+    from tools.pipeline import _write_orientation_hints
+
+    batch_work = tmp_path / "work" / "adopt-0001"
+    oriented = batch_work / "oriented"
+    guess = batch_work / "ocr-guess"
+    oriented.mkdir(parents=True)
+    guess.mkdir(parents=True)
+    (batch_work / "oriented" / "rotations.json").write_text(
+        json.dumps({"p1.jpg": {"degrees": 0, "strong": 100, "scores": {"0": 100, "90": 0, "180": 0, "270": 0}}}),
+        encoding="utf-8",
+    )
+
+    def _should_not_be_called(_image: Path) -> list[dict[str, object]]:
+        raise AssertionError("the report must not run for a clean page")
+
+    _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _should_not_be_called)
+    assert not (guess / "p1.orientation.json").exists()
+
+
+def test_orientation_hints_write_the_sidecar_for_ambiguous_pages(tmp_path: Path) -> None:
+    """An arbiter-ambiguous page gets the report; a report with at least
+    two distinct directions writes the sidecar the layout stage reads;
+    a single-direction report (the model disagrees) writes nothing."""
+    from tools.pipeline import _write_orientation_hints
+
+    batch_work = tmp_path / "work" / "adopt-0001"
+    oriented = batch_work / "oriented"
+    guess = batch_work / "ocr-guess"
+    oriented.mkdir(parents=True)
+    guess.mkdir(parents=True)
+    (batch_work / "oriented" / "rotations.json").write_text(
+        json.dumps({"p1.jpg": {"degrees": 0, "strong": 16, "scores": {"0": 16, "90": 4, "180": 7, "270": 9}}}),
+        encoding="utf-8",
+    )
+    (oriented / "p1.jpg").write_text("image", encoding="utf-8")
+    calls: list[Path] = []
+
+    def _fake_report(image: Path) -> list[dict[str, object]]:
+        calls.append(image)
+        return [{"region": "message", "degrees": 0}, {"region": "address", "degrees": 270}]
+
+    _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _fake_report)
+    assert calls == [oriented / "p1.jpg"]
+    hint = json.loads((guess / "p1.orientation.json").read_text(encoding="utf-8"))
+    assert [h["degrees"] for h in hint] == [0, 270]
+
+    # a re-run must not re-pay the model call (idempotent)
+    calls.clear()
+    _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _fake_report)
+    assert calls == []
+
+    # the model disagrees: one direction only -> no sidecar
+    (guess / "p1.orientation.json").unlink()
+
+    def _single(_image: Path) -> list[dict[str, object]]:
+        return [{"region": "message", "degrees": 0}]
+
+    _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _single)
+    assert not (guess / "p1.orientation.json").exists()

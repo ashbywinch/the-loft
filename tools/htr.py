@@ -28,14 +28,39 @@ from pathlib import Path
 from typing import Any
 
 from PIL import Image
-from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
+# The transformers/TrOCR stack (~450MB of torch+CUDA libs) is ONLY needed
+# by the local HTR backend (LOFT_HTR_BACKEND=local, the privacy mode). The
+# serving layer imports htr_pages_vlm for the reprocess route, and the
 from tools.atomic import atomic_write
 from tools.vlm import parse_transcription_response, transcribe_image_vlm, transcription_system_with_context
+
+# The transformers/TrOCR stack (~450MB of torch+CUDA libs) is ONLY needed
+# by the local HTR backend (LOFT_HTR_BACKEND=local, the privacy mode). The
+# serving layer imports htr_pages_vlm for the reprocess route, and the
+# VLM backend never touches these symbols — so the import is guarded:
+# before 2026-08-17 the top-level import dragged torch into the review
+# server (and every watchfiles reload-spawned copy of it), ~450MB each.
+# The local backend sets the env before the process starts, so the guard
+# matches the call site.
+_LOCAL_HTR_BACKEND = os.environ.get("LOFT_HTR_BACKEND") == "local"
+if _LOCAL_HTR_BACKEND:
+    import torch  # noqa: E402 # guarded: the local backend only (see above)
+    from transformers import TrOCRProcessor, VisionEncoderDecoderModel  # noqa: E402 # guarded: the local backend only
+else:
+    # the guarded import leaves the names None in the default VLM backend —
+    # the assignment is the fallback, not a suppression of a real error
+    torch = None  # type: ignore[assignment] # the VLM backend's fallback for the guarded import
+    TrOCRProcessor = None  # type: ignore[assignment] # the VLM backend's fallback for the guarded import
+    VisionEncoderDecoderModel = None  # type: ignore[assignment] # the VLM backend's fallback for the guarded import
 
 KRAKEN = str(Path(__file__).resolve().parent.parent / ".venv-htr" / "bin" / "kraken")
 ORLI_MODEL = Path.home() / ".local/share/htrmopo/c690cc12-0cf5-59dd-af71-69cdef2392b2/orli_base.safetensors"
 TROCR_MODEL = "microsoft/trocr-small-handwritten"
+
+# The ML stages leave a core for the rest of the box (2026-08-17, the
+# laptop requirement): torch's inference threads cap at nproc-1.
+ML_THREADS = max(1, (os.cpu_count() or 2) - 1)
 
 # Line-box geometry (the crop bounds derived from each line's baseline): the
 # box spans the gap to the NEXT baseline — clamped to sane heights, split
@@ -173,6 +198,9 @@ def htr_page(image: Path, out_path: Path, *, _segment: Any = None, _transcribe: 
     if _transcribe is not None:
         text = _transcribe(crops)
     else:
+        if TrOCRProcessor is None or VisionEncoderDecoderModel is None or torch is None:
+            raise HtrError("the local HTR stack is not loaded — run with LOFT_HTR_BACKEND=local")
+        torch.set_num_threads(ML_THREADS)
         processor = TrOCRProcessor.from_pretrained(TROCR_MODEL)
         model = VisionEncoderDecoderModel.from_pretrained(TROCR_MODEL)
         try:
@@ -185,6 +213,9 @@ def htr_page(image: Path, out_path: Path, *, _segment: Any = None, _transcribe: 
 
 def htr_pages(pages: list[tuple[str, Path]], raw_dir: Path) -> None:
     """HTR each (name, page-image) pair into raw_dir/<stem>.txt, in order."""
+    if TrOCRProcessor is None or VisionEncoderDecoderModel is None or torch is None:
+        raise HtrError("the local HTR stack is not loaded — run with LOFT_HTR_BACKEND=local")
+    torch.set_num_threads(ML_THREADS)
     processor = TrOCRProcessor.from_pretrained(TROCR_MODEL)
     model = VisionEncoderDecoderModel.from_pretrained(TROCR_MODEL)
     transcribe = partial(transcribe_lines, processor=processor, model=model)

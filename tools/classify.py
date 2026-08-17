@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -51,6 +52,9 @@ def _load_clip() -> tuple[Any, Any, Any]:
     return is NOT the tokenizer for MobileCLIP (a second Compose); the
     tokenizer comes from get_tokenizer. The boundary is treated as untyped —
     the live acceptance test exercises it."""
+    # leave a core for the rest of the box (2026-08-17, the laptop
+    # requirement) — torch's inference threads cap at nproc-1
+    torch.set_num_threads(max(1, (os.cpu_count() or 2) - 1))
     model, preprocess, _ = open_clip.create_model_and_transforms("MobileCLIP-S2", pretrained="datacompdr")
     tokenizer = open_clip.get_tokenizer("MobileCLIP-S2")
     return model, preprocess, tokenizer

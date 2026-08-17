@@ -49,11 +49,14 @@ fighting it; the tool's heuristic is narrower than the repo's convention.
 
 ### 1.4 The `swallow` heuristic accepts only control-flow exits (return/raise/break/continue) or returned-name mutation
 
-Logging is not counted, though the repo standard explicitly allows
-log-as-handling ("Every catch/except must log, re-raise, or handle
-observably"). Where logging WAS the handling (the reprocess thread's
-terminal handler in server.py), the fix is a suppression comment naming
-the log as the observable surface.
+Logging is not counted as surfacing. That is right in the majority case (a
+caller exists that should decide) and wrong only at the terminal/defensive
+boundaries the heuristic cannot distinguish: the reprocess thread's terminal
+handler in server.py logs because there is no caller to propagate to. The
+repo standard's "log" option is the *terminal* case, not a licence to hide
+a recoverable failure — the standard was tightened to say exactly this and
+`tools/ai_client.find_api_key`'s corrupt-file fallback (which was a genuine
+silently-degraded-config swallow) now raises instead (§ below, 2026-08-16).
 
 ---
 
@@ -400,3 +403,30 @@ README describes becomes usable; today it isn't.
   pinned.
 
 Each is reproduced with the exact file/line in the referenced section.
+
+---
+
+## 8. Resolution of the log-as-handling question (2026-08-16)
+
+The reviewer questioned whether "log-and-continue" was ever legitimate, and
+correctly caught an overstatement: one of my suppressions — `find_api_key`
+treating a corrupt `auth.json` as "no stored keys" — was a genuine
+silently-degraded-config swallow, not a terminal boundary. Two actions:
+
+1. **The standard was tightened** (`docs/coding-standards.md`, "Fail fast,
+   never swallow errors"): "log" is the *terminal* option, legitimate only
+   where there is no caller to propagate to (background thread, callback,
+   teardown) or the failure is non-fatal and the fallback is the visible
+   behaviour; everywhere else — a caller exists, or the error is an
+   operator/config defect — re-raise or handle observably. The anti-pattern
+   is named: the silently-degraded config.
+2. **`find_api_key` now fails loudly** on a corrupt/unreadable auth file
+   (`AIClientError("cannot read the opencode auth file <path>: …")`) instead
+   of falling back to "no key", and the suppression comment was removed (it
+   no longer swallows). Added `test_find_api_key_raises_on_corrupt_auth_file`.
+
+The lucidlint `swallow` heuristic (control-flow-or-return only) remains too
+strict at genuine terminal boundaries (server.py's reprocess thread), where
+the log is the only surface — but the repo's own test-seam discipline now
+says so explicitly, so a suppression there carries a written, standard-backed
+reason rather than a blanket "log is allowed".

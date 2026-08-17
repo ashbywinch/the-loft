@@ -141,6 +141,17 @@ def test_find_api_key_raises_when_missing(tmp_path: Path) -> None:
         find_api_key(_env={}, _home=tmp_path)
 
 
+def test_find_api_key_raises_on_corrupt_auth_file(tmp_path: Path) -> None:
+    """A config file that exists but is corrupt is an operator error — it
+    surfaces loudly, never silently treated as 'no key' (fail-fast,
+    2026-08-16)."""
+    auth_dir = tmp_path / ".local" / "share" / "opencode"
+    auth_dir.mkdir(parents=True)
+    (auth_dir / "auth.json").write_text("this is not json", encoding="utf-8")
+    with pytest.raises(AIClientError, match="auth file"):
+        find_api_key(_env={}, _home=tmp_path)
+
+
 def test_chat_null_message_is_a_clean_error() -> None:
     # a provider returning {"choices": [{"message": null}]} must raise the
     # clean AIClientError, not an AttributeError that escapes as a 500

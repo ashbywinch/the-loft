@@ -185,11 +185,8 @@ def find_api_key(_env: Mapping[str, str] | None = None, _home: Path | None = Non
     if auth_path.exists():
         try:
             auth = json.loads(auth_path.read_text(encoding="utf-8"))
-        # An unreadable auth file means "no stored keys" — logged here;
-        # lucidlint: ignore swallow the caller still raises when no key exists
         except (OSError, json.JSONDecodeError) as e:
-            logger.warning("ai_client: ignoring unreadable auth file %s: %s", auth_path, e)
-            auth = {}
+            raise AIClientError(f"cannot read the opencode auth file {auth_path}: {e}") from e
         for hint in AUTH_JSON_PROVIDER_HINTS:
             entry = auth.get(hint)
             if isinstance(entry, dict) and entry.get("type") == "api" and entry.get("key"):

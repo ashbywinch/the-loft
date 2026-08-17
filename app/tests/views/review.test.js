@@ -596,3 +596,69 @@ describe("the document list shows only awaiting documents (user 2026-08-16)", ()
     vi.unstubAllGlobals();
   });
 });
+
+describe("a multi-orientation page renders (VR15)", () => {
+  it("shows the line texts and the mark-fine buttons on flagged lines", async () => {
+    // the combined multi layout's shape (tools/layout.multi_layout): the
+    // words carry their text, and a line the rec read weakly flags its
+    // words — the review's red doubt + the check button. The reproduced
+    // fault (2026-08-17, the postcard): the words were {box, conf} only,
+    // so the pane rendered blank lines with no check buttons.
+    const multiDoc = {
+      batch_id: "adopt-1",
+      pages: ["p1.jpg"],
+      texts: { "p1.jpg": "weak line\nclean" },
+      layouts: {
+        "p1.jpg": {
+          page: "p1.jpg",
+          width: 100,
+          height: 100,
+          rotation: 0,
+          lines: [
+            {
+              index: 0,
+              text: "weak line",
+              box: [1, 1, 50, 10],
+              conf: 0.9,
+              orientation: 0,
+              words: [
+                { word: "weak", box: [1, 1, 20, 10], conf: 0.0 },
+                { word: "line", box: [21, 1, 50, 10], conf: 0.0 },
+              ],
+            },
+            {
+              index: 1,
+              text: "clean",
+              box: [1, 20, 50, 30],
+              conf: 1.0,
+              orientation: 270,
+              words: [{ word: "clean", box: [1, 20, 50, 30], conf: 1.0 }],
+            },
+          ],
+          unmatched: [],
+        },
+      },
+      greeting: null,
+      signoff: null,
+      status: "review",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ batch_id: "adopt-1", label: "Pile", documents: [multiDoc], processing: {} }),
+      }),
+    );
+    const main = document.createElement("main");
+    render(main, { name: "review", arg: "adopt-1", rest: ["review", "adopt-1", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-line")).toBeTruthy());
+    // the line TEXTS render — the words carry their text
+    expect(main.textContent).toContain("weak");
+    expect(main.textContent).toContain("clean");
+    // the flagged line carries the mark-fine (check) button
+    const weakLine = main.querySelector('.rv-line[data-index="0"]');
+    expect(weakLine?.querySelector(".rv-ok-btn")).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
+});

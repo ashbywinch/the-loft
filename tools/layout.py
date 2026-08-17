@@ -67,6 +67,10 @@ QUARTERS_PER_FULL_TURN = 4  # a full rotation is four quarter-turns (90° each)
 REC_SCORE_GATE = 0.85  # recognition confidence: real words read at the right orientation
 MIN_LETTERS = 2  # plausibility: a "real word" has letters, not just shapes
 _DEDUPE_OVERLAP = 0.3  # two passes' lines sharing this much of the smaller box are the same physical region
+# A multi line the rec read below this is doubtful — its words flag (conf
+# 0.0), the review's red doubt + the mark-fine button (VR4, 2026-08-17:
+# the multi path had no self-report, so the rec score is the doubt signal).
+WORD_FLAG_THRESHOLD = 0.95
 
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
 _WS = re.compile(r"\s+")
@@ -498,6 +502,23 @@ def dedupe_regions(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [line for line, k in zip(lines, keep, strict=True) if k]
 
 
+def _multi_line_words(text: str, boxes: list[dict[str, Any]], score: float) -> list[dict[str, Any]]:
+    """The per-word entries for a multi-orientation line: the rec text's
+    tokens (the display words — verbatim, vlm_line_words) paired with the
+    detector's remapped word boxes (extra tokens get no box; extra boxes
+    drop), and the flag convention — a line the rec read weakly flags ALL
+    its words (conf 0.0: the review's red doubt + the mark-fine button).
+    Before 2026-08-17 the words carried no text and never flagged — the
+    review rendered blank lines with no check buttons (reproduced on the
+    Caradog 1915 sample, 2026-08-17)."""
+    tokens = vlm_line_words(text)
+    out: list[dict[str, Any]] = []
+    for i, token in enumerate(tokens):
+        box = boxes[i].get("box") if i < len(boxes) else None
+        out.append({"word": token, "box": box, "conf": 0.0 if score < WORD_FLAG_THRESHOLD else score})
+    return out
+
+
 def multi_layout(
     page: str,
     width: int,
@@ -523,7 +544,7 @@ def multi_layout(
                     "conf": entry["score"],
                     "orientation": degrees,
                     "box_source": "multi",
-                    "words": [{"box": w.get("box"), "conf": entry["score"]} for w in entry.get("words", [])],
+                    "words": _multi_line_words(entry["text"], entry.get("words", []), entry["score"]),
                 }
             )
     lines = dedupe_regions(lines)

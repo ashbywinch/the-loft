@@ -446,6 +446,45 @@ def test_admit_and_remap_keeps_only_real_text() -> None:
     assert len(rejected) == 3
 
 
+def test_multi_layout_words_carry_text_and_flag_weak_lines() -> None:
+    """The multi-orientation layout's words are reviewable (2026-08-17):
+    each word carries its TEXT (the review renders word.word — a word
+    without it renders blank) and a line the rec read weakly flags its
+    words (conf 0.0 — the red doubt + the mark-fine button, VR4). The
+    reproduced fault: the combined layout's words were {box, conf} only —
+    the postcard's review showed blank lines and no check buttons."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        200,
+        100,
+        [
+            (
+                0,
+                [
+                    {
+                        "text": "weak line",
+                        "box": [1, 1, 5, 5],
+                        "score": 0.9,
+                        "words": [{"box": [1, 1, 2, 2]}, {"box": [3, 1, 5, 2]}],
+                    }
+                ],
+            ),
+            (
+                270,
+                [{"text": "clean", "box": [10, 10, 20, 20], "score": 1.0, "words": [{"box": [10, 10, 20, 20]}]}],
+            ),
+        ],
+    )
+    weak = layout["lines"][0]
+    assert [w["word"] for w in weak["words"]] == ["weak", "line"]
+    assert all(w["conf"] == 0.0 for w in weak["words"])  # the doubt + the check button
+    clean = layout["lines"][1]
+    assert clean["words"][0]["word"] == "clean"
+    assert clean["words"][0]["conf"] == 1.0  # a confident read stays clean
+
+
 def test_multi_layout_orders_zero_first_then_next_directions() -> None:
     """The combined layout shows the 0° lines first, then each next
     direction, each line carrying the orientation it was read at (VR15)."""

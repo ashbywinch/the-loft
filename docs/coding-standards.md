@@ -303,6 +303,24 @@ good.
     /* fall back */
   }
   ```
+
+  "Log" is not a weaker synonym for "handle observably" — it is the
+  **terminal** option, legitimate in exactly two situations: **(1) there is
+  no caller to propagate to** (a background thread, a callback, teardown),
+  where the log *is* the maximal observability available; or **(2) the
+  failure is non-fatal to the operation's contract** and the fallback is the
+  visible behaviour itself (a degraded-but-successful result, the deepest
+  cache miss). Everywhere else — a caller exists that could surface, retry,
+  or roll back, or the error is an **operator/config defect** — re-raise or
+  handle observably; a log-and-continue that hides a recoverable failure from
+  the code that should decide is a swallow. Naming the anti-pattern: **the
+  silently-degraded config** — a config file that exists but is corrupt is
+  an operator error and is surfaced, never treated as "absent". ✗
+  `tools/ai_client.py find_api_key` treated a corrupt `auth.json` as "no
+  stored keys", so a miswritten file the operator *had* fixed read as a plain
+  missing key (2026-08-16). ✓ the corrupt file now raises
+  `AIClientError("cannot read the opencode auth file <path>")` — the
+  degradation message names the file.
 - **Two-tier failure messages.** A user-facing failure emits a plain-language
   line ("the archive didn't load — the data files may be missing") *and* a
   dev log with the root cause. One half alone is a bug (the boot error and

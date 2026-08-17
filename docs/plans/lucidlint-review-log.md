@@ -329,3 +329,74 @@ pyrefly's inference are in conflict; the type checker's semantics won.
 The 4 remaining docs failures and the 13 unused warns are all documented
 above — each is either a tool bug or an intentional design the tool
 cannot express.
+
+---
+
+## 7. For the tool author — could we use the built-in `fix` capability? No.
+
+We attempted it and it was unusable in the v0.1.0 release. Every refactor in
+this session (all ~22 complexity extractions, the parameter objects, the
+keyword-izing) was done by hand. The blockers, in order hit:
+
+1. **`fix_engine.py` is not shipped in the release bundle.** The installed
+   v0.1.0 `~/.local/share/lucidlint/` bundle has only `lucidlint.py`,
+   `bin/`, `version.txt`. The orchestrator's `fix` path imports
+   `fix_engine` (an "optional extra") and degrades if absent. We had to copy
+   `fix_engine.py` out of the build-tools source repo into the bundle dir.
+
+2. **CLI syntax mismatch: the README is ahead of the v0.1.0 binary.** The
+   README documents `lucidlint fix --kind extract-method --file X --line N`
+   (the build-tools HEAD CLI), but the installed v0.1.0 `lucidlint.py`
+   only accepts the older flat flags `--fix-kind/--fix-file/--fix-line`.
+   `fix --kind ...` → "unrecognized arguments".
+
+3. **With the correct flat flags, the seam detection returns nothing.** Even
+   with the repo's `fix_engine.py` copied in and libcst installed:
+   `--fix-kind extract-method --fix-file tools/gedcom_document.py
+   --fix-line 131` → "fix: nothing to change" for a function at CC 68. The
+   v0.1.0 orchestrator's command contract (what it passes to the fix
+   engine) does not match the newer `fix_engine.py` from the repo — no
+   seam is found, no preview, no diff.
+
+4. **`libcst` is not a declared/pinned dependency.** We installed it into
+   the project venv (`uv pip install libcst`) to satisfy the engine, but
+   the next `uv sync` (the repo's normal `make setup`) pruned it because
+   it is not in the lock — the fix path then crashes on `import libcst`.
+   The bundle neither ships nor pins it.
+
+Recommendation: ship `fix_engine.py` (and pin `libcst`) in the release
+bundle, align the CLI + orchestrator/fix-engine contract with HEAD, and
+make the "nothing to change" path actually explain why the seam wasn't
+found (or match HEAD's seam detection). Once mechanical families
+(`positional-literals`, `stale-suppression`, `magic-number`) and the
+structural previews work from the release bundle, the agent loop the
+README describes becomes usable; today it isn't.
+
+### Consolidated snag list for the tool author
+
+- **B1 (docs-link bug).** `../`-prefixed backtick paths resolve against
+  the repo root, not the doc's directory (`scanner/src/docs.rs`), unlike
+  markdown links. §1.1.
+- **B2 (unused counts only cross-file refs).** In-module-used helpers
+  (`memory.py _slug`, `_person_of`, …) are flagged dead. §1.2.
+- **B3 (`ignore unused` self-defeating).** The suppression comment counts
+  as the missing reference, so a warn `unused` becomes a FAIL
+  `stale-suppression`. §5.1.
+- **B4 (noqa reason heuristic).** Only a *second* `#` comment counts as a
+  reason; `# noqa: BLE001 — reason` is invisible. §1.3.
+- **B5 (swallow heuristic).** Only control-flow exits (return/raise/
+  break/continue) or returned-name mutation count as handling; logging
+  does not, so "log and proceed" terminal handlers must be suppressed
+  with a comment instead. §1.4.
+- **B6 (suppression matches raw SIGNAL, not display kind).** `latent-class`
+  collapses `closures`/`partition`/`strewing`; `ignore latent-class`
+  matches none of them → unconditional stale-suppression until the raw
+  signal is used. §5.2.
+- **B7 (suppression window is line and line-1 only).** An intervening
+  decorator line (`@final`) or a stacked comment line breaks the match,
+  silently. §5.2.
+- **B8 (fix capability unusable in v0.1.0).** §7 above — engine not
+  bundled, CLI/contract mismatch, seam "nothing to change", libcst not
+  pinned.
+
+Each is reproduced with the exact file/line in the referenced section.

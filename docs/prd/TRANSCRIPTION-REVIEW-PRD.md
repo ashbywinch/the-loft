@@ -75,31 +75,29 @@ words are usable on the smaller screen (user, 2026-08-15).
 remains in a batch, leave partway, and come back without re-reading what
 they already handled. Progress is visible.
 
-**VR10 — Reorientation is the reviewer's act, immediate and reliable.** 
-Only pressing the ↻ control reorients a page — nothing on the front end
-ever rotates a page the reviewer didn't rotate, and no stored "intent" is
-ever replayed or auto-delivered. When the reviewer does press ↻:
-(i) the page is reoriented instantly and stays that way on every look
-thereafter, regardless of what the back end is doing — the reviewer's
-corrected orientation is authoritative for display and never reverts; and
-(ii) that reorientation is delivered reliably to the back end, which
-reorients the image, re-runs OCR, and returns an updated transcription —
-a back end that catches up late changes the OCR results, never the
-displayed orientation (user requirement, 2026-08-16).
+**VR10 — Reorientation is the reviewer's act, immediate and reliable.**
+A page's orientation changes only because the reviewer changed it — never
+on its own, even after a reload or a return visit. When the reviewer does
+change it: (i) the page shows the corrected way round instantly and stays
+that way on every look thereafter, whatever else is happening — what the
+reviewer set is what they see, and it never reverts; and (ii) the
+corrected transcription reliably arrives, and when it arrives late it
+updates the text, never the orientation the reviewer set (user
+requirement, 2026-08-16).
 
 **VR11 — The review proceeds page by page, in any order, at the reviewer's
-pace.** Each page is confirmed on its own; a document is fully reviewed
-only when every one of its pages is confirmed. The reviewer moves through
-the pile in whatever order suits them — skipping pages or documents and
-returning later — and the system never loses their place or confuses their
-progress. A fast reader can confirm a page without first checking any
-line: checking lines is for the pages that need it, never a prerequisite
-to moving on (user requirement, 2026-08-16: power readers blast through
-without the app getting in their way).
+pace.** Each page is finished on its own; a document is finished only when
+every one of its pages is finished. The reviewer moves through the pile in
+whatever order suits them — leaving a page or a document and coming back
+later — and the system never loses their place or confuses their
+progress. The reviewer moves at their own speed: nothing in the app ever
+slows them down or asks for more than they choose to do (user
+requirement, 2026-08-16: power readers blast through without the app
+getting in their way).
 
 **VR12 — Fully reviewed work leaves the pending pile.** A document whose
-pages are all confirmed is finished: it disappears from the list of work
-still to be reviewed (user requirement, 2026-08-16).
+pages are all finished is done: it disappears from the list of work still
+to be reviewed (user requirement, 2026-08-16).
 
 **VR13 — Completed work is visibly marked, so nothing is redone.** Lines
 and pages the reviewer has already handled stay clearly marked; returning
@@ -130,26 +128,24 @@ to the batch shows exactly what remains, so no finished work is re-checked
    confirmed (VR8, R14).
 10. Leaving a batch and returning resumes where the reviewer stopped,
     with progress visible (VR9).
-11. Turning a page reorients it immediately, and it appears that way on
-    every subsequent visit, independent of the back end's re-transcription
-    state (VR10).
-12. A reorientation the reviewer makes is delivered reliably to the back
-    end, which reorients the image and delivers an updated transcription;
-    a back end that catches up late changes the OCR text, never the
-    displayed orientation (VR10).
-13. The front end reorients a page only when the reviewer presses ↻ — a
-    stored or stale item is never replayed, and a reload or revisit never
-    rotates a page the reviewer didn't rotate (VR10).
-14. When a page's re-read after a correction fails, the surface says so
-    plainly ("the re-read failed") — it never implies the text is fine,
-    and never blames a correction the reviewer never made (VR10, VR8).
-15. A page can be confirmed without first checking any line — the fast
-    reader is never held back (VR11).
-16. Confirming a page advances to the next; a skipped page or document
-    keeps its exact state so the reviewer returns to where they were, in
-    any order (VR11, VR9).
-17. A document whose pages are all confirmed is no longer listed as
-    pending work (VR12).
+11. Turning a page shows it the corrected way round immediately, and it
+    stays that way on every subsequent visit, whatever else is happening
+    (VR10).
+12. The corrected transcription for a reoriented page reliably arrives;
+    when it arrives late it updates the text, never the orientation
+    (VR10).
+13. A page's orientation changes only because the reviewer changed it —
+    never on its own, even after a reload or a return visit (VR10).
+14. When the corrected transcription can't arrive, the surface says so
+    plainly — it never implies the text is fine, and never blames a change
+    the reviewer didn't make (VR10, VR8).
+15. A fast reader can move through the batch at full speed, with nothing
+    in the app making them do extra steps (VR11).
+16. Finishing a page moves the reviewer on; a page or document they left
+    unfinished is exactly where they left it when they return, in any
+    order (VR11, VR9).
+17. A document whose pages are all finished is no longer listed as pending
+    work (VR12).
 18. Lines and pages already handled are visibly marked on return, so none
     are redone (VR13).
 19. Leaving and returning restores the exact document and page the

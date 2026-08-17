@@ -94,26 +94,9 @@ export function flaggedPositions(documents, docIndex, edits) {
   return positions;
 }
 
-/** The next flagged line after ``from`` (wrapping); null when there are
- *  no flags at all. ``from`` is one of the flaggedPositions entries —
- *  OR a position that was since ACCEPTED (removed from the list): the
- *  tour then continues AFTER it by order instead of silently restarting
- *  at the first flag (user 2026-08-16: after an accept, next-flagged
- *  "restarted at the beginning — nothing moved"). */
-export function nextFlagged(positions, from) {
-  if (!positions.length) return null;
-  if (!from) return positions[0];
-  const idx = positions.findIndex((p) => p.page === from.page && p.line === from.line);
-  if (idx !== -1) return positions[(idx + 1) % positions.length];
-  const next = positions.find(
-    (p) => p.page > from.page || (p.page === from.page && p.line > from.line),
-  );
-  return next || positions[0];
-}
-
-/** The remaining flagged lines per page — the navigation strip's flag dots
- *  (2026-08-16: the dots make a cross-page "Next flagged" jump visible
- *  before it happens; the map replaces the hint words). */
+/** The remaining flagged lines per page — the page chips' flag dots
+ *  (2026-08-16: the dots make a cross-page jump visible before any
+ *  press; the map replaces the hint words). */
 export function flaggedByPage(documents, docIndex, edits) {
   const byPage = {};
   for (const { page } of flaggedPositions(documents, docIndex, edits)) {
@@ -559,10 +542,9 @@ function renderSurface(main, session) {
     session.acked = st.acked;
     session.rotation = deltaOfDesired(st.desired, session.baseRotation);
   }
-  // the count and the dots exclude the rework pages — their flags will
-  // change when the backend re-reads them
+  // the dots exclude the rework pages — their flags will change when the
+  // backend re-reads them
   const positions = availablePositions(session);
-  const toCheck = positions.length;
 
   const root = el("div", { class: "rv" });
   // One bar for the whole chrome: back, the document's name, and BOTH
@@ -705,10 +687,10 @@ function renderSurface(main, session) {
   }
   session.pageProcessing = pageState;
 
-  const fcBadge = el("span", { class: "rv-fc" }, String(toCheck));
-  const nextBtn = el("button", { class: "rv-fn", onclick: () => jumpNextFlag(session) }, [fcBadge, " Next flagged ↓"]);
   // the honest label: only the LAST page's press confirms — earlier pages
-  // just advance (walk finding 3, 2026-08-15); the page rail is the pager
+  // just advance (walk finding 3, 2026-08-15); the page rail is the pager.
+  // The "Next flagged" button is GONE (user, 2026-08-17): the page chips
+  // carry the flag dots — the reviewer taps the flagged chip to jump.
   const isLastPage = session.pageIndex === doc.pages.length - 1;
   const confirmBtn = el(
     "button",
@@ -716,7 +698,6 @@ function renderSurface(main, session) {
     isLastPage ? "✓ Confirm & Next →" : "Next page →",
   );
   const actionBar = el("div", { class: "rv-txa" }, [
-    nextBtn,
     el("div", { class: "rv-txa-right" }, [confirmBtn]),
   ]);
 
@@ -725,11 +706,9 @@ function renderSurface(main, session) {
 
   session.root = root;
   session.txBody = txBody;
-  session.fcBadge = fcBadge;
   session.confirmBtn = confirmBtn;
   session.fixingNote = null;
   syncSurfaceUrl(session);
-  session.nextBtn = nextBtn;
   currentSession = session;
   updateFixingState(session);
 
@@ -1516,9 +1495,6 @@ function applyEdit(session, lineIndex, text) {
   saveEdits(batch.batchId, docIndex, session.edits);
   session.editing = null;
   session.selLine = lineIndex;
-  const toCheck = availablePositions(session).length;
-  session.fcBadge.textContent = String(toCheck);
-  session.nextBtn.disabled = toCheck === 0;
   renderTx(session);
   // The accept ADVANCES the review: a line down, eased, so the next
   // content comes into view — the reviewer never reads a line whose
@@ -1762,23 +1738,6 @@ function renderTx(session) {
     session.txBody.querySelector(".rv-line--sel")?.scrollIntoView({ block: "nearest" });
   }
   session.lastSelRendered = session.selLine;
-}
-
-/** Jump to the next flagged word (across pages), opening its line for
- *  editing; wraps when the document is done. */
-async function jumpNextFlag(session) {
-  acceptEdit(session);
-  await queueRotation(session);
-  const positions = availablePositions(session);
-  const pos = nextFlagged(positions, session.from);
-  if (!pos) return;
-  session.from = pos;
-  const { batch } = session;
-  const doc = batch.documents[session.docIndex];
-  session.pageIndex = doc.pages.indexOf(pos.page);
-  session.selLine = pos.line;
-  session.editing = pos.line;
-  renderSurface(session.root, session);
 }
 
 /** Confirm & Next: the last page confirms the document through the sync

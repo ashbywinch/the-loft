@@ -14,7 +14,6 @@ import {
   formatParts,
   lineIndexForY,
   loadEdits,
-  nextFlagged,
   outboxAdd,
   outboxDrop,
   outboxPending,
@@ -144,31 +143,8 @@ describe("flag navigation — bounded and resumable (VR9)", () => {
       { page: "p1.jpg", line: 0 },
     ]);
   });
-
-  it("nextFlagged walks forward and wraps; null with nothing left", () => {
-    const positions = flaggedPositions([DOC], 0, {});
-    expect(nextFlagged(positions, null)).toEqual(positions[0]);
-    expect(nextFlagged(positions, positions[0])).toEqual(positions[1]);
-    expect(nextFlagged(positions, positions[1])).toEqual(positions[0]);
-    expect(nextFlagged([], null)).toBeNull();
-  });
-
-  it("nextFlagged continues AFTER an accepted position instead of restarting", () => {
-    // the from's line was accepted (removed from the list) — the tour
-    // must continue after it by order, not blink back at the first flag
-    const positions = [
-      { page: "page-03.jpg", line: 0 },
-      { page: "page-03.jpg", line: 1 },
-      { page: "page-04.jpg", line: 2 },
-    ];
-    expect(nextFlagged(positions, { page: "page-03.jpg", line: 0 })).toEqual(positions[1]);
-    expect(nextFlagged(positions, { page: "page-03.jpg", line: 1 })).toEqual(positions[2]);
-    // the from on a fully-accepted page — continue on the next page
-    expect(nextFlagged(positions, { page: "page-03.jpg", line: 9 })).toEqual(positions[2]);
-    // the from was the LAST position (accepted) — wrap to the start
-    expect(nextFlagged(positions, { page: "page-04.jpg", line: 2 })).toEqual(positions[0]);
-  });
 });
+
 
 describe("the outbox — nothing confirmed is lost to a failed push", () => {
   beforeEach(() => localStorage.clear());

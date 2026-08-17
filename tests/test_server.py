@@ -980,11 +980,12 @@ def test_sync_drafts_serves_the_guessed_texts(server: ServerFixture) -> None:
 
 
 def test_sync_drafts_hides_photo_only_documents(server: ServerFixture) -> None:
-    """The transcription review shows only documents with a text page
-    (2026-08-17, user): a standalone photo has nothing to transcribe —
-    it belongs to the people/places identification flow, which reads the
-    same structure unfiltered. A mixed document (a postcard's picture
-    side + text side) still shows."""
+    """The transcription review shows only documents with a text page,
+    and only their TEXT pages (2026-08-17, user): a standalone photo has
+    nothing to transcribe — it belongs to the people/places identification
+    flow, which reads the same structure unfiltered. A two-sided item's
+    picture side stays in the structure but the review pages through only
+    its text side."""
     import json as _json
 
     guess = server.work_dir / "adopt-0001" / "ocr-guess"
@@ -1018,7 +1019,7 @@ def test_sync_drafts_hides_photo_only_documents(server: ServerFixture) -> None:
     assert status == 200
     body = _json.loads(raw.decode("utf-8"))
     docs = body["documents"]
-    assert [d["pages"] for d in docs] == [["front.jpg", "back.jpg"]]
+    assert [d["pages"] for d in docs] == [["back.jpg"]]
 
 
 def test_sync_drafts_rejects_a_traversal_batch_id(server: ServerFixture) -> None:

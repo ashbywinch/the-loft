@@ -686,21 +686,27 @@ def build_app(
         try:
             record = load_batch(batch_id, registry_dir)
             by_pages = {tuple(b.get("pages", [])): b.get("status", "review") for b in (record.get("boundaries") or [])}
-            # the transcription review shows only documents with a text
-            # page (2026-08-17, user): photo-only items — the picture side
-            # of a postcard pairs into its document, but a standalone
-            # photo has nothing to transcribe — belong to the
-            # people/places identification flow, which reads the same
-            # structure with no filter. The photo docs stay "review" in
-            # the registry until that flow claims them.
-            documents = [
-                {
-                    **document,
-                    "status": by_pages.get(tuple(document.get("pages", [])), "review"),
-                }
-                for document in draft_payloads(batch_id, work_dir)
-                if document.get("texts")
-            ]
+            # The transcription review shows only documents with a text
+            # page, and only their TEXT pages (2026-08-17, user: "we just
+            # don't need to show users any of the photos when they're
+            # checking transcription"). A photo-only item has nothing to
+            # transcribe — it belongs to the people/places identification
+            # flow, which reads the same structure with no filter (the
+            # photo docs stay "review" until that flow claims them). The
+            # picture side of a two-sided item stays in the structure; the
+            # review just does not page through it.
+            documents = []
+            for document in draft_payloads(batch_id, work_dir):
+                texts = document.get("texts") or {}
+                if not texts:
+                    continue
+                documents.append(
+                    {
+                        **document,
+                        "pages": [p for p in document.get("pages", []) if p in texts],
+                        "status": by_pages.get(tuple(document.get("pages", [])), "review"),
+                    }
+                )
             return {
                 "batch_id": batch_id,
                 "label": record.get("label"),

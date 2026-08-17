@@ -75,14 +75,17 @@ words are usable on the smaller screen (user, 2026-08-15).
 remains in a batch, leave partway, and come back without re-reading what
 they already handled. Progress is visible.
 
-**VR10 — Reorientation is immediate and persistent.** When the reviewer
-turns a page with the ↻ control, the page is reoriented instantly, and it
-stays reoriented every time they look at it thereafter — regardless of
-what the back end is doing (a pending, delivered, or failed
-re-transcription never reverts or re-flags the reviewer's own correction).
-The reviewer's view of a page they fixed is authoritative on their side;
-the back end's async re-read is invisible unless it has something to say
-(user requirement, 2026-08-16).
+**VR10 — Reorientation is the reviewer's act, immediate and reliable.** 
+Only pressing the ↻ control reorients a page — nothing on the front end
+ever rotates a page the reviewer didn't rotate, and no stored "intent" is
+ever replayed or auto-delivered. When the reviewer does press ↻:
+(i) the page is reoriented instantly and stays that way on every look
+thereafter, regardless of what the back end is doing — the reviewer's
+corrected orientation is authoritative for display and never reverts; and
+(ii) that reorientation is delivered reliably to the back end, which
+reorients the image, re-runs OCR, and returns an updated transcription —
+a back end that catches up late changes the OCR results, never the
+displayed orientation (user requirement, 2026-08-16).
 
 ## 3. Acceptance criteria
 
@@ -111,9 +114,16 @@ the back end's async re-read is invisible unless it has something to say
 11. Turning a page reorients it immediately, and it appears that way on
     every subsequent visit, independent of the back end's re-transcription
     state (VR10).
-12. When a page's re-read after a correction fails, the surface says so
-    plainly ("the re-read failed") — it never implies the text is fine, and
-    never blames a correction the reviewer never made (VR10, VR8).
+12. A reorientation the reviewer makes is delivered reliably to the back
+    end, which reorients the image and delivers an updated transcription;
+    a back end that catches up late changes the OCR text, never the
+    displayed orientation (VR10).
+13. The front end reorients a page only when the reviewer presses ↻ — a
+    stored or stale item is never replayed, and a reload or revisit never
+    rotates a page the reviewer didn't rotate (VR10).
+14. When a page's re-read after a correction fails, the surface says so
+    plainly ("the re-read failed") — it never implies the text is fine,
+    and never blames a correction the reviewer never made (VR10, VR8).
 
 ## 4. Non-goals
 

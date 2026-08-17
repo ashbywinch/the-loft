@@ -226,11 +226,46 @@ def test_orientation_hints_skip_single_dominant_pages(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    def _should_not_be_called(_image: Path) -> dict[str, object]:
+    def _should_not_be_called(_image: Path, _text: str) -> dict[str, object]:
         raise AssertionError("the report must not run for a clean page")
 
     _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _should_not_be_called)
     assert not (guess / "p1.orientation.json").exists()
+
+
+def test_orientation_hints_write_when_the_located_lines_are_multi_direction(tmp_path: Path) -> None:
+    """The v3 report's multi-direction evidence lives in the LINES' degrees
+    (the model locates the known text; the orientation_hint may be empty)
+    — the sidecar must still be written (2026-08-17: the eval caught the
+    check reading only the hints, so an ambiguous page fell back to the
+    plain single-orientation layout)."""
+    from tools.pipeline import _write_orientation_hints
+
+    batch_work = tmp_path / "work" / "adopt-0001"
+    oriented = batch_work / "oriented"
+    guess = batch_work / "ocr-guess"
+    oriented.mkdir(parents=True)
+    guess.mkdir(parents=True)
+    (batch_work / "oriented" / "rotations.json").write_text(
+        json.dumps({"p1.jpg": {"degrees": 0, "strong": 23, "scores": {"0": 15, "90": 3, "180": 23, "270": 5}}}),
+        encoding="utf-8",
+    )
+    (oriented / "p1.jpg").write_text("image", encoding="utf-8")
+    (guess / "p1.txt").write_text("POST CARD.\nmessage line\n", encoding="utf-8")
+
+    def _fake_report(_image: Path, text: str) -> dict[str, object]:
+        assert "POST CARD." in text  # the known transcription is the context
+        return {
+            "orientation_hint": [],
+            "lines": [
+                {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+                {"index": 1, "box": [500, 200, 900, 400], "degrees": 90},
+            ],
+        }
+
+    _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _fake_report)
+    sidecar = json.loads((guess / "p1.orientation.json").read_text(encoding="utf-8"))
+    assert [ln["degrees"] for ln in sidecar["lines"]] == [0, 90]
 
 
 def test_orientation_hints_write_the_sidecar_for_ambiguous_pages(tmp_path: Path) -> None:
@@ -251,7 +286,7 @@ def test_orientation_hints_write_the_sidecar_for_ambiguous_pages(tmp_path: Path)
     (oriented / "p1.jpg").write_text("image", encoding="utf-8")
     calls: list[Path] = []
 
-    def _fake_report(image: Path) -> dict[str, object]:
+    def _fake_report(image: Path, _text: str) -> dict[str, object]:
         calls.append(image)
         return {
             "orientation_hint": [{"region": "message", "degrees": 0}, {"region": "address", "degrees": 270}],
@@ -271,7 +306,7 @@ def test_orientation_hints_write_the_sidecar_for_ambiguous_pages(tmp_path: Path)
     # the model disagrees: one direction only -> no sidecar
     (guess / "p1.orientation.json").unlink()
 
-    def _single(_image: Path) -> dict[str, object]:
+    def _single(_image: Path, _text: str) -> dict[str, object]:
         return {"orientation_hint": [{"region": "message", "degrees": 0}], "lines": []}
 
     _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _single)

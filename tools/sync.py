@@ -392,16 +392,21 @@ def _write_multi_sidecar(
     page: str,
     image_path: Path,
     raw_dir: Path,
-    orientation_report_fn: Callable[[Path], dict[str, Any]] | None,
+    text: str,
+    orientation_report_fn: Callable[[Path, str], dict[str, Any]] | None,
 ) -> None:
     """The second pass does better (2026-08-17): the reviewer's rotate is
     the signal the first pass missed an orientation — re-run the report on
-    the corrected image; a multi-direction report writes the sidecar the
-    layout stage reads (the model's per-line transcription + boxes)."""
+    the corrected image, locating the freshly re-read transcription; a
+    multi-direction report writes the sidecar the layout stage reads (the
+    per-line boxes + orientations, keyed to the text's line numbers)."""
     report_fn = orientation_report_fn if orientation_report_fn is not None else orientation_report
-    report = report_fn(image_path)
+    report = report_fn(image_path, text)
     hints = report.get("orientation_hint", []) if isinstance(report, dict) else []
     degrees = {int(h.get("degrees")) for h in hints if h.get("degrees") in (0, 90, 180, 270)}
+    # the v3 multi-direction evidence lives in the lines' degrees too
+    located = report.get("lines", []) if isinstance(report, dict) else []
+    degrees |= {int(ln.get("degrees")) for ln in located if ln.get("degrees") in (0, 90, 180, 270)}
     if len(degrees) >= 2:
         atomic_write(
             raw_dir / Path(page).with_suffix(".orientation.json"),
@@ -417,7 +422,7 @@ def reprocess_page_transcription(
     *,
     transcribe: Any = None,
     selfreport: Any = None,
-    orientation_report_fn: Callable[[Path], dict[str, Any]] | None = None,
+    orientation_report_fn: Callable[[Path, str], dict[str, Any]] | None = None,
     layout_runner: Callable[[str, Path, list[str] | None], None] | None = None,
     people: list[str] | None = None,
     places: list[str] | None = None,
@@ -469,7 +474,7 @@ def reprocess_page_transcription(
         atomic_write(report_path, json.dumps(report, ensure_ascii=False, indent=1) + "\n")
         # the fresh orientation report on the CORRECTED image — a
         # multi-direction report writes the sidecar the layout stage reads
-        _write_multi_sidecar(page, image_path, raw_dir, orientation_report_fn)
+        _write_multi_sidecar(page, image_path, raw_dir, new_text, orientation_report_fn)
         runner = layout_runner if layout_runner is not None else run_layout
         runner(batch_id, work_dir, [page])
         new_layout = load_layout(layout_path)

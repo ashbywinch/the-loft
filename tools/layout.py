@@ -585,56 +585,125 @@ def _anchored_lines(
     return lines
 
 
+def _located_box(
+    report: dict[str, Any] | None,
+    match: dict[str, Any] | None,
+    width: int,
+    height: int,
+) -> list[float] | None:
+    """The line's box: the report's located box (normalized 0-1000 scaled
+    to pixels; [0,0,0,0] = not located), else the rec match's box, else
+    None — a boxless line is flagged (2026-08-17)."""
+    b = report.get("box") if report else None
+    if b and (b[2] > b[0] or b[3] > b[1]):
+        return [
+            b[0] / NORMALIZED_BOX_SCALE * width,
+            b[1] / NORMALIZED_BOX_SCALE * height,
+            b[2] / NORMALIZED_BOX_SCALE * width,
+            b[3] / NORMALIZED_BOX_SCALE * height,
+        ]
+    return match["box"] if match else None
+
+
+def _vlm_text_lines(
+    guess_lines: list[str],
+    report_lines: list[dict[str, Any]],
+    matches: list[dict[str, Any]],
+    width: int,
+    height: int,
+) -> list[dict[str, Any]]:
+    """The v3 anchored lines (2026-08-17): the guess's authoritative
+    transcription, each line LOCATED by the report (box + degrees keyed
+    by the line index). A line the report couldn't locate takes its rec
+    match's box, or none — flagged. Only the CONTENT matches confirm
+    (the rec read the same words); a partial report degrades only the
+    geometry, never the text."""
+    by_index = {int(r["index"]): r for r in report_lines if isinstance(r.get("index"), int)}
+    match_by_index = {m["vlm_index"]: m for m in matches}
+    confirmed = {m["vlm_index"] for m in matches if m.get("box_source") == "content"}
+    lines: list[dict[str, Any]] = []
+    for i, line_text in enumerate(guess_lines):
+        r = by_index.get(i)
+        match = match_by_index.get(i)
+        is_confirmed = i in confirmed
+        lines.append(
+            {
+                "index": len(lines),
+                "text": line_text,
+                "box": _located_box(r, match, width, height),
+                "conf": 1.0 if is_confirmed else 0.0,
+                "orientation": int(r.get("degrees", 0)) if r else 0,
+                "box_source": "vlm" if is_confirmed else "vlm-unconfirmed",
+                "words": [
+                    {"word": w, "box": None, "conf": 1.0 if is_confirmed else 0.0} for w in vlm_line_words(line_text)
+                ],
+            }
+        )
+    return lines
+
+
+def _extra_lines(unmatched: list[Detection]) -> list[dict[str, Any]]:
+    """The rec detections no text line claimed — the model-missed text —
+    flagged extras at their pass orientation."""
+    lines: list[dict[str, Any]] = []
+    for det in unmatched:
+        orientation = det.get("orientation")
+        lines.append(
+            {
+                "index": 0,  # provisional — re-indexed after the dedupe + sort
+                "text": det["text"],
+                "box": det["box"],
+                "conf": 0.0,
+                "orientation": orientation if isinstance(orientation, int) else 0,
+                "box_source": "multi",
+                "words": _multi_line_words(det["text"], det.get("words", []), 0.0),
+            }
+        )
+    return lines
+
+
+# the combined layout's heterogeneous inputs — the page identity, geometry, the passes, the report, the text
+# lucidlint: ignore long-param-list a parameter object would obscure the pure function
 def multi_layout(
     page: str,
     width: int,
     height: int,
     passes: list[tuple[int, list[dict[str, Any]]]],
     report_lines: list[dict[str, Any]] | None = None,
+    vlm_text: str | None = None,
 ) -> dict[str, Any]:
     """The combined multi-orientation layout (PRD VR15).
 
-    With the model's per-line geometry (``report_lines`` — the orientation
-    report's transcription, each line with its box in the normalized
-    0-1000 frame and its degrees), the lines ARE the model's transcription
-    anchored to its OWN boxes — the box holds the words it claims, by
-    construction (VR14, 2026-08-17: the reproduced fault was the rec's
-    fragments mispaired with the detector's boxes — the review's text was
-    nonsense and the boxes didn't match the words). A rec detection
-    agreeing on content marks the line confident; the rec lines no VLM
-    line claims stay as flagged extras (the vertical texts the model
-    missed). Without the report's geometry, the rec-based pass lines are
-    the layout (the v1 fallback).
+    With the report's per-line geometry (``report_lines`` — box in the
+    normalized 0-1000 frame + degrees, keyed by the line index) AND the
+    page's known transcription (``vlm_text`` — the guess's corrected
+    reading), the lines ARE that authoritative text, each located at its
+    box — the box holds the words it claims (VR14). A rec detection
+    agreeing on content marks the line confident; the rec lines no text
+    line claims stay as flagged extras. Without the report, the
+    rec-based pass lines are the layout (the v1 fallback).
 
     The lines order 0° first then each next direction; within a group the
-    report's order, then the extras by reading position; the same physical
+    text order, then the extras by reading position; the same physical
     region keeps only its best reading (dedupe_regions)."""
     if report_lines:
         detections = cast(
             "list[Detection]",
             [{**entry, "orientation": degrees} for degrees, admitted in passes for entry in admitted],
         )
-        report_texts = [str(r.get("text", "")) for r in report_lines]
-        matches, unmatched = associate_lines(report_texts, detections)
-        # only a CONTENT match confirms — the positional fallback
-        # (associate_lines' boxless fill) means the rec found something
-        # nearby but never read the same words: honest doubt
-        confirmed = {m["vlm_index"] for m in matches if m.get("box_source") == "content"}
-        lines = _anchored_lines(report_lines, confirmed, width, height)
-        for det in unmatched:  # the model-missed rec lines stay, flagged
-            orientation = det.get("orientation")
-            ori = orientation if isinstance(orientation, int) else 0
-            lines.append(
-                {
-                    "index": len(lines),
-                    "text": det["text"],
-                    "box": det["box"],
-                    "conf": 0.0,
-                    "orientation": ori,
-                    "box_source": "multi",
-                    "words": _multi_line_words(det["text"], det.get("words", []), 0.0),
-                }
-            )
+        if vlm_text:
+            # v3 (2026-08-17): the layout's text is the guess's
+            # authoritative transcription; the report LOCATES each line
+            guess_lines = [ln for ln in vlm_text.split("\n") if ln.strip()]
+            matches, unmatched = associate_lines(guess_lines, detections)
+            lines = _vlm_text_lines(guess_lines, report_lines, matches, width, height)
+        else:
+            # v2: the report's own transcription (no known text was given)
+            report_texts = [str(r.get("text", "")) for r in report_lines]
+            matches, unmatched = associate_lines(report_texts, detections)
+            confirmed = {m["vlm_index"] for m in matches if m.get("box_source") == "content"}
+            lines = _anchored_lines(report_lines, confirmed, width, height)
+        lines += _extra_lines(unmatched)
     else:
         lines = [
             {
@@ -663,9 +732,11 @@ def load_orientation_hint(path: Path) -> list[int]:
     the pipeline stage when the arbiter's scores suggested more than one
     direction (PRD VR15). [] = a single orientation — the plain
     single-orientation layout path applies. The sidecar is the report
-    dict — {"orientation_hint": [...], "lines": [...]} (2026-08-17)."""
+    dict — the v3 lines carry their own degrees (2026-08-17), so the
+    hints and the lines' degrees both feed the pass set."""
     report = load_orientation_report(path)
     degrees = {int(h.get("degrees")) for h in report.get("orientation_hint", [])}
+    degrees |= {int(ln.get("degrees")) for ln in report.get("lines", []) if ln.get("degrees") in (0, 90, 180, 270)}
     return sorted(degrees) if len(degrees) >= 2 else []
 
 

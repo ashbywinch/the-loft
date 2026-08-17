@@ -392,7 +392,7 @@ def test_reprocess_page_transcription_reruns_the_text(tmp_path: Path) -> None:
         tmp_path,
         transcribe=lambda image, **kw: ("the corrected fresh text\n", {"total_tokens": 0}),
         selfreport=lambda image, guess_text, **kw: [{"line": 1, "word": "fresh"}],
-        orientation_report_fn=lambda image: {"orientation_hint": [], "lines": []},
+        orientation_report_fn=lambda image, text: {"orientation_hint": [], "lines": []},
         layout_runner=fake_layout_runner,
     )
 
@@ -436,7 +436,7 @@ def test_reprocess_page_transcription_writes_the_multi_sidecar(tmp_path: Path) -
         tmp_path,
         transcribe=lambda image, **kw: ("the corrected fresh text\n", {"total_tokens": 0}),
         selfreport=lambda image, guess_text, **kw: [],
-        orientation_report_fn=lambda image: {
+        orientation_report_fn=lambda image, text: {
             "orientation_hint": [
                 {"region": "message", "degrees": 0},
                 {"region": "address", "degrees": 270},

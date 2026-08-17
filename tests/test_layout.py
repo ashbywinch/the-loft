@@ -608,6 +608,41 @@ def test_dedupe_never_drops_the_anchored_report_lines() -> None:
     assert "ONLY THE ADDRESS TO BE WRITTEN HERE." in texts
 
 
+def test_multi_layout_uses_the_guess_text_located_by_the_report() -> None:
+    """v3 (2026-08-17): the layout's text is the GUESS's authoritative
+    transcription; the report LOCATES each line (box + degrees keyed by
+    the line index) — a partial report degrades only the geometry, never
+    the text (the reproduced fault: the report's own transcription varied
+    between calls and could drop whole paragraphs)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (0, [{"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []}]),
+            (270, [{"text": "onorrow", "box": [501, 201, 899, 399], "score": 0.9, "words": []}]),
+        ],
+        report_lines=[
+            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+            {"index": 1, "box": [500, 200, 900, 400], "degrees": 270},
+            {"index": 2, "box": [0, 0, 0, 0], "degrees": 0},  # not located
+        ],
+        vlm_text="POST CARD\nWe are from beauford\na line the report could not locate",
+    )
+    texts = [ln["text"] for ln in layout["lines"]]
+    assert texts[0] == "POST CARD"
+    assert "We are from beauford" in texts
+    assert "a line the report could not locate" in texts  # the text survives a missing box
+    by_text = {ln["text"]: ln for ln in layout["lines"]}
+    assert by_text["POST CARD"]["box"] == [100.0, 50.0, 300.0, 100.0]  # the report's located box
+    assert by_text["POST CARD"]["conf"] == 1.0  # the rec content-agreed
+    assert by_text["We are from beauford"]["box"] == [500.0, 200.0, 900.0, 400.0]
+    assert all(w["conf"] == 0.0 for w in by_text["We are from beauford"]["words"])  # the rec didn't agree
+    assert by_text["a line the report could not locate"]["box"] is None  # flagged, boxless
+
+
 def test_multi_layout_orders_zero_first_then_next_directions() -> None:
     """The combined layout shows the 0° lines first, then each next
     direction, each line carrying the orientation it was read at (VR15)."""

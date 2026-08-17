@@ -160,13 +160,17 @@ def pass_at(
 
 
 def layout_page_multi(
-    engine: Any, image: Path, orientations: list[int], report_lines: list[dict[str, Any]] | None = None
+    engine: Any,
+    image: Path,
+    orientations: list[int],
+    report_lines: list[dict[str, Any]] | None = None,
+    vlm_text: str | None = None,
 ) -> dict[str, Any]:
     """The multi-orientation layout (PRD VR15): a detection pass at each
     reported orientation, recognition-driven admission, one combined
-    layout — with the model's own per-line transcription + boxes from the
-    orientation report when present (the v2 anchoring, 2026-08-17), the
-    rec passes validating; without them the rec-based lines fall back.
+    layout — the guess's authoritative transcription located at the
+    report's per-line boxes (the v3 anchoring, 2026-08-17), the rec
+    passes validating; without the report the rec-based lines fall back.
     The oriented image is already the pipeline's right way up, so the
     initial display rotation stays 0."""
     with Image.open(image) as im:
@@ -175,7 +179,7 @@ def layout_page_multi(
     for degrees in orientations:
         kept, _ = pass_at(engine, image, degrees, ow, oh)
         passes.append((degrees, kept))
-    return multi_layout(image.name, ow, oh, passes, report_lines=report_lines)
+    return multi_layout(image.name, ow, oh, passes, report_lines=report_lines, vlm_text=vlm_text)
 
 
 def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engine: Any) -> int:
@@ -202,7 +206,8 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
         if orientations:
             passes = orientation_passes(orientations)
             report_lines = load_orientation_report(guess_dir / f"{image.stem}.orientation.json").get("lines") or None
-            layout = layout_page_multi(engine, image, passes, report_lines=report_lines)
+            vlm_text = vlm_path.read_text(encoding="utf-8")
+            layout = layout_page_multi(engine, image, passes, report_lines=report_lines, vlm_text=vlm_text)
             print(
                 f"layout: {image.name} multi-orientation {orientations} "
                 f"(passes {passes}) -> {len(layout['lines'])} lines"

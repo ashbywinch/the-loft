@@ -194,7 +194,7 @@ def process(
     work_dir: Path = WORK_DIR,
     archive_dir: Path = ARCHIVE_DIR,
     client: Callable[[str, str], str] | None = None,
-    orientation_report_fn: Callable[[Path], dict[str, Any]] | None = None,
+    orientation_report_fn: Callable[[Path, str], dict[str, Any]] | None = None,
     run_layout: Callable[[str, Path], None] | None = None,
 ) -> None:
     """Classify → orient (text pages) → route → HTR/tesseract → guess →
@@ -400,7 +400,7 @@ def _run_guess(
     raw_texts = [(name, (raw_dir / Path(name).with_suffix(".txt")).read_text(encoding="utf-8")) for name in text_pages]
     label = str(record.get("label", ""))
     people, places = _standing_knowledge(archive_dir)
-    chat = client if client is not None else AIClient(model=GUESS_MODEL, max_tokens=12000, timeout=300.0).chat
+    chat = client if client is not None else AIClient(model=GUESS_MODEL, max_tokens=12000, timeout=900.0).chat
     flags: list[dict[str, Any]] = []
     # each iteration calls guess_pages — a model inference with side effects — and extends
     # with its result; a comprehension would bury the side-effecting call inside an expression
@@ -465,16 +465,17 @@ def _write_orientation_hints(
     batch_work: Path,
     oriented_dir: Path,
     guess_dir: Path,
-    orientation_report_fn: Callable[[Path], dict[str, Any]],
+    orientation_report_fn: Callable[[Path, str], dict[str, Any]],
 ) -> None:
     """For pages whose arbiter scores suggest more than one text
-    direction, ask the vision model for the structured orientation report
-    (the per-line transcription with the model's own boxes + the region
-    hints) and store it (``ocr-guess/<stem>.orientation.json``) for the
-    layout stage. A single-dominant page gets no report — the plain
-    single-orientation layout suffices; the report runs only where the
-    scores already suspect more than one direction (PRD VR15, 2026-08-17).
-    A single-direction report (the model disagrees) also writes nothing —
+    direction, ask the vision model to LOCATE the page's known
+    transcription (the guess's corrected text — the model assigns each
+    line its box + orientation) and store it
+    (``ocr-guess/<stem>.orientation.json``) for the layout stage. A
+    single-dominant page gets no report — the plain single-orientation
+    layout suffices; the report runs only where the scores already
+    suspect more than one direction (PRD VR15, 2026-08-17). A
+    single-direction report (the model disagrees) also writes nothing —
     the layout stage then takes the plain path."""
     rotations_path = batch_work / "oriented" / "rotations.json"
     if not rotations_path.exists():
@@ -487,9 +488,20 @@ def _write_orientation_hints(
         scores = rotations.get(page, {}).get("scores", {})
         if not _ambiguous_rotations(scores):
             continue
-        report = orientation_report_fn(oriented_dir / page)
+        guess_text = ""
+        txt = guess_dir / f"{Path(page).stem}.txt"
+        if txt.exists():
+            guess_text = txt.read_text(encoding="utf-8")
+        report = orientation_report_fn(oriented_dir / page, guess_text)
         hints = report.get("orientation_hint", []) if isinstance(report, dict) else []
         degrees = {int(h.get("degrees")) for h in hints if h.get("degrees") in (0, 90, 180, 270)}
+        # the v3 report's multi-direction evidence lives in the LINES'
+        # degrees (the model locates the known text; the orientation_hint
+        # may be empty) — the sidecar must be written either way
+        # (2026-08-17: the eval caught the hints-only check dropping an
+        # ambiguous page back to the plain layout)
+        located = report.get("lines", []) if isinstance(report, dict) else []
+        degrees |= {int(ln.get("degrees")) for ln in located if ln.get("degrees") in (0, 90, 180, 270)}
         if len(degrees) >= 2:
             atomic_write(out, json.dumps(report, ensure_ascii=False) + "\n")
             print(f"layout: orientation report for {page} — {sorted(degrees)}")

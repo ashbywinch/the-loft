@@ -659,6 +659,9 @@ describe("a multi-orientation page renders (VR15)", () => {
     // the flagged line carries the mark-fine (check) button
     const weakLine = main.querySelector('.rv-line[data-index="0"]');
     expect(weakLine?.querySelector(".rv-ok-btn")).toBeTruthy();
+    // the action bar holds the advance/confirm button — the only control
+    // (the Next-flagged button is gone, user 2026-08-17)
+    expect(main.querySelector(".rv-txa .rv-btn--primary")).toBeTruthy();
     vi.unstubAllGlobals();
   });
 });

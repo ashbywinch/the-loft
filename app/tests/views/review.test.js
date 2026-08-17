@@ -20,6 +20,7 @@ import {
   outboxPending,
   deltaOfDesired,
   deliverOwed,
+  isOrientationCovered,
   orientationState,
   render,
   saveEdits,
@@ -433,6 +434,21 @@ describe("the reviewer's orientation — { desired, acked } per page, set only b
     // a never-pressed page shows the file as-is, whatever the backend's
     // applied rotation — a stale legacy entry cannot reorient it
     expect(deltaOfDesired(0, 90)).toBe(270); // base 90, nothing pressed → the file's own orientation
+  });
+
+  it("a rotate to a covered orientation is view-only; an uncovered one is owed (VR15)", () => {
+    // the postcard: the pipeline read 0° + 90° + 270° — a plain layout
+    // ([0]) covers only the image's upright; no layout covers nothing
+    expect(isOrientationCovered([0, 90, 270], 0, 0)).toBe(true);
+    expect(isOrientationCovered([0, 90, 270], 0, 1)).toBe(true); // 90°
+    expect(isOrientationCovered([0, 90, 270], 0, 2)).toBe(false); // 180° — missed
+    expect(isOrientationCovered([0, 90, 270], 0, 3)).toBe(true); // 270°
+    expect(isOrientationCovered([0], 0, 1)).toBe(false); // plain page → 90° queues the re-read
+    expect(isOrientationCovered(undefined, 0, 1)).toBe(false); // no layout → nothing covered
+    // the covered set is relative to the served image: after the backend
+    // applied +180°, the page's 0° text displays at quarter 2
+    expect(isOrientationCovered([0], 180, 2)).toBe(true);
+    expect(isOrientationCovered([0], 180, 0)).toBe(false);
   });
 
   it("persists the reviewer's desired per page, independently of the backend", () => {

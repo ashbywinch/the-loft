@@ -21,7 +21,6 @@ import contextlib
 import json
 import os
 import shutil
-import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -31,6 +30,7 @@ from tools.ai_client import AIClient, AIClientError
 from tools.atomic import atomic_write
 from tools.classify import route, run_classify
 from tools.htr import htr_pages, htr_pages_vlm
+from tools.layout_stage import run_layout as layout_stage_run
 from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR
 from tools.ocr import orient_pages
 from tools.registry import RegistryError as PipelineError
@@ -49,11 +49,6 @@ GUESS_PAGE_CHUNK = 5  # the guess re-emits each page's corrected text; the OUTPU
 # 270:9 splits; a clean page's losers are near zero).
 AMBIGUITY_RATIO = 0.25  # the second-best rotation's share of the winner
 AMBIGUITY_FLOOR = 5  # ...and it must clear this many strong words outright
-
-# The layout stage's interpreter (VR14, 2026-08-15): PaddleOCR lives in
-# the .venv-htr venv; the main venv never imports it — the htr.py
-# KRAKEN precedent.
-LAYOUT_INTERP = str(Path(__file__).resolve().parent.parent / ".venv-htr" / "bin" / "python")
 
 STATUS_PROCESSING = "importing"
 STATUS_REVIEW = "review"
@@ -277,9 +272,11 @@ def process(
     # runs only for the arbiter-ambiguous pages; the pass itself runs
     # under the .venv-htr interpreter (PaddleOCR lives there).
     report = orientation_report_fn if orientation_report_fn is not None else orientation_report
-    runner = run_layout if run_layout is not None else _run_layout_subprocess
+    # the module-level run_layout (tools.layout_stage) — the DI param of
+    # the same name shadows it inside process, so resolve before use
+    layout_runner = run_layout if run_layout is not None else layout_stage_run
     _write_orientation_hints(text_pages, batch_work, oriented_dir, guess_dir, report)
-    runner(batch_id, work_dir)
+    layout_runner(batch_id, work_dir)
 
     _update_status(record, batch_id, STATUS_REVIEW, registry_dir)
     print(f"batch {batch_id} awaiting review (make confirm ARGS={batch_id!r})")
@@ -474,24 +471,6 @@ def _write_orientation_hints(
         if len(degrees) >= 2:
             atomic_write(out, json.dumps(hints, ensure_ascii=False) + "\n")
             print(f"layout: orientation report for {page} — {sorted(degrees)}")
-
-
-def _run_layout_subprocess(batch_id: str, work_dir: Path) -> None:
-    """The VR14 wiring: the layout stage runs under the .venv-htr
-    interpreter (PaddleOCR lives there; the main venv never imports it —
-    the htr.py KRAKEN precedent). Every text page gets its layout: line
-    boxes + per-word confidence; the multi-orientation pages get the
-    combined per-line-orientation layout (PRD VR15). The thread env caps
-    the engine at nproc-1 cores — the ML stages leave a core for the
-    rest of the box (2026-08-17, the laptop requirement)."""
-    threads = max(1, (os.cpu_count() or 2) - 1)
-    env = {**os.environ, "OMP_NUM_THREADS": str(threads), "FLAGS_paddle_num_threads": str(threads)}
-    subprocess.run(
-        [LAYOUT_INTERP, "-m", "tools.layout_detect", batch_id, "--work-dir", str(work_dir)],
-        check=True,
-        cwd=Path(__file__).resolve().parent.parent,
-        env=env,
-    )
 
 
 def _update_status(record: dict[str, Any], batch_id: str, status: str, registry_dir: Path) -> None:

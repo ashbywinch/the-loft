@@ -684,6 +684,24 @@ reading at that orientation produced real text — never on shape alone, so
 an accidental upside-down pass's boxes are discarded. This is the
 candidate approach for VR15; it is being prototyped on the postcard.
 
+**Prototype outcome (2026-08-16, the postcard).** The approach was tried
+end to end: one vision-model call returned the transcription + a
+structured `orientation_hint` (text at 0° and 270°, with regions — the
+model sees multi-direction text reliably); then a detection pass ran at
+each reported orientation and a line was admitted only when the
+recognizer read real text there (rec score ≥ 0.85 and ≥ 2 letters), with
+its box remapped to the original image. It works: the 270° block's text
+(`HERNSPETH HOUSE,`, `HARBOTTLE, MORPETH`, `With Greetings and`) is
+admitted in the 270° pass with correct in-image boxes, while
+wrong-orientation reads (`Bbesrwishesl`, `Greetig and`) are rejected.
+Two follow-ups before this is production-ready: (1) **line assembly** —
+the recognizer emits word fragments on rotated text, so admitted pieces
+must be merged into lines (as `build_layout` already does for single
+orientation); (2) **admission tuning** — single-letter pieces (the
+stamp's "E R") are dropped by the ≥2-letter rule; and the orientation
+report should be folded into the existing transcription call (one model
+pass) rather than a separate call, to avoid the extra ~12K tokens.
+
 
 **Decisions — RESOLVED (user, 2026-08-03):** managed Postgres + pgvector on **Supabase**; **a small number of family curators** (a simple per-field last-write-wins + audit-log conflict story suffices; the far-future possibility of hosting *other families* that must never see our content is a tenant-isolation seam — the existing contributor-ID namespacing, §14 — and is not built now); the generation batch runs on **the reviewer's laptop**.
 

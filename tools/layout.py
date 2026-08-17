@@ -66,6 +66,7 @@ QUARTERS_PER_FULL_TURN = 4  # a full rotation is four quarter-turns (90° each)
 # alone, so an accidental upside-down pass's boxes are rejected.
 REC_SCORE_GATE = 0.85  # recognition confidence: real words read at the right orientation
 MIN_LETTERS = 2  # plausibility: a "real word" has letters, not just shapes
+_DEDUPE_OVERLAP = 0.3  # two passes' lines sharing this much of the smaller box are the same physical region
 
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
 _WS = re.compile(r"\s+")
@@ -460,6 +461,43 @@ def admit_and_remap(
     return kept, rejected
 
 
+def _box_area(box: list[float]) -> float:
+    return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+
+
+def _box_overlap(a: list[float], b: list[float]) -> float:
+    """The intersection over the SMALLER box — a tall strip inside a wide
+    box still claims the same region."""
+    x = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    y = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    return (x * y) / min(_box_area(a), _box_area(b), 1e-9)
+
+
+def _richness(line: dict[str, Any]) -> tuple[int, float]:
+    """The reading's strength — more letters beat fewer; ties by score.
+    The dedupe keeps the BEST reading of a physical region across the
+    orientation passes (2026-08-17: the postcard's vertical strips were
+    read at 0°, 90° AND 270° — 'MHOTH' (90°) vs 'HARBOTTLE, MORPETH'
+    (270°) share a box at IoU 0.97; only the richer survives)."""
+    return sum(1 for ch in line["text"] if ch.isalpha()), float(line["conf"])
+
+
+def dedupe_regions(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop the weaker readings of the same physical region across
+    orientations: a line is kept only when no other line overlaps its box
+    with a strictly richer reading. Ties keep the earlier line. The
+    survivors keep their index — the caller re-indexes after."""
+    keep = [True] * len(lines)
+    for i, a in enumerate(lines):
+        for j, b in enumerate(lines):
+            if i == j or not keep[i] or not keep[j]:
+                continue
+            if _box_overlap(a["box"], b["box"]) > _DEDUPE_OVERLAP and _richness(b) > _richness(a):
+                keep[i] = False
+                break
+    return [line for line, k in zip(lines, keep, strict=True) if k]
+
+
 def multi_layout(
     page: str,
     width: int,
@@ -471,7 +509,9 @@ def multi_layout(
     direction, each line carrying the orientation it was read at. The
     passes' boxes are already remapped to the original image's pixels;
     width/height are the original (oriented) image's. The rec text is
-    the provisional transcription (VR14) — the reviewer corrects it."""
+    the provisional transcription (VR14) — the reviewer corrects it.
+    The same physical region read in several passes keeps only its
+    best reading (dedupe_regions)."""
     lines: list[dict[str, Any]] = []
     for degrees, admitted in sorted(passes, key=lambda p: p[0]):
         for entry in admitted:
@@ -486,6 +526,9 @@ def multi_layout(
                     "words": [{"box": w.get("box"), "conf": entry["score"]} for w in entry.get("words", [])],
                 }
             )
+    lines = dedupe_regions(lines)
+    for i, line in enumerate(lines):
+        line["index"] = i
     return {"page": page, "width": width, "height": height, "lines": lines, "unmatched": []}
 
 

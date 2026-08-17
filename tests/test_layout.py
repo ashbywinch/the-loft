@@ -465,6 +465,30 @@ def test_multi_layout_orders_zero_first_then_next_directions() -> None:
     assert layout["unmatched"] == []
 
 
+def test_multi_layout_keeps_only_the_best_reading_of_a_region() -> None:
+    """The same physical strip read in several passes keeps only the
+    richest reading — the postcard's vertical text read at 0°, 90° and
+    270° (MHOTH vs HARBOTTLE, MORPETH at IoU 0.97): the wrong-direction
+    garbage must not survive next to the real text."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        200,
+        100,
+        [
+            (90, [{"text": "MHOTH", "box": [10, 10, 20, 60], "score": 0.9, "words": []}]),
+            (270, [{"text": "HARBOTTLE, MORPETH", "box": [10, 10, 20, 60], "score": 0.9, "words": []}]),
+            (0, [{"text": "With Greetings", "box": [30, 30, 40, 80], "score": 0.95, "words": []}]),
+        ],
+    )
+    texts = [line["text"] for line in layout["lines"]]
+    assert "MHOTH" not in texts
+    assert "HARBOTTLE, MORPETH" in texts
+    assert "With Greetings" in texts
+    assert len(layout["lines"]) == 2
+
+
 def test_load_orientation_hint_needs_two_distinct_directions(tmp_path: Path) -> None:
     """The sidecar is honoured only when it reports at least two distinct
     orientations — a single-direction report keeps the plain path."""

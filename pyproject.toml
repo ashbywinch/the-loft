@@ -22,7 +22,6 @@ dev = [
     "pre-commit>=3.0.0",
     "pyrefly>=1.2.0",
     "gedcom7>=0.4.1",  # GEDCOM 7.0 strict-spec validator — the export's parse check (2026-08-05)
-    "radon>=6.0.1",  # cyclomatic complexity for the vendored code_health gate — never run it without radon (2026-08-15)
     "google-auth>=2.38.0",  # id_token verification for Google sign-in (2026-08-06)
     "google-auth-oauthlib>=1.2.1",  # the PKCE authorization-code flow (houses parity)
     "itsdangerous>=2.2.0",  # signed session cookies
@@ -46,9 +45,6 @@ include = ["tools*"]
 # with SyntaxError while the local 3.14.6 compiled it)
 target-version = "py313"
 line-length = 120
-# vendored from build-tools @ 5668162 — upstream code, not ours to lint
-# (the pin is the refresh path)
-extend-exclude = ["tools/code_health.py", "tools/check_records.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "N"]

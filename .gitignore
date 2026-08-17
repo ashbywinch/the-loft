@@ -62,3 +62,7 @@ interviews/
 # The review wireframes — real family letters, never pushed (user,
 # 2026-08-16); the public repo ships only the design rules they informed.
 docs/wireframes/
+
+# The lucidlint code-health gate — the self-contained release bundle the
+# make target downloads from github.com/ashbywinch/lucidlint (2026-08-16).
+lucidlint-dist/

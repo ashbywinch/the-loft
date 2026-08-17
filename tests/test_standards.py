@@ -11,10 +11,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-# vendored from build-tools @ 5668162 (and the .venv-htr-only stage) —
-# upstream/foreign-interpreter code, not subject to this repo's module
-# contract; the same set ruff and pyrefly exclude
-VENDORED = {"code_health.py", "check_records.py", "layout_detect.py"}
+# vendored — the .venv-htr-only stage, foreign-interpreter code not subject
+# to this repo's module contract; the same set ruff and pyrefly exclude.
+# (The code-health tools were vendored here but are now served by lucidlint
+# from its own repo — deleted 2026-08-16.)
+VENDORED = {"layout_detect.py"}
 
 
 def test_every_tools_module_has_a_docstring() -> None:

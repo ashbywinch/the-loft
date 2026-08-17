@@ -32,6 +32,7 @@ from tools.layout import (
     admit_and_remap,
     build_layout,
     load_orientation_hint,
+    load_orientation_report,
     load_vlm_boxes,
     multi_layout,
     orientation_passes,
@@ -150,19 +151,23 @@ def pass_at(
         rotated.unlink(missing_ok=True)
 
 
-def layout_page_multi(engine: Any, image: Path, orientations: list[int]) -> dict[str, Any]:
+def layout_page_multi(
+    engine: Any, image: Path, orientations: list[int], report_lines: list[dict[str, Any]] | None = None
+) -> dict[str, Any]:
     """The multi-orientation layout (PRD VR15): a detection pass at each
     reported orientation, recognition-driven admission, one combined
-    layout with per-line orientations — 0° lines first, then each next
-    direction. The oriented image is already the pipeline's right way up,
-    so the initial display rotation stays 0."""
+    layout — with the model's own per-line transcription + boxes from the
+    orientation report when present (the v2 anchoring, 2026-08-17), the
+    rec passes validating; without them the rec-based lines fall back.
+    The oriented image is already the pipeline's right way up, so the
+    initial display rotation stays 0."""
     with Image.open(image) as im:
         ow, oh = im.size
     passes: list[tuple[int, list[dict[str, Any]]]] = []
     for degrees in orientations:
         kept, _ = pass_at(engine, image, degrees, ow, oh)
         passes.append((degrees, kept))
-    return multi_layout(image.name, ow, oh, passes)
+    return multi_layout(image.name, ow, oh, passes, report_lines=report_lines)
 
 
 def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engine: Any) -> int:
@@ -188,7 +193,8 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
         orientations = load_orientation_hint(guess_dir / f"{image.stem}.orientation.json")
         if orientations:
             passes = orientation_passes(orientations)
-            layout = layout_page_multi(engine, image, passes)
+            report_lines = load_orientation_report(guess_dir / f"{image.stem}.orientation.json").get("lines") or None
+            layout = layout_page_multi(engine, image, passes, report_lines=report_lines)
             print(
                 f"layout: {image.name} multi-orientation {orientations} "
                 f"(passes {passes}) -> {len(layout['lines'])} lines"

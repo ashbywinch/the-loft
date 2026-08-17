@@ -25,6 +25,7 @@ import {
   saveEdits,
   saveOrientation,
   strikeParts,
+  viewRotation,
   zoomView,
 } from "../../views/review.js";
 
@@ -598,7 +599,7 @@ describe("the document list shows only awaiting documents (user 2026-08-16)", ()
 });
 
 describe("a multi-orientation page renders (VR15)", () => {
-  it("shows the line texts and the mark-fine buttons on flagged lines", async () => {
+  it("shows the line texts, a check button on EVERY line, and the skip button", async () => {
     // the combined multi layout's shape (tools/layout.multi_layout): the
     // words carry their text, and a line the rec read weakly flags its
     // words — the review's red doubt + the check button. The reproduced
@@ -656,12 +657,21 @@ describe("a multi-orientation page renders (VR15)", () => {
     // the line TEXTS render — the words carry their text
     expect(main.textContent).toContain("weak");
     expect(main.textContent).toContain("clean");
-    // the flagged line carries the mark-fine (check) button
-    const weakLine = main.querySelector('.rv-line[data-index="0"]');
-    expect(weakLine?.querySelector(".rv-ok-btn")).toBeTruthy();
-    // the action bar holds the advance/confirm button — the only control
-    // (the Next-flagged button is gone, user 2026-08-17)
+    // the check (mark-fine) button is on EVERY line — the multi pages are
+    // provisional, the reviewer checks each line as they read it
+    expect(main.querySelectorAll(".rv-line .rv-ok-btn").length).toBe(2);
+    // the action bar: the skip (advance without confirming) + the confirm
+    const skip = [...main.querySelectorAll(".rv-txa button")].find((b) => b.textContent.includes("Skip"));
+    expect(skip).toBeTruthy();
     expect(main.querySelector(".rv-txa .rv-btn--primary")).toBeTruthy();
     vi.unstubAllGlobals();
+  });
+
+  it("selecting a non-horizontal line rotates the view to read it", () => {
+    // the per-line read rotation (2026-08-17): a 270° line reads
+    // horizontally when the view turns 90°; a 0° line leaves the view put.
+    expect(viewRotation({ rotation: 0, readRotation: 0 })).toBe(0);
+    expect(viewRotation({ rotation: 0, readRotation: 90 })).toBe(90);
+    expect(viewRotation({ rotation: 90, readRotation: 270 })).toBe(0); // combined mod 360
   });
 });

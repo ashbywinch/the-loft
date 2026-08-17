@@ -286,19 +286,24 @@ def _extract_json(text: str) -> Any:
 _ORIENTATION_SYSTEM = "You analyse document layouts precisely. Reply with the requested JSON only."
 _ORIENTATION_PROMPT = (
     "This is a photo of a document page. Its text may run in more than one direction "
-    "(for example a message upright and another block rotated 90 degrees). Identify every "
-    "distinct text region and its orientation relative to the image exactly as shown. "
-    "Reply with JSON only: "
-    '{"orientation_hint": [{"region": "<short name>", "degrees": 0|90|180|270, '
-    '"approx_box": [x0, y0, x1, y1]}]}'
+    "(for example a message upright and another block rotated 90 degrees). Transcribe ALL "
+    "the text verbatim, ONE LINE PER ENTRY, and for every line give its bounding box and its "
+    "orientation relative to the image exactly as shown. Reply with JSON only: "
+    '{"lines": [{"text": "<one line>", "box": [x0, y0, x1, y1], "degrees": 0|90|180|270}], '
+    '"orientation_hint": [{"region": "<short name>", "degrees": 0|90|180|270, '
+    '"approx_box": [x0, y0, x1, y1]}]} — box coordinates are 0-1000 fractions of the '
+    "image width and height."
 )
 
 
-def orientation_report(image: Path) -> list[dict[str, Any]]:
+def orientation_report(image: Path) -> dict[str, Any]:
     """The text orientations present on a page, structured — used by the
     layout stage when the arbiter's scores suggest more than one direction
-    (PRD VR15). Returns the orientation_hint list; [] when the model sees a
-    single direction or cannot answer."""
+    (PRD VR15). Returns {"orientation_hint": [...], "lines": [...]} — the
+    lines carry the model's OWN per-line transcription, box (normalized
+    0-1000) and degrees, so the layout anchors every transcribed line to
+    the box the model drew around it (VR14, 2026-08-17: every piece of
+    text has a box, and the box holds the words it claims)."""
     text, _ = transcribe_image_vlm(
         image,
         system=_ORIENTATION_SYSTEM,
@@ -307,8 +312,23 @@ def orientation_report(image: Path) -> list[dict[str, Any]]:
     try:
         data = _extract_json(text)
     except VlmError:
-        return []
-    hints = data.get("orientation_hint") if isinstance(data, dict) else None
-    if not isinstance(hints, list):
-        return []
-    return [h for h in hints if isinstance(h, dict) and h.get("degrees") in (0, 90, 180, 270)]
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    hints = data.get("orientation_hint") if isinstance(data.get("orientation_hint"), list) else []
+    hints = [h for h in hints if isinstance(h, dict) and h.get("degrees") in (0, 90, 180, 270)]
+    raw_lines = data.get("lines") if isinstance(data.get("lines"), list) else []
+    lines = [
+        {
+            "text": str(entry.get("text", "")).strip(),
+            "box": entry.get("box"),
+            "degrees": entry.get("degrees"),
+        }
+        for entry in raw_lines
+        if isinstance(entry, dict)
+        and entry.get("text")
+        and isinstance(entry.get("box"), list)
+        and len(entry.get("box")) == 4
+        and entry.get("degrees") in (0, 90, 180, 270)
+    ]
+    return {"orientation_hint": hints, "lines": lines}

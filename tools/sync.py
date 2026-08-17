@@ -388,6 +388,27 @@ def demote_stale_jobs(work_dir: Path) -> None:
                 set_page_job(batch_id, page, "failed", work_dir)
 
 
+def _write_multi_sidecar(
+    page: str,
+    image_path: Path,
+    raw_dir: Path,
+    orientation_report_fn: Callable[[Path], dict[str, Any]] | None,
+) -> None:
+    """The second pass does better (2026-08-17): the reviewer's rotate is
+    the signal the first pass missed an orientation — re-run the report on
+    the corrected image; a multi-direction report writes the sidecar the
+    layout stage reads (the model's per-line transcription + boxes)."""
+    report_fn = orientation_report_fn if orientation_report_fn is not None else orientation_report
+    report = report_fn(image_path)
+    hints = report.get("orientation_hint", []) if isinstance(report, dict) else []
+    degrees = {int(h.get("degrees")) for h in hints if h.get("degrees") in (0, 90, 180, 270)}
+    if len(degrees) >= 2:
+        atomic_write(
+            raw_dir / Path(page).with_suffix(".orientation.json"),
+            json.dumps(report, ensure_ascii=False) + "\n",
+        )
+
+
 # lucidlint: ignore long-param-list the reprocess gate's identity + injectable seams — a single call site
 def reprocess_page_transcription(
     batch_id: str,
@@ -396,7 +417,7 @@ def reprocess_page_transcription(
     *,
     transcribe: Any = None,
     selfreport: Any = None,
-    orientation_report_fn: Callable[[Path], list[dict[str, Any]]] | None = None,
+    orientation_report_fn: Callable[[Path], dict[str, Any]] | None = None,
     layout_runner: Callable[[str, Path, list[str] | None], None] | None = None,
     people: list[str] | None = None,
     places: list[str] | None = None,
@@ -448,14 +469,7 @@ def reprocess_page_transcription(
         atomic_write(report_path, json.dumps(report, ensure_ascii=False, indent=1) + "\n")
         # the fresh orientation report on the CORRECTED image — a
         # multi-direction report writes the sidecar the layout stage reads
-        report_fn = orientation_report_fn if orientation_report_fn is not None else orientation_report
-        hints = report_fn(image_path)
-        degrees = {int(h.get("degrees")) for h in hints if h.get("degrees") in (0, 90, 180, 270)}
-        if len(degrees) >= 2:
-            atomic_write(
-                raw_dir / Path(page).with_suffix(".orientation.json"),
-                json.dumps(hints, ensure_ascii=False) + "\n",
-            )
+        _write_multi_sidecar(page, image_path, raw_dir, orientation_report_fn)
         runner = layout_runner if layout_runner is not None else run_layout
         runner(batch_id, work_dir, [page])
         new_layout = load_layout(layout_path)

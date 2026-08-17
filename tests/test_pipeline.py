@@ -226,7 +226,7 @@ def test_orientation_hints_skip_single_dominant_pages(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    def _should_not_be_called(_image: Path) -> list[dict[str, object]]:
+    def _should_not_be_called(_image: Path) -> dict[str, object]:
         raise AssertionError("the report must not run for a clean page")
 
     _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _should_not_be_called)
@@ -251,14 +251,17 @@ def test_orientation_hints_write_the_sidecar_for_ambiguous_pages(tmp_path: Path)
     (oriented / "p1.jpg").write_text("image", encoding="utf-8")
     calls: list[Path] = []
 
-    def _fake_report(image: Path) -> list[dict[str, object]]:
+    def _fake_report(image: Path) -> dict[str, object]:
         calls.append(image)
-        return [{"region": "message", "degrees": 0}, {"region": "address", "degrees": 270}]
+        return {
+            "orientation_hint": [{"region": "message", "degrees": 0}, {"region": "address", "degrees": 270}],
+            "lines": [],
+        }
 
     _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _fake_report)
     assert calls == [oriented / "p1.jpg"]
     hint = json.loads((guess / "p1.orientation.json").read_text(encoding="utf-8"))
-    assert [h["degrees"] for h in hint] == [0, 270]
+    assert [h["degrees"] for h in hint["orientation_hint"]] == [0, 270]
 
     # a re-run must not re-pay the model call (idempotent)
     calls.clear()
@@ -268,8 +271,8 @@ def test_orientation_hints_write_the_sidecar_for_ambiguous_pages(tmp_path: Path)
     # the model disagrees: one direction only -> no sidecar
     (guess / "p1.orientation.json").unlink()
 
-    def _single(_image: Path) -> list[dict[str, object]]:
-        return [{"region": "message", "degrees": 0}]
+    def _single(_image: Path) -> dict[str, object]:
+        return {"orientation_hint": [{"region": "message", "degrees": 0}], "lines": []}
 
     _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _single)
     assert not (guess / "p1.orientation.json").exists()

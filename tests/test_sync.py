@@ -392,7 +392,7 @@ def test_reprocess_page_transcription_reruns_the_text(tmp_path: Path) -> None:
         tmp_path,
         transcribe=lambda image, **kw: ("the corrected fresh text\n", {"total_tokens": 0}),
         selfreport=lambda image, guess_text, **kw: [{"line": 1, "word": "fresh"}],
-        orientation_report_fn=lambda image: [],
+        orientation_report_fn=lambda image: {"orientation_hint": [], "lines": []},
         layout_runner=fake_layout_runner,
     )
 
@@ -436,15 +436,18 @@ def test_reprocess_page_transcription_writes_the_multi_sidecar(tmp_path: Path) -
         tmp_path,
         transcribe=lambda image, **kw: ("the corrected fresh text\n", {"total_tokens": 0}),
         selfreport=lambda image, guess_text, **kw: [],
-        orientation_report_fn=lambda image: [
-            {"region": "message", "degrees": 0},
-            {"region": "address", "degrees": 270},
-        ],
+        orientation_report_fn=lambda image: {
+            "orientation_hint": [
+                {"region": "message", "degrees": 0},
+                {"region": "address", "degrees": 270},
+            ],
+            "lines": [],
+        },
         layout_runner=lambda batch_id, work_dir, pages: None,
     )
 
     sidecar = json.loads((batch / "ocr-guess" / "p1.orientation.json").read_text(encoding="utf-8"))
-    assert [h["degrees"] for h in sidecar] == [0, 270]
+    assert [h["degrees"] for h in sidecar["orientation_hint"]] == [0, 270]
 
 
 def test_reprocess_failure_marks_the_page(tmp_path: Path) -> None:

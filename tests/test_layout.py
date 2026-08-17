@@ -485,6 +485,64 @@ def test_multi_layout_words_carry_text_and_flag_weak_lines() -> None:
     assert clean["words"][0]["conf"] == 1.0  # a confident read stays clean
 
 
+def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
+    """VR14: every piece of text has a bounding box, and the box holds the
+    words it claims (2026-08-17 — the reproduced fault: the lines carried
+    the rec's fragments mispaired with the det's boxes, so the review's
+    text was nonsense and the boxes didn't match the words). With the
+    model's per-line geometry the lines ARE the model's transcription
+    anchored to its own boxes; a rec detection agreeing on content marks
+    the line confident; rec lines no VLM line claims stay as flagged
+    extras — and the fragment duplicates of an anchored line drop (the
+    dedupe keeps the richer reading)."""
+    from tools.layout import multi_layout
+
+    report_lines = [
+        {"text": "POST CARD", "box": [100, 50, 300, 100], "degrees": 0},
+        {"text": "Printed in Great Britain", "box": [100, 110, 400, 140], "degrees": 0},
+        {"text": "We are from beauford", "box": [500, 200, 900, 400], "degrees": 270},
+    ]
+    passes = [
+        (
+            0,
+            [
+                {"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []},
+                {"text": "Printed in Great Britain", "box": [101, 111, 399, 139], "score": 0.98, "words": []},
+                {"text": "HERNSPETH", "box": [150, 500, 200, 900], "score": 0.95, "words": []},  # the model missed this
+            ],
+        ),
+        (
+            270,
+            [
+                {  # the rec's fragment of the message
+                    "text": "onorrow",
+                    "box": [501, 201, 899, 399],
+                    "score": 0.9,
+                    "words": [],
+                },
+            ],
+        ),
+    ]
+    layout = multi_layout("p1.jpg", 1000, 1000, passes, report_lines=report_lines)
+    texts = [ln["text"] for ln in layout["lines"]]
+    # 0° first (report order, then the extra), then 270°; the fragment
+    # duplicate of the anchored message line drops
+    assert texts == ["POST CARD", "Printed in Great Britain", "HERNSPETH", "We are from beauford"]
+    by_text = {ln["text"]: ln for ln in layout["lines"]}
+    # every line has a box; the anchored lines carry the MODEL's box (scaled
+    # from the normalized 0-1000 frame) — the box holds the words it claims
+    assert by_text["POST CARD"]["box"] == [100.0, 50.0, 300.0, 100.0]
+    assert all(ln["box"] for ln in layout["lines"])
+    # the rec agreed on the header -> confident; the message -> the rec's
+    # fragment did not agree -> flagged (the honest doubt)
+    assert all(w["conf"] == 1.0 for w in by_text["POST CARD"]["words"])
+    assert all(w["conf"] == 0.0 for w in by_text["We are from beauford"]["words"])
+    assert by_text["We are from beauford"]["orientation"] == 270
+    # the model-missed rec line stays, flagged, at its pass orientation
+    assert by_text["HERNSPETH"]["orientation"] == 0
+    assert all(w["conf"] == 0.0 for w in by_text["HERNSPETH"]["words"])
+
+
 def test_multi_layout_orders_zero_first_then_next_directions() -> None:
     """The combined layout shows the 0° lines first, then each next
     direction, each line carrying the orientation it was read at (VR15)."""
@@ -535,12 +593,13 @@ def test_load_orientation_hint_needs_two_distinct_directions(tmp_path: Path) -> 
 
     two = tmp_path / "two.json"
     two.write_text(
-        '[{"region": "message", "degrees": 0}, {"region": "address", "degrees": 270}]',
+        '{"orientation_hint": [{"region": "message", "degrees": 0},'
+        ' {"region": "address", "degrees": 270}], "lines": []}',
         encoding="utf-8",
     )
     assert load_orientation_hint(two) == [0, 270]
     one = tmp_path / "one.json"
-    one.write_text('[{"region": "message", "degrees": 0}]', encoding="utf-8")
+    one.write_text('{"orientation_hint": [{"region": "message", "degrees": 0}], "lines": []}', encoding="utf-8")
     assert load_orientation_hint(one) == []
     bad = tmp_path / "bad.json"
     bad.write_text("not json", encoding="utf-8")

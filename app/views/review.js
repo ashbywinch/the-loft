@@ -692,12 +692,18 @@ function renderSurface(main, session) {
   // The "Next flagged" button is GONE (user, 2026-08-17): the page chips
   // carry the flag dots — the reviewer taps the flagged chip to jump.
   const isLastPage = session.pageIndex === doc.pages.length - 1;
+  const skipBtn = el(
+    "button",
+    { class: "rv-btn rv-btn--ghost", onclick: () => skipNext(session), title: "Move on without confirming — come back later" },
+    "Skip →",
+  );
   const confirmBtn = el(
     "button",
     { class: "rv-btn rv-btn--primary", onclick: () => confirmNext(session), disabled: session.pageProcessing === "transcribing" },
     isLastPage ? "✓ Confirm & Next →" : "Next page →",
   );
   const actionBar = el("div", { class: "rv-txa" }, [
+    skipBtn,
     el("div", { class: "rv-txa-right" }, [confirmBtn]),
   ]);
 
@@ -831,14 +837,15 @@ export function zoomView(view, k, paneW, paneH, cx, cy, imgW) {
 /** Paint the current view: the layer's transform maps original-image points
  *  to the pane with the view's rectangle at the pane's origin. */
 function renderView(session) {
-  const { imgBox, layer, view, rotation, imgSize } = session;
+  const { imgBox, layer, view, imgSize } = session;
   if (!view || !imgSize || !layer) return;
   const paneW = imgBox.clientWidth;
   const paneH = imgBox.clientHeight;
   if (!paneW || !paneH) return;
   const s = paneW / view.width;
-  const f = displayFrame(rotation, imgSize.w, imgSize.h);
-  layer.style.transform = `translate(${(f.ox - view.x) * s}px, ${(f.oy - view.y) * s}px) scale(${s}) rotate(${rotation}deg)`;
+  const display = viewRotation(session); // the ↻ + the per-line read rotation
+  const f = displayFrame(display, imgSize.w, imgSize.h);
+  layer.style.transform = `translate(${(f.ox - view.x) * s}px, ${(f.oy - view.y) * s}px) scale(${s}) rotate(${display}deg)`;
   syncTxFromImage(session); // the dual-pane link: the words follow the picture
 }
 
@@ -870,6 +877,7 @@ function openViewer(session, imgBox) {
   session.overlays = [];
   session.contentTop = 0;
   session.userMoved = false;
+  session.readRotation = 0; // the per-line read rotation resets per page
 
   const layer = el("div", { class: "rv-layer" });
   const img = el("img", { class: "rv-page", alt: "" });
@@ -975,7 +983,7 @@ function openViewer(session, imgBox) {
       const rect = imgBox.getBoundingClientRect();
       const cx = (a.x + b.x) / 2 - rect.left;
       const cy = (a.y + b.y) / 2 - rect.top;
-      const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+      const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
       session.view = zoomView(session.view, k, imgBox.clientWidth, imgBox.clientHeight, cx, cy, f.dw);
       clampView(session); // never zoom off the page's edges
       pinchStart = { dist, view: { ...session.view } };
@@ -1026,7 +1034,7 @@ function openViewer(session, imgBox) {
     const layout = doc.layouts?.[page];
     let idx = null;
     if (layout) {
-      const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+      const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
       for (const line of layout.lines) {
         if (!line.box) continue;
         const r = boxToDisplay(f, line.box);
@@ -1084,7 +1092,7 @@ function syncImageFromTx(session) {
   }
   const line = layout.lines.find((l) => l.index === Number(topEl?.dataset.index));
   if (!line?.box) return;
-  const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+  const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
   const rect = boxToDisplay(f, line.box);
   const margin = session.imgBox.clientHeight * 0.08;
   const y = Math.min(Math.max(rect.y - margin, 0), Math.max(f.dh - session.view.height, 0));
@@ -1120,7 +1128,7 @@ function syncTxFromImage(session) {
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page];
   if (!layout) return;
-  const idx = lineIndexForY(layout, session.rotation, session.imgSize, session.view.y);
+  const idx = lineIndexForY(layout, viewRotation(session), session.imgSize, session.view.y);
   if (idx === null) return;
   const el = txb.querySelector(`[data-index="${idx}"]`);
   if (!el) return;
@@ -1139,9 +1147,9 @@ function syncTxFromImage(session) {
  *  rotated views' floor is the page's own top. */
 function clampView(session) {
   if (!session.view || !session.imgSize) return;
-  const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+  const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
   session.view.x = Math.min(Math.max(session.view.x, 0), Math.max(f.dw - session.view.width, 0));
-  const floor = session.rotation % 180 === 0 ? Math.max(session.contentTop ?? 0, 0) : 0;
+  const floor = viewRotation(session) % 180 === 0 ? Math.max(session.contentTop ?? 0, 0) : 0;
   session.view.y = Math.min(Math.max(session.view.y, floor), Math.max(f.dh - session.view.height, floor));
 }
 
@@ -1153,10 +1161,10 @@ function clampView(session) {
 function fitPage(session, { markMoved = true } = {}) {
   if (!session.imgSize) return;
   if (markMoved) session.userMoved = true;
-  const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+  const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
   const imgBox = session.imgBox;
   const paneAspect = imgBox.clientWidth / Math.max(imgBox.clientHeight, 1);
-  if (session.rotation % 180 === 0 && paneAspect > (f.dw / f.dh) * 1.5) {
+  if (viewRotation(session) % 180 === 0 && paneAspect > (f.dw / f.dh) * 1.5) {
     // the band whose WIDTH is the page's width and whose aspect matches the
     // pane — fitBounds fits both dims, so the page fills the pane's width
     const visibleH = f.dw / paneAspect;
@@ -1204,6 +1212,7 @@ function rotatePage(session) {
   // previous frame's coordinates, and rendering it through the new frame
   // drew the page in the wrong place, unreadable (user 2026-08-16: "it's
   // not drawn in the right place after I rotate it")
+  session.readRotation = 0; // the reviewer's own ↻ overrides the per-line read rotation
   fitPage(session, { markMoved: false });
   updateFixingState(session);
 }
@@ -1262,6 +1271,14 @@ export function isOrientationCovered(covered, baseDeg, desiredQuarters) {
  *  applied rotation. Deterministic and self-contained (VR10). */
 export function deltaOfDesired(desiredQuarters, baseDeg) {
   return (((desiredQuarters * 90 - (baseDeg ?? 0)) % 360) + 360) % 360;
+}
+
+/** The combined display rotation: the reviewer's desired orientation plus
+ *  the per-line read rotation (2026-08-17: selecting a line whose text
+ *  runs sideways turns the view so that line reads horizontally — a pure
+ *  view change, never an owed correction, so the ↻ state is untouched). */
+export function viewRotation(session) {
+  return (((session.rotation ?? 0) + (session.readRotation ?? 0)) % 360 + 360) % 360;
 }
 
 // -- the reviewer's desired orientation (display truth) + the delivery
@@ -1479,6 +1496,20 @@ function startEdit(session, lineIndex) {
   if (session.editing !== null && session.editing !== lineIndex) acceptEdit(session);
   syncSelection(session, lineIndex);
   session.editing = lineIndex;
+  // the per-line read rotation: a line whose text runs sideways turns the
+  // view so it reads horizontally (2026-08-17, VR15 — the postcard's 270°
+  // message must be readable without pressing ↻). Pure view: the ↻ state
+  // (desired/acked) is untouched.
+  const doc = session.batch.documents[session.docIndex];
+  const page = doc.pages[session.pageIndex];
+  const line = doc.layouts?.[page]?.lines.find((l) => l.index === lineIndex);
+  const orientation = line?.orientation ?? 0;
+  // the pass at orientation D reads its text with the image rotated CSS D°
+  // (pass_at rotates -D in PIL = D in CSS) — the display rotation is the
+  // orientation itself, not its mirror (2026-08-17: (360-O) put the 270°
+  // message upside down)
+  session.readRotation = orientation;
+  renderView(session); // the view turns to read the line horizontally
   renderTx(session);
 }
 
@@ -1521,7 +1552,7 @@ function applyEdit(session, lineIndex, text) {
     const above = txb.querySelector(`.rv-line[data-index="${Number(el.dataset.index) - 1}"]`);
     const hasLineAbove = above ? above.getBoundingClientRect().bottom > tRect.top : false;
     if (!hasLineAbove) return; // the accepted line is the top visible row — hold
-    const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+    const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
     const current = layout?.lines.find((l) => l.index === Number(el.dataset.index));
     const next = layout?.lines.find((l) => l.index === Number(el.dataset.index) + 1);
     const curTop = current?.box ? boxToDisplay(f, current.box).y : null;
@@ -1626,7 +1657,6 @@ function renderTx(session) {
     const corrected = pageEdits[line.index];
     const shown = corrected ?? line.text;
     const sel = session.selLine === line.index ? " rv-line--sel" : "";
-    const hasFlags = line.words.some((w) => w.conf === 0) && corrected === undefined;
     // one dense row: the text + the actions — no number gutter (the line
     // numbers ate screen real estate for nothing, user 2026-08-16: "why?")
     const lineEl = el("div", { class: `rv-line${sel}` });
@@ -1706,20 +1736,20 @@ function renderTx(session) {
         ));
       }
       lineEl.append(textEl);
-      // "mark this line fine" — a checked line with red squiggles needs no
-      // text change (user, 2026-08-16): the verbatim text counts as verified
-      if (hasFlags) {
-        lineEl.append(
-          el("button", {
-            class: "rv-ok-btn",
-            title: "Mark this line as fine",
-            onclick: (e) => {
-              e.stopPropagation();
-              applyMarkedFine(session, line.index);
-            },
-          }, "✓"),
-        );
-      }
+      // "mark this line fine" — a checked line needs no text change (user,
+      // 2026-08-16: the verbatim text counts as verified). On EVERY line
+      // (2026-08-17): the multi-orientation pages are provisional — the
+      // reviewer checks each line as they read it, red words or not.
+      lineEl.append(
+        el("button", {
+          class: "rv-ok-btn",
+          title: "Mark this line as fine",
+          onclick: (e) => {
+            e.stopPropagation();
+            applyMarkedFine(session, line.index);
+          },
+        }, "✓"),
+      );
       // every line is clickable — one click enters edit (user, 2026-08-16);
       // clicking the already-editing line's own input must not re-render
       lineEl.addEventListener("click", () => {
@@ -1744,6 +1774,26 @@ function renderTx(session) {
  *  seam (outbox fallback), then moves on; earlier pages just advance. The
  *  confirmation is blocked while the page's orientation fix is in flight
  *  (the text would be the stale pre-fix reading). */
+/** Skip — advance WITHOUT confirming (user, 2026-08-17: the agreed
+ *  replacement for the next-red-word button — a way to give up on
+ *  something temporarily). The page, and on the last page the document,
+ *  stays unconfirmed — the reviewer can come back to it. */
+function skipNext(session) {
+  acceptEdit(session);
+  const { batch, docIndex } = session;
+  const doc = batch.documents[docIndex];
+  if (session.pageIndex < doc.pages.length - 1) {
+    const next = nextAvailableAfter(doc, batch, session.pageIndex);
+    session.pageIndex = next === -1 ? session.pageIndex + 1 : next;
+    session.selLine = null;
+    session.editing = null;
+    renderSurface(session.root, session);
+    return;
+  }
+  // the last page — the next document, nothing confirmed
+  openReview(session.root, batch, (docIndex + 1) % batch.documents.length);
+}
+
 async function confirmNext(session) {
   const { batch, docIndex } = session;
   const doc = batch.documents[docIndex];

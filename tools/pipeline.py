@@ -184,7 +184,7 @@ def process(
     work_dir: Path = WORK_DIR,
     archive_dir: Path = ARCHIVE_DIR,
     client: Callable[[str, str], str] | None = None,
-    orientation_report_fn: Callable[[Path], list[dict[str, Any]]] | None = None,
+    orientation_report_fn: Callable[[Path], dict[str, Any]] | None = None,
     run_layout: Callable[[str, Path], None] | None = None,
 ) -> None:
     """Classify → orient (text pages) → route → HTR/tesseract → guess →
@@ -455,12 +455,13 @@ def _write_orientation_hints(
     batch_work: Path,
     oriented_dir: Path,
     guess_dir: Path,
-    orientation_report_fn: Callable[[Path], list[dict[str, Any]]],
+    orientation_report_fn: Callable[[Path], dict[str, Any]],
 ) -> None:
     """For pages whose arbiter scores suggest more than one text
     direction, ask the vision model for the structured orientation report
-    and store it (``ocr-guess/<stem>.orientation.json``) for the layout
-    stage. A single-dominant page gets no report — the plain
+    (the per-line transcription with the model's own boxes + the region
+    hints) and store it (``ocr-guess/<stem>.orientation.json``) for the
+    layout stage. A single-dominant page gets no report — the plain
     single-orientation layout suffices; the report runs only where the
     scores already suspect more than one direction (PRD VR15, 2026-08-17).
     A single-direction report (the model disagrees) also writes nothing —
@@ -476,10 +477,11 @@ def _write_orientation_hints(
         scores = rotations.get(page, {}).get("scores", {})
         if not _ambiguous_rotations(scores):
             continue
-        hints = orientation_report_fn(oriented_dir / page)
+        report = orientation_report_fn(oriented_dir / page)
+        hints = report.get("orientation_hint", []) if isinstance(report, dict) else []
         degrees = {int(h.get("degrees")) for h in hints if h.get("degrees") in (0, 90, 180, 270)}
         if len(degrees) >= 2:
-            atomic_write(out, json.dumps(hints, ensure_ascii=False) + "\n")
+            atomic_write(out, json.dumps(report, ensure_ascii=False) + "\n")
             print(f"layout: orientation report for {page} — {sorted(degrees)}")
 
 

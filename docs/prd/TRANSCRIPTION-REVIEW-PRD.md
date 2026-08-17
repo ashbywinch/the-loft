@@ -104,6 +104,17 @@ and pages the reviewer has already handled stay clearly marked; returning
 to the batch shows exactly what remains, so no finished work is re-checked
 (user requirement, 2026-08-16).
 
+**VR14 — Every page arrives fully processed by the pipeline.** For every
+page, the pipeline identifies the text, produces its bounding boxes, and
+provisionally transcribes it. A page that reaches the review without all
+three is a pipeline failure — the review never works around it by hand
+(user requirement, 2026-08-16).
+
+**VR15 — Text in any direction is captured.** A page whose text runs in
+more than one direction — a postcard with a rotated message — still has
+every word identified, boxed, and provisionally transcribed: nothing is
+missed because of its orientation (user requirement, 2026-08-16).
+
 ## 3. Acceptance criteria
 
 1. A reviewer opening a batch knows at a glance what each document is and

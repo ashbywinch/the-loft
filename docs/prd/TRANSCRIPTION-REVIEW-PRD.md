@@ -161,6 +161,13 @@ missed because of its orientation (user requirement, 2026-08-16).
     are redone (VR13).
 19. Leaving and returning restores the exact document and page the
     reviewer was on, with their handled work marked (VR9, VR13).
+20. A page whose text runs in several directions shows all of it, with the
+    0° lines first, then each next direction in turn; the page initially
+    shows the way the pipeline determined is right-way-up — the printed
+    writing upright (VR15).
+21. A two-sided item such as a postcard is one document — its picture side
+    the first page, its text side the second — identified by the pipeline,
+    never corrected by hand (VR6, VR14).
 
 ## 4. Non-goals
 

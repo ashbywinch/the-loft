@@ -541,6 +541,21 @@ describe("marking a line fine — the verbatim text counts as verified", () => {
     // the corrected document text keeps the verbatim line unchanged
     expect(correctedDocumentText(DOC, { "p1.jpg": { 0: "line one" } })).toBe("line one\nline two\nline three");
   });
+
+  it("a line checked off stays handled in a fresh session — the reviewer never redoes it (VR13)", () => {
+    localStorage.clear();
+    // session 1: the reviewer marks the flagged line fine without editing —
+    // the persisted effect is an edit equal to the line's own verbatim text
+    saveEdits("adopt-1", 0, { "p1.jpg": { 0: "line one" } });
+    expect(flaggedPositions([DOC], 0, { "p1.jpg": { 0: "line one" } })).toEqual([{ page: "p1.jpg", line: 1 }]);
+    // session 2: the reviewer returns — the handled line is still handled,
+    // only the unhandled line remains in the work set
+    const edits = loadEdits("adopt-1", 0);
+    expect(flaggedPositions([DOC], 0, edits)).toEqual([{ page: "p1.jpg", line: 1 }]);
+    expect(flaggedCount([DOC], 0, edits)).toBe(1);
+    // and the confirmed text is exactly what the reviewer verified (verbatim)
+    expect(correctedDocumentText(DOC, edits)).toBe("line one\nline two\nline three");
+  });
 });
 
 describe("the document list shows only awaiting documents (user 2026-08-16)", () => {

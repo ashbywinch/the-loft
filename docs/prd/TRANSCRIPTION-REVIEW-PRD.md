@@ -87,6 +87,25 @@ reorients the image, re-runs OCR, and returns an updated transcription —
 a back end that catches up late changes the OCR results, never the
 displayed orientation (user requirement, 2026-08-16).
 
+**VR11 — The review proceeds page by page, in any order, at the reviewer's
+pace.** Each page is confirmed on its own; a document is fully reviewed
+only when every one of its pages is confirmed. The reviewer moves through
+the pile in whatever order suits them — skipping pages or documents and
+returning later — and the system never loses their place or confuses their
+progress. A fast reader can confirm a page without first checking any
+line: checking lines is for the pages that need it, never a prerequisite
+to moving on (user requirement, 2026-08-16: power readers blast through
+without the app getting in their way).
+
+**VR12 — Fully reviewed work leaves the pending pile.** A document whose
+pages are all confirmed is finished: it disappears from the list of work
+still to be reviewed (user requirement, 2026-08-16).
+
+**VR13 — Completed work is visibly marked, so nothing is redone.** Lines
+and pages the reviewer has already handled stay clearly marked; returning
+to the batch shows exactly what remains, so no finished work is re-checked
+(user requirement, 2026-08-16).
+
 ## 3. Acceptance criteria
 
 1. A reviewer opening a batch knows at a glance what each document is and
@@ -124,6 +143,17 @@ displayed orientation (user requirement, 2026-08-16).
 14. When a page's re-read after a correction fails, the surface says so
     plainly ("the re-read failed") — it never implies the text is fine,
     and never blames a correction the reviewer never made (VR10, VR8).
+15. A page can be confirmed without first checking any line — the fast
+    reader is never held back (VR11).
+16. Confirming a page advances to the next; a skipped page or document
+    keeps its exact state so the reviewer returns to where they were, in
+    any order (VR11, VR9).
+17. A document whose pages are all confirmed is no longer listed as
+    pending work (VR12).
+18. Lines and pages already handled are visibly marked on return, so none
+    are redone (VR13).
+19. Leaving and returning restores the exact document and page the
+    reviewer was on, with their handled work marked (VR9, VR13).
 
 ## 4. Non-goals
 

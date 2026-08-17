@@ -281,3 +281,34 @@ def _extract_json(text: str) -> Any:
             except json.JSONDecodeError:
                 raise VlmError(f"self-report returned no JSON: {text[:300]}") from None
         raise VlmError(f"self-report returned no JSON: {text[:300]}") from None
+
+
+_ORIENTATION_SYSTEM = "You analyse document layouts precisely. Reply with the requested JSON only."
+_ORIENTATION_PROMPT = (
+    "This is a photo of a document page. Its text may run in more than one direction "
+    "(for example a message upright and another block rotated 90 degrees). Identify every "
+    "distinct text region and its orientation relative to the image exactly as shown. "
+    "Reply with JSON only: "
+    '{"orientation_hint": [{"region": "<short name>", "degrees": 0|90|180|270, '
+    '"approx_box": [x0, y0, x1, y1]}]}'
+)
+
+
+def orientation_report(image: Path) -> list[dict[str, Any]]:
+    """The text orientations present on a page, structured — used by the
+    layout stage when the arbiter's scores suggest more than one direction
+    (PRD VR15). Returns the orientation_hint list; [] when the model sees a
+    single direction or cannot answer."""
+    text, _ = transcribe_image_vlm(
+        image,
+        system=_ORIENTATION_SYSTEM,
+        user_text=_ORIENTATION_PROMPT,
+    )
+    try:
+        data = _extract_json(text)
+    except VlmError:
+        return []
+    hints = data.get("orientation_hint") if isinstance(data, dict) else None
+    if not isinstance(hints, list):
+        return []
+    return [h for h in hints if isinstance(h, dict) and h.get("degrees") in (0, 90, 180, 270)]

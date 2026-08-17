@@ -21,6 +21,7 @@ import contextlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -35,10 +36,24 @@ from tools.ocr import orient_pages
 from tools.registry import RegistryError as PipelineError
 from tools.registry import load_batch, record_path
 from tools.sync import record_confirmation
+from tools.vlm import orientation_report
 
 PAGE_LIMIT = 30  # one guess call per batch; beyond this the context is too big — chunking is future work
 GUESS_PAGE_CHUNK = 5  # the guess re-emits each page's corrected text; the OUTPUT size binds — 5 pages of
 # verbatim text + JSON fits the client's max_tokens (2026-08-14: a 12-page pile's JSON response truncated)
+
+# The multi-orientation gate (PRD VR15, 2026-08-17): a page whose arbiter
+# scores suggest text in more than one direction gets the vision model's
+# orientation report — and only then. The second-best rotation must carry
+# a meaningful share of the winner's strong words (the postcard's 0:16 /
+# 270:9 splits; a clean page's losers are near zero).
+AMBIGUITY_RATIO = 0.25  # the second-best rotation's share of the winner
+AMBIGUITY_FLOOR = 5  # ...and it must clear this many strong words outright
+
+# The layout stage's interpreter (VR14, 2026-08-15): PaddleOCR lives in
+# the .venv-htr venv; the main venv never imports it — the htr.py
+# KRAKEN precedent.
+LAYOUT_INTERP = str(Path(__file__).resolve().parent.parent / ".venv-htr" / "bin" / "python")
 
 STATUS_PROCESSING = "importing"
 STATUS_REVIEW = "review"
@@ -188,6 +203,8 @@ def apply_routes(classify: dict[str, Any], rotations: dict[str, Any]) -> dict[st
     return classify
 
 
+# a single call site — the stage paths and DI seams are the caller's locals
+# lucidlint: ignore long-param-list a parameter object would be ceremony for one entry point
 def process(
     batch_id: str,
     *,
@@ -195,8 +212,12 @@ def process(
     work_dir: Path = WORK_DIR,
     archive_dir: Path = ARCHIVE_DIR,
     client: Callable[[str, str], str] | None = None,
+    orientation_report_fn: Callable[[Path], list[dict[str, Any]]] | None = None,
+    run_layout: Callable[[str, Path], None] | None = None,
 ) -> None:
-    """Classify → orient (text pages) → route → HTR/tesseract → guess → review."""
+    """Classify → orient (text pages) → route → HTR/tesseract → guess →
+    layout (boxes + flags; the multi-orientation pages get the combined
+    per-line layout) → review."""
     record = load_batch(batch_id, registry_dir)
     folder = Path(str(record["path"]))
     if not folder.is_dir():
@@ -249,6 +270,16 @@ def process(
         print("guess already present — reusing")
     else:
         _run_guess(text_pages, raw_dir, guess_dir, boundaries_path, record, batch_id, registry_dir, archive_dir, client)
+
+    # 6. layout stage (VR14 — every text page gets line boxes + per-word
+    # confidence; VR15 — the multi-orientation pages get the combined
+    # per-line-orientation layout). The vision-model orientation report
+    # runs only for the arbiter-ambiguous pages; the pass itself runs
+    # under the .venv-htr interpreter (PaddleOCR lives there).
+    report = orientation_report_fn if orientation_report_fn is not None else orientation_report
+    runner = run_layout if run_layout is not None else _run_layout_subprocess
+    _write_orientation_hints(text_pages, batch_work, oriented_dir, guess_dir, report)
+    runner(batch_id, work_dir)
 
     _update_status(record, batch_id, STATUS_REVIEW, registry_dir)
     print(f"batch {batch_id} awaiting review (make confirm ARGS={batch_id!r})")
@@ -399,6 +430,68 @@ def _run_guess(
     record["boundaries"] = boundaries
     atomic_write(record_path(batch_id, registry_dir), json.dumps(record, indent=1, ensure_ascii=False) + "\n")
     print(f"model guess: {len(flags)} page(s), {len(boundaries)} document(s) -> {guess_dir}")
+
+
+def _ambiguous_rotations(scores: dict[str, int]) -> bool:
+    """The arbiter's strong-word counts suggest text in more than one
+    direction (PRD VR15): the second-best rotation carries a meaningful
+    share of the winner's words — the postcard's {0: 16, 270: 9} splits,
+    while a clean page's losers sit near zero."""
+    vals = sorted((int(scores.get(str(k), 0)) for k in (0, 90, 180, 270)), reverse=True)
+    if len(vals) < 2 or vals[0] <= 0:
+        return False
+    return vals[1] >= max(AMBIGUITY_FLOOR, AMBIGUITY_RATIO * vals[0])
+
+
+def _write_orientation_hints(
+    text_pages: list[str],
+    batch_work: Path,
+    oriented_dir: Path,
+    guess_dir: Path,
+    orientation_report_fn: Callable[[Path], list[dict[str, Any]]],
+) -> None:
+    """For pages whose arbiter scores suggest more than one text
+    direction, ask the vision model for the structured orientation report
+    and store it (``ocr-guess/<stem>.orientation.json``) for the layout
+    stage. A single-dominant page gets no report — the plain
+    single-orientation layout suffices; the report runs only where the
+    scores already suspect more than one direction (PRD VR15, 2026-08-17).
+    A single-direction report (the model disagrees) also writes nothing —
+    the layout stage then takes the plain path."""
+    rotations_path = batch_work / "oriented" / "rotations.json"
+    if not rotations_path.exists():
+        return
+    rotations = json.loads(rotations_path.read_text(encoding="utf-8"))
+    for page in text_pages:
+        out = guess_dir / f"{Path(page).stem}.orientation.json"
+        if out.exists():
+            continue  # idempotent — re-running process must not re-pay the model call
+        scores = rotations.get(page, {}).get("scores", {})
+        if not _ambiguous_rotations(scores):
+            continue
+        hints = orientation_report_fn(oriented_dir / page)
+        degrees = {int(h.get("degrees")) for h in hints if h.get("degrees") in (0, 90, 180, 270)}
+        if len(degrees) >= 2:
+            atomic_write(out, json.dumps(hints, ensure_ascii=False) + "\n")
+            print(f"layout: orientation report for {page} — {sorted(degrees)}")
+
+
+def _run_layout_subprocess(batch_id: str, work_dir: Path) -> None:
+    """The VR14 wiring: the layout stage runs under the .venv-htr
+    interpreter (PaddleOCR lives there; the main venv never imports it —
+    the htr.py KRAKEN precedent). Every text page gets its layout: line
+    boxes + per-word confidence; the multi-orientation pages get the
+    combined per-line-orientation layout (PRD VR15). The thread env caps
+    the engine at nproc-1 cores — the ML stages leave a core for the
+    rest of the box (2026-08-17, the laptop requirement)."""
+    threads = max(1, (os.cpu_count() or 2) - 1)
+    env = {**os.environ, "OMP_NUM_THREADS": str(threads), "FLAGS_paddle_num_threads": str(threads)}
+    subprocess.run(
+        [LAYOUT_INTERP, "-m", "tools.layout_detect", batch_id, "--work-dir", str(work_dir)],
+        check=True,
+        cwd=Path(__file__).resolve().parent.parent,
+        env=env,
+    )
 
 
 def _update_status(record: dict[str, Any], batch_id: str, status: str, registry_dir: Path) -> None:

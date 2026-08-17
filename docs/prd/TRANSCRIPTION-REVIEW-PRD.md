@@ -115,6 +115,12 @@ more than one direction — a postcard with a rotated message — still has
 every word identified, boxed, and provisionally transcribed: nothing is
 missed because of its orientation (user requirement, 2026-08-16).
 
+**VR16 — The app runs lightly on this laptop.** The review app and the
+processing pipeline keep their memory use steady no matter how long they
+run or how much they process, leave a CPU core free for other work, and
+the heavy analysis tools load only while a piece of work is being
+processed and free themselves afterwards (user requirement, 2026-08-17).
+
 ## 3. Acceptance criteria
 
 1. A reviewer opening a batch knows at a glance what each document is and
@@ -168,6 +174,11 @@ missed because of its orientation (user requirement, 2026-08-16).
 21. A two-sided item such as a postcard is one document — its picture side
     the first page, its text side the second — identified by the pipeline,
     never corrected by hand (VR6, VR14).
+22. The review app's memory use stays flat however long it runs and
+    whatever it processes — it never grows with use (VR16).
+23. While the pipeline processes a batch, the rest of the laptop keeps
+    running smoothly: a core stays free, and the heavy analysis tools
+    release their memory when their stage is done (VR16).
 
 ## 4. Non-goals
 

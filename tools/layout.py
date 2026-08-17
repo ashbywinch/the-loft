@@ -30,6 +30,7 @@ assigned (their geometry is real; a confident text anchor is not — conf 0).
 from __future__ import annotations
 
 import json
+import math
 import re
 import unicodedata
 from pathlib import Path
@@ -58,6 +59,13 @@ BOX_COORDINATE_COUNT = 4  # a box is [x0, y0, x1, y1]
 # image's width/height, times 1000), rescaled to pixels when anchored.
 NORMALIZED_BOX_SCALE = 1000
 QUARTERS_PER_FULL_TURN = 4  # a full rotation is four quarter-turns (90° each)
+
+# The multi-orientation admission (PRD VR15, 2026-08-16 prototype): a
+# detected line is admitted only when the recognizer read REAL text at
+# that orientation — confidence + plausibility — never on box shape
+# alone, so an accidental upside-down pass's boxes are rejected.
+REC_SCORE_GATE = 0.85  # recognition confidence: real words read at the right orientation
+MIN_LETTERS = 2  # plausibility: a "real word" has letters, not just shapes
 
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
 _WS = re.compile(r"\s+")
@@ -392,6 +400,123 @@ def load_vlm_boxes(path: Path) -> dict[int, list[float]] | None:
         ):
             boxes[i] = [float(v) for v in b]
     return boxes or None
+
+
+def admission_gate(text: str, score: float) -> bool:
+    """Admit a detected line only when the recognizer read real text at
+    this orientation (confidence + plausibility) — never on box shape
+    alone (PRD VR15)."""
+    return float(score) >= REC_SCORE_GATE and sum(1 for ch in text if ch.isalpha()) >= MIN_LETTERS
+
+
+def remap_box(
+    box: list[float],
+    degrees: int,
+    original: tuple[int, int],
+    rotated: tuple[int, int],
+) -> list[float]:
+    """A box from the rotated frame (rotated = rw×rh) mapped back to the
+    original image (original = ow×oh) — the inverse of the applied
+    rotation, exact for a rigid quarter-turn."""
+    ow, oh = original
+    rw, rh = rotated
+    rad = math.radians(degrees)
+    ox, oy = ow / 2, oh / 2
+    rx, ry = rw / 2, rh / 2
+    xs: list[float] = []
+    ys: list[float] = []
+    for x, y in ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])):
+        dx, dy = x - rx, y - ry
+        xs.append(dx * math.cos(rad) - dy * math.sin(rad) + ox)
+        ys.append(dx * math.sin(rad) + dy * math.cos(rad) + oy)
+    return [round(min(xs), 1), round(min(ys), 1), round(max(xs), 1), round(max(ys), 1)]
+
+
+def admit_and_remap(
+    detections: list[Detection],
+    degrees: int,
+    original: tuple[int, int],
+    rotated: tuple[int, int],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Admit the detector's lines read as real text at this orientation
+    (recognition-driven, never shape-only) and remap their boxes from the
+    rotated frame back to the original image. Returns (kept, rejected)."""
+    kept: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for det in detections:
+        text = det["text"].strip()
+        score = float(det["score"])
+        entry: dict[str, Any] = {
+            "text": text,
+            "score": round(score, 2),
+            "words": [{"box": remap_box(w["box"], degrees, original, rotated)} for w in det.get("words", [])],
+        }
+        if admission_gate(text, score):
+            entry["box"] = remap_box(det["box"], degrees, original, rotated)
+            kept.append(entry)
+        else:
+            entry["box"] = [round(v, 1) for v in det["box"]]
+            rejected.append(entry)
+    return kept, rejected
+
+
+def multi_layout(
+    page: str,
+    width: int,
+    height: int,
+    passes: list[tuple[int, list[dict[str, Any]]]],
+) -> dict[str, Any]:
+    """The combined multi-orientation layout (PRD VR15): the admitted
+    lines from each orientation pass, ordered 0° first then each next
+    direction, each line carrying the orientation it was read at. The
+    passes' boxes are already remapped to the original image's pixels;
+    width/height are the original (oriented) image's. The rec text is
+    the provisional transcription (VR14) — the reviewer corrects it."""
+    lines: list[dict[str, Any]] = []
+    for degrees, admitted in sorted(passes, key=lambda p: p[0]):
+        for entry in admitted:
+            lines.append(
+                {
+                    "index": len(lines),
+                    "text": entry["text"],
+                    "box": entry["box"],
+                    "conf": entry["score"],
+                    "orientation": degrees,
+                    "box_source": "multi",
+                    "words": [{"box": w.get("box"), "conf": entry["score"]} for w in entry.get("words", [])],
+                }
+            )
+    return {"page": page, "width": width, "height": height, "lines": lines, "unmatched": []}
+
+
+def load_orientation_hint(path: Path) -> list[int]:
+    """The page's distinct text orientations (0/90/180/270), written by
+    the pipeline stage when the arbiter's scores suggested more than one
+    direction (PRD VR15). [] = a single orientation — the plain
+    single-orientation layout path applies."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    degrees = {int(h.get("degrees")) for h in data if isinstance(h, dict) and h.get("degrees") in (0, 90, 180, 270)}
+    return sorted(degrees) if len(degrees) >= 2 else []
+
+
+def orientation_passes(degrees: list[int]) -> list[int]:
+    """The detection passes for a page's reported orientations. A
+    reported vertical direction (90 or 270) runs BOTH its mirrors: the
+    vision model flips between 90 and 270 for the same physical block
+    between calls (2026-08-17), and a pass at the wrong direction leaves
+    the block upside-down — the recognition admission then rejects it
+    and the text is silently missed. The mirror pass costs one detection
+    run (no model call) and admits nothing garbage."""
+    out = set(degrees)
+    for d in degrees:
+        if d in (90, 270):
+            out.add(270 if d == 90 else 90)
+    return sorted(out)
 
 
 def layout_detections(layout: dict[str, Any]) -> list[Detection]:

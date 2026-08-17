@@ -558,10 +558,16 @@ def _confirm_documents(
     confirmed_dir = batch_work / "ocr-confirmed"
     confirmed_dir.mkdir(parents=True, exist_ok=True)
     for index, document in enumerate(boundaries, start=1):
+        text_pages = [p for p in document["pages"] if (guess_dir / Path(p).with_suffix(".txt")).exists()]
+        if not text_pages:
+            # a photo-only item — nothing to transcribe; its people/places
+            # identification is a separate flow (user, 2026-08-17)
+            write_line(f"=== Document {index} — {len(document['pages'])} photo page(s), no text to check")
+            continue
         write_line(f"\n=== Document {index} — pages {', '.join(document['pages'])} ===")
         if document.get("greeting"):
             write_line(f"greeting: {document['greeting']}")
-        for page in document["pages"]:
+        for page in text_pages:
             text_path = guess_dir / Path(page).with_suffix(".txt")
             if text_path.exists():
                 write_line(f"--- {page} ---\n{text_path.read_text(encoding='utf-8')}")
@@ -570,11 +576,7 @@ def _confirm_documents(
             record_confirmation(batch_id, index, document, None, work_dir=work_dir, registry_dir=registry_dir)
             write_line(f"document {index} rejected")
             continue
-        text = "\n".join(
-            (guess_dir / Path(p).with_suffix(".txt")).read_text(encoding="utf-8")
-            for p in document["pages"]
-            if (guess_dir / Path(p).with_suffix(".txt")).exists()
-        )
+        text = "\n".join((guess_dir / Path(p).with_suffix(".txt")).read_text(encoding="utf-8") for p in text_pages)
         if answer == "e":
             text = _read_multiline("paste the corrected text, '.' alone ends:\n", line)
         record_confirmation(batch_id, index, document, text, work_dir=work_dir, registry_dir=registry_dir)

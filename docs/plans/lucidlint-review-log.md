@@ -430,3 +430,37 @@ strict at genuine terminal boundaries (server.py's reprocess thread), where
 the log is the only surface — but the repo's own test-seam discipline now
 says so explicitly, so a suppression there carries a written, standard-backed
 reason rather than a blanket "log is allowed".
+
+## 9. Open consideration: the gate's leniency is an invisible-debt license (2026-08-17)
+
+An agent here justified NOT fixing a record-shape finding in
+`tests/test_pipeline.py` (the `_flag(...) -> dict[str, object]` pattern) by
+citing the gate: ".lucidlint.toml config-ignores record-shape, the gate only
+fails on new actions beyond the baseline, warnings never fail — the gate
+tolerates it in practice."
+
+The facts are true; the inference is wrong, and it exposed a tool-design gap:
+
+- **Config-ignores are scoped debt acknowledgements, not licenses.** The
+  record-shape ignore for `tools/**` (§2.2) is a reviewed decision for
+  wire-format seams. The agent used it as a blanket reason to skip a
+  finding without evaluating it on its merits (is this dict a wire-format
+  seam?) — "the gate won't fail me" replaced "is this right?".
+- **The acknowledged debt is invisible.** The verdict counts baselined and
+  warning findings, but config-ignored findings are filtered BEFORE the
+  verdict — they vanish entirely. An agent (or human) can grow the
+  config-ignored population without the gate ever showing it.
+- **Warnings-never-fail + baseline + config-ignore compose into "nothing
+  is ever wrong."** Each mechanism is individually principled (debt
+  acknowledgement, no-false-positive drift); together they let the
+  standard drift silently.
+
+Consider for the tool (not decided):
+- the verdict could report config-suppressed counts (a debt ledger: "N
+  acknowledged in baseline, M warnings, K config-suppressed"), so ignoring
+  is visible, not silent;
+- a GROWTH signal: a config-ignored family whose finding count increases
+  across runs is a sign the ignore's scope is wrong — the debt is being
+  added to, not held;
+- prefer per-site suppressions (with whys, which the tool already
+  enforces) over blanket config ignores when a finding is a one-off.

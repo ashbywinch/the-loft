@@ -686,12 +686,20 @@ def build_app(
         try:
             record = load_batch(batch_id, registry_dir)
             by_pages = {tuple(b.get("pages", [])): b.get("status", "review") for b in (record.get("boundaries") or [])}
+            # the transcription review shows only documents with a text
+            # page (2026-08-17, user): photo-only items — the picture side
+            # of a postcard pairs into its document, but a standalone
+            # photo has nothing to transcribe — belong to the
+            # people/places identification flow, which reads the same
+            # structure with no filter. The photo docs stay "review" in
+            # the registry until that flow claims them.
             documents = [
                 {
                     **document,
                     "status": by_pages.get(tuple(document.get("pages", [])), "review"),
                 }
                 for document in draft_payloads(batch_id, work_dir)
+                if document.get("texts")
             ]
             return {
                 "batch_id": batch_id,

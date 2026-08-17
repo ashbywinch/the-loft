@@ -136,6 +136,47 @@ def test_review_reject_records_the_rejection(tmp_path: Path) -> None:
     assert not (tmp_path / "work" / "adopt-0001" / "ocr-confirmed" / "doc-01.txt").exists()
 
 
+def test_review_skips_photo_only_documents(tmp_path: Path) -> None:
+    """A photo-only document (the postcard's standalone fronts, 2026-08-17)
+    has nothing to transcribe — the confirm gate notes it and moves on;
+    the text document confirms normally, and the photo doc stays "review"
+    for the people/places identification flow."""
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    batch = "adopt-0001"
+    record = {"batch_id": batch, "path": str(tmp_path / "folder"), "label": "", "status": "review"}
+    (registry / f"{batch}.json").write_text(json.dumps(record), encoding="utf-8")
+    work = tmp_path / "work" / batch / "ocr-guess"
+    work.mkdir(parents=True)
+    (work / "p2.txt").write_text("Dear Mum,", encoding="utf-8")
+    (work / "boundaries.json").write_text(
+        json.dumps(
+            [
+                {"pages": ["photo1.jpg"], "greeting": None, "signoff": None},
+                {"pages": ["p2.jpg"], "greeting": None, "signoff": None},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    lines_written: list[str] = []
+    review(
+        batch,
+        registry_dir=registry,
+        work_dir=tmp_path / "work",
+        readline=lambda _prompt: "\n",
+        write_line=lines_written.append,
+    )
+    record = json.loads((registry / f"{batch}.json").read_text(encoding="utf-8"))
+    assert record["status"] == "confirmed"
+    # replace-by-pages: only the reviewed document lands in the registry;
+    # the unconfirmed photo doc is absent — the drafts default reads it
+    # "review" until the identification flow claims it
+    assert record["boundaries"] == [{"pages": ["p2.jpg"], "greeting": None, "signoff": None, "status": "confirmed"}]
+    assert any("no text to check" in line for line in lines_written)
+    confirmed = tmp_path / "work" / "adopt-0001" / "ocr-confirmed" / "doc-02.txt"
+    assert confirmed.read_text(encoding="utf-8") == "Dear Mum,"
+
+
 def test_review_photo_only_batch_confirms_nothing(tmp_path: Path) -> None:
     """2026-08-14 final review: make confirm on a photo-only batch must not error."""
     import json as _json

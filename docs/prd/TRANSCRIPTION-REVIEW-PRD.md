@@ -99,10 +99,10 @@ getting in their way).
 pages are all finished is done: it disappears from the list of work still
 to be reviewed (user requirement, 2026-08-16).
 
-**VR13 — Completed work is visibly marked, so nothing is redone.** The
-reviewer can mark a line — or a page — as handled as they go, and handled
-work stays clearly marked; returning to the batch shows exactly what
-remains, so no finished work is re-checked (user requirement, 2026-08-16).
+**VR13 — Completed work is visibly marked, so nothing is redone.** Lines
+and pages the reviewer has already handled stay clearly marked; returning
+to the batch shows exactly what remains, so no finished work is re-checked
+(user requirement, 2026-08-16).
 
 ## 3. Acceptance criteria
 
@@ -146,9 +146,8 @@ remains, so no finished work is re-checked (user requirement, 2026-08-16).
     order (VR11, VR9).
 17. A document whose pages are all finished is no longer listed as pending
     work (VR12).
-18. The reviewer can mark a line handled as they go, and lines and pages
-    already handled are visibly marked on return, so none are redone
-    (VR13).
+18. Lines and pages already handled are visibly marked on return, so none
+    are redone (VR13).
 19. Leaving and returning restores the exact document and page the
     reviewer was on, with their handled work marked (VR9, VR13).
 

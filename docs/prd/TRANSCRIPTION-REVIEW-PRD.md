@@ -75,6 +75,15 @@ words are usable on the smaller screen (user, 2026-08-15).
 remains in a batch, leave partway, and come back without re-reading what
 they already handled. Progress is visible.
 
+**VR10 — Reorientation is immediate and persistent.** When the reviewer
+turns a page with the ↻ control, the page is reoriented instantly, and it
+stays reoriented every time they look at it thereafter — regardless of
+what the back end is doing (a pending, delivered, or failed
+re-transcription never reverts or re-flags the reviewer's own correction).
+The reviewer's view of a page they fixed is authoritative on their side;
+the back end's async re-read is invisible unless it has something to say
+(user requirement, 2026-08-16).
+
 ## 3. Acceptance criteria
 
 1. A reviewer opening a batch knows at a glance what each document is and
@@ -99,6 +108,12 @@ they already handled. Progress is visible.
    confirmed (VR8, R14).
 10. Leaving a batch and returning resumes where the reviewer stopped,
     with progress visible (VR9).
+11. Turning a page reorients it immediately, and it appears that way on
+    every subsequent visit, independent of the back end's re-transcription
+    state (VR10).
+12. When a page's re-read after a correction fails, the surface says so
+    plainly ("the re-read failed") — it never implies the text is fine, and
+    never blames a correction the reviewer never made (VR10, VR8).
 
 ## 4. Non-goals
 

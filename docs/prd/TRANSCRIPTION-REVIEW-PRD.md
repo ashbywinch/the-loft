@@ -121,6 +121,18 @@ run or how much they process, leave a CPU core free for other work, and
 the heavy analysis tools load only while a piece of work is being
 processed and free themselves afterwards (user requirement, 2026-08-17).
 
+**VR17 — The reviewer explores the document by scanning the image, not
+the transcription.** The image pane is the zoomable, pannable,
+tappable navigation surface. The transcription pane follows — scrolling
+the text pans the image to the focused line; panning/zooming the image
+does not change the text's focus. Every box overlay on the image is a
+tap target: tapping a box scrolls the text to that line and rotates the
+image to make it readable. The reviewer can freely explore the scan
+without losing their reading position, and a "return" button in the
+image pane re-centres on the focused line. The inline edit has a visible
+Done and Cancel; the verification tick is a toggleable state (user
+requirement, 2026-08-17, walkthrough finding 2026-08-17).
+
 ## 3. Acceptance criteria
 
 1. A reviewer opening a batch knows at a glance what each document is and
@@ -179,6 +191,22 @@ processed and free themselves afterwards (user requirement, 2026-08-17).
 23. While the pipeline processes a batch, the rest of the laptop keeps
     running smoothly: a core stays free, and the heavy analysis tools
     release their memory when their stage is done (VR16).
+24. Scrolling the transcription pane pans the image to the focused line's
+    box and rotates the image to the line's reading orientation — the
+    reviewer reads the text and sees where it is on the page without
+    hunting (VR1, VR17).
+25. Panning or zooming the image does not change the text's focus — the
+    reviewer can explore the scan freely and return to the reading
+    position with a single tap (VR17).
+26. A box overlay on the image is a tap target: tapping it scrolls the
+    text to the corresponding line and rotates the image to make it
+    readable (VR17).
+27. The inline editor has a visible Done button and a visible Cancel
+    button — the reviewer never loses a correction or gets stuck in an
+    edit (VR2, VR17, walkthrough finding 2026-08-17).
+28. The verification tick is a toggle: unchecked (○) shows the line is
+    unverified; checked (✓) shows it is verified; tapping a checked line
+    unchecks it (VR17, walkthrough finding 2026-08-17).
 
 ## 4. Non-goals
 

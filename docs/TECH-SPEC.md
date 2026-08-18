@@ -1011,7 +1011,10 @@ none is irrevocable:
 
 - **Confirmed** — the reviewer is confident in the transcription. The
   document is published to the archive and removed from the pending queue
-  ("✓ Confirm & Next →" button).
+  ("✓ Confirm & Next →" button). The confirm button is always available
+  (it is not blocked by unchecked lines, unverified lines, or any other
+  pre-condition — the reviewer's own confidence is the only gate; VR5,
+  AC27, AC28).
 - **Rejected** — the document does not belong in the archive (an
   accidental import such as petrol receipts, an unreadable scan, one too
   embarrassing to keep — user, 2026-08-17). The rejection is a

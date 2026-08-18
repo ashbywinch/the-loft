@@ -159,6 +159,7 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[
                     "rec_words": words(detections[di]["text"]),
                     "det_words": detections[di].get("words", []),
                     "box_source": "content",
+                    "orientation": detections[di].get("orientation", 0),
                 }
             )
     matches.sort(key=lambda m: m["vlm_index"])
@@ -182,6 +183,7 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[
             "rec_words": words(det["text"]),
             "det_words": det.get("words", []),
             "box_source": "positional",
+            "orientation": det.get("orientation", 0),
         }
         for vi, det in zip(boxless, unmatched, strict=False)
     )
@@ -632,7 +634,9 @@ def _vlm_text_lines(
                 "text": line_text,
                 "box": _located_box(r, match, width, height),
                 "conf": 1.0 if is_confirmed else 0.0,
-                "orientation": int(r.get("degrees", 0)) if r else 0,
+                "orientation": int(match["orientation"])
+                if match and isinstance(match.get("orientation"), int)
+                else (int(r.get("degrees", 0)) if r else 0),
                 "box_source": "vlm" if is_confirmed else "vlm-unconfirmed",
                 "words": [
                     {"word": w, "box": None, "conf": 1.0 if is_confirmed else 0.0} for w in vlm_line_words(line_text)

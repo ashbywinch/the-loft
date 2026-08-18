@@ -485,6 +485,36 @@ def test_multi_layout_words_carry_text_and_flag_weak_lines() -> None:
     assert clean["words"][0]["conf"] == 1.0  # a confident read stays clean
 
 
+def test_multi_layout_orientation_comes_from_the_pass_not_the_report() -> None:
+    """The line's reading orientation is the PASS where the rec read it
+    (the detector's detection pass), not the report's estimated degrees.
+    The report can say 90° while the 270° pass actually read the text —
+    the per-line rotation must use 270° (so the viewRotation makes the
+    text readable). The reproduced fault (2026-08-17): the report's 90°
+    made the per-line rotation 180° off, leaving the text unreadable."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (0, [{"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []}]),
+            (270, [{"text": "onorrow", "box": [501, 201, 899, 399], "score": 0.9, "words": []}]),
+        ],
+        report_lines=[
+            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+            {"index": 1, "box": [500, 200, 900, 400], "degrees": 90},  # the report says 90°
+        ],
+        vlm_text="POST CARD\nWe are from beauford",
+    )
+    message = [ln for ln in layout["lines"] if "beauford" in ln["text"]]
+    assert message, "the message line must be present"
+    assert message[0]["orientation"] == 270, (
+        f"the orientation must be 270 (the pass that read it), was {message[0]['orientation']}"
+    )
+
+
 def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
     """VR14: every piece of text has a bounding box, and the box holds the
     words it claims (2026-08-17 — the reproduced fault: the lines carried

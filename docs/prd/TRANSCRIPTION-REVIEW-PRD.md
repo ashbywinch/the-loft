@@ -203,6 +203,9 @@ The reviewer can mark a word as verified and change their mind later
     not checked (VR17, user 2026-08-17).
 29. The reviewer can move to the next document without confirming the
     current one (VR17, user 2026-08-17).
+30. No action is irrevocable — the reviewer can change their mind,
+    including bringing a rejected document back from the bin (VR17, user
+    2026-08-17).
 
 ## 4. Non-goals
 

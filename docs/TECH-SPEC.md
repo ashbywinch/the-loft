@@ -989,6 +989,23 @@ added words (prior art: spatial page maps — CHI space-filling thumbnails;
 per-page review status — FromThePage). Flagged words render with a wavy red
 underline (the spell-check convention) at rest, not only in edit.
 
+**The three outcomes (VR5 — confirm or reject; VR17 — defer; AC30 — no
+action is irrevocable).** Every document reaches one of three states, and
+none is irrevocable:
+
+- **Confirmed** — the reviewer is confident in the transcription. The
+  document is published to the archive and removed from the pending queue
+  ("✓ Confirm & Next →" button).
+- **Rejected** — the document does not belong in the archive (an
+  accidental import such as petrol receipts, an unreadable scan, one too
+  embarrassing to keep — user, 2026-08-17). The rejection is a
+  soft-delete: the document moves to a recoverable bin and leaves the
+  pending queue; the reviewer can bring it back. Not yet implemented.
+- **Deferred** — the document belongs in the archive but the reviewer
+  cannot finish it now (needs to ask a family member, come back later).
+  It stays in the pending queue, unconfirmed ("Skip →" button,
+  implemented 2026-08-17).
+
 **The correction interaction (2026-08-15, grounded in the prior art).** The
 reviewer's correction model follows Trove/Transkribus: **per-line inline
 editing anchored to the image**. Selecting a transcription line enters edit

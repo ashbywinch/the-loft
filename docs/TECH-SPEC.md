@@ -1006,6 +1006,11 @@ tablet and phone-landscape instead of a second stacked mobile layout
   projection failed globally).
 - The Azure subscription, once it exists, is the cloud fallback for the
   same mechanism (real boxes + confidence, handwriting-capable).
+- **Grouping correction (VR6).** The reviewer can see the document grouping
+  (the navigation strip) but has no way to correct a wrong page-to-document
+  assignment — split a document, merge two, or move a page. The design is
+  deferred until a real example of a wrong grouping surfaces in testing
+  (user, 2026-08-17).
 
 **The navigation and focus model (2026-08-17, VR17, walkthrough finding).**
 

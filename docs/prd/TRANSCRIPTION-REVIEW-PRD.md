@@ -179,10 +179,13 @@ The reviewer can mark a word as verified and change their mind later
     are redone (VR13).
 19. Leaving and returning restores the exact document and page the
     reviewer was on, with their handled work marked (VR9, VR13).
-20. A page whose text runs in several directions shows all of it, with the
-    0° lines first, then each next direction in turn; the page initially
-    shows the way the pipeline determined is right-way-up — the printed
-    writing upright (VR15).
+20. The transcription presents the text in a coherent order that feels
+    sensible — lines from the same block of writing (a paragraph, a
+    callout box, a marginal note) are kept together, and lines from
+    different blocks are not mixed even if they happen to be at the
+    same height on the page. The page initially shows the way the
+    pipeline determined is right-way-up — the printed writing upright
+    (VR15, user 2026-08-17).
 21. A two-sided item such as a postcard is one document — its picture side
     the first page, its text side the second — identified by the pipeline,
     never corrected by hand (VR6, VR14).

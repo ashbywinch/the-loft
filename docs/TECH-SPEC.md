@@ -989,6 +989,21 @@ added words (prior art: spatial page maps — CHI space-filling thumbnails;
 per-page review status — FromThePage). Flagged words render with a wavy red
 underline (the spell-check convention) at rest, not only in edit.
 
+**The reading order (VR15, AC20 — coherent, not dislocating).** The
+transcription presents the text in a coherent order: lines from the same
+block of writing (a paragraph, a callout box, a marginal note) are kept
+together, and lines from different blocks are not mixed even if they
+happen to be at the same height on the page. The layout achieves this
+by running a detection pass per orientation (the multi-orientation layout
+anchors lines from each pass separately), then ordering the combined
+lines by orientation (0° first, then 90°, 180°, 270°) — the reading
+direction the user naturally expects. Within each orientation group, the
+lines stay in the detector's reading order (top-to-bottom in the
+rotated frame), so a callout box's lines stay together and are not
+interleaved with the main text column. The initial display shows the
+page the way the pipeline determined is right-way-up — the printed
+writing upright (the oriented image).
+
 **The three outcomes (VR5 — confirm or reject; VR17 — defer; AC30 — no
 action is irrevocable).** Every document reaches one of three states, and
 none is irrevocable:

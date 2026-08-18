@@ -687,6 +687,21 @@ function renderSurface(main, session) {
   }
   session.pageProcessing = pageState;
 
+  // Fail-fast (2026-08-17): a page whose layout failed validation is
+  // never shown with wrong boxes — the boxes are withheld and the reason
+  // is stated loudly. The reviewer must never see boxes that don't
+  // correspond to the page.
+  const layoutError = doc.layout_errors?.[page];
+  if (layoutError) {
+    txPane.prepend(
+      el(
+        "div",
+        { class: "rv-note rv-note--fixing" },
+        `This page's word boxes were rejected (${String(layoutError).slice(0, 120)}…) — showing the text without boxes.`,
+      ),
+    );
+  }
+
   // the honest label: only the LAST page's press confirms — earlier pages
   // just advance (walk finding 3, 2026-08-15); the page rail is the pager.
   // The "Next flagged" button is GONE (user, 2026-08-17): the page chips

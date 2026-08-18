@@ -643,7 +643,30 @@ def test_multi_layout_uses_the_guess_text_located_by_the_report() -> None:
     assert by_text["a line the report could not locate"]["box"] is None  # flagged, boxless
 
 
-def test_multi_layout_orders_zero_first_then_next_directions() -> None:
+def test_validate_layout_rejects_bad_boxes() -> None:
+    """The fail-fast guard (2026-08-17): a layout whose line has a box
+    that is degenerate or outside the image must never reach the front
+    end — the reviewer must never see wrong boxes. Returns the
+    violations; a clean layout passes."""
+    from tools.layout import validate_layout
+
+    good = {
+        "width": 1000,
+        "height": 2000,
+        "lines": [
+            {"text": "post card", "box": [100, 100, 300, 140]},
+            {"text": "message", "box": [50, 500, 900, 540]},
+            {"text": "no box", "box": None},
+        ],
+    }
+    assert validate_layout(good) == []
+    bad_out = {"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [100, 100, 1500, 140]}]}
+    assert validate_layout(bad_out), "a box outside the image must fail"
+    bad_degenerate = {"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [100, 100, 100, 200]}]}
+    assert validate_layout(bad_degenerate), "a degenerate box must fail"
+    bad_neg = {"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [-50, 100, 300, 140]}]}
+    assert validate_layout(bad_neg), "a negative coordinate must fail"
+
     """The combined layout shows the 0° lines first, then each next
     direction, each line carrying the orientation it was read at (VR15)."""
     from tools.layout import multi_layout

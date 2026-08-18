@@ -30,6 +30,7 @@ from tools.layout import (
     layout_detections,
     load_layout,
     rotate_detections,
+    validate_layout,
     write_layout,
 )
 from tools.layout_stage import run_layout
@@ -185,11 +186,23 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
             for page in pages
             if (guess_dir / Path(page).with_suffix(".txt")).exists()
         }
-        layouts = {
-            page: load_layout(guess_dir / Path(page).with_suffix(".layout.json"))
-            for page in pages
-            if (guess_dir / Path(page).with_suffix(".layout.json")).exists()
-        }
+        # Fail-fast (2026-08-17): a layout with a degenerate or
+        # out-of-image box must NEVER reach the review surface — the page
+        # gets no layout (its text still shows) and a loud marker instead
+        # of wrong boxes. The reviewer must never see boxes that don't
+        # correspond to the page.
+        layouts = {}
+        layout_errors = {}
+        for page in pages:
+            layout_path = guess_dir / Path(page).with_suffix(".layout.json")
+            if not layout_path.exists():
+                continue
+            layout = load_layout(layout_path)
+            violations = validate_layout(layout)
+            if violations:
+                layout_errors[page] = violations
+                continue
+            layouts[page] = layout
         # the orientations the pipeline already read on each page (VR15,
         # 2026-08-17): the distinct per-line orientations from the layout.
         # The reviewer's rotate to a covered orientation is view-only — no
@@ -207,6 +220,7 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
                 "pages": pages,
                 "texts": texts,
                 "layouts": layouts,
+                "layout_errors": layout_errors,
                 "orientations": orientations,
                 **document,
             }

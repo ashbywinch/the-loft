@@ -817,8 +817,39 @@ def rotate_detections(detections: list[Detection], quarters: int, w: int, h: int
     return rotated
 
 
+def validate_layout(layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
+    """The fail-fast box guard (2026-08-17): a layout whose line has a
+    box that is degenerate or outside the image must NEVER reach the
+    front end — the reviewer must never see wrong boxes (the reproduced
+    incident: page-02's reprocessed layout carried approximate boxes to
+    the review surface silently). Returns the violations; [] = clean.
+    ``None`` boxes are fine (the line is flagged, the review shows it
+    without a box); the tolerance covers the model's estimate slop."""
+    width = int(layout.get("width", 0))
+    height = int(layout.get("height", 0))
+    violations: list[str] = []
+    for line in layout.get("lines", []):
+        box = line.get("box")
+        if box is None:
+            continue
+        if len(box) != 4 or not all(isinstance(v, (int, float)) for v in box):
+            violations.append(f"{line.get('text', '')[:20]!r}: malformed box {box}")
+            continue
+        x0, y0, x1, y1 = box
+        if x1 <= x0 or y1 <= y0:
+            violations.append(f"{line.get('text', '')[:20]!r}: degenerate box {box}")
+        elif x0 < -tolerance or y0 < -tolerance or x1 > width + tolerance or y1 > height + tolerance:
+            violations.append(f"{line.get('text', '')[:20]!r}: box outside the image {box}")
+    return violations
+
+
 def write_layout(layout: dict[str, Any], path: Path) -> None:
     """Publish a page's layout atomically — a reader must never meet a
     half-written layout (house rule: files other code reads are
-    write-then-rename)."""
+    write-then-rename). Fail-fast (2026-08-17): a layout with a
+    degenerate or out-of-image box is REFUSED — a bad layout must never
+    be persisted, let alone served."""
+    violations = validate_layout(layout)
+    if violations:
+        raise ValueError(f"refusing to write an invalid layout: {violations}")
     atomic_write(path, json.dumps(layout, indent=1, ensure_ascii=False) + "\n")

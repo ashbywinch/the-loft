@@ -109,6 +109,36 @@ def test_draft_payloads_serves_the_review_surface(tmp_path: Path) -> None:
     assert drafts[0]["greeting"] == "Chère Maman."
 
 
+def test_draft_payloads_never_serves_a_bad_layout(tmp_path: Path) -> None:
+    """Fail-fast (2026-08-17): a layout with a degenerate or out-of-image
+    box is NOT served to the review surface — the page keeps its text but
+    loses the layout, and a loud ``layout_errors`` marker names the
+    violation. Wrong boxes must never reach the reviewer."""
+    guess = tmp_path / "adopt-0001" / "ocr-guess"
+    guess.mkdir(parents=True)
+    (guess / "p1.txt").write_text("line one", encoding="utf-8")
+    (guess / "p1.layout.json").write_text(
+        json.dumps(
+            {
+                "page": "p1.jpg",
+                "width": 100,
+                "height": 100,
+                "lines": [{"index": 0, "text": "line one", "box": [0, 0, 500, 10], "conf": 1.0, "words": []}],
+                "unmatched": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (guess / "boundaries.json").write_text(
+        json.dumps([{"pages": ["p1.jpg"], "greeting": None, "signoff": None}]),
+        encoding="utf-8",
+    )
+    drafts = draft_payloads("adopt-0001", tmp_path)
+    assert drafts[0]["layouts"] == {}  # the bad layout is not served
+    assert "line one" in drafts[0]["texts"]["p1.jpg"]  # the text still shows
+    assert drafts[0]["layout_errors"]["p1.jpg"], "the violation is named loudly"
+
+
 def test_draft_payloads_carries_the_layout_when_the_pass_has_run(tmp_path: Path) -> None:
     """TECH-SPEC §16.16: the drafts payload gains the per-page layout (line
     boxes + per-word confidence) once the layout pass has written it —

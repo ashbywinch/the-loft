@@ -978,3 +978,45 @@ tablet and phone-landscape instead of a second stacked mobile layout
   projection failed globally).
 - The Azure subscription, once it exists, is the cloud fallback for the
   same mechanism (real boxes + confidence, handwriting-capable).
+
+**The navigation and focus model (2026-08-17, VR17, walkthrough finding).**
+
+The fake-user walkthrough (Sam, 2026-08-17) + the UX research (Preview
+Panel, Master-Detail, Overview+Detail, Inline Edit patterns) established
+the focus model:
+
+*The focused line* is the line at the top of the text pane's viewport.
+Scrolling the text changes the focus. The image follows — pans to the
+focused line's box, rotates to the line's reading orientation.
+Panning/zooming the image does NOT change the focus; the reviewer can
+explore the scan freely. A "return" button in the image toolbar
+re-centres on the focused line.
+
+*The image is the navigation surface.* The box overlays are touchable
+(`pointer-events: auto`). Tapping a box scrolls the text to the
+corresponding line and rotates the image to make it readable. The image
+pane's click handler that silently edits the text is removed.
+
+*The inline edit* has a visible Done (✓, commits) and Cancel (✕,
+discards) — the standard Inline Edit pattern. The Escape key cancels;
+the keyboard's Done key commits. The edit row shows the format buttons + Done + Cancel.
+
+*The verification tick* is a toggle: unchecked (○ outline) and checked
+(✓ filled). Clicking a checked line unchecks it (the edit is removed,
+the line returns to its unchecked state). The line's background turns
+cream when checked.
+
+*The image pane's initial view* fits the document's full content area
+(all boxes' min/max y, not just the first line) at a readable zoom
+level — the reviewer sees the full card and can scroll to the message.
+
+*The per-line rotation* uses the pass orientation (the detector's
+reading direction), not the report's estimated degrees. The
+`_vlm_text_lines` anchoring: the line's orientation = the matched
+detection's pass orientation when a rec match exists, else the report's
+degrees (the best available estimate). This makes the viewRotation work
+correctly for the dual-pane link and the per-line reading rotation.
+
+*Implementation status:* The front-end changes are API-independent and
+ready to build. The page-02 rebuild (201004) needs the model API
+(monthly limit reached 2026-08-17).

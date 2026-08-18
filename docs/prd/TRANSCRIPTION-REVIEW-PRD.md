@@ -62,14 +62,14 @@ be corrected.
 boxes, and filled-in forms appear in the transcription in their place —
 the review never loses the layout content the pipeline transcribed (R12).
 
-**VR8 — The review works from the always-on home.** The surface runs on
-the cheap, always-on front end (R14): it reads the machine's drafts and
-writes confirmations over the sync seam, and a failed sync never loses a
-confirmed transcription. The reviewer's tablet is the primary surface —
-**landscape is the natural reviewing posture** (the page and its words
-side by side, per the product's tablet-first platform, PRD §1). The same
-review works on a phone: the handwriting is big enough to read and the
-words are usable on the smaller screen (user, 2026-08-15).
+**VR8 — The review works from the always-on home.** The reviewer can
+review the machine's drafts from the family home's always-on device, and
+their work is never lost — even if the connection goes down. The
+reviewer's tablet is the primary surface — **landscape is the natural
+reviewing posture** (the page and its words side by side, per the
+product's tablet-first platform, PRD §1). The same review works on a
+phone: the handwriting is big enough to read and the words are usable on
+the smaller screen (user, 2026-08-15).
 
 **VR9 — The work is bounded and resumable.** The reviewer can see what
 remains in a batch, leave partway, and come back without re-reading what
@@ -89,7 +89,7 @@ requirement, 2026-08-16).
 pace.** Each page is finished on its own; a document is finished only when
 every one of its pages is finished. The reviewer moves through the pile in
 whatever order suits them — leaving a page or a document and coming back
-later — and the system never loses their place or confuses their
+later — and the reviewer never loses their place or confuses their
 progress. The reviewer moves at their own speed: nothing in the app ever
 slows them down or asks for more than they choose to do (user
 requirement, 2026-08-16: power readers blast through without the app
@@ -128,10 +128,8 @@ of them. The reviewer needs to look at any part of the document closely,
 find the corresponding word in the transcription, and return to where
 they were reading without searching. The reviewer never gets stuck in a
 correction — they can always keep or abandon a change. The reviewer can
-mark a line as verified and change their mind later (user requirement,
+mark a word as verified and change their mind later (user requirement,
 2026-08-17, walkthrough finding 2026-08-17).
-The reviewer can mark a word as verified and change their mind later
-(user requirement, 2026-08-17, walkthrough finding 2026-08-17).
 
 ## 3. Acceptance criteria
 

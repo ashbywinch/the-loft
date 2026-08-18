@@ -62,6 +62,56 @@ export function clearEdits(batchId, docIndex) {
     // nothing to clear
   }
 }
+/** Save the current page\'s review state (scroll, view, selected line) to
+ * localStorage so the reviewer never loses their place (VR9, VR17).
+ * Keyed by batch + page index; expects the doc index to validate. */
+export function saveResumePosition(batchId, docIndex, pageIndex, selLine, view, scrollTop, readRotation) {
+  try {
+    const key = `rv-res-${batchId}-${pageIndex}`;
+    const data = JSON.stringify({ docIndex, selLine, view, scrollTop, readRotation, ts: Date.now() });
+    localStorage.setItem(key, data);
+  } catch { /* quota exceeded */ }
+}
+
+export function loadResumePosition(batchId, pageIndex) {
+  try {
+    const key = `rv-res-${batchId}-${pageIndex}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+
+export function clearResumePosition(batchId, pageIndex) {
+  try {
+    localStorage.removeItem(`rv-res-${batchId}-${pageIndex}`);
+  } catch { /* ignore */ }
+}
+
+/** Save the current session page\'s resume position before navigation. */
+function saveCurrentResumePosition(session) {
+  const { batch, docIndex, pageIndex, selLine, view, readRotation } = session;
+  if (pageIndex !== undefined && session.txBody) {
+    saveResumePosition(batch.batchId, docIndex, pageIndex, selLine, view, session.txBody.scrollTop ?? 0, readRotation);
+  }
+}
+
+/** The full bounding box of all lines in the layout, or null if there
+ * are no line boxes. The margin is the line-0 top: the band anchor\'s
+ * half-line margin. */
+function contentBounds(layout) {
+  const lines = (layout?.lines || []).filter((l) => l.box);
+  if (!lines.length) return null;
+  const allX = lines.flatMap((l) => [l.box[0], l.box[2]]);
+  const allY = lines.flatMap((l) => [l.box[1], l.box[3]]);
+  const r = Math.max(allX[1] - allX[0], allY[1] - allY[0]) * 0.05;
+  return {
+    x: Math.min(...allX) - r,
+    y: Math.min(...allY) - r,
+    width: Math.max(...allX) - Math.min(...allX) + 2 * r,
+    height: Math.max(...allY) - Math.min(...allY) + 2 * r,
+  };
+}
 
 // -- pure helpers (exported for tests) ----------------------------------------
 
@@ -553,7 +603,7 @@ function renderSurface(main, session) {
   // page dots; the document boundary and the cross-page jump are visible
   // before any press, so nothing needs explaining).
   const topbar = el("div", { class: "rv-topbar" }, [
-    el("button", { class: "rv-back", onclick: async () => { acceptEdit(session); await queueRotation(session); renderBatch(root, batch.batchId); } }, `← ${batch.label || "Documents"}`),
+    el("button", { class: "rv-back", onclick: async () => { saveCurrentResumePosition(session); acceptEdit(session); await queueRotation(session); renderBatch(root, batch.batchId); } }, `← ${batch.label || "Documents"}`),
     el("div", { class: "rv-topbar-titles" }, [
       el("div", { class: "rv-tt" }, docTitle(doc)),
     ]),
@@ -576,6 +626,7 @@ function renderSurface(main, session) {
           onclick: async () => {
             acceptEdit(session);
             await queueRotation(session);
+            saveCurrentResumePosition(session);
             openReview(root, batch, i);
           },
           title: d.greeting || `Document ${i + 1}`,
@@ -601,6 +652,7 @@ function renderSurface(main, session) {
           onclick: async () => {
             acceptEdit(session);
             await queueRotation(session);
+            saveCurrentResumePosition(session);
             session.pageIndex = i;
             session.selLine = null;
             session.editing = null;
@@ -633,6 +685,16 @@ function renderSurface(main, session) {
   // data, not just the view)
   const zoomControls = el("div", { class: "rv-zoom" }, [
     el("button", { class: "rv-zoom-btn", onclick: () => rotatePage(session), title: "Turn the page" }, "↻"),
+    el("button", {
+      class: "rv-zoom-btn",
+      onclick: () => {
+        session.readRotation = 0;
+        session.view = null;
+        renderView(session);
+        if (session.contentTop !== undefined) initialView(session, session.contentTop ?? 0);
+      },
+      title: "Return to the line you were reading",
+    }, "⌖"),
   ]);
   imgPane.append(zoomControls);
   imgPane.append(
@@ -656,7 +718,9 @@ function renderSurface(main, session) {
     if (e.target.closest(".rv-line")) return;
     acceptEdit(session);
   });
-  imgPane.addEventListener("click", () => acceptEdit(session));
+  // The boxes are touchable (the overlay's own click handler) — the
+  // image pane itself does not start edits (2026-08-17: walkthrough
+  // finding — tapping the picture silently edited the text).
 
   // The orientation fix's async half: while the backend re-reads the page's
   // text on the corrected image, the document is greyed with a note and the
@@ -883,7 +947,7 @@ function openViewer(session, imgBox) {
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page] || null;
 
-  session.resizer?.disconnect();
+session.resizer?.disconnect();
   session.imgBox = imgBox;
   session.layer = null;
   session.img = null;
@@ -926,6 +990,25 @@ function openViewer(session, imgBox) {
         box.style.width = `${line.box[2] - line.box[0]}px`;
         box.style.height = `${line.box[3] - line.box[1]}px`;
         layer.append(box);
+        box.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const idx = Number(box.dataset.line);
+          if (!isNaN(idx)) {
+            // keep the same page — the box is on this page
+            session.selLine = idx;
+            session.editing = null;
+            // scroll the text to this line
+            const txLine = session.txBody?.querySelector(`.rv-line[data-index="${idx}"]`);
+            if (txLine) txLine.scrollIntoView({ block: "nearest" });
+            // rotate to the line's reading orientation
+            const doc = session.batch.documents[session.docIndex];
+            const page = doc.pages[session.pageIndex];
+            const line = doc.layouts?.[page]?.lines.find((l) => l.index === idx);
+            if (line) session.readRotation = line.orientation || 0;
+            renderView(session);
+            renderTx(session);
+          }
+        });
         session.overlays.push(box);
       });
       session.overlays.forEach((box) => {
@@ -943,10 +1026,24 @@ function openViewer(session, imgBox) {
       // the image "wouldn't let me scroll up at all" (user 2026-08-16).
       session.contentTop = bandAnchor(layout) - bandMargin(layout);
     }
-    if (session.selLine !== null) {
+    // Restore the resume position (2026-08-18): the scroll, image view,
+    // selected line, and read rotation from the last session on this page.
+    const saved = loadResumePosition(batch.batchId, page);
+    if (saved && saved.docIndex === docIndex && saved.selLine !== undefined) {
+      session.selLine = saved.selLine;
+      session.visibleLine = saved.selLine;
+      session.readRotation = saved.readRotation ?? session.readRotation;
+      if (saved.view) {
+        session.view = saved.view;
+        session.contentTop = saved.view.y;
+      } else {
+        initialView(session, session.contentTop);
+      }
+      // restore the text-pane scroll after renderTx
+      session.txBody.scrollTop = saved.scrollTop ?? 0;
+      if (session.view) renderView(session);
+    } else if (session.selLine !== null) {
       initialView(session, session.contentTop);
-      // the transcription pane is already scrolled to the selected line —
-      // align the image to it (the dual-pane link, same zoom)
       syncImageFromTx(session);
     } else {
       initialView(session, session.contentTop);
@@ -1105,7 +1202,19 @@ function syncImageFromTx(session) {
       break;
     }
   }
-  const line = layout.lines.find((l) => l.index === Number(topEl?.dataset.index));
+  const topIndex = Number(topEl?.dataset.index);
+  if (!isNaN(topIndex) && topIndex !== session.visibleLine) {
+    session.visibleLine = topIndex;
+    const doc = session.batch.documents[session.docIndex];
+    const page = doc.pages[session.pageIndex];
+    const line = doc.layouts?.[page]?.lines.find((l) => l.index === topIndex);
+    const newOrientation = line?.orientation ?? 0;
+    if (newOrientation !== session.readRotation) {
+      session.readRotation = newOrientation;
+      renderView(session);
+    }
+  }
+  const line = layout.lines.find((l) => l.index === topIndex);
   if (!line?.box) return;
   const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
   const rect = boxToDisplay(f, line.box);
@@ -1473,17 +1582,33 @@ async function rereadPage(session) {
  *  paper (user 2026-08-16: "I don't see any of the actual document").
  *  Tall panes keep the whole page in view. Records the pane size it fitted
  *  against, so the resize handler can tell a real change from noise. */
+/** The default view: show the FULL bounding box of all line boxes so the
+ *  reviewer sees the entire card at once (the walkthrough finding — the
+ *  postcard's header was visible but the message was off-screen and
+ *  unreachable via pan). On very wide/thin pages the zoom fills the pane
+ *  width with the full height visible. */
 function initialView(session, contentTop = 0) {
   if (!session.imgSize) return;
   session.lastFitSize = [session.imgBox.clientWidth, session.imgBox.clientHeight];
   session.contentTop = contentTop;
-  fitPage(session, { markMoved: false });
+  const doc = session.batch.documents[session.docIndex];
+  const page = doc.pages[session.pageIndex];
+  const layout = doc.layouts?.[page];
+  const bounds = contentBounds(layout);
+  if (bounds) {
+    const paneW = session.imgBox.clientWidth;
+    const paneH = session.imgBox.clientHeight;
+    session.view = fitRect(paneW, paneH, bounds);
+  } else {
+    fitPage(session, { markMoved: false });
+  }
 }
 
 /** Highlight the line's box and the transcription line; the box list is
  *  re-rendered by the caller when the surface is static. */
 function syncSelection(session, lineIndex) {
   session.selLine = lineIndex;
+  session.visibleLine = lineIndex;
   session.editing = null;
   session.overlays.forEach((box) => {
     box.classList.toggle("rv-lb--sel", box.dataset.line === String(lineIndex));
@@ -1714,6 +1839,21 @@ function renderTx(session) {
         onclick: (e) => { e.stopPropagation(); wrapSelection(input, "~"); },
       }, "U");
       input.after(strikeBtn, underBtn);
+      const doneBtn = el("button", {
+        class: "rv-fmtbtn rv-fmtbtn--row",
+        title: "Save correction (Enter)",
+        onclick: (e) => { e.stopPropagation(); applyEdit(session, line.index, input.value); },
+      }, "✓");
+      const cancelBtn = el("button", {
+        class: "rv-fmtbtn rv-fmtbtn--row",
+        title: "Discard correction (Escape)",
+        onclick: (e) => {
+          e.stopPropagation();
+          session.editing = null;
+          renderTx(session);
+        },
+      }, "✕");
+      input.after(doneBtn, cancelBtn);
       input.focus();
     } else {
       const textEl = el("span", { class: "rv-lt" });
@@ -1754,16 +1894,30 @@ function renderTx(session) {
       // "mark this line fine" — a checked line needs no text change (user,
       // 2026-08-16: the verbatim text counts as verified). On EVERY line
       // (2026-08-17): the multi-orientation pages are provisional — the
-      // reviewer checks each line as they read it, red words or not.
+      // reviewer checks each line as they read it. The button is a toggle:
+      // ○ unchecked (not yet verified), ✓ checked (verified). Clicking a
+      // checked line unchecks it (the edit is removed).
+      const isChecked = corrected !== undefined || pageEdits[line.index] !== undefined;
       lineEl.append(
         el("button", {
-          class: "rv-ok-btn",
-          title: "Mark this line as fine",
+          class: "rv-ok-btn" + (isChecked ? " rv-ok-btn--checked" : ""),
+          title: isChecked ? "Mark this line as not checked" : "Mark this line as fine",
           onclick: (e) => {
             e.stopPropagation();
-            applyMarkedFine(session, line.index);
+            if (isChecked) {
+              // uncheck — remove the edit for this line
+              const { batch, docIndex, pageIndex } = session;
+              const page = doc.pages[pageIndex];
+              const edits = { ...session.edits[page] };
+              delete edits[line.index];
+              session.edits[page] = edits;
+              saveEdits(batch.batchId, docIndex, session.edits);
+              renderTx(session);
+            } else {
+              applyMarkedFine(session, line.index);
+            }
           },
-        }, "✓"),
+        }, isChecked ? "✓" : "○"),
       );
       // every line is clickable — one click enters edit (user, 2026-08-16);
       // clicking the already-editing line's own input must not re-render

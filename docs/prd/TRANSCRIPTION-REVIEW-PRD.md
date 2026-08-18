@@ -195,6 +195,12 @@ The reviewer can mark a word as verified and change their mind later
     losing their place in the transcription (VR17).
 25. The reviewer can tell whether a line has been checked and can change
     their mind (VR17, walkthrough finding 2026-08-17).
+26. The reviewer can work through the document in whatever order makes
+    sense to them (VR17, user 2026-08-17).
+27. The reviewer can mark a document complete even when some lines are
+    not checked (VR17, user 2026-08-17).
+28. The reviewer can move to the next document without confirming the
+    current one (VR17, user 2026-08-17).
 
 ## 4. Non-goals
 

@@ -1017,6 +1017,28 @@ detection's pass orientation when a rec match exists, else the report's
 degrees (the best available estimate). This makes the viewRotation work
 correctly for the dual-pane link and the per-line reading rotation.
 
+**Resource management (VR16 — the app runs lightly on this laptop).**
+
+The layout stage (PaddleOCR) is the only heavy component in the review
+pipeline. Three measures bound its footprint:
+
+- *The detection input is bounded.* The engine's `text_det_limit_side_len`
+  is set to 2000px (the default is 4000px). The engine resizes the input
+  image internally and maps the boxes back to the original pixels (the
+  coordinate assertion in `detect_page` guards that mapping). The
+  prediction arrays drop ~4× in size, and the per-rotation passes (the
+  multi-orientation path) stay within the same bound (VR16 — the
+  pipeline's peak memory is bounded, not the scan's native resolution).
+- *The allocator uses on-demand growth.* The layout subprocess sets
+  `FLAGS_allocator_strategy=auto_growth` and
+  `FLAGS_use_system_allocator=1` — the framework allocates per-operation
+  instead of reserving a large arena up front (VR16 — the framework's
+  base footprint is the floor, not an arena that doubles the peak).
+- *The thread count leaves a core free.* The layout subprocess caps
+  `OMP_NUM_THREADS` and `FLAGS_paddle_num_threads` at `nproc-1`
+  (2026-08-17: the 8‑core machine leaves one core for the rest of the
+  box) (VR16 — a core is free for other work while the engine runs).
+
 *Implementation status:* The front-end changes are API-independent and
 ready to build. The page-02 rebuild (201004) needs the model API
 (monthly limit reached 2026-08-17).

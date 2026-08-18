@@ -978,8 +978,9 @@ backend has it):
 
 **The navigation model (2026-08-16).** The review surface shows two nested
 sequences — pages inside a document, documents inside the batch — as ONE
-compact strip under the top bar: the batch's documents as numbered chips
-(✓ confirmed) and the current document's pages as numbered chips (the
+compact strip under the top bar: the batch's documents as chips showing
+the document's greeting (or a numbered fallback), with ✓ confirmed and ✗
+rejected status marks; the current document's pages as numbered chips (the
 current page filled; a red dot marks pages with lines still to check). Tap
 a chip to navigate. The strip replaces the top-bar subtitle and the
 Prev/Next page buttons: the document boundary is visible before the last

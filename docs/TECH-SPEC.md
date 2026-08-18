@@ -898,6 +898,22 @@ matched pair, the per-word flags come from the model's self-report
 as data. Word boxes without a confident line match are still carried (their
 geometry is real) with a line confidence of 0.
 
+**The fail-fast box guard (VR14 — every page reaches the review with
+valid boxes).** A layout with a degenerate or out-of-image box must never
+reach the review surface — the reviewer must never see a box that doesn't
+correspond to the page. Two boundaries enforce this (2026-08-17):
+
+- *Write-time:* `write_layout` runs `validate_layout` before persisting.
+  A line whose box is degenerate (x1 ≤ x0 or y1 ≤ y0) or outside the image
+  (with a 4 px tolerance) raises `ValueError` — the layout is never
+  written (VR14 — a bad layout cannot be persisted).
+- *Serve-time:* `draft_payloads` runs `validate_layout` on every layout
+  before serving it. A layout that fails validation is excluded from the
+  drafts payload; the page keeps its text but loses its boxes, and the
+  `layout_errors` dict names the violation per page. The review surface
+  shows a loud note (VR14 — the reviewer never sees wrong boxes, even
+  from a pre-existing bad layout on disk).
+
 **The front-end surface (VR1/VR4 of the review PRD).** The drafts payload
 (`draft_payloads`, §16.15) gains the per-page layout: each transcription
 line's box + per-word confidence. The review view renders the page image

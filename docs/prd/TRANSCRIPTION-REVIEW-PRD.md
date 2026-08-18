@@ -121,13 +121,13 @@ run or how much they process, leave a CPU core free for other work, and
 the heavy analysis tools load only while a piece of work is being
 processed and free themselves afterwards (user requirement, 2026-08-17).
 
-**VR17 — The reviewer explores the document by looking at the scan, not
-the transcription.** The scan is the primary reference — the reviewer
-can look at any part of it, zoom in, and find the corresponding word in
-the transcription instantly. The reviewer never loses their reading
-position when they explore the scan, and they can always return to where
-they were reading with one tap. The reviewer never gets stuck in a
-correction — there is always a clear way to commit or abandon a change.
+**VR17 — The reviewer uses the picture to find their way around.** The
+reviewer can look at any part of the picture closely, find the
+corresponding word in the transcription instantly, and return to where
+they were reading without searching. The reviewer never gets stuck in a
+correction — there is always a clear way to keep or abandon a change.
+The reviewer can mark a line as verified and change their mind later
+(user requirement, 2026-08-17, walkthrough finding 2026-08-17).
 The reviewer can mark a word as verified and change their mind later
 (user requirement, 2026-08-17, walkthrough finding 2026-08-17).
 
@@ -189,20 +189,18 @@ The reviewer can mark a word as verified and change their mind later
 23. While the pipeline processes a batch, the rest of the laptop keeps
     running smoothly: a core stays free, and the heavy analysis tools
     release their memory when their stage is done (VR16).
-24. Scrolling the transcription moves the picture to the part of the page
-    the line came from — the reviewer reads the text and sees where it is
-    on the page without hunting (VR1, VR17).
-25. Looking at a different part of the scan (panning or zooming) does not
-    move the transcription — the reviewer explores the picture freely and
-    can return to the reading position with one tap (VR17).
-26. Tapping a word's box on the image scrolls the transcription to that
-    word and turns the page so the word is readable (VR17).
-27. Fixing a word opens a clear edit box with a visible way to save or
-    cancel the change — the reviewer never loses a correction or gets
-    stuck in editing (VR2, VR17, walkthrough finding 2026-08-17).
-28. Marking a line as verified is visible and can be undone — the
-    reviewer sees whether a line has been checked and can change their
-    mind (VR17, walkthrough finding 2026-08-17).
+24. Reading any word of the transcription, the reviewer can see where it
+    is on the page without searching (VR1, VR17).
+25. Looking at any part of the picture does not move the transcription —
+    the reviewer can explore freely and return to where they were reading
+    with one tap (VR17).
+26. Seeing any word on the picture, the reviewer can find it in the
+    transcription instantly (VR17).
+27. The reviewer never gets stuck in a correction — there is always a
+    clear way to save or abandon the change (VR2, VR17, walkthrough
+    finding 2026-08-17).
+28. The reviewer can see whether a line has been checked and can change
+    their mind (VR17, walkthrough finding 2026-08-17).
 
 ## 4. Non-goals
 

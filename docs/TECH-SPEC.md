@@ -640,9 +640,10 @@ flowchart TB
         C --> D["ocr-raw — tesseract"]
         D --> E["route — print vs cursive"]
         E --> F["transcribe — the vision model (cursive)"]
-        F --> G["guess — document grouping + provisional transcription"]
+        F --> G["guess — corrected transcription (vision model)"]
+        G --> H["group — full-sequence boundaries (scored grouping)"]
     end
-    G --> L["layout — boxes + per-word flags"]
+    H --> L["layout — boxes + per-word flags"]
     L --> R["review — boxes + draft text + flags"]
     R --> P["archive"]
     L -. "not wired: run by hand today" .-> R
@@ -656,7 +657,8 @@ flowchart TB
 | ocr-raw | tesseract read of the oriented page | `ocr-raw/*.txt` |
 | route | print vs cursive from strong-word density | `classify.json` |
 | transcribe | the vision model reads cursive pages | `ocr-raw/*.vlm.json` |
-| guess | group the documents + the provisional transcription | `ocr-guess/*.txt`, `boundaries.json` |
+| guess | corrected transcription per page (the vision model) | `ocr-guess/*.txt` |
+| **group** | **full-sequence grouping by physical evidence: duplex sides, paper size, page numbers, the model's flags (tools/grouping.py)** | **`boundaries.json` — the grouping scorer supersedes the model's text-only grouping** |
 | **layout** | **detect text lines + per-word boxes/flags (paddleocr + build_layout)** | **`ocr-guess/*.layout.json`** |
 | review | the reviewer verifies/corrects the draft | confirmed text |
 
@@ -669,6 +671,32 @@ nobody manually layouted reaches the review with draft text and **no
 boxes and no flags** (batch `adopt-20260813-201024` was exactly this).
 The simplest thing meeting VR14: make the layout stage a `process` step
 after `guess` — the logic already exists, it only needs wiring.
+
+**The grouping scorer (VR6 — the grouping is part of the review; AC21 —
+two-sided item).** The guess stage's model groups TEXT pages only by
+greeting/sign-off boundaries, so a photo page (the picture side of a
+postcard) can never join its document. The grouping scorer
+(`tools/grouping.py`, 2026-08-17) replaces the model's text-only
+grouping with a full-sequence pass over ALL pages (photos included), in
+scan order. The evidence hierarchy, priority-ordered:
+
+1. **Duplex sides (strongest):** a photo/drawing page adjacent to a text
+   page of the same paper (normalised aspect within 12%, the phone-scan
+   proxy for paper size) is the two sides of one sheet — same document,
+   the picture side first. The pairs are greedy (a page never pairs with
+   both neighbours), so concurrent [back1, front1, back2, front2] pairs
+   disjointly.
+2. **Paper size:** different papers are probably not the same document
+   (the 12% tolerance is deliberately soft — phone-scan aspect variance
+   is the same order as paper differences).
+3. **Page numbers:** a page starting "2" continues its document; a fresh
+   "1" starts one.
+4. **The model's greeting/sign-off flags:** the fallback for text pages.
+
+The transcription review's drafts route (`tools/server.py`) filters out
+photo-only documents and shows only the TEXT pages of each document
+(the picture side stays in the structure for the future people/places
+identification flow, but the review never pages through a photo).
 
 **Multi-orientation pages (PRD VR15) — the postcard finding.** A
 postcard with text running in several directions defeats the single-

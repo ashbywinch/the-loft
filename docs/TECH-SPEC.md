@@ -1038,6 +1038,15 @@ cream when checked.
 (all boxes' min/max y, not just the first line) at a readable zoom
 level — the reviewer sees the full card and can scroll to the message.
 
+*Returning to a page restores the exact view.* The document and page
+are already in the URL (`syncSurfaceUrl`). The image view rectangle
+(the pan position and zoom level) and the text scroll position are
+persisted to `localStorage` keyed by `{batch}|{page}` — the same store
+as the rotation outbox — and restored on return. The focused line, the
+scroll position, and the image view are always in sync: the "no
+dislocating moves" rule (P18 from the walkthrough, 2026-08-16) applies
+to every re-render, not just within the session (VR9, AC19).
+
 *The per-line rotation* uses the pass orientation (the detector's
 reading direction), not the report's estimated degrees. The
 `_vlm_text_lines` anchoring: the line's orientation = the matched

@@ -65,34 +65,36 @@ export function clearEdits(batchId, docIndex) {
 /** Save the current page\'s review state (scroll, view, selected line) to
  * localStorage so the reviewer never loses their place (VR9, VR17).
  * Keyed by batch + page index; expects the doc index to validate. */
-export function saveResumePosition(batchId, docIndex, pageIndex, selLine, view, scrollTop, readRotation) {
+export function saveResumePosition(batchId, docIndex, pageId, selLine, view, scrollTop, readRotation) {
   try {
-    const key = `rv-res-${batchId}-${pageIndex}`;
+    const key = `rv-res-${batchId}-${pageId}`;
     const data = JSON.stringify({ docIndex, selLine, view, scrollTop, readRotation, ts: Date.now() });
     localStorage.setItem(key, data);
   } catch { /* quota exceeded */ }
 }
 
-export function loadResumePosition(batchId, pageIndex) {
+export function loadResumePosition(batchId, pageId) {
   try {
-    const key = `rv-res-${batchId}-${pageIndex}`;
+    const key = `rv-res-${batchId}-${pageId}`;
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     return JSON.parse(raw);
   } catch { return null; }
 }
 
-export function clearResumePosition(batchId, pageIndex) {
+export function clearResumePosition(batchId, pageId) {
   try {
-    localStorage.removeItem(`rv-res-${batchId}-${pageIndex}`);
+    localStorage.removeItem(`rv-res-${batchId}-${pageId}`);
   } catch { /* ignore */ }
 }
 
-/** Save the current session page\'s resume position before navigation. */
+/** Save the current session page's resume position before navigation. */
 function saveCurrentResumePosition(session) {
   const { batch, docIndex, pageIndex, selLine, view, readRotation } = session;
-  if (pageIndex !== undefined && session.txBody) {
-    saveResumePosition(batch.batchId, docIndex, pageIndex, selLine, view, session.txBody.scrollTop ?? 0, readRotation);
+  const doc = batch.documents[docIndex];
+  const pageId = doc?.pages?.[pageIndex];
+  if (pageId !== undefined && session.txBody) {
+    saveResumePosition(batch.batchId, docIndex, pageId, selLine, view, session.txBody.scrollTop ?? 0, readRotation);
   }
 }
 

@@ -121,13 +121,15 @@ run or how much they process, leave a CPU core free for other work, and
 the heavy analysis tools load only while a piece of work is being
 processed and free themselves afterwards (user requirement, 2026-08-17).
 
-**VR17 — The reviewer uses the picture to find their way around.** The
-reviewer can look at any part of the picture closely, find the
-corresponding word in the transcription instantly, and return to where
+**VR17 — The reviewer can look at the document in any order and never
+lose their place.** Checking the machine's transcription means going
+back and forth between the words on the page and the machine's reading
+of them. The reviewer needs to look at any part of the document closely,
+find the corresponding word in the transcription, and return to where
 they were reading without searching. The reviewer never gets stuck in a
-correction — there is always a clear way to keep or abandon a change.
-The reviewer can mark a line as verified and change their mind later
-(user requirement, 2026-08-17, walkthrough finding 2026-08-17).
+correction — they can always keep or abandon a change. The reviewer can
+mark a line as verified and change their mind later (user requirement,
+2026-08-17, walkthrough finding 2026-08-17).
 The reviewer can mark a word as verified and change their mind later
 (user requirement, 2026-08-17, walkthrough finding 2026-08-17).
 
@@ -189,17 +191,9 @@ The reviewer can mark a word as verified and change their mind later
 23. While the pipeline processes a batch, the rest of the laptop keeps
     running smoothly: a core stays free, and the heavy analysis tools
     release their memory when their stage is done (VR16).
-24. Reading any word of the transcription, the reviewer can see where it
-    is on the page without searching (VR1, VR17).
-25. Looking at any part of the picture does not move the transcription —
-    the reviewer can explore freely and return to where they were reading
-    with one tap (VR17).
-26. Seeing any word on the picture, the reviewer can find it in the
-    transcription instantly (VR17).
-27. The reviewer never gets stuck in a correction — there is always a
-    clear way to save or abandon the change (VR2, VR17, walkthrough
-    finding 2026-08-17).
-28. The reviewer can see whether a line has been checked and can change
+24. The reviewer can look at a different part of the document without
+    losing their place in the transcription (VR17).
+25. The reviewer can tell whether a line has been checked and can change
     their mind (VR17, walkthrough finding 2026-08-17).
 
 ## 4. Non-goals

@@ -39,31 +39,54 @@ class PipelineStore:
         self._store: FileStore = DiskStore(Path(root))
 
     def write(self, path: str, content: str | bytes) -> None:
-        """Write ``content`` to the next version of ``path``."""
-        version = self._next_version(path)
-        vpath = _versioned_path(path, version)
-        self._store.write_new(vpath, content)
+        """Write ``content`` to the next version of ``path``. The base path
+        (``path`` itself) is also updated to point to the latest version,
+        so readers that don't know about versioning (``load_layout``,
+        ``json.loads(layout_path.read_text(...))``) still see the latest
+        data. The old version is preserved at ``path-2.suffix``,
+        ``path-3.suffix``, etc. for recovery."""
+        if not self._store.exists(path):
+            # First write: just create the base path.
+            self._store.write_new(path, content)
+            return
+        # Subsequent write: preserve the old base content at a versioned
+        # path (version 2+, since version 1 IS the base path), then
+        # overwrite the base path with the new content.
+        old_content = self._store.read(path)
+        # Find the next available version suffix for the archive copy.
+        archive_version = 2
+        while True:
+            archive_path = _versioned_path(path, archive_version)
+            if not self._store.exists(archive_path):
+                break
+            archive_version += 1
+        self._store.write_new(archive_path, old_content)
+        # Overwrite the base path with the new content.
+        self._store.delete(path)
+        self._store.write_new(path, content)
 
     def read_latest(self, path: str) -> str:
-        """Return the latest version of ``path``, or raise ``StoreError``."""
-        version = self._next_version(path) - 1
-        if version < 1:
+        """Return the latest version of ``path``, or raise ``StoreError``.
+        The base path always holds the latest version."""
+        if not self._store.exists(path):
             raise StoreError(f"no versions of {path} exist")
-        vpath = _versioned_path(path, version)
-        return self._store.read(vpath)
+        return self._store.read(path)
 
     def exists(self, path: str) -> bool:
         """Does any version of ``path`` exist?"""
         return self._store.exists(path) or self._store.exists(_versioned_path(path, 2))
 
     def versions(self, path: str) -> list[int]:
-        """All existing versions of ``path``, sorted ascending."""
+        """All existing versions of ``path``, sorted ascending. Version 1
+        is the base path; versions 2+ are ``path-2.ext``, ``path-3.ext``, etc."""
         result: list[int] = []
-        for v in range(1, self._next_version(path)):
-            try:
-                self._store.read(_versioned_path(path, v))
+        if self._store.exists(path):
+            result.append(1)
+        for v in range(2, 100):
+            vpath = _versioned_path(path, v)
+            if self._store.exists(vpath):
                 result.append(v)
-            except FileNotFoundError:
+            else:
                 break
         return result
 

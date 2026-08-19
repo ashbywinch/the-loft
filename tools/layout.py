@@ -386,6 +386,11 @@ def load_layout(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_layout_store(store: Any, store_path: str) -> dict[str, Any]:
+    """Read the latest version of a layout from a ``PipelineStore``."""
+    return json.loads(store.read_latest(store_path))
+
+
 def load_vlm_boxes(path: Path) -> dict[int, list[float]] | None:
     """The VLM's per-line boxes (normalized 0-1000) from a page's
     transcription sidecar (``page.vlm.json`` — written by

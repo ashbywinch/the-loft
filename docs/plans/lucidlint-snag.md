@@ -96,3 +96,12 @@ invariant — an indirect hop through a doc the reader already chose is fine.
 Suggested fix: allow an N-hop (e.g. 2-hop) threshold for reachability, or
 let AGENTS.md entries that point to "hub" docs (TECH-SPEC, coding-standards)
 implicitly grant reachability to everything those docs link to.
+
+## `noqa` rule doesn't understand cross-tool suppressions
+
+The `noqa` rule flags `# noqa: F401` comments as unnecessary — but those
+comments suppress RUFF's unused-import warnings, not lucidlint's own. The
+imports are intentionally unused (architecture dependency declarations for
+the store layer) and the noqa is the correct way to suppress the ruff
+warning. Lucidlint's noqa rule should only flag noqa comments that suppress
+nothing in ANY tool, or be configurable to only check its own kind prefixes.

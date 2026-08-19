@@ -29,12 +29,14 @@ from tools.layout import (
     build_layout,
     layout_detections,
     load_layout,
+    load_layout_store,
     rotate_detections,
     validate_layout,
-    write_layout,
+    write_layout_store,
 )
 from tools.layout_stage import run_layout
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
+from tools.pipeline_store import PipelineStore
 from tools.registry import load_batch, record_path
 from tools.store import DiskStore  # noqa: F401
 from tools.vlm import orientation_report, selfreport_words
@@ -198,7 +200,7 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
             layout_path = guess_dir / Path(page).with_suffix(".layout.json")
             if not layout_path.exists():
                 continue
-            layout = load_layout(layout_path)
+            layout = load_layout_store(PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
             violations = validate_layout(layout)
             if violations:
                 layout_errors[page] = violations
@@ -273,7 +275,7 @@ def _recover_crashed_layout(
                         selfreport=selfreport,
                     )
                     layout["rotation"] = intended
-                    write_layout(layout, layout_path)
+                    write_layout_store(layout, PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
     except (OSError, json.JSONDecodeError, ValueError) as e:
         logger.warning("sync: unreadable rotation journal %s — recovery abandoned: %s", journal_path, e)
         journal_path.unlink(missing_ok=True)
@@ -305,7 +307,7 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
         raise ValueError(f"no such page: {page}")
     if not layout_path.is_file():
         raise ValueError(f"no layout for {page} — the layout pass must run before a rotate")
-    layout = json.loads(layout_path.read_text(encoding="utf-8"))
+    layout = load_layout_store(PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
     # A crash between the image swap and the layout write leaves the image
     # rotated while the layout still carries the old rotation and boxes —
     # the pair is not transactional (bot review, 2026-08-16). The journal
@@ -353,7 +355,7 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
         json.dumps({"from": current, "rotation": new_layout["rotation"]}, ensure_ascii=False) + "\n",
     )
     tmp.replace(image_path)
-    write_layout(new_layout, layout_path)
+    write_layout_store(new_layout, PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
     journal_path.unlink(missing_ok=True)
     return True
 
@@ -466,7 +468,7 @@ def reprocess_page_transcription(
     if not image_path.is_file() or not layout_path.is_file():
         raise ValueError(f"no such page or layout: {page}")
     try:
-        layout = json.loads(layout_path.read_text(encoding="utf-8"))
+        layout = load_layout_store(PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
         # force the re-read: drop the markers the pipeline's skip logic uses
         raw_dir = guess_dir
         for suffix in (".txt", ".vlm.json", ".selfreport.json", ".orientation.json"):
@@ -495,7 +497,7 @@ def reprocess_page_transcription(
         new_layout = load_layout(layout_path)
         if "rotation" in layout:
             new_layout["rotation"] = layout.get("rotation", 0)
-            write_layout(new_layout, layout_path)
+            write_layout_store(new_layout, PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
         set_page_job(batch_id, page, None, work_dir)
     # lucidlint: ignore broad-except the stage's terminal boundary — mark failed on ANY error, then re-raise
     except Exception:

@@ -36,9 +36,10 @@ from tools.layout import (
     load_vlm_boxes,
     multi_layout,
     orientation_passes,
-    write_layout,
+    write_layout_store,
 )
 from tools.loft_paths import WORK_DIR
+from tools.pipeline_store import PipelineStore
 from tools.store import DiskStore  # noqa: F401
 
 # The proven engine config (spike, 2026-08-15) — the rec model rides along
@@ -221,7 +222,9 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
             vlm_boxes = load_vlm_boxes(guess_dir / f"{image.stem}.vlm.json")
             layout = layout_page(engine, image, vlm_path.read_text(encoding="utf-8"), selfreport, vlm_boxes)
         out = guess_dir / f"{image.stem}.layout.json"
-        write_layout(layout, out)
+        store = PipelineStore(WORK_DIR)
+        store_path = str(Path(batch_id) / "ocr-guess" / out.name)
+        write_layout_store(layout, store, store_path)
         flagged = sum(1 for line in layout["lines"] for w in line["words"] if w["conf"] == 0.0)
         print(
             f"layout: {image.name} {len(layout['lines'])} lines, "

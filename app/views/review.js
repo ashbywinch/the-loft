@@ -115,6 +115,34 @@ function contentBounds(layout) {
   };
 }
 
+/** Reject (bin) persistence: a simple localStorage marker so the batch
+ *  list filters rejected documents across page loads. The bin is
+ *  recoverable (AC30): clearRejection reinstates the document. */
+export function saveRejection(batchId, docIndex) {
+  try {
+    const key = `rv-rej-${batchId}-${docIndex}`;
+    localStorage.setItem(key, "1");
+  } catch { /* ignore */ }
+}
+
+export function loadRejections(batchId) {
+  try {
+    const prefix = `rv-rej-${batchId}-`;
+    const set = new Set();
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(prefix)) set.add(k.slice(prefix.length));
+    }
+    return set;
+  } catch { return new Set(); }
+}
+
+export function clearRejection(batchId, docIndex) {
+  try {
+    localStorage.removeItem(`rv-rej-${batchId}-${docIndex}`);
+  } catch { /* ignore */ }
+}
+
 // -- pure helpers (exported for tests) ----------------------------------------
 
 /** The document's lines still to check: lines carrying a flagged (conf 0)
@@ -455,6 +483,9 @@ async function renderBatch(main, batchId, state, initial = null) {
   // the work still to do (user 2026-08-16: "if it WAS confirmed it
   // shouldn't be listed"). The original documents index is kept for the
   // confirmation payload (the CLI gate's 1-based boundaries order).
+  // apply persisted rejections before filtering
+  const rejectedSet = loadRejections(batchId);
+  documents.forEach((d, i) => { if (rejectedSet.has(String(i))) d.status = "rejected"; });
   const awaiting = documents
     .map((doc, i) => ({ doc, i }))
     .filter(({ doc }) => doc.status !== "confirmed" && doc.status !== "rejected");
@@ -605,7 +636,7 @@ function renderSurface(main, session) {
   // page dots; the document boundary and the cross-page jump are visible
   // before any press, so nothing needs explaining).
   const topbar = el("div", { class: "rv-topbar" }, [
-    el("button", { class: "rv-back", onclick: async () => { saveCurrentResumePosition(session); acceptEdit(session); await queueRotation(session); renderBatch(root, batch.batchId); } }, `← ${batch.label || "Documents"}`),
+    el("button", { class: "rv-back", onclick: async () => { saveCurrentResumePosition(session); acceptEdit(session); await queueRotation(session); navigate(`review/${batch.batchId}`); } }, `← ${batch.label || "Documents"}`),
     el("div", { class: "rv-topbar-titles" }, [
       el("div", { class: "rv-tt" }, docTitle(doc)),
     ]),
@@ -778,6 +809,11 @@ function renderSurface(main, session) {
     { class: "rv-btn rv-btn--ghost", onclick: () => skipNext(session), title: "Move on without confirming — come back later" },
     "Skip →",
   );
+  const rejectBtn = el(
+    "button",
+    { class: "rv-btn rv-btn--ghost", onclick: () => rejectDoc(session), title: "Move this document to the bin — it can be recovered" },
+    "Bin →",
+  );
   const confirmBtn = el(
     "button",
     { class: "rv-btn rv-btn--primary", onclick: () => confirmNext(session), disabled: session.pageProcessing === "transcribing" },
@@ -785,6 +821,7 @@ function renderSurface(main, session) {
   );
   const actionBar = el("div", { class: "rv-txa" }, [
     skipBtn,
+    rejectBtn,
     el("div", { class: "rv-txa-right" }, [confirmBtn]),
   ]);
 
@@ -1965,6 +2002,25 @@ function skipNext(session) {
   openReview(session.root, batch, (docIndex + 1) % batch.documents.length);
 }
 
+/** Reject — soft-delete to the recoverable bin (AC30). The document
+ *  disappears from the pending list; the rejection is stored in
+ *  localStorage and survives page reload. A future 'Bin' view will
+ *  list rejected documents and offer a restore button. */
+function rejectDoc(session) {
+  acceptEdit(session);
+  const { batch, docIndex } = session;
+  const doc = batch.documents[docIndex];
+  saveRejection(batch.batchId, docIndex);
+  doc.status = "rejected";
+  // advance to the next document still awaiting review
+  const next = batch.documents.findIndex((d, i) => i > docIndex && d.status !== "confirmed" && d.status !== "rejected");
+  if (next !== -1) {
+    openReview(session.root, batch, next);
+  } else {
+    navigate(`review/${batch.batchId}`);
+  }
+}
+
 async function confirmNext(session) {
   const { batch, docIndex } = session;
   const doc = batch.documents[docIndex];
@@ -2014,7 +2070,7 @@ async function confirmNext(session) {
   if (next !== -1) {
     setTimeout(() => openReview(session.root, batch, next), 1800);
   } else {
-    setTimeout(() => renderBatch(session.root, batch.batchId), 2200);
+    setTimeout(() => navigate(`review/${batch.batchId}`), 2200);
   }
 }
 

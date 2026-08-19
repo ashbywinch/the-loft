@@ -859,3 +859,18 @@ def write_layout(layout: dict[str, Any], path: Path) -> None:
     if violations:
         raise ValueError(f"refusing to write an invalid layout: {violations}")
     atomic_write(path, json.dumps(layout, indent=1, ensure_ascii=False) + "\n")
+
+
+def write_layout_store(
+    layout: dict[str, Any],
+    store: Any,
+    store_path: str,
+) -> None:
+    """Versioned layout write via the ``PipelineStore`` — a re-run creates
+    a new version instead of overwriting (2026-08-18: the page-02 incident
+    was a direct atomic_write to a fixed path, which lost the previous
+    good layout)."""
+    violations = validate_layout(layout)
+    if violations:
+        raise ValueError(f"refusing to write an invalid layout: {violations}")
+    store.write(store_path, json.dumps(layout, indent=1, ensure_ascii=False) + "\n")

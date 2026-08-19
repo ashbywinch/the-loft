@@ -1078,9 +1078,21 @@ session.resizer?.disconnect();
       } else {
         initialView(session, session.contentTop);
       }
-      // restore the text-pane scroll after renderTx
-      session.txBody.scrollTop = saved.scrollTop ?? 0;
+      // RenderView fires syncTxFromImage which sets scrollTop from the
+      // image view. We set the scrollTop AFTER renderView so our saved
+      // scroll position wins (2026-08-18: walkthrough 3 found that
+      // syncTxFromImage pulled the text back to the top).
       if (session.view) renderView(session);
+      session.txBody.scrollTop = saved.scrollTop ?? 0;
+      // Highlight the selected line without a full renderTx (which would
+      // reset the scroll position). The existing text elements are already
+      // in the DOM from renderSurface's renderTx call.
+      if (saved.selLine !== null) {
+        const prev = session.txBody.querySelector(".rv-line--sel");
+        if (prev) prev.classList.remove("rv-line--sel");
+        const txLine = session.txBody.querySelector(`.rv-line[data-index="${saved.selLine}"]`);
+        if (txLine) txLine.classList.add("rv-line--sel");
+      }
     } else if (session.selLine !== null) {
       initialView(session, session.contentTop);
       syncImageFromTx(session);

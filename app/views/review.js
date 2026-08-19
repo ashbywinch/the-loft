@@ -42,6 +42,55 @@ export function loadEdits(batchId, docIndex) {
   }
 }
 
+/** Reconcile edits against a layout: when the layout changes (new pipeline
+ *  run, re-aligned lines), the edits' line indices can become stale. For
+ *  each edit, if the text at its index no longer matches, try to find the
+ *  edit's text elsewhere in the layout and re-map the index. Edits that
+ *  can't be matched are dropped — the reviewer re-checks those lines.
+ *  Returns a new edits dict with the re-mapped indices. */
+function reconcileEdits(edits, layout) {
+  if (!layout || !layout.lines) return edits;
+  const lines = layout.lines;
+  const result = {};
+  for (const [idxStr, text] of Object.entries(edits)) {
+    const idx = Number(idxStr);
+    // The text at the original index — if it still matches, the edit is valid.
+    const lineAtIdx = lines.find((l) => l.index === idx);
+    if (lineAtIdx && (lineAtIdx.text === text || fuzzyMatch(lineAtIdx.text, text))) {
+      result[idx] = text;
+      continue;
+    }
+    // The line at this index changed or doesn't exist. Try to find the edit's
+    // text somewhere else in the layout.
+    const matched = lines.find((l) => l.text === text || fuzzyMatch(l.text, text));
+    if (matched && !result[matched.index]) {
+      result[matched.index] = text;
+      continue;
+    }
+    // Could not find a match — the edit is orphaned. Drop it.
+  }
+  return result;
+}
+
+/** Fuzzy text match: two strings match if one is a substring of the other
+ *  (case-insensitive, trimmed), or their edit distance is <=3 chars (for
+ *  OCR corrections like "POSTCARD" vs "POST CARD"). */
+function fuzzyMatch(a, b) {
+  if (!a || !b) return false;
+  const sa = a.trim().toLowerCase();
+  const sb = b.trim().toLowerCase();
+  if (sa === sb) return true;
+  if (sa.includes(sb) || sb.includes(sa)) return true;
+  const maxLen = Math.max(sa.length, sb.length);
+  if (maxLen < 3) return false;
+  let diff = 0;
+  for (let i = 0; i < Math.min(sa.length, sb.length); i++) {
+    if (sa[i] !== sb[i]) diff++;
+  }
+  diff += Math.abs(sa.length - sb.length);
+  return diff <= 3;
+}
+
 export function saveEdits(batchId, docIndex, edits) {
   try {
     const all = JSON.parse(localStorage.getItem(EDITS_KEY) || "{}");
@@ -1836,6 +1885,13 @@ function renderTx(session) {
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page] || null;
   const pageEdits = session.edits[page] || {};
+  // reconcile edits when the layout changed (different line indices, new
+  // pipeline run) — stale edits are re-mapped by text or dropped (2026-08-18)
+  const reconciled = reconcileEdits(pageEdits, layout);
+  if (reconciled !== pageEdits) {
+    session.edits[page] = reconciled;
+    saveEdits(batch.batchId, docIndex, session.edits);
+  }
   const txb = session.txBody;
   const savedScroll = txb?.scrollTop ?? 0;
 
@@ -1845,7 +1901,7 @@ function renderTx(session) {
     : (doc.texts?.[page] || "").split("\n").filter(Boolean).map((text, i) => ({ index: i, text, box: null, words: [] }));
 
   lines.forEach((line) => {
-    const corrected = pageEdits[line.index];
+    const corrected = reconciled[line.index];
     const shown = corrected ?? line.text;
     const sel = session.selLine === line.index ? " rv-line--sel" : "";
     // one dense row: the text + the actions — no number gutter (the line

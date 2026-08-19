@@ -230,7 +230,7 @@ def build_app(
     @app.post("/api/assess", response_model=None)
     def assess(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
         mine = narrator(request)
-        # lucidlint: ignore special-case the 401 auth gate IS the absent case — a stand-in would hide the boundary
+        # the 401 auth gate IS the absent case — a stand-in would hide the boundary
         if mine is None:
             return JSONResponse({"ok": False, "error": "sign in to tell a story"}, status_code=401)
         if client is None:

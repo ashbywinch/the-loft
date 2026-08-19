@@ -25,7 +25,11 @@ def test_eval_fails_fast_without_api_key() -> None:
     hides an eval that never ran (2026-08-05). The env is scrubbed of every
     key source (LOFT_AI_*, OPENCODE_API_KEY) and the opencode auth file is
     made unreachable via an empty XDG_DATA_HOME."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("LOFT_AI_", "OPENCODE_API_KEY"))}
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(("LOFT_AI_", "OPENCODE_API_KEY", "OPENAI_API_KEY", "CLOUDFLARE_AIGATEWAY_TOKEN"))
+    }
     env["XDG_DATA_HOME"] = str(REPO / ".eval-empty-xdg")
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "-m", "eval", "-k", "arc", "-q", "--no-header"],

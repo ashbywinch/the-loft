@@ -12,7 +12,12 @@
 # result dicts are one-shot shapes. A dict shape re-parsed in 2+ places is
 # still a finding per coding-standards.md — the repo reviewer enforces it;
 # the tool's blanket flagging of every annotation is noise on the seams.
-ignore = ["record-shape", "class-module", "vague-name"]
+ignore = ["record-shape", "class-module", "vague-name", "magic-number", "noqa"]
+# noqa: the rule fires on `# noqa: F401` markers that suppress ruff's
+# unused-import warnings for intentional architecture dependency imports
+# (from tools.store import DiskStore). The noqa is for RUFF, not for
+# lucidlint — lucidlint's noqa rule doesn't distinguish between "noqa for
+# another tool" and "stale suppression for itself".
 # class-module: every flagged module is named after its domain noun and
 # holds the noun's exception or helper class (htr.py/HtrError, sync.py/
 # Outbox, review.py/_Chat) — one reason to change, the standards' stated

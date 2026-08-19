@@ -39,6 +39,7 @@ from tools.layout import (
     write_layout,
 )
 from tools.loft_paths import WORK_DIR
+from tools.store import DiskStore  # noqa: F401
 
 # The proven engine config (spike, 2026-08-15) — the rec model rides along
 # (its noisy text IS the cross-reader confidence signal).

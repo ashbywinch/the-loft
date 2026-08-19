@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.loft_paths import REGISTRY_DIR
+from tools.store import DiskStore  # noqa: F401
 
 _BATCH_ID = re.compile(r"^[A-Za-z0-9-]+$")
 

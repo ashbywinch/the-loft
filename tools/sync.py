@@ -36,6 +36,7 @@ from tools.layout import (
 from tools.layout_stage import run_layout
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.registry import load_batch, record_path
+from tools.store import DiskStore  # noqa: F401
 from tools.vlm import orientation_report, selfreport_words
 
 logger = logging.getLogger(__name__)

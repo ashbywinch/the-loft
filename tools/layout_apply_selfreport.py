@@ -15,6 +15,7 @@ from pathlib import Path
 
 from tools.layout import is_struck, normalize, write_layout
 from tools.selfreport_driver import run_cli
+from tools.store import DiskStore  # noqa: F401
 
 REPORT_NAME = "selfreport.json"
 

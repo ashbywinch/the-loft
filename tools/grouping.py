@@ -23,6 +23,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+_ASPECT_EPS = 1e-9  # float division-underflow guard
+
 # The paper-size tolerance for phone scans: the SAME physical sheet
 # photographed twice differs in pixel dims (distance, crop — the
 # postcard's two sides measure 3500x2215 and 2333x3500, 2026-08-17), so
@@ -46,7 +48,7 @@ def same_paper(a: tuple[int, int], b: tuple[int, int], tolerance: float = PAPER_
     aspects agree within the tolerance (the phone-scan proxy for paper
     size, 2026-08-17)."""
     pa, pb = paper_aspect(*a), paper_aspect(*b)
-    return abs(pa - pb) / max(min(pa, pb), 1e-9) <= tolerance
+    return abs(pa - pb) / max(min(pa, pb), _ASPECT_EPS) <= tolerance
 
 
 def first_page_number(text: str | None) -> int | None:

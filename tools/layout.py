@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Any, TypedDict, cast
 
 from tools.atomic import atomic_write
+from tools.store import DiskStore  # noqa: F401
 
 
 # A PaddleOCR recognition line + its box (the detection stage's output).
@@ -58,6 +59,9 @@ BOX_COORDINATE_COUNT = 4  # a box is [x0, y0, x1, y1]
 # The VLM's box coordinate system: normalized 0-1000 (fractions of the
 # image's width/height, times 1000), rescaled to pixels when anchored.
 NORMALIZED_BOX_SCALE = 1000
+
+# Float tolerance for division-underflow protection.
+_MIN_AREA_EPSILON = 1e-9
 QUARTERS_PER_FULL_TURN = 4  # a full rotation is four quarter-turns (90° each)
 
 # The multi-orientation admission (PRD VR15, 2026-08-16 prototype): a
@@ -476,7 +480,7 @@ def _box_overlap(a: list[float], b: list[float]) -> float:
     box still claims the same region."""
     x = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
     y = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-    return (x * y) / min(_box_area(a), _box_area(b), 1e-9)
+    return (x * y) / min(_box_area(a), _box_area(b), _MIN_AREA_EPSILON)
 
 
 def _richness(line: dict[str, Any]) -> tuple[int, float]:
@@ -767,10 +771,8 @@ def orientation_passes(degrees: list[int]) -> list[int]:
     the block upside-down — the recognition admission then rejects it
     and the text is silently missed. The mirror pass costs one detection
     run (no model call) and admits nothing garbage."""
-    out = set(degrees)
-    for d in degrees:
-        if d in (90, 270):
-            out.add(270 if d == 90 else 90)
+    out = {d for d in degrees}
+    out.update({270 if d == 90 else 90 for d in degrees if d in (90, 270)})
     return sorted(out)
 
 

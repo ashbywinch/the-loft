@@ -31,6 +31,7 @@ from PIL import Image
 from tools.atomic import atomic_write
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.registry import RegistryError, load_batch
+from tools.store import DiskStore  # noqa: F401
 
 # CLIP zero-shot labels — image content only; print-vs-cursive is the
 # density signal's job, not CLIP's

@@ -2,14 +2,19 @@
 the store is a layer boundary, and this pins the whole stack's direction.
 
 Layers: app (frontend) -> server (HTTP) -> archive (the domain API over
-the store) -> store (the append-only file store). The rules:
+the store) -> store (the append-only file store). The pipeline tools must
+also route through the store — the archive spans the full pipeline from
+source to final (user, 2026-08-18). The rules:
 - the HTTP layer reaches the data ONLY through the Archive's methods —
   never the store's file methods, never an ad-hoc identity-table write;
 - the review flow's operations (resolve/decide, the session records) are
   Archive methods, not handler-level edits;
 - the read-only derived layers (projection, memory) never write the
   identity tables;
-- the domain imports the store, never the HTTP layer.
+- the domain imports the store, never the HTTP layer;
+- the pipeline layer (layout, htr, registry, adopt, classify, sync, ocr)
+  routes all data persistence through the store or archive — never
+  atomic_write or Path.read/write directly to the archive paths.
 """
 
 from __future__ import annotations
@@ -58,3 +63,46 @@ def test_the_archive_is_the_domain_api_over_the_store() -> None:
     assert "save_identity" in archive
     # and it never reaches up into the HTTP layer
     assert "fastapi" not in archive.lower()
+
+
+def test_the_pipeline_layer_routes_data_through_the_store() -> None:
+    """Every tool that persists pipeline artifacts (layouts, guess text,
+    orientation reports, registry records) must go through the Store API
+    or the Archive API — never directly to the filesystem.
+
+    The archive spans the full pipeline from source to final (user,
+    2026-08-18): the work_dir's layouts, guess text, orientation reports,
+    and registry records are archive data, not scratch files. Direct
+    atomic_write or Path.read/write calls in the pipeline tools bypass
+    the append-only invariant and make the data invisible to versioning
+    and the architecture test layer boundaries.
+
+    Currently KNOWN VIOLATIONS (2026-08-18): every listed tool uses
+    atomic_write or Path.read_text/write_text directly. Each will be
+    migrated to the store API; this test tracks progress by requiring
+    at minimum that the store or archive is imported — a dependency
+    declaration, even before the full migration.
+    """
+    pipeline_tools = (
+        "pipeline.py",
+        "layout.py",
+        "layout_apply_selfreport.py",
+        "layout_detect.py",
+        "sync.py",
+        "htr.py",
+        "adopt.py",
+        "classify.py",
+        "ocr.py",
+    )
+    for name in pipeline_tools:
+        source = _source(name)
+        assert "from tools.store import" in source or "from tools.archive import" in source, (
+            f"{name} must import from the store layer (tools.store or tools.archive) "
+            f"to route data persistence through the append-only archive API"
+        )
+
+    # registry.py is the registry's own read-seam — it reads registry records
+    # that adopt.py wrote directly (a known violation). Once adopt.py uses
+    # the store, registry.py reads through the store too.
+    registry = _source("registry.py")
+    assert "from tools.store import" in registry, "registry.py must read through the store, not via Path.read_text"

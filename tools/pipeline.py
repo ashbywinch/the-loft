@@ -38,6 +38,7 @@ from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR
 from tools.ocr import orient_pages
 from tools.registry import RegistryError as PipelineError
 from tools.registry import load_batch, record_path
+from tools.store import DiskStore  # noqa: F401
 from tools.sync import record_confirmation
 from tools.vlm import orientation_report
 
@@ -61,7 +62,7 @@ AMBIGUITY_FLOOR = 5  # ...and it must clear this many strong words outright
 # with finish_reason "stop") is the completing choice on this endpoint;
 # the thinking-disable/budget params are ignored by the endpoint, so the
 # model must simply be one that answers.
-GUESS_MODEL = "mimo-v2.5"
+GUESS_MODEL = "dynamic/image"
 
 STATUS_PROCESSING = "importing"
 STATUS_REVIEW = "review"

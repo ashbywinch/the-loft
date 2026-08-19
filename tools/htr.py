@@ -33,6 +33,7 @@ from PIL import Image
 # by the local HTR backend (LOFT_HTR_BACKEND=local, the privacy mode). The
 # serving layer imports htr_pages_vlm for the reprocess route, and the
 from tools.atomic import atomic_write
+from tools.store import DiskStore  # noqa: F401
 from tools.vlm import parse_transcription_response, transcribe_image_vlm, transcription_system_with_context
 
 # The transformers/TrOCR stack (~450MB of torch+CUDA libs) is ONLY needed

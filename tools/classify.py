@@ -28,8 +28,8 @@ import open_clip
 import torch
 from PIL import Image
 
-from tools.atomic import atomic_write
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
+from tools.pipeline_store import PipelineStore
 from tools.registry import RegistryError, load_batch
 from tools.store import DiskStore  # noqa: F401
 
@@ -112,12 +112,14 @@ def run_classify(
     if not pages:
         raise RegistryError(f"batch {batch_id} has no registered pages")
     classify_path = work_dir / batch_id / "classify.json"
-    if classify_path.exists():
+    store = PipelineStore(work_dir)
+    store_path = str(classify_path.relative_to(work_dir))
+    if store.exists(store_path):
         return classify_path  # idempotent
     classify = classifier if classifier is not None else zero_shot_classifier()
     results = classify_pages(pages, classify, folder)
     classify_path.parent.mkdir(parents=True, exist_ok=True)
-    atomic_write(classify_path, json.dumps(results, indent=1, ensure_ascii=False) + "\n")
+    store.write(store_path, json.dumps(results, indent=1, ensure_ascii=False) + "\n")
     return classify_path
 
 
@@ -127,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         classify_path = run_classify(args.batch_id)
-        results = json.loads(classify_path.read_text(encoding="utf-8"))
+        results = json.loads(PipelineStore(WORK_DIR).read_latest(str(classify_path.relative_to(WORK_DIR))))
     except RegistryError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

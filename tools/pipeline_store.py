@@ -24,7 +24,7 @@ from pathlib import Path
 from tools.store import DiskStore, FileStore, StoreError
 
 # The version suffix pattern: "base-42.json" captures 42.
-_VERSION_SUFFIX = re.compile(r"-(\d+)\.json$")
+VERSION_SUFFIX = re.compile(r"-(\d+)\.json$")
 
 
 class PipelineStore:

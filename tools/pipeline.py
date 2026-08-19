@@ -29,13 +29,13 @@ from typing import Any
 from PIL import Image
 
 from tools.ai_client import AIClient, AIClientError
-from tools.atomic import atomic_write
 from tools.classify import route, run_classify
 from tools.grouping import score_boundaries
 from tools.htr import htr_pages, htr_pages_vlm
 from tools.layout_stage import run_layout as layout_stage_run
 from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR
 from tools.ocr import orient_pages
+from tools.pipeline_store import PipelineStore
 from tools.registry import RegistryError as PipelineError
 from tools.registry import load_batch, record_path
 from tools.store import DiskStore  # noqa: F401
@@ -73,16 +73,15 @@ def _standing_knowledge(archive_dir: Path = ARCHIVE_DIR) -> tuple[list[str], lis
     """The archive's people and places names — the context the guess works from."""
     people: list[str] = []
     places: list[str] = []
-    people_path = archive_dir / "people.json"
-    places_path = archive_dir / "places.json"
-    if people_path.exists():
-        for record in json.loads(people_path.read_text(encoding="utf-8")).get("people", []):
+    store = PipelineStore(archive_dir)
+    if store.exists("people.json"):
+        for record in json.loads(store.read_latest("people.json")).get("people", []):
             name = str(record.get("name", "")).strip()
             if name:
                 people.append(name)
             people += [str(alias) for alias in record.get("aliases", []) if str(alias).strip()]
-    if places_path.exists():
-        for record in json.loads(places_path.read_text(encoding="utf-8")).get("places", []):
+    if store.exists("places.json"):
+        for record in json.loads(store.read_latest("places.json")).get("places", []):
             name = str(record.get("name", "")).strip()
             if name:
                 places.append(name)
@@ -311,12 +310,14 @@ def _classify_pages(
     """The per-page photo/text classification — run when absent, a pile's
     photos/drawings skip orientation + OCR entirely. Returns
     (classify, text_pages, image_pages)."""
-    if classify_path.exists():
+    store = PipelineStore(work_dir)
+    rel_classify = f"{batch_id}/classify.json"
+    if store.exists(rel_classify):
         print("classification already present — reusing")
     else:
         run_classify(batch_id, registry_dir=registry_dir, work_dir=work_dir)
         print(f"classified {len(pages)} page(s) -> {classify_path}")
-    classify = json.loads(classify_path.read_text(encoding="utf-8"))
+    classify = json.loads(store.read_latest(rel_classify))
     text_pages = [name for name, entry in classify.items() if entry.get("kind") == "text"]
     image_pages = [name for name, entry in classify.items() if entry.get("kind") != "text"]
     if image_pages:
@@ -327,13 +328,15 @@ def _classify_pages(
 def _orient_and_ocr(text_pages: list[str], folder: Path, oriented_dir: Path, raw_dir: Path, batch_work: Path) -> None:
     """Orient the text pages and run tesseract raw OCR (rotations.json is
     the completion marker — piles may hold PNG/TIFF pages, not only JPEGs)."""
-    if not (oriented_dir / "rotations.json").exists():
+    store = PipelineStore(batch_work.parent)
+    batch_id = batch_work.name
+    if not store.exists(f"{batch_id}/oriented/rotations.json"):
         oriented = orient_pages([folder / name for name in text_pages], oriented_dir, root=folder)
         raw_dir.mkdir(parents=True, exist_ok=True)
         for page in oriented:
-            atomic_write(raw_dir / Path(str(page["name"])).with_suffix(".txt"), str(page["text"]))
-        atomic_write(
-            oriented_dir / "rotations.json",
+            store.write(f"{batch_id}/ocr-raw/{Path(str(page['name'])).with_suffix('.txt')}", str(page["text"]))
+        store.write(
+            f"{batch_id}/oriented/rotations.json",
             json.dumps(
                 {
                     str(page["name"]): {"degrees": page["degrees"], "strong": page["strong"], "scores": page["scores"]}
@@ -353,9 +356,12 @@ def _orient_and_ocr(text_pages: list[str], folder: Path, oriented_dir: Path, raw
 def _route_pages(classify: dict[str, Any], oriented_dir: Path, classify_path: Path, text_pages: list[str]) -> list[str]:
     """Route print vs cursive by the orientation density, recorded in
     classify.json; returns the cursive page names."""
-    rotations = json.loads((oriented_dir / "rotations.json").read_text(encoding="utf-8"))
+    work_dir = classify_path.parent.parent
+    batch_id = classify_path.parent.name
+    store = PipelineStore(work_dir)
+    rotations = json.loads(store.read_latest(f"{batch_id}/oriented/rotations.json"))
     apply_routes(classify, rotations)
-    atomic_write(classify_path, json.dumps(classify, indent=1, ensure_ascii=False) + "\n")
+    store.write(f"{batch_id}/classify.json", json.dumps(classify, indent=1, ensure_ascii=False) + "\n")
     cursive = [name for name, entry in classify.items() if entry.get("route") == "cursive"]
     if cursive:
         print(f"routing: {len(cursive)} cursive page(s) -> HTR, {len(text_pages) - len(cursive)} print -> tesseract")
@@ -398,7 +404,12 @@ def _run_guess(
     then the grouping scorer over the FULL page sequence (photos
     included) — the duplex/paper/page-number evidence the model never
     sees decides the boundaries (tools/grouping.py, 2026-08-17)."""
-    raw_texts = [(name, (raw_dir / Path(name).with_suffix(".txt")).read_text(encoding="utf-8")) for name in text_pages]
+    work_dir = raw_dir.parent.parent
+    store = PipelineStore(work_dir)
+    reg_store = PipelineStore(registry_dir)
+    raw_texts = [
+        (name, store.read_latest(f"{batch_id}/ocr-raw/{Path(name).with_suffix('.txt')}")) for name in text_pages
+    ]
     label = str(record.get("label", ""))
     people, places = _standing_knowledge(archive_dir)
     chat = client if client is not None else AIClient(model=GUESS_MODEL, max_tokens=12000, timeout=900.0).chat
@@ -420,7 +431,7 @@ def _run_guess(
         if str(flag["page"]) not in text_pages:
             print(f"guess returned an unknown page {flag['page']!r} — dropped")
     for flag in known_flags:
-        atomic_write(guess_dir / Path(str(flag["page"])).with_suffix(".txt"), str(flag["text"]))
+        store.write(f"{batch_id}/ocr-guess/{Path(str(flag['page'])).with_suffix('.txt')}", str(flag["text"]))
     # the grouping scorer (2026-08-17): the full page sequence, the
     # classify kinds, the paper sizes, and the corrected texts feed the
     # evidence hierarchy — duplex sides > paper size > page numbers >
@@ -440,13 +451,13 @@ def _run_guess(
         texts,
         flags_by_page,
     )
-    atomic_write(boundaries_path, json.dumps(boundaries, indent=1, ensure_ascii=False) + "\n")
+    store.write(f"{batch_id}/ocr-guess/boundaries.json", json.dumps(boundaries, indent=1, ensure_ascii=False) + "\n")
     # seed the registry record with the full boundaries so the review
     # surface's batch list shows the correct pending count (the registry
     # is the status' home; the guess stage's boundaries.json is the
     # pipeline's output, never the registry — 2026-08-15)
     record["boundaries"] = boundaries
-    atomic_write(record_path(batch_id, registry_dir), json.dumps(record, indent=1, ensure_ascii=False) + "\n")
+    reg_store.write(f"{batch_id}.json", json.dumps(record, indent=1, ensure_ascii=False) + "\n")
     print(f"model guess: {len(flags)} page(s), {len(boundaries)} document(s) -> {guess_dir}")
 
 
@@ -478,21 +489,22 @@ def _write_orientation_hints(
     suspect more than one direction (PRD VR15, 2026-08-17). A
     single-direction report (the model disagrees) also writes nothing —
     the layout stage then takes the plain path."""
-    rotations_path = batch_work / "oriented" / "rotations.json"
-    if not rotations_path.exists():
+    store = PipelineStore(batch_work.parent)
+    batch_id = batch_work.name
+    if not store.exists(f"{batch_id}/oriented/rotations.json"):
         return
-    rotations = json.loads(rotations_path.read_text(encoding="utf-8"))
+    rotations = json.loads(store.read_latest(f"{batch_id}/oriented/rotations.json"))
     for page in text_pages:
-        out = guess_dir / f"{Path(page).stem}.orientation.json"
-        if out.exists():
+        out_rel = f"{batch_id}/ocr-guess/{Path(page).stem}.orientation.json"
+        if store.exists(out_rel):
             continue  # idempotent — re-running process must not re-pay the model call
         scores = rotations.get(page, {}).get("scores", {})
         if not _ambiguous_rotations(scores):
             continue
         guess_text = ""
-        txt = guess_dir / f"{Path(page).stem}.txt"
-        if txt.exists():
-            guess_text = txt.read_text(encoding="utf-8")
+        txt_rel = f"{batch_id}/ocr-guess/{Path(page).stem}.txt"
+        if store.exists(txt_rel):
+            guess_text = store.read_latest(txt_rel)
         report = orientation_report_fn(oriented_dir / page, guess_text)
         hints = report.get("orientation_hint", []) if isinstance(report, dict) else []
         degrees = {int(h.get("degrees")) for h in hints if h.get("degrees") in (0, 90, 180, 270)}
@@ -504,13 +516,14 @@ def _write_orientation_hints(
         located = report.get("lines", []) if isinstance(report, dict) else []
         degrees |= {int(ln.get("degrees")) for ln in located if ln.get("degrees") in (0, 90, 180, 270)}
         if len(degrees) >= 2:
-            atomic_write(out, json.dumps(report, ensure_ascii=False) + "\n")
+            store.write(out_rel, json.dumps(report, ensure_ascii=False) + "\n")
             print(f"layout: orientation report for {page} — {sorted(degrees)}")
 
 
 def _update_status(record: dict[str, Any], batch_id: str, status: str, registry_dir: Path) -> None:
     record["status"] = status
-    atomic_write(record_path(batch_id, registry_dir), json.dumps(record, indent=1, ensure_ascii=False) + "\n")
+    store = PipelineStore(registry_dir)
+    store.write(f"{batch_id}.json", json.dumps(record, indent=1, ensure_ascii=False) + "\n")
 
 
 def _read_multiline(prompt: str, readline: Callable[[str], str]) -> str:
@@ -553,17 +566,15 @@ def _load_boundaries(batch_work: Path, batch_id: str, write_line: Callable[[str]
     """The guess stage's documents, or None after reporting a photo-only
     batch — nothing to transcribe (2026-08-14 final review: `make confirm`
     must not error on it). A missing guess raises."""
-    guess_dir = batch_work / "ocr-guess"
-    boundaries_path = guess_dir / "boundaries.json"
-    if not boundaries_path.exists():
-        classify_path = batch_work / "classify.json"
-        if classify_path.exists():
-            classify = json.loads(classify_path.read_text(encoding="utf-8"))
+    store = PipelineStore(batch_work.parent)
+    if not store.exists(f"{batch_id}/ocr-guess/boundaries.json"):
+        if store.exists(f"{batch_id}/classify.json"):
+            classify = json.loads(store.read_latest(f"{batch_id}/classify.json"))
             if not any(entry.get("kind") == "text" for entry in classify.values()):
                 write_line(f"batch {batch_id}: no text pages — nothing to confirm")
                 return None
         raise PipelineError(f"no guess for batch {batch_id} — run process first")
-    return json.loads(boundaries_path.read_text(encoding="utf-8"))
+    return json.loads(store.read_latest(f"{batch_id}/ocr-guess/boundaries.json"))
 
 
 # parameter object would add a type for one use
@@ -579,11 +590,13 @@ def _confirm_documents(
 ) -> None:
     """The user's accept/edit/reject gate per document; the accepted text
     lands in work/<batch>/ocr-confirmed/."""
-    guess_dir = batch_work / "ocr-guess"
+    store = PipelineStore(work_dir)
     confirmed_dir = batch_work / "ocr-confirmed"
     confirmed_dir.mkdir(parents=True, exist_ok=True)
     for index, document in enumerate(boundaries, start=1):
-        text_pages = [p for p in document["pages"] if (guess_dir / Path(p).with_suffix(".txt")).exists()]
+        text_pages = [
+            p for p in document["pages"] if store.exists(f"{batch_id}/ocr-guess/{Path(p).with_suffix('.txt')}")
+        ]
         if not text_pages:
             # a photo-only item — nothing to transcribe; its people/places
             # identification is a separate flow (user, 2026-08-17)
@@ -593,15 +606,15 @@ def _confirm_documents(
         if document.get("greeting"):
             write_line(f"greeting: {document['greeting']}")
         for page in text_pages:
-            text_path = guess_dir / Path(page).with_suffix(".txt")
-            if text_path.exists():
-                write_line(f"--- {page} ---\n{text_path.read_text(encoding='utf-8')}")
+            txt_rel = f"{batch_id}/ocr-guess/{Path(page).with_suffix('.txt')}"
+            if store.exists(txt_rel):
+                write_line(f"--- {page} ---\n{store.read_latest(txt_rel)}")
         answer = line("accept (Enter) / edit (e) / reject (r): ").strip().lower()
         if answer == "r":
             record_confirmation(batch_id, index, document, None, work_dir=work_dir, registry_dir=registry_dir)
             write_line(f"document {index} rejected")
             continue
-        text = "\n".join((guess_dir / Path(p).with_suffix(".txt")).read_text(encoding="utf-8") for p in text_pages)
+        text = "\n".join(store.read_latest(f"{batch_id}/ocr-guess/{Path(p).with_suffix('.txt')}") for p in text_pages)
         if answer == "e":
             text = _read_multiline("paste the corrected text, '.' alone ends:\n", line)
         record_confirmation(batch_id, index, document, text, work_dir=work_dir, registry_dir=registry_dir)

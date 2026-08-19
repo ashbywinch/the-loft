@@ -33,6 +33,8 @@ from PIL import Image
 # by the local HTR backend (LOFT_HTR_BACKEND=local, the privacy mode). The
 # serving layer imports htr_pages_vlm for the reprocess route, and the
 from tools.atomic import atomic_write
+from tools.loft_paths import WORK_DIR
+from tools.pipeline_store import PipelineStore
 from tools.store import DiskStore  # noqa: F401
 from tools.vlm import parse_transcription_response, transcribe_image_vlm, transcription_system_with_context
 
@@ -211,7 +213,11 @@ def htr_page(image: Path, out_path: Path, *, _segment: Any = None, _transcribe: 
             text = transcribe_lines(crops, processor, model)
         finally:
             del model  # the 3.14 main venv shares RAM with everything else
-    atomic_write(out_path, text)
+    store = PipelineStore(WORK_DIR)
+    batch_id = out_path.parent.parent.name
+    store_path = str(Path(batch_id) / "ocr-guess" / out_path.name)
+    store.write(store_path, text)
+    atomic_write(out_path, text)  # backward compat — htr_pages reads from the old path
     return text
 
 
@@ -270,7 +276,11 @@ def htr_pages_vlm(
         system = transcription_system_with_context(people=people, places=places, label=label, previous_page=previous)
         text, usage = call(image, system=system)
         plain, boxes = parse_transcription_response(text)
-        atomic_write(out, plain)
+        atomic_write(out, plain)  # backward compat — callers read from the old path
+        store = PipelineStore(WORK_DIR)
+        batch_id = out.parent.parent.name
+        store_path = str(Path(batch_id) / "ocr-guess" / out.name)
+        store.write(store_path, plain)
         marker_data: dict[str, Any] = dict(usage)
         if boxes is not None:
             # the VLM's own line geometry (normalized 0-1000) — the layout
@@ -280,7 +290,11 @@ def htr_pages_vlm(
             # anchor each line it transcribed). Only the entries with boxes
             # ride along; a page without geometry keeps the old fallback.
             marker_data["lines"] = [{"text": plain.split("\n")[i], "box": boxes[i]} for i in sorted(boxes)]
-        atomic_write(marker, json.dumps(marker_data, ensure_ascii=False))
+        store = PipelineStore(WORK_DIR)
+        batch_id = out.parent.parent.name
+        store_path = str(Path(batch_id) / "ocr-guess" / marker.name)
+        store.write(store_path, json.dumps(marker_data, ensure_ascii=False))
+        atomic_write(marker, json.dumps(marker_data, ensure_ascii=False))  # backward compat — marker.exists()
         previous = plain
         print(f"vlm: {name} -> {out.name} ({usage.get('total_tokens', 0)} tokens)")
 

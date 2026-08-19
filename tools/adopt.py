@@ -24,11 +24,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from tools.atomic import atomic_write
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
-from tools.store import DiskStore  # noqa: F401
+from tools.pipeline_store import PipelineStore
+from tools.store import StoreError
 
 _BATCH_ID = re.compile(r"^[A-Za-z0-9-]+$")
+
+# A PipelineStore versioned copy: base-2.json, base-3.json, etc.
+_VERSIONED_FILE = re.compile(r"-(\d+)\.json$")
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 DEFAULT_SOURCE = "external"
@@ -36,6 +39,18 @@ DEFAULT_SOURCE = "external"
 
 class AdoptionError(RuntimeError):
     """An adoption failed; the message is the plain-language line."""
+
+
+def _is_versioned_copy(path: Path) -> bool:
+    """Is *path* a PipelineStore versioned copy (v2+) with a sibling base file?"""
+    m = _VERSIONED_FILE.search(path.name)
+    if not m:
+        return False
+    ver = int(m.group(1))
+    if ver < 2:
+        return False
+    base = path.with_name(path.name[: m.start()] + ".json")
+    return base.exists()
 
 
 def page_files(folder: Path) -> list[Path]:
@@ -49,10 +64,14 @@ def _existing_records(registry_dir: Path) -> list[tuple[Path, dict[str, Any]]]:
     records: list[tuple[Path, dict[str, Any]]] = []
     if not registry_dir.is_dir():
         return records
+    store = PipelineStore(registry_dir)
     for path in sorted(registry_dir.glob("*.json")):
+        if _is_versioned_copy(path):
+            continue  # PipelineStore versioned copies are read via the base path
+        rel = str(path.relative_to(registry_dir))
         try:
-            records.append((path, json.loads(path.read_text(encoding="utf-8"))))
-        except (OSError, json.JSONDecodeError) as exc:
+            records.append((path, json.loads(store.read_latest(rel))))
+        except (OSError, json.JSONDecodeError, StoreError) as exc:
             raise AdoptionError(f"registry record unreadable: {path} ({exc})") from exc
     return records
 
@@ -89,7 +108,7 @@ def register_adopted(
     best = _find_same_pile(fingerprint, folder, registry_dir)
     if best is not None:
         _overlap, record_path, record = best
-        return _apply_content_changed(record_path, record, pages, fingerprint, folder, work_dir)
+        return _apply_content_changed(record_path, record, pages, fingerprint, folder, work_dir, registry_dir)
 
     return _register_new(folder, label, source, pages, fingerprint, registry_dir)
 
@@ -104,7 +123,8 @@ def _match_fingerprint(fingerprint: list[str], folder: Path, registry_dir: Path)
             if old_path == str(folder):
                 return record_path, "already-registered"
             record["path"] = str(folder)  # re-association: the folder moved
-            atomic_write(record_path, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
+            rel = str(record_path.relative_to(registry_dir))
+            PipelineStore(registry_dir).write(rel, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
             return record_path, "re-associated"
     return None
 
@@ -148,6 +168,7 @@ def _apply_content_changed(
     fingerprint: list[str],
     folder: Path,
     work_dir: Path,
+    registry_dir: Path,
 ) -> tuple[Path, str]:
     """Update the same-pile record: the new hashes, the pile's new home,
     and the flag for a manual review. Confirmed transcriptions are NEVER
@@ -164,10 +185,12 @@ def _apply_content_changed(
     record["content_changed"] = True
     confirmed = [b for b in (record.get("boundaries") or []) if b.get("status") == "confirmed"]
     if confirmed:
-        atomic_write(record_path, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
+        rel = str(record_path.relative_to(registry_dir))
+        PipelineStore(registry_dir).write(rel, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
         return record_path, "content-changed"
     record["boundaries"] = None
-    atomic_write(record_path, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
+    rel = str(record_path.relative_to(registry_dir))
+    PipelineStore(registry_dir).write(rel, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
     stale_work = work_dir / batch_id
     if stale_work.exists():
         shutil.rmtree(stale_work)  # our workspace, no confirmed content — the stages regenerate
@@ -194,7 +217,9 @@ def _register_new(
     }
     registry_dir.mkdir(parents=True, exist_ok=True)
     record_path = registry_dir / f"{record['batch_id']}.json"
-    atomic_write(record_path, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
+    PipelineStore(registry_dir).write(
+        f"{record['batch_id']}.json", json.dumps(record, indent=1, ensure_ascii=False) + "\n"
+    )
     return record_path, "new"
 
 

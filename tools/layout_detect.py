@@ -196,40 +196,73 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
     # like "1782635795946-5f7905a9~2.jpg" (the PhotoScan batch, 2026-08-16)
     # and must not be silently skipped by the layout pass
     pages = [p for p in sorted(oriented_dir.glob("*.jpg"))]
+    wanted: set[str] = set()
     if page_names:
         wanted = set(page_names)
         pages = [p for p in pages if p.name in wanted]
+    missing: list[str] = []
     for image in pages:
         vlm_path = guess_dir / image.with_suffix(".txt").name
         if not vlm_path.exists():
-            print(f"layout: no guess text for {image.name} — skipping", file=sys.stderr)
+            rc = _warn_missing_guess(image.name, vlm_path.name, page_names, wanted)
+            if rc:
+                return rc
+            missing.append(image.name)
             continue
-        orientations = load_orientation_hint(guess_dir / f"{image.stem}.orientation.json")
-        if orientations:
-            passes = orientation_passes(orientations)
-            report_lines = load_orientation_report(guess_dir / f"{image.stem}.orientation.json").get("lines") or None
-            vlm_text = vlm_path.read_text(encoding="utf-8")
-            layout = layout_page_multi(engine, image, passes, report_lines=report_lines, vlm_text=vlm_text)
-            print(
-                f"layout: {image.name} multi-orientation {orientations} "
-                f"(passes {passes}) -> {len(layout['lines'])} lines"
-            )
-        else:
-            selfreport_path = guess_dir / f"{image.stem}.selfreport.json"
-            selfreport = None
-            if selfreport_path.exists():
-                selfreport = json.loads(selfreport_path.read_text(encoding="utf-8"))
-            vlm_boxes = load_vlm_boxes(guess_dir / f"{image.stem}.vlm.json")
-            layout = layout_page(engine, image, vlm_path.read_text(encoding="utf-8"), selfreport, vlm_boxes)
-        out = guess_dir / f"{image.stem}.layout.json"
-        store = PipelineStore(WORK_DIR)
-        store_path = str(Path(batch_id) / "ocr-guess" / out.name)
-        write_layout_store(layout, store, store_path)
-        flagged = sum(1 for line in layout["lines"] for w in line["words"] if w["conf"] == 0.0)
+        _layout_one(engine, image, guess_dir, batch_id)
+    if missing:
         print(
-            f"layout: {image.name} {len(layout['lines'])} lines, "
-            f"{len(layout['unmatched'])} unmatched, {flagged} flagged words -> {out.name}"
+            f"layout: {len(missing)} page(s) skipped — no guess text: {', '.join(sorted(missing))}",
+            file=sys.stderr,
         )
+    return 0
+
+
+def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str) -> None:
+    """Layout ONE page: read its guess/orientation/self-report, run the
+    (multi-orientation) layout build, and persist via the store. Split
+    from run_batch so the per-page path stays under the complexity bar."""
+    vlm_path = guess_dir / image.with_suffix(".txt").name
+    orientations = load_orientation_hint(guess_dir / f"{image.stem}.orientation.json")
+    if orientations:
+        passes = orientation_passes(orientations)
+        report_lines = load_orientation_report(guess_dir / f"{image.stem}.orientation.json").get("lines") or None
+        vlm_text = vlm_path.read_text(encoding="utf-8")
+        layout = layout_page_multi(engine, image, passes, report_lines=report_lines, vlm_text=vlm_text)
+        print(
+            f"layout: {image.name} multi-orientation {orientations} (passes {passes}) -> {len(layout['lines'])} lines"
+        )
+    else:
+        selfreport_path = guess_dir / f"{image.stem}.selfreport.json"
+        selfreport = None
+        if selfreport_path.exists():
+            selfreport = json.loads(selfreport_path.read_text(encoding="utf-8"))
+        vlm_boxes = load_vlm_boxes(guess_dir / f"{image.stem}.vlm.json")
+        layout = layout_page(engine, image, vlm_path.read_text(encoding="utf-8"), selfreport, vlm_boxes)
+    out = guess_dir / f"{image.stem}.layout.json"
+    store = PipelineStore(WORK_DIR)
+    store_path = str(Path(batch_id) / "ocr-guess" / out.name)
+    write_layout_store(layout, store, store_path)
+    flagged = sum(1 for line in layout["lines"] for w in line["words"] if w["conf"] == 0.0)
+    print(
+        f"layout: {image.name} {len(layout['lines'])} lines, "
+        f"{len(layout['unmatched'])} unmatched, {flagged} flagged words -> {out.name}"
+    )
+
+
+def _warn_missing_guess(image_name: str, txt_name: str, page_names: list[str] | None, wanted: set[str]) -> int:
+    """A page with no guess text must never be laid out from geometry alone
+    (2026-08-20 — the bad page-02 layout was exactly that). Explicitly
+    requested pages are fatal (2); implicit pages are skipped loudly with
+    a stderr warning. Returns the exit code to return, 0 to continue."""
+    if page_names and image_name in wanted:
+        print(
+            f"layout: FATAL — no guess text for {image_name} (requested explicitly). "
+            f"Run the guess stage first, or restore {txt_name}.",
+            file=sys.stderr,
+        )
+        return 2
+    print(f"layout: no guess text for {image_name} — skipping", file=sys.stderr)
     return 0
 
 

@@ -770,3 +770,56 @@ def test_orientation_passes_mirror_a_reported_vertical_direction() -> None:
     assert orientation_passes([0, 90]) == [0, 90, 270]
     assert orientation_passes([0, 270]) == [0, 90, 270]
     assert orientation_passes([0, 180]) == [0, 180]  # no mirror for 0/180
+
+
+def _stub_paddleocr() -> None:
+    """layout_detect imports paddleocr at module top — the main venv has no
+    such module (PaddleOCR lives in .venv-htr). Stub it so the fail-loud
+    logic is testable here without the heavy import."""
+    import sys
+    import types
+
+    if "paddleocr" not in sys.modules:
+        mod = types.ModuleType("paddleocr")
+        mod.PaddleOCR = object  # type: ignore[attr-defined]  # the engine is injected; the class is never constructed
+        sys.modules["paddleocr"] = mod
+
+
+def test_layout_run_batch_fails_loud_on_explicit_page_without_guess(tmp_path: Path) -> None:
+    """A layout for an explicitly requested page with no guess text must
+    fail loudly (return 2), never silently skip — the bad page-02 layout
+    was exactly a geometry-only build (2026-08-20)."""
+    _stub_paddleocr()
+    from tools.layout_detect import run_batch
+
+    work = tmp_path
+    (work / "adopt-0001" / "oriented").mkdir(parents=True)
+    (work / "adopt-0001" / "ocr-guess").mkdir(parents=True)
+    (work / "adopt-0001" / "oriented" / "p1.jpg").write_bytes(b"jpeg")
+
+    class _FakeEngine:
+        def predict(self, *args, **kwargs):  # pragma: no cover — must not be reached
+            raise AssertionError("engine must not run for a missing guess")
+
+    # explicitly requested page with no guess text -> fatal
+    rc = run_batch("adopt-0001", ["p1.jpg"], work, _FakeEngine())
+    assert rc == 2
+
+
+def test_layout_run_batch_skips_implicit_page_without_guess(tmp_path: Path) -> None:
+    """An unrequested page with no guess text is skipped with a stderr
+    warning and a summary — the batch keeps going, but loudly."""
+    _stub_paddleocr()
+    from tools.layout_detect import run_batch
+
+    work = tmp_path
+    (work / "adopt-0001" / "oriented").mkdir(parents=True)
+    (work / "adopt-0001" / "ocr-guess").mkdir(parents=True)
+    (work / "adopt-0001" / "oriented" / "p1.jpg").write_bytes(b"jpeg")
+
+    class _FakeEngine:
+        def predict(self, *args, **kwargs):  # pragma: no cover — must not be reached
+            raise AssertionError("engine must not run for a missing guess")
+
+    rc = run_batch("adopt-0001", None, work, _FakeEngine())
+    assert rc == 0  # batch continues, page skipped loudly

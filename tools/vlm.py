@@ -180,7 +180,7 @@ def _drop_degenerate_boxes(boxes: dict[int, list[float]]) -> dict[int, list[floa
 def transcribe_image_vlm(
     image: Path,
     *,
-    model: str = "mimo-v2.5",
+    model: str = "dynamic/image",
     system: str = VLM_SYSTEM,
     user_text: str | None = None,
     base_url: str = DEFAULT_BASE_URL,
@@ -204,6 +204,7 @@ def transcribe_image_vlm(
             {"role": "user", "content": user_content},
         ],
         "temperature": 0,
+        "max_tokens": 32000,
     }
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions",
@@ -211,18 +212,31 @@ def transcribe_image_vlm(
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {key}",
-            "User-Agent": "the-loft/0.1",
+            "User-Agent": "opencode/1.14.20",
         },
         method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")[:300]
+        raise VlmError(f"vision model call failed: HTTP {e.code} - {detail}") from e
     # lucidlint: ignore broad-except the module's contract — every failure surfaces as VlmError
     except Exception as exc:  # network or API errors surface loudly
         raise VlmError(f"vision model call failed: {exc}") from exc
     try:
-        text = str(body["choices"][0]["message"]["content"])
+        content = (body.get("choices", [{}])[0].get("message") or {}).get("content") or ""
+        finish_reason = body.get("choices", [{}])[0].get("finish_reason")
+        if finish_reason == "length" and not content.strip():
+            raise VlmError(
+                "vision model produced only reasoning tokens, no content — "
+                "the max_tokens limit was hit before the model could produce output. "
+                "Increase max_tokens or reduce the prompt."
+            )
+        if not content.strip():
+            raise VlmError(f"vision model returned empty content (finish_reason={finish_reason})")
+        text = str(content)
         usage = dict(body.get("usage", {}))
     except (KeyError, IndexError, TypeError) as exc:
         raise VlmError(f"unexpected vision response: {json.dumps(body)[:300]}") from exc

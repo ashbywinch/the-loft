@@ -185,6 +185,25 @@ def apply_routes(classify: dict[str, Any], rotations: dict[str, Any]) -> dict[st
     return classify
 
 
+def _guess_is_stale(text_pages: list[str], guess_dir: Path, boundaries_path: Path) -> bool:
+    """Is the existing guess incomplete? The boundaries may exist from a
+    previous run while individual page .txt files were cleared (e.g. a bad
+    layout_detect run that deleted them). Existence of boundaries alone is
+    a lie of a completion proxy — a stale guess must be re-run, not
+    silently reused (2026-08-20)."""
+    missing = [name for name in text_pages if not (guess_dir / Path(name).with_suffix(".txt")).exists()]
+    if not missing:
+        return False
+    print(f"WARNING: guess text missing for {len(missing)} page(s) — deleting stale boundaries and re-running guess")
+    boundaries_path.unlink(missing_ok=True)
+    # Also clear any stale orientation reports that reference the old text
+    for name in missing:
+        ori = guess_dir / Path(name).with_suffix(".orientation.json")
+        if ori.exists():
+            ori.unlink()
+    return True
+
+
 # a single call site — the stage paths and DI seams are the caller's locals
 # lucidlint: ignore long-param-list a parameter object would be ceremony for one entry point
 def process(
@@ -248,7 +267,7 @@ def process(
     # 5. model guess on the TEXT pages only (chunked past PAGE_LIMIT — a
     # multi-page document spanning a chunk boundary is split, a noted
     # limitation; postcards and letters within a chunk group correctly)
-    if boundaries_path.exists():
+    if boundaries_path.exists() and not _guess_is_stale(text_pages, guess_dir, boundaries_path):
         print("guess already present — reusing")
     else:
         _run_guess(
@@ -621,19 +640,128 @@ def _confirm_documents(
         write_line(f"document {index} confirmed -> {confirmed_dir / f'doc-{index:02d}.txt'}")
 
 
+def cmd_guess(batch_id: str, pages: list[str], work_dir: Path, registry_dir: Path) -> int:
+    """Surgical recovery (2026-08-20): re-run the VLM guess for specific
+    pages, then regenerate boundaries from the full page set. The guess
+    stage previously could only run as part of the whole ``process`` chain —
+    fixing one page re-paid model calls for every page. ``pages`` limits
+    which pages get re-transcribed; the boundaries regen still sees the
+    full set (the grouping scorer needs the whole sequence)."""
+    batch_work = work_dir / batch_id
+    oriented_dir = batch_work / "oriented"
+    raw_dir = batch_work / "ocr-raw"
+    classify_path = batch_work / "classify.json"
+    record = load_batch(batch_id, registry_dir)
+
+    if not classify_path.exists():
+        print(f"guess: no classify.json for {batch_id} — run `pipeline process` once first", file=sys.stderr)
+        return 1
+    classify = json.loads(PipelineStore(work_dir).read_latest(f"{batch_id}/classify.json"))
+    text_pages: list[str] = [name for name, entry in classify.items() if entry.get("kind") == "text"]
+    if pages:
+        requested = {p if p.endswith(".jpg") else p + ".jpg" for p in pages}
+        unknown = requested - set(text_pages)
+        if unknown:
+            print(f"guess: not text pages: {', '.join(sorted(unknown))}", file=sys.stderr)
+            return 2
+        cursive = [p for p in requested if classify.get(p, {}).get("route") == "cursive"]
+        if not cursive:
+            print("guess: none of the requested pages are routed cursive — nothing to re-transcribe", file=sys.stderr)
+            return 2
+    else:
+        cursive = [name for name in text_pages if classify.get(name, {}).get("route") == "cursive"]
+
+    people, places = _standing_knowledge()
+    label = record.get("label")
+    htr_pages_vlm(
+        [(name, oriented_dir / name) for name in cursive],
+        raw_dir,
+        people=people,
+        places=places,
+        label=label,
+    )
+
+    _regen_boundaries(batch_id, record, classify, text_pages, work_dir, registry_dir)
+    print(f"guess: {len(cursive)} page(s) re-transcribed, boundaries regenerated")
+    return 0
+
+
+# a single call site — the surgical-recovery regen; a parameter object would be ceremony
+# lucidlint: ignore long-param-list the stage paths and DI seams are the caller's locals
+def _regen_boundaries(
+    batch_id: str,
+    record: dict[str, Any],
+    classify: dict[str, Any],
+    text_pages: list[str],
+    work_dir: Path,
+    registry_dir: Path,
+) -> None:
+    """Regenerate boundaries from the full set — the grouping scorer needs
+    the whole sequence (photos included), the classify kinds, the image
+    sizes, and the texts. Same call pattern as _run_guess (2026-08-20)."""
+    raw_dir = work_dir / batch_id / "ocr-raw"
+    guess_dir = work_dir / batch_id / "ocr-guess"
+    store = PipelineStore(work_dir)
+    reg_store = PipelineStore(registry_dir)
+    folder = Path(str(record.get("path", "")))
+    dims: dict[str, tuple[int, int]] = {}
+    for rel in sorted(record.get("pages", {})):
+        with Image.open(folder / rel) as im:
+            dims[rel] = im.size
+    texts: dict[str, str | None] = {
+        name: (raw_dir / Path(name).with_suffix(".txt")).read_text(encoding="utf-8") for name in text_pages
+    }
+    boundaries = score_boundaries(
+        sorted(record.get("pages", {})),
+        {page: str(entry.get("kind", "text")) for page, entry in classify.items()},
+        dims,
+        texts,
+        {},
+    )
+    boundaries_path = guess_dir / "boundaries.json"
+    boundaries_path.parent.mkdir(parents=True, exist_ok=True)
+    store.write(f"{batch_id}/ocr-guess/boundaries.json", json.dumps(boundaries, indent=1, ensure_ascii=False) + "\n")
+    record["boundaries"] = boundaries
+    reg_store.write(f"{batch_id}.json", json.dumps(record, indent=1, ensure_ascii=False) + "\n")
+
+
+def cmd_layout(batch_id: str, pages: list[str], work_dir: Path, registry_dir: Path) -> int:
+    """Surgical recovery (2026-08-20): run the layout stage for specific
+    pages only. The layout stage (PaddleOCR in the .venv-htr venv) is the
+    slowest stage — re-running it for the whole batch to fix one page is
+    wasteful. Delegates to the layout stage's own page filter and its
+    fail-loud missing-input check."""
+    try:
+        layout_stage_run(batch_id, work_dir, pages or None)
+    except Exception as exc:  # lucidlint: ignore broad-except the subprocess surfaces its exit as CalledProcessError
+        print(f"layout: stage failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pipeline", description="The ingest chain per batch")
     sub = parser.add_subparsers(dest="command", required=True)
     p = sub.add_parser("process", help="orient + raw OCR + model guess + boundaries")
     p.add_argument("batch_id")
     p.set_defaults(fn=process)
+    p = sub.add_parser("guess", help="surgical recovery: re-transcribe specific pages, regen boundaries")
+    p.add_argument("batch_id")
+    p.add_argument("pages", nargs="*", help="page names (e.g. page-02); empty = all cursive pages")
+    p.set_defaults(fn=cmd_guess)
+    p = sub.add_parser("layout", help="surgical recovery: layout specific pages only")
+    p.add_argument("batch_id")
+    p.add_argument("pages", nargs="*", help="page names (e.g. page-02); empty = all pages")
+    p.set_defaults(fn=cmd_layout)
     p = sub.add_parser("review", help="user confirmation gate for the guessed text")
     p.add_argument("batch_id")
     p.set_defaults(fn=review)
-
     args = parser.parse_args(argv)
     try:
-        args.fn(args.batch_id)
+        if args.command in ("guess", "layout"):
+            args.fn(args.batch_id, args.pages, WORK_DIR, REGISTRY_DIR)
+        else:
+            args.fn(args.batch_id)
     except PipelineError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

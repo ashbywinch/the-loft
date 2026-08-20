@@ -267,12 +267,20 @@ def htr_pages_vlm(
     for name, image in pages:
         out = raw_dir / Path(name).with_suffix(".txt")
         marker = out.with_suffix(".vlm.json")
-        if marker.exists():
+        # Skip only when BOTH the completion marker and the artifact it
+        # promises exist and are non-empty. A marker with a missing or
+        # empty .txt is a stale or partial write (2026-08-20: a bad
+        # layout_detect run left page-02's marker while clearing its
+        # text — the stage "reused" the corrupt guess). Existence alone
+        # is a lie of a completion proxy; validate before skipping.
+        if marker.exists() and out.exists() and out.read_text(encoding="utf-8").strip():
             print(f"vlm: {name} already done — reusing")
-            if out.exists():
-                previous = out.read_text(encoding="utf-8")  # keep the continuity current
+            previous = out.read_text(encoding="utf-8")  # keep the continuity current
             continue
-        print(f"vlm: {name} transcribing…", flush=True)
+        if marker.exists():
+            print(f"vlm: {name} marker present but text missing — re-transcribing")
+        else:
+            print(f"vlm: {name} transcribing…", flush=True)
         system = transcription_system_with_context(people=people, places=places, label=label, previous_page=previous)
         text, usage = call(image, system=system)
         plain, boxes = parse_transcription_response(text)

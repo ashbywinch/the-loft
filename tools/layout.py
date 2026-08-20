@@ -32,9 +32,13 @@ from __future__ import annotations
 import json
 import math
 import re
+import tempfile
 import unicodedata
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypedDict, cast
+
+from PIL import Image
 
 from tools.atomic import atomic_write
 from tools.store import DiskStore  # noqa: F401
@@ -716,21 +720,80 @@ def _vlm_text_lines(
     return lines
 
 
-def _extra_lines(unmatched: list[Detection]) -> list[dict[str, Any]]:
+def recognize_extra(
+    image: Path,
+    box: list[float],
+    orientation: int,
+    recognize: Callable[[Path], str | None],
+) -> str | None:
+    """The clip→rotate→recognize flow for an extra (rec-only) line
+    (2026-08-20, user's direction): clip the line's box from the ORIGINAL
+    image, rotate the clip UPRIGHT by its orientation, and recognize the
+    de-rotated text — the rec engine's rotated-frame reading is fragment
+    garbage for cursive; the VLM reads the upright clip. Fail fast
+    (returns None — the line is DROPPED, never garbage-admitted): the
+    clip is out of bounds, recognition returns nothing (Gate C), or the
+    recognized text is wildly out of sync with the box's reading-axis
+    extent (Gate B's check, applied to the recognized reading)."""
+    x0, y0, x1, y1 = box
+    try:
+        with Image.open(image) as im:
+            w, h = im.size
+            if x0 < 0 or y0 < 0 or x1 > w or y1 > h or x1 <= x0 or y1 <= y0:
+                return None
+            # rotate(-degrees) makes `degrees`-oriented text upright —
+            # the same transform the orientation pass applies to the page
+            clip = im.crop((x0, y0, x1, y1)).rotate(-orientation, expand=True)
+    except OSError:
+        return None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            clip.save(tmp, format="JPEG", quality=85)
+            tmp_path = Path(tmp.name)
+        try:
+            text = recognize(tmp_path)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+    except OSError:
+        return None
+    text = (text or "").strip()
+    if not text:
+        return None
+    if _text_extent_violation(text, x1 - x0, y1 - y0, float(orientation)):
+        return None
+    return text
+
+
+def _extra_lines(
+    unmatched: list[Detection],
+    image: Path | None = None,
+    recognize: Callable[[Path], str | None] | None = None,
+) -> list[dict[str, Any]]:
     """The rec detections no text line claimed — the model-missed text —
-    flagged extras at their pass orientation."""
+    flagged extras at their pass orientation. With the clip seam
+    (``image`` + ``recognize``) each extra is re-read from its OWN upright
+    clip (recognize_extra): a successful reading replaces the rec
+    fragment; a failed one DROPS the line — the rec's rotated-frame
+    fragment garbage never reaches the review (2026-08-20)."""
     lines: list[dict[str, Any]] = []
     for det in unmatched:
         orientation = det.get("orientation")
+        orientation = orientation if isinstance(orientation, int) else 0
+        text = det["text"]
+        if image is not None and recognize is not None:
+            recognized = recognize_extra(image, det["box"], orientation, recognize)
+            if recognized is None:
+                continue  # fail fast — the fragment is not admitted
+            text = recognized
         lines.append(
             {
                 "index": 0,  # provisional — re-indexed after the dedupe + sort
-                "text": det["text"],
+                "text": text,
                 "box": det["box"],
                 "conf": 0.0,
-                "orientation": orientation if isinstance(orientation, int) else 0,
+                "orientation": orientation,
                 "box_source": "multi",
-                "words": _multi_line_words(det["text"], det.get("words", []), 0.0),
+                "words": _multi_line_words(text, det.get("words", []), 0.0),
             }
         )
     return lines
@@ -745,6 +808,8 @@ def multi_layout(
     passes: list[tuple[int, list[dict[str, Any]]]],
     report_lines: list[dict[str, Any]] | None = None,
     vlm_text: str | None = None,
+    image: Path | None = None,
+    recognize: Callable[[Path], str | None] | None = None,
 ) -> dict[str, Any]:
     """The combined multi-orientation layout (PRD VR15).
 
@@ -777,7 +842,7 @@ def multi_layout(
             matches, unmatched = associate_lines(report_texts, detections)
             confirmed = {m["vlm_index"] for m in matches if m.get("box_source") == "content"}
             lines = _anchored_lines(report_lines, confirmed, width, height)
-        lines += _extra_lines(unmatched)
+        lines += _extra_lines(unmatched, image, recognize)
     else:
         lines = [
             {

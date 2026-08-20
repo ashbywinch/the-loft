@@ -41,6 +41,7 @@ from tools.layout import (
 from tools.loft_paths import WORK_DIR
 from tools.pipeline_store import PipelineStore
 from tools.store import DiskStore  # noqa: F401
+from tools.vlm import VlmError, parse_transcription_response, transcribe_image_vlm
 
 # The proven engine config (spike, 2026-08-15) — the rec model rides along
 # (its noisy text IS the cross-reader confidence signal).
@@ -161,6 +162,22 @@ def pass_at(
         rotated.unlink(missing_ok=True)
 
 
+def _vlm_clip_reader(crop: Path) -> str | None:
+    """Read one upright line clip with the vision model — the extra-line
+    recognition (2026-08-20): the rec engine's rotated-frame fragment is
+    garbage for cursive; the VLM reads the de-rotated clip. None on any
+    failure — the line then DROPS (fail fast, never garbage-admitted)."""
+    try:
+        text, _ = transcribe_image_vlm(crop, max_tokens=4000, timeout=120.0)
+    except VlmError:
+        return None
+    try:
+        plain, _ = parse_transcription_response(text)
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None
+    return plain.strip() or None
+
+
 def layout_page_multi(
     engine: Any,
     image: Path,
@@ -174,14 +191,24 @@ def layout_page_multi(
     report's per-line boxes (the v3 anchoring, 2026-08-17), the rec
     passes validating; without the report the rec-based lines fall back.
     The oriented image is already the pipeline's right way up, so the
-    initial display rotation stays 0."""
+    initial display rotation stays 0. The rec-only extra lines are
+    re-read from their own upright clips (2026-08-20)."""
     with Image.open(image) as im:
         ow, oh = im.size
     passes: list[tuple[int, list[dict[str, Any]]]] = []
     for degrees in orientations:
         kept, _ = pass_at(engine, image, degrees, ow, oh)
         passes.append((degrees, kept))
-    return multi_layout(image.name, ow, oh, passes, report_lines=report_lines, vlm_text=vlm_text)
+    return multi_layout(
+        image.name,
+        ow,
+        oh,
+        passes,
+        report_lines=report_lines,
+        vlm_text=vlm_text,
+        image=image,
+        recognize=_vlm_clip_reader,
+    )
 
 
 def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engine: Any) -> int:
@@ -241,10 +268,21 @@ def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str) -> Non
     (multi-orientation) layout build, and persist via the store. Split
     from run_batch so the per-page path stays under the complexity bar."""
     vlm_path = guess_dir / image.with_suffix(".txt").name
+    report = load_orientation_report(guess_dir / f"{image.stem}.orientation.json")
     orientations = load_orientation_hint(guess_dir / f"{image.stem}.orientation.json")
+    # The multi path needs either the hint OR the report's line evidence.
+    # The v3 report's multi-direction evidence lives in the LINES' degrees
+    # (the model locates the known text; the orientation_hint may be empty
+    # — 2026-08-20: page-03's empty-hints report fell to the plain path and
+    # the good anchored text was replaced by detection fragments).
+    if not orientations:
+        located = report.get("lines", []) if isinstance(report, dict) else []
+        line_degrees = {int(ln.get("degrees")) for ln in located if ln.get("degrees") in (0, 90, 180, 270)}
+        if len(line_degrees) >= 2:
+            orientations = sorted(line_degrees)
     if orientations:
         passes = orientation_passes(orientations)
-        report_lines = load_orientation_report(guess_dir / f"{image.stem}.orientation.json").get("lines") or None
+        report_lines = report.get("lines") or None
         vlm_text = vlm_path.read_text(encoding="utf-8")
         layout = layout_page_multi(engine, image, passes, report_lines=report_lines, vlm_text=vlm_text)
         print(

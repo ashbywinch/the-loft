@@ -35,7 +35,7 @@ from tools.htr import htr_pages, htr_pages_vlm
 from tools.layout_stage import run_layout as layout_stage_run
 from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR
 from tools.ocr import orient_pages
-from tools.pipeline_store import PipelineStore
+from tools.pipeline_store import PipelineStore, text_sha256
 from tools.registry import RegistryError as PipelineError
 from tools.registry import load_batch, record_path
 from tools.store import DiskStore  # noqa: F401
@@ -185,16 +185,24 @@ def apply_routes(classify: dict[str, Any], rotations: dict[str, Any]) -> dict[st
     return classify
 
 
-def _guess_is_stale(text_pages: list[str], guess_dir: Path, boundaries_path: Path) -> bool:
-    """Is the existing guess incomplete? The boundaries may exist from a
-    previous run while individual page .txt files were cleared (e.g. a bad
-    layout_detect run that deleted them). Existence of boundaries alone is
-    a lie of a completion proxy — a stale guess must be re-run, not
-    silently reused (2026-08-20)."""
+def _guess_is_stale(text_pages: list[str], raw_dir: Path, guess_dir: Path, boundaries_path: Path) -> bool:
+    """Is the existing guess stale? Two failure modes: (1) individual page
+    .txt files were cleared (a bad layout_detect run) — the boundaries may
+    exist while the artifacts they promise are gone; (2) the RAW
+    transcriptions the guess was built from changed (a re-orientation
+    regenerated ocr-raw) — the recorded input fingerprints no longer
+    match. Existence of boundaries alone is a lie of a completion proxy —
+    a stale guess must be re-run, not silently reused (2026-08-20)."""
     missing = [name for name in text_pages if not (guess_dir / Path(name).with_suffix(".txt")).exists()]
-    if not missing:
+    stale_inputs = _guess_inputs_changed(text_pages, raw_dir, boundaries_path)
+    if not missing and not stale_inputs:
         return False
-    print(f"WARNING: guess text missing for {len(missing)} page(s) — deleting stale boundaries and re-running guess")
+    reasons = []
+    if missing:
+        reasons.append(f"{len(missing)} page(s) missing")
+    if stale_inputs:
+        reasons.append("raw transcriptions changed")
+    print(f"WARNING: guess stale ({'; '.join(reasons)}) — deleting stale boundaries and re-running guess")
     boundaries_path.unlink(missing_ok=True)
     # Also clear any stale orientation reports that reference the old text
     for name in missing:
@@ -202,6 +210,32 @@ def _guess_is_stale(text_pages: list[str], guess_dir: Path, boundaries_path: Pat
         if ori.exists():
             ori.unlink()
     return True
+
+
+def _guess_inputs_changed(text_pages: list[str], raw_dir: Path, boundaries_path: Path) -> bool:
+    """Did the raw transcriptions the guess was built from change? The
+    boundaries.json records each raw text's fingerprint; a mismatch means
+    the guess reflects an older reading (2026-08-20: a re-orientation
+    regenerated ocr-raw, but the guess still carried the pre-fix text). A
+    boundaries file without the fingerprint field (pre-2026-08-20) cannot
+    prove its inputs and is treated as stale once."""
+    inputs_path = boundaries_path.with_suffix(".inputs.json")
+    if not inputs_path.exists():
+        return True  # pre-fingerprint boundaries cannot prove their inputs
+    try:
+        recorded = json.loads(inputs_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return True
+    if not recorded:
+        return True
+    for name in text_pages:
+        raw_txt = raw_dir / Path(name).with_suffix(".txt")
+        if not raw_txt.exists():
+            continue  # the missing-check above handles absent artifacts
+        current = text_sha256(raw_txt.read_text(encoding="utf-8"))
+        if recorded.get(name) != current:
+            return True
+    return False
 
 
 # a single call site — the stage paths and DI seams are the caller's locals
@@ -267,7 +301,7 @@ def process(
     # 5. model guess on the TEXT pages only (chunked past PAGE_LIMIT — a
     # multi-page document spanning a chunk boundary is split, a noted
     # limitation; postcards and letters within a chunk group correctly)
-    if boundaries_path.exists() and not _guess_is_stale(text_pages, guess_dir, boundaries_path):
+    if boundaries_path.exists() and not _guess_is_stale(text_pages, raw_dir, guess_dir, boundaries_path):
         print("guess already present — reusing")
     else:
         _run_guess(
@@ -470,7 +504,12 @@ def _run_guess(
         texts,
         flags_by_page,
     )
+    inputs = {
+        name: text_sha256(store.read_latest(f"{batch_id}/ocr-raw/{Path(name).with_suffix('.txt')}"))
+        for name in text_pages
+    }
     store.write(f"{batch_id}/ocr-guess/boundaries.json", json.dumps(boundaries, indent=1, ensure_ascii=False) + "\n")
+    store.write(f"{batch_id}/ocr-guess/boundaries.inputs.json", json.dumps(inputs, ensure_ascii=False))
     # seed the registry record with the full boundaries so the review
     # surface's batch list shows the correct pending count (the registry
     # is the status' home; the guess stage's boundaries.json is the
@@ -720,7 +759,11 @@ def _regen_boundaries(
     )
     boundaries_path = guess_dir / "boundaries.json"
     boundaries_path.parent.mkdir(parents=True, exist_ok=True)
+    inputs = {
+        name: text_sha256((raw_dir / Path(name).with_suffix(".txt")).read_text(encoding="utf-8")) for name in text_pages
+    }
     store.write(f"{batch_id}/ocr-guess/boundaries.json", json.dumps(boundaries, indent=1, ensure_ascii=False) + "\n")
+    store.write(f"{batch_id}/ocr-guess/boundaries.inputs.json", json.dumps(inputs, ensure_ascii=False))
     record["boundaries"] = boundaries
     reg_store.write(f"{batch_id}.json", json.dumps(record, indent=1, ensure_ascii=False) + "\n")
 

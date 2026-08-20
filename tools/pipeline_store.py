@@ -18,6 +18,7 @@ Usage::
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -25,6 +26,25 @@ from tools.store import DiskStore, FileStore, StoreError
 
 # The version suffix pattern: "base-42.json" captures 42.
 VERSION_SUFFIX = re.compile(r"-(\d+)\.json$")
+
+
+def file_sha256(path: Path) -> str:
+    """The sha256 of a file's bytes — the input fingerprint for stage
+    markers. A stage's output is stale when its recorded input fingerprint
+    no longer matches the current input (e.g. the oriented image changed
+    after a rotation); the skip check compares the two instead of trusting
+    marker existence alone (2026-08-20)."""
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def text_sha256(text: str) -> str:
+    """The sha256 of a text string — for fingerprinting in-memory inputs
+    (the raw transcription a guess was built from)."""
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 class PipelineStore:

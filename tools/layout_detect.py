@@ -198,8 +198,18 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
     pages = [p for p in sorted(oriented_dir.glob("*.jpg"))]
     wanted: set[str] = set()
     if page_names:
-        wanted = set(page_names)
+        # The CLI takes bare stems ("page-02"); the glob yields full
+        # filenames ("page-02.jpg") — normalize so the filter actually
+        # matches (2026-08-20: a raw `p.name in wanted` silently produced
+        # an empty page list and exit 0, a no-op that looked like success).
+        wanted = {p if p.endswith(".jpg") else p + ".jpg" for p in page_names}
         pages = [p for p in pages if p.name in wanted]
+        if not pages:
+            print(
+                f"layout: FATAL — none of the requested pages exist in {oriented_dir}: {', '.join(sorted(wanted))}",
+                file=sys.stderr,
+            )
+            return 2
     missing: list[str] = []
     for image in pages:
         vlm_path = guess_dir / image.with_suffix(".txt").name

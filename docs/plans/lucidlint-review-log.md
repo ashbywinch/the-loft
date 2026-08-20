@@ -467,12 +467,13 @@ Consider for the tool (not decided):
 
 ---
 
-## 10. What lucidlint could have caught during a refactor-heavy session (2026-08-20)
+## 10. The extraction findings were right; the hand-implementation of them was the failure (2026-08-20)
 
-The pipeline anti-fragility work (commit 6a6dda3) involved extracting
-helpers to satisfy lucidlint's own complexity/long-param-list findings.
-The extraction itself was where the edits went wrong — four distinct
-mechanical mistakes, none caught by any linter in the stack:
+The pipeline anti-fragility work (commit 6a6dda3) was driven by lucidlint's
+complexity and long-param-list findings — and every finding was correct.
+Where the session went wrong was in IMPLEMENTING the extractions by hand
+with a text editor: four distinct mechanical mistakes, none caught by any
+linter in the stack:
 
 1. **A module-level name collision.** A new `guess_pages()` CLI command
    shadowed an existing module-level `guess_pages()` helper (the model-
@@ -490,26 +491,49 @@ mechanical mistakes, none caught by any linter in the stack:
    from its `# lucidlint: ignore` — this one lucidlint's
    `stale-suppression` rule DID catch, correctly and deterministically.
 
-Deterministic findings lucidlint could add (all correct-by-construction,
-no judgement needed):
+**The core lesson: the fix engine already does these extractions
+deterministically — the session should have used it instead of hand-
+editing.** `lucidlint fix --kind extract-method --file F --line N`
+previews the seam (libcst-based, bounded to ≤13 decisions so the result
+lands under the CC-15 gate, made private by construction), and applying
+with `--name` is the commitment. Run against the pre-refactor
+`tools/layout_detect.py`, it proposed exactly the loop-body seam the
+session extracted by hand (`for image in pages:` → a private method, call
+site replaced) — correctly, in one preview, before any edit landed.
+`unreachable`/`noop-statement` fix kinds delete dead tails like finding 2
+deterministically. The tool's R27 ("agents never compute line numbers —
+the tool owns its own coordinates") exists precisely so an agent does not
+hand-apply these.
 
+The fix surface needs `libcst` in the running venv (the engine refuses
+without it: "the Python fix engine requires libcst"). Added to the dev
+dependency group so the fix commands work in this repo.
+
+**The corrected process for a complexity/long-param-list finding:**
+1. `lucidlint fix --kind extract-method --file F --line N` (no name) →
+   read the proposed diff + the seam's first lines;
+2. judge the seam (is this the right split? — the engine proposes, the
+   agent decides); if wrong, the preview is discarded, nothing changed;
+3. apply with `--name _private_helper --confirm` (the name is the
+   commitment);
+4. `lucidlint fix --kind unreachable --file F --line N` for any dead
+   tails the move left behind;
+5. re-run the gate. Hand-editing is the fallback only when the engine's
+   seam is genuinely wrong — not the default.
+
+**Findings lucidlint could still add** (correct-by-construction, beyond
+what the fix engine covers):
 - **Duplicate module-scope definition**: two `def <name>` at module level
   is a shadowing hazard; flag the second. The module's name→line map is
-  already in the tool's graph.
-- **Dead code after a terminal statement**: a statement in a block after
-  `return`/`continue`/`raise` is unreachable. My leftover tails were
-  exactly this; the fix is a deterministic deletion.
+  already in the tool's graph. (Finding 1 — no existing rule covers it.)
 - **A `def` name and its first parameter separated by a blank line**:
   mechanical formatting smell from an edit tool landing mid-parens.
+  (Finding 3.)
 
-The session also confirmed what already works well:
-- `stale-suppression` caught the orphaned ignore (finding 4 above) — the
-  suppression-adjacency rule is doing its job;
-- the `--file` LSP mode surfaced the syntax errors from botched edits
-  immediately, before the test gate — worth running after every non-
-  trivial edit sequence;
-- the complexity and long-param-list findings drove exactly the right
-  extractions (`_guess_is_stale`, `_layout_one`, `_regen_boundaries`),
-  and the repo's per-site `# lucidlint: ignore long-param-list` + why
-  pattern (§9's conclusion) held up: only genuinely-single-call-site
-  helpers got the ignore, the rest were refactored.
+**What already worked well:** `stale-suppression` caught the orphaned
+ignore (finding 4) — the suppression-adjacency rule is doing its job; the
+`--file` LSP mode surfaced syntax errors from botched edits immediately,
+before the test gate; the complexity/long-param-list findings drove the
+right extractions, and the repo's per-site `# lucidlint: ignore
+long-param-list` + why pattern (§9's conclusion) held up — only genuinely
+single-call-site helpers got the ignore, the rest were refactored.

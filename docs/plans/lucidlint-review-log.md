@@ -530,6 +530,31 @@ what the fix engine covers):
   mechanical formatting smell from an edit tool landing mid-parens.
   (Finding 3.)
 
+**Confirmed again by the fingerprint work (2026-08-20, commit 4ce0500):**
+the same hand-edit failure class recurred three times in one small change,
+with one NEW shape:
+- **A duplicated statement block.** A `PUT` that replaced a loop header
+  left the old body in place — two identical
+  `transcribe → write → marker` sequences in one function. The silent
+  consequence: every page would be transcribed and billed TWICE. This is
+  deterministic to detect — two identical statement sequences in one
+  function body (AST subtree equality) — and worth a "duplicate code
+  block" rule; the existing "duplicate" rule covers imports/keys, not
+  statement blocks.
+- The two known shapes recurred: a helper inserted mid-import-block
+  (def-in-imports) and an import dropped by a repair edit (undefined
+  name — pyflakes F821, but only caught at the gate, not at edit time).
+- The available-but-unused tool: `ast_edit` (structural AST rewrites)
+  was in the toolbelt the whole session and would have applied these
+  changes atomically. The lesson from §10 extends: for structural
+  changes, prefer the AST tool or the fix engine — the text editor is
+  the wrong instrument, and the recurring mistakes are the evidence.
+
+The actionable affordance remains the same, sharpened: the per-file LSP
+mode should run the FULL rule set (undefined names, duplicate blocks,
+def-in-imports) so transient states are flagged at edit time — the
+syntax-only stream caught nothing about these.
+
 **Affordance findings (what the tool could change, beyond the process):**
 - **What is NOT attachable to a finding: the exact output.** The
   structural fixes are name-driven by design — "structural kinds need a

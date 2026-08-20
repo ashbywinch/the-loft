@@ -444,10 +444,16 @@ def build_layout(
                 "box_source": match["box_source"],
             }
         )
-    # physical reading order for the review pane — the transcription order
-    # scrambles multi-orientation pages (2026-08-20); the sort preserves
-    # each line's index (the edit key), only the display order changes
-    lines = order_lines_by_reading(lines)
+    # The single-orientation reading order (2026-08-20, user's
+    # requirement): the transcription order IS the block-aware reading —
+    # the model read the page block-by-block, and each block's text order
+    # is its physical order. The reading-start sort read ROW-by-row
+    # across same-y-band margin blocks, interleaving them (page-03's P.S.
+    # margin and the address block bounced 10+ times). The single path
+    # keeps the transcription order: the display matches the
+    # transcription, and the image moves block-by-block, never bouncing.
+    # (The MULTI path — multi_layout — keeps the physical sort: the
+    # transcription order scrambled the postcard's multi reading.)
     return {
         "page": page,
         "width": width,
@@ -618,6 +624,16 @@ def _drop_fragment_subsets(lines: list[dict[str, Any]], keep: list[bool]) -> Non
                 break
 
 
+def _weaker_duplicate(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Is ``a`` the weaker reading of ``b``'s physical region? Extracted
+    from dedupe_regions (2026-08-20) when the boxless guard pushed its
+    cyclomatic complexity to lucidlint's bar. A boxless line has no
+    region to dedupe — never a duplicate."""
+    if not a.get("box") or not b.get("box"):
+        return False
+    return _box_overlap(a["box"], b["box"]) > _DEDUPE_OVERLAP and _richness(b) > _richness(a)
+
+
 def dedupe_regions(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop the weaker readings of the same physical region across
     orientations. The anchored lines (the model's authoritative
@@ -636,7 +652,7 @@ def dedupe_regions(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for j, b in enumerate(lines):
             if i == j or not keep[i] or not keep[j]:
                 continue
-            if _box_overlap(a["box"], b["box"]) > _DEDUPE_OVERLAP and _richness(b) > _richness(a):
+            if _weaker_duplicate(a, b):
                 keep[i] = False
                 break
     _drop_fragment_subsets(lines, keep)
@@ -696,22 +712,34 @@ def _anchored_lines(
     return lines
 
 
+def _box_sync(text: str, box: list[float] | None, orientation: float) -> bool:
+    """Does the box plausibly hold the line's text — Gate B's own rule,
+    used to arbitrate the anchor candidates (2026-08-20). A None box is
+    trivially consistent (nothing to check)."""
+    if not box:
+        return True
+    return _text_extent_violation(text, box[2] - box[0], box[3] - box[1], orientation) is None
+
+
 def _located_box(
     report: dict[str, Any] | None,
     match: dict[str, Any] | None,
     width: int,
     height: int,
+    text: str,
 ) -> list[float] | None:
-    """The line's box: the report's located box (normalized 0-1000 scaled
-    to pixels; [0,0,0,0] = not located) when it claims the same ink a
-    CONTENT match read (the per-line refinement, the v3 design), else
-    the content match's box — the detector's ink-grounded geometry
-    (2026-08-20: page-03's transcription boxes sat ~200px above the real
-    text; a report box disjoint from the matched detection is an
-    estimate, not an anchor). A POSITIONAL match's box is unrelated ink
-    (the k-th unmatched detection), never evidence — the report's box
-    anchors over it (the v3 design). Else the report's box, else the
-    match's box, else None — a boxless line is flagged (2026-08-17)."""
+    """The line's box, arbitrated by the gates' own text-sync rule
+    (2026-08-20): a CONTENT match's box only overrides the report's
+    location when it plausibly holds the line's text — the postcard's
+    'E    R' false-matched a rec detection whose box was a 1341px merged
+    band (the rec read the stamp region as a few words containing
+    'e'/'r'); a wildly out-of-sync match box is a false match, and the
+    report's located box anchors instead (the v3 design). A POSITIONAL
+    match's box is unrelated ink — never evidence. When NO candidate
+    holds the text (the location call's loose stamp boxes), the line
+    goes BOXLESS (flagged) rather than anchoring a box that refuses the
+    whole page at the write gate. ``None`` (no box) lines are flagged
+    (2026-08-17)."""
     b = report.get("box") if report else None
     if b and (b[2] > b[0] or b[3] > b[1]):
         scaled = [
@@ -720,11 +748,21 @@ def _located_box(
             b[2] / NORMALIZED_BOX_SCALE * width,
             b[3] / NORMALIZED_BOX_SCALE * height,
         ]
+        report_ori = int(report["degrees"]) if report and isinstance(report.get("degrees"), (int, float)) else 0
         if match and match.get("box_source") == "content":
-            if _box_overlap(scaled, match["box"]) >= _LOCATED_OVERLAP:
-                return scaled
-            return match["box"]
-        return scaled
+            match_ori = int(match["orientation"]) if isinstance(match.get("orientation"), int) else 0
+            if _box_sync(text, match["box"], match_ori):
+                # the match READ real text at a plausible size — its box is
+                # ink-grounded; the report box is the per-line refinement
+                # when they agree (page-03: the marker boxes sat ~200px
+                # above the real text — the disjoint match box wins)
+                if _box_overlap(scaled, match["box"]) >= _LOCATED_OVERLAP:
+                    return scaled
+                return match["box"]
+            # a false content match (noise) — the report's location anchors
+        if _box_sync(text, scaled, report_ori):
+            return scaled
+        return None  # no candidate holds the text — boxless, flagged
     return match["box"] if match else None
 
 
@@ -818,7 +856,7 @@ def _vlm_text_lines(
         r = by_index.get(i)
         match = match_by_index.get(i)
         is_confirmed = i in confirmed
-        located = _located_box(r, match, width, height)
+        located = _located_box(r, match, width, height, line_text)
         orientation = _line_orientation(r, match, trust_report_degrees, located)
         lines.append(
             {

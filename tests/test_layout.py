@@ -555,9 +555,11 @@ def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
     ]
     layout = multi_layout("p1.jpg", 1000, 1000, passes, report_lines=report_lines)
     texts = [ln["text"] for ln in layout["lines"]]
-    # 0° first (report order, then the extra), then 270°; the fragment
-    # duplicate of the anchored message line drops
-    assert texts == ["POST CARD", "Printed in Great Britain", "HERNSPETH", "We are from beauford"]
+    # physical reading order (2026-08-20): the reading-start corner sorts
+    # top-to-bottom — POST CARD (y50), Printed (y110), the 270° message
+    # (start y400), then the extra HERNSPETH (y500). The fragment duplicate
+    # of the anchored message line drops.
+    assert texts == ["POST CARD", "Printed in Great Britain", "We are from beauford", "HERNSPETH"]
     by_text = {ln["text"]: ln for ln in layout["lines"]}
     # every line has a box; the anchored lines carry the MODEL's box (scaled
     # from the normalized 0-1000 frame) — the box holds the words it claims
@@ -823,3 +825,125 @@ def test_layout_run_batch_skips_implicit_page_without_guess(tmp_path: Path) -> N
 
     rc = run_batch("adopt-0001", None, work, _FakeEngine())
     assert rc == 0  # batch continues, page skipped loudly
+
+
+def test_reading_order_sorts_top_to_bottom_then_left_to_right() -> None:
+    from tools.layout import order_lines_by_reading
+
+    lines = [
+        {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
+        {"index": 1, "box": [100, 100, 300, 120], "orientation": 0},
+        {"index": 2, "box": [400, 100, 600, 120], "orientation": 0},
+    ]
+    ordered = order_lines_by_reading(lines)
+    assert [ln["index"] for ln in ordered] == [1, 2, 0]  # top band left→right, then the lower line
+
+
+def test_reading_order_180_line_sorts_by_bottom_right() -> None:
+    """An upside-down line's first character sits at the visual bottom-right
+    of its box — it sorts by (x1, y1), not (x0, y0). A 180° line PHYSICALLY
+    higher on the page still reads first (its reading-start y is smaller)."""
+    from tools.layout import order_lines_by_reading
+
+    lines = [
+        {"index": 0, "box": [100, 100, 300, 120], "orientation": 180},
+        {"index": 1, "box": [100, 200, 300, 220], "orientation": 0},
+    ]
+    # the 180 line's reading start is (300, 120) — y=120, ABOVE the 0 line's
+    # (100, 200) — so it reads first despite being upside down
+    ordered = order_lines_by_reading(lines)
+    assert [ln["index"] for ln in ordered] == [0, 1]
+
+
+def test_reading_order_90_line_sorts_by_top_of_vertical_text() -> None:
+    """A 90° line reads top-to-bottom; its first character is the top-left
+    of the tall box — it sorts by (x0, y0)."""
+    from tools.layout import order_lines_by_reading
+
+    lines = [
+        {"index": 0, "box": [100, 400, 160, 900], "orientation": 90},
+        {"index": 1, "box": [100, 100, 300, 120], "orientation": 0},
+    ]
+    ordered = order_lines_by_reading(lines)
+    assert [ln["index"] for ln in ordered] == [1, 0]  # the header at y100 first, then the 90° message
+
+
+def test_reading_order_270_line_sorts_by_bottom_left() -> None:
+    """A 270° line reads bottom-to-top; its first character is the bottom
+    of the box — (x0, y1)."""
+    from tools.layout import order_lines_by_reading
+
+    lines = [
+        {"index": 0, "box": [100, 100, 160, 900], "orientation": 270},
+        {"index": 1, "box": [100, 50, 300, 70], "orientation": 0},
+    ]
+    # the 270 line's reading start is (100, 900) — BELOW the 0° line (100, 50)
+    ordered = order_lines_by_reading(lines)
+    assert [ln["index"] for ln in ordered] == [1, 0]
+
+
+def test_reading_order_handles_exact_near_cardinal_angles() -> None:
+    """The clip classifier returns exact angles (88.4, 271.2, 358.7). The
+    reading-start corner is chosen by quadrant; the stored orientation is
+    NOT rounded."""
+    from tools.layout import order_lines_by_reading, reading_start
+
+    assert reading_start([100, 100, 300, 120], 358.7) == (100, 100)  # near 0 → top-left
+    assert reading_start([100, 100, 300, 120], 88.4) == (100, 100)  # near 90 → top-left
+    assert reading_start([100, 100, 300, 120], 181.5) == (300, 120)  # near 180 → bottom-right
+    assert reading_start([100, 100, 300, 120], 271.2) == (100, 120)  # near 270 → bottom-left
+
+    lines = [
+        {"index": 0, "box": [100, 400, 300, 420], "orientation": 88.4},
+        {"index": 1, "box": [100, 100, 300, 120], "orientation": 358.7},
+    ]
+    ordered = order_lines_by_reading(lines)
+    assert [ln["index"] for ln in ordered] == [1, 0]
+
+
+def test_reading_order_preserves_line_index() -> None:
+    """The sort reorders the display list but keeps each line's index — the
+    review surface keys edits and selections by index."""
+    from tools.layout import order_lines_by_reading
+
+    lines = [
+        {"index": 7, "box": [100, 300, 300, 320], "orientation": 0},
+        {"index": 3, "box": [100, 100, 300, 120], "orientation": 0},
+    ]
+    ordered = order_lines_by_reading(lines)
+    assert [ln["index"] for ln in ordered] == [3, 7]
+
+
+def test_reading_order_boxless_lines_last_in_input_order() -> None:
+    from tools.layout import order_lines_by_reading
+
+    lines = [
+        {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
+        {"index": 1, "text": "no box"},
+        {"index": 2, "box": [100, 100, 300, 120], "orientation": 0},
+    ]
+    ordered = order_lines_by_reading(lines)
+    assert [ln["index"] for ln in ordered] == [2, 0, 1]
+
+
+def test_reading_order_is_stable_for_equal_starts() -> None:
+    from tools.layout import order_lines_by_reading
+
+    lines = [
+        {"index": 0, "box": [100, 100, 300, 120], "orientation": 0},
+        {"index": 1, "box": [100, 100, 300, 120], "orientation": 0},
+    ]
+    ordered = order_lines_by_reading(lines)
+    assert [ln["index"] for ln in ordered] == [0, 1]  # ties keep input order
+
+
+def test_reading_order_degenerate_box_does_not_crash() -> None:
+    from tools.layout import order_lines_by_reading
+
+    lines = [
+        {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
+        {"index": 1, "box": [50, 50, 50, 50], "orientation": 0},  # zero-area
+        {"index": 2, "box": [0, 0, 10, 10], "orientation": 0},
+    ]
+    ordered = order_lines_by_reading(lines)
+    assert len(ordered) == 3

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -183,11 +184,13 @@ def transcribe_image_vlm(
     base_url: str = DEFAULT_BASE_URL,
     api_key: str | None = None,
     timeout: float = 900.0,
+    max_tokens: int = 64000,
 ) -> tuple[str, dict[str, int]]:
     """One multimodal call; returns (text, token usage) — the cost measure.
-    ``user_text`` rides the user message alongside the image (the
-    self-report pass hands the model its own transcription with line
-    numbers to review)."""
+    ``user_text`` rides the user message alongside the image. ``max_tokens``
+    bounds the completion: reasoning models need large headroom for
+    location tasks (64000) but a line-crop classification is done with a
+    small budget (1000)."""
     key = api_key or find_api_key()
     mime = _MIME_BY_SUFFIX.get(image.suffix.lower(), "application/octet-stream")
     data_url = f"data:{mime};base64," + base64.b64encode(image.read_bytes()).decode("ascii")
@@ -201,7 +204,7 @@ def transcribe_image_vlm(
             {"role": "user", "content": user_content},
         ],
         "temperature": 0,
-        "max_tokens": 64000,
+        "max_tokens": max_tokens,
     }
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions",
@@ -249,6 +252,32 @@ def transcribe_image_vlm(
     except (KeyError, IndexError, TypeError) as exc:
         raise VlmError(f"unexpected vision response: {json.dumps(body)[:300]}") from exc
     return text, usage
+
+
+ANGLE_PROMPT = (
+    "What is the rotation angle of the text in this image, in degrees "
+    "clockwise from upright (0 = the text reads left-to-right with the "
+    "image upright)? Reply with just the number."
+)
+
+
+def line_orientation_degrees(crop: Path, *, max_tokens: int = 4000, timeout: float = 120.0) -> float:
+    """The exact clockwise angle of one clipped text line, in degrees.
+    A single line crop is a trivial task for the model — ~600 total tokens,
+    ~6s — vs the full-page location call that burned 64K reasoning tokens
+    with zero content (2026-08-20). The exact value disambiguates the
+    90-vs-270 flip the rounded question never could."""
+    text, _usage = transcribe_image_vlm(
+        crop,
+        system="You measure text orientation precisely.",
+        user_text=ANGLE_PROMPT,
+        max_tokens=max_tokens,
+        timeout=timeout,
+    )
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        raise VlmError(f"could not parse an angle from the model's answer: {text[:80]!r}")
+    return float(match.group(0)) % 360
 
 
 def selfreport_words(

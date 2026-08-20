@@ -345,6 +345,13 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
         selfreport=selfreport,
     )
     new_layout["rotation"] = (current + delta) % FULL_ROTATION_DEGREES
+    # Rotation is a rigid remap: the transcription's order is authoritative.
+    # The rebuild's reading-order sort re-sorts by the ROTATED geometry,
+    # which scrambles the text order (2026-08-20 — after a 90° turn both
+    # lines sit in one horizontal band and the x-sort swaps them). Restore
+    # the transcription order: build_layout's index IS the vlm_text
+    # position, so sorting by it is the text order.
+    new_layout["lines"].sort(key=lambda ln: ln["index"])
     tmp = image_path.with_name(image_path.name + ".tmp")
     rotated.save(tmp, format=image.format or "JPEG")
     # the journal lands BEFORE the image swap: a crash mid-rotate leaves a

@@ -98,11 +98,11 @@ class TestAssociateLines:
         # with the detection's geometry (2026-08-16: cursive pages never
         # content-match; the box is real, the text anchor is not)
         vlm = ["the quick brown fox"]
-        dets = [_det([0, 0, 10, 10], "zzz qqq wwww eeee rrrr")]
+        dets = [_det([0, 0, 200, 20], "zzz qqq wwww eeee rrrr")]
         matches, unmatched = associate_lines(vlm, dets)
         assert len(matches) == 1
         assert matches[0]["box_source"] == "positional"
-        assert matches[0]["box"] == [0, 0, 10, 10]
+        assert matches[0]["box"] == [0, 0, 200, 20]
         assert unmatched == []
 
     def test_one_to_one_each_direction(self) -> None:
@@ -124,9 +124,9 @@ class TestAssociateLines:
         # y-top, whatever the detection order in the input
         vlm = ["line one", "line two", "line three"]
         dets = [
-            _det([0, 200, 10, 210], "noise zzz"),
-            _det([0, 0, 10, 10], "noise yyy"),
-            _det([0, 100, 10, 110], "noise xxx"),
+            _det([0, 200, 100, 220], "noise zzz"),
+            _det([0, 0, 100, 20], "noise yyy"),
+            _det([0, 100, 100, 120], "noise xxx"),
         ]
         matches, unmatched = associate_lines(vlm, dets)
         by_index = {m["vlm_index"]: m for m in matches}
@@ -318,13 +318,13 @@ class TestLayoutDetections:
             100,
             100,
             "line one\nline two",
-            [_det([0, 0, 10, 10], "line one"), _det([0, 50, 10, 60], "noise")],
+            [_det([0, 0, 100, 20], "line one"), _det([0, 50, 120, 70], "noise")],
         )
         dets = layout_detections(layout)
         assert len(dets) == 2
         by_box = {tuple(d["box"]): d for d in dets}
-        assert by_box[(0, 0, 10, 10)]["text"] == "line one"
-        assert by_box[(0, 50, 10, 60)]["text"] == "noise"
+        assert by_box[(0, 0, 100, 20)]["text"] == "line one"
+        assert by_box[(0, 50, 120, 70)]["text"] == "noise"
         # re-running the association on the reconstruction reproduces the layout
         rebuilt = build_layout("p.jpg", 100, 100, "line one\nline two", dets)
         assert rebuilt["lines"][0]["box"] == layout["lines"][0]["box"]
@@ -1315,3 +1315,82 @@ def test_multi_layout_extras_force_the_aspect_consistent_orientation() -> None:
     )
     line = layout["lines"][0]
     assert line["orientation"] == 0, f"the wide extra box must force 0, was {line['orientation']}"
+
+
+def test_build_layout_leaves_a_wildly_oversized_positional_box_boxless() -> None:
+    """The positional fallback's guard (2026-08-20): a boxless VLM line
+    takes an unmatched detection's box ONLY when the box plausibly holds
+    the line's text — page-05's '③' (one glyph) was paired with a 552px
+    detection box, which refused the whole page at the write gate. The
+    absurd box is dropped (the line stays boxless, flagged), never
+    assigned — the page stays reviewable."""
+    from tools.layout import build_layout
+
+    layout = build_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        "a real line\n③",
+        [
+            {"box": [100, 100, 600, 140], "text": "a real line", "score": 0.95, "words": []},
+            {"box": [50, 500, 602, 589], "text": "garbage", "score": 0.9, "words": []},  # 552px wide
+        ],
+    )
+    by_text = {ln["text"]: ln for ln in layout["lines"]}
+    assert by_text["a real line"]["box"] == [100, 100, 600, 140]
+    assert by_text["③"]["box"] is None, "the absurd positional box must be dropped, not assigned"
+    # the drop is per-line: a plausible positional box still anchors
+    layout2 = build_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        "a real line\nN.B",
+        [
+            {"box": [100, 100, 600, 140], "text": "a real line", "score": 0.95, "words": []},
+            {"box": [50, 500, 150, 540], "text": "garbage", "score": 0.9, "words": []},  # 100px for 3 chars
+        ],
+    )
+    by2 = {ln["text"]: ln for ln in layout2["lines"]}
+    assert by2["N.B"]["box"] == [50, 500, 150, 540]
+
+
+def test_multi_layout_report_box_anchors_over_a_positional_match() -> None:
+    """The report's located box is the v3 anchor for a line the rec never
+    content-matched: the POSITIONAL match's box is unrelated ink (the
+    k-th unmatched detection), not evidence — a good report box must win
+    over it (2026-08-20: layout-5's correct anchors would have been
+    replaced by the positional boxes). A CONTENT match's box still wins
+    when the report box misses the ink (the disjoint case, tested
+    above)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                0,
+                [
+                    {
+                        "text": "POST CARD",
+                        "box": [101, 51, 299, 99],
+                        "score": 0.99,
+                        "words": [],
+                    },
+                    {"text": "HERNSPETH", "box": [150, 500, 200, 900], "score": 0.95, "words": []},
+                ],
+            ),
+        ],
+        report_lines=[
+            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+            # the report located line 1 at the left margin; the positional
+            # match box is the unrelated HERNSPETH detection
+            {"index": 1, "box": [50, 400, 100, 500], "degrees": 0},
+        ],
+        vlm_text="POST CARD\ncritic's view. To quote:",
+    )
+    by_text = {ln["text"]: ln for ln in layout["lines"]}
+    critic = by_text["critic's view. To quote:"]
+    assert critic["box"] == [50.0, 400.0, 100.0, 500.0], f"the report's box must anchor, was {critic['box']}"
+    assert critic["box_source"] == "vlm-unconfirmed"

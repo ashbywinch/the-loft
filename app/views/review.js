@@ -1749,7 +1749,26 @@ function startEdit(session, lineIndex) {
   // orientation itself, not its mirror (2026-08-17: (360-O) put the 270°
   // message upside down)
   session.readRotation = orientation;
-  renderView(session); // the view turns to read the line horizontally
+  // Zoom the image to the focused line (2026-08-20 — the recorded "never
+  // zoom" decision is superseded: the reviewer must SEE the line's
+  // original at a readable scale, not just a same-zoom pan). The line
+  // fills the pane with a margin; the read rotation is already in the
+  // frame. A boxless line keeps the old turn-only view.
+  if (line?.box && session.imgBox?.clientWidth && session.view) {
+    const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
+    const rect = boxToDisplay(f, line.box);
+    const pad = Math.max(rect.width, rect.height) * 0.15;
+    fitBounds(session, {
+      x: rect.x - pad,
+      y: rect.y - pad,
+      width: rect.width + 2 * pad,
+      height: rect.height + 2 * pad,
+    });
+    clampView(session);
+    session.userMoved = true; // a deliberate zoom — stop the auto-fit follow
+  } else {
+    renderView(session); // the view turns to read the line horizontally
+  }
   renderTx(session);
 }
 

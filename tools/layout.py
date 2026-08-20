@@ -137,6 +137,22 @@ def _by_vlm_index(m: dict[str, Any]) -> int:
     return m["vlm_index"]
 
 
+def _positional_box_plausible(text: str, box: list[float]) -> bool:
+    """The positional fallback's guard (2026-08-20): an unmatched
+    detection's box is only a plausible anchor for a boxless line when
+    the line's text length roughly matches the box's extent — the gate's
+    own rule (Gate B) applied at assignment. A single glyph in a 552px
+    box ('③', page-05) is the wrong region; assigning it refused the
+    whole page at the write gate."""
+    if not text.strip():
+        return False
+    box_w = box[2] - box[0]
+    box_h = box[3] - box[1]
+    if box_w <= 0 or box_h <= 0:
+        return False
+    return _text_extent_violation(text, box_w, box_h, 0.0) is None
+
+
 def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[list[dict[str, Any]], list[Detection]]:
     """Match detector lines to VLM transcription lines by content.
 
@@ -197,7 +213,13 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[
         {
             "vlm": vlm_lines[vi],
             "vlm_index": vi,
-            "box": det["box"],
+            # The positional guard (2026-08-20): the detection's box
+            # anchors the boxless line ONLY when it plausibly holds the
+            # line's text — page-05's '③' (one glyph) was paired with a
+            # 552px detection box, which refused the whole page at the
+            # write gate. An absurd box is dropped (the line stays
+            # boxless, flagged), never assigned.
+            "box": det["box"] if _positional_box_plausible(vlm_lines[vi], det["box"]) else None,
             "rec_text": det["text"],
             "rec_score": det["score"],
             "rec_words": words(det["text"]),
@@ -681,13 +703,15 @@ def _located_box(
     height: int,
 ) -> list[float] | None:
     """The line's box: the report's located box (normalized 0-1000 scaled
-    to pixels; [0,0,0,0] = not located) when it claims the same ink the
-    rec matched (the per-line refinement, the v3 design), else the rec
-    match's box — the detector's ink-grounded geometry (2026-08-20:
-    page-03's transcription boxes sat ~200px above the real text; a
-    report box disjoint from the matched detection is an estimate, not
-    an anchor), else the report's box, else None — a boxless line is
-    flagged (2026-08-17)."""
+    to pixels; [0,0,0,0] = not located) when it claims the same ink a
+    CONTENT match read (the per-line refinement, the v3 design), else
+    the content match's box — the detector's ink-grounded geometry
+    (2026-08-20: page-03's transcription boxes sat ~200px above the real
+    text; a report box disjoint from the matched detection is an
+    estimate, not an anchor). A POSITIONAL match's box is unrelated ink
+    (the k-th unmatched detection), never evidence — the report's box
+    anchors over it (the v3 design). Else the report's box, else the
+    match's box, else None — a boxless line is flagged (2026-08-17)."""
     b = report.get("box") if report else None
     if b and (b[2] > b[0] or b[3] > b[1]):
         scaled = [
@@ -696,7 +720,7 @@ def _located_box(
             b[2] / NORMALIZED_BOX_SCALE * width,
             b[3] / NORMALIZED_BOX_SCALE * height,
         ]
-        if match:
+        if match and match.get("box_source") == "content":
             if _box_overlap(scaled, match["box"]) >= _LOCATED_OVERLAP:
                 return scaled
             return match["box"]

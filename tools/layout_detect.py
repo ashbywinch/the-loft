@@ -219,7 +219,15 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
                 return rc
             missing.append(image.name)
             continue
-        _layout_one(engine, image, guess_dir, batch_id)
+        try:
+            _layout_one(engine, image, guess_dir, batch_id)
+        except ValueError as exc:  # lucidlint: ignore swallow one bad page must not kill the batch (2026-08-20)
+            # A refused layout write (invalid boxes) must not kill the
+            # batch (2026-08-20: page-12's out-of-image boxes crashed the
+            # whole run after 11 pages had laid out). Record, skip the
+            # page, continue — the serve path already refuses the page
+            # and the next pass can retry with fresh inputs.
+            print(f"layout: {image.name} refused — {str(exc)[:160]}", file=sys.stderr)
     if missing:
         print(
             f"layout: {len(missing)} page(s) skipped — no guess text: {', '.join(sorted(missing))}",

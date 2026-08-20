@@ -23,6 +23,7 @@ import os
 import shutil
 import sys
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -38,7 +39,7 @@ from tools.ocr import orient_pages
 from tools.pipeline_store import PipelineStore, text_sha256
 from tools.registry import RegistryError as PipelineError
 from tools.registry import load_batch, record_path
-from tools.store import DiskStore  # noqa: F401
+from tools.store import DiskStore, StoreError  # noqa: F401
 from tools.sync import record_confirmation
 from tools.vlm import orientation_report
 
@@ -552,6 +553,11 @@ def _write_orientation_hints(
     if not store.exists(f"{batch_id}/oriented/rotations.json"):
         return
     rotations = json.loads(store.read_latest(f"{batch_id}/oriented/rotations.json"))
+    failures_rel = f"{batch_id}/ocr-guess/orientation.failed.json"
+    failures: list[dict[str, Any]] = []
+    if store.exists(failures_rel):
+        # a corrupt failure log fails loudly — never silently reset the trail
+        failures = json.loads(store.read_latest(failures_rel))
     for page in text_pages:
         out_rel = f"{batch_id}/ocr-guess/{Path(page).stem}.orientation.json"
         if store.exists(out_rel):
@@ -563,19 +569,58 @@ def _write_orientation_hints(
         txt_rel = f"{batch_id}/ocr-guess/{Path(page).stem}.txt"
         if store.exists(txt_rel):
             guess_text = store.read_latest(txt_rel)
-        report = orientation_report_fn(oriented_dir / page, guess_text)
-        hints = report.get("orientation_hint", []) if isinstance(report, dict) else []
-        degrees = {int(h.get("degrees")) for h in hints if h.get("degrees") in (0, 90, 180, 270)}
-        # the v3 report's multi-direction evidence lives in the LINES'
-        # degrees (the model locates the known text; the orientation_hint
-        # may be empty) — the sidecar must be written either way
-        # (2026-08-17: the eval caught the hints-only check dropping an
-        # ambiguous page back to the plain layout)
-        located = report.get("lines", []) if isinstance(report, dict) else []
-        degrees |= {int(ln.get("degrees")) for ln in located if ln.get("degrees") in (0, 90, 180, 270)}
-        if len(degrees) >= 2:
-            store.write(out_rel, json.dumps(report, ensure_ascii=False) + "\n")
-            print(f"layout: orientation report for {page} — {sorted(degrees)}")
+        try:
+            report = orientation_report_fn(oriented_dir / page, guess_text)
+        except Exception as exc:  # lucidlint: ignore broad-except a failed report must NOT kill the batch
+            _record_orientation_failure(failures, store, failures_rel, page, exc)
+            continue
+        _commit_orientation_report(store, out_rel, page, report)
+
+
+def _commit_orientation_report(store: PipelineStore, out_rel: str, page: str, report: dict[str, Any]) -> None:
+    """Write the report sidecar when the model reports more than one
+    direction. The v3 report's multi-direction evidence lives in the
+    LINES' degrees (the model locates the known text; the
+    orientation_hint may be empty) — the sidecar must be written either
+    way (2026-08-17: the eval caught the hints-only check dropping an
+    ambiguous page back to the plain layout)."""
+    hints = report.get("orientation_hint", []) if isinstance(report, dict) else []
+    degrees = {int(h.get("degrees")) for h in hints if h.get("degrees") in (0, 90, 180, 270)}
+    located = report.get("lines", []) if isinstance(report, dict) else []
+    degrees |= {int(ln.get("degrees")) for ln in located if ln.get("degrees") in (0, 90, 180, 270)}
+    if len(degrees) >= 2:
+        store.write(out_rel, json.dumps(report, ensure_ascii=False) + "\n")
+        print(f"layout: orientation report for {page} — {sorted(degrees)}")
+
+
+def _record_orientation_failure(
+    failures: list[dict[str, Any]],
+    store: PipelineStore,
+    failures_rel: str,
+    page: str,
+    exc: Exception,
+) -> None:
+    """Record a failed orientation report (accumulating across passes —
+    each attempt appends, so repeated failures build a diagnosable trail)
+    and CONTINUE: the layout stage still runs for the page via the
+    single-orientation fallback (transcription boxes + the dominant
+    rotation). The next process pass retries the report (no report exists,
+    so nothing marks it done). 2026-08-20: the heavy location task burns
+    64K reasoning tokens with no content, non-deterministically — the
+    batch must stay usable through it."""
+    entry = {
+        "page": page,
+        "at": datetime.now(UTC).isoformat(),
+        "attempt": len([f for f in failures if f.get("page") == page]) + 1,
+        "error": str(exc)[:1000],
+    }
+    failures.append(entry)
+    store.write(failures_rel, json.dumps(failures, indent=1, ensure_ascii=False) + "\n")
+    print(
+        f"layout: orientation report FAILED for {page} (attempt {entry['attempt']}) — "
+        f"continuing with the single-orientation fallback: {str(exc)[:160]}",
+        file=sys.stderr,
+    )
 
 
 def _update_status(record: dict[str, Any], batch_id: str, status: str, registry_dir: Path) -> None:

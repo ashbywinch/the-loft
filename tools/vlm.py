@@ -38,9 +38,6 @@ VLM_SYSTEM = (
     "(fractions of the image's width and height, times 1000); it must enclose "
     "every glyph of that line, nothing else."
 )
-
-# A box smaller than a third of the median line height is degenerate — the
-# model's boxes collapse at the page's bottom edge (2026-08-16), so the
 # line falls back to the detector's association.
 DEGENERATE_BOX_DIVISOR = 3
 
@@ -204,7 +201,7 @@ def transcribe_image_vlm(
             {"role": "user", "content": user_content},
         ],
         "temperature": 0,
-        "max_tokens": 32000,
+        "max_tokens": 64000,
     }
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions",
@@ -226,18 +223,29 @@ def transcribe_image_vlm(
     except Exception as exc:  # network or API errors surface loudly
         raise VlmError(f"vision model call failed: {exc}") from exc
     try:
-        content = (body.get("choices", [{}])[0].get("message") or {}).get("content") or ""
-        finish_reason = body.get("choices", [{}])[0].get("finish_reason")
+        choice = body.get("choices", [{}])[0]
+        message = choice.get("message") or {}
+        content = message.get("content") or ""
+        finish_reason = choice.get("finish_reason")
+        reasoning = message.get("reasoning") or message.get("reasoning_content") or ""
+        usage = dict(body.get("usage", {}))
+        # The model's thinking, always captured — a failed call is diagnosable
+        # from its trace (2026-08-20: the orientation calls burned 64K tokens
+        # of reasoning with zero content; without the reasoning the cause was
+        # invisible). Mirrors AIClient.last_reasoning.
         if finish_reason == "length" and not content.strip():
             raise VlmError(
                 "vision model produced only reasoning tokens, no content — "
-                "the max_tokens limit was hit before the model could produce output. "
-                "Increase max_tokens or reduce the prompt."
+                f"the max_tokens limit was hit. reasoning={len(reasoning)} chars, "
+                f"tokens={usage.get('completion_tokens')}. tail: …{reasoning[-300:]}"
             )
         if not content.strip():
-            raise VlmError(f"vision model returned empty content (finish_reason={finish_reason})")
+            raise VlmError(
+                f"vision model returned empty content (finish_reason={finish_reason}); "
+                f"reasoning={len(reasoning)} chars, tokens={usage.get('completion_tokens')}. "
+                f"tail: …{reasoning[-300:]}"
+            )
         text = str(content)
-        usage = dict(body.get("usage", {}))
     except (KeyError, IndexError, TypeError) as exc:
         raise VlmError(f"unexpected vision response: {json.dumps(body)[:300]}") from exc
     return text, usage

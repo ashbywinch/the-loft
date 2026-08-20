@@ -531,15 +531,25 @@ what the fix engine covers):
   (Finding 3.)
 
 **Affordance findings (what the tool could change, beyond the process):**
-- **The finding already names the fix, but hides the preview.** The
-  complexity message literally says "extract part of this function into a
-  named method (the preview shows the block) — fix: extract-method" — the
-  answer was in the message and the session still hand-extracted. The
-  preview EXISTS (the fix engine computes it before applying); attach it
-  to the finding itself so the agent sees the proposed seam at finding
-  time, not after deciding to run a separate command. The finding's terse
-  `fix: extract-method` should be the full runnable command with
-  file/line/name placeholders.
+- **What is NOT attachable to a finding: the exact output.** The
+  structural fixes are name-driven by design — "structural kinds need a
+  name (agent-supplied via --fix-name... they are never applied blindly)".
+  extract-method's function name, long-param-list's parameter-object
+  shape, extract-class's split are all the agent's commitment; the result
+  is genuinely novel, which is exactly why those kinds preview a diff
+  before --confirm. Attaching "the expected output" to the finding is
+  impossible and would be wrong.
+- **What IS deterministic and attachable: the seam.** The name-free
+  preview already computes which block would move (bounded to ≤13
+  decisions, made private by construction) and shows it with a
+  placeholder name — the session's pre-refactor run_batch preview showed
+  the whole `for image in pages:` loop with `_extracted` as the
+  placeholder. The finding message could surface the seam's start line and
+  first statement (name-independent), so the agent can judge whether the
+  split is right at finding time; the full diff comes from the one-command
+  name-free preview. The tool's own workflow — "naming AFTER seeing the
+  diff, not before" — is the correct process; the gap was the session
+  never ran that preview before hand-editing.
 - **The per-file LSP mode should run the full rule set, not just syntax.**
   The LSP diagnostics caught the syntax errors from botched edits
   instantly; it would have caught the transient duplicate-def and

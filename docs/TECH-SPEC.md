@@ -730,6 +730,59 @@ stamp's "E R") are dropped by the ≥2-letter rule; and the orientation
 report should be folded into the existing transcription call (one model
 pass) rather than a separate call, to avoid the extra ~12K tokens.
 
+### 16.14.2 Pipeline reliability — completion markers, fail-loud, and surgical recovery (2026-08-20)
+
+**Completion markers.** Each stage treats an output artifact's existence as
+its completion marker: `ocr-raw/<stem>.vlm.json` marks the transcription,
+`ocr-guess/<stem>.txt` the guess, `boundaries.json` the grouping, and
+`ocr-guess/<stem>.layout.json` the layout. Re-running a stage skips pages
+whose marker exists — that is what makes re-runs cheap.
+
+**The marker rule: existence of the marker alone is not completion.** A
+marker promises its artifact; a marker whose artifact is missing or empty
+is a stale or partial write and must be re-done, not "reused". Concretely:
+`htr_pages_vlm` skips only when BOTH the `.vlm.json` and a non-empty
+`.txt` exist; `process` re-runs the guess when any text page's `.txt` is
+missing (the stale `boundaries.json` is deleted and regenerated); the
+layout stage refuses (exit 2) to build a page with no guess text when that
+page was explicitly requested, and skips with a stderr summary otherwise.
+The 2026-08-17 page-02 incident — a layout written from geometry alone
+over a cleared guess — is the canonical failure this rule prevents.
+
+**Fail-loud over silent no-op.** A stage that cannot do its job for a
+requested input fails loudly with the remedy in the message. Never a
+geometry-only build, never a "reused" corrupt guess, never an output that
+looks done but isn't.
+
+**Surgical recovery.** Fixing one page must not re-pay model calls for the
+whole batch. The pipeline exposes per-page stage commands:
+
+```bash
+make pipeline ARGS="guess <batch> [page...]"   # re-transcribe pages + regen boundaries
+make pipeline ARGS="layout <batch> [page...]"  # layout specific pages only
+```
+
+`guess` re-transcribes only the named pages (empty = all cursive) then
+regenerates boundaries from the full set (the grouping scorer needs the
+whole sequence). `layout` runs the PaddleOCR stage for the named pages
+only, inheriting its fail-loud missing-input check. The general
+`process <batch>` remains the whole-chain entry point.
+
+**The model-API contract (the client side of the Cloudflare gateway).**
+The VLM client must send a User-Agent the gateway's WAF accepts
+(`opencode/1.14.20`), and must give reasoning models `max_tokens` headroom
+(≥32000 for vision/geometry tasks — a reasoning model with a small budget
+returns `finish_reason: "length"` and zero content). HTTP errors surface
+with the response body; empty-content and budget-exhaustion failures are
+raised as actionable `VlmError`s. See the `cloudflare-ai-gateway` skill
+for the route-side configuration.
+
+**Versioned persistence.** All pipeline artifact writes go through
+`PipelineStore` (`tools/pipeline_store.py`), which preserves the previous
+version at `-2.ext` before overwriting the base path — an overwrite is
+always recoverable, and the append-only invariant is enforced at the write
+seam rather than hoped for.
+
 
 **Decisions — RESOLVED (user, 2026-08-03):** managed Postgres + pgvector on **Supabase**; **a small number of family curators** (a simple per-field last-write-wins + audit-log conflict story suffices; the far-future possibility of hosting *other families* that must never see our content is a tenant-isolation seam — the existing contributor-ID namespacing, §14 — and is not built now); the generation batch runs on **the reviewer's laptop**.
 

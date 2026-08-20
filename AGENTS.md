@@ -32,6 +32,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 |---|---|
 | Product requirements, scope, personas | `docs/prd/PRD.md` |
 | Architecture, stack, data model, decisions | `docs/TECH-SPEC.md` |
+| Pipeline stages, completion markers, and per-page recovery (`make pipeline ARGS="guess\|layout <batch> [page...]"`) | `docs/TECH-SPEC.md` §16.14.2 |
 |Interview/observation instruments|`docs/DISCOVERY.md`, private session records|
 | The story-capture flow spec ("Add your memory") | `docs/prd/MEMORIES.md` |
 | The artifact-import flow spec + its rules (A–S) | `docs/prd/IMPORT-PRD.md` |

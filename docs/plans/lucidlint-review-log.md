@@ -464,3 +464,52 @@ Consider for the tool (not decided):
   added to, not held;
 - prefer per-site suppressions (with whys, which the tool already
   enforces) over blanket config ignores when a finding is a one-off.
+
+---
+
+## 10. What lucidlint could have caught during a refactor-heavy session (2026-08-20)
+
+The pipeline anti-fragility work (commit 6a6dda3) involved extracting
+helpers to satisfy lucidlint's own complexity/long-param-list findings.
+The extraction itself was where the edits went wrong — four distinct
+mechanical mistakes, none caught by any linter in the stack:
+
+1. **A module-level name collision.** A new `guess_pages()` CLI command
+   shadowed an existing module-level `guess_pages()` helper (the model-
+   inference loop). Legal shadowing — the later definition wins — so
+   neither ruff nor pyrefly flagged it, but the CLI dispatch would have
+   silently called the wrong function.
+2. **Unreachable leftover tails.** After extracting a helper, the old
+   body's closing `if missing: ... return 0` stayed behind as dead code
+   after the helper's `return`.
+3. **A `def` whose parameter list was split from its name** by an
+   insertion that landed inside the parens (`def f(\n<blank>\n  arg:`).
+   Python parses it; it's a structural smell only a formatter/linter
+   notices.
+4. **Orphaned suppression comments** after refactoring moved the def away
+   from its `# lucidlint: ignore` — this one lucidlint's
+   `stale-suppression` rule DID catch, correctly and deterministically.
+
+Deterministic findings lucidlint could add (all correct-by-construction,
+no judgement needed):
+
+- **Duplicate module-scope definition**: two `def <name>` at module level
+  is a shadowing hazard; flag the second. The module's name→line map is
+  already in the tool's graph.
+- **Dead code after a terminal statement**: a statement in a block after
+  `return`/`continue`/`raise` is unreachable. My leftover tails were
+  exactly this; the fix is a deterministic deletion.
+- **A `def` name and its first parameter separated by a blank line**:
+  mechanical formatting smell from an edit tool landing mid-parens.
+
+The session also confirmed what already works well:
+- `stale-suppression` caught the orphaned ignore (finding 4 above) — the
+  suppression-adjacency rule is doing its job;
+- the `--file` LSP mode surfaced the syntax errors from botched edits
+  immediately, before the test gate — worth running after every non-
+  trivial edit sequence;
+- the complexity and long-param-list findings drove exactly the right
+  extractions (`_guess_is_stale`, `_layout_one`, `_regen_boundaries`),
+  and the repo's per-site `# lucidlint: ignore long-param-list` + why
+  pattern (§9's conclusion) held up: only genuinely-single-call-site
+  helpers got the ignore, the rest were refactored.

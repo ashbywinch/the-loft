@@ -311,3 +311,50 @@ def test_orientation_hints_write_the_sidecar_for_ambiguous_pages(tmp_path: Path)
 
     _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _single)
     assert not (guess / "p1.orientation.json").exists()
+
+
+def test_guess_is_stale_when_raw_transcriptions_change(tmp_path: Path) -> None:
+    """The guess's boundaries.inputs.json records each raw text's
+    fingerprint; a mismatch (a re-orientation regenerated ocr-raw) makes
+    the guess stale and deletes the boundaries so the next run re-guesses
+    (2026-08-20)."""
+    from tools.pipeline import _guess_is_stale
+
+    raw = tmp_path / "ocr-raw"
+    guess = tmp_path / "ocr-guess"
+    raw.mkdir(parents=True)
+    guess.mkdir(parents=True)
+    boundaries = guess / "boundaries.json"
+
+    # A completed guess: text present, boundaries + inputs sidecar matching.
+    (guess / "p1.txt").write_text("guess text", encoding="utf-8")
+    (boundaries).write_text("[]", encoding="utf-8")
+    (guess / "boundaries.inputs.json").write_text(
+        '{"p1.jpg": "' + __import__("hashlib").sha256(b"raw v1").hexdigest() + '"}',
+        encoding="utf-8",
+    )
+    (raw / "p1.txt").write_text("raw v1", encoding="utf-8")
+
+    assert not _guess_is_stale(["p1.jpg"], raw, guess, boundaries)
+
+    # The raw transcription changed (re-orientation regenerated it).
+    (raw / "p1.txt").write_text("raw v2", encoding="utf-8")
+    assert _guess_is_stale(["p1.jpg"], raw, guess, boundaries)
+    assert not boundaries.exists(), "stale boundaries must be deleted for the re-run"
+
+
+def test_guess_is_stale_when_boundaries_lack_fingerprint_sidecar(tmp_path: Path) -> None:
+    """A pre-fingerprint boundaries (no inputs sidecar) cannot prove its
+    inputs — treat as stale once so the next run re-guesses."""
+    from tools.pipeline import _guess_is_stale
+
+    raw = tmp_path / "ocr-raw"
+    guess = tmp_path / "ocr-guess"
+    raw.mkdir(parents=True)
+    guess.mkdir(parents=True)
+    boundaries = guess / "boundaries.json"
+    (guess / "p1.txt").write_text("guess text", encoding="utf-8")
+    boundaries.write_text("[]", encoding="utf-8")
+    (raw / "p1.txt").write_text("raw v1", encoding="utf-8")
+
+    assert _guess_is_stale(["p1.jpg"], raw, guess, boundaries)

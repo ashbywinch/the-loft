@@ -141,3 +141,60 @@ def test_htr_pages_vlm_writes_geometry_when_the_model_complies(tmp_path: Path) -
     assert (raw / "p2.txt").read_text(encoding="utf-8") == "Chère Maman."
     marker2 = json.loads((raw / "p2.vlm.json").read_text(encoding="utf-8"))
     assert "lines" not in marker2
+
+
+def test_htr_pages_vlm_re_transcribes_when_input_image_changed(tmp_path: Path) -> None:
+    """A marker whose recorded input fingerprint no longer matches the
+    current image is stale (2026-08-20: page-02's marker predated its
+    orientation fix, so the chain reused the corrupt guess). The stage
+    must re-transcribe."""
+    from tools.htr import htr_pages_vlm
+
+    page = tmp_path / "p1.jpg"
+    raw = tmp_path / "ocr-raw"
+    raw.mkdir(parents=True)
+    calls = {"n": 0}
+
+    def fake_transcribe(image: Path, *, system: str) -> tuple[str, dict[str, int]]:
+        calls["n"] += 1
+        return "Chère Maman.", {"total_tokens": 100}
+
+    # First pass: writes marker + text with the CURRENT image's fingerprint.
+    page.write_bytes(b"image-v1")
+    htr_pages_vlm([("p1.jpg", page)], raw, transcribe=fake_transcribe)
+    assert calls["n"] == 1
+    assert (raw / "p1.txt").read_text(encoding="utf-8") == "Chère Maman."
+
+    # Same image -> skip.
+    htr_pages_vlm([("p1.jpg", page)], raw, transcribe=fake_transcribe)
+    assert calls["n"] == 1
+
+    # Image CHANGED (a re-orientation rewrites the jpg) -> re-transcribe.
+    page.write_bytes(b"image-v2-rotated")
+    htr_pages_vlm([("p1.jpg", page)], raw, transcribe=fake_transcribe)
+    assert calls["n"] == 2, "a changed input image must invalidate the transcription"
+    assert (raw / "p1.txt").read_text(encoding="utf-8") == "Chère Maman."
+
+
+def test_htr_pages_vlm_re_transcribes_marker_without_fingerprint(tmp_path: Path) -> None:
+    """A marker written before the fingerprint field cannot prove its
+    input — treat it as stale and re-transcribe once."""
+    from tools.htr import htr_pages_vlm
+
+    page = tmp_path / "p1.jpg"
+    page.write_bytes(b"image")
+    raw = tmp_path / "ocr-raw"
+    raw.mkdir(parents=True)
+    calls = {"n": 0}
+
+    def fake_transcribe(image: Path, *, system: str) -> tuple[str, dict[str, int]]:
+        calls["n"] += 1
+        return "Chère Maman.", {"total_tokens": 100}
+
+    # A legacy marker (usage only, no input_sha) with a non-empty text.
+    (raw / "p1.txt").write_text("old text", encoding="utf-8")
+    (raw / "p1.vlm.json").write_text('{"total_tokens": 50}', encoding="utf-8")
+
+    htr_pages_vlm([("p1.jpg", page)], raw, transcribe=fake_transcribe)
+    assert calls["n"] == 1, "a fingerprint-less marker must not suppress re-transcription"
+    assert (raw / "p1.txt").read_text(encoding="utf-8") == "Chère Maman."

@@ -34,9 +34,22 @@ from PIL import Image
 # serving layer imports htr_pages_vlm for the reprocess route, and the
 from tools.atomic import atomic_write
 from tools.loft_paths import WORK_DIR
-from tools.pipeline_store import PipelineStore
+from tools.pipeline_store import PipelineStore, file_sha256
 from tools.store import DiskStore  # noqa: F401
 from tools.vlm import parse_transcription_response, transcribe_image_vlm, transcription_system_with_context
+
+
+def _marker_input_matches(marker: Path, input_sha: str) -> bool:
+    """Does the completion marker record the CURRENT input fingerprint?
+    A marker without the field (written before 2026-08-20) is treated as
+    stale — it cannot prove its input — so the stage re-transcribes once
+    and the fresh marker carries the fingerprint."""
+    try:
+        data = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return data.get("input_sha") == input_sha
+
 
 # The transformers/TrOCR stack (~450MB of torch+CUDA libs) is ONLY needed
 # by the local HTR backend (LOFT_HTR_BACKEND=local, the privacy mode). It
@@ -268,17 +281,25 @@ def htr_pages_vlm(
         out = raw_dir / Path(name).with_suffix(".txt")
         marker = out.with_suffix(".vlm.json")
         # Skip only when BOTH the completion marker and the artifact it
-        # promises exist and are non-empty. A marker with a missing or
-        # empty .txt is a stale or partial write (2026-08-20: a bad
-        # layout_detect run left page-02's marker while clearing its
-        # text — the stage "reused" the corrupt guess). Existence alone
-        # is a lie of a completion proxy; validate before skipping.
-        if marker.exists() and out.exists() and out.read_text(encoding="utf-8").strip():
+        # promises exist and are non-empty, AND the marker records the
+        # CURRENT input image's fingerprint. A marker whose input changed
+        # (a re-orientation rewrote the jpg) is stale — the text was read
+        # from the old image (2026-08-20: page-02's marker predated its
+        # orientation fix, so the chain "reused" the corrupt guess).
+        # Existence alone is a lie of a completion proxy; validate the
+        # input dependency before skipping.
+        input_sha = file_sha256(image)
+        if (
+            marker.exists()
+            and out.exists()
+            and out.read_text(encoding="utf-8").strip()
+            and _marker_input_matches(marker, input_sha)
+        ):
             print(f"vlm: {name} already done — reusing")
             previous = out.read_text(encoding="utf-8")  # keep the continuity current
             continue
         if marker.exists():
-            print(f"vlm: {name} marker present but text missing — re-transcribing")
+            print(f"vlm: {name} input changed or text missing — re-transcribing")
         else:
             print(f"vlm: {name} transcribing…", flush=True)
         system = transcription_system_with_context(people=people, places=places, label=label, previous_page=previous)
@@ -290,6 +311,7 @@ def htr_pages_vlm(
         store_path = str(Path(batch_id) / "ocr-guess" / out.name)
         store.write(store_path, plain)
         marker_data: dict[str, Any] = dict(usage)
+        marker_data["input_sha"] = input_sha
         if boxes is not None:
             # the VLM's own line geometry (normalized 0-1000) — the layout
             # pass uses it instead of the rec association, which cannot read

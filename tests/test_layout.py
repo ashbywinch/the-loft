@@ -12,6 +12,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from PIL import Image
+
 from tools.layout import (
     MATCH_THRESHOLD,
     Detection,
@@ -1037,3 +1039,140 @@ def test_validate_layout_text_length_reasonable_cases_pass() -> None:
     assert not validate_layout(_layout([{"text": "anything", "orientation": 0}]))
     # no orientation -> the axis defaults to the width (horizontal)
     assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50]}]))
+
+
+class TestRecognizeExtra:
+    """The clip->rotate->recognize flow for extra (rec-only) lines
+    (2026-08-20, user's direction): a line the rec engine read as a
+    fragment is clipped from the ORIGINAL image, rotated UPRIGHT by its
+    orientation, and recognized there — the de-rotated reading, never
+    the rotated-frame garbage. Fail fast (drop the line) when the clip
+    is out of bounds, recognition returns nothing, or the recognized
+    text is wildly out of sync with the box's reading axis (Gate C)."""
+
+    def _png(self, tmp_path, w: int, h: int, rgb=(200, 200, 200)) -> Path:
+        img = Image.new("RGB", (w, h), rgb)
+        path = tmp_path / "page.png"
+        img.save(path)
+        return path
+
+    def test_clip_is_rotated_upright_before_recognition(self, tmp_path) -> None:
+        """A 90° line's clip must reach the recognizer UPRIGHT — the
+        box [0, 0, 50, 100] in a 100x100 image holds vertical text; the
+        recognizer must see the 100x50 (de-rotated) crop, not the tall
+        sliver. A fragment is the rec's rotated-frame reading; the
+        upright clip is what the model can actually read."""
+        from tools.layout import recognize_extra
+
+        image = self._png(tmp_path, 100, 100)
+        seen: list[Path] = []
+
+        def fake_recognize(crop: Path) -> str | None:
+            seen.append(crop)
+            with Image.open(crop) as im:
+                assert im.size == (100, 50), f"clip must be upright 100x50, got {im.size}"
+            return "the upright line"
+
+        text = recognize_extra(image, [0, 0, 50, 100], 90, fake_recognize)
+        assert text == "the upright line"
+        assert len(seen) == 1
+
+    def test_180_flips_the_clip(self, tmp_path) -> None:
+        from tools.layout import recognize_extra
+
+        image = self._png(tmp_path, 100, 60)
+        seen: list[Path] = []
+
+        def fake_recognize(crop: Path) -> str | None:
+            seen.append(crop)
+            with Image.open(crop) as im:
+                assert im.size == (100, 60)
+            return "flipped line"
+
+        assert recognize_extra(image, [0, 0, 100, 60], 180, fake_recognize) == "flipped line"
+        assert len(seen) == 1
+
+    def test_empty_recognition_drops_the_line(self, tmp_path) -> None:
+        """Gate C: recognition that returns nothing must DROP the line —
+        never admit garbage or a blank line with a box."""
+        from tools.layout import recognize_extra
+
+        image = self._png(tmp_path, 100, 100)
+        assert recognize_extra(image, [0, 0, 100, 20], 0, lambda crop: None) is None
+        assert recognize_extra(image, [0, 0, 100, 20], 0, lambda crop: "   ") is None
+
+    def test_out_of_sync_text_drops_the_line(self, tmp_path) -> None:
+        """Gate C: the recognized text must match the box's proportions
+        — 40 characters in a 50px reading axis is impossible; the line
+        is dropped (a wildly wrong clip read must not anchor)."""
+        from tools.layout import recognize_extra
+
+        image = self._png(tmp_path, 100, 100)
+        long = "x" * 40
+        assert recognize_extra(image, [0, 0, 50, 20], 0, lambda crop: long) is None
+
+    def test_out_of_bounds_box_drops_without_calling(self, tmp_path) -> None:
+        from tools.layout import recognize_extra
+
+        image = self._png(tmp_path, 100, 100)
+        called = False
+
+        def fake_recognize(crop: Path) -> str | None:
+            nonlocal called
+            called = True
+            return "never"
+
+        assert recognize_extra(image, [80, 0, 150, 20], 0, fake_recognize) is None
+        assert not called
+
+    def test_multi_layout_extras_use_the_recognized_text(self, tmp_path) -> None:
+        """The wire-through: multi_layout's extra lines are replaced by
+        the clip-recognized reading; a failed recognition DROPS the
+        line entirely — the rec fragment never reaches the review."""
+        from tools.layout import multi_layout
+
+        image = self._png(tmp_path, 200, 200)
+        passes = [
+            (
+                0,
+                [
+                    {
+                        "text": "anchored line",
+                        "box": [10, 10, 150, 30],
+                        "score": 0.9,
+                        "words": [],
+                    }
+                ],
+            ),
+            (
+                90,
+                [
+                    {
+                        "text": "frag",
+                        "box": [10, 50, 30, 150],
+                        "score": 0.8,
+                        "words": [],
+                    }
+                ],
+            ),
+        ]
+        recognized: list[str] = []
+
+        def fake_recognize(crop: Path) -> str | None:
+            recognized.append(crop.name)
+            return "the true text" if len(recognized) == 1 else None
+
+        layout = multi_layout(
+            "p1.jpg",
+            200,
+            200,
+            passes,
+            report_lines=[{"index": 0, "box": [50, 50, 750, 150], "degrees": 0, "text": "anchored line"}],
+            vlm_text="anchored line",
+            image=image,
+            recognize=fake_recognize,
+        )
+        texts = [ln["text"] for ln in layout["lines"]]
+        assert "anchored line" in texts
+        assert "the true text" in texts  # the first extra recognized
+        assert "frag" not in texts  # the second extra's recognition failed -> dropped

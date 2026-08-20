@@ -116,7 +116,22 @@ def _overlap(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(a | b)
 
 
-# lucidlint: ignore closures one coherent greedy-match algorithm — the closures are sort keys
+def _det_y(det: Detection) -> float:
+    """The detection's top — the sort key for reading order (module-level:
+    captures nothing, so it is not a closure)."""
+    return det["box"][1]
+
+
+def _by_top(d: Detection) -> float:
+    """Sort key: the box's top — module-level (captures nothing)."""
+    return d["box"][1]
+
+
+def _by_vlm_index(m: dict[str, Any]) -> int:
+    """Sort key: the VLM line index — module-level (captures nothing)."""
+    return m["vlm_index"]
+
+
 def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[list[dict[str, Any]], list[Detection]]:
     """Match detector lines to VLM transcription lines by content.
 
@@ -127,20 +142,16 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[
     unmatched_detections), where matches are in VLM line order:
         {"vlm": str, "vlm_index": int, "box": [x0,y0,x1,y1],
          "rec_text": str, "rec_score": float,
-         "rec_words": [str, ...]}
     """
     vlm_sets = [set(words(line)) for line in vlm_lines]
     used_vlm: set[int] = set()
     used_det: set[int] = set()
     matches: list[dict[str, Any]] = []
 
-    def y_of(det: Detection) -> float:
-        return det["box"][1]
-
     # Greedy in detector reading order: each detector line claims its best
     # still-free VLM line. The pair is dropped when no candidate clears the
     # threshold (the rec text is too noisy to anchor).
-    for di in sorted(range(len(detections)), key=lambda i: y_of(detections[i])):
+    for di in sorted(range(len(detections)), key=lambda i: _det_y(detections[i])):
         det_set = set(words(detections[di]["text"]))
         best: tuple[float, int] = (0.0, -1)
         for vi in range(len(vlm_lines)):
@@ -166,7 +177,7 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[
                     "orientation": detections[di].get("orientation", 0),
                 }
             )
-    matches.sort(key=lambda m: m["vlm_index"])
+    matches.sort(key=_by_vlm_index)
     unmatched = [d for i, d in enumerate(detections) if i not in used_det]
     # Positional fallback (2026-08-16: the audit found 101 of 323 lines
     # boxless — the rec model cannot read cursive, so whole pages never
@@ -176,7 +187,7 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[
     # positional, not textual (the rec text never matched) — the caller
     # marks it, and the surface renders positional boxes dashed.
     boxless = [vi for vi in range(len(vlm_lines)) if vi not in used_vlm]
-    unmatched.sort(key=lambda d: d["box"][1])
+    unmatched.sort(key=_by_top)
     matches.extend(
         {
             "vlm": vlm_lines[vi],
@@ -191,7 +202,7 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[
         }
         for vi, det in zip(boxless, unmatched, strict=False)
     )
-    matches.sort(key=lambda m: m["vlm_index"])
+    matches.sort(key=_by_vlm_index)
     return matches, unmatched[len(boxless) :]
 
 
@@ -261,6 +272,52 @@ def _words_out(
         )
         out.append({"word": w, "box": None, "conf": conf})
     return out
+
+
+def reading_start(box: list[float], orientation: float) -> tuple[float, float]:
+    """The corner where the line's FIRST character sits, in image pixels —
+    the reading start used for the physical reading-order sort. The
+    QUADRANT of the exact orientation picks the corner (the clip
+    classifier returns exact angles like 88.4 — not rounded to 90 for the
+    sort); the line's stored ``orientation`` stays exact.
+    0/90 → top-left (a 90° line reads top-to-bottom, so its first char is
+    the top of the tall box); 180 → bottom-right (upside-down text starts
+    at the visual bottom-right); 270 → bottom-left (text reads
+    bottom-to-top)."""
+    o = orientation % 360
+    x0, y0, x1, y1 = box
+    if 135 <= o < 225:
+        return (x1, y1)
+    if 225 <= o < 315:
+        return (x0, y1)
+    return (x0, y0)
+
+
+def order_lines_by_reading(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Physical reading order for the review pane: a STABLE top-to-bottom,
+    left-to-right sort by each line's reading-start corner. The model's
+    transcription order scrambles multi-orientation pages (2026-08-20:
+    page-03's guess interleaved the P.S. box with the body). Each line's
+    ``index`` is PRESERVED — the review surface keys edits and selections
+    by it; only the display order changes. Boxless or degenerate lines
+    keep their input relative order, after the boxed lines."""
+    boxed: list[dict[str, Any]] = []
+    rest: list[dict[str, Any]] = []
+    for line in lines:
+        box = line.get("box")
+        if isinstance(box, list) and len(box) == 4 and box[2] > box[0] and box[3] > box[1]:
+            boxed.append(line)
+        else:
+            rest.append(line)
+    # reading_start returns (x, y); the reading ORDER compares top-to-bottom
+    # first (y), then left-to-right (x)
+    boxed.sort(
+        key=lambda line: (
+            reading_start(line["box"], line.get("orientation", 0))[1],
+            reading_start(line["box"], line.get("orientation", 0))[0],
+        )
+    )
+    return boxed + rest
 
 
 # detections, self-report, VLM boxes — each consumed once by the pure pass; no second function shares the group
@@ -360,6 +417,10 @@ def build_layout(
                 "box_source": match["box_source"],
             }
         )
+    # physical reading order for the review pane — the transcription order
+    # scrambles multi-orientation pages (2026-08-20); the sort preserves
+    # each line's index (the edit key), only the display order changes
+    lines = order_lines_by_reading(lines)
     return {
         "page": page,
         "width": width,
@@ -732,9 +793,12 @@ def multi_layout(
             for entry in admitted
         ]
     lines = dedupe_regions(lines)
-    # 0° first, then each next direction — a stable sort keeps the report
-    # order (and the extras' reading position) within each group
-    lines.sort(key=lambda line: line["orientation"])
+    # physical reading order — replaces the old by-orientation grouping
+    # (2026-08-20: the report's text order scrambled multi-orientation
+    # pages); the sort is stable and the indices are renumbered to the
+    # display order (these lines are the detection admissions, not the
+    # guess text)
+    lines = order_lines_by_reading(lines)
     for i, line in enumerate(lines):
         line["index"] = i
     return {"page": page, "width": width, "height": height, "lines": lines, "unmatched": []}

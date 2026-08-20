@@ -17,11 +17,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import contextlib
 import json
 import os
 import shutil
 import sys
+import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -41,7 +43,7 @@ from tools.registry import RegistryError as PipelineError
 from tools.registry import load_batch, record_path
 from tools.store import DiskStore, StoreError  # noqa: F401
 from tools.sync import record_confirmation
-from tools.vlm import orientation_report
+from tools.vlm import VlmError, line_orientation_degrees, orientation_report
 
 PAGE_LIMIT = 30  # one guess call per batch; beyond this the context is too big — chunking is future work
 GUESS_PAGE_CHUNK = 5  # the guess re-emits each page's corrected text; the OUTPUT size binds — 5 pages of
@@ -569,12 +571,107 @@ def _write_orientation_hints(
         txt_rel = f"{batch_id}/ocr-guess/{Path(page).stem}.txt"
         if store.exists(txt_rel):
             guess_text = store.read_latest(txt_rel)
+        # The clip path (2026-08-20): when the transcription returned
+        # per-line geometry, clip each in-bounds line and classify its
+        # EXACT angle — ~600 tokens and ~6s per line, vs the full-page
+        # location call that burned 64K reasoning tokens with zero
+        # content. The full-page call remains the fallback for pages the
+        # transcription gave no geometry.
+        clip_report = _try_clip_report(store, batch_id, page, oriented_dir)
         try:
-            report = orientation_report_fn(oriented_dir / page, guess_text)
-        except Exception as exc:  # lucidlint: ignore broad-except a failed report must NOT kill the batch
+            report = clip_report if clip_report is not None else orientation_report_fn(oriented_dir / page, guess_text)
+        # the seam is a Callable (anything may raise): the failure is recorded
+        # (orientation.failed.json) and the layout falls back; the next pass
+        # retries (nothing marks it done)
+        # lucidlint: ignore broad-except a failed report must not kill the batch — recorded, falls back, retried
+        except Exception as exc:
             _record_orientation_failure(failures, store, failures_rel, page, exc)
             continue
         _commit_orientation_report(store, out_rel, page, report)
+
+
+def _try_clip_report(store: PipelineStore, batch_id: str, page: str, oriented_dir: Path) -> dict[str, Any] | None:
+    """The clip path's envelope: read the transcription geometry and build
+    the per-line clip-and-classify report, or return None (the full-page
+    call then stands). None on ANY failure — the contract is "no clip
+    report", never a crash; a missing marker or malformed geometry simply
+    falls back."""
+    raw_marker = f"{batch_id}/ocr-raw/{Path(page).stem}.vlm.json"
+    if not store.exists(raw_marker):
+        return None
+    try:
+        marker = json.loads(store.read_latest(raw_marker))
+    except (OSError, json.JSONDecodeError):
+        return None
+    vlm_lines = marker.get("lines") if isinstance(marker, dict) else None
+    if not vlm_lines:
+        return None
+    boxes: dict[int, list[float]] = {}
+    for position, ln in enumerate(vlm_lines):
+        if isinstance(ln, dict) and "box" in ln:
+            boxes[position] = ln["box"]
+    if not boxes:
+        return None
+    try:
+        return _clip_orientation_report(oriented_dir / page, boxes)
+    # the clip path's only failure types: tempfile/PIL (OSError) and the
+    # classifier (VlmError); a clip failure falls back to the full-page call
+    except (VlmError, OSError) as exc:
+        print(f"layout: clip orientation failed for {page} — falling back: {str(exc)[:120]}", file=sys.stderr)
+        return None
+
+
+def _clip_orientation_report(
+    image: Path,
+    norm_boxes: dict[int, list[float]],
+    *,
+    classify: Callable[[Path], float] | None = None,
+    _max_workers: int = 4,
+) -> dict[str, Any]:
+    """The per-line clip-and-classify report: for each in-bounds
+    transcription box, clip the line from the image and ask the model the
+    EXACT clockwise angle. Returns the report shape the layout consumes
+    (``{"lines": [{index, box, degrees}]}``). Out-of-bounds or degenerate
+    boxes are DROPPED — the model's normalized geometry sometimes exceeds
+    the canvas (page-12's refusal), and such a line cannot be clipped and
+    must not anchor the layout (2026-08-20)."""
+    classify_fn = classify if classify is not None else line_orientation_degrees
+    img = Image.open(image)
+    img.load()  # PIL lazy-loads on crop; concurrent crops race the load (OSError: truncated)
+    w, h = img.size
+
+    def _classify_one(index: int, norm_box: list[float]) -> dict[str, Any] | None:
+        x0, y0, x1, y1 = (
+            norm_box[0] / 1000 * w,
+            norm_box[1] / 1000 * h,
+            norm_box[2] / 1000 * w,
+            norm_box[3] / 1000 * h,
+        )
+        if x0 < 0 or y0 < 0 or x1 > w or y1 > h or x1 <= x0 or y1 <= y0:
+            return None  # out-of-bounds or degenerate — cannot clip, must not anchor
+        crop = img.crop((x0, y0, x1, y1))
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+            crop.save(tmp, format="JPEG", quality=85)
+            tmp_path = Path(tmp.name)
+        try:
+            try:
+                degrees = classify_fn(tmp_path)
+            except (VlmError, OSError):
+                return None
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        cardinal = int(round(degrees / 90)) * 90 % 360
+        return {"index": index, "box": list(norm_box), "degrees": cardinal}
+
+    lines: list[dict[str, Any]] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=_max_workers) as pool:
+        futures = [pool.submit(_classify_one, i, b) for i, b in sorted(norm_boxes.items())]
+        for future in concurrent.futures.as_completed(futures):
+            result = future.result()
+            if result is not None:
+                lines.append(result)
+    lines.sort(key=lambda ln: ln["index"])
+    return {"orientation_hint": [], "lines": lines}
 
 
 def _commit_orientation_report(store: PipelineStore, out_rel: str, page: str, report: dict[str, Any]) -> None:

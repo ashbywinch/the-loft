@@ -530,6 +530,30 @@ what the fix engine covers):
   mechanical formatting smell from an edit tool landing mid-parens.
   (Finding 3.)
 
+**Affordance findings (what the tool could change, beyond the process):**
+- **The finding already names the fix, but hides the preview.** The
+  complexity message literally says "extract part of this function into a
+  named method (the preview shows the block) — fix: extract-method" — the
+  answer was in the message and the session still hand-extracted. The
+  preview EXISTS (the fix engine computes it before applying); attach it
+  to the finding itself so the agent sees the proposed seam at finding
+  time, not after deciding to run a separate command. The finding's terse
+  `fix: extract-method` should be the full runnable command with
+  file/line/name placeholders.
+- **The per-file LSP mode should run the full rule set, not just syntax.**
+  The LSP diagnostics caught the syntax errors from botched edits
+  instantly; it would have caught the transient duplicate-def and
+  undefined-name states too if the same rule set ran per-file. The
+  transient mistakes were never linted because they were fixed before the
+  next gate run — only the always-on LSP stream saw them.
+- **`unreachable` exists as a rule and fix, but would NOT have fired on
+  this session's leftover tails** — they were reachable-but-broken code
+  referencing undefined names (`missing`, `cursive`), not statements after
+  a `return`. The genuinely missing piece is the duplicate module-scope
+  definition rule (catches both the `guess_pages` shadowing and the
+  double-`def` edit mistakes) plus undefined-name flagging in the LSP
+  stream.
+
 **What already worked well:** `stale-suppression` caught the orphaned
 ignore (finding 4) — the suppression-adjacency rule is doing its job; the
 `--file` LSP mode surfaced syntax errors from botched edits immediately,

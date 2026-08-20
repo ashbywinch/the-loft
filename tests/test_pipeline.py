@@ -358,3 +358,41 @@ def test_guess_is_stale_when_boundaries_lack_fingerprint_sidecar(tmp_path: Path)
     (raw / "p1.txt").write_text("raw v1", encoding="utf-8")
 
     assert _guess_is_stale(["p1.jpg"], raw, guess, boundaries)
+
+
+def test_orientation_hints_failure_is_recorded_not_fatal(tmp_path: Path) -> None:
+    """A failing orientation report must NOT kill the batch (2026-08-20:
+    the heavy location task burns 64K reasoning tokens with no content,
+    non-deterministically). The failure is recorded — accumulating across
+    passes — and the page is left without a report so the next pass
+    retries and the layout falls back to single-orientation."""
+    from tools.pipeline import _write_orientation_hints
+
+    batch_work = tmp_path / "work" / "adopt-0001"
+    oriented = batch_work / "oriented"
+    guess = batch_work / "ocr-guess"
+    oriented.mkdir(parents=True)
+    guess.mkdir(parents=True)
+    (oriented / "rotations.json").write_text(
+        json.dumps({"p1.jpg": {"degrees": 0, "strong": 16, "scores": {"0": 16, "90": 4, "180": 7, "270": 9}}}),
+        encoding="utf-8",
+    )
+    (oriented / "p1.jpg").write_text("image", encoding="utf-8")
+
+    def _failing_report(_image: Path, _text: str) -> dict[str, object]:
+        raise RuntimeError("model produced only reasoning tokens, no content")
+
+    _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _failing_report)
+    # no report written, failure recorded
+    assert not (guess / "p1.orientation.json").exists()
+    trail = json.loads((guess / "orientation.failed.json").read_text(encoding="utf-8"))
+    assert len(trail) == 1
+    assert trail[0]["page"] == "p1.jpg"
+    assert trail[0]["attempt"] == 1
+    assert "reasoning tokens" in trail[0]["error"]
+
+    # a second pass appends, not overwrites — the trail accumulates
+    _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _failing_report)
+    trail = json.loads((guess / "orientation.failed.json").read_text(encoding="utf-8"))
+    assert len(trail) == 2
+    assert trail[1]["attempt"] == 2

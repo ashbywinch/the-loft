@@ -198,7 +198,7 @@ def test_draft_payloads_reports_the_multi_orientations(tmp_path: Path) -> None:
                     {
                         "index": 1,
                         "text": "HARBOTTLE, MORPETH",
-                        "box": [0, 10, 50, 20],
+                        "box": [60, 0, 70, 100],
                         "conf": 1.0,
                         "orientation": 270,
                         "words": [],

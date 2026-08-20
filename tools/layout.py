@@ -964,6 +964,19 @@ def _extra_lines(
     return lines
 
 
+def _order_layout_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The layout's reading order (extracted from multi_layout 2026-08-20
+    when the resolved-orientation rule pushed its cyclomatic complexity
+    over lucidlint's bar): a page whose lines resolve to ONE orientation
+    reads in the TRANSCRIPTION order — the model read the page
+    block-by-block, so margin blocks never interleave (page-03). A
+    genuinely multi-orientation page reads by the physical reading-start
+    sort in the dominant frame (the postcard)."""
+    if len({line.get("orientation", 0) for line in lines}) > 1:
+        return order_lines_by_reading(lines)
+    return lines
+
+
 # the combined layout's heterogeneous inputs — the page identity, geometry, the passes, the report, the text
 # lucidlint: ignore long-param-list a parameter object would obscure the pure function
 def multi_layout(
@@ -1031,12 +1044,15 @@ def multi_layout(
             for entry in admitted
         ]
     lines = dedupe_regions(lines)
-    # physical reading order — replaces the old by-orientation grouping
-    # (2026-08-20: the report's text order scrambled multi-orientation
-    # pages); the sort is stable and the indices are renumbered to the
-    # display order (these lines are the detection admissions, not the
-    # guess text)
-    lines = order_lines_by_reading(lines)
+    # The reading order (2026-08-20, user's requirement): a page whose
+    # lines resolve to ONE orientation reads in the TRANSCRIPTION order —
+    # the model read the page block-by-block, so the margin blocks never
+    # interleave (page-03: a single-orientation letter took the multi
+    # path on the report's garbage degrees; the aspect rule resolved
+    # every line to 0). A genuinely multi-orientation page reads by the
+    # physical reading-start sort in the dominant frame (the postcard:
+    # the transcription order scrambled the multi reading).
+    lines = _order_layout_lines(lines)
     for i, line in enumerate(lines):
         line["index"] = i
     return {"page": page, "width": width, "height": height, "lines": lines, "unmatched": []}

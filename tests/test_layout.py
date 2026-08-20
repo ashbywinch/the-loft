@@ -1560,3 +1560,41 @@ def test_dedupe_regions_survives_boxless_lines() -> None:
     ]
     out = dedupe_regions(lines)
     assert [ln["text"] for ln in out] == ["E    R", "extra fragment"]
+
+
+def test_multi_layout_keeps_text_order_when_orientations_resolve_single() -> None:
+    """page-03 (2026-08-20): a single-orientation letter took the multi
+    path because the report's line degrees ({0, 90}) triggered it — but
+    the aspect rule corrected every line to 0 (wide boxes). With ONE
+    resolved orientation, the reading order is the TRANSCRIPTION order
+    (the margin blocks read block-by-block, never interleaved); the
+    physical sort applies only to genuinely multi-orientation pages
+    (the postcard)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                90,
+                [
+                    # the rec read the horizontal lines during the 90° pass
+                    {"text": "P.S. line one", "box": [100, 100, 300, 140], "score": 0.9, "words": []},
+                    {"text": "theory paper", "box": [100, 150, 300, 190], "score": 0.9, "words": []},
+                    {"text": "Postmark", "box": [400, 102, 600, 142], "score": 0.9, "words": []},
+                ],
+            ),
+        ],
+        report_lines=[
+            {"index": 0, "box": [100, 100, 300, 140], "degrees": 0},
+            {"index": 1, "box": [100, 150, 300, 190], "degrees": 0},
+            {"index": 2, "box": [400, 102, 600, 142], "degrees": 90},  # a garbage label — aspect-corrected to 0
+        ],
+        vlm_text="P.S. line one\ntheory paper\nPostmark",
+        trust_report_degrees=True,
+    )
+    texts = [ln["text"] for ln in layout["lines"]]
+    assert texts == ["P.S. line one", "theory paper", "Postmark"], texts
+    assert all(ln["orientation"] == 0 for ln in layout["lines"])

@@ -267,7 +267,7 @@ class TestSelfReportFlags:
 
 class TestWriteLoadLayout:
     def test_atomic_round_trip(self, tmp_path) -> None:
-        layout = build_layout("p.jpg", 100, 100, "one line", [_det([0, 0, 10, 10], "one line")])
+        layout = build_layout("p.jpg", 100, 100, "one line", [_det([0, 0, 100, 20], "one line")])
         path = tmp_path / "p.layout.json"
         write_layout(layout, path)
         assert json.loads(path.read_text(encoding="utf-8")) == layout
@@ -687,7 +687,7 @@ def test_validate_layout_rejects_bad_boxes() -> None:
         "height": 2000,
         "lines": [
             {"text": "post card", "box": [100, 100, 300, 140]},
-            {"text": "message", "box": [50, 500, 900, 540]},
+            {"text": "message", "box": [50, 500, 250, 540]},
             {"text": "no box", "box": None},
         ],
     }
@@ -947,3 +947,93 @@ def test_reading_order_degenerate_box_does_not_crash() -> None:
     ]
     ordered = order_lines_by_reading(lines)
     assert len(ordered) == 3
+
+
+def test_validate_layout_orientation_matches_box_aspect() -> None:
+    """Gate A (2026-08-20): a line's orientation must be consistent with its
+    box's aspect. A wide box (width >> height) holds horizontal text (axis
+    near 0/180); a tall box holds vertical text (axis near 90/270). The
+    check uses the orientation's AXIS (mod 180) so exact angles work —
+    a 88.4° line is vertical-axis and must have a tall box. Fails only on
+    the CLEARLY wrong cases (aspect >= 2x against a clearly-opposite
+    axis); diagonal angles and near-square boxes pass (lenient)."""
+    from tools.layout import validate_layout
+
+    def _layout(lines):
+        return {"width": 1000, "height": 1000, "lines": lines}
+
+    # clearly-wide box labeled with a vertical axis -> violation
+    assert validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 90}]))
+    assert validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 88.4}]))
+    assert validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 271.2}]))
+    # clearly-tall box labeled with a horizontal axis -> violation
+    assert validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 0}]))
+    assert validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 358.7}]))
+    assert validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 180}]))
+
+
+def test_validate_layout_orientation_consistent_cases_pass() -> None:
+    from tools.layout import validate_layout
+
+    def _layout(lines):
+        return {"width": 1000, "height": 1000, "lines": lines}
+
+    # wide box with horizontal axis -> pass
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 0}]))
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 180}]))
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 358.7}]))
+    # tall box with vertical axis -> pass
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 90}]))
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 271.2}]))
+    # near-square box -> pass regardless (ambiguous, skip)
+    assert not validate_layout(_layout([{"text": "x" * 5, "box": [0, 0, 60, 50], "orientation": 90}]))
+    # diagonal axis with a wide box -> pass (lenient; a 45° line is diagonal)
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 300], "orientation": 45}]))
+    # moderate aspect (1.5x) against a vertical axis -> pass (not clearly wrong)
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 300, 200], "orientation": 90}]))
+    # no orientation field -> pass (nothing to check)
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50]}]))
+    # no box -> pass (the existing gate handles boxless lines elsewhere)
+    assert not validate_layout(_layout([{"text": "x" * 25, "orientation": 90}]))
+
+
+def test_validate_layout_text_length_matches_box_extent() -> None:
+    """Gate B (2026-08-20): a line's recognized text length must not be
+    WILDLY out of sync with the box's reading-axis extent. The reading
+    axis is the width for a horizontal line (axis near 0/180) and the
+    height for a vertical one (axis near 90/270). A 500px-wide box holding
+    3 characters is absurd (the box is empty or the text is truncated);
+    a 50px box holding 40 characters is also absurd. The gate is LOOSE —
+    only the wildly-out cases (outside ~3-80 px per character) fail, so
+    handwriting variance and short fragments never false-positive."""
+    from tools.layout import validate_layout
+
+    def _layout(lines):
+        return {"width": 1000, "height": 1000, "lines": lines}
+
+    # a wide box (500px) with a 3-char text -> ~167 px/char: wildly out
+    assert validate_layout(_layout([{"text": "abc", "box": [0, 0, 500, 50], "orientation": 0}]))
+    # a narrow box (50px) with a 40-char text -> ~1.25 px/char: wildly out
+    assert validate_layout(_layout([{"text": "x" * 40, "box": [0, 0, 50, 50], "orientation": 0}]))
+    # a tall box (500px) with a 3-char text at 90° -> the axis is the height
+    assert validate_layout(_layout([{"text": "abc", "box": [0, 0, 50, 500], "orientation": 90}]))
+    # an empty text with a box -> wildly out (nothing there)
+    assert validate_layout(_layout([{"text": "", "box": [0, 0, 500, 50], "orientation": 0}]))
+
+
+def test_validate_layout_text_length_reasonable_cases_pass() -> None:
+    from tools.layout import validate_layout
+
+    def _layout(lines):
+        return {"width": 1000, "height": 1000, "lines": lines}
+
+    # a 500px box with ~25 chars -> ~20 px/char: plausible handwriting
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 0}]))
+    # a short fragment ("N.B") in a small box -> plausible
+    assert not validate_layout(_layout([{"text": "N.B", "box": [0, 0, 120, 50], "orientation": 0}]))
+    # a vertical 500px box with ~25 chars at 90° -> axis is the height
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 90}]))
+    # no box -> pass (handled elsewhere)
+    assert not validate_layout(_layout([{"text": "anything", "orientation": 0}]))
+    # no orientation -> the axis defaults to the width (horizontal)
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50]}]))

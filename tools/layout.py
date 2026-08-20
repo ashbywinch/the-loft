@@ -892,6 +892,82 @@ def rotate_detections(detections: list[Detection], quarters: int, w: int, h: int
     return rotated
 
 
+def _orientation_violation(orientation: float, box_w: float, box_h: float, text: str) -> str | None:
+    """Gate A (2026-08-20): the line's orientation must be consistent
+    with its box's aspect. The AXIS (mod 180) handles EXACT angles — an
+    88.4° line is vertical-axis and must have a tall box. Fails only on
+    the clearly-wrong cases (aspect >= 2x against a clearly-opposite
+    axis); diagonal angles and near-square boxes pass (lenient — a 45°
+    line is genuinely diagonal). Returns the violation or None."""
+    axis = orientation % 180
+    clearly_wide = box_w > 2 * box_h
+    clearly_tall = box_h > 2 * box_w
+    vertical_axis = 60 <= axis <= 120
+    horizontal_axis = axis <= 30 or axis >= 150
+    if (clearly_wide and vertical_axis) or (clearly_tall and horizontal_axis):
+        return f"{text[:20]!r}: orientation {orientation:.1f}° inconsistent with a {int(box_w)}x{int(box_h)} box"
+    return None
+
+
+def _text_extent_violation(text: str, box_w: float, box_h: float, orientation: float | None) -> str | None:
+    """Gate B (2026-08-20): the recognized text length must not be
+    WILDLY out of sync with the box's reading-axis extent — a 500px-wide
+    box holding 3 characters is empty or truncated; a 50px box holding
+    40 characters is impossible. The gate is loose (only ~2-80 px/char
+    fails — the far-too-short nonsense is the >80 side) so handwriting
+    variance never false-positives; an empty text with a box fails
+    ("nothing there"). The axis defaults to horizontal (width) when the
+    line has no orientation. Returns the violation or None."""
+    axis = (orientation or 0) % 180
+    reading_extent = box_w if (axis <= 45 or axis >= 135) else box_h
+    if not text.strip() and reading_extent > 0:
+        return f"{text[:20]!r}: empty text in a {int(box_w)}x{int(box_h)} box"
+    if text.strip():
+        px_per_char = reading_extent / len(text.strip())
+        if px_per_char < 2 or px_per_char > 80:
+            return (
+                f"{text[:20]!r}: text length {len(text.strip())} wildly out of "
+                f"sync with a {int(reading_extent)}px reading axis ({px_per_char:.0f} px/char)"
+            )
+    return None
+
+
+def _line_violations(line: dict[str, Any], width: int, height: int, tolerance: float) -> list[str]:
+    """The per-line fail-fast checks, one line's violations ([] = clean).
+    Extracted from validate_layout (2026-08-20) when the two new gates
+    pushed its cyclomatic complexity over lucidlint's bar — the loop
+    itself is trivial; this carries the actual judgement. ``None`` boxes
+    pass (the line is flagged, the review shows it without a box)."""
+    violations: list[str] = []
+    box = line.get("box")
+    if box is None:
+        return violations
+    if len(box) != 4 or not all(isinstance(v, (int, float)) for v in box):
+        violations.append(f"{line.get('text', '')[:20]!r}: malformed box {box}")
+        return violations
+    x0, y0, x1, y1 = box
+    if x1 <= x0 or y1 <= y0:
+        violations.append(f"{line.get('text', '')[:20]!r}: degenerate box {box}")
+        return violations
+    if x0 < -tolerance or y0 < -tolerance or x1 > width + tolerance or y1 > height + tolerance:
+        violations.append(f"{line.get('text', '')[:20]!r}: box outside the image {box}")
+        return violations
+    box_w = x1 - x0
+    box_h = y1 - y0
+    text = line.get("text", "")
+    orientation = line.get("orientation")
+    if isinstance(orientation, (int, float)):
+        gate_a = _orientation_violation(orientation, box_w, box_h, text)
+        if gate_a:
+            violations.append(gate_a)
+        gate_b = _text_extent_violation(text, box_w, box_h, orientation)
+    else:
+        gate_b = _text_extent_violation(text, box_w, box_h, None)
+    if gate_b:
+        violations.append(gate_b)
+    return violations
+
+
 def validate_layout(layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
     """The fail-fast box guard (2026-08-17): a layout whose line has a
     box that is degenerate or outside the image must NEVER reach the
@@ -899,22 +975,25 @@ def validate_layout(layout: dict[str, Any], tolerance: float = 4.0) -> list[str]
     incident: page-02's reprocessed layout carried approximate boxes to
     the review surface silently). Returns the violations; [] = clean.
     ``None`` boxes are fine (the line is flagged, the review shows it
-    without a box); the tolerance covers the model's estimate slop."""
+    without a box); the tolerance covers the model's estimate slop.
+
+    Two more gates (2026-08-20), both in user-need language from the
+    multi-orientation review: the line's orientation must be consistent
+    with its box's aspect (Gate A), and the recognized text length must
+    not be wildly out of sync with the box's reading-axis extent (Gate B).
+    Both handle EXACT angles (88.4°, 271.2°) via the orientation's axis
+    (mod 180), and both are deliberately lenient — a 45° diagonal line and
+    a near-square box are never flagged. page-03's orientation report
+    labeled 26 horizontal lines as 90°, which cascaded into the layout,
+    the UI rotation, and the reading-order sort: Gate A catches that class
+    with no model in the loop. Gate B's >80 px/char side catches the
+    "far-too-short" fragments; the <2 px/char side catches impossible
+    density."""
     width = int(layout.get("width", 0))
     height = int(layout.get("height", 0))
     violations: list[str] = []
     for line in layout.get("lines", []):
-        box = line.get("box")
-        if box is None:
-            continue
-        if len(box) != 4 or not all(isinstance(v, (int, float)) for v in box):
-            violations.append(f"{line.get('text', '')[:20]!r}: malformed box {box}")
-            continue
-        x0, y0, x1, y1 = box
-        if x1 <= x0 or y1 <= y0:
-            violations.append(f"{line.get('text', '')[:20]!r}: degenerate box {box}")
-        elif x0 < -tolerance or y0 < -tolerance or x1 > width + tolerance or y1 > height + tolerance:
-            violations.append(f"{line.get('text', '')[:20]!r}: box outside the image {box}")
+        violations.extend(_line_violations(line, width, height, tolerance))
     return violations
 
 

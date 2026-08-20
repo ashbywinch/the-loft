@@ -30,7 +30,6 @@ assigned (their geometry is real; a confident text anchor is not — conf 0).
 from __future__ import annotations
 
 import json
-import math
 import re
 import tempfile
 import unicodedata
@@ -75,6 +74,8 @@ QUARTERS_PER_FULL_TURN = 4  # a full rotation is four quarter-turns (90° each)
 REC_SCORE_GATE = 0.85  # recognition confidence: real words read at the right orientation
 MIN_LETTERS = 2  # plausibility: a "real word" has letters, not just shapes
 _DEDUPE_OVERLAP = 0.3  # two passes' lines sharing this much of the smaller box are the same physical region
+_LOCATED_OVERLAP = 0.5  # the report box must claim at least half of the matched detection's ink to anchor it
+_CLIP_INK_MIN = 0.001  # a line clip must carry >= 0.1% dark pixels — a blank clip has nothing to recognize
 # A multi line the rec read below this is doubtful — its words flag (conf
 # 0.0), the review's red doubt + the mark-fine button (VR4, 2026-08-17:
 # the multi path had no self-report, so the rec score is the doubt signal).
@@ -497,19 +498,31 @@ def remap_box(
     rotated: tuple[int, int],
 ) -> list[float]:
     """A box from the rotated frame (rotated = rw×rh) mapped back to the
-    original image (original = ow×oh) — the inverse of the applied
-    rotation, exact for a rigid quarter-turn."""
+    original image (original = ow×oh) — the exact inverse of the applied
+    rotation. The forward index map of ``Image.rotate(-degrees,
+    expand=True)``, verified empirically (2026-08-20 — the old matrix
+    form mirrored the 90°/270° boxes: page-03's rebuilt layout put the
+    letter's lines at the image top):
+      degrees 90  (CW):  (x, y) -> (oh-1-y, x)
+      degrees 180 (flip): (x, y) -> (ow-1-x, oh-1-y)
+      degrees 270 (CCW):  (x, y) -> (y, ow-1-x)
+    The inverse maps the rotated-frame corners back exactly."""
     ow, oh = original
     rw, rh = rotated
-    rad = math.radians(degrees)
-    ox, oy = ow / 2, oh / 2
-    rx, ry = rw / 2, rh / 2
+    del rw, rh  # the inverse needs only the original dims + the corner rule
     xs: list[float] = []
     ys: list[float] = []
     for x, y in ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])):
-        dx, dy = x - rx, y - ry
-        xs.append(dx * math.cos(rad) - dy * math.sin(rad) + ox)
-        ys.append(dx * math.sin(rad) + dy * math.cos(rad) + oy)
+        if degrees == 90:
+            nx, ny = y, oh - 1 - x
+        elif degrees == 180:
+            nx, ny = ow - 1 - x, oh - 1 - y
+        elif degrees == 270:
+            nx, ny = ow - 1 - y, x
+        else:
+            nx, ny = x, y  # 0 — identity
+        xs.append(nx)
+        ys.append(ny)
     return [round(min(xs), 1), round(min(ys), 1), round(max(xs), 1), round(max(ys), 1)]
 
 
@@ -668,32 +681,111 @@ def _located_box(
     height: int,
 ) -> list[float] | None:
     """The line's box: the report's located box (normalized 0-1000 scaled
-    to pixels; [0,0,0,0] = not located), else the rec match's box, else
-    None — a boxless line is flagged (2026-08-17)."""
+    to pixels; [0,0,0,0] = not located) when it claims the same ink the
+    rec matched (the per-line refinement, the v3 design), else the rec
+    match's box — the detector's ink-grounded geometry (2026-08-20:
+    page-03's transcription boxes sat ~200px above the real text; a
+    report box disjoint from the matched detection is an estimate, not
+    an anchor), else the report's box, else None — a boxless line is
+    flagged (2026-08-17)."""
     b = report.get("box") if report else None
     if b and (b[2] > b[0] or b[3] > b[1]):
-        return [
+        scaled = [
             b[0] / NORMALIZED_BOX_SCALE * width,
             b[1] / NORMALIZED_BOX_SCALE * height,
             b[2] / NORMALIZED_BOX_SCALE * width,
             b[3] / NORMALIZED_BOX_SCALE * height,
         ]
+        if match:
+            if _box_overlap(scaled, match["box"]) >= _LOCATED_OVERLAP:
+                return scaled
+            return match["box"]
+        return scaled
     return match["box"] if match else None
 
 
+def _aspect_consistent(degrees: int, box: list[float] | None) -> bool:
+    """Is the orientation consistent with the box's aspect — Gate A's
+    deterministic rule, shared by the orientation resolution (a line's
+    orientation must come from geometry-validated data, 2026-08-20): a
+    clearly-wide box is horizontal text, a clearly-tall box is vertical.
+    Near-square boxes and diagonal angles (45°) are always consistent
+    (lenient — a diagonal line is genuinely diagonal). ``None`` box (no
+    geometry) is always consistent."""
+    if not box:
+        return True
+    box_w = box[2] - box[0]
+    box_h = box[3] - box[1]
+    if box_w <= 2 * box_h and box_h <= 2 * box_w:
+        return True  # near-square — no aspect constraint
+    axis = degrees % 180
+    vertical = 60 <= axis <= 120
+    horizontal = axis <= 30 or axis >= 150
+    if box_w > 2 * box_h:
+        return not vertical  # clearly wide: horizontal text only
+    return not horizontal  # clearly tall: vertical text only
+
+
+def _line_orientation(
+    r: dict[str, Any] | None,
+    match: dict[str, Any] | None,
+    trust_report_degrees: bool,
+    box: list[float] | None,
+) -> int:
+    """The anchored line's orientation — the precedence resolved against
+    the box's aspect (extracted from _vlm_text_lines 2026-08-20 when the
+    trust flag pushed its cyclomatic complexity over lucidlint's bar).
+    The candidates: the report's LOCATED degrees first when trustworthy
+    (the clip-classified report, whose per-line angles are measured from
+    the actual text), else the rec match's pass orientation — the pass
+    that READ the text is the ground truth for the view rotation when
+    the report's estimates are the flaky full-page call's (the 2026-08-17
+    90-vs-270 flip) — then the report's degrees, then 0. Only the first
+    ASPECT-CONSISTENT candidate wins (a 90° label on a wide box is a
+    mirrored-pass artifact: page-03's horizontal lines were
+    content-matched during the 90° pass); near-square boxes accept the
+    first candidate."""
+    candidates: list[int] = []
+    if trust_report_degrees and r and isinstance(r.get("degrees"), (int, float)):
+        candidates.append(int(r["degrees"]))
+    if match and isinstance(match.get("orientation"), int):
+        candidates.append(int(match["orientation"]))
+    if not trust_report_degrees and r and isinstance(r.get("degrees"), (int, float)):
+        candidates.append(int(r["degrees"]))
+    candidates.append(0)
+    for degrees in candidates:
+        if _aspect_consistent(degrees, box):
+            return degrees
+    return candidates[0]
+
+
+# the anchored-lines assembly's six inputs — the page geometry, the report evidence, the trust flag — are one
+# pure function's data; a parameter object would obscure it (the same why as multi_layout's suppression)
+# lucidlint: ignore long-param-list a parameter object would obscure the pure function
 def _vlm_text_lines(
     guess_lines: list[str],
     report_lines: list[dict[str, Any]],
     matches: list[dict[str, Any]],
     width: int,
     height: int,
+    trust_report_degrees: bool = False,
 ) -> list[dict[str, Any]]:
     """The v3 anchored lines (2026-08-17): the guess's authoritative
     transcription, each line LOCATED by the report (box + degrees keyed
     by the line index). A line the report couldn't locate takes its rec
     match's box, or none — flagged. Only the CONTENT matches confirm
     (the rec read the same words); a partial report degrades only the
-    geometry, never the text."""
+    geometry, never the text.
+
+    The line's orientation: the report's LOCATED degrees when they are
+    trustworthy (``trust_report_degrees`` — the clip-classified report,
+    whose per-line angles are measured from the actual text), else the
+    rec match's pass orientation — the pass that READ the text is the
+    ground truth for the view rotation when the report's estimates are
+    the flaky full-page call's (the 2026-08-17 90-vs-270 flip). A
+    mirrored-pass artifact (page-03's horizontal lines content-matched
+    during the 90° pass and labeled 90°) is exactly why the clip
+    report's located degrees must win over the pass."""
     by_index = {int(r["index"]): r for r in report_lines if isinstance(r.get("index"), int)}
     match_by_index = {m["vlm_index"]: m for m in matches}
     confirmed = {m["vlm_index"] for m in matches if m.get("box_source") == "content"}
@@ -702,15 +794,15 @@ def _vlm_text_lines(
         r = by_index.get(i)
         match = match_by_index.get(i)
         is_confirmed = i in confirmed
+        located = _located_box(r, match, width, height)
+        orientation = _line_orientation(r, match, trust_report_degrees, located)
         lines.append(
             {
                 "index": len(lines),
                 "text": line_text,
-                "box": _located_box(r, match, width, height),
+                "box": located,
                 "conf": 1.0 if is_confirmed else 0.0,
-                "orientation": int(match["orientation"])
-                if match and isinstance(match.get("orientation"), int)
-                else (int(r.get("degrees", 0)) if r else 0),
+                "orientation": orientation,
                 "box_source": "vlm" if is_confirmed else "vlm-unconfirmed",
                 "words": [
                     {"word": w, "box": None, "conf": 1.0 if is_confirmed else 0.0} for w in vlm_line_words(line_text)
@@ -746,6 +838,12 @@ def recognize_extra(
             clip = im.crop((x0, y0, x1, y1)).rotate(-orientation, expand=True)
     except OSError:
         return None
+    # deterministic ink guard (2026-08-20): a blank clip has no text to
+    # recognize — the model would spiral on it (the 4000-token reasoning
+    # tail); fail fast BEFORE the call, the line is dropped
+    gray = clip.convert("L")
+    if sum(gray.histogram()[:128]) < _CLIP_INK_MIN * clip.width * clip.height:
+        return None
     try:
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
             clip.save(tmp, format="JPEG", quality=85)
@@ -777,8 +875,13 @@ def _extra_lines(
     fragment garbage never reaches the review (2026-08-20)."""
     lines: list[dict[str, Any]] = []
     for det in unmatched:
-        orientation = det.get("orientation")
-        orientation = orientation if isinstance(orientation, int) else 0
+        pass_orientation = det.get("orientation")
+        pass_orientation = pass_orientation if isinstance(pass_orientation, int) else 0
+        # the extra's orientation must be geometry-validated like the
+        # anchored lines': a wide box is horizontal text even when the
+        # rec read it during a vertical pass (2026-08-20: page-03's
+        # merged wide boxes carried the 90° pass's label)
+        orientation = pass_orientation if _aspect_consistent(pass_orientation, det["box"]) else 0
         text = det["text"]
         if image is not None and recognize is not None:
             recognized = recognize_extra(image, det["box"], orientation, recognize)
@@ -810,6 +913,7 @@ def multi_layout(
     vlm_text: str | None = None,
     image: Path | None = None,
     recognize: Callable[[Path], str | None] | None = None,
+    trust_report_degrees: bool = False,
 ) -> dict[str, Any]:
     """The combined multi-orientation layout (PRD VR15).
 
@@ -835,7 +939,14 @@ def multi_layout(
             # authoritative transcription; the report LOCATES each line
             guess_lines = [ln for ln in vlm_text.split("\n") if ln.strip()]
             matches, unmatched = associate_lines(guess_lines, detections)
-            lines = _vlm_text_lines(guess_lines, report_lines, matches, width, height)
+            lines = _vlm_text_lines(
+                guess_lines,
+                report_lines,
+                matches,
+                width,
+                height,
+                trust_report_degrees=trust_report_degrees,
+            )
         else:
             # v2: the report's own transcription (no known text was given)
             report_texts = [str(r.get("text", "")) for r in report_lines]
@@ -850,7 +961,7 @@ def multi_layout(
                 "text": entry["text"],
                 "box": entry["box"],
                 "conf": entry["score"],
-                "orientation": degrees,
+                "orientation": degrees if _aspect_consistent(degrees, entry["box"]) else 0,
                 "box_source": "multi",
                 "words": _multi_line_words(entry["text"], entry.get("words", []), entry["score"]),
             }

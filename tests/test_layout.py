@@ -1394,3 +1394,169 @@ def test_multi_layout_report_box_anchors_over_a_positional_match() -> None:
     critic = by_text["critic's view. To quote:"]
     assert critic["box"] == [50.0, 400.0, 100.0, 500.0], f"the report's box must anchor, was {critic['box']}"
     assert critic["box_source"] == "vlm-unconfirmed"
+
+
+def test_multi_layout_false_content_match_cannot_override_the_report_box() -> None:
+    """The postcard (2026-08-20): a 2-word line ('E    R') false-matches a
+    rec detection whose box is a 1341px merged band — the rec read the
+    stamp region as a few words containing 'e'/'r', clearing the Jaccard
+    bar. A content match's box only overrides the report's location when
+    the box plausibly holds the line's text (Gate B's own rule): the
+    1341px band for 6 characters is a false match; the report's located
+    box anchors instead."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        3500,
+        2215,
+        [
+            (
+                0,
+                [
+                    {
+                        "text": "e r",  # the rec's noisy stamp reading
+                        "box": [1998, 988, 3339, 1316],  # a 1341px merged band
+                        "score": 0.95,
+                        "words": [],
+                    }
+                ],
+            ),
+        ],
+        report_lines=[
+            {"index": 0, "box": [900, 76, 950, 101], "degrees": 0},  # the located stamp text, tight
+        ],
+        vlm_text="E    R",
+    )
+    line = layout["lines"][0]
+    assert line["text"] == "E    R"
+    # the report's scaled box: 900/1000*3500 = 3150 ... 950/1000*3500 = 3325
+    assert line["box"][0] == 3150, f"the report's located box must anchor, was {line['box']}"
+    assert line["box"][2] == 3325
+
+
+def test_multi_layout_drops_the_box_when_no_candidate_holds_the_text() -> None:
+    """When neither the report's box nor the match's box plausibly holds
+    the line's text (the postcard's stamp lines — the location call's
+    boxes are loose for printed graphics), the line goes BOXLESS (flagged)
+    rather than anchoring a wildly wrong box that refuses the whole page
+    (2026-08-20)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        3500,
+        2215,
+        [
+            (
+                0,
+                [
+                    {
+                        "text": "e r",
+                        "box": [1998, 988, 3339, 1316],
+                        "score": 0.95,
+                        "words": [],
+                    }
+                ],
+            ),
+        ],
+        report_lines=[
+            {"index": 0, "box": [821, 76, 964, 101], "degrees": 0},  # 501px for 'E    R' — still too loose
+        ],
+        vlm_text="E    R",
+    )
+    assert layout["lines"][0]["box"] is None, "no candidate holds the text — boxless, flagged"
+
+
+def test_build_layout_keeps_the_transcription_order_for_margin_blocks() -> None:
+    """The single-orientation reading order (2026-08-20, user's
+    requirement): a page's transcription order IS the block-aware reading
+    — the model read the page block-by-block (page-03: the P.S. margin
+    top-to-bottom, then the address block, then the body; each block's
+    text order = its physical order). The reading-start sort read
+    ROW-by-row across the same y-band, interleaving the margin blocks
+    (P.S. line, Postmark, theory line, Queen's House — 10+ image
+    bounces). The single path keeps the transcription order: the display
+    matches the transcription, and the image moves block-by-block (one
+    jump), never bouncing."""
+    from tools.layout import build_layout
+
+    layout = build_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        "P.S. line one\ntheory paper\nPostmark 27.9.63\nQueen's House",
+        [
+            {"box": [100, 100, 300, 140], "text": "P.S. line one", "score": 0.95, "words": []},
+            {"box": [100, 150, 300, 190], "text": "theory paper", "score": 0.95, "words": []},
+            {"box": [400, 102, 600, 142], "text": "Postmark", "score": 0.95, "words": []},
+            {"box": [400, 152, 600, 192], "text": "Queen's House", "score": 0.95, "words": []},
+        ],
+    )
+    texts = [ln["text"] for ln in layout["lines"]]
+    # the transcription order — NOT the reading-start interleave
+    assert texts == ["P.S. line one", "theory paper", "Postmark 27.9.63", "Queen's House"], texts
+
+
+def test_multi_layout_keeps_the_physical_reading_order() -> None:
+    """The multi-orientation reading order (the postcard, 2026-08-20):
+    the transcription order scrambled the multi reading (the 90° body's
+    top fragments sorted before the 0° margin), so the physical
+    reading-start sort in the dominant frame still applies — each
+    orientation block reads top-to-bottom in its frame position, the
+    rotations change once per block, never per line."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                270,
+                [
+                    {
+                        "text": "message line",
+                        "box": [700, 400, 900, 900],  # the 270° message at the bottom-right
+                        "score": 0.9,
+                        "words": [],
+                    }
+                ],
+            ),
+            (
+                0,
+                [
+                    {"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []},
+                ],
+            ),
+        ],
+        report_lines=[
+            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+            {"index": 1, "box": [700, 400, 900, 900], "degrees": 270},
+        ],
+        vlm_text="POST CARD\nmessage line",
+    )
+    texts = [ln["text"] for ln in layout["lines"]]
+    # the 270° message reads upright with its reading-start ABOVE the
+    # 0° POST CARD? No — POST CARD (y50) is physically above the message
+    # (y400): the physical order reads POST CARD first.
+    assert texts == ["POST CARD", "message line"], texts
+    # and the 270° line keeps its orientation (the reading frame, not a
+    # per-line rotation flip)
+    msg = [ln for ln in layout["lines"] if ln["text"] == "message line"][0]
+    assert msg["orientation"] == 270
+
+
+def test_dedupe_regions_survives_boxless_lines() -> None:
+    """The boxless anchored lines (2026-08-20 — the arbitration drops a
+    box when no candidate holds the text) must not crash the dedupe: the
+    region-overlap check skips lines without a box — the postcard's
+    rebuild crashed on a None box in _box_area."""
+    from tools.layout import dedupe_regions
+
+    lines = [
+        {"index": 0, "text": "E    R", "box": None, "conf": 0.0, "box_source": "vlm-unconfirmed"},
+        {"index": 1, "text": "extra fragment", "box": [0, 0, 100, 20], "conf": 0.0, "box_source": "multi"},
+    ]
+    out = dedupe_regions(lines)
+    assert [ln["text"] for ln in out] == ["E    R", "extra fragment"]

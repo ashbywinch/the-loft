@@ -178,12 +178,16 @@ def _vlm_clip_reader(crop: Path) -> str | None:
     return plain.strip() or None
 
 
+# the multi-pass assembly's six stage inputs — engine, image, the orientations, the report, the text, the trust
+# flag — are one function's data; a parameter object would obscure it (the same why as multi_layout's suppression)
+# lucidlint: ignore long-param-list a parameter object would obscure the pure function
 def layout_page_multi(
     engine: Any,
     image: Path,
     orientations: list[int],
     report_lines: list[dict[str, Any]] | None = None,
     vlm_text: str | None = None,
+    trust_report_degrees: bool = False,
 ) -> dict[str, Any]:
     """The multi-orientation layout (PRD VR15): a detection pass at each
     reported orientation, recognition-driven admission, one combined
@@ -192,7 +196,9 @@ def layout_page_multi(
     passes validating; without the report the rec-based lines fall back.
     The oriented image is already the pipeline's right way up, so the
     initial display rotation stays 0. The rec-only extra lines are
-    re-read from their own upright clips (2026-08-20)."""
+    re-read from their own upright clips (2026-08-20); the clip-sourced
+    report's located degrees are trusted over the pass orientations
+    (``trust_report_degrees``)."""
     with Image.open(image) as im:
         ow, oh = im.size
     passes: list[tuple[int, list[dict[str, Any]]]] = []
@@ -208,6 +214,7 @@ def layout_page_multi(
         vlm_text=vlm_text,
         image=image,
         recognize=_vlm_clip_reader,
+        trust_report_degrees=trust_report_degrees,
     )
 
 
@@ -284,7 +291,14 @@ def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str) -> Non
         passes = orientation_passes(orientations)
         report_lines = report.get("lines") or None
         vlm_text = vlm_path.read_text(encoding="utf-8")
-        layout = layout_page_multi(engine, image, passes, report_lines=report_lines, vlm_text=vlm_text)
+        layout = layout_page_multi(
+            engine,
+            image,
+            passes,
+            report_lines=report_lines,
+            vlm_text=vlm_text,
+            trust_report_degrees=report.get("source") == "clip",
+        )
         print(
             f"layout: {image.name} multi-orientation {orientations} (passes {passes}) -> {len(layout['lines'])} lines"
         )

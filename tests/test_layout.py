@@ -422,11 +422,18 @@ def test_remap_box_maps_back_to_the_original_frame() -> None:
     from tools.layout import remap_box
 
     # 200x100 original; rotated -90° (clockwise, expand) the frame is
-    # 100x200. A box at the top of the rotated frame (centered) lands on
-    # the original's right edge, vertically centered.
+    # 100x200. A box at the top of the rotated frame (y=0-20) maps back
+    # to the original's LEFT edge, vertically centered (2026-08-20: the
+    # old matrix form mirrored this to the right edge — page-03's rebuilt
+    # layout put the letter's lines at the image top).
     box = remap_box([40, 0, 60, 20], 90, (200, 100), (100, 200))
-    assert box[2] > 195  # the far edge touches the right side (200)
+    assert box[0] < 5  # the far edge touches the left side (0)
     assert 30 < box[1] < 70 and 30 < box[3] < 70  # y near the center (50)
+    # 270° (CCW): the top of the rotated frame maps back to the original's
+    # right edge — the mirror of the 90° case.
+    box270 = remap_box([40, 0, 60, 20], 270, (200, 100), (100, 200))
+    assert box270[2] > 195  # the far edge touches the right side (200)
+    assert 30 < box270[1] < 70 and 30 < box270[3] < 70
 
 
 def test_admit_and_remap_keeps_only_real_text() -> None:
@@ -444,7 +451,7 @@ def test_admit_and_remap_keeps_only_real_text() -> None:
     kept, rejected = admit_and_remap(dets, 90, (200, 100), (100, 200))
     assert len(kept) == 1
     assert kept[0]["text"] == "HERNSPETH HOUSE"
-    assert kept[0]["box"][2] > 195  # remapped to the original frame (right edge)
+    assert kept[0]["box"][0] < 5  # remapped to the original frame (left edge — 2026-08-20 fix)
     assert len(rejected) == 3
 
 
@@ -1050,7 +1057,7 @@ class TestRecognizeExtra:
     is out of bounds, recognition returns nothing, or the recognized
     text is wildly out of sync with the box's reading axis (Gate C)."""
 
-    def _png(self, tmp_path, w: int, h: int, rgb=(200, 200, 200)) -> Path:
+    def _png(self, tmp_path, w: int, h: int, rgb=(40, 40, 40)) -> Path:
         img = Image.new("RGB", (w, h), rgb)
         path = tmp_path / "page.png"
         img.save(path)
@@ -1176,3 +1183,135 @@ class TestRecognizeExtra:
         assert "anchored line" in texts
         assert "the true text" in texts  # the first extra recognized
         assert "frag" not in texts  # the second extra's recognition failed -> dropped
+
+
+def test_multi_layout_trusts_clip_report_degrees_over_the_pass() -> None:
+    """A clip-sourced report's located degrees are the line's TRUE
+    orientation (the clip classifier measures the exact angle of the
+    actual text — the designed fix for the full-page call's 90-vs-270
+    flip). The pass orientation is a rotated-frame artifact: page-03's
+    horizontal lines were content-matched during the mirrored 90° pass
+    and labeled 90° — wrong for the UI rotation and the reading order.
+    With ``trust_report_degrees`` (the clip source), the located degrees
+    win; without it the full-page report's estimates stay untrusted
+    (the 2026-08-17 decision, test above)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (0, [{"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []}]),
+            (90, [{"text": "my first Theory", "box": [501, 201, 999, 252], "score": 0.9, "words": []}]),
+        ],
+        report_lines=[
+            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+            # the clip classifier located the line at 0 (it IS horizontal);
+            # the 90° pass merely read the mirrored frame
+            {"index": 1, "box": [500, 200, 1000, 252], "degrees": 0},
+        ],
+        vlm_text="POST CARD\nmy first Theory lesson to",
+        trust_report_degrees=True,
+    )
+    line = [ln for ln in layout["lines"] if "Theory" in ln["text"]][0]
+    assert line["orientation"] == 0, f"the located degrees must win over the pass, was {line['orientation']}"
+
+
+def test_multi_layout_uses_the_match_box_when_the_report_box_misses_the_ink() -> None:
+    """The report's located box is an anchor only when it claims the same
+    ink the rec matched — page-03's transcription boxes sat ~200px above
+    the real text (the model's estimate failed), while the detector found
+    the line. A report box disjoint from the matched detection is an
+    estimate, not geometry: the layout must use the rec match's box
+    (2026-08-20)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                0,
+                [
+                    {
+                        "text": "P.S. I had a whole Grade 3A",
+                        "box": [100, 400, 480, 440],  # the rec found the text HERE
+                        "score": 0.95,
+                        "words": [],
+                    }
+                ],
+            ),
+        ],
+        report_lines=[
+            # the report claims the line ~200px ABOVE the actual text
+            {"index": 0, "box": [100, 150, 480, 190], "degrees": 0},
+        ],
+        vlm_text="P.S. I had a whole Grade 3A",
+    )
+    line = layout["lines"][0]
+    assert line["box"] == [100, 400, 480, 440], f"the rec match's box must win, was {line['box']}"
+
+
+def test_multi_layout_rejects_an_inconsistent_report_angle_on_a_wide_box() -> None:
+    """Even a TRUSTED (clip) report's angle must be geometry-validated:
+    a 90° label on a 501x51 (wide) box is the classifier's error — the
+    box says horizontal text, so the line's orientation resolves to the
+    aspect-consistent 0 (2026-08-20: the clip classifier misread 2 of
+    page-03's tiny crops as 90°)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                90,
+                [
+                    {
+                        "text": "my first Theory lesson",
+                        "box": [100, 200, 601, 251],  # wide: horizontal text
+                        "score": 0.9,
+                        "words": [],
+                    }
+                ],
+            ),
+        ],
+        report_lines=[{"index": 0, "box": [100, 200, 601, 251], "degrees": 90}],
+        vlm_text="my first Theory lesson",
+        trust_report_degrees=True,
+    )
+    line = layout["lines"][0]
+    assert line["orientation"] == 0, f"the wide box must force 0, was {line['orientation']}"
+
+
+def test_multi_layout_extras_force_the_aspect_consistent_orientation() -> None:
+    """The extras' orientations are geometry-validated too: an extra
+    detected during the 90° pass but with a wide (merged) box is
+    horizontal text — the pass label is a rotated-frame artifact, the
+    line's orientation is 0 (2026-08-20: page-03's refused rebuild)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                90,
+                [
+                    {
+                        "text": "When Dr W. saw & di",
+                        "box": [100, 100, 351, 220],  # wide -> horizontal
+                        "score": 0.9,
+                        "words": [],
+                    }
+                ],
+            ),
+        ],
+        report_lines=None,
+    )
+    line = layout["lines"][0]
+    assert line["orientation"] == 0, f"the wide extra box must force 0, was {line['orientation']}"

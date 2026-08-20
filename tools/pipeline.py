@@ -671,7 +671,11 @@ def _clip_orientation_report(
             if result is not None:
                 lines.append(result)
     lines.sort(key=lambda ln: ln["index"])
-    return {"orientation_hint": [], "lines": lines}
+    # "source": "clip" tells the layout stage the per-line degrees are
+    # measured from the actual text (exact angles) — trusted over the
+    # rec-pass orientations (2026-08-20: a mirrored-pass artifact
+    # labeled page-03's horizontal lines 90°).
+    return {"orientation_hint": [], "source": "clip", "lines": lines}
 
 
 def _commit_orientation_report(store: PipelineStore, out_rel: str, page: str, report: dict[str, Any]) -> None:

@@ -408,7 +408,7 @@ def test_layout_detections_keeps_the_vlm_text_as_the_anchor(tmp_path: Path) -> N
 def test_admission_gate_requires_real_text_at_the_orientation() -> None:
     """A line is admitted only when the recognizer read real text:
     confidence AND plausibility — never on box shape alone (VR15)."""
-    from tools.layout import admission_gate
+    from tools.layout import is_admissible as admission_gate
 
     assert admission_gate("HERNSPETH HOUSE", 0.93)
     assert not admission_gate("mo", 0.5)  # two letters but low confidence
@@ -841,7 +841,7 @@ def test_reading_order_sorts_top_to_bottom_then_left_to_right() -> None:
     top-to-bottom; same-y-band blocks keep their input order (the old
     reading-start sort's left-to-right tie-break is subsumed by the
     block clustering — side-by-side blocks are separate clusters)."""
-    from tools.layout import order_lines_by_blocks
+    from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
         {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
@@ -856,7 +856,7 @@ def test_reading_order_180_line_reads_after_the_upright_header() -> None:
     """An upside-down (180°) line's block sorts by its box top — a block
     physically higher reads first; the orientation itself is untouched
     (never rounded)."""
-    from tools.layout import order_lines_by_blocks
+    from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
         {"index": 0, "box": [100, 100, 300, 120], "orientation": 180},
@@ -871,7 +871,7 @@ def test_reading_order_handles_exact_near_cardinal_angles() -> None:
     """The clip classifier returns exact angles (88.4, 271.2, 358.7); the
     block order clusters by ink (orientation-independent) and never
     rounds the stored orientation."""
-    from tools.layout import order_lines_by_blocks
+    from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
         {"index": 0, "box": [100, 400, 300, 420], "orientation": 88.4},
@@ -885,7 +885,7 @@ def test_reading_order_handles_exact_near_cardinal_angles() -> None:
 def test_reading_order_preserves_line_index() -> None:
     """The ordering reorders the display list but keeps each line's index —
     the review surface keys edits and selections by index."""
-    from tools.layout import order_lines_by_blocks
+    from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
         {"index": 7, "box": [100, 300, 300, 320], "orientation": 0},
@@ -896,7 +896,7 @@ def test_reading_order_preserves_line_index() -> None:
 
 
 def test_reading_order_boxless_lines_last_in_input_order() -> None:
-    from tools.layout import order_lines_by_blocks
+    from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
         {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
@@ -908,7 +908,7 @@ def test_reading_order_boxless_lines_last_in_input_order() -> None:
 
 
 def test_reading_order_is_stable_for_equal_starts() -> None:
-    from tools.layout import order_lines_by_blocks
+    from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
         {"index": 0, "box": [100, 100, 300, 120], "orientation": 0},
@@ -919,7 +919,7 @@ def test_reading_order_is_stable_for_equal_starts() -> None:
 
 
 def test_reading_order_degenerate_box_does_not_crash() -> None:
-    from tools.layout import order_lines_by_blocks
+    from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
         {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
@@ -1580,7 +1580,7 @@ def test_block_order_reads_each_block_whole() -> None:
     interleave of overlapping blocks (the 0° top and the 90° message
     bounced per line). Within a block, the TRANSCRIPTION order is
     preserved."""
-    from tools.layout import order_lines_by_blocks
+    from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
         {"index": 0, "text": "POST CARD", "box": [1575, 73, 2240, 222], "orientation": 0},
@@ -1608,7 +1608,7 @@ def test_block_order_keeps_boxless_lines_in_place() -> None:
     """A boxless line has no block — it stays in its transcription
     position (the postcard's stamp lines, boxless after the arbitration,
     read after the address block)."""
-    from tools.layout import order_lines_by_blocks
+    from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
         {"index": 0, "text": "message line", "box": [100, 100, 200, 900], "orientation": 90},
@@ -1672,7 +1672,7 @@ def test_box_overlap_is_intersection_over_the_smaller_box() -> None:
     and Gate E all consumed the inflated value. The overlap is the
     intersection over the SMALLER box: identical = 1, disjoint = 0,
     half-covered = 0.5."""
-    from tools.layout import _box_overlap
+    from tools.box import overlap as _box_overlap
 
     assert _box_overlap([0, 0, 100, 100], [0, 0, 100, 100]) == 1.0
     assert _box_overlap([0, 0, 100, 100], [200, 200, 300, 300]) == 0.0

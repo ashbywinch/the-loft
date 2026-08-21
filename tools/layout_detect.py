@@ -29,13 +29,11 @@ from paddleocr import PaddleOCR
 from PIL import Image
 
 from tools.layout import (
+    Layout,
     admit_and_remap,
-    build_layout,
-    drop_inkless_boxes,
     load_orientation_hint,
     load_orientation_report,
     load_vlm_boxes,
-    multi_layout,
     orientation_passes,
     write_layout_store,
 )
@@ -136,7 +134,7 @@ def layout_page(
     the rest (2026-08-16: the rec cannot read cursive and merges/misses
     its lines)."""
     raw = detect_page(engine, image)
-    return build_layout(
+    return Layout.single(
         image.name,
         raw["width"],
         raw["height"],
@@ -206,7 +204,7 @@ def layout_page_multi(
     for degrees in orientations:
         kept, _ = pass_at(engine, image, degrees, ow, oh)
         passes.append((degrees, kept))
-    return multi_layout(
+    return Layout.multi(
         image.name,
         ow,
         oh,
@@ -300,9 +298,7 @@ def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str) -> Non
             vlm_text=vlm_text,
             trust_report_degrees=report.get("source") == "clip",
         )
-        print(
-            f"layout: {image.name} multi-orientation {orientations} (passes {passes}) -> {len(layout['lines'])} lines"
-        )
+        print(f"layout: {image.name} multi-orientation {orientations} (passes {passes}) -> {len(layout.lines)} lines")
     else:
         selfreport_path = guess_dir / f"{image.stem}.selfreport.json"
         selfreport = None
@@ -314,17 +310,17 @@ def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str) -> Non
     # page-03's transcription boxes sat ~200px above the real text, and
     # a well-proportioned box in a blank region is an estimate, not an
     # anchor; the box is dropped (the line stays flagged).
-    inkless = drop_inkless_boxes(layout["lines"], image)
+    inkless = layout.drop_inkless(image)
     if inkless:
         print(f"layout: {image.name} — {inkless} box(es) with no ink dropped (Gate D)", file=sys.stderr)
     out = guess_dir / f"{image.stem}.layout.json"
     store = PipelineStore(WORK_DIR)
     store_path = str(Path(batch_id) / "ocr-guess" / out.name)
-    write_layout_store(layout, store, store_path)
-    flagged = sum(1 for line in layout["lines"] for w in line["words"] if w["conf"] == 0.0)
+    write_layout_store(layout.to_dict(), store, store_path)
+    flagged = sum(1 for line in layout.lines for w in line["words"] if w["conf"] == 0.0)
     print(
-        f"layout: {image.name} {len(layout['lines'])} lines, "
-        f"{len(layout['unmatched'])} unmatched, {flagged} flagged words -> {out.name}"
+        f"layout: {image.name} {len(layout.lines)} lines, "
+        f"{len(layout.unmatched)} unmatched, {flagged} flagged words -> {out.name}"
     )
 
 

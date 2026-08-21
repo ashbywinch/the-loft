@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from tools.box import overlap
+from tools.gates import validate_layout
 from tools.layout import Detection, Layout
 from tools.text import normalize
 
@@ -36,7 +37,9 @@ class TruthLine:
 @dataclass
 class Fixture:
     """A tricky page: the geometry inputs (what the pipeline consumes)
-    plus the known truth."""
+    plus the known truth. The builder verbs run the layout from a given
+    geometry source — each candidate is one way the pipeline could
+    anchor the lines."""
 
     name: str
     width: int
@@ -44,6 +47,63 @@ class Fixture:
     detections: list[Detection]
     marker_boxes: dict[int, list[float]] | None
     truth: list[TruthLine]
+
+    def _vlm_text(self) -> str:
+        return "\n".join(t.text for t in self.truth)
+
+    def baseline(self) -> dict[str, Any]:
+        """The current pipeline: the transcription's own boxes (the marker
+        geometry) anchor the single-orientation layout."""
+        return Layout.single(
+            "p1.jpg",
+            self.width,
+            self.height,
+            self._vlm_text(),
+            self.detections,
+            vlm_boxes=self.marker_boxes,
+        ).to_dict()
+
+    def rec_only(self) -> dict[str, Any]:
+        """Candidate: the rec association's ink-grounded boxes instead of
+        the marker geometry (no vlm_boxes) — the misplaced-marker
+        failing's proposed fix."""
+        return Layout.single(
+            "p1.jpg",
+            self.width,
+            self.height,
+            self._vlm_text(),
+            self.detections,
+            vlm_boxes=None,
+        ).to_dict()
+
+    def multi(self) -> dict[str, Any]:
+        """The multi-orientation layout: the report LOCATES the known text
+        at its true boxes (the truth, normalized), the passes validate."""
+        report_lines = [
+            {
+                "index": i,
+                "box": [
+                    t.box[0] / self.width * 1000,
+                    t.box[1] / self.height * 1000,
+                    t.box[2] / self.width * 1000,
+                    t.box[3] / self.height * 1000,
+                ],
+                "degrees": t.orientation,
+            }
+            for i, t in enumerate(self.truth)
+        ]
+        passes: list[tuple[int, list[dict[str, Any]]]] = cast(
+            "list[tuple[int, list[dict[str, Any]]]]", [(0, self.detections)]
+        )
+        return Layout.multi(
+            "p1.jpg",
+            self.width,
+            self.height,
+            passes,
+            report_lines=report_lines,
+            vlm_text=self._vlm_text(),
+            trust_report_degrees=True,
+        ).to_dict()
 
 
 @dataclass
@@ -153,30 +213,82 @@ def report(fixtures: list[Fixture], builder: Any, label: str) -> str:
     return f"{label}:\n" + "\n".join(rows)
 
 
-def baseline_builder(fixture: Fixture) -> dict[str, Any]:
-    """The current pipeline: the single-orientation layout with the
-    transcription's own boxes (the marker geometry)."""
-    vlm_text = "\n".join(t.text for t in fixture.truth)
-    return Layout.single(
-        "p1.jpg",
-        fixture.width,
-        fixture.height,
-        vlm_text,
-        fixture.detections,
-        vlm_boxes=fixture.marker_boxes,
-    ).to_dict()
+def synthetic_postcard() -> Fixture:
+    """A postcard back — the genuinely-multi case: the printed top (0°),
+    the handwritten message running vertically (90°), the address (0°).
+    The report's located boxes carry the truth (the model LOCATED the
+    known text); the pass detections are the rec's readings."""
+    width, height = 1000, 1500
+    printed = [
+        ("POST CARD", [300, 30, 700, 80], 0),
+        ("Printed in Great Britain", [300, 90, 700, 120], 0),
+    ]
+    message = [
+        ("We are from", [150, 200, 220, 700], 90),
+        ("beauford & Mrs", [240, 200, 310, 700], 90),
+        ("Hampshire", [330, 200, 400, 700], 90),
+    ]
+    address = [
+        ("Paul Wink", [500, 800, 900, 840], 0),
+        ("47 Brighton Grove", [500, 850, 900, 890], 0),
+    ]
+    all_lines = printed + message + address
+    truth = [
+        TruthLine(text, list(box), orientation, position) for position, (text, box, orientation) in enumerate(all_lines)
+    ]
+    detections = cast(
+        "list[Detection]",
+        [{"box": list(box), "text": text, "score": 0.95, "words": []} for text, box, _ in all_lines],
+    )
+    marker_boxes = {
+        i: [box[0] / width * 1000, box[1] / height * 1000, box[2] / width * 1000, box[3] / height * 1000]
+        for i, (_, box, _) in enumerate(all_lines)
+    }
+    return Fixture("synthetic-postcard", width, height, detections, marker_boxes, truth)
 
 
-def rec_only_builder(fixture: Fixture) -> dict[str, Any]:
-    """Candidate: the rec association's ink-grounded boxes instead of the
-    marker geometry (no vlm_boxes) — the misplaced-marker failing's
-    proposed fix."""
-    vlm_text = "\n".join(t.text for t in fixture.truth)
-    return Layout.single(
-        "p1.jpg",
-        fixture.width,
-        fixture.height,
-        vlm_text,
-        fixture.detections,
-        vlm_boxes=None,
-    ).to_dict()
+def duplicate_region_fixture() -> Fixture:
+    """The injected duplicate-region failing (the postcard's location
+    report gave two message lines the SAME box): the truth has the lines
+    at distinct positions; the report's boxes claim the same region. The
+    RegionGate must fire — the experiment's detection axis."""
+    width, height = 1000, 1500
+    truth = [
+        TruthLine("We are from", [150, 200, 220, 700], 90, 0),
+        TruthLine("beauford & Mrs", [240, 200, 310, 700], 90, 1),
+    ]
+    detections = cast(
+        "list[Detection]",
+        [{"box": list(t.box), "text": t.text, "score": 0.95, "words": []} for t in truth],
+    )
+    marker_boxes: dict[int, list[float]] = {0: [150.0, 200.0, 220.0, 700.0], 1: [150.0, 200.0, 220.0, 700.0]}
+    return Fixture("duplicate-region", width, height, detections, marker_boxes, truth)
+
+
+def loose_box_fixture() -> Fixture:
+    """The injected loose-box failing (the postcard's stamp lines): the
+    location report's box is ~8x the text's true extent (well-placed but
+    wildly loose), so Gate B fires and the anchor arbitration must drop
+    the box — the line stays flagged, never anchoring a box that refuses
+    the page."""
+    width, height = 1000, 1500
+    truth = [TruthLine("POSTAGE", [820, 300, 880, 320], 0, 0)]
+    detections = cast(
+        "list[Detection]",
+        [{"box": [820, 300, 880, 320], "text": "POSTAGE", "score": 0.95, "words": []}],
+    )
+    # the report's box: the same region but ~11x the width (the loose
+    # estimate — 'POSTAGE' in a 680px box is 97 px/char, over Gate B's 80)
+    marker_boxes = {0: [820 / width * 1000, 300 / height * 1000, 1500 / width * 1000, 320 / height * 1000]}
+    return Fixture("loose-box", width, height, detections, marker_boxes, truth)
+
+
+def detection_report(fixtures: list[Fixture], label: str) -> str:
+    """The detection axis: for the injected-failing fixtures, how many
+    gates fire (the failing is seen) and whether the layout refuses."""
+    rows = []
+    for fixture in fixtures:
+        layout = fixture.baseline()
+        findings = validate_layout(layout)
+        rows.append(f"  {fixture.name:<20} gate findings {len(findings):>2}  refuses: {bool(findings)}")
+    return f"{label}:\n" + "\n".join(rows)

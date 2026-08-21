@@ -596,3 +596,65 @@ before the test gate; the complexity/long-param-list findings drove the
 right extractions, and the repo's per-site `# lucidlint: ignore
 long-param-list` + why pattern (§9's conclusion) held up — only genuinely
 single-call-site helpers got the ignore, the rest were refactored.
+
+## 11. How lucidlint could have deterministically found the architecture pass's improvements (2026-08-20)
+
+The architecture pass (commit e576086) split the 1342-line
+`tools/layout.py` into `text.py` / `box.py` / `gates.py` / `reading.py` +
+the layout model, renamed the misleading identifiers, removed the dead
+reading-start sort, and cut the "what" comments. Every one of those
+improvements was found because the user PROMPTED for them — none of it
+was flagged by a tool. What a deterministic linter could have said:
+
+1. **The module-cohesion bar (the biggest miss).** `layout.py` held
+   seven responsibilities — the tokenization, the box math, the
+   validation gates, the reading order, the association, the anchor
+   arbitration, and the clip flow — interleaved in 54 functions. The
+   priority ranking already computes the per-file edge count (it
+   reported the P99 hotspot function) but never the MODULE's cohesion:
+   a module whose edges cross any sane bar AND whose private functions
+   span several sub-domains is a split candidate. Rule shape: the file
+   edge count over the fail bar + the number of distinct module-scope
+   groups → "split the module at the domain seams". Deterministic,
+   data-only, and it would have fired years of debt ago.
+2. **The dead code after a refactor.** When the block-aware order
+   replaced the reading-start sort, `reading_start` and
+   `order_lines_by_reading` survived as unused module functions for a
+   full commit. `unreachable` catches statements-after-return, not
+   orphaned functions; `stale-suppression` caught the orphaned ignores
+   but not the dead bodies. Rule shape: a module-scope def never
+   referenced anywhere in the repo (excluding the re-export pattern, the
+   test imports, and the `__main__` dispatch) → flag. Cheap, exact,
+   and it would have deleted the dead sort at the same commit.
+3. **The name collisions.** `admission_gate` (the rec admission rule)
+   sat beside the `Gate` classes (the validation gates) — the same term
+   for two different concepts, legible only with the context the
+   context-free agent lacks. Rule shape: a repo's domain-term registry
+   (the class names) + the flagging of a function whose name reuses a
+   class term for a different concept. Heuristic, but the collisions are
+   exactly what the AST can see.
+4. **The near-duplicates.** The aspect-consistency rule and the
+   text-extent rule each lived in BOTH the gates and the layout's
+   arbitration (the `_box_sync` / `_aspect_consistent` copies) before
+   the split. Rule shape: the same body in two module-scope defs (the
+   AST-equality or the normalized-token-equality) → "extract the shared
+   module" — the extract-method engine already has the machinery.
+5. **The "what" comments.** The heaviest comment load restated the body
+   ("the line's orientation must be consistent with its box's aspect"
+   beside the four lines that say exactly that). Rule shape: a
+   docstring whose content words are a subset of the body's tokens →
+   "the docstring restates the code — name the concept instead". This
+   is the user's "great naming over comments" direction, mechanizable.
+
+**What lucidlint DID catch deterministically during the pass, and steered
+it:** the cyclomatic spikes drove every extraction (the gates, the
+dedupe, `multi_layout`, `_try_clip_report`, `_clip_source_boxes` — each
+went over CC-15 and each was split at the seam the tool named); the
+`stale-suppression` rule caught the orphaned ignores when the defs moved;
+the module-level mutable `GATES` collection was flagged; the
+long-param-list findings forced the suppression-with-a-real-why pattern.
+The tool's current rules are complexity-shaped — they shaped HOW the
+refactor happened but never WHERE. The five rules above are the missing
+"where": module cohesion, dead symbols, name collisions, near-duplicates,
+restating docstrings — all implementable on the AST the tool already
+walks, all deterministic, and all would have fired unprompted.

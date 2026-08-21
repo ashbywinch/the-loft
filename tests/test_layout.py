@@ -1615,3 +1615,69 @@ def test_block_order_keeps_boxless_lines_in_place() -> None:
         {"index": 1, "text": "POSTAGE", "box": None, "orientation": 0},
     ]
     assert [ln["text"] for ln in order_lines_by_blocks(lines)] == ["message line", "POSTAGE"]
+
+
+def test_validate_layout_catches_duplicate_region_claims() -> None:
+    """Gate E (2026-08-20): two lines whose boxes claim the same region
+    with DIFFERENT text is a geometry failing — the postcard's location
+    report gave 'We are from' and 'beauford & Mrs' the SAME box (the
+    model's message geometry duplicated). The same text in one region is
+    the dedupe's job (a fragment); different texts in one region is
+    ambiguity the review must see."""
+    from tools.layout import validate_layout
+
+    layout = {
+        "width": 3500,
+        "height": 2215,
+        "lines": [
+            {"text": "We are from", "box": [1505, 235, 1662, 1108], "orientation": 90},
+            {"text": "beauford & Mrs", "box": [1505, 235, 1662, 1108], "orientation": 90},  # the same box
+        ],
+    }
+    viol = validate_layout(layout)
+    assert any("same region" in v for v in viol), viol
+    # the same text in one region is NOT a duplicate-region violation
+    layout["lines"][1]["text"] = "We are from"
+    assert not [v for v in validate_layout(layout) if "same region" in v]
+
+
+def test_drop_inkless_boxes_removes_blank_estimates(tmp_path) -> None:
+    """Gate D (2026-08-20): a line's box must contain the ink it claims —
+    page-03's transcription boxes sat ~200px above the real text, and a
+    well-proportioned box in a blank region is an ESTIMATE, not an
+    anchor (the gates cannot see it: in-bounds, aspect-consistent,
+    text-synced). The layout stage checks the ink and drops the box —
+    the line stays flagged, the page stays reviewable."""
+    from tools.layout import drop_inkless_boxes
+
+    img = Image.new("RGB", (200, 200), (255, 255, 255))
+    for x in range(100, 140):
+        for y in range(20, 40):
+            img.putpixel((x, y), (40, 40, 40))  # ink at the TOP
+    img.save(tmp_path / "p1.png")
+    lines = [
+        {"index": 0, "text": "real line", "box": [100, 20, 140, 40]},  # on the ink
+        {"index": 1, "text": "P.S. I had a whole", "box": [100, 150, 180, 190]},  # blank region
+    ]
+    dropped = drop_inkless_boxes(lines, tmp_path / "p1.png")
+    assert dropped == 1
+    assert lines[0]["box"] == [100, 20, 140, 40]
+    assert lines[1]["box"] is None, "the blank-region box is an estimate — dropped, flagged"
+
+
+def test_box_overlap_is_intersection_over_the_smaller_box() -> None:
+    """2026-08-20: the zero-division guard was ``min(a, b, eps)`` — the
+    epsilon is the MINIMUM, so every overlap divided by 1e-9 and any
+    1px intersection read as ~1e12. The dedupe, the anchor arbitration
+    and Gate E all consumed the inflated value. The overlap is the
+    intersection over the SMALLER box: identical = 1, disjoint = 0,
+    half-covered = 0.5."""
+    from tools.layout import _box_overlap
+
+    assert _box_overlap([0, 0, 100, 100], [0, 0, 100, 100]) == 1.0
+    assert _box_overlap([0, 0, 100, 100], [200, 200, 300, 300]) == 0.0
+    # the taller strip covers half the wide box's area, the wide box
+    # fully contains the strip — over the SMALLER (the strip) = 1.0
+    assert _box_overlap([0, 0, 100, 100], [25, 0, 75, 100]) == 1.0
+    # half the smaller box's area is inside the other
+    assert _box_overlap([0, 0, 100, 100], [50, 0, 150, 100]) == 0.5

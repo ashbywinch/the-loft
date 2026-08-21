@@ -31,6 +31,7 @@ from PIL import Image
 from tools.layout import (
     admit_and_remap,
     build_layout,
+    drop_inkless_boxes,
     load_orientation_hint,
     load_orientation_report,
     load_vlm_boxes,
@@ -309,6 +310,13 @@ def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str) -> Non
             selfreport = json.loads(selfreport_path.read_text(encoding="utf-8"))
         vlm_boxes = load_vlm_boxes(guess_dir / f"{image.stem}.vlm.json")
         layout = layout_page(engine, image, vlm_path.read_text(encoding="utf-8"), selfreport, vlm_boxes)
+    # Gate D (2026-08-20): a boxed line must contain the ink it claims —
+    # page-03's transcription boxes sat ~200px above the real text, and
+    # a well-proportioned box in a blank region is an estimate, not an
+    # anchor; the box is dropped (the line stays flagged).
+    inkless = drop_inkless_boxes(layout["lines"], image)
+    if inkless:
+        print(f"layout: {image.name} — {inkless} box(es) with no ink dropped (Gate D)", file=sys.stderr)
     out = guess_dir / f"{image.stem}.layout.json"
     store = PipelineStore(WORK_DIR)
     store_path = str(Path(batch_id) / "ocr-guess" / out.name)

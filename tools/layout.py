@@ -601,10 +601,14 @@ def _box_area(box: list[float]) -> float:
 
 def _box_overlap(a: list[float], b: list[float]) -> float:
     """The intersection over the SMALLER box — a tall strip inside a wide
-    box still claims the same region."""
+    box still claims the same region. (2026-08-20: the zero-division
+    guard was written as ``min(area_a, area_b, eps)`` — the epsilon is
+    the MINIMUM of the three, so every overlap divided by 1e-9 and any
+    1px intersection read as ~1e12; the dedupe, the anchor arbitration
+    and the gates all consumed the inflated value.)"""
     x = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
     y = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-    return (x * y) / min(_box_area(a), _box_area(b), _MIN_AREA_EPSILON)
+    return (x * y) / max(min(_box_area(a), _box_area(b)), _MIN_AREA_EPSILON)
 
 
 def _richness(line: dict[str, Any]) -> tuple[int, float]:
@@ -777,6 +781,39 @@ def _located_box(
             return scaled
         return None  # no candidate holds the text — boxless, flagged
     return match["box"] if match else None
+
+
+def drop_inkless_boxes(lines: list[dict[str, Any]], image: Path) -> int:
+    """Gate D (2026-08-20): a line's box must contain the ink it claims.
+    page-03's transcription boxes sat ~200px above the real text — a
+    well-proportioned box in a blank region is an ESTIMATE, not an
+    anchor, and the pure gates cannot see it (in-bounds,
+    aspect-consistent, text-synced). The layout stage checks the ink
+    share (the same deterministic rule as the clip guard) and drops the
+    box — the line stays flagged, the page stays reviewable. Returns the
+    count dropped; a missing/unreadable image drops nothing."""
+    if not lines:
+        return 0
+    try:
+        with Image.open(image) as im:
+            w, h = im.size
+            dropped = 0
+            for line in lines:
+                box = line.get("box")
+                if not isinstance(box, list) or len(box) != 4:
+                    continue
+                x0, y0, x1, y1 = (int(v) for v in box)
+                x0, y0 = max(0, x0), max(0, y0)
+                x1, y1 = min(w, x1), min(h, y1)
+                if x1 <= x0 or y1 <= y0:
+                    continue
+                gray = im.crop((x0, y0, x1, y1)).convert("L")
+                if sum(gray.histogram()[:128]) < _CLIP_INK_MIN * gray.width * gray.height:
+                    line["box"] = None
+                    dropped += 1
+            return dropped
+    except OSError:
+        return 0
 
 
 def _aspect_consistent(degrees: int, box: list[float] | None) -> bool:
@@ -1262,6 +1299,19 @@ def validate_layout(layout: dict[str, Any], tolerance: float = 4.0) -> list[str]
     violations: list[str] = []
     for line in layout.get("lines", []):
         violations.extend(_line_violations(line, width, height, tolerance))
+    # Gate E (2026-08-20): the same region claimed by DIFFERENT text is a
+    # geometry failing — the postcard's location report gave two message
+    # lines the SAME box. The same text in one region is the dedupe's job
+    # (a fragment); different texts in one region is ambiguity the review
+    # must see. The anchored lines' loose boxes may legitimately overlap
+    # slightly, so the bar is half the smaller box.
+    boxed = [(ln, ln.get("box")) for ln in layout.get("lines", []) if isinstance(ln.get("box"), list)]
+    for i, (a, ab) in enumerate(boxed):
+        for b, bb in boxed[i + 1 :]:
+            if _box_overlap(ab, bb) >= 0.5 and normalize(a.get("text", "")) != normalize(b.get("text", "")):
+                violations.append(
+                    f"{a.get('text', '')[:20]!r} and {b.get('text', '')[:20]!r}: same region claimed by different text"
+                )
     return violations
 
 

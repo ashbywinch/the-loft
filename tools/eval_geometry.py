@@ -14,6 +14,7 @@ pipeline's enhancement decisions.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import ceil
 from typing import Any, cast
 
 from tools.box import overlap
@@ -292,3 +293,107 @@ def detection_report(fixtures: list[Fixture], label: str) -> str:
         findings = validate_layout(layout)
         rows.append(f"  {fixture.name:<20} gate findings {len(findings):>2}  refuses: {bool(findings)}")
     return f"{label}:\n" + "\n".join(rows)
+
+
+@dataclass
+class LocationCost:
+    """The clip-location candidate's cost for one fixture: the number of
+    model calls and the estimated tokens. The model's per-call overhead
+    (the system prompt + the image tokens) dominates small batches — the
+    cost-effectiveness question the batch-size sweep answers."""
+
+    calls: int
+    tokens: int
+
+    def tokens_per_line(self, n_lines: int) -> float:
+        return self.tokens / n_lines if n_lines else 0.0
+
+
+# The model call's fixed overhead: the system prompt + one image's tokens.
+# A line clip at the marker-box resolution is ~a few hundred tokens; the
+# overhead is the dominant term at batch size 1.
+_OVERHEAD_TOKENS = 800
+_CLIP_TOKENS = 300
+
+
+def clip_location_cost(n_lines: int, batch_size: int) -> LocationCost:
+    """The cost of locating ``n_lines`` in batches of ``batch_size``:
+    each call carries the overhead + the batch's clips. The larger
+    batches amortize the overhead — the sweep's point."""
+    calls = ceil(n_lines / batch_size) if n_lines else 0
+    tokens = calls * _OVERHEAD_TOKENS + n_lines * _CLIP_TOKENS
+    return LocationCost(calls, tokens)
+
+
+class ClipLocation:
+    """The clip-location candidate (2026-08-20): clip each line's marker
+    box, ask the model to LOCATE the batch's lines (the exact box within
+    the clip + the angle), map the crop boxes back to the page. The
+    batch size is the experimental variable — one call per batch, not
+    one per line. The SIMULATED locator is perfect WITHIN the clip but
+    inherits the crop quality: a marker box that misses the line's ink
+    (page-03's misplaced boxes) yields a blank clip no model can locate —
+    the line falls back to the rec's match. The real model calls are the
+    eval's."""
+
+    def __init__(self, batch_size: int) -> None:
+        self.batch_size = batch_size
+
+    def __call__(self, fixture: Fixture) -> dict[str, Any]:
+        report_lines = []
+        for i, t in enumerate(fixture.truth):
+            marker = fixture.marker_boxes.get(i) if fixture.marker_boxes else None
+            if marker:
+                scaled = [
+                    marker[0] / 1000 * fixture.width,
+                    marker[1] / 1000 * fixture.height,
+                    marker[2] / 1000 * fixture.width,
+                    marker[3] / 1000 * fixture.height,
+                ]
+                locatable = overlap(scaled, t.box) > 0
+            else:
+                locatable = False
+            if locatable:
+                report_lines.append(
+                    {
+                        "index": i,
+                        "box": [
+                            t.box[0] / fixture.width * 1000,
+                            t.box[1] / fixture.height * 1000,
+                            t.box[2] / fixture.width * 1000,
+                            t.box[3] / fixture.height * 1000,
+                        ],
+                        "degrees": t.orientation,
+                    }
+                )
+        vlm_text = "\n".join(t.text for t in fixture.truth)
+        passes: list[tuple[int, list[dict[str, Any]]]] = cast(
+            "list[tuple[int, list[dict[str, Any]]]]", [(0, fixture.detections)]
+        )
+        return Layout.multi(
+            "p1.jpg",
+            fixture.width,
+            fixture.height,
+            passes,
+            report_lines=report_lines or None,
+            vlm_text=vlm_text,
+            trust_report_degrees=True,
+        ).to_dict()
+
+
+def batch_sweep(fixtures: list[Fixture], batch_sizes: list[int]) -> str:
+    """The clip-location sweep: the accuracy at each batch size (the
+    simulated perfect model — the ceiling) + the cost model's tokens per
+    line. The question: does the accuracy hold as the batches grow, and
+    how much does the per-line cost drop?"""
+    rows = ["  batch  calls  tokens/line  accuracy"]
+    for fixture in fixtures:
+        n = len(fixture.truth)
+        for size in batch_sizes:
+            metrics = measure(ClipLocation(size)(fixture), fixture)
+            cost = clip_location_cost(n, size)
+            rows.append(
+                f"  {size:>5}  {cost.calls:>5}  {cost.tokens_per_line(n):>10.0f}  "
+                f"IoU {metrics.anchor_iou:.2f} ori {metrics.orientation_accuracy:.2f}"
+            )
+    return "\n".join(rows)

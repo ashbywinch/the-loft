@@ -590,30 +590,76 @@ def _write_orientation_hints(
         _commit_orientation_report(store, out_rel, page, report)
 
 
-def _try_clip_report(store: PipelineStore, batch_id: str, page: str, oriented_dir: Path) -> dict[str, Any] | None:
+def _report_boxes(store: PipelineStore, batch_id: str, page: str) -> dict[int, list[float]]:
+    """The located report's per-line boxes (normalized 0-1000) — the clip
+    path's fallback when the transcription gave no geometry (the
+    postcard, 2026-08-20: the model LOCATED the known text, and the clip
+    classifier measures its exact angle). {} = nothing located."""
+    report_rel = f"{batch_id}/ocr-guess/{Path(page).stem}.orientation.json"
+    if not store.exists(report_rel):
+        return {}
+    try:
+        report = json.loads(store.read_latest(report_rel))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    boxes: dict[int, list[float]] = {}
+    located = (report.get("lines") or []) if isinstance(report, dict) else []
+    for ln in located:
+        if isinstance(ln, dict) and isinstance(ln.get("index"), int) and ln.get("box"):
+            boxes[int(ln["index"])] = ln["box"]
+    return boxes
+
+
+def _clip_source_boxes(store: PipelineStore, batch_id: str, page: str) -> dict[int, list[float]]:
+    """The boxes the clip path clips (extracted from _try_clip_report
+    2026-08-20 when the fallback pushed its cyclomatic complexity over
+    lucidlint's bar): the transcription's own per-line geometry, else the
+    located report's boxes — the transcription gave no geometry (the
+    postcard), the model LOCATED the known text, and the clip classifier
+    measures its exact angle. {} = nothing to clip (the full-page call
+    then stands)."""
+    raw_marker = f"{batch_id}/ocr-raw/{Path(page).stem}.vlm.json"
+    if not store.exists(raw_marker):
+        return {}
+    try:
+        marker = json.loads(store.read_latest(raw_marker))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    boxes: dict[int, list[float]] = {}
+    vlm_lines = marker.get("lines") if isinstance(marker, dict) else None
+    if vlm_lines:
+        for position, ln in enumerate(vlm_lines):
+            if isinstance(ln, dict) and "box" in ln:
+                boxes[position] = ln["box"]
+    if not boxes:
+        # the transcription gave no per-line geometry — the located
+        # report's boxes stand in (the model located the known text)
+        boxes = _report_boxes(store, batch_id, page)
+    return boxes
+
+
+def _try_clip_report(
+    store: PipelineStore,
+    batch_id: str,
+    page: str,
+    oriented_dir: Path,
+    *,
+    classify: Callable[[Path], float] | None = None,
+) -> dict[str, Any] | None:
     """The clip path's envelope: read the transcription geometry and build
     the per-line clip-and-classify report, or return None (the full-page
     call then stands). None on ANY failure — the contract is "no clip
     report", never a crash; a missing marker or malformed geometry simply
-    falls back."""
-    raw_marker = f"{batch_id}/ocr-raw/{Path(page).stem}.vlm.json"
-    if not store.exists(raw_marker):
-        return None
-    try:
-        marker = json.loads(store.read_latest(raw_marker))
-    except (OSError, json.JSONDecodeError):
-        return None
-    vlm_lines = marker.get("lines") if isinstance(marker, dict) else None
-    if not vlm_lines:
-        return None
-    boxes: dict[int, list[float]] = {}
-    for position, ln in enumerate(vlm_lines):
-        if isinstance(ln, dict) and "box" in ln:
-            boxes[position] = ln["box"]
+    falls back. When the transcription gave NO geometry (the postcard,
+    2026-08-20), the EXISTING report's located boxes stand in — the model
+    located the known text, and the clip classifier can measure its
+    EXACT angle (the 90-vs-270 flip the full-page estimate cannot
+    resolve)."""
+    boxes = _clip_source_boxes(store, batch_id, page)
     if not boxes:
         return None
     try:
-        return _clip_orientation_report(oriented_dir / page, boxes)
+        return _clip_orientation_report(oriented_dir / page, boxes, classify=classify)
     # the clip path's only failure types: tempfile/PIL (OSError) and the
     # classifier (VlmError); a clip failure falls back to the full-page call
     except (VlmError, OSError) as exc:

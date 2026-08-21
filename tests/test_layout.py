@@ -837,124 +837,96 @@ def test_layout_run_batch_skips_implicit_page_without_guess(tmp_path: Path) -> N
 
 
 def test_reading_order_sorts_top_to_bottom_then_left_to_right() -> None:
-    from tools.layout import order_lines_by_reading
+    """The block order clusters the lines by ink and reads the blocks
+    top-to-bottom; same-y-band blocks keep their input order (the old
+    reading-start sort's left-to-right tie-break is subsumed by the
+    block clustering — side-by-side blocks are separate clusters)."""
+    from tools.layout import order_lines_by_blocks
 
     lines = [
         {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
         {"index": 1, "box": [100, 100, 300, 120], "orientation": 0},
         {"index": 2, "box": [400, 100, 600, 120], "orientation": 0},
     ]
-    ordered = order_lines_by_reading(lines)
-    assert [ln["index"] for ln in ordered] == [1, 2, 0]  # top band left→right, then the lower line
+    ordered = order_lines_by_blocks(lines)
+    assert [ln["index"] for ln in ordered] == [1, 2, 0]  # top band first, then the lower line
 
 
-def test_reading_order_180_line_sorts_by_bottom_right() -> None:
-    """An upside-down line's first character sits at the visual bottom-right
-    of its box — it sorts by (x1, y1), not (x0, y0). A 180° line PHYSICALLY
-    higher on the page still reads first (its reading-start y is smaller)."""
-    from tools.layout import order_lines_by_reading
+def test_reading_order_180_line_reads_after_the_upright_header() -> None:
+    """An upside-down (180°) line's block sorts by its box top — a block
+    physically higher reads first; the orientation itself is untouched
+    (never rounded)."""
+    from tools.layout import order_lines_by_blocks
 
     lines = [
         {"index": 0, "box": [100, 100, 300, 120], "orientation": 180},
         {"index": 1, "box": [100, 200, 300, 220], "orientation": 0},
     ]
-    # the 180 line's reading start is (300, 120) — y=120, ABOVE the 0 line's
-    # (100, 200) — so it reads first despite being upside down
-    ordered = order_lines_by_reading(lines)
+    ordered = order_lines_by_blocks(lines)
     assert [ln["index"] for ln in ordered] == [0, 1]
-
-
-def test_reading_order_90_line_sorts_by_top_of_vertical_text() -> None:
-    """A 90° line reads top-to-bottom; its first character is the top-left
-    of the tall box — it sorts by (x0, y0)."""
-    from tools.layout import order_lines_by_reading
-
-    lines = [
-        {"index": 0, "box": [100, 400, 160, 900], "orientation": 90},
-        {"index": 1, "box": [100, 100, 300, 120], "orientation": 0},
-    ]
-    ordered = order_lines_by_reading(lines)
-    assert [ln["index"] for ln in ordered] == [1, 0]  # the header at y100 first, then the 90° message
-
-
-def test_reading_order_270_line_sorts_by_bottom_left() -> None:
-    """A 270° line reads bottom-to-top; its first character is the bottom
-    of the box — (x0, y1)."""
-    from tools.layout import order_lines_by_reading
-
-    lines = [
-        {"index": 0, "box": [100, 100, 160, 900], "orientation": 270},
-        {"index": 1, "box": [100, 50, 300, 70], "orientation": 0},
-    ]
-    # the 270 line's reading start is (100, 900) — BELOW the 0° line (100, 50)
-    ordered = order_lines_by_reading(lines)
-    assert [ln["index"] for ln in ordered] == [1, 0]
+    assert ordered[0]["orientation"] == 180  # the exact angle survives
 
 
 def test_reading_order_handles_exact_near_cardinal_angles() -> None:
-    """The clip classifier returns exact angles (88.4, 271.2, 358.7). The
-    reading-start corner is chosen by quadrant; the stored orientation is
-    NOT rounded."""
-    from tools.layout import order_lines_by_reading, reading_start
-
-    assert reading_start([100, 100, 300, 120], 358.7) == (100, 100)  # near 0 → top-left
-    assert reading_start([100, 100, 300, 120], 88.4) == (100, 100)  # near 90 → top-left
-    assert reading_start([100, 100, 300, 120], 181.5) == (300, 120)  # near 180 → bottom-right
-    assert reading_start([100, 100, 300, 120], 271.2) == (100, 120)  # near 270 → bottom-left
+    """The clip classifier returns exact angles (88.4, 271.2, 358.7); the
+    block order clusters by ink (orientation-independent) and never
+    rounds the stored orientation."""
+    from tools.layout import order_lines_by_blocks
 
     lines = [
         {"index": 0, "box": [100, 400, 300, 420], "orientation": 88.4},
         {"index": 1, "box": [100, 100, 300, 120], "orientation": 358.7},
     ]
-    ordered = order_lines_by_reading(lines)
+    ordered = order_lines_by_blocks(lines)
     assert [ln["index"] for ln in ordered] == [1, 0]
+    assert ordered[1]["orientation"] == 88.4
 
 
 def test_reading_order_preserves_line_index() -> None:
-    """The sort reorders the display list but keeps each line's index — the
-    review surface keys edits and selections by index."""
-    from tools.layout import order_lines_by_reading
+    """The ordering reorders the display list but keeps each line's index —
+    the review surface keys edits and selections by index."""
+    from tools.layout import order_lines_by_blocks
 
     lines = [
         {"index": 7, "box": [100, 300, 300, 320], "orientation": 0},
         {"index": 3, "box": [100, 100, 300, 120], "orientation": 0},
     ]
-    ordered = order_lines_by_reading(lines)
+    ordered = order_lines_by_blocks(lines)
     assert [ln["index"] for ln in ordered] == [3, 7]
 
 
 def test_reading_order_boxless_lines_last_in_input_order() -> None:
-    from tools.layout import order_lines_by_reading
+    from tools.layout import order_lines_by_blocks
 
     lines = [
         {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
         {"index": 1, "text": "no box"},
         {"index": 2, "box": [100, 100, 300, 120], "orientation": 0},
     ]
-    ordered = order_lines_by_reading(lines)
+    ordered = order_lines_by_blocks(lines)
     assert [ln["index"] for ln in ordered] == [2, 0, 1]
 
 
 def test_reading_order_is_stable_for_equal_starts() -> None:
-    from tools.layout import order_lines_by_reading
+    from tools.layout import order_lines_by_blocks
 
     lines = [
         {"index": 0, "box": [100, 100, 300, 120], "orientation": 0},
         {"index": 1, "box": [100, 100, 300, 120], "orientation": 0},
     ]
-    ordered = order_lines_by_reading(lines)
+    ordered = order_lines_by_blocks(lines)
     assert [ln["index"] for ln in ordered] == [0, 1]  # ties keep input order
 
 
 def test_reading_order_degenerate_box_does_not_crash() -> None:
-    from tools.layout import order_lines_by_reading
+    from tools.layout import order_lines_by_blocks
 
     lines = [
         {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
         {"index": 1, "box": [50, 50, 50, 50], "orientation": 0},  # zero-area
         {"index": 2, "box": [0, 0, 10, 10], "orientation": 0},
     ]
-    ordered = order_lines_by_reading(lines)
+    ordered = order_lines_by_blocks(lines)
     assert len(ordered) == 3
 
 
@@ -1598,3 +1570,48 @@ def test_multi_layout_keeps_text_order_when_orientations_resolve_single() -> Non
     texts = [ln["text"] for ln in layout["lines"]]
     assert texts == ["P.S. line one", "theory paper", "Postmark"], texts
     assert all(ln["orientation"] == 0 for ln in layout["lines"])
+
+
+def test_block_order_reads_each_block_whole() -> None:
+    """The block-aware reading order (2026-08-20, user's requirement): the
+    lines cluster into physical blocks (lines sharing ink), each block
+    reads WHOLE — the postcard's printed top (0°), then the vertical
+    message, then the address — never the reading-start sort's row-by-row
+    interleave of overlapping blocks (the 0° top and the 90° message
+    bounced per line). Within a block, the TRANSCRIPTION order is
+    preserved."""
+    from tools.layout import order_lines_by_blocks
+
+    lines = [
+        {"index": 0, "text": "POST CARD", "box": [1575, 73, 2240, 222], "orientation": 0},
+        {"index": 1, "text": "Printed in Great Britain", "box": [1295, 246, 1995, 301], "orientation": 0},
+        {"index": 2, "text": "We are from", "box": [1277, 343, 1540, 975], "orientation": 90},
+        {"index": 3, "text": "beauford & Mrs", "box": [1505, 235, 1662, 1108], "orientation": 90},
+        {"index": 4, "text": "Paul Wink", "box": [1999, 988, 3339, 1316], "orientation": 0},
+        {"index": 5, "text": "47 Brighton Grove", "box": [2142, 1376, 3479, 1692], "orientation": 0},
+    ]
+    ordered = order_lines_by_blocks(lines)
+    texts = [ln["text"] for ln in ordered]
+    # the printed top (block 1), then the message (block 2), then the
+    # address (block 3) — each whole, no interleave
+    assert texts == [
+        "POST CARD",
+        "Printed in Great Britain",
+        "We are from",
+        "beauford & Mrs",
+        "Paul Wink",
+        "47 Brighton Grove",
+    ], texts
+
+
+def test_block_order_keeps_boxless_lines_in_place() -> None:
+    """A boxless line has no block — it stays in its transcription
+    position (the postcard's stamp lines, boxless after the arbitration,
+    read after the address block)."""
+    from tools.layout import order_lines_by_blocks
+
+    lines = [
+        {"index": 0, "text": "message line", "box": [100, 100, 200, 900], "orientation": 90},
+        {"index": 1, "text": "POSTAGE", "box": None, "orientation": 0},
+    ]
+    assert [ln["text"] for ln in order_lines_by_blocks(lines)] == ["message line", "POSTAGE"]

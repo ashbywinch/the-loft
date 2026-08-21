@@ -301,33 +301,46 @@ def _words_out(
     return out
 
 
-def reading_start(box: list[float], orientation: float) -> tuple[float, float]:
-    """The corner where the line's FIRST character sits, in image pixels —
-    the reading start used for the physical reading-order sort. The
-    QUADRANT of the exact orientation picks the corner (the clip
-    classifier returns exact angles like 88.4 — not rounded to 90 for the
-    sort); the line's stored ``orientation`` stays exact.
-    0/90 → top-left (a 90° line reads top-to-bottom, so its first char is
-    the top of the tall box); 180 → bottom-right (upside-down text starts
-    at the visual bottom-right); 270 → bottom-left (text reads
-    bottom-to-top)."""
-    o = orientation % 360
-    x0, y0, x1, y1 = box
-    if 135 <= o < 225:
-        return (x1, y1)
-    if 225 <= o < 315:
-        return (x0, y1)
-    return (x0, y0)
+def _block_clusters(lines: list[dict[str, Any]]) -> list[list[int]]:
+    """The physical blocks: the connected components of the box-overlap
+    graph — lines sharing ink form a block (2026-08-20). Boxless lines
+    are singleton clusters (no box to share)."""
+    parent = list(range(len(lines)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    for i in range(len(lines)):
+        a = lines[i].get("box")
+        if not a:
+            continue
+        for j in range(i + 1, len(lines)):
+            b = lines[j].get("box")
+            if b and _box_overlap(a, b) > 0:
+                union(i, j)
+    clusters: dict[int, list[int]] = {}
+    for i in range(len(lines)):
+        clusters.setdefault(find(i), []).append(i)
+    return list(clusters.values())
 
 
-def order_lines_by_reading(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Physical reading order for the review pane: a STABLE top-to-bottom,
-    left-to-right sort by each line's reading-start corner. The model's
-    transcription order scrambles multi-orientation pages (2026-08-20:
-    page-03's guess interleaved the P.S. box with the body). Each line's
-    ``index`` is PRESERVED — the review surface keys edits and selections
-    by it; only the display order changes. Boxless or degenerate lines
-    keep their input relative order, after the boxed lines."""
+def order_lines_by_blocks(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The block-aware reading order (2026-08-20, user's requirement):
+    cluster the lines into physical blocks (lines sharing ink), order the
+    blocks top-to-bottom by their topmost box, and within each block keep
+    the TRANSCRIPTION order — each block reads WHOLE with one rotation,
+    never the row-by-row interleave of overlapping blocks (the postcard's
+    0° top and 90° message bounced per line under the reading-start
+    sort). Boxless lines keep their input relative order. Each line's
+    ``index`` is preserved — the review surface keys edits by it."""
     boxed: list[dict[str, Any]] = []
     rest: list[dict[str, Any]] = []
     for line in lines:
@@ -336,15 +349,15 @@ def order_lines_by_reading(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
             boxed.append(line)
         else:
             rest.append(line)
-    # reading_start returns (x, y); the reading ORDER compares top-to-bottom
-    # first (y), then left-to-right (x)
-    boxed.sort(
-        key=lambda line: (
-            reading_start(line["box"], line.get("orientation", 0))[1],
-            reading_start(line["box"], line.get("orientation", 0))[0],
-        )
-    )
-    return boxed + rest
+    boxed_ids = {id(line) for line in boxed}
+    ordered: list[dict[str, Any]] = []
+    for cluster in sorted(
+        _block_clusters(boxed),
+        key=lambda c: min(boxed[i]["box"][1] for i in c),
+    ):
+        ordered.extend(boxed[i] for i in sorted(cluster))
+    ordered.extend(line for line in rest if id(line) not in boxed_ids)
+    return ordered
 
 
 # detections, self-report, VLM boxes — each consumed once by the pure pass; no second function shares the group
@@ -965,15 +978,16 @@ def _extra_lines(
 
 
 def _order_layout_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The layout's reading order (extracted from multi_layout 2026-08-20
-    when the resolved-orientation rule pushed its cyclomatic complexity
-    over lucidlint's bar): a page whose lines resolve to ONE orientation
-    reads in the TRANSCRIPTION order — the model read the page
-    block-by-block, so margin blocks never interleave (page-03). A
-    genuinely multi-orientation page reads by the physical reading-start
-    sort in the dominant frame (the postcard)."""
+    """The layout's reading order (2026-08-20, user's requirement): a
+    page whose lines resolve to ONE orientation reads in the
+    TRANSCRIPTION order — the model read the page block-by-block, so
+    margin blocks never interleave (page-03). A genuinely
+    multi-orientation page reads by the block-aware order: each physical
+    block (lines sharing ink) reads WHOLE, the blocks top-to-bottom —
+    the postcard's 0° top and 90° message never bounce per line, and
+    the rotation changes once per block."""
     if len({line.get("orientation", 0) for line in lines}) > 1:
-        return order_lines_by_reading(lines)
+        return order_lines_by_blocks(lines)
     return lines
 
 

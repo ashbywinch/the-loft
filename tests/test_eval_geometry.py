@@ -16,6 +16,7 @@ import pytest
 
 from tools.eval_geometry import measure, synthetic_letter, synthetic_postcard
 from tools.gates import validate_layout
+from tools.text import normalize
 
 pytestmark = pytest.mark.eval
 
@@ -74,3 +75,25 @@ def test_the_gates_catch_the_failings_when_they_reach_the_layout() -> None:
         "lines": [{"text": "POSTAGE", "box": [820, 200, 1500, 213], "orientation": 0}],  # 97 px/char
     }
     assert validate_layout(loose)
+
+
+def test_the_crop_grid_candidate_anchors_the_truth() -> None:
+    """The crop-grid candidate (2026-08-22): the page read as a grid of
+    overlapping crops, each crop's lines measured in the crop's own
+    frame, stitched into the page. The fixture's truth is known BY
+    CONSTRUCTION; the model-perfect local boxes must anchor at IoU 1.00
+    with full coverage — the quantified case for the geometry rework."""
+    fixture = synthetic_letter()
+    metrics = measure(fixture.crop_grid(), fixture)
+    assert metrics.anchor_iou == 1.0, f"the stitched crop boxes must be the truth: {metrics.anchor_iou}"
+    assert metrics.coverage == 1.0
+
+
+def test_the_crop_grid_dedupes_the_boundary_lines() -> None:
+    """The overlapping crops read the boundary lines TWICE — the stitched
+    layout must carry each line once (the cross-crop duplicates drop)."""
+    fixture = synthetic_letter()
+    layout = fixture.crop_grid()
+    texts = [normalize(ln["text"]) for ln in layout["lines"]]
+    assert len(texts) == len(set(texts)), "every truth line appears exactly once"
+    assert len(layout["lines"]) == len(fixture.truth)

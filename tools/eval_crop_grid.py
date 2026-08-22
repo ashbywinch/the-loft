@@ -46,7 +46,9 @@ def _content_bounds(layout: dict[str, Any]) -> tuple[float, float, float, float]
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def _read_crop(crop: CropReading, image_path: Path, tmp: Path, index: int) -> tuple[list[dict[str, Any]], int] | None:
+def _read_crop(
+    crop: CropReading, image_path: Path, tmp: Path, index: int, model: str
+) -> tuple[list[dict[str, Any]], int] | None:
     """Read ONE crop with the VLM — the text + the crop-local boxes.
     None when the call failed or the model gave no geometry. Returns
     (the lines, the token usage) on success."""
@@ -56,7 +58,7 @@ def _read_crop(crop: CropReading, image_path: Path, tmp: Path, index: int) -> tu
         im.crop(box).save(crop_path)
     t0 = monotonic()
     try:
-        text, usage = transcribe_image_vlm(crop_path, system=transcription_system_with_context())
+        text, usage = transcribe_image_vlm(crop_path, model=model, system=transcription_system_with_context())
         plain, boxes = parse_transcription_response(text)
     except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
         print(f"crop {index} FAILED: {str(exc)[:120]}", file=sys.stderr)
@@ -90,7 +92,9 @@ def _anchor_agreement(assembled: dict[str, Any], layout: dict[str, Any]) -> tupl
     return ious, matched
 
 
-def run(batch_id: str, page: str, work_dir: Path, cols: int = 2, rows: int = 3) -> dict[str, Any]:
+def run(
+    batch_id: str, page: str, work_dir: Path, cols: int = 2, rows: int = 3, model: str = "dynamic/image"
+) -> dict[str, Any]:
     """Read the page's crops, stitch, and report. Returns the report
     dict (the run's record — the geometry experiment's ledger)."""
     image_path = work_dir / batch_id / "oriented" / f"{page}.jpg"
@@ -108,7 +112,7 @@ def run(batch_id: str, page: str, work_dir: Path, cols: int = 2, rows: int = 3) 
     started = monotonic()
     with tempfile.TemporaryDirectory() as tmp:
         for i, crop in enumerate(crops):
-            read = _read_crop(crop, image_path, Path(tmp), i)
+            read = _read_crop(crop, image_path, Path(tmp), i, model)
             if read is None:
                 failed += 1
                 continue
@@ -150,8 +154,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cols", type=int, default=2)
     parser.add_argument("--rows", type=int, default=3)
     parser.add_argument("--work-dir", type=Path, default=WORK_DIR)
+    parser.add_argument("--model", default="dynamic/image", help="the gateway model to trial")
     args = parser.parse_args(argv)
-    report = run(args.batch_id, args.page, args.work_dir, args.cols, args.rows)
+    report = run(args.batch_id, args.page, args.work_dir, args.cols, args.rows, model=args.model)
     print(json.dumps(report, indent=1))
     return 0
 

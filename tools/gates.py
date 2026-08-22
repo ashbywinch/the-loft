@@ -134,10 +134,28 @@ class RegionGate(Gate):
         return findings
 
 
+class BoxlessGate(Gate):
+    """Gate F (2026-08-22, user: "I want boxless lines to fail during the
+    pipeline run so we can figure out how to fix our pipeline!"): a line
+    without a box is an unfinished pipeline result — the anchor
+    arbitration found no candidate that holds the text, which means the
+    geometry pass needs fixing, not a flag in the review. The page fails
+    loudly at the write; the reviewer never sees a half-anchored layout.
+    (The older ``None``-box-passes rule belongs to the flag era; the
+    user's explicit choice supersedes it.)"""
+
+    def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
+        return [
+            f"line {line.get('index', i)} is boxless — the pipeline must fix its geometry"
+            for i, line in enumerate(layout.get("lines", []))
+            if _boxed(line) is None
+        ]
+
+
 # The gates in their run order — the integrity first (a malformed box
 # cannot be checked for aspect or extent), then the line-level geometry,
 # then the region-level ambiguity. A tuple: the collection is fixed.
-GATES: tuple[Gate, ...] = (IntegrityGate(), AspectGate(), TextExtentGate(), RegionGate())
+GATES: tuple[Gate, ...] = (IntegrityGate(), AspectGate(), TextExtentGate(), RegionGate(), BoxlessGate())
 
 
 def validate_layout(layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:

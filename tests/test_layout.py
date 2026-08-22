@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
 from tools.layout import (
@@ -303,6 +304,45 @@ def test_layout_payload_declares_the_box_frame() -> None:
 
     layout = Layout("p.jpg", 100, 200, [], [])
     assert layout.to_dict()["box_space"] == "original-image"
+
+
+def test_validate_layout_rejects_a_boxless_line() -> None:
+    """2026-08-22 (user: "I want boxless lines to fail during the pipeline
+    run so we can figure out how to fix our pipeline!"): a line without a
+    box is an unfinished pipeline result — the page must FAIL loudly at
+    the write, never reach the review as a flag-riddled layout."""
+    from tools.gates import validate_layout
+
+    layout = {
+        "page": "p1.jpg",
+        "width": 100,
+        "height": 100,
+        "lines": [
+            {"index": 0, "text": "boxed line", "box": [0, 0, 50, 10], "conf": 1.0, "words": []},
+            {"index": 1, "text": "boxless line", "box": None, "conf": 0.0, "words": []},
+        ],
+        "unmatched": [],
+    }
+    assert validate_layout(layout)
+
+
+def test_write_layout_store_refuses_a_boxless_line(tmp_path: Path) -> None:
+    """The write gate (2026-08-22): a layout with a boxless line is
+    refused — the pipeline run fails loudly for that page, and the
+    reviewer never sees a half-anchored layout."""
+    from tools.layout import write_layout_store
+    from tools.pipeline_store import PipelineStore
+
+    store = PipelineStore(tmp_path)
+    layout = {
+        "page": "p1.jpg",
+        "width": 100,
+        "height": 100,
+        "lines": [{"index": 0, "text": "boxless line", "box": None, "conf": 0.0, "words": []}],
+        "unmatched": [],
+    }
+    with pytest.raises(ValueError, match="boxless"):
+        write_layout_store(layout, store, "b/ocr-guess/p1.layout.json")
 
 
 class TestRotateDetections:
@@ -810,7 +850,6 @@ def test_validate_layout_rejects_bad_boxes() -> None:
         "lines": [
             {"text": "post card", "box": [100, 100, 300, 140]},
             {"text": "message", "box": [50, 500, 250, 540]},
-            {"text": "no box", "box": None},
         ],
     }
     assert validate_layout(good) == []
@@ -965,6 +1004,36 @@ def test_reading_order_sorts_top_to_bottom_then_left_to_right() -> None:
     assert [ln["index"] for ln in ordered] == [1, 2, 0]  # top band first, then the lower line
 
 
+def test_layout_run_batch_returns_1_when_a_page_is_refused(tmp_path: Path) -> None:
+    """2026-08-22 (user: boxless lines must FAIL the pipeline run): a page
+    whose layout the gates refuse (a boxless line) makes the run FAIL —
+    return 1, never a silent 0 with the page missing from the output."""
+    from PIL import Image
+
+    _stub_paddleocr()
+    from tools.layout_detect import run_batch
+
+    work = tmp_path
+    (work / "adopt-0001" / "oriented").mkdir(parents=True)
+    (work / "adopt-0001" / "ocr-guess").mkdir(parents=True)
+    Image.new("RGB", (200, 100), (200, 200, 200)).save(work / "adopt-0001" / "oriented" / "p1.jpg")
+    (work / "adopt-0001" / "ocr-guess" / "p1.txt").write_text("boxed line\nboxless line", encoding="utf-8")
+
+    class _FakeEngine:
+        def predict(self, input, return_word_box=False):
+            return [
+                {
+                    "dt_polys": [[[0, 0], [100, 0], [100, 20], [0, 20]]],
+                    "rec_texts": ["boxed line"],
+                    "rec_scores": [0.9],
+                    "text_word_region": [],
+                }
+            ]
+
+    rc = run_batch("adopt-0001", None, work, _FakeEngine())
+    assert rc == 1
+
+
 def test_reading_order_180_line_reads_after_the_upright_header() -> None:
     """An upside-down (180°) line's block sorts by its box top — a block
     physically higher reads first; the orientation itself is untouched
@@ -1087,8 +1156,10 @@ def test_validate_layout_orientation_consistent_cases_pass() -> None:
     assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 300, 200], "orientation": 90}]))
     # no orientation field -> pass (nothing to check)
     assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50]}]))
-    # no box -> pass (the existing gate handles boxless lines elsewhere)
-    assert not validate_layout(_layout([{"text": "x" * 25, "orientation": 90}]))
+    # no box -> FAILS (2026-08-22, user: boxless lines must fail the
+    # pipeline run so the geometry pass gets fixed — the older
+    # boxless-passes rule is superseded)
+    assert validate_layout(_layout([{"text": "x" * 25, "orientation": 90}]))
 
 
 def test_validate_layout_text_length_matches_box_extent() -> None:
@@ -1127,8 +1198,9 @@ def test_validate_layout_text_length_reasonable_cases_pass() -> None:
     assert not validate_layout(_layout([{"text": "N.B", "box": [0, 0, 120, 50], "orientation": 0}]))
     # a vertical 500px box with ~25 chars at 90° -> axis is the height
     assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 90}]))
-    # no box -> pass (handled elsewhere)
-    assert not validate_layout(_layout([{"text": "anything", "orientation": 0}]))
+    # no box -> FAILS (2026-08-22, user: boxless lines must fail the
+    # pipeline run so the geometry pass gets fixed)
+    assert validate_layout(_layout([{"text": "anything", "orientation": 0}]))
     # no orientation -> the axis defaults to the width (horizontal)
     assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50]}]))
 

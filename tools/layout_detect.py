@@ -266,30 +266,53 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
                 file=sys.stderr,
             )
             return 2
-    missing: list[str] = []
-    for image in pages:
-        vlm_path = guess_dir / image.with_suffix(".txt").name
-        if not vlm_path.exists():
-            rc = _warn_missing_guess(image.name, vlm_path.name, page_names, wanted)
-            if rc:
-                return rc
-            missing.append(image.name)
-            continue
-        try:
-            _layout_one(engine, image, guess_dir, batch_id)
-        except ValueError as exc:  # lucidlint: ignore swallow one bad page must not kill the batch (2026-08-20)
-            # A refused layout write (invalid boxes) must not kill the
-            # batch (2026-08-20: page-12's out-of-image boxes crashed the
-            # whole run after 11 pages had laid out). Record, skip the
-            # page, continue — the serve path already refuses the page
-            # and the next pass can retry with fresh inputs.
-            print(f"layout: {image.name} refused — {str(exc)[:160]}", file=sys.stderr)
+    outcomes = [_process_page(engine, image, guess_dir, batch_id, page_names, wanted) for image in pages]
+    if 2 in outcomes:
+        return 2
+    refused = outcomes.count(1)
+    missing = _missing_guesses(guess_dir, pages, outcomes)
     if missing:
         print(
             f"layout: {len(missing)} page(s) skipped — no guess text: {', '.join(sorted(missing))}",
             file=sys.stderr,
         )
-    return 0
+    return 1 if refused else 0
+
+
+def _missing_guesses(guess_dir: Path, pages: list[Path], outcomes: list[int]) -> list[str]:
+    """The quietly-skipped pages: laid out 0 (or skipped implicitly) but
+    with no guess text — extracted for the complexity bar."""
+    return [
+        image.name
+        for image, outcome in zip(pages, outcomes, strict=True)
+        if outcome == 0 and not (guess_dir / image.with_suffix(".txt").name).exists()
+    ]
+
+
+# lucidlint: ignore long-param-list the page's six inputs are the run's own
+# locals — a parameter object would add a class for one call site
+def _process_page(
+    engine: Any,
+    image: Path,
+    guess_dir: Path,
+    batch_id: str,
+    page_names: list[str] | None,
+    wanted: set[str],
+) -> int:
+    """Lay ONE page out — 0 = laid out or quietly skipped, 1 = refused
+    (the gates: boxless lines now fail the run, 2026-08-22), 2 = fatal
+    (an explicitly requested page has no guess text). Split from
+    run_batch for the complexity bar."""
+    vlm_path = guess_dir / image.with_suffix(".txt").name
+    if not vlm_path.exists():
+        rc = _warn_missing_guess(image.name, vlm_path.name, page_names, wanted)
+        return 2 if rc else 0
+    try:
+        _layout_one(engine, image, guess_dir, batch_id)
+        return 0
+    except ValueError as exc:
+        print(f"layout: {image.name} refused — {str(exc)[:160]}", file=sys.stderr)
+        return 1
 
 
 def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str) -> None:

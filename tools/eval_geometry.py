@@ -136,33 +136,35 @@ class Fixture:
 
     def crop_grid(self) -> dict[str, Any]:
         """The crop-grid candidate (2026-08-22): each crop's lines
-        stitched into the page frame; the cross-crop duplicates (the
-        same line read in the overlapping crops) drop; the lines read in
-        the grid order. The text comes from the same model that measured
-        the boxes — no cross-engine matching."""
-        lines: list[dict[str, Any]] = []
-        for crop in self.crops or []:
-            for line in crop.lines:
-                if any(normalize(existing["text"]) == normalize(line["text"]) for existing in lines):
-                    continue  # the cross-crop duplicate — keep the first (the grid order)
-                lines.append(
-                    {
-                        "index": len(lines),
-                        "text": line["text"],
-                        "box": stitch_crop_box(crop, line["box"]),
-                        "conf": 1.0,
-                        "words": [],
-                        "box_source": "crop",
-                        "orientation": int(line.get("orientation", 0)),
-                    }
-                )
-        return {
-            "page": "p1.jpg",
-            "width": self.width,
-            "height": self.height,
-            "lines": lines,
-            "unmatched": [],
-        }
+        stitched into the page frame; the cross-crop duplicates drop;
+        the lines read in the grid order. The text comes from the same
+        model that measured the boxes — no cross-engine matching."""
+        return assemble_crop_grid(self.crops or [], "p1.jpg", self.width, self.height)
+
+
+def assemble_crop_grid(crops: list[CropReading], page: str, width: int, height: int) -> dict[str, Any]:
+    """The crop-grid assembly: each crop's lines stitched into the page
+    frame; the cross-crop duplicates (the same line read in the
+    overlapping crops) drop; the lines read in the grid order. The
+    load-bearing seam of the geometry rework (2026-08-22) — shared by
+    the fixture and the real runner."""
+    lines: list[dict[str, Any]] = []
+    for crop in crops:
+        for line in crop.lines:
+            if any(normalize(existing["text"]) == normalize(line["text"]) for existing in lines):
+                continue  # the cross-crop duplicate — keep the first (the grid order)
+            lines.append(
+                {
+                    "index": len(lines),
+                    "text": line["text"],
+                    "box": stitch_crop_box(crop, line["box"]),
+                    "conf": 1.0,
+                    "words": [],
+                    "box_source": "crop",
+                    "orientation": int(line.get("orientation", 0)),
+                }
+            )
+    return {"page": page, "width": width, "height": height, "lines": lines, "unmatched": []}
 
 
 @dataclass
@@ -217,7 +219,7 @@ def synthetic_letter() -> Fixture:
     return Fixture("synthetic-letter", width, height, detections, misplaced, truth_lines, crops)
 
 
-def _grid_crops(width: float, height: float, cols: int, rows: int, overlap: float = 0.08) -> list[CropReading]:
+def grid_crops(width: float, height: float, cols: int, rows: int, overlap: float = 0.08) -> list[CropReading]:
     """The crop grid: cols × rows with the given overlap fraction — the
     boundary lines are read in BOTH crops, and the cross-crop dedupe
     keeps one."""
@@ -244,7 +246,7 @@ def _crop_readings(truth_lines: list[TruthLine], width: int, height: int) -> lis
     xs = [t.box[0] for t in truth_lines] + [t.box[2] for t in truth_lines]
     ys = [t.box[1] for t in truth_lines] + [t.box[3] for t in truth_lines]
     bx0, by0 = min(xs), min(ys)
-    crops = _grid_crops(max(xs) - bx0, max(ys) - by0, 2, 3)
+    crops = grid_crops(max(xs) - bx0, max(ys) - by0, 2, 3)
     for crop in crops:
         crop.x += bx0
         crop.y += by0

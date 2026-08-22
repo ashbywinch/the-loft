@@ -58,7 +58,12 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path) -> in
         return 1
     pages = [p for p in sorted(oriented_dir.glob("*.jpg"))]  # all names, not just page-* (the phone-export duplicates)
     if page_names:
-        wanted = set(page_names)
+        # The CLI takes bare stems ("page-02"); the glob yields full
+        # filenames ("page-02.jpg") — normalize so the filter actually
+        # matches (2026-08-22: a raw ``p.name in wanted`` silently produced
+        # an empty page list and exit 0, a no-op that looked like success —
+        # the same bug layout_detect's filter had, 2026-08-20).
+        wanted = {p if p.endswith(".jpg") else p + ".jpg" for p in page_names}
         pages = [p for p in pages if p.name in wanted]
     if not pages:
         return 0

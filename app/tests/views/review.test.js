@@ -675,3 +675,49 @@ describe("a multi-orientation page renders (VR15)", () => {
     expect(viewRotation({ rotation: 90, readRotation: 270 })).toBe(0); // combined mod 360
   });
 });
+
+describe("reconcileEdits", () => {
+  const layout = {
+    lines: [
+      { index: 0, text: "P.S. I had a whole Grade 3A" },
+      { index: 1, text: "theory paper to work before" },
+      { index: 2, text: "my first Theory lesson today." },
+    ],
+  };
+
+  it("keeps an edit whose line's text is unchanged", async () => {
+    const { reconcileEdits } = await import("../../views/review.js");
+    expect(reconcileEdits({ 1: "theory paper to work before" }, layout)).toEqual({
+      1: "theory paper to work before",
+    });
+  });
+
+  it("re-maps an edit by exact text when the index moved", async () => {
+    const { reconcileEdits } = await import("../../views/review.js");
+    expect(reconcileEdits({ 5: "theory paper to work before" }, layout)).toEqual({
+      1: "theory paper to work before",
+    });
+  });
+
+  it("orphans an edit whose line's transcription changed (no fuzzy re-map)", async () => {
+    const { reconcileEdits } = await import("../../views/review.js");
+    // the rebuilt transcription differs from the corrected text by 1 char —
+    // the OLD fuzzy match (edit distance <=3) kept it, attaching the user's
+    // correction to a changed line; the exact rule orphans it (the user
+    // re-verifies the changed line)
+    expect(reconcileEdits({ 0: "P.S.] I had a whole Grade 3A" }, layout)).toEqual({});
+  });
+});
+
+describe("transcriptScrollFor", () => {
+  it("follows the image proportionally — a tiny pan scrolls a tiny bit", async () => {
+    const { transcriptScrollFor } = await import("../../views/review.js");
+    const scroll = (y) => transcriptScrollFor(y, 4642, 1200, 3000, 600);
+    // the image's visible fraction maps to the transcript's scroll fraction
+    expect(scroll(0)).toBe(0);
+    const mid = scroll(1721); // half the image's scrollable range (4642-1200)
+    expect(Math.abs(mid - 1200)).toBeLessThan(1); // half of 3000-600
+    // a tiny pan (10 image px) moves the transcript a tiny bit — no jump
+    expect(scroll(1731) - mid).toBeLessThan(15);
+  });
+});

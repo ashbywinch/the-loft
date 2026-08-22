@@ -48,47 +48,36 @@ export function loadEdits(batchId, docIndex) {
  *  edit's text elsewhere in the layout and re-map the index. Edits that
  *  can't be matched are dropped — the reviewer re-checks those lines.
  *  Returns a new edits dict with the re-mapped indices. */
-function reconcileEdits(edits, layout) {
+export function reconcileEdits(edits, layout) {
+  // An edit (a corrected text, or a "mark fine" of the verbatim text)
+  // stays valid ONLY while the line it belongs to still carries the same
+  // text. When the pipeline rebuilds a page and the transcription changes,
+  // the old edits must ORPHAN — the reviewer re-verifies the changed lines
+  // (user, 2026-08-22: "keeping the state if the new boxes or guessed
+  // transcriptions are different would also be bad"). The match is EXACT —
+  // a fuzzy re-map (edit distance <=3) attached old corrections to the
+  // wrong lines after a rebuild, mixing the user's verified text with the
+  // raw transcription.
   if (!layout || !layout.lines) return edits;
   const lines = layout.lines;
   const result = {};
   for (const [idxStr, text] of Object.entries(edits)) {
     const idx = Number(idxStr);
-    // The text at the original index — if it still matches, the edit is valid.
     const lineAtIdx = lines.find((l) => l.index === idx);
-    if (lineAtIdx && (lineAtIdx.text === text || fuzzyMatch(lineAtIdx.text, text))) {
-      result[idx] = text;
+    if (lineAtIdx && lineAtIdx.text === text) {
+      result[idx] = text; // the line's text is unchanged — the edit holds
       continue;
     }
-    // The line at this index changed or doesn't exist. Try to find the edit's
-    // text somewhere else in the layout.
-    const matched = lines.find((l) => l.text === text || fuzzyMatch(l.text, text));
+    // The line at this index changed (or moved). Keep the edit only when
+    // its exact text exists elsewhere in the layout.
+    const matched = lines.find((l) => l.text === text);
     if (matched && !result[matched.index]) {
       result[matched.index] = text;
       continue;
     }
-    // Could not find a match — the edit is orphaned. Drop it.
+    // The transcription changed under this edit — orphan it.
   }
   return result;
-}
-
-/** Fuzzy text match: two strings match if one is a substring of the other
- *  (case-insensitive, trimmed), or their edit distance is <=3 chars (for
- *  OCR corrections like "POSTCARD" vs "POST CARD"). */
-function fuzzyMatch(a, b) {
-  if (!a || !b) return false;
-  const sa = a.trim().toLowerCase();
-  const sb = b.trim().toLowerCase();
-  if (sa === sb) return true;
-  if (sa.includes(sb) || sb.includes(sa)) return true;
-  const maxLen = Math.max(sa.length, sb.length);
-  if (maxLen < 3) return false;
-  let diff = 0;
-  for (let i = 0; i < Math.min(sa.length, sb.length); i++) {
-    if (sa[i] !== sb[i]) diff++;
-  }
-  diff += Math.abs(sa.length - sb.length);
-  return diff <= 3;
 }
 
 export function saveEdits(batchId, docIndex, edits) {
@@ -1356,23 +1345,27 @@ function syncImageFromTx(session) {
  *  the image-side sync and fight the drag (2026-08-16: the guard cleared
  *  too early — the panes ping-ponged, "jumps about disconcertingly" — the
  *  established dual-pane pattern: isSyncing + requestAnimationFrame). */
+export function transcriptScrollFor(viewY, imageHeight, viewHeight, scrollHeight, clientHeight) {
+  // The dual-pane follow (2026-08-22): the transcript's scroll mirrors the
+  // image's visible FRACTION — a tiny image pan scrolls the transcript a
+  // tiny bit. The old line-snapping (scroll to the top-visible LINE's
+  // position) jumped the transcript to a line far down the page on a tiny
+  // pan that crossed into another line — "scrolled the image down a tiny
+  // bit and the transcript jumped to somewhere in the middle" (user).
+  const imageRange = Math.max(imageHeight - viewHeight, 1);
+  const frac = Math.min(Math.max(viewY / imageRange, 0), 1);
+  return frac * Math.max(scrollHeight - clientHeight, 0);
+}
+
 function syncTxFromImage(session) {
   if (session.syncLock || !session.view || !session.imgSize) return;
   const txb = session.txBody;
   if (!txb) return;
-  const { batch, docIndex, pageIndex } = session;
-  const doc = batch.documents[docIndex];
-  const page = doc.pages[pageIndex];
-  const layout = doc.layouts?.[page];
-  if (!layout) return;
-  const idx = lineIndexForY(layout, viewRotation(session), session.imgSize, session.view.y);
-  if (idx === null) return;
-  const el = txb.querySelector(`[data-index="${idx}"]`);
-  if (!el) return;
-  const delta = el.getBoundingClientRect().top - txb.getBoundingClientRect().top;
-  if (Math.abs(delta) < 4) return;
+  const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
+  const target = transcriptScrollFor(session.view.y, f.dh, session.view.height, txb.scrollHeight, txb.clientHeight);
+  if (Math.abs(txb.scrollTop - target) < 2) return;
   session.syncLock = true;
-  txb.scrollTop += delta - 8; // a small breathing room at the pane's top
+  txb.scrollTop = target;
   requestAnimationFrame(() => {
     session.syncLock = false;
   });

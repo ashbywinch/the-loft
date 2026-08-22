@@ -171,16 +171,14 @@ function saveCurrentResumePosition(session) {
  * are no line boxes. The margin is the line-0 top: the band anchor\'s
  * half-line margin. */
 export function initialViewRect(layout) {
-  // The initial view zooms to the FIRST boxed line — the review starts at
-  // the letter's first line, readable (2026-08-22, user: "the whole letter
-  // is zoomed right out and stuck in the corner"). Same padding as the
-  // zoom-to-line click, so the first visit and the first click agree. The
-  // fit-to-content (the whole letter) stays available via the fit button.
-  const first = (layout?.lines || []).find((l) => l.box);
-  if (!first) return null;
-  const [x0, y0, x1, y1] = first.box;
-  const pad = Math.max(x1 - x0, y1 - y0) * 0.04;
-  return { x: x0 - pad, y: y0 - pad, width: x1 - x0 + 2 * pad, height: y1 - y0 + 2 * pad };
+  // The WHOLE letter, centered — 2026-08-22 (user: "the first line
+  // appears anchored at the top left, instead of the letter itself being
+  // centered so that as we continue on down we can display all the lines
+  // without having to jog the letter left and right"). The first-line
+  // zoom was the wrong anchor: every other line's x-extent needed a jog.
+  // The letter's full extent fills the pane; the vertical scroll then
+  // reveals the rest with the letter centered the whole way down.
+  return contentBounds(layout);
 }
 
 function contentBounds(layout) {
@@ -1054,16 +1052,6 @@ export function bandMargin(layout) {
   return (top.box[3] - top.box[1]) / 2;
 }
 
-/** The view that shows ``rect`` (display px) in a pane: the rect fills one
- *  dimension, the pane's aspect rules the other (fitBounds semantics). */
-export function fitRect(paneW, paneH, rect) {
-  const paneAspect = paneW / paneH;
-  const rectAspect = rect.width / rect.height;
-  if (rectAspect >= paneAspect) {
-    return { x: rect.x, y: rect.y, width: rect.width, height: rect.width / paneAspect };
-  }
-  return { x: rect.x, y: rect.y, width: rect.height * paneAspect, height: rect.height };
-}
 
 /** Zoom the view by ``k`` around the pane point (cx, cy) — the image point
  *  under the cursor stays put. The visible width is clamped to
@@ -1076,6 +1064,28 @@ export function zoomView(view, k, paneW, paneH, cx, cy, imgW) {
   const height = (width * paneH) / paneW;
   const s2 = paneW / width;
   return { x: ix - cx / s2, y: iy - cy / s2, width, height };
+}
+
+/** The view that shows ``rect`` (display px) in a pane: the rect fills one
+ *  dimension, the pane's aspect rules the other (fitBounds semantics). */
+export function fitRect(paneW, paneH, rect) {
+  const paneAspect = paneW / paneH;
+  const rectAspect = rect.width / rect.height;
+  if (rectAspect >= paneAspect) {
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.width / paneAspect };
+  }
+  return { x: rect.x, y: rect.y, width: rect.height * paneAspect, height: rect.height };
+}
+
+/** The width-fit — the letter's horizontal extent fills the pane, the
+ *  height follows the pane's aspect. The initial view's fit (2026-08-22,
+ *  user: "as we continue on down we can display all the lines without
+ *  having to jog the letter left and right"): the whole-letter height-fit
+ *  made the letter one screen tall — nothing to pan, tiny text. The
+ *  width-fit keeps the letter readable AND centered (the x-extent fills
+ *  the view), and the vertical scroll reveals the rest. */
+export function widthFitRect(paneW, paneH, rect) {
+  return { x: rect.x, y: rect.y, width: rect.width, height: (rect.width * paneH) / paneW };
 }
 
 /** Paint the current view: the layer's transform maps original-image points
@@ -1813,7 +1823,7 @@ function initialView(session, contentTop = 0) {
   if (bounds) {
     const paneW = session.imgBox.clientWidth;
     const paneH = session.imgBox.clientHeight;
-    session.view = fitRect(paneW, paneH, bounds);
+    session.view = widthFitRect(paneW, paneH, bounds);
   } else {
     fitPage(session, { markMoved: false });
   }

@@ -8,6 +8,7 @@ import {
   correctedPageText,
   displayFrame,
   fitRect,
+  widthFitRect,
   flaggedByPage,
   flaggedCount,
   flaggedPositions,
@@ -369,6 +370,20 @@ describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)",
     expect(view.width).toBeCloseTo(79 * (812 / 131), 5);
   });
 
+  it("widthFitRect: the letter's width fills the pane; the height follows the aspect — the vertical scroll has room (user 2026-08-22)", () => {
+    // page-06-like: the tall letter [481, 2246, 1881, 4642] in a 654×524
+    // pane. The old whole-letter fit made the letter one screen tall —
+    // nothing to pan, tiny text. The width-fit: the letter's x-extent
+    // fills the pane, the height follows the pane's aspect (the pan
+    // reveals the rest), and the letter's center lands at the view's.
+    const view = widthFitRect(654, 524, { x: 481, y: 2246, width: 1400, height: 2396 });
+    expect(view.width).toBe(1400);
+    expect(view.height).toBeCloseTo(1400 * (524 / 654), 5); // ~1121 < 2396 — the pan room!
+    expect(view.x).toBe(481);
+    expect(view.y).toBe(2246);
+  });
+
+
   it("zoomView: the image point under the cursor stays put when zooming", () => {
     const paneW = 812, paneH = 131;
     const before = { x: 0, y: 100, width: 2544, height: 410 };
@@ -392,7 +407,28 @@ describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)",
     const deep = zoomView({ x: 0, y: 0, width: 2544, height: 410 }, 0.0001, paneW, paneH, 0, 0, 2544);
     expect(deep.width).toBe(2544 * 8);
   });
+
+  it("initialViewRect spans the WHOLE letter, not the first line (user 2026-08-22)", async () => {
+    const { initialViewRect } = await import("../../views/review.js");
+    // page-01-like: the reading-first line sits mid-letter; other lines
+    // extend LEFT (the P.S. margin at x 526) and RIGHT (2017). The old
+    // view anchored the first line's left edge — every other line needed
+    // a jog; the view must cover the LETTER so the vertical scroll just
+    // goes down.
+    const layout = {
+      lines: [
+        { text: "A picture of life in Music College.", box: [757, 2252, 1547, 2365] },
+        { text: "P.S. I had a whole Grade 3A", box: [526, 2247, 1044, 2294] },
+        { text: "Orchestra for 3 performances of operas b", box: [547, 2600, 2017, 2690] },
+      ],
+    };
+    const rect = initialViewRect(layout);
+    expect(rect.x).toBeLessThanOrEqual(526); // the letter's left edge
+    expect(rect.x + rect.width).toBeGreaterThanOrEqual(2017); // the letter's right edge
+    expect(rect.y).toBeLessThanOrEqual(2247); // the letter's top, not below it
+  });
 });
+
 
 describe("the reviewer's orientation — { desired, acked } per page, set only by ↻ (VR10)", () => {
   beforeEach(() => localStorage.clear());

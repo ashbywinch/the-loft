@@ -135,3 +135,23 @@ already tried it and learned why it failed. Append chronologically.
   (#/review/adopt-20260813-201004/0/1).
 - OPEN: the process should RUN the self-report stage (the pipeline gap —
   the cursive pages all-flag without it).
+
+## 2026-08-22 — "how did this pass tests?" (the user's in-app finding)
+
+The user opened page-03 ("Chere Maman") in the app: no text visible in
+the image, the transcription without structure. ROOT CAUSE:
+
+- The current page-03 layout FAILS Gate E: the boxless lines' wrong
+  boxes ("critic's view. To quote:" on the P.S. margin, "quartet to
+  start on." on "my first Theory", the "noting?\nNote" rec fragment on
+  "1st page") — 4 same-region pairs with different text. The drafts
+  EXCLUDE the layout (fail-loud) — the app falls back to the raw text
+  with NO boxes, and the image pane has no content band to fit.
+- Why the tests passed: the unit tests + the fixtures never cover the
+  real page-03's SERVED state; the gates' exclusion is the new behavior.
+  The page served before the Gate E + rebuild changes.
+- FIX: drop_conflicting_boxes (Gate E as a correction) — when two lines
+  claim the same region with different text, the lower-confidence box
+  drops (the line stays flagged); the confirmed anchor keeps its region.
+  Wired into the Layout class + the stage, after the Gate D drop.
+  Rebuild page-03 to confirm the drafts include it again.

@@ -139,7 +139,7 @@ function saveCurrentResumePosition(session) {
 /** The full bounding box of all lines in the layout, or null if there
  * are no line boxes. The margin is the line-0 top: the band anchor\'s
  * half-line margin. */
-export function initialViewRect(layout, paneW, paneH) {
+export function initialViewRect(layout) {
   // The initial view zooms to the FIRST boxed line — the review starts at
   // the letter's first line, readable (2026-08-22, user: "the whole letter
   // is zoomed right out and stuck in the corner"). Same padding as the
@@ -148,7 +148,7 @@ export function initialViewRect(layout, paneW, paneH) {
   const first = (layout?.lines || []).find((l) => l.box);
   if (!first) return null;
   const [x0, y0, x1, y1] = first.box;
-  const pad = Math.max(x1 - x0, y1 - y0) * 0.15;
+  const pad = Math.max(x1 - x0, y1 - y0) * 0.04;
   return { x: x0 - pad, y: y0 - pad, width: x1 - x0 + 2 * pad, height: y1 - y0 + 2 * pad };
 }
 
@@ -1713,8 +1713,7 @@ function initialView(session, contentTop = 0) {
   const doc = session.batch.documents[session.docIndex];
   const page = doc.pages[session.pageIndex];
   const layout = doc.layouts?.[page];
-  const bounds = initialViewRect(layout, session.imgBox.clientWidth, session.imgBox.clientHeight)
-    ?? contentBounds(layout);
+  const bounds = initialViewRect(layout) ?? contentBounds(layout);
   if (bounds) {
     const paneW = session.imgBox.clientWidth;
     const paneH = session.imgBox.clientHeight;
@@ -1777,7 +1776,7 @@ function startEdit(session, lineIndex) {
   if (line?.box && session.imgBox?.clientWidth && session.view) {
     const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
     const rect = boxToDisplay(f, line.box);
-    const pad = Math.max(rect.width, rect.height) * 0.15;
+    const pad = Math.max(rect.width, rect.height) * 0.04;
     fitBounds(session, {
       x: rect.x - pad,
       y: rect.y - pad,

@@ -1358,24 +1358,45 @@ function syncImageFromTx(session) {
  *  the image-side sync and fight the drag (2026-08-16: the guard cleared
  *  too early — the panes ping-ponged, "jumps about disconcertingly" — the
  *  established dual-pane pattern: isSyncing + requestAnimationFrame). */
-export function transcriptScrollFor(viewY, imageHeight, viewHeight, scrollHeight, clientHeight) {
-  // The dual-pane follow (2026-08-22): the transcript's scroll mirrors the
-  // image's visible FRACTION — a tiny image pan scrolls the transcript a
-  // tiny bit. The old line-snapping (scroll to the top-visible LINE's
-  // position) jumped the transcript to a line far down the page on a tiny
-  // pan that crossed into another line — "scrolled the image down a tiny
-  // bit and the transcript jumped to somewhere in the middle" (user).
-  const imageRange = Math.max(imageHeight - viewHeight, 1);
-  const frac = Math.min(Math.max(viewY / imageRange, 0), 1);
-  return frac * Math.max(scrollHeight - clientHeight, 0);
+export function lineScrollFor(viewY, layout, frame, offsets) {
+  // The transcript shows the LINE at the image's view top (2026-08-22,
+  // user: the proportional fraction "tracks along but doesn't display the
+  // actual line from the image"). The physical y selects the line whose
+  // box is there (the first below when the view sits in a gap), and the
+  // transcript scrolls to THAT line's offset — the transcript's top is
+  // the actual line from the image.
+  const lines = layout?.lines || [];
+  let firstBelow = null;
+  let idx = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.box) continue;
+    const rect = boxToDisplay(frame, line.box);
+    if (viewY >= rect.y && viewY <= rect.y + rect.height) {
+      idx = i;
+      break;
+    }
+    if (rect.y >= viewY && (firstBelow === null || rect.y < firstBelow.y)) {
+      firstBelow = { y: rect.y, i };
+    }
+  }
+  if (idx === null && firstBelow !== null) idx = firstBelow.i;
+  return idx === null ? 0 : (offsets[idx] ?? 0);
 }
 
 function syncTxFromImage(session) {
   if (session.syncLock || !session.view || !session.imgSize) return;
   const txb = session.txBody;
   if (!txb) return;
+  const { batch, docIndex, pageIndex } = session;
+  const doc = batch.documents[docIndex];
+  const page = doc.pages[pageIndex];
+  const layout = doc.layouts?.[page];
+  if (!layout) return;
   const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
-  const target = transcriptScrollFor(session.view.y, f.dh, session.view.height, txb.scrollHeight, txb.clientHeight);
+  const base = txb.offsetTop;
+  const offsets = [...txb.querySelectorAll(".rv-line")].map((el) => el.offsetTop - base);
+  const target = lineScrollFor(session.view.y, layout, f, offsets);
   if (Math.abs(txb.scrollTop - target) < 2) return;
   session.syncLock = true;
   txb.scrollTop = target;

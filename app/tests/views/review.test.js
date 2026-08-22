@@ -709,73 +709,35 @@ describe("reconcileEdits", () => {
   });
 });
 
-describe("transcriptScrollFor", () => {
-  it("follows the image proportionally — a tiny pan scrolls a tiny bit", async () => {
-    const { transcriptScrollFor } = await import("../../views/review.js");
-    const scroll = (y) => transcriptScrollFor(y, 4642, 1200, 3000, 600);
-    // the image's visible fraction maps to the transcript's scroll fraction
-    expect(scroll(0)).toBe(0);
-    const mid = scroll(1721); // half the image's scrollable range (4642-1200)
-    expect(Math.abs(mid - 1200)).toBeLessThan(1); // half of 3000-600
-    // a tiny pan (10 image px) moves the transcript a tiny bit — no jump
-    expect(scroll(1731) - mid).toBeLessThan(15);
-  });
-});
-
-describe("initialViewRect", () => {
-  // the letter: the first line at y 2247, the body running to y 4585 —
-  // the whole-letter content bounds span y 2121-4585 (2582px tall)
-  const LETTER = {
+describe("lineScrollFor", () => {
+  // the page-03-like structure: the transcription's DISPLAY order (the
+  // reading order — the P.S. block first, then the address, then the body)
+  // vs the image's physical y positions
+  const LAYOUT = {
     lines: [
       { text: "P.S. I had a whole Grade 3A", box: [526, 2247, 1044, 2294] },
       { text: "theory paper to work before", box: [540, 2297, 1042, 2340] },
-      { text: "my first Theory lesson today.", box: [536, 2331, 1079, 2402] },
+      { text: "Queen Alexandra's House,", box: [1176, 2272, 1925, 2370] },
       { text: "Chere Maman.", box: [628, 2551, 1140, 2655] },
-      { text: "many notes on the page, notes of fast values.", box: [575, 4430, 1980, 4585] },
+      { text: "I've come to the conclusion", box: [620, 2628, 1905, 2757] },
     ],
   };
+  const FRAME = { a: 1, b: 0, c: 0, d: 1, ox: 0, oy: 0, dw: 2544, dh: 4642 };
+  // the transcript's DOM offsets for the five lines, in display order
+  const OFFSETS = [0, 40, 80, 120, 160];
 
-  it("zooms to the FIRST line — not the whole letter fitted into the corner", async () => {
-    const { initialViewRect } = await import("../../views/review.js");
-    const rect = initialViewRect(LETTER);
-    // the view is at the first line's position (y ~2247) — NOT the
-    // whole-letter top (y ~2121)
-    expect(rect.y).toBeGreaterThan(2150);
-    expect(rect.y).toBeLessThan(2300);
-    // the view is the line's vicinity — NOT the whole 2582px letter
-    expect(rect.height).toBeLessThan(400);
-    // and it fills the pane's width (a readable zoom — the line fills it)
-    expect(rect.width).toBeGreaterThan(400);
+  it("scrolls the transcript to the line at the image's view top — NOT the proportional fraction", async () => {
+    const { lineScrollFor } = await import("../../views/review.js");
+    // the image view at y 2600: the physical line there is the body's
+    // "Chere Maman." (y 2551-2655) — display index 3 — offset 120
+    expect(lineScrollFor(2600, LAYOUT, FRAME, OFFSETS)).toBe(120);
+    // the view at y 2300: the physical line there is "theory paper" (the
+    // P.S. block, y 2297-2340 — the first display-order line containing it)
+    expect(lineScrollFor(2300, LAYOUT, FRAME, OFFSETS)).toBe(40);
   });
 
-  it("returns the content bounds when there are no boxed lines", async () => {
-    const { initialViewRect } = await import("../../views/review.js");
-    expect(initialViewRect({ lines: [{ text: "no box" }] })).toBeNull();
-  });
-});
-
-describe("initialViewRect fills the line", () => {
-  const LETTER = {
-    lines: [
-      { text: "P.S. I had a whole Grade 3A", box: [526, 2247, 1044, 2294] },
-      { text: "theory paper to work before", box: [540, 2297, 1042, 2340] },
-      { text: "Chere Maman.", box: [628, 2551, 1140, 2655] },
-    ],
-  };
-
-  it("the first line FILLS the pane's width — the letter is not stuck at 77% with giant side pads", async () => {
-    const { initialViewRect } = await import("../../views/review.js");
-    const rect = initialViewRect(LETTER);
-    // the line is 518px wide; the view must hug it (a small margin), NOT
-    // pad it 15% each side (the 674px view that left the letter at 77%)
-    expect(rect.width).toBeLessThan(580);
-  });
-
-  it("no blank strip above — the view starts AT the first line, not 78px above it", async () => {
-    const { initialViewRect } = await import("../../views/review.js");
-    const rect = initialViewRect(LETTER);
-    // the line's top is y 2247; the view's top must be at the line, not
-    // the pad above (y 2169 — the giant white strip)
-    expect(rect.y).toBeGreaterThan(2200);
+  it("clamps to the first line when the view is above all boxes", async () => {
+    const { lineScrollFor } = await import("../../views/review.js");
+    expect(lineScrollFor(100, LAYOUT, FRAME, OFFSETS)).toBe(0);
   });
 });

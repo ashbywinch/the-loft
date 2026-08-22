@@ -36,6 +36,33 @@ class TruthLine:
 
 
 @dataclass
+class CropReading:
+    """One crop's model reading (2026-08-22): the crop's region in the
+    page frame and the lines the model measured within it — each line's
+    box in the crop's OWN normalized 0-1000 frame (the same contract as
+    the location report, per-crop: the model's geometry is trustworthy
+    only when the question is LOCAL)."""
+
+    x: float
+    y: float
+    w: float
+    h: float
+    lines: list[dict[str, Any]]  # {text, box (normalized in the crop), orientation}
+
+
+def stitch_crop_box(crop: CropReading, local_box: list[float]) -> list[float]:
+    """The crop-local box (normalized 0-1000 in the crop's frame) -> the
+    page frame: the crop's origin adds, the crop's size scales. The
+    crop-grid's load-bearing seam (2026-08-22) — the page box, exactly."""
+    return [
+        crop.x + local_box[0] / 1000 * crop.w,
+        crop.y + local_box[1] / 1000 * crop.h,
+        crop.x + local_box[2] / 1000 * crop.w,
+        crop.y + local_box[3] / 1000 * crop.h,
+    ]
+
+
+@dataclass
 class Fixture:
     """A tricky page: the geometry inputs (what the pipeline consumes)
     plus the known truth. The builder verbs run the layout from a given
@@ -48,6 +75,7 @@ class Fixture:
     detections: list[Detection]
     marker_boxes: dict[int, list[float]] | None
     truth: list[TruthLine]
+    crops: list[CropReading] | None = None
 
     def _vlm_text(self) -> str:
         return "\n".join(t.text for t in self.truth)
@@ -106,6 +134,36 @@ class Fixture:
             trust_report_degrees=True,
         ).to_dict()
 
+    def crop_grid(self) -> dict[str, Any]:
+        """The crop-grid candidate (2026-08-22): each crop's lines
+        stitched into the page frame; the cross-crop duplicates (the
+        same line read in the overlapping crops) drop; the lines read in
+        the grid order. The text comes from the same model that measured
+        the boxes — no cross-engine matching."""
+        lines: list[dict[str, Any]] = []
+        for crop in self.crops or []:
+            for line in crop.lines:
+                if any(normalize(existing["text"]) == normalize(line["text"]) for existing in lines):
+                    continue  # the cross-crop duplicate — keep the first (the grid order)
+                lines.append(
+                    {
+                        "index": len(lines),
+                        "text": line["text"],
+                        "box": stitch_crop_box(crop, line["box"]),
+                        "conf": 1.0,
+                        "words": [],
+                        "box_source": "crop",
+                        "orientation": int(line.get("orientation", 0)),
+                    }
+                )
+        return {
+            "page": "p1.jpg",
+            "width": self.width,
+            "height": self.height,
+            "lines": lines,
+            "unmatched": [],
+        }
+
 
 @dataclass
 class Metrics:
@@ -155,7 +213,61 @@ def synthetic_letter() -> Fixture:
         if text.startswith(("P.S.", "theory", "my first", "Postmark", "Queen")):
             box = [box[0], box[1] - 200, box[2], box[3] - 200]
         misplaced[i] = [box[0] / width * 1000, box[1] / height * 1000, box[2] / width * 1000, box[3] / height * 1000]
-    return Fixture("synthetic-letter", width, height, detections, misplaced, truth_lines)
+    crops = _crop_readings(truth_lines, width, height)
+    return Fixture("synthetic-letter", width, height, detections, misplaced, truth_lines, crops)
+
+
+def _grid_crops(width: float, height: float, cols: int, rows: int, overlap: float = 0.08) -> list[CropReading]:
+    """The crop grid: cols × rows with the given overlap fraction — the
+    boundary lines are read in BOTH crops, and the cross-crop dedupe
+    keeps one."""
+    crops: list[CropReading] = []
+    cw = width / cols
+    ch = height / rows
+    ox = cw * overlap
+    oy = ch * overlap
+    for r in range(rows):
+        for c in range(cols):
+            x0 = max(0, c * cw - (ox if c > 0 else 0))
+            y0 = max(0, r * ch - (oy if r > 0 else 0))
+            x1 = min(width, (c + 1) * cw + (ox if c < cols - 1 else 0))
+            y1 = min(height, (r + 1) * ch + (oy if r < rows - 1 else 0))
+            crops.append(CropReading(float(x0), float(y0), float(x1 - x0), float(y1 - y0), []))
+    return crops
+
+
+def _crop_readings(truth_lines: list[TruthLine], width: int, height: int) -> list[CropReading]:
+    """The fixture's crop readings: the truth lines measured in a grid
+    anchored to the CONTENT's bounds (the ink extent — never the blank
+    margins; the real pipeline anchors to the rec's detection bounds) —
+    the model-perfect local boxes, the lines in their reading order."""
+    xs = [t.box[0] for t in truth_lines] + [t.box[2] for t in truth_lines]
+    ys = [t.box[1] for t in truth_lines] + [t.box[3] for t in truth_lines]
+    bx0, by0 = min(xs), min(ys)
+    crops = _grid_crops(max(xs) - bx0, max(ys) - by0, 2, 3)
+    for crop in crops:
+        crop.x += bx0
+        crop.y += by0
+        inside = [
+            t
+            for t in truth_lines
+            if t.box[0] < crop.x + crop.w and crop.x < t.box[2] and t.box[1] < crop.y + crop.h and crop.y < t.box[3]
+        ]
+        inside.sort(key=lambda t: t.position)
+        crop.lines = [
+            {
+                "text": t.text,
+                "box": [
+                    (t.box[0] - crop.x) / crop.w * 1000,
+                    (t.box[1] - crop.y) / crop.h * 1000,
+                    (t.box[2] - crop.x) / crop.w * 1000,
+                    (t.box[3] - crop.y) / crop.h * 1000,
+                ],
+                "orientation": t.orientation,
+            }
+            for t in inside
+        ]
+    return crops
 
 
 def _matching_line(layout: dict[str, Any], truth: TruthLine) -> dict[str, Any] | None:

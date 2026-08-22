@@ -860,8 +860,26 @@ def test_validate_layout_rejects_bad_boxes() -> None:
     bad_neg = {"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [-50, 100, 300, 140]}]}
     assert validate_layout(bad_neg), "a negative coordinate must fail"
 
+
+def test_stitch_crop_box_maps_the_crop_local_frame_into_the_page() -> None:
+    """The crop-grid's stitch (2026-08-22): the model measures each line
+    within a crop's own frame (normalized 0-1000 in the crop); the
+    stitch maps that local box into the page by the crop's known
+    offset — the page box, exactly."""
+    from tools.eval_geometry import CropReading, stitch_crop_box
+
+    crop = CropReading(x=500.0, y=700.0, w=400.0, h=300.0, lines=[])
+
+    local: list[float] = [100, 200, 600, 250]  # normalized 0-1000 in the crop
+    assert stitch_crop_box(crop, local) == [540.0, 760.0, 740.0, 775.0]
+    # the crop's origin adds, the crop's size scales
+    assert stitch_crop_box(crop, [0, 0, 1000, 1000]) == [500.0, 700.0, 900.0, 1000.0]
+
+
+def test_multi_layout_orders_zero_first_then_each_next_direction() -> None:
     """The combined layout shows the 0° lines first, then each next
     direction, each line carrying the orientation it was read at (VR15)."""
+
     from tools.layout import multi_layout
 
     layout = multi_layout(

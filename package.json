@@ -18,7 +18,7 @@
     "@vitest/coverage-istanbul": "4.1.10",
     "eslint": "10.8.0",
     "eslint-config-prettier": "10.1.8",
-    "globals": "17.9.0",
+    "globals": "17.11.0",
     "happy-dom": "20.11.1",
     "prettier": "3.9.6",
     "vitest": "4.1.10"

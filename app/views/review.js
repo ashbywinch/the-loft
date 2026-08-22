@@ -1144,9 +1144,15 @@ session.resizer?.disconnect();
       }
     } else if (session.selLine !== null) {
       initialView(session, session.contentTop);
+      // The fit MUST paint before the pan — syncImageFromTx returns early
+      // when the y already matches (no render!), leaving the layer
+      // untransformed (2026-08-22: the first visit showed the image at
+      // natural size — the blank top-left — "no text visible").
+      renderView(session);
       syncImageFromTx(session);
     } else {
       initialView(session, session.contentTop);
+      renderView(session);
     }
   };
   img.onerror = () => {
@@ -1165,7 +1171,14 @@ session.resizer?.disconnect();
     if (imgBox.clientHeight <= 0) return;
     const size = [imgBox.clientWidth, imgBox.clientHeight];
     if (session.lastFitSize && size[0] === session.lastFitSize[0] && size[1] === session.lastFitSize[1]) return;
-    if (session.imgSize) initialView(session, session.contentTop ?? 0);
+    if (session.imgSize) {
+      initialView(session, session.contentTop ?? 0);
+      // The re-fit must PAINT — the onload's fit may have hit the hidden
+      // 0-sized pane and returned without rendering, and this resize is
+      // the pane becoming visible (2026-08-22: the first visit showed the
+      // image at natural size — the blank top-left — "no text visible").
+      renderView(session);
+    }
   });
   session.resizer.observe(imgBox);
 

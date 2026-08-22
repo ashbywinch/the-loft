@@ -275,6 +275,35 @@ class TestWriteLoadLayout:
         assert json.loads(path.read_text(encoding="utf-8")) == layout
         assert load_layout(path) == layout
 
+    def test_write_layout_store_stamps_the_store_version(self, tmp_path) -> None:
+        """The layout's revision (2026-08-22): every store write stamps
+        the version — a rebuild creates a NEW revision, and the drafts
+        payload carries it so the review surface can DETECT a stale
+        layout instead of rendering yesterday's boxes (the architectural
+        gap: five copies of a layout, no way to tell which is newest).
+        The same path re-run: 1, then 2."""
+        from tools.layout import load_layout_store, write_layout_store
+        from tools.pipeline_store import PipelineStore
+
+        store = PipelineStore(tmp_path)
+        layout = {"page": "p1.jpg", "width": 100, "height": 100, "lines": [], "unmatched": []}
+        path = "b/ocr-guess/p1.layout.json"
+        write_layout_store(layout, store, path)
+        assert load_layout_store(store, path)["revision"] == 1
+        write_layout_store(layout, store, path)
+        assert load_layout_store(store, path)["revision"] == 2
+
+
+def test_layout_payload_declares_the_box_frame() -> None:
+    """2026-08-22: the payload declares the boxes' coordinate frame — the
+    ORIGINAL image's pixels, the same space as width/height — so a reader
+    can check, never assume (the VLM-canvas drift was a box in the wrong
+    frame that looked valid: right size, right proportions, gates pass)."""
+    from tools.layout import Layout
+
+    layout = Layout("p.jpg", 100, 200, [], [])
+    assert layout.to_dict()["box_space"] == "original-image"
+
 
 class TestRotateDetections:
     """The reviewer's orientation fix re-anchors the boxes by a rigid remap
@@ -354,8 +383,8 @@ def test_build_layout_uses_the_vlm_boxes_when_present(tmp_path: Path) -> None:
         vlm_boxes={0: [219, 496, 760, 526], 1: [234, 513, 733, 543]},
     )
     assert layout["lines"][0]["box"] == [219.0, 992.0, 760.0, 1052.0]  # x*1000/1000, y*2000/1000
-    assert layout["lines"][0]["box_source"] == "vlm"
-    assert layout["lines"][1]["box_source"] == "vlm"
+    assert layout["lines"][0]["box_source"] == "report"
+    assert layout["lines"][1]["box_source"] == "report"
     # a line the VLM gave no box for falls back to the old association
     assert layout["lines"][0]["text"] == "piano-practising facilities. At the"
 
@@ -582,6 +611,90 @@ def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
     # the model-missed rec line stays, flagged, at its pass orientation
     assert by_text["HERNSPETH"]["orientation"] == 0
     assert all(w["conf"] == 0.0 for w in by_text["HERNSPETH"]["words"])
+
+
+def test_anchor_prefers_the_disjoint_positional_ink_when_the_rec_read_the_line() -> None:
+    """page-01 (2026-08-22): the location report's boxes sit in the VLM's
+    compressed canvas — the whole letter squeezed into the top of the
+    0-1000 frame — so the scaled report box lands ~500px ABOVE the real
+    text (the title region claimed by 'Last term I was called upon').
+    The positional match's box is only the line's real region when the
+    rec READ the line's text there (the rec_words agree) — then the
+    ink wins over the disjoint estimate. The review's dual-pane
+    alignment (the line at the image's view) is only as true as the
+    boxes."""
+    from tools.layout import Anchor
+
+    anchor = Anchor(
+        report_line={"text": "Last term I was called upon to play in t", "box": [220, 481, 790, 494], "degrees": 0},
+        match={
+            "vlm": "Last term I was called upon to play in t",
+            "vlm_index": 10,
+            "box": [560, 2600, 2010, 2660],  # the rec's ink — the REAL region
+            "box_source": "positional",
+            "orientation": 0,
+            "rec_words": ["last", "term", "i", "was", "called", "upon", "to", "play", "in", "the", "college", "opera"],
+        },
+        text="Last term I was called upon to play in the Orchestra",
+        width=2544,
+        height=4642,
+    )
+    assert anchor.box == [560, 2600, 2010, 2660]
+    assert anchor.box_source == "positional"
+
+
+def test_anchor_disjoint_positional_with_unrelated_reading_keeps_the_report_box() -> None:
+    """The other half of the same rule (2026-08-22): the order-based
+    fallback CAN mispair — the rec's 17 detections vs the guess's 31
+    lines means the tail's positional boxes are the wrong lines' ink.
+    When the rec did NOT read the line's text at the match's box (the
+    rec_words disagree), the match's box is unrelated ink and must not
+    displace a good report box — the pre-existing test
+    (report_box_anchors_over_a_positional_match) pins the same case at
+    the layout level."""
+    from tools.layout import Anchor
+
+    anchor = Anchor(
+        report_line={"text": "Last term I was called upon to play in t", "box": [220, 481, 790, 494], "degrees": 0},
+        match={
+            "vlm": "Last term I was called upon to play in t",
+            "vlm_index": 10,
+            "box": [560, 2600, 2010, 2660],
+            "box_source": "positional",
+            "orientation": 0,
+            "rec_words": ["ortra", "for", "3", "eope"],  # the rec read a DIFFERENT line there
+        },
+        text="Last term I was called upon to play in the Orchestra",
+        width=2544,
+        height=4642,
+    )
+    assert anchor.box == [559.68, 2232.802, 2009.76, 2293.148]
+    assert anchor.box_source == "report"
+
+
+def test_anchor_report_box_still_refines_an_agreeing_positional_box() -> None:
+    """The regression guard: when the report's estimate AGREES with the
+    positional ink (the same region), the report box is the per-line
+    refinement and wins — the pre-2026-08-22 behavior stays for the
+    normal pages (02-12), where the report's boxes are on the text."""
+    from tools.layout import Anchor
+
+    anchor = Anchor(
+        report_line={"text": "Last term I was called upon to play in t", "box": [220, 481, 790, 494], "degrees": 0},
+        match={
+            "vlm": "Last term I was called upon to play in t",
+            "vlm_index": 10,
+            "box": [560, 2230, 2010, 2300],  # overlaps the report's scaled box
+            "box_source": "positional",
+            "orientation": 0,
+            "rec_words": ["last", "term", "i", "was", "called"],
+        },
+        text="Last term I was called upon to play in the Orchestra",
+        width=2544,
+        height=4642,
+    )
+    assert anchor.box == [559.68, 2232.802, 2009.76, 2293.148]
+    assert anchor.box_source == "report"
 
 
 def test_dedupe_drops_fragment_duplicates_by_content() -> None:
@@ -1350,7 +1463,6 @@ def test_multi_layout_report_box_anchors_over_a_positional_match() -> None:
                         "score": 0.99,
                         "words": [],
                     },
-                    {"text": "HERNSPETH", "box": [150, 500, 200, 900], "score": 0.95, "words": []},
                 ],
             ),
         ],
@@ -1364,8 +1476,8 @@ def test_multi_layout_report_box_anchors_over_a_positional_match() -> None:
     )
     by_text = {ln["text"]: ln for ln in layout["lines"]}
     critic = by_text["critic's view. To quote:"]
+    assert critic["box_source"] == "report-unconfirmed"
     assert critic["box"] == [50.0, 400.0, 100.0, 500.0], f"the report's box must anchor, was {critic['box']}"
-    assert critic["box_source"] == "vlm-unconfirmed"
 
 
 def test_multi_layout_false_content_match_cannot_override_the_report_box() -> None:
@@ -1527,7 +1639,7 @@ def test_dedupe_regions_survives_boxless_lines() -> None:
     from tools.layout import dedupe_regions
 
     lines = [
-        {"index": 0, "text": "E    R", "box": None, "conf": 0.0, "box_source": "vlm-unconfirmed"},
+        {"index": 0, "text": "E    R", "box": None, "conf": 0.0, "box_source": "report-unconfirmed"},
         {"index": 1, "text": "extra fragment", "box": [0, 0, 100, 20], "conf": 0.0, "box_source": "multi"},
     ]
     out = dedupe_regions(lines)

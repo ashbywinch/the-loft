@@ -721,3 +721,35 @@ describe("transcriptScrollFor", () => {
     expect(scroll(1731) - mid).toBeLessThan(15);
   });
 });
+
+describe("initialViewRect", () => {
+  // the letter: the first line at y 2247, the body running to y 4585 —
+  // the whole-letter content bounds span y 2121-4585 (2582px tall)
+  const LETTER = {
+    lines: [
+      { text: "P.S. I had a whole Grade 3A", box: [526, 2247, 1044, 2294] },
+      { text: "theory paper to work before", box: [540, 2297, 1042, 2340] },
+      { text: "my first Theory lesson today.", box: [536, 2331, 1079, 2402] },
+      { text: "Chere Maman.", box: [628, 2551, 1140, 2655] },
+      { text: "many notes on the page, notes of fast values.", box: [575, 4430, 1980, 4585] },
+    ],
+  };
+
+  it("zooms to the FIRST line — not the whole letter fitted into the corner", async () => {
+    const { initialViewRect } = await import("../../views/review.js");
+    const rect = initialViewRect(LETTER, 654, 623);
+    // the view is at the first line's position (y ~2247) — NOT the
+    // whole-letter top (y ~2121)
+    expect(rect.y).toBeGreaterThan(2150);
+    expect(rect.y).toBeLessThan(2300);
+    // the view is the line's vicinity — NOT the whole 2582px letter
+    expect(rect.height).toBeLessThan(400);
+    // and it fills the pane's width (a readable zoom — the line fills it)
+    expect(rect.width).toBeGreaterThan(400);
+  });
+
+  it("returns the content bounds when there are no boxed lines", async () => {
+    const { initialViewRect } = await import("../../views/review.js");
+    expect(initialViewRect({ lines: [{ text: "no box" }] }, 654, 623)).toBeNull();
+  });
+});

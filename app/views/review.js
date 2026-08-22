@@ -139,6 +139,19 @@ function saveCurrentResumePosition(session) {
 /** The full bounding box of all lines in the layout, or null if there
  * are no line boxes. The margin is the line-0 top: the band anchor\'s
  * half-line margin. */
+export function initialViewRect(layout, paneW, paneH) {
+  // The initial view zooms to the FIRST boxed line — the review starts at
+  // the letter's first line, readable (2026-08-22, user: "the whole letter
+  // is zoomed right out and stuck in the corner"). Same padding as the
+  // zoom-to-line click, so the first visit and the first click agree. The
+  // fit-to-content (the whole letter) stays available via the fit button.
+  const first = (layout?.lines || []).find((l) => l.box);
+  if (!first) return null;
+  const [x0, y0, x1, y1] = first.box;
+  const pad = Math.max(x1 - x0, y1 - y0) * 0.15;
+  return { x: x0 - pad, y: y0 - pad, width: x1 - x0 + 2 * pad, height: y1 - y0 + 2 * pad };
+}
+
 function contentBounds(layout) {
   const lines = (layout?.lines || []).filter((l) => l.box);
   if (!lines.length) return null;
@@ -1700,7 +1713,8 @@ function initialView(session, contentTop = 0) {
   const doc = session.batch.documents[session.docIndex];
   const page = doc.pages[session.pageIndex];
   const layout = doc.layouts?.[page];
-  const bounds = contentBounds(layout);
+  const bounds = initialViewRect(layout, session.imgBox.clientWidth, session.imgBox.clientHeight)
+    ?? contentBounds(layout);
   if (bounds) {
     const paneW = session.imgBox.clientWidth;
     const paneH = session.imgBox.clientHeight;

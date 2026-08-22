@@ -21,6 +21,6 @@
     "globals": "17.9.0",
     "happy-dom": "20.11.1",
     "prettier": "3.9.6",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   }
 }

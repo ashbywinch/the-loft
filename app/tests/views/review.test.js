@@ -737,7 +737,7 @@ describe("initialViewRect", () => {
 
   it("zooms to the FIRST line — not the whole letter fitted into the corner", async () => {
     const { initialViewRect } = await import("../../views/review.js");
-    const rect = initialViewRect(LETTER, 654, 623);
+    const rect = initialViewRect(LETTER);
     // the view is at the first line's position (y ~2247) — NOT the
     // whole-letter top (y ~2121)
     expect(rect.y).toBeGreaterThan(2150);
@@ -750,6 +750,32 @@ describe("initialViewRect", () => {
 
   it("returns the content bounds when there are no boxed lines", async () => {
     const { initialViewRect } = await import("../../views/review.js");
-    expect(initialViewRect({ lines: [{ text: "no box" }] }, 654, 623)).toBeNull();
+    expect(initialViewRect({ lines: [{ text: "no box" }] })).toBeNull();
+  });
+});
+
+describe("initialViewRect fills the line", () => {
+  const LETTER = {
+    lines: [
+      { text: "P.S. I had a whole Grade 3A", box: [526, 2247, 1044, 2294] },
+      { text: "theory paper to work before", box: [540, 2297, 1042, 2340] },
+      { text: "Chere Maman.", box: [628, 2551, 1140, 2655] },
+    ],
+  };
+
+  it("the first line FILLS the pane's width — the letter is not stuck at 77% with giant side pads", async () => {
+    const { initialViewRect } = await import("../../views/review.js");
+    const rect = initialViewRect(LETTER);
+    // the line is 518px wide; the view must hug it (a small margin), NOT
+    // pad it 15% each side (the 674px view that left the letter at 77%)
+    expect(rect.width).toBeLessThan(580);
+  });
+
+  it("no blank strip above — the view starts AT the first line, not 78px above it", async () => {
+    const { initialViewRect } = await import("../../views/review.js");
+    const rect = initialViewRect(LETTER);
+    // the line's top is y 2247; the view's top must be at the line, not
+    // the pad above (y 2169 — the giant white strip)
+    expect(rect.y).toBeGreaterThan(2200);
   });
 });

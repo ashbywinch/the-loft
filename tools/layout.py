@@ -416,7 +416,19 @@ def build_layout(
     for vi, line in enumerate(vlm_lines):
         vw = vlm_line_words(line)
         if vlm_boxes and vi in vlm_boxes:
-            b = vlm_boxes[vi]
+            # The marker box anchors ONLY when the Anchor says it is the
+            # better source — the rec's ink-grounded content match wins
+            # when the marker's estimate misses the text (2026-08-22:
+            # page-01's marker boxes sat ~770px above the real text; the
+            # single path anchored them unconditionally and the stage's
+            # drops patched the symptom).
+            anchor = Anchor(
+                {"box": vlm_boxes[vi], "degrees": 0},
+                by_index.get(vi),
+                line,
+                width,
+                height,
+            )
             words_out = _words_out(
                 vw,
                 selfreport_line=report_by_line.get(vi),
@@ -424,20 +436,14 @@ def build_layout(
                 use_selfreport=use_selfreport,
             )
             line_conf = (sum(w["conf"] for w in words_out) / len(words_out)) if words_out else 0.0
-            x0, y0, x1, y1 = b
             lines.append(
                 {
                     "index": vi,
                     "text": line,
-                    "box": [
-                        x0 / NORMALIZED_BOX_SCALE * width,
-                        y0 / NORMALIZED_BOX_SCALE * height,
-                        x1 / NORMALIZED_BOX_SCALE * width,
-                        y1 / NORMALIZED_BOX_SCALE * height,
-                    ],
+                    "box": anchor.box,
                     "conf": line_conf,
                     "words": words_out,
-                    "box_source": "vlm",
+                    "box_source": "vlm" if anchor.box_source == "report" else anchor.box_source,
                 }
             )
             continue
@@ -775,12 +781,22 @@ class Anchor:
     def orientation(self) -> int:
         return self._orientation
 
+    @property
+    def box_source(self) -> str:
+        """Which source the chosen box came from: "report" (the located
+        estimate), "content" (the rec's ink-grounded match) or
+        "positional" (the fallback)."""
+        return self._box_source
+
     def _resolve(self) -> None:
         report_line, match, text = self._report_line, self._match, self._text
         width, height = self._width, self._height
+        self._box_source: str = "positional"  # the provenance of the chosen box
         report_box = report_line.get("box") if report_line else None
         if not (report_box and (report_box[2] > report_box[0] or report_box[3] > report_box[1])):
             self._box = match["box"] if match else None
+            if match and match.get("box_source") == "content":
+                self._box_source = "content"
             self._orientation = self._resolve_orientation(self._box)
             return
         scaled = [
@@ -798,15 +814,22 @@ class Anchor:
                 # ink-grounded; the report box is the per-line refinement
                 # when they agree (page-03: the marker boxes sat ~200px
                 # above the real text — the disjoint match box wins)
-                self._box = scaled if overlap(scaled, match["box"]) >= _LOCATED_OVERLAP else match["box"]
+                if overlap(scaled, match["box"]) >= _LOCATED_OVERLAP:
+                    self._box = scaled
+                    self._box_source = "report"
+                else:
+                    self._box = match["box"]
+                    self._box_source = "content"
                 self._orientation = self._resolve_orientation(self._box)
                 return
             # a false content match (noise) — the report's location anchors
         if text_extent_violation(text, scaled, report_orientation) is None:
             self._box = scaled
+            self._box_source = "report"
             self._orientation = self._resolve_orientation(scaled)
             return
         self._box = None  # no candidate holds the text — boxless, flagged
+        self._box_source = "report"
         self._orientation = self._resolve_orientation(None)
 
     def _resolve_orientation(self, box: list[float] | None) -> int:

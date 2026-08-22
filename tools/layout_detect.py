@@ -20,9 +20,13 @@ Usage: .venv-htr/bin/python -m tools.layout_detect <batch_id> [page ...]
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import sys
+from datetime import datetime
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from paddleocr import PaddleOCR
@@ -165,10 +169,25 @@ def _vlm_clip_reader(crop: Path) -> str | None:
     """Read one upright line clip with the vision model — the extra-line
     recognition (2026-08-20): the rec engine's rotated-frame fragment is
     garbage for cursive; the VLM reads the de-rotated clip. None on any
-    failure — the line then DROPS (fail fast, never garbage-admitted)."""
+    failure — the line then DROPS (fail fast, never garbage-admitted).
+    Every call is logged with its duration and token usage — the layout
+    stage's VLM calls were SILENT, so a slow/failed run was undiagnosable
+    (2026-08-22: page-03's rebuilds timed out with no evidence of why)."""
+    started = monotonic()
     try:
-        text, _ = transcribe_image_vlm(crop, max_tokens=4000, timeout=120.0)
-    except VlmError:
+        text, usage = transcribe_image_vlm(crop, max_tokens=4000, timeout=120.0)
+        print(
+            f"layout: clip read {crop.name} in {monotonic() - started:.1f}s, {usage.get('total_tokens', 0)} tokens",
+            file=sys.stderr,
+        )
+    except VlmError as exc:
+        # the FULL VlmError message — it carries the reasoning tail
+        # (2026-08-22: the earlier [:120] truncation threw the tail away,
+        # leaving only the counts — the actual reasoning was unreadable)
+        print(
+            f"layout: clip read {crop.name} FAILED after {monotonic() - started:.1f}s: {exc}",
+            file=sys.stderr,
+        )
         return None
     try:
         plain, _ = parse_transcription_response(text)
@@ -219,7 +238,11 @@ def layout_page_multi(
 
 def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engine: Any) -> int:
     """Layout the batch's oriented pages; page_names narrows the set (None =
-    every oriented page). Returns 0 on success."""
+    every oriented page). Returns 0 on success. Every run's diagnostics —
+    the per-clip VLM calls (timing + tokens + failures), the drops, the
+    per-page results — are teed to ``work/<batch>/logs/layout-<run>.log``
+    so a problematic run is examinable AFTER the fact (2026-08-22: the
+    rebuild timeouts were undiagnosable — the calls were silent)."""
     oriented_dir = work_dir / batch_id / "oriented"
     guess_dir = work_dir / batch_id / "ocr-guess"
     if not oriented_dir.is_dir():
@@ -347,17 +370,50 @@ def _warn_missing_guess(image_name: str, txt_name: str, page_names: list[str] | 
     return 0
 
 
+@contextlib.contextmanager
+def _run_log(work_dir: Path, batch_id: str) -> Any:
+    """Tee the run's stderr diagnostics to ``work/<batch>/logs/
+    layout-<run>.log`` — a problematic run stays examinable after the
+    fact (2026-08-22: the rebuild timeouts were undiagnosable because the
+    layout stage's VLM calls were silent)."""
+    # a FRESH file per run (the microseconds + the pid make the name
+    # unique) — never an accumulating log the runs keep appending to
+    # (2026-08-22, user: no one big growing log file)
+    log_path = work_dir / batch_id / "logs" / f"layout-{datetime.now():%Y%m%d-%H%M%S-%f}-{os.getpid()}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log = log_path.open("w", encoding="utf-8")
+    real_stderr = sys.stderr
+
+    class _Tee:
+        def write(self, text: str) -> int:
+            real_stderr.write(text)
+            log.write(text)
+            return len(text)
+
+        def flush(self) -> None:
+            real_stderr.flush()
+            log.flush()
+
+    try:
+        with contextlib.redirect_stderr(_Tee()):
+            yield log_path
+    finally:
+        log.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="layout_detect", description="The layout pass per batch")
     parser.add_argument("batch_id")
     parser.add_argument("pages", nargs="*", help="optional page names to limit the pass")
     parser.add_argument("--work-dir", type=Path, default=WORK_DIR)
     args = parser.parse_args(argv)
-    engine = PaddleOCR(**ENGINE)
-    try:
-        return run_batch(args.batch_id, args.pages or None, args.work_dir, engine)
-    finally:
-        del engine  # drop the weights promptly — the 3.13 venv shares RAM with the main venv
+    with _run_log(args.work_dir, args.batch_id) as log_path:
+        print(f"layout: run log -> {log_path}", file=sys.stderr)
+        engine = PaddleOCR(**ENGINE)
+        try:
+            return run_batch(args.batch_id, args.pages or None, args.work_dir, engine)
+        finally:
+            del engine  # drop the weights promptly — the 3.13 venv shares RAM with the main venv
 
 
 if __name__ == "__main__":

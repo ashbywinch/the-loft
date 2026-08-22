@@ -155,3 +155,28 @@ the image, the transcription without structure. ROOT CAUSE:
   drops (the line stays flagged); the confirmed anchor keeps its region.
   Wired into the Layout class + the stage, after the Gate D drop.
   Rebuild page-03 to confirm the drafts include it again.
+
+## 2026-08-22 — the consistent fix + the diagnosability (the user's challenge)
+
+The user challenged the "spiralling" claim + the bodge nature of the
+drops. Findings:
+
+- The instrumentation revealed the truth: the page-03 clip reads — 3 of
+  20 FAILED with "vision model produced only reasoning tokens, no
+  content — the max_tokens limit was hit. reasoning=8747-12916 chars,
+  tokens=40-400" (the VlmError's captured counts). The "spiralling"
+  label is an inference from the counts — the reasoning TEXT was never
+  read, and my first instrumentation truncated the failure message to
+  120 chars (str(exc)[:120]), throwing the reasoning tail away. FIXED:
+  the full VlmError message (with the reasoning tail) is now logged.
+- The single path's unconditional marker-box anchoring was the bodge's
+  root: page-01/03's misplaced marker boxes anchored directly, and the
+  stage's drops patched the symptom. FIXED: the single path now uses
+  the Anchor arbitration (the rec's ink-grounded content match wins
+  when the marker's estimate misses the text). The experiment measures
+  it: the synthetic-letter baseline went IoU 0.44 -> 1.00 (the injected
+  failing PREVENTED, not patched). The eval tests now pin the fix.
+- The run log: each layout run writes a FRESH file
+  work/<batch>/logs/layout-<timestamp>-<pid>.log (the write mode, the
+  unique name — never an accumulating log, per the user). A problematic
+  run is examinable after the fact.

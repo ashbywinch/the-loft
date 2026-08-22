@@ -16,7 +16,7 @@ The layout JSON per page (written beside ocr-guess, atomic):
      "lines": [{index, text, box, conf, box_source, words: [{word, box, conf}]}],
      "unmatched": [{box, text, conf: 0.0}]}
 
-``box_source`` says how the anchor was found: "vlm" (the transcription
+``box_source`` says how the anchor was found: "report" (the transcription
 model's OWN per-line box — it read the page, so its box is text-anchored
 and reading-consistent; the rec engine cannot read cursive and merges or
 misses its lines, 2026-08-16), "content" (the detector's rec text matched
@@ -376,6 +376,12 @@ class Layout:
             "page": self.page,
             "width": self.width,
             "height": self.height,
+            # the coordinate frame the boxes live in (2026-08-22: the
+            # VLM-canvas drift was a box in the wrong frame that looked
+            # valid — the payload now declares the frame so a reader can
+            # check, never assume): the ORIGINAL image's pixels, the same
+            # space as width/height.
+            "box_space": "original-image",
             "lines": self.lines,
             "unmatched": self.unmatched,
         }
@@ -443,7 +449,7 @@ def build_layout(
                     "box": anchor.box,
                     "conf": line_conf,
                     "words": words_out,
-                    "box_source": "vlm" if anchor.box_source == "report" else anchor.box_source,
+                    "box_source": anchor.box_source,
                 }
             )
             continue
@@ -673,7 +679,7 @@ def dedupe_regions(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     another's) applies to all. The survivors keep their index — the
     caller re-indexes after."""
     keep = [True] * len(lines)
-    anchored = {i for i, line in enumerate(lines) if line.get("box_source") in ("vlm", "vlm-unconfirmed")}
+    anchored = {i for i, line in enumerate(lines) if line.get("box_source") in ("report", "report-unconfirmed")}
     for i, a in enumerate(lines):
         if i in anchored:
             continue
@@ -733,7 +739,7 @@ def _anchored_lines(
                 ],
                 "conf": 1.0 if is_confirmed else 0.0,
                 "orientation": int(report.get("degrees", 0)),
-                "box_source": "vlm" if is_confirmed else "vlm-unconfirmed",
+                "box_source": "report" if is_confirmed else "report-unconfirmed",
                 "words": [{"word": w, "box": None, "conf": 1.0 if is_confirmed else 0.0} for w in vlm_line_words(text)],
             }
         )
@@ -743,13 +749,17 @@ def _anchored_lines(
 class Anchor:
     """A line's geometry resolution — the box and orientation it takes
     when the sources disagree (2026-08-20). The report's located box is
-    the v3 anchor; a CONTENT match's ink-grounded box overrides it only
-    when the report's estimate misses the text's proportions (a false
-    content match — the rec's merged bands — never overrides). The
-    orientation is the first aspect-consistent candidate: the report's
-    measured degrees when trusted (the clip-classified report), else the
-    pass that READ the text (the 90-vs-270 flip's ground truth), then
-    the report's estimate, then 0."""
+    the v3 anchor. A CONTENT match's ink-grounded box overrides it only
+    when the report's estimate misses the text's region (a disjoint
+    box). A POSITIONAL match's box is only the line's real region when
+    the rec READ the line's text there (the rec_words agree) — then it
+    wins over a disjoint report estimate (page-01's squeezed canvas,
+    ~500px above the real lines); otherwise the unrelated ink must not
+    displace a good report box (2026-08-22). The orientation is the
+    first aspect-consistent candidate: the report's measured degrees
+    when trusted (the clip-classified report), else the pass that READ
+    the text (the 90-vs-270 flip's ground truth), then the report's
+    estimate, then 0."""
 
     # the geometry resolution's six inputs — the report line, the match, the text, the page geometry, the trust
     # flag; a parameter object would obscure the pure decision (the same why as multi_layout's)
@@ -807,7 +817,7 @@ class Anchor:
         ]
         assert report_line is not None
         report_orientation = int(report_line["degrees"]) if isinstance(report_line.get("degrees"), (int, float)) else 0
-        if match and match.get("box_source") == "content":
+        if match and match.get("box") and match.get("box_source") == "content":
             match_orientation = int(match["orientation"]) if isinstance(match.get("orientation"), int) else 0
             if text_extent_violation(text, match["box"], match_orientation) is None:
                 # the match read REAL text at a plausible size — its box is
@@ -823,6 +833,29 @@ class Anchor:
                 self._orientation = self._resolve_orientation(self._box)
                 return
             # a false content match (noise) — the report's location anchors
+        if match and match.get("box") and match.get("box_source") == "positional":
+            match_orientation = int(match["orientation"]) if isinstance(match.get("orientation"), int) else 0
+            if text_extent_violation(text, match["box"], match_orientation) is None:
+                # the order-based fallback's box is only the line's region
+                # when the rec READ the line's text there — page-01's
+                # squeezed report boxes (~500px above the real lines) must
+                # never displace that ink, and an unrelated detection (the
+                # 17-vs-31 mispair's tail) must never displace a good
+                # report box (2026-08-22). The report refines when they
+                # agree; the rec's OWN reading of the match's box decides
+                # the disjoint case.
+                if overlap(scaled, match["box"]) >= _LOCATED_OVERLAP:
+                    self._box = scaled
+                    self._box_source = "report"
+                elif jaccard(set(match.get("rec_words") or []), set(words(text))) >= MATCH_THRESHOLD:
+                    self._box = match["box"]
+                    self._box_source = "positional"
+                else:
+                    self._box = scaled
+                    self._box_source = "report"
+                self._orientation = self._resolve_orientation(self._box)
+                return
+            # the match's box cannot hold the text — the report's location anchors
         if text_extent_violation(text, scaled, report_orientation) is None:
             self._box = scaled
             self._box_source = "report"
@@ -926,7 +959,7 @@ def anchor_guess_lines(
                 "box": located,
                 "conf": 1.0 if is_confirmed else 0.0,
                 "orientation": orientation,
-                "box_source": "vlm" if is_confirmed else "vlm-unconfirmed",
+                "box_source": "report" if is_confirmed else "report-unconfirmed",
                 "words": [
                     {"word": w, "box": None, "conf": 1.0 if is_confirmed else 0.0} for w in vlm_line_words(line_text)
                 ],
@@ -1228,8 +1261,15 @@ def write_layout_store(
     """Versioned layout write via the ``PipelineStore`` — a re-run creates
     a new version instead of overwriting (2026-08-18: the page-02 incident
     was a direct atomic_write to a fixed path, which lost the previous
-    good layout)."""
+    good layout). Every write stamps the layout's ``revision`` — the
+    store's version AFTER this write — so a reader can tell the newest
+    layout from yesterday's (2026-08-22: five copies of a layout, no way
+    to detect the drift; the drafts payload now carries the revision and
+    the review surface refreshes when it changes)."""
     violations = validate_layout(layout)
     if violations:
         raise ValueError(f"refusing to write an invalid layout: {violations}")
-    store.write(store_path, json.dumps(layout, indent=1, ensure_ascii=False) + "\n")
+    versions = store.versions(store_path)
+    revision = (versions[-1] + 1) if versions else 1
+    stamped = {**layout, "revision": revision}
+    store.write(store_path, json.dumps(stamped, indent=1, ensure_ascii=False) + "\n")

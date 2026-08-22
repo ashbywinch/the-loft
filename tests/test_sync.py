@@ -173,6 +173,29 @@ def test_draft_payloads_carries_the_layout_when_the_pass_has_run(tmp_path: Path)
     assert drafts[0]["orientations"] == {"p1.jpg": [0]}
 
 
+def test_draft_payloads_carries_the_layout_revision(tmp_path: Path) -> None:
+    """2026-08-22: the drafts payload carries each layout's revision (the
+    store version at write) so the review surface can DETECT a stale
+    layout — a rebuild bumps the revision, and the client refreshes
+    when the payload's revision differs from the one it rendered."""
+    from tools.layout import write_layout_store
+    from tools.pipeline_store import PipelineStore
+
+    guess = tmp_path / "adopt-0001" / "ocr-guess"
+    guess.mkdir(parents=True)
+    (guess / "p1.txt").write_text("line one", encoding="utf-8")
+    (guess / "boundaries.json").write_text(
+        json.dumps([{"pages": ["p1.jpg"], "greeting": None, "signoff": None}]),
+        encoding="utf-8",
+    )
+    store = PipelineStore(tmp_path)
+    layout = {"page": "p1.jpg", "width": 100, "height": 100, "lines": [], "unmatched": []}
+    path = "adopt-0001/ocr-guess/p1.layout.json"
+    write_layout_store(layout, store, path)
+    drafts = draft_payloads("adopt-0001", tmp_path)
+    assert drafts[0]["layouts"]["p1.jpg"]["revision"] == 1
+
+
 def test_draft_payloads_reports_the_multi_orientations(tmp_path: Path) -> None:
     """VR15: the combined layout's per-line orientations are the covered
     set the review surface uses for the view-only rotate rule — the

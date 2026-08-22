@@ -741,3 +741,32 @@ describe("lineScrollFor", () => {
     expect(lineScrollFor(100, LAYOUT, FRAME, OFFSETS)).toBe(0);
   });
 });
+
+describe("layout staleness — the drafts' revisions vs the rendered layout", () => {
+  it("collectLayoutRevisions records each page's layout revision", async () => {
+    const { collectLayoutRevisions } = await import("../../views/review.js");
+    const docs = [
+      { pages: ["p1.jpg", "p2.jpg"], layouts: { "p1.jpg": { revision: 3 }, "p2.jpg": { revision: 1 } } },
+      { pages: ["p3.jpg"], layouts: {} },
+    ];
+    expect(collectLayoutRevisions(docs)).toEqual({ "p1.jpg": 3, "p2.jpg": 1 });
+  });
+
+  it("staleLayoutPages finds the pages whose layout revision changed", async () => {
+    const { staleLayoutPages } = await import("../../views/review.js");
+    const docs = [{ pages: ["p1.jpg", "p2.jpg"], layouts: { "p1.jpg": { revision: 3 }, "p2.jpg": { revision: 4 } } }];
+    expect(staleLayoutPages({ "p1.jpg": 3, "p2.jpg": 1 }, docs)).toEqual(["p2.jpg"]);
+  });
+
+  it("staleLayoutPages finds a page that gained a layout since the render", async () => {
+    const { staleLayoutPages } = await import("../../views/review.js");
+    const docs = [{ pages: ["p1.jpg"], layouts: { "p1.jpg": { revision: 1 } } }];
+    expect(staleLayoutPages({}, docs)).toEqual(["p1.jpg"]);
+  });
+
+  it("staleLayoutPages ignores pages without a layout", async () => {
+    const { staleLayoutPages } = await import("../../views/review.js");
+    const docs = [{ pages: ["p1.jpg"], layouts: {} }];
+    expect(staleLayoutPages({}, docs)).toEqual([]);
+  });
+});

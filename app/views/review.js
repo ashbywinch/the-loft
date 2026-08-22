@@ -80,6 +80,37 @@ export function reconcileEdits(edits, layout) {
   return result;
 }
 
+/** The layout revisions of every page in a drafts payload — the
+ *  rendered page must refresh when the server's revision moves on
+ *  (2026-08-22: a layout rebuilt while the page was open stayed stale
+ *  until something forced a re-fetch — five copies of a layout, no way
+ *  to tell which was newest). */
+export function collectLayoutRevisions(documents) {
+  const revisions = {};
+  for (const doc of documents || []) {
+    for (const page of doc.pages || []) {
+      const revision = doc.layouts?.[page]?.revision;
+      if (revision !== undefined) revisions[page] = revision;
+    }
+  }
+  return revisions;
+}
+
+/** The pages whose server-side layout revision differs from the one the
+ *  surface rendered — the stale set the refresh acts on. A page that
+ *  gained a layout since the render is stale too (the recorded revision
+ *  is absent); a page without a layout on either side is not. */
+export function staleLayoutPages(recorded, documents) {
+  const stale = [];
+  for (const doc of documents || []) {
+    for (const page of doc.pages || []) {
+      const revision = doc.layouts?.[page]?.revision;
+      if (revision !== undefined && recorded?.[page] !== revision) stale.push(page);
+    }
+  }
+  return stale;
+}
+
 export function saveEdits(batchId, docIndex, edits) {
   try {
     const all = JSON.parse(localStorage.getItem(EDITS_KEY) || "{}");
@@ -591,6 +622,9 @@ function syncSurfaceUrl(session) {
 
 function makeSession(batch, docIndex) {
   return {
+    layoutRevisions: collectLayoutRevisions(batch.documents), // page -> revision, the staleness baseline
+    processingWas: false, // the re-read poll's previous processing state
+    visHandler: null, // the visibility-change refresh handler
     batch,
     docIndex,
     pageIndex: 0,
@@ -887,32 +921,73 @@ function renderSurface(main, session) {
   currentSession = session;
   updateFixingState(session);
 
+
+/** Re-fetch the drafts and re-render when the server's state moved on —
+ *  the page's re-read landed (the old transcription is gone, the stale
+ *  edits orphan) OR any layout revision changed (a rebuild while the
+ *  page was open — 2026-08-22: five copies of a layout, and the page
+ *  rendered yesterday's boxes until something forced a re-fetch). The
+ *  view/selection survive (they live on the session); the edits
+ *  reconcile against the new layout at the re-render (the exact-text
+ *  rule). Returns true when the surface re-rendered. */
+async function refreshBatchState(session) {
+  const { batch, docIndex } = session;
+  const page = batch.documents?.[docIndex]?.pages?.[session.pageIndex];
+  if (!page) return false;
+  try {
+    const data = await (
+      await fetch(`/api/sync/batch/${encodeURIComponent(batch.batchId)}/drafts`, {
+        headers: { Accept: "application/json" },
+      })
+    ).json();
+    if (!Array.isArray(data.documents)) return false;
+    const stale = staleLayoutPages(session.layoutRevisions, data.documents);
+    const reReadLanded = session.processingWas && !(data.processing || {})[page];
+    if (!stale.length && !reReadLanded) return false;
+    const currentChanged = collectLayoutRevisions(data.documents)[page] !== session.layoutRevisions?.[page];
+    session.processingWas = !!(data.processing || {})[page];
+    session.batch.documents = data.documents;
+    session.batch.processing = data.processing || {};
+    session.layoutRevisions = collectLayoutRevisions(data.documents);
+    if (reReadLanded) {
+      delete session.edits[page];
+      saveEdits(batch.batchId, docIndex, session.edits);
+      session.from = null;
+    }
+    // re-render only when THIS page's layout moved on (a rebuild of
+    // another document must not yank the reviewer's position — the
+    // batch's fresh data is there for the next navigation)
+    if (currentChanged || reReadLanded) {
+      renderSurface(session.root, session);
+      return true;
+    }
+    return false;
+  } catch {
+    // backend unreachable — retry next tick / next focus
+    return false;
+  }
+}
+
   // the poll: while the backend re-reads this page's text, refresh when the
   // re-read lands (the old transcription is replaced, the stale edits
   // cleared, the flags recomputed from the new self-report)
   clearInterval(session.processingTimer);
   session.processingTimer = null;
+  session.processingWas = !!(session.batch.processing || {})[page];
   if (pageState === "transcribing") {
-    session.processingTimer = setInterval(async () => {
-      try {
-        const data = await (
-          await fetch(`/api/sync/batch/${encodeURIComponent(batch.batchId)}/drafts`, {
-            headers: { Accept: "application/json" },
-          })
-        ).json();
-        if ((data.processing || {})[page] || !Array.isArray(data.documents)) return;
-        delete session.edits[page];
-        saveEdits(batch.batchId, docIndex, session.edits);
-        session.from = null;
-        session.batch.documents = data.documents;
-        session.batch.processing = data.processing || {};
-        renderSurface(session.root, session);
-      } catch {
-        // backend unreachable — retry next tick
-      }
+    session.processingTimer = setInterval(() => {
+      void refreshBatchState(session);
     }, 5000);
   }
-
+  // the rebuild-while-open staleness (2026-08-22): when the reviewer
+  // comes back to the tab, re-check the layouts and refresh if the
+  // server's moved on — the only moment the stale geometry matters is
+  // the moment it is looked at.
+  if (currentSession?.visHandler) document.removeEventListener("visibilitychange", currentSession.visHandler);
+  session.visHandler = () => {
+    if (document.visibilityState === "visible") void refreshBatchState(session);
+  };
+  document.addEventListener("visibilitychange", session.visHandler);
   renderTx(session);
   openViewer(session, imgBox);
 }
@@ -1395,7 +1470,7 @@ function syncTxFromImage(session) {
   if (!layout) return;
   const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
   const base = txb.offsetTop;
-  const offsets = [...txb.querySelectorAll(".rv-line")].map((el) => el.offsetTop - base);
+  const offsets = session.txOffsets || [...txb.querySelectorAll(".rv-line")].map((el) => el.offsetTop - base);
   const target = lineScrollFor(session.view.y, layout, f, offsets);
   if (Math.abs(txb.scrollTop - target) < 2) return;
   session.syncLock = true;
@@ -2103,6 +2178,12 @@ function renderTx(session) {
     session.txBody.querySelector(".rv-line--sel")?.scrollIntoView({ block: "nearest" });
   }
   session.lastSelRendered = session.selLine;
+  // the dual-pane sync's offsets — recorded at the render, used by the
+  // sync (2026-08-22: the sync re-queried the DOM per event, so a render
+  // between the query and the scroll could hand it stale positions; the
+  // render's own data is the only source the sync should read)
+  const base = txb.offsetTop;
+  session.txOffsets = [...txb.querySelectorAll(".rv-line")].map((el) => el.offsetTop - base);
 }
 
 /** Confirm & Next: the last page confirms the document through the sync

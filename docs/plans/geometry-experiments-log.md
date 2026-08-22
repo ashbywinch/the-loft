@@ -180,3 +180,56 @@ drops. Findings:
   work/<batch>/logs/layout-<timestamp>-<pid>.log (the write mode, the
   unique name — never an accumulating log, per the user). A problematic
   run is examinable after the fact.
+
+## 2026-08-22 — the crop-grid experiment, Phase 1 + 2 (the geometry rework)
+
+The user's architectural question: the pipeline's cross-engine fusion (the
+VLM's text vs the rec's ink) is the seam where every fix-up lands. The
+proposal: MEASURE LOCALLY, STITCH GLOBALLY — the page read as a grid of
+crops, each crop's lines measured in the crop's OWN frame (the model's
+geometry is trustworthy only when the question is local), stitched into
+the page.
+
+### Phase 1 — the pure stitch (committed f961919)
+
+- stitch_crop_box: the crop-local normalized 0-1000 box -> the page
+  frame, exactly. The synthetic-letter fixture's crop-grid candidate
+  anchors at IoU 1.00 with full coverage (the truth by construction).
+- The content-anchored grid: the crops cover the INK extent (the real
+  pipeline anchors to the rec's detection bounds), never the blank
+  margins — all 6 crops carry lines.
+- The order metric is a separate concern (the reading-order machinery).
+
+### Phase 2 — the real crop-grid on page-01 (tools/eval_crop_grid.py)
+
+Two runs (27.4k tokens, ~6 min each, sequential single-image calls — the
+proven shape; the multi-image prompts still spiral):
+
+- **Coverage SOLVED: 0 boxless (vs the current pipeline's 9), 67 lines
+  (vs the guess's 31), the full letter read (y 2263-4640) with clean
+  text** — the model's per-crop cursive reading is good, and it finds
+  MORE lines than the guess (the finer segmentation: "Our week includes
+  :" + "Professor: J.R.P.O." split, the margin notes, the bottom tail).
+- **Box PRECISION is model-limited**: the visual assessment — roughly
+  half the boxes align with single lines; the rest are merged (2-4
+  lines), misaligned, or overlapping at the bottom. The model's local
+  boxes are MUCH better than the full-page schematic (the location
+  report) but are attention-drawings, not measurements.
+- The exact-text matching vs the current layout found only 2-3 pairs
+  (the finer segmentation breaks the 1:1) — the IoU numbers are not
+  the point; the visual is.
+- The reading order: the grid order reads the two-column letter's LEFT
+  column before the RIGHT (the "Helen Just" at y 3894 after "questions"
+  at y 4387) — the block-aware order (reading.py) is the fix.
+
+### The decision point
+
+The crop-grid solves the coverage + the text; the boxes need the
+rec's ink for precision. Next candidates:
+(a) the crop-grid's line regions + the rec's ink WITHIN each region (the
+    intersection = the precise box) — the fusion inverted: the VLM
+    segments + labels, the rec measures;
+(b) accept the approximate boxes + the review's correction;
+(c) the crop-grid's regions as the rec's detection ROIs (the rec
+    re-detects within each crop-grid line at a higher zoom — the
+    merged-line problem may resolve at the single-line scale).

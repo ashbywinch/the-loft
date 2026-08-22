@@ -313,6 +313,13 @@ def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str) -> Non
     inkless = layout.drop_inkless(image)
     if inkless:
         print(f"layout: {image.name} — {inkless} box(es) with no ink dropped (Gate D)", file=sys.stderr)
+    # Gate E as a correction (2026-08-22): a box that claims another
+    # line's region with different text shadows the confirmed anchor —
+    # page-03's boxless lines sat on the P.S. margin, refusing the page
+    # at the serve gate. The lower-confidence box drops.
+    conflicts = layout.drop_conflicts()
+    if conflicts:
+        print(f"layout: {image.name} — {conflicts} conflicting box(es) dropped (Gate E)", file=sys.stderr)
     out = guess_dir / f"{image.stem}.layout.json"
     store = PipelineStore(WORK_DIR)
     store_path = str(Path(batch_id) / "ocr-guess" / out.name)

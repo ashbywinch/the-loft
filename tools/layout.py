@@ -196,6 +196,30 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[
     return matches, unmatched[len(boxless) :]
 
 
+def drop_conflicting_boxes(lines: list[dict[str, Any]]) -> int:
+    """Gate E as a correction (2026-08-22): when two lines claim the same
+    region with DIFFERENT text, the lower-confidence line's box is an
+    estimate that shadows the confirmed anchor — page-03's boxless
+    "critic's view. To quote:" box sat on the P.S. margin, refusing the
+    whole page at the serve gate. The lower-conf box drops (the line
+    stays flagged); the confirmed anchor keeps its region. The same text
+    in one region is the dedupe's job, never dropped here. Returns the
+    count dropped."""
+    boxed = [ln for ln in lines if ln.get("box")]
+    dropped = 0
+    for i, a in enumerate(boxed):
+        for b in boxed[i + 1 :]:
+            if not a.get("box") or not b.get("box"):
+                continue
+            if overlap(a["box"], b["box"]) >= 0.5 and normalize(a.get("text", "")) != normalize(b.get("text", "")):
+                if float(a.get("conf", 0.0)) < float(b.get("conf", 0.0)):
+                    a["box"] = None
+                else:
+                    b["box"] = None
+                dropped += 1
+    return dropped
+
+
 def word_conf(vlm_words: list[str], rec_words: list[str]) -> list[float]:
     """Per-VLM-word cross-reader agreement.
 
@@ -339,6 +363,13 @@ class Layout:
         """Gate D: the boxes whose region holds no ink are estimates, not
         anchors — dropped (the lines stay flagged). Returns the count."""
         return drop_inkless_boxes(self.lines, image)
+
+    def drop_conflicts(self) -> int:
+        """Gate E as a correction: when two lines claim the same region
+        with different text, the lower-confidence box is an estimate that
+        shadows the confirmed anchor — dropped (the line stays flagged).
+        Returns the count."""
+        return drop_conflicting_boxes(self.lines)
 
     def to_dict(self) -> dict[str, Any]:
         return {

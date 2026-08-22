@@ -1681,3 +1681,24 @@ def test_box_overlap_is_intersection_over_the_smaller_box() -> None:
     assert _box_overlap([0, 0, 100, 100], [25, 0, 75, 100]) == 1.0
     # half the smaller box's area is inside the other
     assert _box_overlap([0, 0, 100, 100], [50, 0, 150, 100]) == 0.5
+
+
+def test_drop_conflicting_boxes_keeps_the_confirmed_anchor() -> None:
+    """Gate E as a correction (2026-08-22): when two lines claim the same
+    region with DIFFERENT text, the lower-confidence line's box is an
+    estimate that shadows the confirmed anchor — page-03's boxless
+    'critic's view. To quote:' box sat on the P.S. margin, refusing the
+    whole page at the serve gate. The lower-conf box drops (the line
+    stays flagged); the confirmed anchor keeps its region."""
+    from tools.layout import drop_conflicting_boxes
+
+    lines = [
+        {"index": 0, "text": "P.S. I had a whole Grade 3A", "box": [526, 2247, 1044, 2294], "conf": 1.0},
+        {"index": 1, "text": "critic's view. To quote:", "box": [517, 2247, 1048, 2302], "conf": 0.0},
+        {"index": 2, "text": "theory paper", "box": [540, 2297, 1042, 2340], "conf": 1.0},
+    ]
+    dropped = drop_conflicting_boxes(lines)
+    assert dropped == 1
+    assert lines[0]["box"] == [526, 2247, 1044, 2294]
+    assert lines[1]["box"] is None, "the unconfirmed claim on the anchor's region must drop"
+    assert lines[2]["box"] == [540, 2297, 1042, 2340]

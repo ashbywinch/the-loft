@@ -1,130 +1,219 @@
-# Model Trial Report — the crop-grid geometry rework
+# The layout geometry: what we learned and where we're going
 
-Status: IN PROGRESS (2026-08-22) — the trial's verdict is in (route the
-image model to `z-ai/glm-4.6v`); the postcard's geometry is an open
-problem with a spike proposal (§6-7).
+Status: IN PROGRESS (2026-08-22) — the model trial's verdict is in; the
+postcard's geometry has a proposed spike (§7).
 
-The running experiment ledger: `docs/plans/geometry-experiments-log.md`.
+This report is about one question: **how do we get a box around every
+line of handwriting, aligned with the text, for family documents
+(letters and postcards)?** It records the attempts, what each taught us,
+the model comparison, and the proposed way forward. The running
+experiment log (the what-we-tried-when ledger) is
+`docs/plans/geometry-experiments-log.md`.
 
-## 1. The problem
+## 1. The goal and the two test documents
 
-The layout pipeline fuses two engines whose capabilities barely overlap:
-the VLM reads cursive well but its **full-page** geometry is schematic
-(the location report squeezed page-01's whole letter into the top 31-80%
-of its output canvas — boxes landed 500-770px off), and the rec
-(PaddleOCR) measures real ink but cannot read cursive (17 merged
-detections vs the guess's 31 lines). The cross-engine fusion is where
-every fix-up has landed.
+The review surface shows each scanned page as an image with line boxes
+and a transcription. The pipeline must produce, per page: the **text**
+and a **box per line of text**. This report is about the box half.
 
-The hypothesis (tested in the ledger): **measure locally, stitch
-globally** — read the page as a grid of crops; the model's geometry is
-trustworthy only when the question is LOCAL (a crop ≈ the model's
-canvas); stitch the crop-local boxes into the page.
+Two documents define the problem space:
 
-## 2. What the crop-grid already proved (Phase 1-2, page-01)
+- **The letter** (page-03): single-orientation handwriting, with a
+  margin callout block top-left and an address block top-right.
+- **The postcard**: printed top, a handwritten message at ~90°, an
+  address, and vertical printed text down the center. Genuinely
+  multi-orientation.
 
-- The stitch (`stitch_crop_box`) is exact — the synthetic fixture
-  anchors at IoU 1.00.
-- The real run (the current Mimo model, 6 crops, ~27k tokens, ~6 min):
-  **0 boxless** (vs the pipeline's 9), 67 lines (vs the guess's 31) —
-  the whole letter read, text clean. The boxes are approximate (the
-  visual: ~half one-line, the rest merged/offset) — the model's local
-  boxes are attention-drawings, not measurements.
+## 2. The pipeline and why its geometry broke
 
-## 3. The model trial — 5 vision models × 2 tasks
+Three engines are involved:
 
-The same crop-grid, sequential single-image calls (the proven shape —
-multi-image prompts spiral), via OpenRouter. Task A: **page-03** — the
-callout-box letter (the P.S. margin top-left, the address top-right, the
-body). Task B: **the 201024 postcard** — the printed top, the 90°
-message, the address, the vertical center text.
+- **The vision model (VLM)** — a cloud multimodal model. Reads cursive
+  handwriting well; produces text and boxes from an image.
+- **The rec** — PaddleOCR, a local OCR engine. Measures ink precisely
+  (its detection boxes are real) but cannot read cursive (its text is
+  garbage on handwriting).
+- **The layout pass** — fuses the two.
 
-| model | task | lines | boxless | tokens | time | IoU* | visual |
+Two structural facts broke the geometry:
+
+1. **The VLM cannot measure a whole page.** Asked for per-line boxes on
+   a full page, it returned a *schematic*: page-01's entire letter came
+   back squeezed into the top 31-80% of its output canvas, so the
+   rescale placed boxes 500-770px from the real text. The model can
+   *read* a page but not *measure* it at full-page scale.
+2. **The fusion requires matching the rec's text against the VLM's
+   text** — and the rec cannot read cursive, so its text barely
+   overlaps the VLM's. The matching fails exactly on the hardest pages;
+   the fallback (position-based pairing) mispairs when the rec's
+   detection count differs from the line count (17 merged detections vs
+   31 lines on page-01).
+
+## 3. What we tried, and what each attempt taught us
+
+### 3.1 The full-page location report (the VLM's boxes for the whole page)
+Tried because the VLM reads the text, so its own boxes should anchor it.
+Result: schematic boxes (the squeezed canvas above); the gates had to
+refuse the layouts. **Lesson: the model's geometry is only trustworthy
+when the question is local — a crop, not a whole page.**
+
+### 3.2 The rec's detection boxes as the geometry
+Tried because the rec's ink boxes are real. Result: the boxes are real
+but merged (one tall box per 2-4 lines) and the rec's text is
+unreadable, so matching them to the VLM's lines fails; position-based
+pairing mispairs. **Lesson: cross-engine text matching is the broken
+seam — we need text and geometry from the same source.**
+
+### 3.3 The arbitration rules and the gates (the patch era)
+Tried because refusing whole pages was too coarse: an Anchor
+arbitration, fail-fast gates (A-F), ink-presence and duplicate-region
+drops. Result: the gates correctly refuse bad layouts (honest, never
+silent bad data) but the pages stay unserved; the "boxless line" is the
+arbitration saying *no candidate holds this text*. **Lesson: patching
+the fusion fixes symptoms, not geometry — and the fail-fast gates are
+the right backstop but the wrong first line of defense.**
+
+### 3.4 The clip-location experiment (locate lines within clips)
+Tried as the first "local geometry" idea: clip each known line, ask the
+model for the clip's box. The simulation (a perfect local locator)
+held accuracy. The real calls failed on **call mechanics**: multi-image
+prompts spiraled (the model's reasoning consumed the 8000-token budget
+and returned empty content), and single-image calls were slow (5 calls
+in 25 minutes). **Lesson: the concept was right, the batching was
+wrong — use sequential single-image calls.**
+
+### 3.5 The crop-grid (measure locally, stitch globally)
+The current approach: divide the page's ink region into overlapping
+crops; read each crop with the VLM (text + boxes in the crop's own
+frame); map the crop-local boxes into the page frame (the stitch);
+drop the duplicates; order the lines. On page-01 (the current model):
+**0 boxless lines** (the pipeline had 9), **67 lines** (the guess had
+31) — the whole letter read, including margin notes and the bottom tail
+the pipeline missed — with clean text. The boxes were approximate:
+about half aligned one-line, the rest merged or slightly off.
+**Lesson: local measurement gives complete coverage and good text; but
+the model's boxes are attention-drawings, not measurements — the model
+choice matters for box quality.**
+
+### 3.6 The model trial (this report's experiment, §4)
+Five models, the same crop-grid, two tasks. Result: every model gave 0
+boxless; the models differed sharply in box quality; none handled the
+postcard's rotated message. **Lesson: on upright text, glm-4.6v's line
+segmentation is excellent; rotated text defeats upright reads — the
+postcard needs reads at the text's own orientation.**
+
+Operational learnings along the way: the crop read's completion budget
+is 8000 tokens (64000 exceeds smaller models' context once the image is
+in); the crop grid is anchored to the ink extent so blank margins are
+never read; the IoU comparison must use text-matched pairs (and is
+meaningless on the postcard, whose readings are scrambled for every
+model).
+
+## 4. The model trial — 5 models × 2 tasks
+
+The same crop-grid, sequential single-image calls, via OpenRouter.
+Task A: the letter (page-03). Task B: the postcard.
+
+| model | task | lines | boxless | tokens | time | IoU* | visual result |
 |---|---|---|---|---|---|---|---|
-| **glm-4.6v** | letter | 54 | 0 | 23,646 | 525s | 0.751 | ~100% one-line boxes; callout + address boxed |
+| **glm-4.6v** | letter | 54 | 0 | 23,646 | 525s | 0.751 | ~100% one-line aligned boxes; callout + address boxed |
 | | postcard | 23 | 0 | 15,964 | 248s | 0.961 | message fragmented into words |
 | **glm-4.5v** | letter | 49 | 0 | 17,189 | 237s | 0.765 | top ~90% clean; bottom third fragments |
 | | postcard | 37 | 0 | 29,148 | 301s | 0.940 | message fragmented; address mostly missed |
 | **qwen2.5-vl-72b** | letter | 57 | 0 | 9,112 | 56s | 0.634 | spatially right but every line split into word groups |
 | | postcard | 17 | 0 | 7,922 | 24s | 0.269 | fragmented |
-| **gpt-4.1-mini** | letter | 53 | 0 | 9,107 | 39s | 0.489 | middling; sparse postcard reading (8 lines) |
-| | postcard | 8 | 0 | 9,000 | 31s | 0.400 | |
+| **gpt-4.1-mini** | letter | 53 | 0 | 9,107 | 39s | 0.489 | middling; only 8 lines on the postcard |
+| | postcard | 8 | 0 | 9,000 | 31s | 0.400 | sparse |
 | **gpt-4o-mini** | letter | 54 | 0 | 156,089 | 41s | 0.334 | poor boxes; ~10× the tokens of everyone |
-| | postcard | 9 | 0 | 185,554 | 37s | 0.883 | |
+| | postcard | 9 | 0 | 185,554 | 37s | 0.883 | sparse |
 
-*IoU is over the text-matched pairs only (exact normalized-text match vs
-the current layout's rec-ink boxes). The postcard's readings are
-scrambled for every model (1-2 matched) — its IoU reflects only the
-printed lines and is not comparable to the letter's.
+\*IoU = box overlap against the current layout's rec-ink boxes, averaged
+over the text-matched pairs only (exact normalized-text match). The
+postcard's readings are scrambled for every model (1-2 matched pairs),
+so its IoU reflects only the printed lines and is not comparable.
 
-Baseline for reference: the current Mimo (`dynamic/image`) on page-01 —
-67 lines, 0 boxless, 27.4k tokens, ~6 min, ~half the boxes approximate.
+Baseline: the current image model (Mimo) on page-01 — 67 lines, 0
+boxless, ~27k tokens, ~6 min, about half the boxes approximate.
 
-## 4. The verdict
+**Verdict:** every model achieves full coverage (0 boxless) — the
+crop-grid works regardless of the model. The model matters for box
+*quality*. On upright text, **glm-4.6v is the winner** (~100% one-line
+boxes on the letter). qwen is far faster and cheaper but fragments
+lines into word groups. The OpenAI pair is the worst (and gpt-4o-mini
+costs ~10× the tokens). Recommendation: route the image model to
+`z-ai/glm-4.6v` (or `glm-4.5v` if speed/cost matter more).
 
-- **Every model: 0 boxless** — the crop-grid's coverage holds across the
-  board. The model only matters for the box *quality*.
-- **The letter (task A): glm-4.6v wins outright** — ~100% one-line
-  aligned boxes, the callout and the address boxed. glm-4.5v is close
-  (top excellent, bottom fragmented) at a third of the time. qwen is
-  fast and cheap but fragments every line into word groups — not line
-  boxes. The OpenAI pair is the worst (and gpt-4o-mini costs ~10× the
-  tokens).
-- **The postcard (task B): none of the models segment the message
-  cleanly.** The 90° message + the address defeat the upright crop
-  reads — a model-picking fix cannot solve it.
-- **Recommendation (user's route): image model → `z-ai/glm-4.6v`**
-  (glm-4.5v if the speed/cost matter more).
+## 5. Why the postcard still fails
 
-## 5. Why the postcard fails
+The crop-grid reads every crop in its natural orientation. The
+postcard's message is at ~90° and the vertical center text at 90°, so
+the model sees rotated text, which it fragments into words, and its
+boxes do not align with the ink. The letter works because its text is
+already horizontal. The postcard fails because its text is not — a
+model-picking fix cannot solve that.
 
-The crop-grid reads each crop UPRIGHT. The postcard's message is at
-~90° and the vertical center text at 90° — the model sees rotated text,
-fragments it into words, and its boxes don't align with the ink. The
-letter works because it is single-orientation; the postcard is genuinely
-multi (the orientation report's degrees {0, 90, 180, 270}).
+## 6. The proposed pipeline — read each crop at its own text orientation
 
-## 6. Spike proposal — the orientation-aware crop-grid
+The idea that unifies the two documents, without classifying the
+document type in advance:
 
-Extend the crop-grid so each crop is read at the text's OWN orientation:
+For each page:
 
-1. The content-anchored crops (existing).
-2. **Per-crop orientation**: the crop's dominant text orientation — from
-   the orientation report's regions where present, else the model's own
-   first-read boxes' aspect (a tall box = vertical text).
-3. **The rotated read**: rotate the crop UPRIGHT by its orientation,
-   read it (glm-4.6v), get the text + crop-local boxes.
-4. **The remap**: the rotation's inverse back into the page frame —
-   `remap_box`/`rotate_detections` already exist and are test-pinned.
-5. The stitch + the cross-crop dedupe + the block-aware reading order
-   (existing).
+1. Find the ink region (the rec's detection, or the current layout's
+   boxes) and divide it into overlapping crops.
+2. **Read each crop with the VLM.** The read returns the lines' text
+   and their boxes within the crop.
+3. **Check the read's boxes for orientation.** A box that is much
+   taller than wide means the text in it is vertical, not horizontal.
+4. **If the text is rotated, rotate the crop so it is horizontal and
+   read it again.** This is the step the postcard needs: the models
+   segment text into clean lines only when it is horizontal.
+5. Map each crop's boxes into the page frame (the stitch).
+6. Drop the duplicates (lines read in overlapping crops).
+7. Order the lines (the block-aware reading order).
 
-The spike's questions: (a) does the upright read fix the message's
-fragmentation and produce aligned boxes? (b) the per-crop orientation's
-accuracy (the clip classifier was flaky on misplaced clips — measure it
-on real crops); (c) the remap's exactness through the crop grid.
+How the two documents flow through this:
 
-## 7. The fit with the letter — the unified pipeline
+- **The letter:** every crop's text is already horizontal, so step 4
+  never triggers — the reads are exactly the ones the trial measured
+  (glm-4.6v: ~100% one-line boxes).
+- **The postcard:** the message crop's text is vertical, so step 4
+  rotates it, the model reads horizontal text and segments it into
+  lines, and step 5 maps the boxes back into the page frame.
 
-We won't know the document type in advance, and we don't need to: **one
-pipeline** — the crop-grid + the per-crop orientation:
+The pipeline never asks "is this a letter or a postcard?" It asks each
+crop the same question — "which way is the text?" — and reads
+accordingly. One misclassification costs one crop, not the page. The
+rec stays as the backstop (its ink finds regions the crops missed).
 
-- A single-orientation letter: every crop classifies 0° → upright reads
-  (the current behavior, the trial's proven quality with glm-4.6v).
-- A multi-orientation postcard: the crops classify their rotations →
-  rotated reads → the remap.
-- The classification is the only seam, and it is local (per crop), so a
-  misclassification costs one crop, not the page.
+## 7. The next experiment (spike)
 
-The rec stays the backstop (its ink finds regions the crops missed; the
-clip path labels them). The outcome for both document types: lines with
-text + page-frame boxes, from the model that read them — no cross-engine
-text matching, no schematic global geometry.
+**Question:** does reading the postcard's message crop rotated-upright
+fix the fragmentation and produce aligned, one-line boxes?
+
+**Steps:**
+1. Take the message crop from the postcard (the left region, whose text
+   is ~90° per the orientation report).
+2. Rotate it 90° so the text is horizontal (the rotation and its
+   inverse are already implemented and test-pinned).
+3. Read it with glm-4.6v — text and crop-local boxes, now on horizontal
+   text.
+4. Remap the boxes back through the rotation into the page frame.
+5. Compare against the upright read from the trial (fragmented): line
+   count, one-line-per-box on the image, agreement with the rec's ink.
+
+**What the result decides:** if the rotated read segments the message
+cleanly, we build the per-crop orientation step (§6.3-6.4) into the
+pipeline. If not, the postcard needs a different idea — and the spike
+tells us that with one rotated read instead of a full build.
 
 ## 8. Open items
 
-- The spike's run on the postcard (the orientation-aware reads).
-- The per-crop orientation's accuracy measurement.
-- The reading order for the two-column letter (the block-aware order).
-- The self-report stage is still never run by the process (a cheap
-  quality win, independent of the geometry work).
+- The spike's run on the postcard (§7).
+- The per-crop orientation check's accuracy (the model's box aspect as
+  the signal, vs the orientation report's regions).
+- The reading order for the two-column letter (the block-aware order
+  exists but the crop-grid's grid order reads the left column first).
+- The self-report stage (a second VLM read flagging unsure words) is
+  built but never run by the process — a cheap quality win independent
+  of the geometry work.

@@ -250,7 +250,7 @@ visual breakdown. The summary:
   (gpt-4o-mini: 156k tokens!).
 - The postcard: NONE of the models segment the 90° message cleanly —
   the upright crop reads fail on the rotated text. The postcard needs
-  the orientation-aware crop-grid (the spike proposal, report §6).
+  the orientation-aware crop-grid (the spike proposal, report §7).
 - DECISION (user's route): the image model -> z-ai/glm-4.6v.
 - The crop read's completion budget: 8000 (64000 exceeds the glm-4.5v's
   65536 context once the image is in — the 400).

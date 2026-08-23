@@ -1,14 +1,15 @@
 # The layout geometry: what we learned and where we're going
 
-Status: IN PROGRESS (2026-08-22) — the model trial's verdict is in; the
-postcard's geometry has a proposed spike (§7).
+Status: IN PROGRESS (2026-08-22) — the model trial's verdict is in
+(route the image model to `z-ai/glm-4.6v`); the postcard spike proved
+the rotation concept but the crop-grid integration needs region-sized
+crops (§7). The running experiment ledger:
+`docs/plans/geometry-experiments-log.md`.
 
 This report is about one question: **how do we get a box around every
 line of handwriting, aligned with the text, for family documents
 (letters and postcards)?** It records the attempts, what each taught us,
-the model comparison, and the proposed way forward. The running
-experiment log (the what-we-tried-when ledger) is
-`docs/plans/geometry-experiments-log.md`.
+the model comparison, and the proposed way forward.
 
 ## 1. The goal and the two test documents
 
@@ -186,32 +187,47 @@ crop the same question — "which way is the text?" — and reads
 accordingly. One misclassification costs one crop, not the page. The
 rec stays as the backstop (its ink finds regions the crops missed).
 
-## 7. The next experiment (spike)
+## 7. The spike and its result — the concept works, the integration needs region-sized crops
 
-**Question:** does reading the postcard's message crop rotated-upright
-fix the fragmentation and produce aligned, one-line boxes?
+**The spike's question:** does reading the postcard's message rotated
+upright fix the fragmentation and produce aligned, one-line boxes?
 
-**Steps:**
-1. Take the message crop from the postcard (the left region, whose text
-   is ~90° per the orientation report).
-2. Rotate it 90° so the text is horizontal (the rotation and its
-   inverse are already implemented and test-pinned).
-3. Read it with glm-4.6v — text and crop-local boxes, now on horizontal
-   text.
-4. Remap the boxes back through the rotation into the page frame.
-5. Compare against the upright read from the trial (fragmented): line
-   count, one-line-per-box on the image, agreement with the rec's ink.
+**The spike's answer — the concept works.** The full message panel (the
+left column, x 100-1700), rotated +90 so the text is horizontal, reads
+cleanly with glm-4.6v: "If it is at all a decent day tomorrow / come
+as early as you / can so as to get a / walk in the morning / I hope it
+will be better / Than today!" — 10 lines, 10 boxed, including the
+~~strike~~ marker. The rotation's inverse (mapping the boxes back into
+the page) was pinned empirically: +90 maps (x, y) → (y, H'−x), so the
+inverse is x = H'−y', y = x'.
 
-**What the result decides:** if the rotated read segments the message
-cleanly, we build the per-crop orientation step (§6.3-6.4) into the
-pipeline. If not, the postcard needs a different idea — and the spike
-tells us that with one rotated read instead of a full build.
+**The integration's failure — an honest negative.** The crop-grid's
+automatic run on the postcard (per-crop orientation: read upright,
+check the boxes' aspect, rotate +90 if tall) produced word-fragments,
+not lines:
+
+- The uniform 2×3 grid's message crops are wide (1203×609), so rotated
+  they are only 609px wide — the message's lines are **cut at the
+  crop's edge**, and the model reads the fragments ("deceu, corne,
+  can, walk").
+- The stitched boxes sat off-crop (x beyond the crop's width) — the
+  remap needs verification against real rotated reads.
+- The address was not read (the top-right crop returned only the
+  printed header).
+
+**The lesson:** the rotation concept is right; the crops must match the
+text region. The vertical-text regions need crops that, when rotated,
+fit the full line length — the message's full panel, or tall strips
+aligned with the ink's columns. The next iteration: region-sized crops
+(the ink's columns or the orientation report's regions as the crop
+boundaries), not the uniform grid.
 
 ## 8. Open items
 
-- The spike's run on the postcard (§7).
+- The region-sized crops for the postcard (§7's lesson).
 - The per-crop orientation check's accuracy (the model's box aspect as
   the signal, vs the orientation report's regions).
+- The remap's verification against real rotated reads.
 - The reading order for the two-column letter (the block-aware order
   exists but the crop-grid's grid order reads the left column first).
 - The self-report stage (a second VLM read flagging unsure words) is

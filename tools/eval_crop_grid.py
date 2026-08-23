@@ -63,8 +63,11 @@ def _read_crop(
     api_key: str | None,
 ) -> tuple[list[dict[str, Any]], int] | None:
     """Read ONE crop with the VLM — the text + the crop-local boxes.
-    None when the call failed or the model gave no geometry. Returns
-    (the lines, the token usage) on success."""
+    When the upright read's boxes are TALLER than wide (the text is
+    vertical — a postcard message), the crop is rotated +90° so the
+    text is horizontal and re-read; the boxes are remapped back into
+    the crop frame. None when the call failed or the model gave no
+    geometry. Returns (the lines, the token usage)."""
     box = (int(crop.x), int(crop.y), int(crop.x + crop.w), int(crop.y + crop.h))
     crop_path = tmp / f"crop-{index}.png"
     with Image.open(image_path) as im:
@@ -90,6 +93,34 @@ def _read_crop(
     if boxes is None:
         print(f"crop {index}: no geometry from the model", file=sys.stderr)
         return None
+    if _vertical_boxes(boxes):
+        rotated = tmp / f"crop-{index}-rot.png"
+        with Image.open(crop_path) as im:
+            im.rotate(90, expand=True).save(rotated)
+        usage2: dict[str, int] = {}
+        try:
+            text2, usage2 = transcribe_image_vlm(
+                rotated,
+                model=model,
+                system=transcription_system_with_context(),
+                base_url=base_url,
+                api_key=api_key,
+                max_tokens=8000,
+            )
+            plain2, boxes2 = parse_transcription_response(text2)
+        except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
+            print(f"crop {index} rotated read FAILED: {str(exc)[:120]}", file=sys.stderr)
+            plain2, boxes2 = None, None
+        if boxes2 and plain2:
+            # the +90 rotation's inverse: the rotated frame's height is
+            # the crop's width (pinned empirically 2026-08-22)
+            rot_h = int(crop.w)
+            boxes2 = {li: _remap_rotated(b, rot_h) for li, b in boxes2.items()}
+            plain, boxes, tokens = plain2, boxes2, tokens + int(usage2.get("total_tokens", 0) or 0)
+            print(f"crop {index}: vertical text — rotated +90 and re-read", file=sys.stderr)
+    if plain is None:
+        print(f"crop {index}: no readable text", file=sys.stderr)
+        return None
     lines = [{"text": plain.split("\n")[li], "box": boxes[li], "orientation": 0} for li in sorted(boxes)]
     print(
         f"crop {index} ({box[0]},{box[1]}) {crop.w:.0f}x{crop.h:.0f}: {len(lines)} lines, "
@@ -97,6 +128,24 @@ def _read_crop(
         file=sys.stderr,
     )
     return (lines, tokens)
+
+
+def _vertical_boxes(boxes: dict[int, list[float]]) -> bool:
+    """The crop's boxes are taller than wide — the text is vertical
+    (the postcard's message); the crop needs the +90° rotation."""
+    if not boxes:
+        return False
+    hs = sorted(b[3] - b[1] for b in boxes.values())
+    ws = sorted(b[2] - b[0] for b in boxes.values())
+    return hs[len(hs) // 2] > ws[len(ws) // 2] * 1.2
+
+
+def _remap_rotated(box: list[float], rot_h: int) -> list[float]:
+    """The box in the +90-rotated frame -> the original crop frame. The
+    +90 rotation maps (x, y) -> (y, H' - x); the inverse is
+    x = H' - y', y = x' — pinned empirically (2026-08-22)."""
+    x0, y0, x1, y1 = box
+    return [float(rot_h - y1), float(x0), float(rot_h - y0), float(x1)]
 
 
 def _anchor_agreement(assembled: dict[str, Any], layout: dict[str, Any]) -> tuple[list[float], int]:

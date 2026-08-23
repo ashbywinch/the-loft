@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -27,7 +28,13 @@ from tools.layout import load_layout_store
 from tools.loft_paths import WORK_DIR
 from tools.pipeline_store import PipelineStore
 from tools.text import normalize
-from tools.vlm import VlmError, parse_transcription_response, transcribe_image_vlm, transcription_system_with_context
+from tools.vlm import (
+    DEFAULT_BASE_URL,
+    VlmError,
+    parse_transcription_response,
+    transcribe_image_vlm,
+    transcription_system_with_context,
+)
 
 
 def _content_bounds(layout: dict[str, Any]) -> tuple[float, float, float, float]:
@@ -47,7 +54,13 @@ def _content_bounds(layout: dict[str, Any]) -> tuple[float, float, float, float]
 
 
 def _read_crop(
-    crop: CropReading, image_path: Path, tmp: Path, index: int, model: str
+    crop: CropReading,
+    image_path: Path,
+    tmp: Path,
+    index: int,
+    model: str,
+    base_url: str,
+    api_key: str | None,
 ) -> tuple[list[dict[str, Any]], int] | None:
     """Read ONE crop with the VLM — the text + the crop-local boxes.
     None when the call failed or the model gave no geometry. Returns
@@ -58,7 +71,17 @@ def _read_crop(
         im.crop(box).save(crop_path)
     t0 = monotonic()
     try:
-        text, usage = transcribe_image_vlm(crop_path, model=model, system=transcription_system_with_context())
+        text, usage = transcribe_image_vlm(
+            crop_path,
+            model=model,
+            system=transcription_system_with_context(),
+            base_url=base_url,
+            api_key=api_key,
+            # the crop read's completion is ~1-4k tokens; 64000 (the
+            # full-page location budget) EXCEEDS the glm-4.5v's 65536
+            # context once the image is in — the 400 (2026-08-22)
+            max_tokens=8000,
+        )
         plain, boxes = parse_transcription_response(text)
     except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
         print(f"crop {index} FAILED: {str(exc)[:120]}", file=sys.stderr)
@@ -93,7 +116,14 @@ def _anchor_agreement(assembled: dict[str, Any], layout: dict[str, Any]) -> tupl
 
 
 def run(
-    batch_id: str, page: str, work_dir: Path, cols: int = 2, rows: int = 3, model: str = "dynamic/image"
+    batch_id: str,
+    page: str,
+    work_dir: Path,
+    cols: int = 2,
+    rows: int = 3,
+    model: str = "dynamic/image",
+    base_url: str = DEFAULT_BASE_URL,
+    api_key: str | None = None,
 ) -> dict[str, Any]:
     """Read the page's crops, stitch, and report. Returns the report
     dict (the run's record — the geometry experiment's ledger)."""
@@ -112,7 +142,7 @@ def run(
     started = monotonic()
     with tempfile.TemporaryDirectory() as tmp:
         for i, crop in enumerate(crops):
-            read = _read_crop(crop, image_path, Path(tmp), i, model)
+            read = _read_crop(crop, image_path, Path(tmp), i, model, base_url, api_key)
             if read is None:
                 failed += 1
                 continue
@@ -137,12 +167,12 @@ def run(
         "matched_lines": matched,
         "current_boxed": current_boxed,
     }
-    # persist the assembled layout + the report — the experiment's record
-    # (2026-08-22: the first run measured but did not save; the visual
-    # comparison needs the actual boxes)
-    out = work_dir / batch_id / "ocr-guess" / f"{page}.cropgrid.json"
+    # the model-scoped saves — the trial runs several models on the same
+    # page; each keeps its own assembled layout + report
+    slug = model.replace("/", "-").replace("@", "")
+    out = work_dir / batch_id / "ocr-guess" / f"{page}.cropgrid-{slug}.json"
     out.write_text(json.dumps(assembled, indent=1, ensure_ascii=False), encoding="utf-8")
-    report_path = work_dir / batch_id / "ocr-guess" / f"{page}.cropgrid-report.json"
+    report_path = work_dir / batch_id / "ocr-guess" / f"{page}.cropgrid-report-{slug}.json"
     report_path.write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")
     return report
 
@@ -154,9 +184,24 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cols", type=int, default=2)
     parser.add_argument("--rows", type=int, default=3)
     parser.add_argument("--work-dir", type=Path, default=WORK_DIR)
-    parser.add_argument("--model", default="dynamic/image", help="the gateway model to trial")
+    parser.add_argument("--model", default="dynamic/image", help="the model to trial")
+    parser.add_argument("--base-url", default=None, help="the API base (default: the gateway)")
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="the API key (default: the gateway token; set OPENROUTER_API_KEY for OpenRouter)",
+    )
     args = parser.parse_args(argv)
-    report = run(args.batch_id, args.page, args.work_dir, args.cols, args.rows, model=args.model)
+    report = run(
+        args.batch_id,
+        args.page,
+        args.work_dir,
+        args.cols,
+        args.rows,
+        model=args.model,
+        base_url=args.base_url,
+        api_key=args.api_key or os.environ.get("OPENROUTER_API_KEY"),
+    )
     print(json.dumps(report, indent=1))
     return 0
 

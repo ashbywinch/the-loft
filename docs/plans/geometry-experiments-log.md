@@ -233,3 +233,24 @@ rec's ink for precision. Next candidates:
 (c) the crop-grid's regions as the rec's detection ROIs (the rec
     re-detects within each crop-grid line at a higher zoom — the
     merged-line problem may resolve at the single-line scale).
+
+## 2026-08-22 — the model trial (5 models x 2 tasks, OpenRouter)
+
+The full report: `docs/plans/model-trial-report.md` — the table + the
+visual breakdown. The summary:
+
+- All 5 models (glm-4.6v, glm-4.5v, qwen2.5-vl-72b, gpt-4.1-mini,
+  gpt-4o-mini) via OpenRouter, the same crop-grid, the same 6 crops:
+  **every model 0 boxless** — the crop-grid's coverage holds regardless
+  of the model.
+- The letter (page-03, the callout): glm-4.6v's boxes ~100% one-line
+  (IoU 0.751, 23.6k tok, 525s); glm-4.5v's top excellent + bottom
+  fragmented (0.765, 17.2k, 237s); qwen's fast/cheap (56s, 9.1k) but
+  fragments every line into word groups; the OpenAI pair the worst
+  (gpt-4o-mini: 156k tokens!).
+- The postcard: NONE of the models segment the 90° message cleanly —
+  the upright crop reads fail on the rotated text. The postcard needs
+  the orientation-aware crop-grid (the spike proposal, report §6).
+- DECISION (user's route): the image model -> z-ai/glm-4.6v.
+- The crop read's completion budget: 8000 (64000 exceeds the glm-4.5v's
+  65536 context once the image is in — the 400).

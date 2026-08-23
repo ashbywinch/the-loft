@@ -254,3 +254,32 @@ visual breakdown. The summary:
 - DECISION (user's route): the image model -> z-ai/glm-4.6v.
 - The crop read's completion budget: 8000 (64000 exceeds the glm-4.5v's
   65536 context once the image is in — the 400).
+
+## 2026-08-22 — the postcard spike + the honest negative
+
+The spike's CONCEPT succeeded: the postcard's full message panel
+(1600x1950, x 100-1700) rotated +90 (PIL's rotate(90) = the
+counter-clockwise) reads CLEANLY with glm-4.6v — "If it is at all a
+decent day tomorrow come as early as you can so as to get a walk in the
+morning I hope it will be better Than today! / With Greetings and Best
+Wishes" — 10 lines, 10 boxed, including the ~~strike~~ marker. The
+rotation's inverse was pinned empirically: +90 maps (x,y)->(y, H'-x),
+so the inverse is x = H'-y', y = x'.
+
+The INTEGRATION failed: the crop-grid's automatic run on the postcard
+(the per-crop orientation: read upright, check the boxes' aspect, rotate
++90 if tall) produced fragments, not lines:
+
+- The uniform 2x3 grid's message crops are WIDE (1203x609), so rotated
+  they are only 609px wide — the message's lines are CUT at the crop's
+  edge, and the model reads the word-fragments ("deceu, corne, can,
+  walk, I hope, Thank").
+- The stitched boxes sit off-crop (x beyond the crop's width) — the
+  remap needs verification against the real rotated reads.
+- The address was not read (the top-right crop returned only the
+  printed header + fragments).
+
+LESSON: the rotation concept is right; the CROPS must be the REGION
+(the message's full panel, or a tall strip), not a uniform grid quarter
+— the vertical-text regions need crops that, when rotated, fit the
+full line length. The spike's panel read is the reference.

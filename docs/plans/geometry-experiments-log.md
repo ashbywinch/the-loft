@@ -313,3 +313,36 @@ the inverse; and the union-boxes (pixels) need the unscaled inverse.
 The remaining imperfection: the per-row clip labels are noisy ("ceut
 day forworre" for "decent day tomorrow") — the text needs the cleaner
 source (the panel's full read, or the label matching).
+
+## 2026-08-22 — the text refinement + the UI attempt's honest blockers
+
+The ink-column's per-row clip labels were noisy; the fix (2be75dc):
+read the whole rotated panel ONCE (the spike's clean read), match its
+lines to the measured rows by y-overlap — the text from the read that
+reads well, the boxes from the ink that measures well. The postcard's
+labels are now clean ("decent day tomorrow", the ~~strike~~), ~8-9k
+tokens (one read vs ten). The script generalizes to upright pages
+(--rot 0).
+
+The UI attempt (the user: "get the docs in the UI") exposed the honest
+blockers — the serve's validation refuses both layouts:
+
+- The LETTER's crop-grid output (49dc1df's run) is degenerate: 12
+  lines share one box [526,2238,1325,3083] (the P.S. margin block —
+  the model's schematic read). The earlier "~100% one-line" visual was
+  the 43 distinct boxes; the P.S. block's 12 identical boxes were
+  hidden under the one visible rectangle.
+- The rec's ink on the LETTER is coarse too: 26-28 clustered rows vs
+  ~35 lines (its det merges cursive lines at any gap 20-50).
+- The POSTCARD's vertical message lines sit at the Gate B 80px/char
+  boundary (81-82) — the legitimate vertical handwriting's glyph
+  height, a borderline false-positive of the "wildly out" threshold.
+- The label y-matching fails when the model's boxes are schematic (the
+  letter's full-page read: every row matched the first band) — order-
+  based matching is the next candidate.
+
+DECISION: the layouts stay out of the UI until they pass the serve's
+validation (the user's "no faults" gate). The next candidates: the
+P.S. block's rec-ink rows (the letter), the order-based label
+matching, and the Gate B threshold's honest calibration for vertical
+text.

@@ -346,3 +346,34 @@ validation (the user's "no faults" gate). The next candidates: the
 P.S. block's rec-ink rows (the letter), the order-based label
 matching, and the Gate B threshold's honest calibration for vertical
 text.
+
+## 2026-08-22 — the order-based matching verified + the UI's remaining blockers
+
+Item 2 (8a23326): tools/ink.py's match_labels — the proportional
+order-based assignment (each row's y-center, as a fraction of the
+content's span, picks the line at the same fraction), with the
+y-overlap refinement gated by the degenerate-detector (<60% distinct
+bands -> fall back). The tests pin the 1:1, the merged rows, the
+degenerate fallback, and the non-degenerate refinement.
+
+VERIFIED on both docs: the letter's 22 rows now carry the clean
+transcription in order (Chère Maman, Queen Alexandra's House, the
+whole letter — the 'all rows -> first band' collapse is gone); the
+postcard's message rows read cleanly (If it is at all a / decent day
+tomorrow / can so as ~~to~~ get a / walk in the morning / I hope N
+will be better / Than today! / With Greetings and Best Wishes).
+
+The UI's remaining blockers (the serve validation refuses):
+- The postcard's row 0: the rec merged the date and the HERNSPETH into
+  one wide row [208,147-1900,219]; its label ('13.11.63') is 8 chars
+  vs the 1692px axis = 212 px/char. The rec's top-row merge, not the
+  matching.
+- The letter's 'London ~S.W.7.~': 15 chars in a 1280px rec-union =
+  85 px/char — 5 over the horizontal 80 ceiling. The rec-union's width
+  includes the inter-word gaps; the line's real glyph extent is
+  tighter.
+
+DECISION: the machinery is verified; the layouts need (a) the rec's
+row-union x-tightening (the pieces' glyph extents, not the full
+width) and (b) the postcard's top-row merge handling. The docs stay
+out of the UI until the validation is clean.

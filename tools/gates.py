@@ -84,7 +84,13 @@ def text_extent_violation(text: str, box: list[float], orientation: float | None
         return f"{text[:20]!r}: empty text in a {int(box[2] - box[0])}x{int(box[3] - box[1])} box"
     if text.strip():
         px_per_char = axis / len(text.strip())
-        if px_per_char < 2 or px_per_char > 80:
+        # The absurdity ceiling scales with the reading axis (2026-08-22):
+        # the vertical text's glyph height is legitimately ~2x the
+        # horizontal glyph advance — the postcard's vertical message at
+        # 81-82 px/char is real handwriting, not emptiness. The vertical
+        # ceiling is 2x (160); the horizontal stays 80.
+        ceiling = 160 if axis == box[3] - box[1] else 80
+        if px_per_char < 2 or px_per_char > ceiling:
             return (
                 f"{text[:20]!r}: text length {len(text.strip())} wildly out of "
                 f"sync with a {int(axis)}px reading axis ({px_per_char:.0f} px/char)"

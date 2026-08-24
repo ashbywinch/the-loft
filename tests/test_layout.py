@@ -876,6 +876,28 @@ def test_stitch_crop_box_maps_the_crop_local_frame_into_the_page() -> None:
     assert stitch_crop_box(crop, [0, 0, 1000, 1000]) == [500.0, 700.0, 900.0, 1000.0]
 
 
+def test_gate_b_calibrates_the_ceiling_for_vertical_text() -> None:
+    """2026-08-22: the postcard's vertical message lines sit at 81-82
+    px/char — the legitimate vertical handwriting's glyph height — a
+    borderline false-positive of the horizontal 80px ceiling. The
+    absurdity ceiling scales with the reading axis: vertical text (the
+    90/270 axis — the reading axis is the box's height) gets a 2x
+    ceiling (160); the real absurdity (a 3-char fragment in a 1500px
+    box = 500) is still caught, and the horizontal ceiling is
+    unchanged."""
+    from tools.gates import text_extent_violation
+
+    # the postcard's message line: 19 chars in a 1539px-tall vertical box
+    assert text_extent_violation("decent day tomorrow", [215, 544, 384, 2083], 90) is None
+    # the absurd vertical: 3 chars in a 1500px box -> 500 px/char
+    assert text_extent_violation("abc", [0, 0, 50, 1500], 90) is not None
+    # the horizontal ceiling is unchanged: 81 px/char still fails
+    assert text_extent_violation("abc", [0, 0, 243, 50], 0) is not None
+    # the vertical's larger-but-plausible handwriting passes (10 chars
+    # in a 1500px box = 150 px/char, under the vertical ceiling)
+    assert text_extent_violation("x" * 10, [0, 0, 50, 1500], 90) is None
+
+
 def test_multi_layout_orders_zero_first_then_each_next_direction() -> None:
     """The combined layout shows the 0° lines first, then each next
     direction, each line carrying the orientation it was read at (VR15)."""

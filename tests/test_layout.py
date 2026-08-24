@@ -898,6 +898,61 @@ def test_gate_b_calibrates_the_ceiling_for_vertical_text() -> None:
     assert text_extent_violation("x" * 10, [0, 0, 50, 1500], 90) is None
 
 
+def test_ink_match_labels_assigns_by_order() -> None:
+    """The order-based label matching (2026-08-22, the user's item 2):
+    each row's y-center, as a fraction of the content's span, picks the
+    transcription line at the same fraction — the 1:1 case."""
+    from tools.ink import match_labels
+
+    # three rows evenly spaced down a 900px span
+    rows = [[0.0, 0.0, 100.0, 100.0], [0.0, 300.0, 100.0, 400.0], [0.0, 600.0, 100.0, 700.0]]
+    lines = ["first line", "second line", "third line"]
+    assert match_labels(rows, lines) == lines
+
+
+def test_ink_match_labels_handles_merged_rows() -> None:
+    """The rec's rows can merge two lines (its det is coarse on
+    cursive) — a merged row gets the line at its center, and the
+    assignment never collapses to one band."""
+    from tools.ink import match_labels
+
+    # five rows (some merged) over a 900px span; five lines
+    rows = [
+        [0.0, 0.0, 100.0, 100.0],
+        [0.0, 180.0, 100.0, 280.0],
+        [0.0, 360.0, 100.0, 460.0],
+        [0.0, 540.0, 100.0, 640.0],
+        [0.0, 720.0, 100.0, 820.0],
+    ]
+    lines = ["one", "two", "three", "four", "five"]
+    labels = match_labels(rows, lines)
+    assert len(set(labels)) >= 4, f"the assignment must not collapse: {labels}"
+
+
+def test_ink_match_labels_falls_back_when_the_overlap_is_degenerate() -> None:
+    """The schematic full-page boxes (every row matches the same band —
+    the letter's read) must fall back to the proportional assignment,
+    not label every row with the first line."""
+    from tools.ink import match_labels
+
+    rows = [[0.0, 0.0, 100.0, 100.0], [0.0, 300.0, 100.0, 400.0], [0.0, 600.0, 100.0, 700.0]]
+    lines = ["first line", "second line", "third line"]
+    # the model's bands all at the same place — the degenerate overlap
+    bands = [(0.0, 50.0, lines[0]), (0.0, 50.0, lines[0]), (0.0, 50.0, lines[0])]
+    assert match_labels(rows, lines, bands) == lines
+
+
+def test_ink_match_labels_keeps_the_overlap_when_it_is_not_degenerate() -> None:
+    """The rotated panel's trustworthy bands (the postcard) keep the
+    y-overlap refinement — the proportional is the fallback."""
+    from tools.ink import match_labels
+
+    rows = [[0.0, 0.0, 100.0, 100.0], [0.0, 300.0, 100.0, 400.0], [0.0, 600.0, 100.0, 700.0]]
+    lines = ["first line", "second line", "third line"]
+    bands = [(0.0, 150.0, "first line"), (250.0, 450.0, "second line"), (550.0, 750.0, "third line")]
+    assert match_labels(rows, lines, bands) == lines
+
+
 def test_multi_layout_orders_zero_first_then_each_next_direction() -> None:
     """The combined layout shows the 0° lines first, then each next
     direction, each line carrying the orientation it was read at (VR15)."""

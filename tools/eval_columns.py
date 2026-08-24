@@ -25,39 +25,17 @@ from paddleocr import (  # type: ignore[missing-import]  # the rec lives in .ven
 )
 from PIL import Image
 
+from tools.ink import cluster_rows, match_labels, union
 from tools.layout_detect import (  # noqa: E402  the rec engine config (paddleocr lives in .venv-htr, this script runs there)
     ENGINE,
     detect_page,
 )
+from tools.loft_paths import WORK_DIR
 from tools.vlm import parse_transcription_response, transcribe_image_vlm, transcription_system_with_context
 
 
-def _cluster_rows(boxes: list[list[float]], gap: float = 50.0) -> list[list[list[float]]]:
-    """The rec's pieces clustered by y-proximity into ROWS — the rotated
-    panel's message lines are horizontal, so one line's pieces share the
-    y-band (the 2026-08-22 mistake clustered by x, the wrong axis, and
-    merged the whole message into one column). Returns the rows'
-    piece-lists, top to bottom."""
-    ordered = sorted(boxes, key=lambda b: (b[1] + b[3]) / 2)
-    rows: list[list[list[float]]] = []
-    for b in ordered:
-        cy = (b[1] + b[3]) / 2
-        if rows and cy - (rows[-1][-1][1] + rows[-1][-1][3]) / 2 < gap:
-            rows[-1].append(b)
-        else:
-            rows.append([b])
-    return rows
-
-
-def _union(boxes: list[list[float]]) -> list[float]:
-    return [
-        min(b[0] for b in boxes),
-        min(b[1] for b in boxes),
-        max(b[2] for b in boxes),
-        max(b[3] for b in boxes),
-    ]
-
-
+# lucidlint: ignore long-param-list the run's inputs are the page's state — a param object
+# would add a class for one call site
 def run(
     batch_id: str,
     page: str,
@@ -92,8 +70,8 @@ def run(
             raw = detect_page(engine, panel_path)
         finally:
             del engine
-        pieces = [d["box"] for d in raw["detections"] if d["box"]]
-        rows = _cluster_rows(pieces)
+        pieces = [[float(v) for v in d["box"]] for d in raw["detections"] if d["box"]]
+        rows = cluster_rows(pieces)
         # the clean panel read — the model reads the whole rotated
         # panel (the 2026-08-22 spike's clean read); the per-row clips
         # were noisy
@@ -112,20 +90,15 @@ def run(
         ((b[1] / 1000) * rot_h, (b[3] / 1000) * rot_h, plain.split("\n")[i])
         for i, b in sorted((model_boxes or {}).items())
     ]
+    unions = [union(row) for row in rows]
+    labels = match_labels(unions, plain.split("\n"), model_bands)
     lines: list[dict[str, Any]] = []
-    for i, row in enumerate(rows):
-        union = _union(row)
-        ry0, ry1 = union[1], union[3]
-        best, best_overlap = "", 0.0
-        for my0, my1, text in model_bands:
-            ov = max(0, min(ry1, my1) - max(ry0, my0))
-            if ov > best_overlap:
-                best, best_overlap = text, ov
-        label = best.strip() if best.strip() else ""
+    for i, row_union in enumerate(unions):
+        label = labels[i].strip()
         # the union-box (the rotated frame!) -> the panel -> the page
         # the union is in the ROTATED frame's PIXELS — the inverse
         # without the normalized scaling: x = H' - y', y = x'
-        ux0, uy0, ux1, uy1 = union
+        ux0, uy0, ux1, uy1 = row_union
         if rotation:
             page_box = [rot_h - uy1 + px0, ux0 + py0, rot_h - uy0 + px0, ux1 + py0]
         else:
@@ -141,7 +114,8 @@ def run(
             }
         )
         print(
-            f"row {i} [{round(union[0])},{round(union[1])}-{round(union[2])},{round(union[3])}]: {label[:44]!r}",
+            f"row {i} [{round(row_union[0])},{round(row_union[1])}-"
+            f"{round(row_union[2])},{round(row_union[3])}]: {label[:44]!r}",
             file=sys.stderr,
         )
     elapsed = monotonic() - started
@@ -177,7 +151,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--work-dir", type=Path, default=None)
     args = parser.parse_args(argv)
-    from tools.loft_paths import WORK_DIR
 
     report = run(
         args.batch_id,

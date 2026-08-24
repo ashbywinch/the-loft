@@ -67,6 +67,8 @@ def _ink_y_range(image: Path) -> tuple[int, int]:
     return int(rows.min()), int(rows.max())
 
 
+# lucidlint: ignore long-param-list the region run's inputs are the page's state —
+# a parameter object would add a class for one call site
 def run(
     batch_id: str,
     page: str,

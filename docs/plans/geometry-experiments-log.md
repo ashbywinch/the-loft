@@ -283,3 +283,33 @@ LESSON: the rotation concept is right; the CROPS must be the REGION
 (the message's full panel, or a tall strip), not a uniform grid quarter
 — the vertical-text regions need crops that, when rotated, fit the
 full line length. The spike's panel read is the reference.
+
+## 2026-08-22 — the ink-column experiment: the postcard's BOXES are right
+
+The decisive pivot: the model's boxes are schematic EVEN locally (the
+rotated panel's read returned even 100px row-bands, not measured
+extents); the rec's recognition is garbage but its DETECTION pieces are
+real ink. The experiment (tools/eval_columns.py):
+
+1. The message panel (x 100-1700, y 150-2100) rotated +90.
+2. The rec's detection pieces (55) on the rotated panel.
+3. The pieces clustered by Y into the message's rows (the lines are
+   horizontal in the rotated frame — the first attempt clustered by X,
+   the wrong axis, and merged the message).
+4. Each row's union-box is the MEASURED line box (the ink's extent).
+5. The VLM reads each row's clip and labels it.
+6. The union-boxes remapped into the page frame.
+
+RESULT: 10 lines, 0 boxless, ~12.5k tokens, ~5 min. The visual
+verification: the green strips align with the message's vertical lines
+(one per line), the HERNSPETH vertical center strip, and the
+With-Greetings strip — none fundamentally misplaced. THE BOXES ARE
+RIGHT, from the rec's ink, not the model's attention.
+
+The remap had two bugs found along the way (both fixed + verified):
+the normalized boxes must scale to the rotated frame's pixels before
+the inverse; and the union-boxes (pixels) need the unscaled inverse.
+
+The remaining imperfection: the per-row clip labels are noisy ("ceut
+day forworre" for "decent day tomorrow") — the text needs the cleaner
+source (the panel's full read, or the label matching).

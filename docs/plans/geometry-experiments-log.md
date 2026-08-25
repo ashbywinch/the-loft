@@ -377,3 +377,29 @@ DECISION: the machinery is verified; the layouts need (a) the rec's
 row-union x-tightening (the pieces' glyph extents, not the full
 width) and (b) the postcard's top-row merge handling. The docs stay
 out of the UI until the validation is clean.
+
+## 2026-08-22 — the carry-on: the order-based matching's residual error
+
+The UI's two remaining rows were inspected (the user: carry on):
+
+1. The postcard's row 0 is a REC MERGE of two lines sharing a y-band:
+   the date's pieces (x 208-241) + the HERNSPETH's (x 1206-1900). An
+   x-split is needed — but the DISTINCTION matters: the letter's row 5
+   has a similar x-gap WITHIN one line (the words at the two ends, the
+   blank middle — the inspector confirmed "send something of interest
+   each week." is one line). The gap size alone cannot distinguish a
+   line boundary from word spacing.
+2. The letter's row 5's LABEL is wrong: the order-based proportional
+   assigned "London ~S.W.7.~" but the row's actual ink is "send
+   something of interest each week." — the rows' merges + the uneven
+   spacing + the line-count mismatch (22 rows vs ~40 transcription
+   lines) skew the fraction-based index.
+
+DECISION: the labels need a per-row VERIFICATION — accept a label only
+when the model's read has a line whose text plausibly matches the
+row's rec-read pieces (the rec reads the ink; the model reads it
+cleanly); otherwise the row stays flagged rather than carrying a wrong
+label. The x-split (for the true two-line merges like the postcard's
+row 0) follows the same verification — split only when the two sides'
+rec-read texts differ. This is the next micro-step; the docs stay out
+of the UI until the validation is clean.

@@ -27,15 +27,20 @@ from PIL import Image
 # the main venv.
 from tools.box import orientation_from_aspect  # noqa: E402
 from tools.gates import validate_layout
-from tools.ink import cluster_rows, match_labels, union
+from tools.ink import cluster_rows, match_labels, transcription_line_count_plausible, union
 from tools.layout import load_layout_store, write_layout_store  # noqa: E402
 from tools.loft_paths import WORK_DIR  # noqa: E402
 from tools.pipeline_store import PipelineStore  # noqa: E402
 from tools.vlm import (  # noqa: E402
     parse_transcription_response,
-    transcribe_image_vlm,
+    transcribe_with_fallbacks,
+    transcription_problem,
     transcription_system_with_context,
 )
+
+# The trial's runner-up (docs/plans/model-trial-report.md §4): same
+# family as glm-4.6v, different failure profile — the ladder's last rung.
+FALLBACK_MODEL = "z-ai/glm-4.5v"
 
 
 def prep_panel(image_path: Path, layout: dict[str, Any] | None, tmp: Path, page: str) -> dict[str, Any] | None:
@@ -86,17 +91,46 @@ def normalized_bands(
 
 
 def _vlm_read(
-    panel_path: str, model: str, base_url: str, api_key: str | None, panel_h: int
+    panel_path: str, model: str, base_url: str, api_key: str | None, panel_h: int, row_count: int
 ) -> tuple[list[str], list[tuple[float, float, str]], int]:
-    """One panel's VLM read — the text + the normalized bands."""
-    text, usage = transcribe_image_vlm(
-        Path(panel_path),
-        model=model,
-        system=transcription_system_with_context(),
-        base_url=base_url,
-        api_key=api_key,
-        max_tokens=8000,
-    )
+    """One panel's VLM read — the text + the normalized bands. The
+    escalation ladder (2026-08-25): first the boxed JSON read, then a
+    plain-text re-read (no format to fail mid-echoing; a fraction of the
+    tokens), then the plain-text read on the fallback model (glm-4.5v,
+    the trial's runner-up with a different failure profile). A response
+    must also plausibly cover the measured rows — the birth certificate's
+    collapse folded 26 rows into one line."""
+
+    def usable(text: str) -> bool:
+        if transcription_problem(text) is not None:
+            return False
+        plain, _boxes = parse_transcription_response(text)
+        return transcription_line_count_plausible(len([ln for ln in plain.split("\n") if ln.strip()]), row_count)
+
+    variants = [
+        {
+            "model": model,
+            "system": transcription_system_with_context(),
+            "base_url": base_url,
+            "api_key": api_key,
+            "max_tokens": 8000,
+        },
+        {
+            "model": model,
+            "system": transcription_system_with_context(request_boxes=False),
+            "base_url": base_url,
+            "api_key": api_key,
+            "max_tokens": 8000,
+        },
+        {
+            "model": FALLBACK_MODEL,
+            "system": transcription_system_with_context(request_boxes=False),
+            "base_url": base_url,
+            "api_key": api_key,
+            "max_tokens": 8000,
+        },
+    ]
+    text, usage = transcribe_with_fallbacks(Path(panel_path), variants, usable=usable)
     plain, boxes = parse_transcription_response(text)
     tokens = int(usage.get("total_tokens", 0) or 0)
     return plain.split("\n"), normalized_bands(plain.split("\n"), boxes, panel_h), tokens
@@ -193,7 +227,8 @@ def _process_batch(
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = {}
         for pg, panel in panels.items():
-            futures[pool.submit(_vlm_read, panel["path"], model, base_url, api_key, panel["h"])] = pg
+            row_count = len(panel["unions"])
+            futures[pool.submit(_vlm_read, panel["path"], model, base_url, api_key, panel["h"], row_count)] = pg
         for future in as_completed(futures):
             pg = futures[future]
             try:

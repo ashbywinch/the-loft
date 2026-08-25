@@ -898,6 +898,21 @@ def test_gate_b_calibrates_the_ceiling_for_vertical_text() -> None:
     assert text_extent_violation("x" * 10, [0, 0, 50, 1500], 90) is None
 
 
+def test_transcription_line_count_plausible() -> None:
+    """The collapse detector (2026-08-25): the birth certificate's model
+    read folded 26 measured rows into one line — every row then carried
+    the same 323-char blob and Gate B refused the page. Conservative:
+    only pages with >= 10 measured rows are judged (photo captions
+    fragment into more rows than real lines)."""
+    from tools.ink import transcription_line_count_plausible as plausible
+
+    assert not plausible(2, 26)  # the birth-cert collapse
+    assert plausible(24, 26)  # a healthy letter
+    assert plausible(11, 26)  # the 40% floor
+    assert plausible(1, 5)  # few rows: any count accepted
+    assert plausible(4, 10)  # exactly 40% passes
+
+
 def test_ink_match_labels_assigns_by_order() -> None:
     """The order-based label matching (2026-08-22, the user's item 2):
     each row's y-center, as a fraction of the content's span, picks the

@@ -78,6 +78,20 @@ def union(boxes: list[list[float]]) -> list[float]:
     ]
 
 
+def transcription_line_count_plausible(line_count: int, row_count: int) -> bool:
+    """Did the model's transcription plausibly cover the rows the rec
+    measured? The collapse detector (2026-08-25): the birth certificate's
+    read folded 26 measured rows into one 323-char line — every row then
+    carried the same blob and Gate B refused the page. A page needs
+    roughly two-fifths of its measured rows as transcription lines (the
+    rec over-splits; the model merges some). Conservative: pages with
+    fewer than 10 measured rows are photo-caption territory where the
+    rec's row count is unreliable — any count is accepted."""
+    if row_count < 10:
+        return True
+    return line_count * 5 >= row_count * 2
+
+
 def match_labels(
     row_unions: list[list[float]],
     transcription_lines: list[str],

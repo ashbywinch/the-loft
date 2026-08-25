@@ -916,7 +916,6 @@ def test_ink_match_labels_handles_merged_rows() -> None:
     assignment never collapses to one band."""
     from tools.ink import match_labels
 
-    # five rows (some merged) over a 900px span; five lines
     rows = [
         [0.0, 0.0, 100.0, 100.0],
         [0.0, 180.0, 100.0, 280.0],
@@ -937,7 +936,6 @@ def test_ink_match_labels_falls_back_when_the_overlap_is_degenerate() -> None:
 
     rows = [[0.0, 0.0, 100.0, 100.0], [0.0, 300.0, 100.0, 400.0], [0.0, 600.0, 100.0, 700.0]]
     lines = ["first line", "second line", "third line"]
-    # the model's bands all at the same place — the degenerate overlap
     bands = [(0.0, 50.0, lines[0]), (0.0, 50.0, lines[0]), (0.0, 50.0, lines[0])]
     assert match_labels(rows, lines, bands) == lines
 
@@ -955,35 +953,56 @@ def test_ink_match_labels_keeps_the_overlap_when_it_is_not_degenerate() -> None:
 
 def test_ink_cluster_rows_splits_side_by_side_pieces() -> None:
     """The x-split (2026-08-22): the rec's y-band clustering can merge
-    side-by-side pieces — the postcard's date and the HERNSPETH sharing
-    a band — and the union would span the blank middle, tripping the
+    side-by-side pieces - the postcard's date and the HERNSPETH sharing
+    a band - and the union would span the blank middle, tripping the
     text-extent gates. The split at wide x-gaps gives each side its own
     row with a tighter box."""
     from tools.ink import cluster_rows, union
 
-    # the postcard's row-0-style pieces: the date at x 200-240 + the
-    # HERNSPETH at x 1200-1900, all in one y-band
     pieces = [
         [208.0, 188.0, 241.0, 206.0],
         [1206.0, 147.0, 1589.0, 216.0],
         [1604.0, 147.0, 1900.0, 214.0],
     ]
     rows = cluster_rows(pieces)
-    assert len(rows) == 2, f"the side-by-side pieces must split: {len(rows)} rows"
+    assert len(rows) == 2
     left = union(rows[0])
     right = union(rows[1])
-    assert left[2] - left[0] < 100, "the date's box must be tight, not span to the HERNSPETH"
-    assert right[0] > 1100, "the HERNSPETH's box must start at its ink"
+    assert left[2] - left[0] < 100
+    assert right[0] > 1100
 
 
 def test_ink_cluster_rows_keeps_a_lines_words_together() -> None:
     """The split must NOT break a single line whose words sit close
-    together (the normal case) — only the wide gaps split."""
+    together (the normal case) - only the wide gaps split."""
     from tools.ink import cluster_rows
 
     pieces = [[0.0, 0.0, 100.0, 20.0], [110.0, 0.0, 220.0, 20.0], [240.0, 0.0, 350.0, 20.0]]
     rows = cluster_rows(pieces)
-    assert len(rows) == 1, "close words are one line"
+    assert len(rows) == 1
+
+
+def test_ink_cluster_row_thresholds_are_scale_invariant() -> None:
+    """The thresholds derive from the measured piece sizes (2026-08-22):
+    the same layout at half the scan resolution must cluster the same
+    way - the absolute pixel gaps were tuned on one batch and would
+    merge every row at a different scale."""
+    from tools.ink import cluster_rows
+
+    def page(scale: float) -> list[list[float]]:
+        out = []
+        for r in range(3):
+            for c in range(3):
+                x = (c * 300 + 50) * scale
+                y = (r * 90 + 20) * scale
+                out.append([x, y, x + 200 * scale, y + 40 * scale])
+        return out
+
+    full = cluster_rows(page(1.0))
+    half = cluster_rows(page(0.5))
+    assert len(full) == 3 and len(half) == 3, (
+        f"the scale must not change the clustering: full={len(full)}, half={len(half)}"
+    )
 
 
 def test_multi_layout_orders_zero_first_then_each_next_direction() -> None:

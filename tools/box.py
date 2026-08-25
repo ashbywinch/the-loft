@@ -59,6 +59,21 @@ def aspect_consistent(orientation: float, box: list[float] | None) -> bool:
     return not horizontal  # clearly tall: vertical text only
 
 
+def orientation_from_aspect(box: list[float] | None) -> int:
+    """The reading direction the box's shape implies — aspect_consistent's
+    inverse, used when labelling ink-measured rows (the batch runner,
+    2026-08-25): a clearly-tall union is vertical text (90°), everything
+    else defaults horizontal. Near-square boxes are lenient under Gate A,
+    so the horizontal default is always safe there. Hardcoding 0 for
+    every row refused seven photo pages ('orientation 0.0° inconsistent
+    with a 65x396 box')."""
+    if not box:
+        return 0
+    box_w = box[2] - box[0]
+    box_h = box[3] - box[1]
+    return 90 if box_h > box_w * 1.5 else 0
+
+
 # A line clip must carry >= 0.1% dark pixels — a blank clip has nothing
 # to recognize (the clip guard) and a box whose region is blank is an
 # estimate, not an anchor (Gate D).

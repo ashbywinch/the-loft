@@ -36,6 +36,44 @@ def _split_by_x_gap(row: list[list[float]], gap: float = 300.0) -> list[list[lis
     return parts
 
 
+ROW_HEIGHT_FACTOR = 2.5
+
+
+def _split_tall_row(row: list[list[float]], factor: float = ROW_HEIGHT_FACTOR) -> list[list[list[float]]]:
+    """Split an implausibly tall row at its internal y-gaps until every
+    part could be ONE line (2026-08-25): single-linkage chaining merges
+    pieces whose every ADJACENT gap is small into rows spanning many
+    real lines — the birth certificate's form table chained 40 cells
+    into one 290px row (6.2x its own piece scale), a photo's big
+    handwriting 13 pieces into 1077px (6.3x). A line's extent stays
+    within ~2.5x its own pieces' median height (ascenders, descenders,
+    slant); past that the row splits at its widest center-gap,
+    recursively. All thresholds are the row's OWN scale — invariant to
+    scan resolution."""
+
+    def extent(part: list[list[float]]) -> float:
+        return max(b[3] for b in part) - min(b[1] for b in part)
+
+    cap = factor * _median([b[3] - b[1] for b in row], 50.0)
+    out: list[list[list[float]]] = []
+    stack = [sorted(row, key=lambda b: (b[1] + b[3]) / 2)]
+    while stack:
+        part = stack.pop()
+        if len(part) < 2 or extent(part) <= cap:
+            out.append(part)
+            continue
+        best_i, best_gap = 1, -1.0
+        for i in range(1, len(part)):
+            gap = (part[i][1] + part[i][3]) / 2 - (part[i - 1][1] + part[i - 1][3]) / 2
+            if gap > best_gap:
+                best_i, best_gap = i, gap
+        if best_gap <= 0:  # coincident centers: nothing to split on
+            out.append(part)
+            continue
+        stack += [part[:best_i], part[best_i:]]
+    return out
+
+
 def cluster_rows(
     boxes: list[list[float]], gap: float | None = None, x_gap: float | None = None
 ) -> list[list[list[float]]]:
@@ -50,7 +88,9 @@ def cluster_rows(
     scale split every line). y-gap defaults to 0.65× the median piece
     height (between within-line jitter and the next line's top);
     x-gap defaults to 1.5× the median piece width (word gaps stay,
-    column gaps split)."""
+    column gaps split). Rows that chained implausibly tall split
+    before the x-split (the form-table case needs y-separation before
+    any column gap exists)."""
     if not boxes:
         return []
     heights = [b[3] - b[1] for b in boxes]
@@ -65,7 +105,8 @@ def cluster_rows(
             rows[-1].append(b)
         else:
             rows.append([b])
-    return [part for row in rows for part in _split_by_x_gap(row, x_split)]
+    treated = [sub for row in rows for sub in _split_tall_row(row)]
+    return [part for row in treated for part in _split_by_x_gap(row, x_split)]
 
 
 def union(boxes: list[list[float]]) -> list[float]:

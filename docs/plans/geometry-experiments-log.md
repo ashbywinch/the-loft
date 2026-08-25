@@ -429,3 +429,51 @@ message's rows got duplicate labels. The previous 10-row state had the
 clean message + the top's mismatch; the x-split's over-splitting needs
 the rec-union refinement (the scattered pieces' handling). The
 postcard is not served.
+
+## The batch runs + the VLM escalation ladder (2026-08-25)
+
+**The scale-up** (`7c3b083`): `tools/eval_batch.py` ran every page
+through the ink-column pipeline — the rec sequential, the VLM reads
+4-at-a-time (independent HTTP). Three bugs from the first untested run,
+each pinned by a failing-test-first test: 37 photo pages skipped for
+want of a full-page fallback (`prep_panel(None)`); good layouts
+overwritten by worse re-runs (a stored layout that validates clean now
+skips); orientation hardcoded 0 failing Gate A on tall boxes
+(`orientation_from_aspect` added beside its inverse `aspect_consistent`,
+with the both-agree property test).
+
+**Run results across the three runs:**
+
+| run | letters clean | photos clean | wrong-stuff failures |
+|---|---|---|---|
+| first (untested) | 4 / 12 | 0 / 38 | ~8 raw-JSON/empty |
+| tested (`7c3b083`) | 9 / 12 | 11 / 38 | ~5 raw-JSON, 1 empty, collapses |
+| ladder (`0a59a1d`) | 9 / 12 | 11 / 38 | **0** |
+
+**The escalation ladder** (`0a59a1d`, user's challenge: "could we just
+have a better prompt?"): partly yes. The empty-content and truncated
+`{"lines": ...` echoes are completion-BUDGET failures (glm-4.6v's
+reasoning eats the 8000 tokens — the trial saw this on multi-image
+prompts), and the ink-column pipeline measures geometry from ink so the
+boxed JSON buys it almost nothing. The ladder per page: [boxed JSON
+@ glm-4.6v] → [plain text @ glm-4.6v] (no format to fail mid-echoing, a
+fraction of the tokens) → [plain text @ glm-4.5v] (the trial's
+runner-up; page-02 emitted the IDENTICAL raw JSON in two runs, so
+same-model retry alone would repeat). `transcription_problem` decides;
+`transcribe_with_fallbacks` escalates with stderr evidence; every
+fall-through logged. A response must also plausibly cover the measured
+rows (`transcription_line_count_plausible`: >=40% when >=10 rows) — the
+birth certificates' collapse folded 26 rows into one 323-char line.
+
+Result: zero wrong-stuff responses in the ladder run (was ~14% of
+pages). Every page got a read. One page exhausted all three attempts
+honestly (1697895793138, the Leigh-on-Sea photo — its remaining refusal
+is a Gate B extent mismatch, not response quality).
+
+**The honest state**: 20 of 50 pages serve clean layouts (9 letters +
+11 photos). The 30 refusals are NO LONGER response-quality failures —
+they are the deeper clustering/matching problem on sparse-photo layouts:
+short labels on long rows ('POST CARD' 9 chars on a 1206px axis),
+long labels on tiny rows ('1938 BIRTH...' 67 chars on a 46px axis),
+empty noise rows. The next lever is the clustering/matching quality for
+scattered captions, not the model call.

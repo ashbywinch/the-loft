@@ -1020,6 +1020,46 @@ def test_ink_cluster_row_thresholds_are_scale_invariant() -> None:
     )
 
 
+def test_ink_cluster_rows_splits_a_runaway_row() -> None:
+    """The tall-split (2026-08-25): single-linkage chaining merges
+    pieces whose every ADJACENT gap is small into a row spanning many
+    real lines - the birth certificate's form table chained 40 cells
+    into one 290px row (6.2x its own piece scale), the photo's big
+    handwriting 13 pieces into 1077px (6.3x). One line's extent cannot
+    exceed ~2.5x its own pieces' median height; an over-tall row splits
+    at its internal gaps until every part is plausible."""
+    from tools.ink import cluster_rows, union
+
+    # three tight text bands (h=40) at staggered x's, centers 25px
+    # apart - every adjacent pair chains under the y-gap threshold,
+    # total extent 190px = 4.75x the piece height
+    pieces = []
+    for i in range(8):
+        y = 100.0 + i * 25.0
+        x = 100.0 + (i % 3) * 400.0
+        pieces.append([x, y, x + 150.0, y + 40.0])
+    rows = cluster_rows(pieces)
+    assert len(rows) >= 3, f"chained into {len(rows)} row(s)"
+    for row in rows:
+        u = union(row)
+        assert u[3] - u[1] <= 2.5 * 40.0 + 1e-9
+
+
+def test_ink_cluster_rows_keeps_a_tall_but_legitimate_line() -> None:
+    """A slanting cursive line with ascenders is ONE row: its extent
+    stays within ~2x its pieces' scale. The split must not shred real
+    lines - only the implausible ones."""
+    from tools.ink import cluster_rows
+
+    pieces = [
+        [100.0, 100.0, 300.0, 150.0],  # h=50
+        [320.0, 115.0, 520.0, 165.0],
+        [540.0, 130.0, 740.0, 180.0],  # drift 30px over the line; extent 80px = 1.6x
+    ]
+    rows = cluster_rows(pieces)
+    assert len(rows) == 1
+
+
 def test_multi_layout_orders_zero_first_then_each_next_direction() -> None:
     """The combined layout shows the 0° lines first, then each next
     direction, each line carrying the orientation it was read at (VR15)."""

@@ -11,11 +11,16 @@ the model's own boxes are schematic and cannot be trusted as positions.
 from __future__ import annotations
 
 
+def _median(values: list[float], fallback: float) -> float:
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2] if ordered else fallback
+
+
 def _split_by_x_gap(row: list[list[float]], gap: float = 300.0) -> list[list[list[float]]]:
-    """Split one row at its x-gaps wider than ``gap`` — the rec's y-band
+    """Split one row at its x-gaps wider than ``gap`` - the rec's y-band
     clustering can merge pieces that are side by side (the postcard's
     date and the HERNSPETH sharing a band; a line whose words sit at
-    the two ends with a blank middle). Each side becomes its own row —
+    the two ends with a blank middle). Each side becomes its own row -
     the union-boxes tighten to the ink, and the text-extent gates stop
     false-positives (2026-08-22)."""
     ordered = sorted(row, key=lambda b: b[0])
@@ -31,20 +36,36 @@ def _split_by_x_gap(row: list[list[float]], gap: float = 300.0) -> list[list[lis
     return parts
 
 
-def cluster_rows(boxes: list[list[float]], gap: float = 50.0, x_gap: float = 300.0) -> list[list[list[float]]]:
+def cluster_rows(
+    boxes: list[list[float]], gap: float | None = None, x_gap: float | None = None
+) -> list[list[list[float]]]:
     """The rec's pieces clustered by y-proximity into ROWS — one text
     line's pieces share the y-band — then each row split at its wide
     x-gaps (side-by-side pieces are separate lines, or a line's words
-    at the two ends — the union must not span the blank middle)."""
+    at the two ends — the union must not span the blank middle).
+
+    The thresholds default to fractions of the MEASURED piece sizes
+    (2026-08-22: the absolute pixel values were tuned on one batch's
+    scan resolution — a half-scale scan merged every row, a double-
+    scale split every line). y-gap defaults to 0.65× the median piece
+    height (between within-line jitter and the next line's top);
+    x-gap defaults to 1.5× the median piece width (word gaps stay,
+    column gaps split)."""
+    if not boxes:
+        return []
+    heights = [b[3] - b[1] for b in boxes]
+    widths = [b[2] - b[0] for b in boxes]
+    y_gap = gap if gap is not None else _median(heights, 50.0) * 0.65
+    x_split = x_gap if x_gap is not None else _median(widths, 200.0) * 1.5
     ordered = sorted(boxes, key=lambda b: (b[1] + b[3]) / 2)
     rows: list[list[list[float]]] = []
     for b in ordered:
         cy = (b[1] + b[3]) / 2
-        if rows and cy - (rows[-1][-1][1] + rows[-1][-1][3]) / 2 < gap:
+        if rows and cy - (rows[-1][-1][1] + rows[-1][-1][3]) / 2 < y_gap:
             rows[-1].append(b)
         else:
             rows.append([b])
-    return [part for row in rows for part in _split_by_x_gap(row, x_gap)]
+    return [part for row in rows for part in _split_by_x_gap(row, x_split)]
 
 
 def union(boxes: list[list[float]]) -> list[float]:

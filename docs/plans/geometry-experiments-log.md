@@ -403,3 +403,29 @@ label. The x-split (for the true two-line merges like the postcard's
 row 0) follows the same verification — split only when the two sides'
 rec-read texts differ. This is the next micro-step; the docs stay out
 of the UI until the validation is clean.
+
+## 2026-08-22 — the letter is in the UI with the ink-measured boxes
+
+The x-split (tools/ink.py's cluster_rows): split each row at its wide
+x-gaps — the fix for BOTH the postcard's date+HERNSPETH merge and the
+letter's two-end words with a blank middle (the union must not span
+the blank). Test-first (the side-by-side split + the close-words
+kept-together).
+
+RESULT: the letter (page-03) validates CLEAN (24 lines) and is served
+in the UI — the reviewer sees the ink-measured boxes, one line each,
+aligned with the handwriting (the visual: 14/15 fully-visible boxes
+correct). THE LETTER'S GEOMETRY IS DONE.
+
+The transcription's labels are imperfect (the model's read: some
+duplicates, some readings differ from the handwriting — "No pears eh!
+Huh!" vs the actual "No peace eh! Huh!") — the text refinement (the
+label verification: accept only when the row's rec-read overlaps the
+assigned line) is the next micro-step.
+
+The postcard REGRESSED under the x-split: the HERNSPETH's pieces sit
+at scattered y's (358, 838, 1356) and became separate rows, and the
+message's rows got duplicate labels. The previous 10-row state had the
+clean message + the top's mismatch; the x-split's over-splitting needs
+the rec-union refinement (the scattered pieces' handling). The
+postcard is not served.

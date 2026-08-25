@@ -477,3 +477,32 @@ short labels on long rows ('POST CARD' 9 chars on a 1206px axis),
 long labels on tiny rows ('1938 BIRTH...' 67 chars on a 46px axis),
 empty noise rows. The next lever is the clustering/matching quality for
 scattered captions, not the model call.
+
+## Caption clustering: the runaway-row fix (2026-08-25, `6b9cc44`)
+
+The user pointed at caption clustering. Diagnosis from piece-level
+dumps: single-linkage chaining — every ADJACENT center-gap small —
+builds rows spanning many real lines. The birth certificate's form
+table chained 40 cells into one 290px row (6.2x its own piece scale);
+a photo's big handwriting chained 13 pieces into 1077px (6.3x).
+
+cluster_rows now splits over-tall rows at internal y-gaps until every
+part is within 2.5x its own median piece height (ascenders/slant live
+under that; tables hit 6+), before the x-split. Own-scale thresholds:
+resolution-invariant. Evidence: birth cert 27->40 rows, 0 implausible;
+photo 5->10; council letter 33; postcard 37 (3 remaining talls are the
+ROTATED message judged upright — region separation, still open).
+
+Re-run: page-10 (26 lines) and the Liber Wedding photo (6 lines) now
+write clean. Total 22/50 (10 letters + 12 photos).
+
+The 28 remaining refusals decompose (each its own lever):
+A. Matching count-mismatch: 40 measured rows vs ~25 transcribed lines
+   — proportional assignment hands long labels to fragment rows (the
+   birth certificates).
+B. Gate B assumes handwriting scale: 'NHS' at 109 px/char and
+   '~PAUL WINCH~' at 126 px/char may be BIG print/handwriting on
+   photos — the 80 px/char ceiling needs the row's own letter size.
+C. Mixed orientations on one page (the postcard's message panel):
+   needs region separation before clustering.
+D. Noise rows: non-text detections become empty-box lines.

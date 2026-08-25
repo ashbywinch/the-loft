@@ -11,12 +11,31 @@ the model's own boxes are schematic and cannot be trusted as positions.
 from __future__ import annotations
 
 
-def cluster_rows(boxes: list[list[float]], gap: float = 50.0) -> list[list[list[float]]]:
+def _split_by_x_gap(row: list[list[float]], gap: float = 300.0) -> list[list[list[float]]]:
+    """Split one row at its x-gaps wider than ``gap`` — the rec's y-band
+    clustering can merge pieces that are side by side (the postcard's
+    date and the HERNSPETH sharing a band; a line whose words sit at
+    the two ends with a blank middle). Each side becomes its own row —
+    the union-boxes tighten to the ink, and the text-extent gates stop
+    false-positives (2026-08-22)."""
+    ordered = sorted(row, key=lambda b: b[0])
+    parts: list[list[list[float]]] = []
+    current = [ordered[0]]
+    for b in ordered[1:]:
+        if b[0] - current[-1][2] > gap:
+            parts.append(current)
+            current = [b]
+        else:
+            current.append(b)
+    parts.append(current)
+    return parts
+
+
+def cluster_rows(boxes: list[list[float]], gap: float = 50.0, x_gap: float = 300.0) -> list[list[list[float]]]:
     """The rec's pieces clustered by y-proximity into ROWS — one text
-    line's pieces share the y-band. Returns the rows' piece-lists, top
-    to bottom. (2026-08-22: the first attempt clustered by x — the
-    wrong axis for the rotated panel's horizontal lines — and merged
-    the whole message.)"""
+    line's pieces share the y-band — then each row split at its wide
+    x-gaps (side-by-side pieces are separate lines, or a line's words
+    at the two ends — the union must not span the blank middle)."""
     ordered = sorted(boxes, key=lambda b: (b[1] + b[3]) / 2)
     rows: list[list[list[float]]] = []
     for b in ordered:
@@ -25,7 +44,7 @@ def cluster_rows(boxes: list[list[float]], gap: float = 50.0) -> list[list[list[
             rows[-1].append(b)
         else:
             rows.append([b])
-    return rows
+    return [part for row in rows for part in _split_by_x_gap(row, x_gap)]
 
 
 def union(boxes: list[list[float]]) -> list[float]:

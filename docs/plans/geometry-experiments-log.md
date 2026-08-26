@@ -564,3 +564,21 @@ The residual failure classes, precisely:
 3. Gate B assumes handwriting scale — big print ('57 Varieties' 90-135
    px/char) fails though correctly boxed.
 4. Duplicate region claims from overlapping unions (page-01/09).
+
+## The token-economy layer: the VLM read cache (2026-08-26, `4475300`)
+
+The user's question — future passes must not re-pay tokens for pages
+that didn't change. Answer: tools/vlm_cache.py. A read is a pure
+function of (panel bytes, call spec); persist it keyed by
+sha256(panel)+sha256(spec) and every subsequent run hits for free.
+Demonstrated live: same page, cold 7,926 tok → warm "CACHED",
+"tokens": 0. Gate/assembly iterations over the whole archive are now
+free; only changed panels or changed PROMPTS re-read.
+
+Same cycle, Gate B recalibrated (`e72b4b2`): the ceiling is the box's
+own perpendicular extent ×1.7 (big print legitimate), density counts
+non-whitespace glyphs ('E    R' stays rejected), and the STRICT pair
+(glyph_extent_violation: [0.12, 1.7]×perpendicular) applies at batch
+write-time to measured unions only. Plus `_recover_crashed_layout`
+now rotates by the stale layout's recorded pre-turn dims — the
+coordinate-frame class again, caught by scaled fixtures.

@@ -29,7 +29,7 @@ from pathlib import Path
 from tools.eval_htr_trial import PAGES
 
 TOKEN_URL = "https://account.readcoop.eu/auth/realms/readcoop/protocol/openid-connect/token"
-PROCESS_URL = "https://transkribus.eu/processing/v2/processes"
+PROCESS_URL = "https://transkribus.eu/processing/v1/processes"
 CLIENT_ID = "transkribus-api-client"
 MODEL_GENERAL_HANDWRITING = 38230  # the Super Model from the docs' example
 
@@ -56,13 +56,17 @@ def get_token(username: str, password: str) -> str:
     return token
 
 
-def submit_process(token: str, image_url: str, model_id: int = MODEL_GENERAL_HANDWRITING) -> str:
+def submit_process(token: str, image: Path, model_id: int = MODEL_GENERAL_HANDWRITING) -> str:
+    """Submit by base64 image data — the v1 schema accepts either
+    base64 or imageUrl; base64 keeps the scans off any tunnel."""
+    import base64 as _b64
+
     body = (
         __import__("json")
         .dumps(
             {
                 "config": {"modelId": model_id},
-                "image": {"imageUrl": image_url},
+                "image": {"base64": _b64.b64encode(image.read_bytes()).decode("ascii")},
             }
         )
         .encode()
@@ -118,7 +122,8 @@ def main(argv: list[str] | None = None) -> int:
     if not argv:
         print("usage: eval_transkribus.py <tunnel-origin> [--pages n,n,...]", file=sys.stderr)
         return 2
-    origin = argv[0].rstrip("/")
+    if argv:
+        pass  # legacy arg kept for CLI symmetry
     user = os.environ.get("TRANSCRIBUS_USER")
     password = os.environ.get("TRANSCRIBUS_PASSWORD")
     if not user or not password:
@@ -130,8 +135,7 @@ def main(argv: list[str] | None = None) -> int:
         if not image.is_file():
             print(f"{page[:26]}: missing image", file=sys.stderr)
             continue
-        url = f"{origin}/{batch}/{image.name}"
-        process_id = submit_process(token, url)
+        process_id = submit_process(token, image)
         print(f"{page[:26]}: submitted {process_id}", file=sys.stderr)
         poll_process(token, process_id)
         xml = fetch_page_xml(token, process_id)

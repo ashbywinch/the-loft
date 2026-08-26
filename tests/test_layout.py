@@ -2216,3 +2216,52 @@ def test_gate_b_density_direction_unchanged() -> None:
     from tools.gates import glyph_extent_violation
 
     assert glyph_extent_violation("x" * 67, [0, 0, 45, 300], 90) is not None
+
+
+def test_selfreport_flags_mark_words_in_the_layout() -> None:
+    """The wiring seam (2026-08-26): the self-report stage exists
+    (selfreport_words + build_layout's conf-0.0 flagging) but the batch
+    never runs it — the UI's "red words are ones the machine wasn't
+    sure of" promise goes unmet on every served layout. These helpers
+    are the missing link: tokenize a line into the layout's word dicts
+    and mark the flagged ones."""
+    from tools.text import flag_line_words, selfreport_by_line
+
+    words = flag_line_words("No peace eh? Hah !", {"peace"})
+    flagged = [w["word"] for w in words if w["conf"] == 0.0]
+    assert flagged == ["peace"], flagged
+    assert all(w["conf"] == 1.0 for w in words if w["word"] != "peace")
+
+    # the report cites "Peace" — matching is case/punct-insensitive
+    words2 = flag_line_words("No peace eh?", {"Peace"})
+    assert [w["word"] for w in words2 if w["conf"] == 0.0] == ["peace"]
+
+    # the line→flags map, 0-based, keyed per line index
+    report = [{"line": 2, "word": "gen"}, {"line": 1, "word": "qualms"}]
+    by_line = selfreport_by_line(report, 3)
+    assert by_line == {0: {"qualms"}, 1: {"gen"}}
+
+    # out-of-range lines are ignored; empty report maps to nothing
+    assert selfreport_by_line([{"line": 9, "word": "x"}], 3) == {}
+    assert selfreport_by_line([], 2) == {}
+
+
+def test_selfreport_flags_match_by_word_content() -> None:
+    """The index-misalignment fix (2026-08-26): the self-report cites
+    line numbers of the RAW VLM text, but out_lines' indices come from
+    proportional matching — the numbers drift when the raw text has
+    empty lines. The word is the reliable key: match each flagged word
+    against the lines that actually contain it."""
+    from tools.text import selfreport_words_by_line
+
+    lines = ["No peace eh?", "Have the gen", "So much for your qualms"]
+    by_line = selfreport_words_by_line(lines, [{"line": 1, "word": "Peace"}, {"line": 2, "word": "GEN"}])
+    assert by_line == {0: {"peace"}, 1: {"gen"}}, by_line
+
+    # a cited word that drifted to the wrong line number still lands on
+    # the line that contains it
+    shifted = selfreport_words_by_line(lines, [{"line": 3, "word": "peace"}])
+    assert shifted == {0: {"peace"}}, shifted
+
+    # a word nowhere in the text flags nothing
+    assert selfreport_words_by_line(lines, [{"line": 1, "word": "nonexistent"}]) == {}

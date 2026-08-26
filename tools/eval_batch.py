@@ -36,13 +36,21 @@ from tools.ink import cluster_rows, match_labels, offset_box, split_by_bands, tr
 from tools.layout import load_layout_store, write_layout_store  # noqa: E402
 from tools.loft_paths import WORK_DIR  # noqa: E402
 from tools.pipeline_store import PipelineStore  # noqa: E402
+from tools.text import flag_line_words, selfreport_words_by_line
 from tools.vlm import (  # noqa: E402
     parse_transcription_response,
+    selfreport_words,
+    transcribe_image_vlm,
     transcribe_with_fallbacks,
     transcription_problem,
     transcription_system_with_context,
 )
-from tools.vlm_cache import load_cached_read, store_read  # noqa: E402
+from tools.vlm_cache import (
+    load_cached_read,
+    load_selfreport,
+    store_read,
+    store_selfreport,
+)  # noqa: E402
 
 # The trial's runner-up (docs/plans/model-trial-report.md §4): same
 # family as glm-4.6v, different failure profile — the ladder's last rung.
@@ -103,6 +111,26 @@ def normalized_bands(
         if i < len(lines):
             bands.append(((b[1] / 1000) * frame_h, (b[3] / 1000) * frame_h, lines[i]))
     return bands
+
+
+def _self_report_for(panel: Path, full_text: str) -> list[dict]:
+    """The model's doubt flags for one panel's transcription — cached
+    like the reads (the flags are a pure function of the read). Runs in
+    Phase 2, where the panel still exists."""
+    cached = load_selfreport(panel, full_text)
+    if cached is not None:
+        return cached
+
+    def _sr_call(image, *, system, user_text=None, **kw):
+        # the 64000 default hangs this model on a page image (the trial
+        # report's budget finding); the doubt list is small
+        return transcribe_image_vlm(image, system=system, user_text=user_text, max_tokens=8000, **kw)
+
+    report = selfreport_words(panel, full_text, transcribe=_sr_call)
+    store_selfreport(panel, full_text, report)
+    if report:
+        print(f"  self-report: {len(report)} entries: {report}", file=sys.stderr)
+    return report
 
 
 def _vlm_read(
@@ -269,7 +297,7 @@ def _process_batch(
         # Phase 2: VLM-read all panels (parallel, network-bound) — INSIDE
         # this try: the panels must live through it; cleanup waits for
         # the finally below.
-        vlm_results: dict[str, tuple[list[str], list[tuple[float, float, str]], int]] = {}
+        vlm_results: dict[str, tuple[list[str], list[tuple[float, float, str]], int, list[dict]]] = {}
         vlm_t0 = monotonic()
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {}
@@ -280,7 +308,8 @@ def _process_batch(
                 pg = futures[future]
                 try:
                     texts, bands, tok = future.result()
-                    vlm_results[pg] = (texts, bands, tok)
+                    report = _self_report_for(Path(panels[pg]["path"]), "\n".join(texts))
+                    vlm_results[pg] = (texts, bands, tok, report)
                     print(f"  vlm {pg}: {len(bands)} bands, {tok} tok", file=sys.stderr)
                 except Exception as exc:
                     print(f"  vlm {pg} FAILED: {exc}", file=sys.stderr)
@@ -300,7 +329,7 @@ def _process_batch(
         result = vlm_results.get(pg)
         if not result:
             continue
-        texts, bands, _ = result
+        texts, bands, _tok, report = result
         # crop-space unions -> page space (the page-10 offset bug,
         # 2026-08-25: the panel's origin must ride with every box)
         x0, y0 = panels[pg]["x0"], panels[pg]["y0"]
@@ -339,6 +368,15 @@ def _process_batch(
             }
             for i, u in enumerate(page_unions)
         ]
+        # The self-report stage: the model's doubt flags (collected in
+        # Phase 2, where the panel exists) mark the UI's "red words" —
+        # flags-only, never a gate.
+        by_line = selfreport_words_by_line([ln["text"] for ln in out_lines], report)
+        flagged = sum(len(v) for v in by_line.values())
+        if flagged:
+            print(f"  {pg}: {flagged} self-flagged words", file=sys.stderr)
+        for ln in out_lines:
+            ln["words"] = flag_line_words(ln["text"], by_line.get(ln["index"], set()))
         if bad:
             refused += 1
             print(f"  {pg} REFUSED (image gates): {len(bad)} boxes off-ink or multi-line", file=sys.stderr)

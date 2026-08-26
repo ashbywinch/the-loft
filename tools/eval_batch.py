@@ -32,7 +32,7 @@ from tools.box import (
     text_line_count,
 )
 from tools.gates import validate_layout
-from tools.ink import cluster_rows, match_labels, offset_box, transcription_line_count_plausible, union
+from tools.ink import cluster_rows, match_labels, offset_box, split_by_bands, transcription_line_count_plausible, union
 from tools.layout import load_layout_store, write_layout_store  # noqa: E402
 from tools.loft_paths import WORK_DIR  # noqa: E402
 from tools.pipeline_store import PipelineStore  # noqa: E402
@@ -46,6 +46,15 @@ from tools.vlm import (  # noqa: E402
 # The trial's runner-up (docs/plans/model-trial-report.md §4): same
 # family as glm-4.6v, different failure profile — the ladder's last rung.
 FALLBACK_MODEL = "z-ai/glm-4.5v"
+
+
+def layout_is_current(layout: dict[str, Any]) -> bool:
+    """Was this layout written by the current ink machinery? The
+    clean-skip must only protect layouts today's gates can vouch for:
+    page-01/08/11 served stale old-pipeline geometry for days because
+    their files validated structurally clean (2026-08-26)."""
+    lines = layout.get("lines") or []
+    return bool(lines) and all(ln.get("box_source") == "ink" for ln in lines)
 
 
 def prep_panel(image_path: Path, layout: dict[str, Any] | None, tmp: Path, page: str) -> dict[str, Any] | None:
@@ -224,7 +233,7 @@ def _process_batch(
                 layout = load_layout_store(store, lp)
             except Exception:
                 layout = None
-            if layout is not None and not validate_layout(layout):
+            if layout is not None and layout_is_current(layout) and not validate_layout(layout):
                 print(f"  {pg}: stored layout clean, skipping", file=sys.stderr)
                 continue
             prep = prep_panel(ip, layout, panel_dir, pg)
@@ -243,29 +252,31 @@ def _process_batch(
                 }
             except Exception as exc:
                 print(f"  rec {pg} FAILED: {str(exc)[:80]}", file=sys.stderr)
+        # Phase 2: VLM-read all panels (parallel, network-bound) — INSIDE
+        # this try: the panels must live through it; cleanup waits for
+        # the finally below.
+        vlm_results: dict[str, tuple[list[str], list[tuple[float, float, str]], int]] = {}
+        vlm_t0 = monotonic()
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {}
+            for pg, panel in panels.items():
+                row_count = len(panel["unions"])
+                futures[pool.submit(_vlm_read, panel["path"], model, base_url, api_key, panel["h"], row_count)] = pg
+            for future in as_completed(futures):
+                pg = futures[future]
+                try:
+                    texts, bands, tok = future.result()
+                    vlm_results[pg] = (texts, bands, tok)
+                    print(f"  vlm {pg}: {len(bands)} bands, {tok} tok", file=sys.stderr)
+                except Exception as exc:
+                    print(f"  vlm {pg} FAILED: {exc}", file=sys.stderr)
+        vlm_elapsed = round(monotonic() - vlm_t0, 1)
     finally:
         # the panels must live through Phase 2 (2026-08-22) — and die
         # after it: the uncleaned mkdtemp dirs leaked ~2.8G of full-page
         # PNGs into /tmp across five batch runs and filled the tmpfs
         # that pytest's own tempdir shares (2026-08-26).
         shutil.rmtree(panel_dir, ignore_errors=True)
-    # Phase 2: VLM-read all panels (parallel, network-bound)
-    vlm_results: dict[str, tuple[list[str], list[tuple[float, float, str]], int]] = {}
-    vlm_t0 = monotonic()
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {}
-        for pg, panel in panels.items():
-            row_count = len(panel["unions"])
-            futures[pool.submit(_vlm_read, panel["path"], model, base_url, api_key, panel["h"], row_count)] = pg
-        for future in as_completed(futures):
-            pg = futures[future]
-            try:
-                texts, bands, tok = future.result()
-                vlm_results[pg] = (texts, bands, tok)
-                print(f"  vlm {pg}: {len(bands)} bands, {tok} tok", file=sys.stderr)
-            except Exception as exc:
-                print(f"  vlm {pg} FAILED: {exc}", file=sys.stderr)
-    vlm_elapsed = round(monotonic() - vlm_t0, 1)
 
     # Phase 3: assemble + validate + write
     written = 0
@@ -279,8 +290,23 @@ def _process_batch(
         # crop-space unions -> page space (the page-10 offset bug,
         # 2026-08-25: the panel's origin must ride with every box)
         x0, y0 = panels[pg]["x0"], panels[pg]["y0"]
-        page_unions = [offset_box(u, x0, y0) for u in panels[pg]["unions"]]
-        labels = match_labels(page_unions, texts, bands)
+        with Image.open(oriented_dir / f"{pg}.jpg") as im:
+            pw, ph = im.size
+            # band-split feedback (2026-08-26): a union spanning several
+            # ink bands divides along them BEFORE label matching — the
+            # image gives the true line boundaries, shrinking the
+            # rows-vs-lines mismatch that misassigned labels.
+            page_unions = [
+                part
+                for u in (offset_box(v, x0, y0) for v in panels[pg]["unions"])
+                for part in (split_by_bands(u, im) if text_line_count(u, im) > 1 else [u])
+            ]
+            labels = match_labels(page_unions, texts, bands)
+            # the image-aware gates: ink under every box and one text
+            # band per box — the deterministic half of what the vision
+            # audit was doing by hand. A page failing here writes
+            # nothing: refusal is the system telling the truth.
+            bad = [i for i, u in enumerate(page_unions) if not has_ink(u, im) or text_line_count(u, im) > 1]
         out_lines = [
             {
                 "index": i,
@@ -293,13 +319,6 @@ def _process_batch(
             }
             for i, u in enumerate(page_unions)
         ]
-        with Image.open(oriented_dir / f"{pg}.jpg") as im:
-            pw, ph = im.size
-            # the image-aware gates (2026-08-26): ink under every box and
-            # one text band per box — the deterministic half of what the
-            # vision audit was doing by hand. A page failing here writes
-            # nothing: refusal is the system telling the truth.
-            bad = [ln["index"] for ln in out_lines if not has_ink(ln["box"], im) or text_line_count(ln["box"], im) > 1]
         if bad:
             refused += 1
             print(f"  {pg} REFUSED (image gates): {len(bad)} boxes off-ink or multi-line", file=sys.stderr)

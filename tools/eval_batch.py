@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -25,7 +26,11 @@ from PIL import Image
 # tools.layout_detect pulls in paddleocr which lives only in .venv-htr;
 # a module-top import would make this file unimportable (untestable) in
 # the main venv.
-from tools.box import orientation_from_aspect  # noqa: E402
+from tools.box import (
+    has_ink,
+    orientation_from_aspect,  # noqa: E402
+    text_line_count,
+)
 from tools.gates import validate_layout
 from tools.ink import cluster_rows, match_labels, offset_box, transcription_line_count_plausible, union
 from tools.layout import load_layout_store, write_layout_store  # noqa: E402
@@ -211,28 +216,39 @@ def _process_batch(
     # The panels persist through BOTH phases — a TemporaryDirectory here
     # would delete them before Phase 2 reads them (2026-08-22).
     panel_dir = Path(tempfile.mkdtemp(prefix="eval-batch-"))
-    for ip in pages_with_text:
-        pg = ip.stem
-        lp = f"{batch_id}/ocr-guess/{pg}.layout.json"
-        try:
-            layout = load_layout_store(store, lp)
-        except Exception:
-            layout = None
-        if layout is not None and not validate_layout(layout):
-            print(f"  {pg}: stored layout clean, skipping", file=sys.stderr)
-            continue
-        prep = prep_panel(ip, layout, panel_dir, pg)
-        if not prep:
-            continue
-        try:
-            pieces = _detect_pieces(engine, Path(prep["path"]))
-            rows = cluster_rows(pieces)
-            unions = [union(r) for r in rows]
-            panels[pg] = {"path": prep["path"], "h": prep["h"], "x0": prep["x0"], "y0": prep["y0"], "unions": unions}
-            print(f"  rec {pg}: {len(pieces)} pieces -> {len(rows)} rows", file=sys.stderr)
-        except Exception as exc:
-            print(f"  rec {pg} FAILED: {str(exc)[:80]}", file=sys.stderr)
-
+    try:
+        for ip in pages_with_text:
+            pg = ip.stem
+            lp = f"{batch_id}/ocr-guess/{pg}.layout.json"
+            try:
+                layout = load_layout_store(store, lp)
+            except Exception:
+                layout = None
+            if layout is not None and not validate_layout(layout):
+                print(f"  {pg}: stored layout clean, skipping", file=sys.stderr)
+                continue
+            prep = prep_panel(ip, layout, panel_dir, pg)
+            if not prep:
+                continue
+            try:
+                pieces = _detect_pieces(engine, Path(prep["path"]))
+                rows = cluster_rows(pieces)
+                unions = [union(r) for r in rows]
+                panels[pg] = {
+                    "path": prep["path"],
+                    "h": prep["h"],
+                    "x0": prep["x0"],
+                    "y0": prep["y0"],
+                    "unions": unions,
+                }
+            except Exception as exc:
+                print(f"  rec {pg} FAILED: {str(exc)[:80]}", file=sys.stderr)
+    finally:
+        # the panels must live through Phase 2 (2026-08-22) — and die
+        # after it: the uncleaned mkdtemp dirs leaked ~2.8G of full-page
+        # PNGs into /tmp across five batch runs and filled the tmpfs
+        # that pytest's own tempdir shares (2026-08-26).
+        shutil.rmtree(panel_dir, ignore_errors=True)
     # Phase 2: VLM-read all panels (parallel, network-bound)
     vlm_results: dict[str, tuple[list[str], list[tuple[float, float, str]], int]] = {}
     vlm_t0 = monotonic()
@@ -279,6 +295,15 @@ def _process_batch(
         ]
         with Image.open(oriented_dir / f"{pg}.jpg") as im:
             pw, ph = im.size
+            # the image-aware gates (2026-08-26): ink under every box and
+            # one text band per box — the deterministic half of what the
+            # vision audit was doing by hand. A page failing here writes
+            # nothing: refusal is the system telling the truth.
+            bad = [ln["index"] for ln in out_lines if not has_ink(ln["box"], im) or text_line_count(ln["box"], im) > 1]
+        if bad:
+            refused += 1
+            print(f"  {pg} REFUSED (image gates): {len(bad)} boxes off-ink or multi-line", file=sys.stderr)
+            continue
         assembled = {"page": pg, "width": pw, "height": ph, "lines": out_lines, "unmatched": []}
         violations = validate_layout(assembled)
         if violations:

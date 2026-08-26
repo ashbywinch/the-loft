@@ -2088,3 +2088,57 @@ def test_drop_conflicting_boxes_keeps_the_confirmed_anchor() -> None:
     assert lines[0]["box"] == [526, 2247, 1044, 2294]
     assert lines[1]["box"] is None, "the unconfirmed claim on the anchor's region must drop"
     assert lines[2]["box"] == [540, 2297, 1042, 2340]
+
+
+def test_box_line_count_by_projection() -> None:
+    """The cheap multi-line gate (2026-08-25): the vision audit caught
+    boxes enclosing 3-4 handwriting lines apiece (1782635795946's stale
+    layout). A box's row-projection counts the separated ink bands it
+    holds — pure PIL, no model. Bands separated by a clear blank gap
+    are distinct lines; a line's own ascender/descender gaps are too
+    small to split it."""
+    from PIL import Image, ImageDraw
+
+    from tools.box import text_line_count
+
+    # one line of "writing": a wavy band with internal thin gaps
+    im = Image.new("L", (400, 200), 255)
+    d = ImageDraw.Draw(im)
+    for x0 in range(40, 360, 21):
+        d.rectangle([x0, 90, min(x0 + 13, 360), 111], fill=0)
+    assert text_line_count([0, 0, 400, 200], im) == 1
+
+    # two clean lines with a real leading gap between them
+    im2 = Image.new("L", (400, 200), 255)
+    d2 = ImageDraw.Draw(im2)
+    d2.rectangle([40, 30, 360, 51], fill=0)
+    d2.rectangle([40, 120, 360, 141], fill=0)
+    assert text_line_count([0, 0, 400, 200], im2) == 2
+
+
+def test_empty_box_has_no_lines() -> None:
+    from PIL import Image
+
+    from tools.box import text_line_count
+
+    im = Image.new("L", (200, 100), 255)
+    assert text_line_count([10, 10, 190, 90], im) == 0
+
+
+def test_has_ink_sees_pencil_on_photo_paper() -> None:
+    """Faint-pencil regression (2026-08-26): the Silver-Wedding photo's
+    annotations are pencil (~level 170) on cream card (~220) — the fixed
+    <128 cutoff called every box blank and the serve-walk refused pages
+    whose boxes were visibly on the writing. Ink must be measured
+    against the crop's OWN paper level."""
+    from PIL import Image, ImageDraw
+
+    from tools.box import has_ink
+
+    im = Image.new("L", (300, 100), 220)
+    d = ImageDraw.Draw(im)
+    d.rectangle([20, 45, 280, 54], fill=168)
+    assert has_ink([0, 0, 300, 100], im)
+
+    blank = Image.new("L", (300, 100), 235)
+    assert not has_ink([0, 0, 300, 100], blank)

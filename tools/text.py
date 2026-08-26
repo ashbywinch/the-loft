@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from typing import Any
 
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
 _WS = re.compile(r"\s+")
@@ -41,6 +42,48 @@ def vlm_line_words(line: str) -> list[str]:
     """The VLM line's display words — whitespace tokens, unnormalized (the
     verbatim discipline: the review shows exactly what the model wrote)."""
     return [w for w in line.split(" ") if w]
+
+
+def flag_line_words(line: str, flagged: set[str]) -> list[dict[str, Any]]:
+    """The line's word dicts for the layout, with the self-report's
+    flagged words at conf 0.0 (2026-08-26: the wiring seam the batch
+    was missing — the UI colours conf-0 words red). Matching uses
+    normalize() on BOTH sides — the report cites display words,
+    case-insensitively."""
+    normalized = {normalize(f) for f in flagged}
+    out: list[dict[str, Any]] = []
+    for w in vlm_line_words(line):
+        out.append({"word": w, "conf": 0.0 if normalize(w) in normalized else 1.0})
+    return out
+
+
+def selfreport_words_by_line(lines: list[str], report: list[dict[str, Any]] | None) -> dict[int, set[str]]:
+    """The self-report's flagged words matched by WORD CONTENT, not line
+    number (2026-08-26: the report cites the RAW VLM text's numbering,
+    but the layout's line indices come from proportional matching — the
+    numbers drift when the raw text has empty lines; the word is the
+    reliable key). Every line containing the word is flagged."""
+    flagged: dict[int, set[str]] = {}
+    for entry in report or []:
+        word = normalize(str(entry.get("word", "")))
+        if not word:
+            continue
+        for i, line in enumerate(lines):
+            if word in {normalize(w) for w in vlm_line_words(line)}:
+                flagged.setdefault(i, set()).add(word)
+    return flagged
+
+
+def selfreport_by_line(report: list[dict[str, Any]] | None, n_lines: int) -> dict[int, set[str]]:
+    """The self-report's flagged words keyed by 0-based line index —
+    lines the model cited beyond the transcript are dropped."""
+    by_line: dict[int, set[str]] = {}
+    for entry in report or []:
+        line = int(entry.get("line", -1)) - 1  # the report is 1-based
+        word = str(entry.get("word", ""))
+        if 0 <= line < n_lines and word:
+            by_line.setdefault(line, set()).add(normalize(word))
+    return by_line
 
 
 def is_struck(word: str) -> bool:

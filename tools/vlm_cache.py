@@ -55,3 +55,37 @@ def load_cached_read(panel: Path, spec: dict[str, Any], *, fresh: bool = False) 
         return data["text"], int(data["tokens"])
     except (OSError, ValueError, KeyError):
         return None
+
+
+def _selfreport_key(panel: Path, text: str) -> tuple[str, Path]:
+    panel_hash = hashlib.sha256(panel.read_bytes()).hexdigest()[:32]
+    text_hash = hashlib.sha256(text.encode()).hexdigest()[:16]
+    return f"{panel_hash}-sr-{text_hash}.json", CACHE_DIR
+
+
+def store_selfreport(panel: Path, text: str, report: list[dict]) -> None:
+    """Cache one self-report keyed on (panel bytes, transcription text)
+    — the flags are a pure function of the read, so re-assembly of an
+    unchanged page never re-pays the doubt call."""
+    # lucidlint: ignore swallow the cache is an optimization — a full
+    # disk must never break a run that would otherwise succeed
+    try:
+        key, directory = _selfreport_key(panel, text)
+        directory.mkdir(parents=True, exist_ok=True)
+        atomic = directory / f"{key}.tmp"
+        atomic.write_text(json.dumps(report), encoding="utf-8")
+        atomic.replace(directory / key)
+    except OSError:
+        pass
+
+
+def load_selfreport(panel: Path, text: str) -> list[dict] | None:
+    """The cached self-report for this exact (panel, text), or None."""
+    try:
+        key, directory = _selfreport_key(panel, text)
+        path = directory / key
+        if not path.is_file():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None

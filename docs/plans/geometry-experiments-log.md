@@ -632,3 +632,28 @@ Verdicts:
    pages), not recognition quality — 2-3x better wherever it serves.
 4. Transkribus (cloud, needs user account) remains the only untested
    option; local alternatives do not change the calculus.
+
+## Transkribus trial: infrastructure verdict (2026-08-26)
+
+The user created a Google-login account; Transkribus issues no API keys
+— OIDC password-grant after setting an account password. Credentials
+worked (token minted; legacy REST /rest/collections returned 200 with
+the user's collections). But:
+
+- The documented Text Recognition API (processing/v1; the docs' v2
+  path 404s) REJECTS the token: its audience is TrpServer (legacy),
+  not the processing service. Likely an account/API-activation issue
+  on READ-COOP's side ("Get API access with a free account" — no
+  self-serve activation found in the app).
+- The legacy REST flow the token DOES authorize needs the full
+  document lifecycle (create doc, multipart upload, HTR job, poll,
+  fetch PAGE XML) and its model-listing endpoints 404 at every
+  documented guess — real integration work on an under-documented API.
+
+Verdict pending user choice: invest in the legacy flow (~an hour of
+endpoint archaeology), or treat the head-to-head as settled on
+tesseract/kraken/ours + the research (recognition quality is not the
+gap — coverage is), or ask READ-COOP support how to enable the
+processing API on a Google-login free account. Tunnel + file server
+used for the abortive imageUrl path were torn down; the trial leg now
+uses base64 (no tunnel needed).

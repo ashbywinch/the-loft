@@ -604,3 +604,31 @@ compare the box width against its band's contiguous ink extent (>=60%
 or refuse). Also: the image-gate refusal message should name WHICH
 gate and the box indexes (off-ink vs multi-band vs glyph-density) —
 today it lumps them.
+
+## The HTR head-to-head: existing tools vs our pipeline (2026-08-26)
+
+The user's challenge — "should we be using existing tools?" — answered
+empirically on 5 real pages (tools/eval_htr_trial.py, outputs in
+work/eval-htr/). CER vs a vision-model reference read (directional,
+not human GT):
+
+| page | tesseract | kraken | ours (served) |
+|---|---|---|---|
+| page-03 cursive | 66.8% (conf 37) | 87.3% | 33.5% |
+| page-10 cursive | 79.3% (conf 33) | 92.8% | 23.5% |
+| postcard | 78.0% (conf 26) | 96.6% | 100% (no layout) |
+| birth cert printed | 42.4% (conf 79) | 95.3% | 100% (no layout) |
+| photo captions | garbage (707%) | 100% | 96.3% |
+
+Verdicts:
+1. kraken's historical-script models cannot read 20th-century family
+   cursive (87-97% CER) — switching recognizers would be a regression.
+2. tesseract is faithful-but-unable on cursive and genuinely useful on
+   PRINTED forms (42% CER, and its confidence 79 vs 26-37 is exactly
+   the research's point: confidence correlates with quality). Its
+   confidence could be a second opinion on print pages; our own rec
+   confidence should be used the same way.
+3. Our pipeline's problem is COVERAGE (nothing serves for refused
+   pages), not recognition quality — 2-3x better wherever it serves.
+4. Transkribus (cloud, needs user account) remains the only untested
+   option; local alternatives do not change the calculus.

@@ -2142,3 +2142,50 @@ def test_has_ink_sees_pencil_on_photo_paper() -> None:
 
     blank = Image.new("L", (300, 100), 235)
     assert not has_ink([0, 0, 300, 100], blank)
+
+
+def test_split_by_bands_divides_a_multi_line_union() -> None:
+    """Band-split feedback (2026-08-26): when a measured union spans
+    several handwriting lines, the image itself gives the true line
+    boundaries — the projection's ink bands. Splitting before label
+    matching turns too-few-rows into accurate-rows instead of refusing
+    the page (the birth certificates' 40-vs-25 mismatch)."""
+    from PIL import Image, ImageDraw
+
+    from tools.ink import split_by_bands
+
+    im = Image.new("L", (400, 200), 255)
+    d = ImageDraw.Draw(im)
+    d.rectangle([40, 30, 360, 51], fill=0)
+    d.rectangle([60, 120, 340, 141], fill=0)
+    parts = split_by_bands([20, 10, 380, 190], im)
+    assert len(parts) == 2
+    top, bottom = sorted(parts, key=lambda b: b[1])
+    assert 25 <= top[1] <= 35 and 45 <= top[3] <= 58  # the first band's rows
+    assert 115 <= bottom[1] <= 125 and 135 <= bottom[3] <= 148
+
+
+def test_split_by_bands_keeps_single_line_boxes_whole() -> None:
+    from PIL import Image, ImageDraw
+
+    from tools.ink import split_by_bands
+
+    im = Image.new("L", (400, 200), 255)
+    d = ImageDraw.Draw(im)
+    d.rectangle([40, 90, 360, 111], fill=0)
+    box = [20, 80, 380, 120]
+    assert split_by_bands(box, im) == [box]
+
+
+def test_layout_skip_requires_ink_provenance() -> None:
+    """The stale-shield fix (2026-08-26): page-01/08/11 served garbage
+    for days because their OLD-pipeline layouts validated structurally
+    clean, so the clean-skip protected them from every pipeline fix.
+    Only layouts written by the current ink machinery (every line
+    carrying box_source='ink') earn the skip."""
+    from tools.eval_batch import layout_is_current
+
+    assert layout_is_current({"lines": [{"box_source": "ink", "box": [0, 0, 1, 1]}]})
+    assert not layout_is_current({"lines": [{"box_source": "model", "box": [0, 0, 1, 1]}]})
+    assert not layout_is_current({"lines": [{"box": [0, 0, 1, 1]}]})
+    assert not layout_is_current({"lines": []})

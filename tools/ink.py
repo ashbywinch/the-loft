@@ -10,6 +10,9 @@ the model's own boxes are schematic and cannot be trusted as positions.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Any
+
 
 def _median(values: list[float], fallback: float) -> float:
     ordered = sorted(values)
@@ -80,6 +83,62 @@ def offset_box(box: list[float], x0: float, y0: float) -> list[float]:
     crop coordinates, and writing them verbatim served page-10 with
     every box shifted up by the stale layout's origin."""
     return [box[0] + x0, box[1] + y0, box[2] + x0, box[3] + y0]
+
+
+def split_by_bands(box: Sequence[float], image: Any) -> list[list[float]]:
+    """A multi-line union divided along its own ink bands (2026-08-26):
+    when the projection shows several separated writing bands, their
+    row ranges — and each band's inked x-extent — ARE the true line
+    boxes. Splitting before label matching turns too-few-rows into
+    accurate-rows (the birth certificates' 40-vs-25 mismatch) instead
+    of refusing the page. Fewer than two bands: the box comes back
+    unchanged — single-line and blank boxes are not this function's
+    business."""
+    x0, y0, x1, y1 = (int(v) for v in box)
+    w, h = image.size
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(w, x1), min(h, y1)
+    if x1 <= x0 or y1 <= y0:
+        return [list(box)]
+    gray = image.crop((x0, y0, x1, y1)).convert("L")
+    norm_h = 100
+    norm = gray.resize((max(1, round(gray.width * norm_h / max(1, gray.height))), norm_h))
+    scale_x = gray.width / norm.width
+    scale_y = gray.height / norm_h
+    ink = norm.point(lambda p: 255 - p)
+    rows = ink.getprojection()[1]
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for i, r in enumerate(rows):
+        if r and start is None:
+            start = i
+        elif not r and start is not None:
+            runs.append((start, i - 1))
+            start = None
+    if start is not None:
+        runs.append((start, len(rows) - 1))
+    merged: list[tuple[int, int]] = []
+    for s, e in runs:
+        if merged and s - merged[-1][1] - 1 < 3:
+            merged[-1] = (merged[-1][0], e)
+        else:
+            merged.append((s, e))
+    bands = [(s, e) for s, e in merged if e - s + 1 >= 3]
+    if len(bands) < 2:
+        return [list(box)]
+    cols = ink.getprojection()[0]
+    parts: list[list[float]] = []
+    for s, e in bands:
+        xs = [i for i, c in enumerate(cols) if c]
+        if not xs:
+            continue
+        pad = 2
+        bx0 = x0 + (min(xs) - pad) * scale_x
+        bx1 = x0 + (max(xs) + 1 + pad) * scale_x
+        by0 = y0 + s * scale_y
+        by1 = y0 + (e + 1) * scale_y
+        parts.append([bx0, by0, min(bx1, x1), min(by1, y1)])
+    return parts or [list(box)]
 
 
 def cluster_rows(

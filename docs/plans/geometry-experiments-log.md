@@ -539,3 +539,28 @@ rerun `walk_review` after ANY layout write; (2) no "it works" claim
 without the per-document vision-audit table in list order; (3) the
 gates stay loud — a refusal is the system telling the truth. Still to
 wire: the structural serve-walk as an archive-marked test in make verify.
+
+## Source-level improvements + the honest coverage drop (2026-08-26, `1cb4dab`)
+
+Three pipeline changes so mistakes stop being MADE, not just caught:
+provenance-gated skip (layout_is_current — only ink-provenanced layouts
+earn protection); split_by_bands (multi-band unions divide along their
+own ink before label matching); image-aware gates at write time
+(previous turn). Plus the panel-tmpdir leak fix, and Phase 2 moved back
+inside Phase 1's try after my restructuring briefly resurrected the
+delete-before-read bug (run16 caught it in minutes — the gates work).
+
+Run17's honest outcome: letters serve 03/04/11/12 (+08 refused on one
+empty-label row); 06/07 LOST their rough old layouts to the provenance
+reprocess and refuse on empty-label rows; photos: several former
+rough-serving pages now refuse at the image gates. Coverage ~13 pages,
+every one of them gate-clean; everything else refuses loudly.
+
+The residual failure classes, precisely:
+1. Over-wide single-band rows from sparse-caption clustering ('Windsor.'
+   8 chars on a 1156px axis) — needs caption-scale clustering.
+2. Label count mismatch persisting after band-split (model under-reads;
+   empty-text rows).
+3. Gate B assumes handwriting scale — big print ('57 Varieties' 90-135
+   px/char) fails though correctly boxed.
+4. Duplicate region claims from overlapping unions (page-01/09).

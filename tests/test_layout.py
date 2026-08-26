@@ -876,26 +876,30 @@ def test_stitch_crop_box_maps_the_crop_local_frame_into_the_page() -> None:
     assert stitch_crop_box(crop, [0, 0, 1000, 1000]) == [500.0, 700.0, 900.0, 1000.0]
 
 
-def test_gate_b_calibrates_the_ceiling_for_vertical_text() -> None:
-    """2026-08-22: the postcard's vertical message lines sit at 81-82
-    px/char — the legitimate vertical handwriting's glyph height — a
-    borderline false-positive of the horizontal 80px ceiling. The
-    absurdity ceiling scales with the reading axis: vertical text (the
-    90/270 axis — the reading axis is the box's height) gets a 2x
-    ceiling (160); the real absurdity (a 3-char fragment in a 1500px
-    box = 500) is still caught, and the horizontal ceiling is
-    unchanged."""
+def test_gate_b_calibrates_the_ceiling_by_glyph_size() -> None:
+    """2026-08-22's absolute 80/160 ceilings assumed handwriting scale;
+    2026-08-26 replaced them with a ceiling that scales with the box's
+    OWN perpendicular extent (x1.7, floor 30) — a letter's advance is
+    proportional to its glyph size, so big print is legitimate while
+    mislabeled normal-height rows stay tight. This test pins both the
+    survivors and the consciously-flipped assertions."""
     from tools.gates import text_extent_violation
 
-    # the postcard's message line: 19 chars in a 1539px-tall vertical box
+    # the postcard's message line: 19 chars in a 1539px-tall vertical
+    # box, width 169 -> ceiling 287: passes (as before)
     assert text_extent_violation("decent day tomorrow", [215, 544, 384, 2083], 90) is None
-    # the absurd vertical: 3 chars in a 1500px box -> 500 px/char
+    # the absurd vertical: 3 chars in a 1500px box -> 500 px/char vs a
+    # 50px-wide column's ceiling of 85: still caught
     assert text_extent_violation("abc", [0, 0, 50, 1500], 90) is not None
-    # the horizontal ceiling is unchanged: 81 px/char still fails
-    assert text_extent_violation("abc", [0, 0, 243, 50], 0) is not None
-    # the vertical's larger-but-plausible handwriting passes (10 chars
-    # in a 1500px box = 150 px/char, under the vertical ceiling)
-    assert text_extent_violation("x" * 10, [0, 0, 50, 1500], 90) is None
+    # FLIPPED (2026-08-26): 81 px/char on a 50px-tall row is now
+    # plausible big-ish handwriting (ceiling 85) — the old horizontal
+    # 80 absolute ceiling refused it; sparsity is judged per glyph size
+    assert text_extent_violation("abc", [0, 0, 243, 50], 0) is None
+    # FLIPPED (2026-08-26): 10 chars at 150 px/char along a 50px-wide
+    # vertical column means 150px between 50px-tall glyphs — absurd
+    # sparsity under the glyph-size rule (ceiling 85): now caught,
+    # where the old 160 vertical ceiling let it through
+    assert text_extent_violation("x" * 10, [0, 0, 50, 1500], 90) is not None
 
 
 def test_transcription_line_count_plausible() -> None:
@@ -2189,3 +2193,26 @@ def test_layout_skip_requires_ink_provenance() -> None:
     assert not layout_is_current({"lines": [{"box_source": "model", "box": [0, 0, 1, 1]}]})
     assert not layout_is_current({"lines": [{"box": [0, 0, 1, 1]}]})
     assert not layout_is_current({"lines": []})
+
+
+def test_gate_b_ceiling_scales_with_glyph_size() -> None:
+    """The scale-aware Gate B (2026-08-26): the absolute px/char ceiling
+    assumed handwriting scale and refused correctly-boxed BIG print —
+    '57 Varieties' at 90 px/char on the Heinz crest, 'REMINDER',
+    'POST CARD'. A letter's advance scales with its own glyph size, so
+    the ceiling is the box's PERPENDICULAR extent × 1.7: big-print rows
+    are also tall, mislabeled normal-height rows stay tight."""
+    from tools.gates import glyph_extent_violation
+
+    # big print: tall row, few large characters — legitimately 90px/char
+    assert glyph_extent_violation("57 Varieties", [0, 0, 1080, 220], 0) is None
+    # normal-height row, sparse text: still refused (the mismatch guard)
+    assert glyph_extent_violation("Windsor.", [0, 0, 1150, 55], 0) is not None
+
+
+def test_gate_b_density_direction_unchanged() -> None:
+    """Too-many-chars-in-a-small-box still fails exactly as before —
+    the birth certificates' 67-char labels on tiny rows."""
+    from tools.gates import glyph_extent_violation
+
+    assert glyph_extent_violation("x" * 67, [0, 0, 45, 300], 90) is not None

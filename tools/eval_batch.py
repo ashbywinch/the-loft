@@ -31,7 +31,7 @@ from tools.box import (
     orientation_from_aspect,  # noqa: E402
     text_line_count,
 )
-from tools.gates import validate_layout
+from tools.gates import glyph_extent_violation, validate_layout
 from tools.ink import cluster_rows, match_labels, offset_box, split_by_bands, transcription_line_count_plausible, union
 from tools.layout import load_layout_store, write_layout_store  # noqa: E402
 from tools.loft_paths import WORK_DIR  # noqa: E402
@@ -302,11 +302,17 @@ def _process_batch(
                 for part in (split_by_bands(u, im) if text_line_count(u, im) > 1 else [u])
             ]
             labels = match_labels(page_unions, texts, bands)
-            # the image-aware gates: ink under every box and one text
-            # band per box — the deterministic half of what the vision
-            # audit was doing by hand. A page failing here writes
-            # nothing: refusal is the system telling the truth.
-            bad = [i for i, u in enumerate(page_unions) if not has_ink(u, im) or text_line_count(u, im) > 1]
+            # the image-aware gates: ink under every box, one text band
+            # per box, and a glyph-plausible label (the strict pair —
+            # these boxes are measured unions). A page failing here
+            # writes nothing: refusal is the system telling the truth.
+            bad = [
+                i
+                for i, u in enumerate(page_unions)
+                if not has_ink(u, im)
+                or text_line_count(u, im) > 1
+                or glyph_extent_violation(labels[i], u, orientation_from_aspect(u))
+            ]
         out_lines = [
             {
                 "index": i,

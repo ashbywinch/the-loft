@@ -317,19 +317,19 @@ def test_rotate_page_fixes_the_orientation(tmp_path: Path) -> None:
     batch = tmp_path / "adopt-0001"
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
-    image = Image.new("RGB", (100, 200), "white")
+    image = Image.new("RGB", (600, 1600), "white")
     for x in range(0, 10):
         for y in range(0, 10):
             image.putpixel((x, y), (255, 0, 0))  # a red block at the top-left
     image.save(batch / "oriented" / "p1.jpg")
     layout = build_layout(
         "p1.jpg",
-        100,
-        200,
+        600,
+        1600,
         "line one\nline two",
         [
-            Detection(box=[0, 100, 50, 120], text="line one", score=0.9, words=[]),
-            Detection(box=[0, 150, 50, 170], text="noise", score=0.5, words=[]),
+            Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[]),
+            Detection(box=[50, 1000, 550, 1500], text="noise", score=0.5, words=[]),
         ],
     )
     write_layout(layout, batch / "ocr-guess" / "p1.layout.json")
@@ -338,17 +338,17 @@ def test_rotate_page_fixes_the_orientation(tmp_path: Path) -> None:
     rotate_page("adopt-0001", "p1.jpg", 1, tmp_path)
 
     rotated = Image.open(batch / "oriented" / "p1.jpg")
-    assert rotated.size == (200, 100)  # 90° CW swaps the dims
+    assert rotated.size == (1600, 600)  # 90° CW swaps the dims
     # the original top-left block lands at the top-right after CW 90
     # (JPEG is lossy — the check tolerates the compression)
-    pixel = rotated.getpixel((194, 4))
+    pixel = rotated.getpixel((1594, 4))
     assert isinstance(pixel, tuple) and len(pixel) >= 3
     assert pixel[0] > 200 and pixel[1] < 60 and pixel[2] < 60
     new_layout = json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
-    assert new_layout["width"] == 200
-    assert new_layout["height"] == 100
-    # the first line's box: [0, 100, 50, 120] -> [h-y1, x0, h-y0, x1]
-    assert new_layout["lines"][0]["box"] == [80, 0, 100, 50]
+    assert new_layout["width"] == 1600
+    assert new_layout["height"] == 600
+    # the first line's box: [50, 400, 550, 900] -> [h-y1, x0, h-y0, x1]
+    assert new_layout["lines"][0]["box"] == [700, 50, 1200, 550]
     assert new_layout["lines"][0]["text"] == "line one"
     assert new_layout["rotation"] == 90  # the cumulative applied rotation
     # the selfreport flags survive the rotation
@@ -362,14 +362,14 @@ def test_rotate_page_is_idempotent_and_cumulative(tmp_path: Path) -> None:
     batch = tmp_path / "adopt-0001"
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
-    Image.new("RGB", (100, 200), "white").save(batch / "oriented" / "p1.jpg")
+    Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
     write_layout(
         build_layout(
             "p1.jpg",
-            100,
-            200,
+            600,
+            1600,
             "line one",
-            [Detection(box=[0, 100, 50, 120], text="line one", score=0.9, words=[])],
+            [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
         ),
         batch / "ocr-guess" / "p1.layout.json",
     )
@@ -377,7 +377,7 @@ def test_rotate_page_is_idempotent_and_cumulative(tmp_path: Path) -> None:
     rotate_page("adopt-0001", "p1.jpg", 2, tmp_path)  # the reviewer pressed twice
     layout_after = json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
     assert layout_after["rotation"] == 180
-    assert Image.open(batch / "oriented" / "p1.jpg").size == (100, 200)  # 180° keeps the dims
+    assert Image.open(batch / "oriented" / "p1.jpg").size == (600, 1600)  # 180° keeps the dims
 
     rotate_page("adopt-0001", "p1.jpg", 2, tmp_path)  # a retried intent: same desired
     layout_retried = json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
@@ -386,7 +386,7 @@ def test_rotate_page_is_idempotent_and_cumulative(tmp_path: Path) -> None:
     rotate_page("adopt-0001", "p1.jpg", 3, tmp_path)  # a further correction
     layout_final = json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
     assert layout_final["rotation"] == 270
-    assert Image.open(batch / "oriented" / "p1.jpg").size == (200, 100)
+    assert Image.open(batch / "oriented" / "p1.jpg").size == (1600, 600)
 
 
 def test_rotate_page_guards(tmp_path: Path) -> None:
@@ -406,14 +406,14 @@ def test_reprocess_page_transcription_reruns_the_text(tmp_path: Path) -> None:
     batch = tmp_path / "adopt-0001"
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
-    Image.new("RGB", (100, 200), "white").save(batch / "oriented" / "p1.jpg")
+    Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
     write_layout(
         build_layout(
             "p1.jpg",
-            100,
-            200,
+            600,
+            1600,
             "old stale text",
-            [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
+            [Detection(box=[50, 400, 550, 900], text="noise", score=0.4, words=[])],
         ),
         batch / "ocr-guess" / "p1.layout.json",
     )
@@ -430,10 +430,10 @@ def test_reprocess_page_transcription_reruns_the_text(tmp_path: Path) -> None:
         write_layout(
             build_layout(
                 "p1.jpg",
-                100,
-                200,
+                600,
+                1600,
                 "the corrected fresh text\n",
-                [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
+                [Detection(box=[50, 400, 550, 900], text="noise", score=0.4, words=[])],
                 selfreport=[{"line": 1, "word": "fresh"}],
             ),
             batch / "ocr-guess" / "p1.layout.json",
@@ -468,14 +468,14 @@ def test_reprocess_page_transcription_writes_the_multi_sidecar(tmp_path: Path) -
     batch = tmp_path / "adopt-0001"
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
-    Image.new("RGB", (100, 200), "white").save(batch / "oriented" / "p1.jpg")
+    Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
     write_layout(
         build_layout(
             "p1.jpg",
-            100,
-            200,
+            600,
+            1600,
             "old stale text",
-            [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
+            [Detection(box=[50, 400, 550, 900], text="noise", score=0.4, words=[])],
         ),
         batch / "ocr-guess" / "p1.layout.json",
     )
@@ -509,14 +509,14 @@ def test_reprocess_failure_marks_the_page(tmp_path: Path) -> None:
     batch = tmp_path / "adopt-0001"
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
-    Image.new("RGB", (100, 200), "white").save(batch / "oriented" / "p1.jpg")
+    Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
     write_layout(
         build_layout(
             "p1.jpg",
-            100,
-            200,
+            600,
+            1600,
             "old text",
-            [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
+            [Detection(box=[50, 400, 550, 900], text="noise", score=0.4, words=[])],
         ),
         batch / "ocr-guess" / "p1.layout.json",
     )
@@ -555,14 +555,14 @@ def test_rotate_page_accepts_desired_zero_rotate_back(tmp_path: Path) -> None:
     batch = tmp_path / "adopt-0001"
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
-    Image.new("RGB", (100, 200), "white").save(batch / "oriented" / "p1.jpg")
+    Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
     write_layout(
         build_layout(
             "p1.jpg",
-            100,
-            200,
+            600,
+            1600,
             "line one",
-            [Detection(box=[0, 100, 50, 120], text="line one", score=0.9, words=[])],
+            [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
         ),
         batch / "ocr-guess" / "p1.layout.json",
     )
@@ -583,14 +583,14 @@ def test_rotate_page_recovers_a_half_rotated_crash(tmp_path: Path) -> None:
     batch = tmp_path / "adopt-0001"
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
-    Image.new("RGB", (100, 200), "white").save(batch / "oriented" / "p1.jpg")
+    Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
     write_layout(
         build_layout(
             "p1.jpg",
-            100,
-            200,
+            600,
+            1600,
             "line one",
-            [Detection(box=[0, 100, 50, 120], text="line one", score=0.9, words=[])],
+            [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
         ),
         batch / "ocr-guess" / "p1.layout.json",
     )
@@ -598,8 +598,9 @@ def test_rotate_page_recovers_a_half_rotated_crash(tmp_path: Path) -> None:
     # simulate the crash: the image is swapped (rotated), the layout is
     # stale (the OLD dims and rotation), and the journal records the intent
     layout = _json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
-    layout["width"] = 100
-    layout["height"] = 200
+    layout["lines"][0]["box"] = [50, 400, 550, 900]  # the pre-turn box
+    layout["width"] = 600
+    layout["height"] = 1600
     layout["rotation"] = 0
     write_layout(layout, batch / "ocr-guess" / "p1.layout.json")
     atomic_write(
@@ -623,14 +624,14 @@ def test_rotate_page_discards_a_premature_journal(tmp_path: Path) -> None:
     batch = tmp_path / "adopt-0001"
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
-    Image.new("RGB", (100, 200), "white").save(batch / "oriented" / "p1.jpg")
+    Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
     write_layout(
         build_layout(
             "p1.jpg",
-            100,
-            200,
+            600,
+            1600,
             "line one",
-            [Detection(box=[0, 100, 50, 120], text="line one", score=0.9, words=[])],
+            [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
         ),
         batch / "ocr-guess" / "p1.layout.json",
     )

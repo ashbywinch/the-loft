@@ -145,6 +145,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--work-dir", type=Path, default=WORK_DIR)
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--pages", default="", help="comma-separated page stems; empty = all")
     args = parser.parse_args(argv)
     api_key = args.api_key or os.environ.get("OPENROUTER_API_KEY")
 
@@ -155,7 +156,15 @@ def main(argv: list[str] | None = None) -> int:
     reports: list[dict[str, Any]] = []
 
     for batch_id in args.batch_ids:
-        result = _process_batch(batch_id, args.work_dir, args.model, args.base_url, api_key, args.workers)
+        result = _process_batch(
+            batch_id,
+            args.work_dir,
+            args.model,
+            args.base_url,
+            api_key,
+            args.workers,
+            wanted={s for s in args.pages.split(",") if s},
+        )
         reports.append(result)
         total_written += result["written"]
         total_refused += result["refused"]
@@ -177,20 +186,23 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-# lucidlint: ignore long-param-list the batch's inputs are the CLI's own args
-
-
 def _process_batch(
-    batch_id: str, work_dir: Path, model: str, base_url: str, api_key: str | None, workers: int
+    batch_id: str,
+    work_dir: Path,
+    model: str,
+    base_url: str,
+    api_key: str | None,
+    workers: int,
+    wanted: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Process one batch's pages: rec-detect sequentially, then VLM-read
-    in parallel, then assemble + write the layouts that pass validation."""
     oriented_dir = work_dir / batch_id / "oriented"
     guess_dir = work_dir / batch_id / "ocr-guess"
     store = PipelineStore(work_dir)
-
     image_paths = sorted(oriented_dir.glob("*.jpg"))
+
     pages_with_text = [p for p in image_paths if (guess_dir / p.with_suffix(".txt").name).exists()]
+    if wanted:
+        pages_with_text = [p for p in pages_with_text if p.stem in wanted]
     print(f"batch {batch_id}: {len(pages_with_text)} pages", file=sys.stderr)
 
     # Phase 1: rec-detect each page's content panel (local, sequential)

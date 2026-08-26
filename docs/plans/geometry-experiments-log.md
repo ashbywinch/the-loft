@@ -582,3 +582,25 @@ non-whitespace glyphs ('E    R' stays rejected), and the STRICT pair
 write-time to measured unions only. Plus `_recover_crashed_layout`
 now rotates by the stale layout's recorded pre-turn dims — the
 coordinate-frame class again, caught by scaled fixtures.
+
+## Run 18: the cache-population pass + the fragment-box false pass (2026-08-26)
+
+Full re-run under the scale-aware Gate B with the write-time image
+gates. HONEST spend note: this pass paid fresh tokens (~400k) — the
+cache only covers reads made after it existed, so run18 populated it;
+every LATER iteration is free.
+
+Letters: page-10 newly written (21 lines, vision-CORRECT — 25 boxes
+each on one line) -> 5 serving (03/04/11/12 + 10). Photos: 7808715
+(2 lines, vision-correct) newly written; 071639 written then
+INVALIDATED — vision caught the fragment-box false pass: ink present,
+single band, but the box covered only part of the text while the real
+line sat rotated beside it. The mechanical gates cannot see that class
+(boxes are on ink); it must not serve. ~12-13 photos serving.
+
+New failure class named: the fragment box (union covers part of a
+line). Cheap next gate: the box's ink band extends beyond its x-range —
+compare the box width against its band's contiguous ink extent (>=60%
+or refuse). Also: the image-gate refusal message should name WHICH
+gate and the box indexes (off-ink vs multi-band vs glyph-density) —
+today it lumps them.

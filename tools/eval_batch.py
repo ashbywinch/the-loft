@@ -42,6 +42,7 @@ from tools.vlm import (  # noqa: E402
     transcription_problem,
     transcription_system_with_context,
 )
+from tools.vlm_cache import load_cached_read, store_read  # noqa: E402
 
 # The trial's runner-up (docs/plans/model-trial-report.md §4): same
 # family as glm-4.6v, different failure profile — the ladder's last rung.
@@ -121,32 +122,45 @@ def _vlm_read(
         plain, _boxes = parse_transcription_response(text)
         return transcription_line_count_plausible(len([ln for ln in plain.split("\n") if ln.strip()]), row_count)
 
-    variants = [
-        {
-            "model": model,
-            "system": transcription_system_with_context(),
-            "base_url": base_url,
-            "api_key": api_key,
-            "max_tokens": 8000,
-        },
-        {
-            "model": model,
-            "system": transcription_system_with_context(request_boxes=False),
-            "base_url": base_url,
-            "api_key": api_key,
-            "max_tokens": 8000,
-        },
-        {
-            "model": FALLBACK_MODEL,
-            "system": transcription_system_with_context(request_boxes=False),
-            "base_url": base_url,
-            "api_key": api_key,
-            "max_tokens": 8000,
-        },
-    ]
-    text, usage = transcribe_with_fallbacks(Path(panel_path), variants, usable=usable)
+    # The read cache (2026-08-26): keyed on the PANEL BYTES + primary
+    # model + budget — any ladder variant's successful read is a valid
+    # transcription of that panel, so gate/assembly iterations over
+    # unchanged pages cost zero tokens. LOFT_VLM_CACHE=0 bypasses.
+    cache_spec = {"model": model, "max_tokens": 8000}
+    cached = load_cached_read(Path(panel_path), cache_spec)
+    tokens = 0
+    if cached is not None:
+        # zero NEW tokens: the spend happened in an earlier run
+        text, _stored_tokens = cached
+        print(f"  vlm {Path(panel_path).name}: CACHED", file=sys.stderr)
+    else:
+        variants = [
+            {
+                "model": model,
+                "system": transcription_system_with_context(),
+                "base_url": base_url,
+                "api_key": api_key,
+                "max_tokens": 8000,
+            },
+            {
+                "model": model,
+                "system": transcription_system_with_context(request_boxes=False),
+                "base_url": base_url,
+                "api_key": api_key,
+                "max_tokens": 8000,
+            },
+            {
+                "model": FALLBACK_MODEL,
+                "system": transcription_system_with_context(request_boxes=False),
+                "base_url": base_url,
+                "api_key": api_key,
+                "max_tokens": 8000,
+            },
+        ]
+        text, usage = transcribe_with_fallbacks(Path(panel_path), variants, usable=usable)
+        tokens = int(usage.get("total_tokens", 0) or 0)
+        store_read(Path(panel_path), cache_spec, text, tokens)
     plain, boxes = parse_transcription_response(text)
-    tokens = int(usage.get("total_tokens", 0) or 0)
     return plain.split("\n"), normalized_bands(plain.split("\n"), boxes, panel_h), tokens
 
 

@@ -506,3 +506,36 @@ B. Gate B assumes handwriting scale: 'NHS' at 109 px/char and
 C. Mixed orientations on one page (the postcard's message panel):
    needs region separation before clustering.
 D. Noise rows: non-text detections become empty-box lines.
+
+## The contact-sheet walk: what "serving" actually looked like (2026-08-25, `712eb9d`+`196ddbb`)
+
+The user asked "will the first page of the first letter look correct?"
+It would not have. The new instrument (tools/walk_review.py — every
+stored layout drawn onto its own scan) + a vision audit of ALL 26
+boxed pages found:
+
+- **page-01 WRONG** (stale old-pipeline layout, structurally valid,
+  geometrically garbage — the clean-skip had protected it from every
+  fix since), **page-05, page-09 WRONG**, and **page-10's boxes all
+  floating above the writing**: the crop-origin offset bug
+  (`712eb9d` — detection in crop space written verbatim into page
+  space; full-page-fallback pages immune).
+- Photos: postcard/3940169... the audit also caught MY transposed-id
+  deletion (took out Heinz `…f652d938`, audited CORRECT, instead of
+  `…5f7905a9`); Heinz reprocessed and now refuses on Gate B at exactly
+  the handwriting-scale ceiling (135 px/char big print) — lever B.
+  `1782635795946` (multi-line boxes, pre-tall-split stale) invalidated.
+
+After invalidation + reprocessing with fixed code: every wrong layout
+is OUT of the UI; the affected pages refuse loudly. Serving now:
+letters 03/04 (vision-correct) + 06/07/08/11/12 (mostly, 1-2 residual
+boxes each); photos 818826(+~2), 363276, 07449, 752512 mostly-good,
+307227 has 1 misplaced box of 3, Liber Wedding serves word-level
+fragments (on ink, not clean one-liners). ~15 pages verified-acceptable;
+everything else refuses rather than lies.
+
+**The ensure-mechanism** (the user's question): (1) the sheets exist —
+rerun `walk_review` after ANY layout write; (2) no "it works" claim
+without the per-document vision-audit table in list order; (3) the
+gates stay loud — a refusal is the system telling the truth. Still to
+wire: the structural serve-walk as an archive-marked test in make verify.

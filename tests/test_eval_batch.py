@@ -93,3 +93,15 @@ def test_band_indexes_align_with_their_lines() -> None:
     # sometimes emits a box for a line it did not return text for).
     bands = normalized_bands(["only"], {0: [0.0, 0.0, 1000.0, 100.0], 5: [0.0, 500.0, 1000.0, 600.0]}, frame_h=1000)
     assert len(bands) == 1
+
+
+def test_page_10_offset_bug_crop_space_becomes_page_space() -> None:
+    """The crop-path offset bug (2026-08-25): prep_panel crops to a stale
+    layout's bounds, detection runs in CROP space, and the assembly wrote
+    those coordinates verbatim — page-10 served every box shifted up by
+    the crop origin while the handwriting sat lower. Unions must be
+    translated into page space."""
+    from tools.ink import offset_box
+
+    assert offset_box([10.0, 20.0, 110.0, 60.0], 500, 900) == [510.0, 920.0, 610.0, 960.0]
+    assert offset_box([0.0, 0.0, 10.0, 10.0], 0, 0) == [0.0, 0.0, 10.0, 10.0]

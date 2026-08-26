@@ -27,7 +27,7 @@ from PIL import Image
 # the main venv.
 from tools.box import orientation_from_aspect  # noqa: E402
 from tools.gates import validate_layout
-from tools.ink import cluster_rows, match_labels, transcription_line_count_plausible, union
+from tools.ink import cluster_rows, match_labels, offset_box, transcription_line_count_plausible, union
 from tools.layout import load_layout_store, write_layout_store  # noqa: E402
 from tools.loft_paths import WORK_DIR  # noqa: E402
 from tools.pipeline_store import PipelineStore  # noqa: E402
@@ -216,7 +216,7 @@ def _process_batch(
             pieces = _detect_pieces(engine, Path(prep["path"]))
             rows = cluster_rows(pieces)
             unions = [union(r) for r in rows]
-            panels[pg] = {"path": prep["path"], "h": prep["h"], "unions": unions}
+            panels[pg] = {"path": prep["path"], "h": prep["h"], "x0": prep["x0"], "y0": prep["y0"], "unions": unions}
             print(f"  rec {pg}: {len(pieces)} pieces -> {len(rows)} rows", file=sys.stderr)
         except Exception as exc:
             print(f"  rec {pg} FAILED: {str(exc)[:80]}", file=sys.stderr)
@@ -248,7 +248,11 @@ def _process_batch(
         if not result:
             continue
         texts, bands, _ = result
-        labels = match_labels(panels[pg]["unions"], texts, bands)
+        # crop-space unions -> page space (the page-10 offset bug,
+        # 2026-08-25: the panel's origin must ride with every box)
+        x0, y0 = panels[pg]["x0"], panels[pg]["y0"]
+        page_unions = [offset_box(u, x0, y0) for u in panels[pg]["unions"]]
+        labels = match_labels(page_unions, texts, bands)
         out_lines = [
             {
                 "index": i,
@@ -259,7 +263,7 @@ def _process_batch(
                 "box_source": "ink",
                 "orientation": orientation_from_aspect(u),
             }
-            for i, u in enumerate(panels[pg]["unions"])
+            for i, u in enumerate(page_unions)
         ]
         with Image.open(oriented_dir / f"{pg}.jpg") as im:
             pw, ph = im.size

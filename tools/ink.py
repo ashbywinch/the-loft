@@ -74,6 +74,14 @@ def _split_tall_row(row: list[list[float]], factor: float = ROW_HEIGHT_FACTOR) -
     return out
 
 
+def offset_box(box: list[float], x0: float, y0: float) -> list[float]:
+    """A crop-space box in PAGE space — the prep_panel crop's origin
+    added back (2026-08-25): detection on a cropped panel measures in
+    crop coordinates, and writing them verbatim served page-10 with
+    every box shifted up by the stale layout's origin."""
+    return [box[0] + x0, box[1] + y0, box[2] + x0, box[3] + y0]
+
+
 def cluster_rows(
     boxes: list[list[float]], gap: float | None = None, x_gap: float | None = None
 ) -> list[list[list[float]]]:

@@ -20,7 +20,9 @@ Instructions for AI agents working in this repo. Humans can read this too.
 - Three pytest selections, never mixed: `make test` = the fast unit gate
   (excludes `eval` and `archive` markers via addopts); `make verify` = the
   archive-quality data checks (`-m archive`, skipped in CI — no archive);
-  `make evals` = the real-model evals (`-m eval`, need the API key;
+  `make evals` = the real-model evals (`-m eval`, need the Cloudflare AI
+  Gateway key — `OPENAI_API_KEY` + `OPENAI_BASE_URL`,
+  skill://cloudflare-ai-gateway;
   CI runs them on every non-dependabot run — a missing key fails loudly;
   dependabot-triggered runs skip them because GitHub strips their secrets
   (2026-08-28)). Split 2026-08-13

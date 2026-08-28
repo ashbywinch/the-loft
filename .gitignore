@@ -16,6 +16,9 @@ venv/
 .conda-tools/
 # the Python 3.13 HTR venv (kraken + orli) — 5GB+, never committed
 .venv-htr/
+# the lucidlint code-health gate bundle (github.com/ashbywinch/lucidlint)
+lucidlint-dist/
+.lucidlint-cache/
 node_modules/
 
 # caches

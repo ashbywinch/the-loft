@@ -2,8 +2,9 @@
 the cost/accuracy comparison against specialist OCR (Azure Document
 Intelligence etc., 2026-08-14).
 
-Sends the page image to a multimodal chat model (the harness's opencode-go
-vision role by default) with the verbatim-transcription discipline
+Sends the page image to a multimodal chat model (the Cloudflare AI Gateway
+vision route `dynamic/image` by default, skill://cloudflare-ai-gateway) with
+the verbatim-transcription discipline
 (MULTI-DOC-IMPORT-PRD.md R10 / IMPORT-PRD Rule L): the document's own
 words, nothing added, nothing removed. Returns the text and the token
 usage (the cost measurement).
@@ -17,11 +18,12 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import urllib.request
 from pathlib import Path
 from typing import Any
 
-from tools.ai_client import DEFAULT_BASE_URL, find_api_key
+from tools.ai_client import find_api_key
 
 VLM_SYSTEM = (
     "You transcribe scanned family documents verbatim. Rules: the document's own "
@@ -146,10 +148,10 @@ def parse_transcription_response(text: str) -> tuple[str, dict[int, list[float]]
 def transcribe_image_vlm(
     image: Path,
     *,
-    model: str = "mimo-v2.5",
+    model: str = "dynamic/image",  # the Cloudflare gateway vision route (skill://cloudflare-ai-gateway)
     system: str = VLM_SYSTEM,
     user_text: str | None = None,
-    base_url: str = DEFAULT_BASE_URL,
+    base_url: str | None = None,
     api_key: str | None = None,
     timeout: float = 300.0,
 ) -> tuple[str, dict[str, int]]:
@@ -157,6 +159,12 @@ def transcribe_image_vlm(
     ``user_text`` rides the user message alongside the image (the
     self-report pass hands the model its own transcription with line
     numbers to review)."""
+    url = (base_url or os.environ.get("OPENAI_BASE_URL") or "").rstrip("/")
+    if not url:
+        raise VlmError(
+            "no model endpoint configured — set OPENAI_BASE_URL (the Cloudflare AI Gateway "
+            "compat endpoint, skill://cloudflare-ai-gateway)"
+        )
     key = api_key or find_api_key()
     mime = _MIME_BY_SUFFIX.get(image.suffix.lower(), "application/octet-stream")
     data_url = f"data:{mime};base64," + base64.b64encode(image.read_bytes()).decode("ascii")
@@ -172,7 +180,7 @@ def transcribe_image_vlm(
         "temperature": 0,
     }
     request = urllib.request.Request(
-        f"{base_url.rstrip('/')}/chat/completions",
+        f"{url}/chat/completions",
         data=json.dumps(payload).encode("utf-8"),
         headers={
             "Content-Type": "application/json",

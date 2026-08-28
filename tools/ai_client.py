@@ -2,9 +2,10 @@
 
 Adapted from books_to_anki/src/book_to_flashcards/opencode_translator.py (the
 house pattern): urllib-only, retry/backoff on 429/5xx, thinking-disable
-fallback, injectable urlopen for tests. The key comes from the environment,
-never from code — `LOFT_AI_KEY`, else `OPENCODE_API_KEY`, else opencode's
-auth.json (docs/coding-standards.md — secrets are shell-env only).
+fallback, injectable urlopen for tests. The provider is the Cloudflare AI
+Gateway (skill://cloudflare-ai-gateway): base URL and key come from the
+environment — `OPENAI_BASE_URL` and `OPENAI_API_KEY` — never from code
+(docs/coding-standards.md — secrets are shell-env only).
 """
 
 from __future__ import annotations
@@ -16,16 +17,14 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, final
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
-DEFAULT_MODEL = "deepseek-v4-flash"
-
-# Providers whose api keys opencode may have stored in its auth.json.
-AUTH_JSON_PROVIDER_HINTS = ("opencode-go", "opencode")
+# The Cloudflare AI Gateway (skill://cloudflare-ai-gateway) is the canonical
+# provider: OPENAI_BASE_URL (compat endpoint) + OPENAI_API_KEY (gateway
+# token). The model name selects the gateway's dynamic route.
+DEFAULT_MODEL = "dynamic/fallback2"
 
 
 class AIClientError(RuntimeError):
@@ -48,8 +47,14 @@ class AIClient:
         _sleep: Callable[[float], None] | None = None,
     ) -> None:
         self.model: str = model or os.environ.get("LOFT_AI_MODEL") or DEFAULT_MODEL
-        self.base_url: str = (base_url or os.environ.get("LOFT_AI_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
-        self.api_key: str = api_key or os.environ.get("LOFT_AI_KEY") or find_api_key()
+        endpoint = base_url or os.environ.get("OPENAI_BASE_URL") or ""
+        if not endpoint:
+            raise AIClientError(
+                "no model endpoint configured — set OPENAI_BASE_URL (the Cloudflare AI Gateway "
+                "compat endpoint, skill://cloudflare-ai-gateway)"
+            )
+        self.base_url: str = endpoint.rstrip("/")
+        self.api_key: str = api_key or find_api_key()
         self.max_tokens: int = max_tokens
         self.timeout: float = timeout
         self.max_retries: int = max_retries
@@ -69,8 +74,8 @@ class AIClient:
         flipped run to run at temperature 0 with it disabled (2026-08-14:
         the review evals failed 3 of 4 runs), and the reasoning is captured
         in ``last_reasoning`` so a wrong judgment is diagnosable. Thinking
-        needs output headroom — deepseek-v4-flash at 3000 tokens spent the
-        whole budget reasoning and returned empty content."""
+        needs output headroom — the model at 3000 tokens can spend the whole
+        budget reasoning and return empty content."""
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -104,7 +109,7 @@ class AIClient:
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self.api_key}",
                 # Cloudflare in front of the API rejects the urllib default UA
-                "User-Agent": "opencode/1.14.20",
+                "User-Agent": "the-loft/0.1",
             },
             method="POST",
         )
@@ -164,29 +169,12 @@ class AIClient:
 
 
 def find_api_key() -> str:
-    """Return the model API key from the environment or opencode's auth file."""
-    env_key = os.environ.get("OPENCODE_API_KEY")
-    if env_key:
-        return env_key
-
-    if os.name == "nt":
-        base = Path(os.environ.get("APPDATA", "")) / "opencode"
-    else:
-        data_home = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local/share")
-        base = Path(data_home) / "opencode"
-    auth_path = base / "auth.json"
-    if auth_path.exists():
-        try:
-            auth = json.loads(auth_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            auth = {}
-        for hint in AUTH_JSON_PROVIDER_HINTS:
-            entry = auth.get(hint)
-            if isinstance(entry, dict) and entry.get("type") == "api" and entry.get("key"):
-                return entry["key"]
+    """Return the Cloudflare AI Gateway token from OPENAI_API_KEY."""
+    key = os.environ.get("OPENAI_API_KEY")
+    if key:
+        return key
     raise AIClientError(
-        "No API key found. Set LOFT_AI_KEY or OPENCODE_API_KEY, or log in with `opencode` "
-        "(its auth file is read automatically)."
+        "no API key found — set OPENAI_API_KEY (the Cloudflare AI Gateway token, skill://cloudflare-ai-gateway)"
     )
 
 

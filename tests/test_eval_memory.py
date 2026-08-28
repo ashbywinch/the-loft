@@ -23,10 +23,8 @@ REPO = Path(__file__).resolve().parent.parent
 def test_eval_fails_fast_without_api_key() -> None:
     """pytest -m eval with no API key must exit non-zero — a silent SKIP
     hides an eval that never ran (2026-08-05). The env is scrubbed of every
-    key source (LOFT_AI_*, OPENCODE_API_KEY) and the opencode auth file is
-    made unreachable via an empty XDG_DATA_HOME."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("LOFT_AI_", "OPENCODE_API_KEY"))}
-    env["XDG_DATA_HOME"] = str(REPO / ".eval-empty-xdg")
+    key source (OPENAI_*, LOFT_AI_*) so the eval cannot find a key."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("OPENAI_", "LOFT_AI_"))}
     result = subprocess.run(
         [sys.executable, "-m", "pytest", "-m", "eval", "-k", "arc", "-q", "--no-header"],
         capture_output=True,

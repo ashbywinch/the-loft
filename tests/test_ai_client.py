@@ -10,7 +10,6 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from http.client import HTTPMessage
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -62,7 +61,7 @@ def http_error(code: int) -> urllib.error.HTTPError:
 
 def test_chat_sends_system_user_and_returns_content() -> None:
     urlopen, calls = make_fake_urlopen([FakeResponse({"choices": [{"message": {"content": '{"ok": true}'}}]})])
-    client = AIClient(api_key="k", urlopen=urlopen)
+    client = AIClient(api_key="k", base_url="http://fake", urlopen=urlopen)
     assert client.chat("sys", "usr") == '{"ok": true}'
     body = calls[0]["body"]
     assert body["messages"] == [{"role": "system", "content": "sys"}, {"role": "user", "content": "usr"}]
@@ -79,28 +78,28 @@ def test_chat_retries_transient_errors_with_backoff() -> None:
             FakeResponse({"choices": [{"message": {"content": "ok"}}]}),
         ]
     )
-    client = AIClient(api_key="k", urlopen=urlopen, max_retries=2, _sleep=sleeps.append)
+    client = AIClient(api_key="k", base_url="http://fake", urlopen=urlopen, max_retries=2, _sleep=sleeps.append)
     assert client.chat("s", "u") == "ok"
     assert sleeps == [2.0, 4.0]
 
 
 def test_chat_gives_up_after_max_retries() -> None:
     urlopen, _ = make_fake_urlopen([http_error(503), http_error(503), http_error(503)])
-    client = AIClient(api_key="k", urlopen=urlopen, max_retries=2, _sleep=lambda _s: None)
+    client = AIClient(api_key="k", base_url="http://fake", urlopen=urlopen, max_retries=2, _sleep=lambda _s: None)
     with pytest.raises(AIClientError):
         client.chat("s", "u")
 
 
 def test_chat_retries_without_thinking_param_on_400() -> None:
     urlopen, calls = make_fake_urlopen([http_error(400), FakeResponse({"choices": [{"message": {"content": "ok"}}]})])
-    client = AIClient(api_key="k", urlopen=urlopen, max_retries=0, _sleep=lambda _s: None)
+    client = AIClient(api_key="k", base_url="http://fake", urlopen=urlopen, max_retries=0, _sleep=lambda _s: None)
     assert client.chat("s", "u") == "ok"
     assert "thinking" not in calls[1]["body"]  # the fallback must not consume the retry budget
 
 
 def test_chat_rejects_malformed_response() -> None:
     urlopen, _ = make_fake_urlopen([FakeResponse({"unexpected": True})])
-    client = AIClient(api_key="k", urlopen=urlopen)
+    client = AIClient(api_key="k", base_url="http://fake", urlopen=urlopen)
     with pytest.raises(AIClientError):
         client.chat("s", "u")
 
@@ -109,7 +108,7 @@ def test_chat_rejects_null_choice_cleanly() -> None:
     # a provider returning "choices": [null] must raise the clean
     # AIClientError, not an AttributeError (review, 2026-08-15)
     urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [None]})])
-    client = AIClient(api_key="k", urlopen=urlopen)
+    client = AIClient(api_key="k", base_url="http://fake", urlopen=urlopen)
     with pytest.raises(AIClientError, match="empty response"):
         client.chat("s", "u")
 
@@ -125,25 +124,14 @@ def test_json_object_rejects_missing_json() -> None:
 
 
 def test_find_api_key_prefers_environment(monkeypatch: MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENCODE_API_KEY", "env-key")
-    assert find_api_key() == "env-key"
+    # lucidlint: ignore monkeypatch the subject is the env seam — OPENAI_API_KEY is the key source
+    monkeypatch.setenv("OPENAI_API_KEY", "gateway-key")
+    assert find_api_key() == "gateway-key"
 
 
-def test_find_api_key_reads_opencode_auth(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
-    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    auth_dir = tmp_path / ".local" / "share" / "opencode"
-    auth_dir.mkdir(parents=True)
-    _ = (auth_dir / "auth.json").write_text(
-        json.dumps({"opencode-go": {"type": "api", "key": "auth-key"}}), encoding="utf-8"
-    )
-    assert find_api_key() == "auth-key"
-
-
-def test_find_api_key_raises_when_missing(monkeypatch: MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+def test_find_api_key_raises_when_missing(monkeypatch: MonkeyPatch) -> None:
+    # lucidlint: ignore monkeypatch the subject is the env seam — a missing key must fail loudly
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(AIClientError):
         find_api_key()
 
@@ -153,6 +141,6 @@ def test_chat_null_message_is_a_clean_error() -> None:
     # clean AIClientError, not an AttributeError that escapes as a 500
     # (2026-08-15 review: the message-capture change regressed this)
     urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [{"message": None}]})])
-    client = AIClient(api_key="k", urlopen=urlopen)
+    client = AIClient(api_key="k", base_url="http://fake", urlopen=urlopen)
     with pytest.raises(AIClientError):
         client.chat("s", "u")

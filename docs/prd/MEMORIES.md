@@ -32,12 +32,12 @@ confirmation gate. Nothing asserted unreviewed (P4); nothing told is lost
 - **Display order is product law** (§19.7): artifact/facts first, the reader's own
   testimony next, other people's testimony last.
 - **Stealable AI client:** `books_to_anki/src/book_to_flashcards/opencode_translator.py`
-  — self-contained urllib client for `https://opencode.ai/zen/go/v1`
-  (`deepseek-v4-flash`): `find_api_key()` (env `OPENCODE_API_KEY` → opencode
-  `auth.json`), retry/backoff on 429/5xx, thinking-disable fallback,
-  `response_format: json_object`, injectable `urlopen` for tests, strict JSON
-  parsing with recovery. Its tests (`test/src/test_opencode_translator.py`) are
-  the template for ours.
+  — the house urllib pattern the client is built on: retry/backoff on
+  429/5xx, thinking-disable fallback, `response_format: json_object`,
+  injectable `urlopen` for tests, strict JSON parsing with recovery. The
+  provider is the Cloudflare AI Gateway (`tools/ai_client.py`: base URL and
+  key from `OPENAI_BASE_URL` / `OPENAI_API_KEY`, model `dynamic/fallback2` —
+  skill://cloudflare-ai-gateway).
 - **Current branch:** static vanilla app, no backend, no `comment_on` rendering
   yet, secrets are shell-env-only. §16.11 establishes the localhost-only server +
   "server not reachable" degradation card. Data shapes: items carry
@@ -337,7 +337,8 @@ never a guessed link — and the operator's review confirms or drops it.
 
 **Open:**
 
-- AI client env naming (`LOFT_AI_*` vs reusing `find_api_key()`'s
-  `OPENCODE_API_KEY`) — settle in Slice 1.
+- AI client provider: the Cloudflare AI Gateway — `OPENAI_BASE_URL` +
+  `OPENAI_API_KEY`, model `dynamic/fallback2` (skill://cloudflare-ai-gateway);
+  settled 2026-08-28.
 - Keeper-facing confirm surface: the §16.11 import admin view hosts it (assumed);
   revisit when Slice 2 of this plan lands.

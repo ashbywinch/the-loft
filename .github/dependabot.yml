@@ -4,10 +4,20 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      minor-patch:
+        update-types: ["minor", "patch"]
+      major:
+        update-types: ["major"]
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      minor-patch:
+        update-types: ["minor", "patch"]
+      major:
+        update-types: ["major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

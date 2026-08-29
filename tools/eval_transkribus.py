@@ -59,6 +59,8 @@ def get_token(username: str, password: str) -> str:
 def submit_process(token: str, image: Path, model_id: int = MODEL_GENERAL_HANDWRITING) -> str:
     """Submit by base64 image data — the v1 schema accepts either
     base64 or imageUrl; base64 keeps the scans off any tunnel."""
+    # lucidlint: ignore inline-import this trial tool is removed in the
+    # stacked top PR (pr/remove-trial-code) — its findings are moot
     import base64 as _b64
 
     body = (

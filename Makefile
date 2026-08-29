@@ -131,7 +131,9 @@ $(LUCIDLINT_BUNDLE):
 
 lucidlint: install-lucidlint
 	@echo "== lucidlint gate =="
-	@$(PYTHON) $(LUCIDLINT_BUNDLE) --repo . --baseline lucidlint.json
+	# NO baseline (user, 2026-08-29): the gate fails on EVERY finding —
+	# a gate failure means the finding gets fixed, never locked
+	@$(PYTHON) $(LUCIDLINT_BUNDLE) --repo .
 
 eval: evals
 

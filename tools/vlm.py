@@ -184,6 +184,7 @@ def transcribe_with_fallbacks(
     variants: list[dict[str, Any]],
     *,
     usable: Callable[[str], bool] | None = None,
+    transcribe: Callable[..., tuple[str, dict[str, int]]] | None = None,
 ) -> tuple[str, dict[str, int]]:
     """Try each call spec in order; return the first usable response as
     (text, usage). A variant dict passes straight to transcribe_image_vlm
@@ -194,13 +195,16 @@ def transcribe_with_fallbacks(
     every attempt ERRORED, in which case the last exception re-raises.
     The returned usage sums every attempt's tokens — the honest cost."""
     usable = usable or (lambda text: transcription_problem(text) is None)
+    # the injectable seam (2026-08-29): the tests pass a fake instead of
+    # monkeypatching the module attribute
+    call = transcribe or transcribe_image_vlm
     last_error: Exception | None = None
     last_text: str | None = None
     total_tokens = 0
     name = getattr(image, "name", str(image))
     for attempt, spec in enumerate(variants, start=1):
         try:
-            text, usage = transcribe_image_vlm(image, **spec)
+            text, usage = call(image, **spec)
         except Exception as exc:
             last_error = exc
             print(f"vlm {name} attempt {attempt}/{len(variants)}: {exc}", file=sys.stderr)

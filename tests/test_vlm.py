@@ -238,8 +238,7 @@ class TestTranscribeWithFallbacks:
             calls.append(kwargs)
             return responses.pop(0)
 
-        monkeypatch.setattr("tools.vlm.transcribe_image_vlm", fake)
-        text, usage = transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "b"}])
+        text, usage = transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "b"}], transcribe=fake)
         assert text == "good text"
         assert usage["total_tokens"] == 10
         assert len(calls) == 1
@@ -254,8 +253,7 @@ class TestTranscribeWithFallbacks:
             calls.append(kwargs)
             return responses.pop(0)
 
-        monkeypatch.setattr("tools.vlm.transcribe_image_vlm", fake)
-        text, usage = transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "a"}])
+        text, usage = transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "a"}], transcribe=fake)
         assert text == "good text"
         assert len(calls) == 2
 
@@ -270,19 +268,17 @@ class TestTranscribeWithFallbacks:
                 raise RuntimeError("vision model returned empty content")
             return "recovered", {"total_tokens": 5}
 
-        monkeypatch.setattr("tools.vlm.transcribe_image_vlm", fake)
-        text, _usage = transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "a"}])
+        text, _usage = transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "a"}], transcribe=fake)
         assert text == "recovered"
 
-    def test_all_attempts_error_reraises_the_last(self, monkeypatch) -> None:
+    def test_all_attempts_error_reraises_the_last(self) -> None:
         from tools.vlm import transcribe_with_fallbacks
 
         def fake(image, **kwargs):
             raise RuntimeError("timeout")
 
-        monkeypatch.setattr("tools.vlm.transcribe_image_vlm", fake)
         with pytest.raises(RuntimeError):
-            transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "b"}])
+            transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "b"}], transcribe=fake)
 
     def test_all_unusable_returns_the_last_response_for_the_gates(self, monkeypatch) -> None:
         from tools.vlm import transcribe_with_fallbacks
@@ -295,8 +291,7 @@ class TestTranscribeWithFallbacks:
             calls.append(kwargs)
             return responses.pop(0)
 
-        monkeypatch.setattr("tools.vlm.transcribe_image_vlm", fake)
-        text, usage = transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "b"}])
+        text, usage = transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "b"}], transcribe=fake)
         assert text == blob
         assert usage["total_tokens"] == 30  # honest cost: both attempts
 
@@ -310,8 +305,7 @@ class TestTranscribeWithFallbacks:
             calls.append(kwargs)
             return responses.pop(0)
 
-        monkeypatch.setattr("tools.vlm.transcribe_image_vlm", fake)
-        transcribe_with_fallbacks(Path("page.png"), [{"model": "a"}, {"model": "a"}])
+        transcribe_with_fallbacks(Path("page.png"), [{"model": "a"}, {"model": "a"}], transcribe=fake)
         err = capsys.readouterr().err
         assert "attempt 1/2" in err
         assert "page.png" in err

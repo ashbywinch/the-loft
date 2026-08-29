@@ -1,9 +1,9 @@
 [openai]
 custom_llm_provider = "openai"
-api_base = "https://opencode.ai/zen/go/v1"
+api_base = "https://gateway.ai.cloudflare.com/v1/e21a5be58ac1e8f7d5619539feb2dc3d/default/compat/v1" # Cloudflare AI Gateway (skill://cloudflare-ai-gateway)
 
 [config]
-model = "openai/deepseek-v4-flash"
+model = "openai/dynamic/fallback2"
 custom_model_max_tokens = 128000
 max_model_tokens = 128000
 ai_timeout = 1800
@@ -48,3 +48,10 @@ handle_push_trigger = true
 # v0.41.1 and main: pr_code_suggestions has no incremental machinery, and
 # -i on it is a no-op) — it is a full-PR pass by upstream design
 push_commands = ["/review -i", "/improve"]
+
+[litellm]
+# CI has no local metadata proxy, so the cf-aig headers ride here instead:
+# the gateway retries are disabled repo-wide (client owns retries — the
+# 2026-08-19 decision, skill://cloudflare-ai-gateway) and a long review gets
+# a first-byte window.
+extra_headers = '{"cf-aig-max-attempts": "0", "cf-aig-request-timeout": "300000"}'

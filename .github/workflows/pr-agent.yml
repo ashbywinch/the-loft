@@ -22,8 +22,8 @@ jobs:
       - uses: the-pr-agent/pr-agent@v0.41.1 # pin a real release tag — @latest does not resolve
         id: pr-agent
         env:
-          OPENAI_KEY: ${{ secrets.OPENCODE_GO_THE_LOFT_API_KEY }}
-          OPENAI_BASE_URL: https://opencode.ai/zen/go/v1
+          OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # SECURITY + correctness: the config comes from this pinned branch,
           # never the PR head (a same-repo branch could ship its own

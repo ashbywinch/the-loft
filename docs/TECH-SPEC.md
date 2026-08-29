@@ -609,9 +609,9 @@ the naive approach and is not used. The pipeline order becomes:
 **The transcription backend decision (2026-08-14, user: "let's stop
 there, this is good enough").** After an evidence comparison on the
 family's own pages, the default transcription backend for cursive/mixed
-pages is the **vision-language model** (`tools/vlm.py`, the opencode-go
-vision role mimo-v2.5) — not the local TrOCR stack and not a specialist
-OCR API. The evidence on real pages: near-perfect pure-cursive and
+pages is the **vision-language model** (`tools/vlm.py`, the Cloudflare AI
+Gateway vision route `dynamic/image`, skill://cloudflare-ai-gateway) — not the
+local TrOCR stack and not a specialist OCR API. The evidence on real pages: near-perfect pure-cursive and
 mixed-layout transcription (page-03's callout box, postmark, address and
 salutation all read correctly); ~85% word accuracy on the medal card's
 hardest element (handwritten digits in a dense form); ~11K tokens/page

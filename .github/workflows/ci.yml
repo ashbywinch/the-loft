@@ -38,12 +38,14 @@ jobs:
       - run: make coverage # the gate: lint + typecheck + the suites ONCE, instrumented (2026-08-11: make test + make coverage used to run pytest and vitest twice)
       - run: make verify # the archive-quality data checks — the gate keeps them; they skip in CI (no archive in the checkout) and run locally
       - name: Note the dependabot eval skip
-        # GitHub strips secrets from dependabot-triggered runs, so the evals
-        # step below can only fail there. Skipped loudly, never silently —
-        # the 2026-08-14 fail-fast rule applied to the skip itself (bot
-        # review, 2026-08-29). The merged main-push evals run is the backstop.
+        # Evals on dependabot runs are IMPOSSIBLE, not optional: GitHub
+        # strips secrets from dependabot-triggered runs, so there is no key
+        # to run with. The skip is mandatory; this note makes it loud, never
+        # silent — the 2026-08-14 fail-fast rule applied to the skip itself
+        # (2026-08-29). The real gate for merged dependabot changes is
+        # main's own evals run (keys present on every normal merge path).
         if: ${{ github.actor == 'dependabot[bot]' && github.ref != 'refs/heads/main' }}
-        run: echo "::warning::Real-model evals skipped for this dependabot run (secrets stripped); main's evals run is the backstop"
+        run: echo "::warning::Real-model evals cannot run on dependabot runs (GitHub strips secrets here); main's evals run gates merged changes"
       - name: Real-model evals
         # Runs on every non-dependabot run: a missing key FAILS the gate loudly
         # (fail-fast rule) — never test for key presence, never silently skip

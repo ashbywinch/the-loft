@@ -53,8 +53,7 @@ def _content_bounds(layout: dict[str, Any]) -> tuple[float, float, float, float]
     return min(xs), min(ys), max(xs), max(ys)
 
 
-# lucidlint: ignore long-param-list the crop read's inputs are the run's locals —
-# a parameter object would obscure the single call site
+# lucidlint: ignore long-param-list the crop read's inputs are the run's locals — no class for one call site
 def read_crop(
     crop: CropReading,
     image_path: Path,
@@ -176,8 +175,7 @@ def _anchor_agreement(assembled: dict[str, Any], layout: dict[str, Any]) -> tupl
     return ious, matched
 
 
-# lucidlint: ignore long-param-list the crop-grid run's inputs are the page's state —
-# a parameter object would add a class for one call site
+# lucidlint: ignore long-param-list the crop-grid run's inputs are the page's state — no class for one call site
 def run(
     batch_id: str,
     page: str,

@@ -74,8 +74,7 @@ def run_kraken(image: Path, python: Path) -> dict:
     """kraken recognition: line boxes + per-line text (no confidence
     exposed by the CLI). The default segmenter requires a bi-level
     image, so a binarized copy is made first."""
-    # lucidlint: ignore inline-import this trial tool is removed in the
-    # stacked top PR (pr/remove-trial-code) — its findings are moot
+    # lucidlint: ignore inline-import this trial tool is removed in the stacked top PR — its findings are moot
     from PIL import Image as PILImage
 
     binary = OUT_DIR / f"{image.stem}.bin.png"
@@ -123,8 +122,7 @@ def main() -> int:
                 out = fn()
                 (OUT_DIR / f"{page}.{engine}.json").write_text(json.dumps(out, indent=1), encoding="utf-8")
                 row[engine] = out
-            # lucidlint: ignore swallow one engine failing must not sink
-            # the whole comparison — its row carries the error text
+            # lucidlint: ignore swallow one engine failing must not sink the comparison — its row carries the error text
             except Exception as exc:
                 row[engine] = {"engine": engine, "error": str(exc)[:200]}
         results.append(row)

@@ -1,7 +1,7 @@
 # Story & Fact Capture — "Add your memory"
 
 - **Status:** plan — approved shape (2026-08-03); **slices 0–3 shipped** (read side, capture server, AI elicitation, write path), plus the chat redesign, review toggles, dob-aware dating, artifact links, and the identity correction (`p-alex`; curation is a role, not a person)
-- **Companions:** `PRD.md` §19 (story harvest), `TECH-SPEC.md` §16.9/§16.11/§16.12, `../plans/PLAN.md`
+- **Companions:** `PRD.md` §19 (story harvest), `TECH-SPEC.md` §16.9/§16.11/§16.12, `docs/plans/PLAN.md`
 - **Note:** the §16 sections live on the `phase-1-import-flow` branch; this plan assumes they land.
 
 ## What this is

@@ -298,8 +298,8 @@ class Layout:
         self.unmatched = unmatched
 
     # the single-path build's inputs mirror build_layout's — a parameter object would obscure the pure pass
-    # lucidlint: ignore long-param-list a parameter object would obscure the pure pass
     @classmethod
+    # lucidlint: ignore long-param-list the single-path build's inputs mirror build_layout's — no param object
     def single(
         cls,
         page: str,
@@ -317,8 +317,8 @@ class Layout:
         )
 
     # the multi-path build's inputs mirror multi_layout's — a parameter object would obscure the combined pass
-    # lucidlint: ignore long-param-list a parameter object would obscure the combined pass
     @classmethod
+    # lucidlint: ignore long-param-list the multi-path build's inputs mirror multi_layout's — no param object
     def multi(
         cls,
         page: str,

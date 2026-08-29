@@ -289,8 +289,7 @@ def _missing_guesses(guess_dir: Path, pages: list[Path], outcomes: list[int]) ->
     ]
 
 
-# lucidlint: ignore long-param-list the page's six inputs are the run's own
-# locals — a parameter object would add a class for one call site
+# lucidlint: ignore long-param-list the page's six inputs are the run's own locals — no class for one call site
 def _process_page(
     engine: Any,
     image: Path,

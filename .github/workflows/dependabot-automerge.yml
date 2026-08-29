@@ -31,4 +31,9 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # --auto arms GitHub's native auto-merge: the PR merges only when every
         # required check has passed (branch protection). Red checks = no merge.
+        # 'Real-model evals' must be a required check that reports green on
+        # dependabot PRs (with the loud skip note in ci.yml, never silently) —
+        # otherwise this guarantee is satisfied by a CI run whose evals never
+        # executed. The merged main-push evals run is the enforcement backstop
+        # (bot review, 2026-08-29).
         run: gh pr merge --auto --merge "$PR_URL"

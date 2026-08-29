@@ -127,6 +127,25 @@ def test_find_api_key_prefers_environment() -> None:
     assert find_api_key(_env={"OPENCODE_API_KEY": "env-key"}) == "env-key"
 
 
+def test_find_api_key_ignores_the_loft_legacy_env(tmp_path: Path) -> None:
+    """LOFT_AI_KEY is the retired secret name — a stale value must never
+    be picked up, only the OPENAI_API_KEY / gateway-token convention
+    (2026-08-29: the CI's LOFT_AI_KEY was rejected 401 by the gateway)."""
+    with pytest.raises(AIClientError):
+        find_api_key(_env={"LOFT_AI_KEY": "stale-token"}, _home=tmp_path)
+
+
+def test_find_api_key_prefers_openai_api_key(tmp_path: Path) -> None:
+    """The gateway token's env name wins over every legacy source."""
+    assert (
+        find_api_key(
+            _env={"OPENAI_API_KEY": "gw", "CLOUDFLARE_AIGATEWAY_TOKEN": "cf", "OPENCODE_API_KEY": "legacy"},
+            _home=tmp_path,
+        )
+        == "gw"
+    )
+
+
 def test_find_api_key_reads_opencode_auth(tmp_path: Path) -> None:
     auth_dir = tmp_path / ".local" / "share" / "opencode"
     auth_dir.mkdir(parents=True)

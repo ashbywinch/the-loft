@@ -3,16 +3,16 @@
 **Purpose.** This document is the product's **requirements and user needs
 only** — what the family needs and why, in the user's terms. It is not an
 implementation document: it does not say how the app is built. The
-mechanics (the data model, the API, the build) live in `../TECH-SPEC.md`;
-the slice sequencing lives in `../plans/PLAN.md`; the presentation conventions
-in `../UI.md`. A requirement earns its place here only when it states a
+mechanics (the data model, the API, the build) live in `docs/TECH-SPEC.md`;
+the slice sequencing lives in `docs/plans/PLAN.md`; the presentation conventions
+in `docs/UI.md`. A requirement earns its place here only when it states a
 user need or a behavior the family experiences. Anything that names a
 technology, a field, or an internal mechanism belongs in TECH-SPEC, not
 here (2026-08-09).
 
 Working title: **The Loft** (approved by the user, 2026-08-02; revisitable before launch).
 
-- **Sequencing:** `../plans/PLAN.md` — thin slices, feature inventory, urgency knobs.
+- **Sequencing:** `docs/plans/PLAN.md` — thin slices, feature inventory, urgency knobs.
 
 - **Status:** Draft v0.10
 - **Length note:** this canonical requirements document runs past the
@@ -26,7 +26,7 @@ Working title: **The Loft** (approved by the user, 2026-08-02; revisitable befor
   - **v0.4 (session 1 complete):** felt experience — explorable, draws you in, never editorial; anti-censorship default; OCR drafts (Should); map as a first-class door; interleaving vision; full interview record kept private
   - **v0.5:** generational longevity (§18) — the artifacts outlast the app; capture facts resolved (photo volume, back-writing, recordings)
   - **v0.6:** story harvest & testimonies (§19, G7) — record / self-record / type; narrators are actors in the story, not editors; testimonies first-class with embeddings; the preservation rule
-  - **v0.7:** names/aliases as first-class identity; everything-to-everything graph at scale; open questions resolved (vanilla nuance, TV/show mode, ML appetite); prototype shipped — sequencing in `../plans/PLAN.md`
+  - **v0.7:** names/aliases as first-class identity; everything-to-everything graph at scale; open questions resolved (vanilla nuance, TV/show mode, ML appetite); prototype shipped — sequencing in `docs/plans/PLAN.md`
   - **v0.8:** Show mode; proposed-status UI; acceptance flows F7–F8
   - **v0.9 (requirements review):** no single-narrator bottleneck (elders contribute via prompts); family-agnostic requirements with abstract user stories; kids and people with dementia alike have fun exploratory experiences; testimony of the involved is a JTBD; §18.3 split (privacy/control + recoverable-without-credentials); accounts required (TBD); ML face/pet/boat labeling and OCR are Should; no public sharing of anything; no camera capture (scanners only); letters link sender+recipient; display priority facts→reader→others; the app never reads Drive at runtime; model-proposed alt text
   - **v0.10:** sanitised — the PRD states requirements only; family-instance facts (names, dates, exact counts, who has what) live in the private interview records and the content
@@ -225,7 +225,7 @@ Four doors + the lens:
 | **Places** | The geography | **Heatmap over time**: dot size ∝ activity in the slider window; a **timeline slider** (scrub the years) and a **person filter** (who you're tracking) — watch the geography of a life move; markers open place pages with the scrubbed window; place pages group the artifacts of each era; optional current street-view imagery for key locations ("a family home of the era — the street today"). **Scale-aware markers** (2026-08-03): the heat map stands alone at overview zoom — no dots, no labels (a dot at country zoom is a meaningless pixel and its label a blob; both obscure the heat). Dots appear from regional zoom, labels from street zoom, and a lone active place is always labelled; the cards below always list the active places. **A point is never presented as more precise than it is** (2026-08-05): an imprecise place (known only to a street/town/country) draws an uncertainty ring, not a pin. Place pages carry **Reflections** that mention them |
 | **Stories** | Guided paths | Curated collections (**auto-suggested** from the archive's patterns, confirmed or edited by users; users can also create their own) with connective text; **reader mode** = page-turn swipe through the items; every story links its artifacts |
 | **Museum** | The heirlooms | Object pages: big imagery, provenance narrative, detail shots |
-| **Show mode** | Showing, not browsing | Full-screen, no-navigation browse for showing someone the archive — big images, large type, auto-advance; operable by anyone in the room; started from any person or story (../plans/PLAN.md Slice 3 — the urgent one: elders' memory is fading) |
+| **Show mode** | Showing, not browsing | Full-screen, no-navigation browse for showing someone the archive — big images, large type, auto-advance; operable by anyone in the room; started from any person or story (docs/plans/PLAN.md Slice 3 — the urgent one: elders' memory is fading) |
 | **Item detail** | The lens | Pinch-zoom scan viewer; **a description line under the title** (the "what is this" that tells a letter apart from the rest of its correspondence — it also renders, two-line clamped, on the cards); transcription toggle with **mention links** into the cast; connections (same people / place / ±1yr); prev/next within current sequence; **web-page documents hyperlink their sources with the access date** ("accessed 2026-08-05"); **Clarifications** that attest the item |
 | **Search** | Find *that one letter* | Titles, people, places, themes, transcriptions; filterable results |
 | **Curator** | Capture + edit | Scanner import, 3-field form, auto-naming; edit metadata of existing items; never delete |
@@ -330,7 +330,7 @@ consolidated user needs from every problem the review loop has hit):**
 | **Archive stats** | Should | "You've seen 212 of 1,847 artifacts" — quiet completion pull |
 | **Street-view place cards** | Should | The archive meets the living world: key locations show today's street view (public imagery only; family content stays local) |
 | **Second-screen / TV mode** | Should | Gatherings: mirror to the TV; fits the private household model |
-| **Show mode** | Should | The urgent one: familiar photos, shown now — elders' memory is fading (../plans/PLAN.md Slice 3) |
+| **Show mode** | Should | The urgent one: familiar photos, shown now — elders' memory is fading (docs/plans/PLAN.md Slice 3) |
 | **Map — heatmap over time** | Should | Places as a heatmap with a timeline slider and person filter — activity moving across geography as the years scrub; Leaflet/OSM tiles, degrades to the non-tile dot view offline |
 | **Family "add a memory"** | Could | Others contribute captions for review — curation was initially single-person, so deferred |
 
@@ -477,10 +477,10 @@ import sessions — they bind every screen and every data decision:
 3. **Photo volume — RESOLVED:** hundreds of physical photos to scan; thousands of digital photos exist (younger family members) but are **human-curated before import** (curation gate, §7).
 4. **Audio/video — RESOLVED:** some recordings likely exist but probably unrecoverable; **BBC archive is a research lead**; the schema stays future-proofed.
 5. **Back-of-photo writing — RESOLVED:** happens but rare → capture default is front-first; back captured when writing is noticed.
-6. **TV/second-screen mode — RESOLVED (via plan):** yes — gatherings are the activation metric; Show mode (Slice 3) and TV mode (Slice 6) are planned in `../plans/PLAN.md`.
+6. **TV/second-screen mode — RESOLVED (via plan):** yes — gatherings are the activation metric; Show mode (Slice 3) and TV mode (Slice 6) are planned in `docs/plans/PLAN.md`.
 7. **Technical appetite — RESOLVED (user, 2026-08-02):** vanilla-first, no framework; a small JS/CSS library is allowed if it degrades well; revisit during development if the code gets messy (recorded in `TECH-SPEC.md` §15).
 8. **Secondary narrators — OPEN:** a family member is the physical collaborator for the clearing-out; do others hold stories worth harvesting?
-9. **The elders and the app — RESOLVED (via plan):** yes — elders may be shown familiar photos, via Show mode (`../plans/PLAN.md` Slice 3); the family decides when, and it is never a dependency. (Sensitive; see §4.)
+9. **The elders and the app — RESOLVED (via plan):** yes — elders may be shown familiar photos, via Show mode (`docs/plans/PLAN.md` Slice 3); the family decides when, and it is never a dependency. (Sensitive; see §4.)
 10. **Private letters** — are any letters/items not for the future user's eyes (e.g., while he's a child), and should the app support per-item privacy flags? (Currently everything is household-private; this is about *within*-family boundaries over time.)
 11. **Sensitive-item timing — DEFERRED (decision recorded):** anti-censorship is the default; sensitive items stay catalogued and searchable; *when* they surface for younger readers is decided at prototype stage with the full collection in view (user, 2026-08-02).
 12. **ML appetite & hosting — RESOLVED (user; revised 2026-08-14):** photo-labeling (people/pets/boats), theme discovery, and **handwriting OCR for transcription drafts** are wanted; the transcription default uses the vision model (cloud), with a **local-only mode** available when desired (the privacy posture is a mode, not a hard constraint — user, 2026-08-14); imperfect suggestions are accepted with family confirmation (the propose/confirm seam).

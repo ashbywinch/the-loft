@@ -93,8 +93,7 @@ def prep_panel(image_path: Path, layout: dict[str, Any] | None, tmp: Path, page:
 
 def _detect_pieces(engine: Any, panel_path: Path) -> list[list[float]]:
     """The rec's detection pieces (the REAL ink)."""
-    # lucidlint: ignore inline-import the .venv-htr seam — paddleocr lives
-    # only in .venv-htr; the main venv's tests import eval_batch without it
+    # lucidlint: ignore inline-import the .venv-htr seam — paddleocr lives only in .venv-htr
     from tools.layout_detect import detect_page
 
     raw = detect_page(engine, panel_path)
@@ -453,8 +452,7 @@ def _process_batch(
 
 def _detect_pieces(engine: Any, panel_path: Path) -> list[list[float]]:
     """The rec's detection pieces (the REAL ink)."""
-    # lucidlint: ignore inline-import the .venv-htr seam — paddleocr lives
-    # only in .venv-htr; the main venv's tests import eval_batch without it
+    # lucidlint: ignore inline-import the .venv-htr seam — paddleocr lives only in .venv-htr
     from tools.layout_detect import detect_page
 
     raw = detect_page(engine, panel_path)

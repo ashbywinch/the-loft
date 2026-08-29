@@ -34,8 +34,7 @@ from tools.loft_paths import WORK_DIR
 from tools.vlm import parse_transcription_response, transcribe_image_vlm, transcription_system_with_context
 
 
-# lucidlint: ignore long-param-list the run's inputs are the page's state — a param object
-# would add a class for one call site
+# lucidlint: ignore long-param-list the run's inputs are the page's state — no class for one call site
 def run(
     batch_id: str,
     page: str,

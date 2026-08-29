@@ -43,7 +43,8 @@ jobs:
         # rule) — never test for key presence, never silently skip (2026-08-14)
         run: make evals
         env:
-          LOFT_AI_KEY: ${{ secrets.LOFT_AI_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
       - name: Coverage summary (Python tools)
         uses: irongut/CodeCoverageSummary@v1.3.0
         with:

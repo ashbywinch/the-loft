@@ -1,7 +1,7 @@
 """Eval for the import-review relevance check — run against the real model.
 
 Not part of `make test` (tests never hit the network): this needs a network
-and a configured key (LOFT_AI_KEY / OPENCODE_API_KEY / opencode auth.json).
+and a configured key (OPENAI_API_KEY / OPENCODE_API_KEY / opencode auth.json).
 Run with `loft eval-review` (tools/cli.py).
 
 The cases cover the review flow's model behaviours (2026-08-09, user):

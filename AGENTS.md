@@ -21,7 +21,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
   (excludes `eval` and `archive` markers via addopts); `make verify` = the
   archive-quality data checks (`-m archive`, skipped in CI — no archive);
   `make evals` = the real-model evals (`-m eval`, need the API key;
-  CI runs them only when `LOFT_AI_KEY` is configured). Split 2026-08-13
+  CI runs them only when `OPENAI_API_KEY` is configured). Split 2026-08-13
   (user: `make test` must stay fast).
 - Tests must be deterministic: no wall-clock, network, or order dependence
   (see `docs/testing-standards.md`).

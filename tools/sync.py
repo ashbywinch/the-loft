@@ -497,6 +497,9 @@ def reprocess_page_transcription(
             people=people,
             places=places,
             label=label,
+            # the reprocess's own root — never the global WORK_DIR
+            # (the hermetic tests, 2026-08-29)
+            store_root=work_dir,
         )
         new_text = (raw_dir / Path(page).with_suffix(".txt")).read_text(encoding="utf-8")
         report = (

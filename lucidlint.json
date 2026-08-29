@@ -22,6 +22,8 @@
     "standard:tools/eval_batch.py:302:_detect_pieces",
     "standard:tools/eval_batch.py:867:_make_engine",
     "standard:tools/eval_batch.py:869:_make_engine",
+    "standard:tools/eval_htr_trial.py:77:run_kraken",
+    "standard:tools/eval_transkribus.py:62:submit_process",
     "complexity:tools/ink.py:88:split_by_bands",
     "docs:AGENTS.md:0:",
     "docs:docs/plans/PLAN.md:0:",

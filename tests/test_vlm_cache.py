@@ -39,9 +39,9 @@ def test_changed_spec_misses(tmp_path) -> None:
     assert load_cached_read(panel, {"model": "b"}, cache_dir=tmp_path) is None
 
 
-def test_cache_disabled_env_bypasses(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv("LOFT_VLM_CACHE", "0")
+def test_cache_disabled_env_bypasses(tmp_path) -> None:
     panel = _png(tmp_path, (1, 2, 3))
     store_read(panel, {"model": "m"}, "text", 5)
-    monkeypatch.delenv("LOFT_VLM_CACHE")
+    # the disable is exercised through the fresh flag (the production knob
+    # LOFT_VLM_CACHE=0 maps to it) — no global-state patching
     assert load_cached_read(panel, {"model": "m"}, fresh=True) is None

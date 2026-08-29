@@ -30,13 +30,18 @@ Instructions for AI agents working in this repo. Humans can read this too.
 
 | Task | Route to |
 |---|---|
+| Adopt / ingest planning (the batch adoption flow's docs) | `docs/plans/INGEST-PLAN.md` |
 | Product requirements, scope, personas | `docs/prd/PRD.md` |
 | Architecture, stack, data model, decisions | `docs/TECH-SPEC.md` |
 | Pipeline stages, completion markers, and per-page recovery (`make pipeline ARGS="guess\|layout <batch> [page...]"`) | `docs/TECH-SPEC.md` §16.14.2 |
+| Layout / geometry experiments ledger (the ink work's measured findings) | `docs/plans/geometry-experiments-log.md` |
+| The plans/ work logs (trial reports, walkthrough records, snags) | `docs/plans/` — `docs/plans/ocr-verification-research.md`, `docs/plans/model-trial-report.md`, `docs/plans/lucidlint-snag.md`, `docs/plans/ux-review-chat-solution.md`, `docs/plans/INGEST-PLAN.md` |
 | Acting on lucidlint findings (fix-engine workflow, baseline, per-file checks) | `skill://lucidlint-workflow`; the repo's findings log at `docs/plans/lucidlint-review-log.md` |
 |Interview/observation instruments|`docs/DISCOVERY.md`, private session records|
 | The story-capture flow spec ("Add your memory") | `docs/prd/MEMORIES.md` |
-| The artifact-import flow spec + its rules (A–S) | `docs/prd/IMPORT-PRD.md` |
+| The artifact-import flow spec + its rules (A–S) | `docs/prd/IMPORT-PRD.md` — the ingest-side planning spec: `docs/prd/INGEST-PRD.md` |
+| The transcription-review surface spec | `docs/prd/TRANSCRIPTION-REVIEW-PRD.md` |
+| The projection / sqlite plans + the research corpus | `docs/sqlite-projection-plan.md`; `research/archive-longevity-research.md`, `research/ocr-correction-ux-tools-guide.md` |
 | The multi-document capture seam (batches, hashes, sidecars, labels) | `docs/prd/MULTI-DOC-IMPORT-PRD.md` |
 | UI / visual conventions (the pattern library) | `docs/UI.md` |
 | Chat / capture-dialog conventions | `docs/CHAT-UX.md` |
@@ -72,7 +77,7 @@ default. Real content never lives in code (`docs/coding-standards.md`).
   blocked commit's stash/restore reverted a fix, and a blind re-add
   committed the stale content).
 - Atomic commits; reference issues with `Fixes #N`.
-- Archive data (scans, sidecars) is committed during dev; on prod it is not committed but regularly backed up (user, 2026-08-03).
+- Archive data (scans, sidecars) is committed during dev; on prod it is not committed but regularly backed up (user, 2026-08-03). The concurrency model for the archive's writers: `docs/archive-concurrency-plan.md`.
 
 ## Public repo (2026-08-08, user)
 

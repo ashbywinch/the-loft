@@ -37,8 +37,7 @@ def store_read(panel: Path, spec: dict[str, Any], text: str, tokens: int, *, cac
         atomic = directory / f"{key}.tmp"
         atomic.write_text(json.dumps({"text": text, "tokens": tokens}), encoding="utf-8")
         atomic.replace(directory / key)
-    # lucidlint: ignore swallow the cache is an optimization — a full
-    # disk must never break a run that would otherwise succeed
+    # lucidlint: ignore swallow the cache is an optimization — a full disk must never break a run
     except OSError:
         pass
 
@@ -72,7 +71,7 @@ def store_selfreport(panel: Path, text: str, report: list[dict]) -> None:
     """Cache one self-report keyed on (panel bytes, transcription text)
     — the flags are a pure function of the read, so re-assembly of an
     unchanged page never re-pays the doubt call."""
-    # lucidlint: ignore swallow the cache is an optimization — a full
+
     # disk must never break a run that would otherwise succeed
     try:
         key, directory = _selfreport_key(panel, text)
@@ -80,6 +79,7 @@ def store_selfreport(panel: Path, text: str, report: list[dict]) -> None:
         atomic = directory / f"{key}.tmp"
         atomic.write_text(json.dumps(report), encoding="utf-8")
         atomic.replace(directory / key)
+    # lucidlint: ignore swallow the cache is an optimization — a full disk must never break a run
     except OSError:
         pass
 

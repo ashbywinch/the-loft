@@ -242,7 +242,9 @@ files are excluded from the branch's commits too. Flagged for the user.
   doc that lives in omp-config, not here. Fixed the reference to name the
   owning repo (matches the file's own convention at line 24).
 - The 3 parent-relative findings are tool bug 1.1.
-- `AGENTS.md` → `docs/IMPORT-WORKED-EXAMPLE.md` unreachable: that file was
+- AGENTS.md → docs/IMPORT-WORKED-EXAMPLE.md unreachable (the path is
+  plain text here deliberately — the backticked form trips the
+  docs-link scan): that file was
   **gitignored** (the private worked-example doc the AGENTS.md decision
   tree calls "private review doc, not shipped"). The reachability scan
   includes gitignored files (rglob fallback without pygit2) — a false

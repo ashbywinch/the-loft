@@ -141,9 +141,13 @@ def text_line_count(box: Sequence[float], image: Any, *, min_band_rows: int = 3,
     if start is not None:
         runs.append((start, len(rows) - 1))
     merged: list[tuple[int, int]] = []
+    _merge_gap_runs(merged, min_gap_rows, runs)
+    return sum(1 for s, e in merged if e - s + 1 >= min_band_rows)
+
+
+def _merge_gap_runs(merged, min_gap_rows, runs):
     for s, e in runs:
         if merged and s - merged[-1][1] - 1 < min_gap_rows:
             merged[-1] = (merged[-1][0], e)
         else:
             merged.append((s, e))
-    return sum(1 for s, e in merged if e - s + 1 >= min_band_rows)

@@ -85,6 +85,41 @@ def offset_box(box: list[float], x0: float, y0: float) -> list[float]:
     return [box[0] + x0, box[1] + y0, box[2] + x0, box[3] + y0]
 
 
+def _band_parts(
+    bands: list[tuple[int, int]], ink: Any, box: tuple[int, int, int, int], scales: tuple[float, float]
+) -> list[list[float]]:
+    """Each band's inked x-extent as a page-space box (extracted from
+    split_by_bands 2026-08-29 for the complexity bar)."""
+    x0, y0, x1, y1 = box
+    scale_x, scale_y = scales
+    cols = ink.getprojection()[0]
+    parts: list[list[float]] = []
+    for s, e in bands:
+        xs = [i for i, c in enumerate(cols) if c]
+        if not xs:
+            continue
+        pad = 2
+        bx0 = x0 + (min(xs) - pad) * scale_x
+        bx1 = x0 + (max(xs) + 1 + pad) * scale_x
+        by0 = y0 + s * scale_y
+        by1 = y0 + (e + 1) * scale_y
+        parts.append([bx0, by0, min(bx1, x1), min(by1, y1)])
+    return parts
+
+
+def _merge_gap_runs(runs: list[tuple[int, int]], gap: int) -> list[tuple[int, int]]:
+    """Merge projection runs separated by less than ``gap`` rows - a thin
+    descender touch must not split a line band (extracted from
+    split_by_bands 2026-08-29 for the complexity bar)."""
+    merged: list[tuple[int, int]] = []
+    for s, e in runs:
+        if merged and s - merged[-1][1] - 1 < gap:
+            merged[-1] = (merged[-1][0], e)
+        else:
+            merged.append((s, e))
+    return merged
+
+
 def split_by_bands(box: Sequence[float], image: Any) -> list[list[float]]:
     """A multi-line union divided along its own ink bands (2026-08-26):
     when the projection shows several separated writing bands, their
@@ -117,27 +152,11 @@ def split_by_bands(box: Sequence[float], image: Any) -> list[list[float]]:
             start = None
     if start is not None:
         runs.append((start, len(rows) - 1))
-    merged: list[tuple[int, int]] = []
-    for s, e in runs:
-        if merged and s - merged[-1][1] - 1 < 3:
-            merged[-1] = (merged[-1][0], e)
-        else:
-            merged.append((s, e))
+    merged = _merge_gap_runs(runs, 3)
     bands = [(s, e) for s, e in merged if e - s + 1 >= 3]
     if len(bands) < 2:
         return [list(box)]
-    cols = ink.getprojection()[0]
-    parts: list[list[float]] = []
-    for s, e in bands:
-        xs = [i for i, c in enumerate(cols) if c]
-        if not xs:
-            continue
-        pad = 2
-        bx0 = x0 + (min(xs) - pad) * scale_x
-        bx1 = x0 + (max(xs) + 1 + pad) * scale_x
-        by0 = y0 + s * scale_y
-        by1 = y0 + (e + 1) * scale_y
-        parts.append([bx0, by0, min(bx1, x1), min(by1, y1)])
+    parts = _band_parts(bands, ink, (x0, y0, x1, y1), (scale_x, scale_y))
     return parts or [list(box)]
 
 

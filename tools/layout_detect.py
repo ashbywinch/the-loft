@@ -266,7 +266,7 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
                 file=sys.stderr,
             )
             return 2
-    outcomes = [_process_page(engine, image, guess_dir, batch_id, page_names, wanted) for image in pages]
+    outcomes = [_process_page(engine, image, guess_dir, batch_id, page_names, wanted, work_dir) for image in pages]
     if 2 in outcomes:
         return 2
     refused = outcomes.count(1)
@@ -298,6 +298,7 @@ def _process_page(
     batch_id: str,
     page_names: list[str] | None,
     wanted: set[str],
+    work_dir: Path,
 ) -> int:
     """Lay ONE page out — 0 = laid out or quietly skipped, 1 = refused
     (the gates: boxless lines now fail the run, 2026-08-22), 2 = fatal
@@ -308,14 +309,14 @@ def _process_page(
         rc = _warn_missing_guess(image.name, vlm_path.name, page_names, wanted)
         return 2 if rc else 0
     try:
-        _layout_one(engine, image, guess_dir, batch_id)
+        _layout_one(engine, image, guess_dir, batch_id, work_dir)
         return 0
     except ValueError as exc:
         print(f"layout: {image.name} refused — {str(exc)[:160]}", file=sys.stderr)
         return 1
 
 
-def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str) -> None:
+def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str, work_dir: Path) -> None:
     """Layout ONE page: read its guess/orientation/self-report, run the
     (multi-orientation) layout build, and persist via the store. Split
     from run_batch so the per-page path stays under the complexity bar."""
@@ -367,7 +368,11 @@ def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str) -> Non
     if conflicts:
         print(f"layout: {image.name} — {conflicts} conflicting box(es) dropped (Gate E)", file=sys.stderr)
     out = guess_dir / f"{image.stem}.layout.json"
-    store = PipelineStore(WORK_DIR)
+    # the store roots at the work_dir this run was GIVEN, not the global
+    # WORK_DIR: the hermetic tests pass a tmp dir, and the hardcoded root
+    # wrote to /run/media/... on CI — which has no work disk (2026-08-29,
+    # the build-and-test failure on all four PRs)
+    store = PipelineStore(work_dir)
     store_path = str(Path(batch_id) / "ocr-guess" / out.name)
     write_layout_store(layout.to_dict(), store, store_path)
     flagged = sum(1 for line in layout.lines for w in line["words"] if w["conf"] == 0.0)

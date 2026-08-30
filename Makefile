@@ -88,7 +88,7 @@ setup: install-tools
 .PHONY: setup-htr
 setup-htr:
 	@test -x .venv-htr/bin/python || uv venv .venv-htr --python 3.13
-	@uv pip install --python .venv-htr/bin/python "paddleocr==3.7.0"
+	@uv pip install --python .venv-htr/bin/python "paddlepaddle==3.3.1" "paddleocr==3.7.0"
 
 serve: setup
 	@./loft serve --host 0.0.0.0 --port 8000 --reload

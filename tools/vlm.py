@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
 import sys
 import urllib.request
@@ -25,6 +26,8 @@ from pathlib import Path
 from typing import Any
 
 from tools.ai_client import DEFAULT_BASE_URL, find_api_key
+
+logger = logging.getLogger(__name__)
 
 _VLM_READING_RULES = (
     "You transcribe scanned family documents verbatim. Rules: the document's own "
@@ -275,46 +278,40 @@ def transcribe_image_vlm(
     api_key: str | None = None,
     timeout: float = 900.0,
     max_tokens: int = 64000,
+    urlopen: Callable[..., Any] | None = None,
 ) -> tuple[str, dict[str, int]]:
     """One multimodal call; returns (text, token usage) — the cost measure.
     ``user_text`` rides the user message alongside the image. ``max_tokens``
     bounds the completion: reasoning models need large headroom for
     location tasks (64000) but a line-crop classification is done with a
-    small budget (1000)."""
-    key = api_key or find_api_key()
+    small budget (1000). ``urlopen`` is the test seam (DI, never
+    monkeypatch); None uses urllib.request.urlopen."""
     mime = _MIME_BY_SUFFIX.get(image.suffix.lower(), "application/octet-stream")
     data_url = f"data:{mime};base64," + base64.b64encode(image.read_bytes()).decode("ascii")
     user_content: list[dict[str, Any]] = [{"type": "image_url", "image_url": {"url": data_url}}]
     if user_text:
         user_content.append({"type": "text", "text": user_text})
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content},
-        ],
-        "temperature": 0,
-        "max_tokens": max_tokens,
-    }
-    request = urllib.request.Request(
-        f"{base_url.rstrip('/')}/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {key}",
-            "User-Agent": "opencode/1.14.20",
+    body = _vision_post(
+        base_url=base_url,
+        key=api_key or find_api_key(),
+        payload={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_content},
+            ],
+            "temperature": 0,
+            "max_tokens": max_tokens,
+            # thinking disabled: transcription is an extraction task, not a
+            # judgment — a reasoning model will otherwise spend the whole
+            # budget reasoning and return empty content (2026-08-30: the
+            # CI's postcard eval). A model that rejects the param gets one
+            # retry without it (the AIClient house pattern).
+            "thinking": {"type": "disabled"},
         },
-        method="POST",
+        timeout=timeout,
+        urlopen=urlopen,
     )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")[:300]
-        raise VlmError(f"vision model call failed: HTTP {e.code} - {detail}") from e
-    # lucidlint: ignore broad-except the module's contract — every failure surfaces as VlmError
-    except Exception as exc:  # network or API errors surface loudly
-        raise VlmError(f"vision model call failed: {exc}") from exc
     try:
         choice = body.get("choices", [{}])[0]
         message = choice.get("message") or {}
@@ -342,6 +339,53 @@ def transcribe_image_vlm(
     except (KeyError, IndexError, TypeError) as exc:
         raise VlmError(f"unexpected vision response: {json.dumps(body)[:300]}") from exc
     return text, usage
+
+
+def _vision_post(
+    *,
+    base_url: str,
+    key: str,
+    payload: dict[str, Any],
+    timeout: float,
+    urlopen: Callable[..., Any] | None,
+) -> dict[str, Any]:
+    """POST one chat-completions payload. On a 400/422 that the model
+    blames on the ``thinking`` param, retry once without it; every other
+    failure surfaces as VlmError (the module's contract)."""
+    do_open = urlopen or urllib.request.urlopen
+    while True:
+        try:
+            with do_open(
+                urllib.request.Request(
+                    f"{base_url.rstrip('/')}/chat/completions",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {key}",
+                        # Cloudflare in front of the API rejects the urllib default UA
+                        "User-Agent": "opencode/1.14.20",
+                    },
+                    method="POST",
+                ),
+                timeout=timeout,
+            ) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")[:300]
+            if e.code in (400, 422) and "thinking" in payload:
+                # model doesn't understand the thinking param — retry once
+                # without it (mirrors AIClient._post)
+                payload.pop("thinking")
+                logger.info(
+                    "model %s rejected the thinking param (HTTP %d); retrying without it",
+                    payload.get("model"),
+                    e.code,
+                )
+                continue
+            raise VlmError(f"vision model call failed: HTTP {e.code} - {detail}") from e
+        # lucidlint: ignore broad-except the module's contract — every failure surfaces as VlmError
+        except Exception as exc:  # network or API errors surface loudly
+            raise VlmError(f"vision model call failed: {exc}") from exc
 
 
 ANGLE_PROMPT = (

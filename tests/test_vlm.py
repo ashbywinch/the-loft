@@ -4,11 +4,13 @@ transcription model's own doubt is the flag source)."""
 
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 
 import pytest
 
+import tools.vlm as vlm
 from tools.vlm import VlmError, _extract_json, selfreport_words, transcription_system_with_context
 
 
@@ -309,3 +311,75 @@ class TestTranscribeWithFallbacks:
         err = capsys.readouterr().err
         assert "attempt 1/2" in err
         assert "page.png" in err
+
+
+class _BytesResponse:
+    """The urlopen context-manager shim returning fixed bytes (DI, 2026-08-30)."""
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    def __enter__(self) -> _BytesResponse:
+        return self
+
+    def __exit__(self, *a: object) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        return self._body
+
+
+class TestThinkingDisabled:
+    """The transcription is an extraction task, not a judgment — thinking
+    is disabled and a model that rejects the param gets one retry without
+    it (the AIClient house pattern; 2026-08-30: the CI's postcard eval
+    burned 64K tokens of reasoning with zero content)."""
+
+    @staticmethod
+    def _png(tmp_path: Path) -> Path:
+        p = tmp_path / "p.png"
+        p.write_bytes(b"\x89PNG fake bytes")
+        return p
+
+    @staticmethod
+    def _ok_body(content: str = "transcribed line") -> dict:
+        return {
+            "choices": [{"message": {"content": content}, "finish_reason": "stop"}],
+            "usage": {"completion_tokens": 7},
+        }
+
+    def test_payload_disables_thinking(self, tmp_path: Path) -> None:
+        captured: dict = {}
+
+        body = json.dumps(TestThinkingDisabled._ok_body()).encode()
+
+        def fake_urlopen(request, timeout=None):
+            captured["payload"] = json.loads(request.data.decode("utf-8"))
+            return _BytesResponse(body)
+
+        vlm.transcribe_image_vlm(
+            self._png(tmp_path), model="dynamic/image", base_url="http://x/v1", api_key="k", urlopen=fake_urlopen
+        )
+        assert captured["payload"]["thinking"] == {"type": "disabled"}
+
+    def test_model_rejecting_the_param_gets_one_retry_without(self, tmp_path: Path) -> None:
+        calls: list[dict] = []
+        import urllib.error
+
+        body = json.dumps(TestThinkingDisabled._ok_body()).encode()
+
+        def fake_urlopen(request, timeout=None):
+            payload = json.loads(request.data.decode("utf-8"))
+            calls.append(payload)
+            if "thinking" in payload:
+                raise urllib.error.HTTPError(
+                    request.full_url, 400, "bad", {}, io.BytesIO(b'{"error": "unknown field thinking"}')
+                )
+            return _BytesResponse(body)
+
+        text, _usage = vlm.transcribe_image_vlm(
+            self._png(tmp_path), model="dynamic/image", base_url="http://x/v1", api_key="k", urlopen=fake_urlopen
+        )
+        assert text == "transcribed line"
+        assert "thinking" in calls[0]
+        assert "thinking" not in calls[1]

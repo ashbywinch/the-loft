@@ -45,6 +45,9 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          # CI has no work disk — the VLM cache must not try to mkdir the
+          # family's mount (loft_paths' designed override)
+          LOFT_DISK_ROOT: ${{ runner.temp }}/loft-disk
       - name: Coverage summary (Python tools)
         uses: irongut/CodeCoverageSummary@v1.3.0
         with:

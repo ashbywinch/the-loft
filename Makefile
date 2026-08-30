@@ -27,6 +27,7 @@ help:
 	@echo "  ${GREEN}make format${NC}       Auto-fix formatting issues"
 	@echo "  ${GREEN}make coverage${NC}     Run tests with coverage report"
 	@echo "  ${GREEN}make evals${NC}        Run the real-model evals (pytest -m eval — needs the API key; select pieces with -k)"
+	@echo "  ${GREEN}make setup-htr${NC}    Provision .venv-htr (Python 3.13 + PaddleOCR) for the layout/eval stages"
 	@echo "  ${GREEN}make verify${NC}       Run the archive-quality data checks (pytest -m archive — the drift guard, completeness, no-PII)"
 	@echo "  ${GREEN}make eval-changed${NC} Run only the evals the current changes affect"
 	@echo "  ${GREEN}make scan-docs${NC}    Scan documents from the FF-680W into ~/loft/inbox (ARGS=\"--job …\")"
@@ -78,6 +79,16 @@ setup: install-tools
 	@if [ ! -d node_modules ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then $(NPM) ci --no-audit --no-fund; fi  # ci stays reproducible; skipped when the lock is unchanged (2026-08-13: a full reinstall on every make call was the suite's fixed 3 s tax)
 	@uv run pre-commit install
 	@[ -f .env ] || cp .env.example .env
+
+# The layout stage and the real-model evals spawn .venv-htr/bin/python
+# (PaddleOCR lives there; the main venv never imports it). Provisioned
+# on demand — the full paddle stack is ~1.5 GB, so make setup does not
+# pay for it; machines that run layout or evals do (2026-08-30: CI's
+# evals died on the missing interpreter).
+.PHONY: setup-htr
+setup-htr:
+	@test -x .venv-htr/bin/python || uv venv .venv-htr --python 3.13
+	@uv pip install --python .venv-htr/bin/python "paddleocr==3.7.0"
 
 serve: setup
 	@./loft serve --host 0.0.0.0 --port 8000 --reload

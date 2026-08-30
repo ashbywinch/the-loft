@@ -319,8 +319,6 @@ def _read_column_regions(image: Path, read_crop_fn: Callable[..., Any] | None) -
     orientation, the boxes stitched into the page frame. None when the
     projection finds no regions (a blank page) (extracted from
     _region_read_rescue 2026-08-30 for the complexity bar)."""
-    from tools.ai_client import find_api_key  # lucidlint: ignore inline-import the same rare path
-
     # lucidlint: ignore inline-import the rescue's rare path; the harness pulls the VLM stack only when needed
     from tools.eval_crop_grid import read_crop
     from tools.eval_geometry import CropReading  # lucidlint: ignore inline-import the same rare path
@@ -338,6 +336,9 @@ def _read_column_regions(image: Path, read_crop_fn: Callable[..., Any] | None) -
     with tempfile.TemporaryDirectory(prefix="layout-regions-") as tmp:
         for i, (x0, x1) in enumerate(regions):
             crop = CropReading(float(x0), float(y0), float(x1 - x0), float(_y1 - y0), [])
+            # api_key None: transcribe resolves it from the env lazily —
+            # an eager find_api_key() would raise in keyless unit tests
+            # whose fake reads never need it
             read = do_read(
                 crop,
                 image,
@@ -345,7 +346,7 @@ def _read_column_regions(image: Path, read_crop_fn: Callable[..., Any] | None) -
                 i,
                 "dynamic/image",
                 os.environ.get("OPENAI_BASE_URL", ""),
-                find_api_key(),
+                None,
             )
             if read is None:
                 continue

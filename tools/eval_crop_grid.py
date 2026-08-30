@@ -94,6 +94,7 @@ def read_crop(
     if boxes is None:
         print(f"crop {index}: no geometry from the model", file=sys.stderr)
         return None
+    rotated_ok = False
     if _vertical_boxes(boxes):
         rotated = tmp / f"crop-{index}-rot.png"
         with Image.open(crop_path) as im:
@@ -119,11 +120,16 @@ def read_crop(
             rot_h = int(crop.w)
             boxes2 = {li: remap_rotated(b, int(crop.h), rot_h) for li, b in boxes2.items()}
             plain, boxes, tokens = plain2, boxes2, tokens + int(usage2.get("total_tokens", 0) or 0)
+            rotated_ok = True
             print(f"crop {index}: vertical text — rotated +90 and re-read", file=sys.stderr)
     if plain is None:
         print(f"crop {index}: no readable text", file=sys.stderr)
         return None
-    lines = [{"text": plain.split("\n")[li], "box": boxes[li], "orientation": 0} for li in sorted(boxes)]
+    # the rotated re-read's lines carry the crop's text orientation: the
+    # +90 rotation makes them horizontal for the read, and the page-frame
+    # consumer needs to know they are vertical on the page (2026-08-30)
+    orientation = 90 if rotated_ok else 0
+    lines = [{"text": plain.split("\n")[li], "box": boxes[li], "orientation": orientation} for li in sorted(boxes)]
     print(
         f"crop {index} ({box[0]},{box[1]}) {crop.w:.0f}x{crop.h:.0f}: {len(lines)} lines, "
         f"{monotonic() - t0:.1f}s, {tokens} tokens",

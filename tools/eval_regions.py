@@ -27,7 +27,7 @@ from tools.eval_geometry import CropReading
 from tools.loft_paths import WORK_DIR
 
 
-def _column_regions(image: Path, min_ink: int = 5) -> list[tuple[int, int]]:
+def column_regions(image: Path, min_ink: int = 5) -> list[tuple[int, int]]:
     """The ink's column clusters: the x-projection's valleys split the
     content into regions (the postcard's message column vs the address
     column). Returns the x-ranges [x0, x1]."""
@@ -56,7 +56,7 @@ def _column_regions(image: Path, min_ink: int = 5) -> list[tuple[int, int]]:
     return [(x0, x1) for x0, x1 in regions if x1 - x0 > 100]
 
 
-def _ink_y_range(image: Path) -> tuple[int, int]:
+def ink_y_range(image: Path) -> tuple[int, int]:
     """The ink's row extent — the regions' vertical span."""
     with Image.open(image) as im:
         arr = np.array(im.convert("L"))
@@ -81,8 +81,8 @@ def run(
     image_path = work_dir / batch_id / "oriented" / f"{page}.jpg"
     with Image.open(image_path) as im:
         width, height = im.size
-    y0, y1 = _ink_y_range(image_path)
-    regions = _column_regions(image_path)
+    y0, y1 = ink_y_range(image_path)
+    regions = column_regions(image_path)
     tokens = 0
     failed = 0
     lines: list[dict[str, Any]] = []

@@ -2265,3 +2265,94 @@ def test_selfreport_flags_match_by_word_content() -> None:
 
     # a word nowhere in the text flags nothing
     assert selfreport_words_by_line(lines, [{"line": 1, "word": "nonexistent"}]) == {}
+
+
+class TestRegionReadRescue:
+    """The rotated-region rescue (model-trial-report §6): when the plain
+    or multi-orientation build refuses (the detector misses boxes on
+    rotated text), the ink's x-projection regions are each read by the
+    VLM at their own orientation and the layout rebuilt from those
+    reads (2026-08-30 — the postcard eval's boxless refusals)."""
+
+    @staticmethod
+    def _fake_read(lines_per_region: dict[int, list[dict]]):
+        def fake(crop, image_path, tmp, index, model, base_url, api_key):
+            lines = lines_per_region.get(index)
+            if lines is None:
+                return None
+            return ([{**ln} for ln in lines], 100)
+
+        return fake
+
+    def test_stitches_region_lines_into_the_page_frame(self, tmp_path: Path) -> None:
+        from tools.layout_detect import _region_read_rescue
+
+        image = tmp_path / "back.jpg"
+        # two ink columns so the x-projection finds two regions (the
+        # message column and the address column, as on the postcard)
+        with Image.new("L", (2000, 1500), 255) as im:
+            from PIL import ImageDraw
+
+            d = ImageDraw.Draw(im)
+            d.rectangle([100, 200, 800, 1300], fill=0)
+            d.rectangle([1200, 150, 1900, 600], fill=0)
+            im.save(image)
+        calls: list[tuple] = []
+
+        def fake(crop, image_path, tmp, index, model, base_url, api_key):
+            calls.append((crop.x, crop.y, crop.w, crop.h, model))
+            if index == 0:
+                return (
+                    [
+                        {"text": "POST CARD", "box": [10.0, 20.0, 300.0, 60.0], "orientation": 0},
+                        {"text": "the message line", "box": [5.0, 100.0, 600.0, 140.0], "orientation": 90},
+                        # a slab shadowed by the message line's box — the
+                        # dedupe must drop it (§6 step 6)
+                        {"text": "the mess", "box": [4.0, 98.0, 200.0, 142.0], "orientation": 90},
+                    ],
+                    100,
+                )
+            return ([{"text": "With greetings", "box": [8.0, 500.0, 250.0, 540.0], "orientation": 0}], 90)
+
+        # the pipeline's orientation report locates the known text: the
+        # message panel's lines at 90°, the header/address upright
+        report_lines = [
+            {"index": 0, "box": [50, 50, 950, 120], "degrees": 0},
+            {"index": 1, "box": [50, 150, 600, 400], "degrees": 90},
+        ]
+        layout = _region_read_rescue(image, tmp_path, read_crop_fn=fake, report_lines=report_lines)
+        assert layout is not None
+        assert [ln["text"] for ln in layout["lines"]] == [
+            "POST CARD",
+            "the message line",
+            "With greetings",
+        ]
+        # the boxes are stitched by the region's origin: the POST CARD's
+        # crop-local box gains the first region's (x0, y0) offset
+        assert layout["lines"][0]["box"] == [110, 170, 400, 210]
+        assert layout["lines"][2]["box"][0] > 300, layout["lines"][2]["box"]
+        # the message line's x-range overlaps the report's 90°-located
+        # panel, so the layout marks it vertical (the ≥2-orientation
+        # contract); the header stays 0
+        assert layout["lines"][1]["orientation"] == 90, layout["lines"][1]
+        assert layout["lines"][0]["orientation"] == 0
+        # every line's words carry text (the review renders them)
+        assert all(ln["words"] and all(w["word"] for w in ln["words"]) for ln in layout["lines"])
+        # the model used is the image route
+        assert all(c[4] == "dynamic/image" for c in calls)
+
+    def test_returns_none_when_no_regions_or_no_reads(self, tmp_path: Path) -> None:
+        from tools.layout_detect import _region_read_rescue
+
+        blank = tmp_path / "blank.jpg"
+        Image.new("L", (800, 600), 255).save(blank)  # no ink — no regions
+        assert _region_read_rescue(blank, tmp_path, read_crop_fn=self._fake_read({})) is None
+
+        inked = tmp_path / "inked.jpg"
+        with Image.new("L", (2000, 1500), 255) as im:
+            # ink exists but every read fails
+            from PIL import ImageDraw
+
+            ImageDraw.Draw(im).rectangle([100, 100, 1500, 1400], outline=0)
+            im.save(inked)
+        assert _region_read_rescue(inked, tmp_path, read_crop_fn=lambda *a, **k: None) is None

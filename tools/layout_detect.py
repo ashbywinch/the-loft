@@ -314,40 +314,30 @@ def _dedupe_region_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return kept
 
 
-def _read_column_regions(image: Path, read_crop_fn: Callable[..., Any] | None) -> list[dict[str, Any]] | None:
-    """The ink's x-projection regions, each read by the VLM at its own
-    orientation, the boxes stitched into the page frame. None when the
-    projection finds no regions (a blank page) (extracted from
-    _region_read_rescue 2026-08-30 for the complexity bar)."""
+def _read_column_regions(
+    image: Path,
+    regions: list[tuple[int, int]],
+    y0: int,
+    y1: int,
+    call: tuple[str, str, str | None, Callable[..., Any] | None],
+) -> list[dict[str, Any]] | None:
+    """The upright regions' crop reads, the boxes stitched into the page
+    frame (the rotated regions go through _rotated_column_lines). None
+    when there are no regions to read."""
     # lucidlint: ignore inline-import the rescue's rare path; the harness pulls the VLM stack only when needed
     from tools.eval_crop_grid import read_crop
     from tools.eval_geometry import CropReading  # lucidlint: ignore inline-import the same rare path
-    from tools.eval_regions import column_regions, ink_y_range  # lucidlint: ignore inline-import the same rare path
 
-    do_read = read_crop_fn or read_crop
-    try:
-        regions = column_regions(image)
-        if not regions:
-            return None
-        y0, _y1 = ink_y_range(image)
-    except OSError:
+    do_read = call[3] or read_crop
+    if not regions:
         return None
+    _y1 = y1
     lines: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="layout-regions-") as tmp:
         for i, (x0, x1) in enumerate(regions):
+            force = False
             crop = CropReading(float(x0), float(y0), float(x1 - x0), float(_y1 - y0), [])
-            # api_key None: transcribe resolves it from the env lazily —
-            # an eager find_api_key() would raise in keyless unit tests
-            # whose fake reads never need it
-            read = do_read(
-                crop,
-                image,
-                Path(tmp),
-                i,
-                "dynamic/image",
-                os.environ.get("OPENAI_BASE_URL", ""),
-                None,
-            )
+            read = do_read(crop, image, Path(tmp), i, call, force_rotate=force)
             if read is None:
                 continue
             region_lines, _used = read
@@ -389,27 +379,174 @@ def _region_orientation(ln_box: list[float], report_lines: list[dict[str, Any]],
     return best
 
 
+def _rotated_column_lines(
+    image: Path,
+    panel: tuple[int, int, int, int],
+    engine: Any,
+    tmp: Path,
+    call: tuple[str, str, str | None, Callable[..., Any] | None],
+) -> list[dict[str, Any]]:
+    """``panel`` = the vertical text's (x0, y0, x1, y1) — the
+    orientation report's 90°-located lines' union box (model-trial
+    report §7)."""
+    x0, y0, x1, y1 = panel
+    model, base_url, api_key, transcribe_fn = call
+    """Read vertical-text regions by the ink-column recipe (the
+    eval_columns spike, model-trial-report §5's pivot): the rec's
+    detection pieces on the rotated panel are REAL ink (its recognition
+    is garbage, its boxes are measurements). Each region is cropped,
+    rotated +90, its pieces clustered into rows; the whole rotated panel
+    is read ONCE (the clean text — per-row clips were noisy) and its
+    lines matched to the measured rows by y-band. The union-boxes are
+    the measured line boxes; they remap into the page frame with the
+    pinned +90 inverse (x = H' - y', y = x'). All lines carry
+    orientation 90 — they are vertical on the page."""
+    from tools.ink import cluster_rows, match_labels, union  # lucidlint: ignore inline-import the rescue's rare path
+    from tools.vlm import transcription_system_with_context  # lucidlint: ignore inline-import the same rare path
+
+    tmp = Path(tmp)
+    lines: list[dict[str, Any]] = []
+    with Image.open(image) as im:
+        panel_img = im.crop((x0, y0, x1, y1)).rotate(90, expand=True)
+    rot_w, rot_h = panel_img.size
+    panel_path = tmp / "rotated-panel.png"
+    panel_img.save(panel_path)
+    raw = detect_page(engine, panel_path)
+    pieces = [[float(v) for v in d["box"]] for d in raw["detections"] if d["box"]]
+    if not pieces:
+        print("layout: no rec pieces on the rotated panel", file=sys.stderr)
+        return lines
+    rows = cluster_rows(pieces)
+    do_transcribe = transcribe_fn or transcribe_image_vlm
+    text, usage = do_transcribe(
+        panel_path,
+        model=model,
+        system=transcription_system_with_context(),
+        base_url=base_url,
+        api_key=api_key,
+        max_tokens=8000,
+    )
+    plain, model_boxes = parse_transcription_response(text)
+    # the model's normalized boxes -> the rotated frame's pixel bands
+    model_bands = [
+        ((b[1] / 1000) * rot_h, (b[3] / 1000) * rot_h, plain.split("\n")[idx])
+        for idx, b in sorted((model_boxes or {}).items())
+    ]
+    unions = [union(row) for row in rows]
+    labels = match_labels(unions, plain.split("\n"), model_bands)
+    for row_union, label in zip(unions, labels, strict=False):
+        if not label.strip():
+            continue
+        ux0, uy0, ux1, uy1 = row_union
+        # the union is in the ROTATED frame's pixels — the pinned
+        # +90 inverse without normalized scaling
+        page_box = [rot_h - uy1 + x0, ux0 + y0, rot_h - uy0 + x0, ux1 + y0]
+        lines.append(
+            {
+                "text": label,
+                "box": [round(v) for v in page_box],
+                "conf": 1.0,
+                "words": [],
+                "box_source": "ink",
+                "orientation": 90,
+            }
+        )
+        print(
+            f"layout: rotated panel: {len(pieces)} pieces, {len(rows)} rows, "
+            f"{int(usage.get('total_tokens', 0) or 0)} tokens",
+            file=sys.stderr,
+        )
+    return lines
+
+
+def _split_regions_by_report(
+    image: Path, regions: list[tuple[int, int]], report_lines: list[dict[str, Any]]
+) -> tuple[tuple[int, int, int, int] | None, list[tuple[int, int]]]:
+    """The report's located lines ARE the crop boundaries (model-trial
+    report §7): the 90°-located lines' union box is the vertical panel
+    (read rotated); regions outside it read upright. Returns (the
+    vertical panel's (x0, y0, x1, y1) or None, the upright regions)."""
+    with Image.open(image) as im:
+        page_w, page_h = im.size
+    vertical_boxes = [
+        (
+            int(rl["box"][0] / 1000 * page_w),
+            int(rl["box"][1] / 1000 * page_h),
+            int(rl["box"][2] / 1000 * page_w),
+            int(rl["box"][3] / 1000 * page_h),
+        )
+        for rl in report_lines
+        if rl.get("degrees") == 90 and rl.get("box")
+    ]
+    if not vertical_boxes:
+        return None, regions
+    vx0 = min(b[0] for b in vertical_boxes)
+    vy0 = min(b[1] for b in vertical_boxes)
+    vx1 = max(b[2] for b in vertical_boxes)
+    vy1 = max(b[3] for b in vertical_boxes)
+    # a margin around the located lines: the report's boxes bound the
+    # text, the crop must bound the ink that carries it
+    margin = 40
+    panel = (max(0, vx0 - margin), max(0, vy0 - margin), min(page_w, vx1 + margin), min(page_h, vy1 + margin))
+
+    def _outside(x0: int, x1: int) -> bool:
+        # a region is upright when the vertical panel claims less than
+        # a third of it — a sliver overlap must not swallow a column
+        overlap = min(x1, panel[2]) - max(x0, panel[0])
+        if overlap <= 0:
+            return True
+        return overlap / (x1 - x0) < 0.3
+
+    return panel, [(x0, x1) for x0, x1 in regions if _outside(x0, x1)]
+
+
 def _region_read_rescue(
     image: Path,
     work_dir: Path,
-    read_crop_fn: Callable[..., Any] | None = None,
+    engine: Any,
     report_lines: list[dict[str, Any]] | None = None,
+    seams: tuple[Callable[..., Any] | None, Callable[..., Any] | None] | None = None,
 ) -> dict[str, Any] | None:
+    """``seams`` = (read_crop_fn, transcribe_fn) — the DI test seams."""
+    read_crop_fn, transcribe_fn = seams or (None, None)
     """The rotated-region rescue (model-trial-report §6, the
-    eval_regions/eval_crop_grid spikes): the ink's x-projection splits
-    the page into column regions; each region is read by the VLM at its
-    own text orientation — read_crop rotates a crop +90 when the upright
-    read's boxes are vertical — and the boxes are stitched into the page
-    frame. Returns a layout dict, or None when the reads yield nothing
-    usable. Gates D/E don't run here: the rec supplies no pieces on
-    pages like this (that is why the plain build refused), so the
-    ink/conflict checks have nothing to measure against. ``read_crop_fn``
-    is the test seam (DI, never monkeypatch)."""
+    eval_regions/eval_columns/eval_crop_grid spikes): the ink's
+    x-projection splits the page into column regions. A region the
+    orientation report locates at 90° goes through the ink-column recipe
+    (boxes measured from the rec's pieces on the rotated panel, text
+    from one panel read, boxes remapped with the pinned +90 inverse);
+    upright regions go through the crop reads. Returns a layout dict, or
+    None when the reads yield nothing usable. Gates D/E don't run here:
+    the rec supplies no page-frame pieces on pages like this (that is
+    why the plain build refused), so the ink/conflict checks have
+    nothing to measure against. ``read_crop_fn`` is the test seam (DI,
+    never monkeypatch)."""
+    from tools.eval_regions import column_regions, ink_y_range  # lucidlint: ignore inline-import the same rare path
     from tools.text import flag_line_words  # lucidlint: ignore inline-import the same rare path
 
-    lines = _read_column_regions(image, read_crop_fn=read_crop_fn)
-    if lines is None:
+    try:
+        regions = column_regions(image)
+        if not regions:
+            return None
+        y0, y1 = ink_y_range(image)
+    except OSError:
         return None
+    panel, upright_regions = _split_regions_by_report(image, regions, report_lines or [])
+    lines: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory(prefix="layout-regions-") as tmp:
+        if panel:
+            lines.extend(
+                _rotated_column_lines(
+                    image,
+                    panel,
+                    engine,
+                    tmp,
+                    ("dynamic/image", os.environ.get("OPENAI_BASE_URL", ""), None, transcribe_fn),
+                )
+            )
+        if upright_regions:
+            call = ("dynamic/image", os.environ.get("OPENAI_BASE_URL", ""), None, read_crop_fn)
+            lines.extend(_read_column_regions(image, regions=upright_regions, y0=y0, y1=y1, call=call))
     usable = [ln for ln in lines if ln.get("box") and ln["box"][2] > ln["box"][0] and ln["box"][3] > ln["box"][1]]
     usable = _dedupe_region_lines(usable)
     if len(usable) < 2:  # one line is not a layout
@@ -417,8 +554,6 @@ def _region_read_rescue(
     usable.sort(key=lambda ln: (ln["box"][1], ln["box"][0]))
     with Image.open(image) as im:
         width, height = im.size
-    for ln in usable:
-        ln["orientation"] = _region_orientation(ln["box"], report_lines or [], width, height)
     return {
         "page": image.stem,
         "width": width,
@@ -429,7 +564,7 @@ def _region_read_rescue(
                 "box": [round(v) for v in ln["box"]],
                 "conf": 1.0,
                 "words": flag_line_words(ln["text"], set()),
-                "box_source": "region-read",
+                "box_source": ln.get("box_source", "region-read"),
                 "orientation": ln.get("orientation", 0),
             }
             for ln in usable
@@ -534,7 +669,10 @@ def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str, work_d
         # re-write re-validates, so a still-bad rescue refuses honestly.
         report = load_orientation_report(guess_dir / f"{image.stem}.orientation.json")
         rescued = _region_read_rescue(
-            image, work_dir, report_lines=(report.get("lines") or []) if isinstance(report, dict) else []
+            image,
+            work_dir,
+            engine,
+            report_lines=(report.get("lines") or []) if isinstance(report, dict) else [],
         )
         if rescued is None:
             raise

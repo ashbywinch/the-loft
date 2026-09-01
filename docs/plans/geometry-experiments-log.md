@@ -301,10 +301,12 @@ real ink. The experiment (tools/eval_columns.py):
 6. The union-boxes remapped into the page frame.
 
 RESULT: 10 lines, 0 boxless, ~12.5k tokens, ~5 min. The visual
-verification: the green strips align with the message's vertical lines
-(one per line), the HERNSPETH vertical center strip, and the
-With-Greetings strip — none fundamentally misplaced. THE BOXES ARE
-RIGHT, from the rec's ink, not the model's attention.
+verification (2026-08-30 correction): an overlay with green strips was
+generated and inspected by the AGENT, not by the user — the user never
+saw it, and it must not be cited as user-verified. The boxes measured
+plausibly from the rec's ink, not the model's attention — but the
+verification bar for "right" is the review surface, not an
+agent-generated overlay.
 
 The remap had two bugs found along the way (both fixed + verified):
 the normalized boxes must scale to the rotated frame's pixels before

@@ -2297,56 +2297,114 @@ class TestRegionReadRescue:
             d.rectangle([100, 200, 800, 1300], fill=0)
             d.rectangle([1200, 150, 1900, 600], fill=0)
             im.save(image)
+
         calls: list[tuple] = []
 
-        def fake(crop, image_path, tmp, index, model, base_url, api_key):
-            calls.append((crop.x, crop.y, crop.w, crop.h, model))
-            if index == 0:
-                return (
-                    [
-                        {"text": "POST CARD", "box": [10.0, 20.0, 300.0, 60.0], "orientation": 0},
-                        {"text": "the message line", "box": [5.0, 100.0, 600.0, 140.0], "orientation": 90},
-                        # a slab shadowed by the message line's box — the
-                        # dedupe must drop it (§6 step 6)
-                        {"text": "the mess", "box": [4.0, 98.0, 200.0, 142.0], "orientation": 90},
-                    ],
-                    100,
-                )
-            return ([{"text": "With greetings", "box": [8.0, 500.0, 250.0, 540.0], "orientation": 0}], 90)
+        def fake(crop, image_path, tmp, index, conn, force_rotate=False):
+            # the upright address column's crop read (the rotated regions
+            # never reach read_crop)
+            return (
+                [{"text": "12 Kensington Gore", "box": [8.0, 300.0, 250.0, 520.0], "orientation": 0}],
+                90,
+            )
 
         # the pipeline's orientation report locates the known text: the
-        # message panel's lines at 90°, the header/address upright
+        # message panel's lines at 90°, the address upright
         report_lines = [
             {"index": 0, "box": [50, 50, 950, 120], "degrees": 0},
             {"index": 1, "box": [50, 150, 600, 400], "degrees": 90},
         ]
-        layout = _region_read_rescue(image, tmp_path, read_crop_fn=fake, report_lines=report_lines)
+
+        class _FakeRotEngine:
+            """Serves the rotated panel's rec pass: three piece-boxes
+            aligned with the panel-read's bands so the row-clustering
+            measures the message's lines."""
+
+            def predict(self, input, return_word_box=False):
+                return [
+                    {
+                        "dt_polys": [
+                            [[100, 1121], [300, 1121], [300, 1168], [100, 1168]],
+                            [[100, 472], [300, 472], [300, 519], [100, 519]],
+                            [[100, 118], [300, 118], [300, 165], [100, 165]],
+                        ],
+                        "rec_texts": ["noise", "noise", "noise"],
+                        "rec_scores": [0.9, 0.9, 0.9],
+                    }
+                ]
+
+        import json as _json
+
+        def fake_transcribe(panel_path, *, model, system, base_url, api_key, max_tokens):
+            # the model's read of the whole rotated panel: the JSON the
+            # system prompt requests — clean lines + normalized boxes as
+            # y-bands across the rotated panel
+            return (
+                _json.dumps(
+                    {
+                        "lines": [
+                            {"text": "POST CARD.", "box": [10, 950, 990, 990]},
+                            {"text": "the message line", "box": [10, 400, 990, 440]},
+                            {"text": "With greetings", "box": [10, 100, 990, 140]},
+                        ]
+                    }
+                ),
+                {"total_tokens": 120},
+            )
+
+        layout = _region_read_rescue(
+            image,
+            tmp_path,
+            _FakeRotEngine(),
+            report_lines=report_lines,
+            seams=(fake, fake_transcribe),
+        )
         assert layout is not None
-        assert [ln["text"] for ln in layout["lines"]] == [
-            "POST CARD",
+        # every contract line is present: the rotated panel's three lines
+        # plus the upright address column's read
+        # the reading order: the rotated columns' remapped x-positions
+        # left-to-right, then the upright address column
+        texts = [ln["text"] for ln in layout["lines"]]
+        assert texts == [
+            "POST CARD.",
             "the message line",
             "With greetings",
-        ]
-        # the boxes are stitched by the region's origin: the POST CARD's
-        # crop-local box gains the first region's (x0, y0) offset
-        assert layout["lines"][0]["box"] == [110, 170, 400, 210]
-        assert layout["lines"][2]["box"][0] > 300, layout["lines"][2]["box"]
-        # the message line's x-range overlaps the report's 90°-located
-        # panel, so the layout marks it vertical (the ≥2-orientation
-        # contract); the header stays 0
-        assert layout["lines"][1]["orientation"] == 90, layout["lines"][1]
-        assert layout["lines"][0]["orientation"] == 0
-        # every line's words carry text (the review renders them)
-        assert all(ln["words"] and all(w["word"] for w in ln["words"]) for ln in layout["lines"])
+            "12 Kensington Gore",
+        ], texts
+        # the rotated column's lines carry the vertical orientation (the
+        # ≥2-orientation contract); the upright region's stays 0
+        by_text = {ln["text"]: ln for ln in layout["lines"]}
+        assert by_text["the message line"]["orientation"] == 90, by_text["the message line"]
+        assert by_text["With greetings"]["orientation"] == 90
+        assert by_text["12 Kensington Gore"]["orientation"] == 0
+        # every stitched box stays inside the page and carries words with
+        # text (the review renders them)
+        for ln in layout["lines"]:
+            box = ln["box"]
+            assert 0 <= box[0] < box[2] <= layout["width"] and 0 <= box[1] < box[3] <= layout["height"], box
+            assert ln["words"] and all(w["word"] for w in ln["words"])
         # the model used is the image route
         assert all(c[4] == "dynamic/image" for c in calls)
+
+    def test_dedupe_drops_slabs_shadowed_by_longer_lines(self) -> None:
+        """§6 step 6: overlapping boxes claim the same region — keep the
+        longer transcription."""
+        from tools.layout_detect import _dedupe_region_lines
+
+        lines = [
+            {"text": "the message line", "box": [105, 250, 700, 290]},
+            {"text": "the mess", "box": [104, 248, 300, 292]},
+            {"text": "with greetings", "box": [110, 500, 400, 540]},
+        ]
+        kept = _dedupe_region_lines(lines)
+        assert [ln["text"] for ln in kept] == ["the message line", "with greetings"]
 
     def test_returns_none_when_no_regions_or_no_reads(self, tmp_path: Path) -> None:
         from tools.layout_detect import _region_read_rescue
 
         blank = tmp_path / "blank.jpg"
         Image.new("L", (800, 600), 255).save(blank)  # no ink — no regions
-        assert _region_read_rescue(blank, tmp_path, read_crop_fn=self._fake_read({})) is None
+        assert _region_read_rescue(blank, tmp_path, engine=None, seams=(self._fake_read({}), None)) is None
 
         inked = tmp_path / "inked.jpg"
         with Image.new("L", (2000, 1500), 255) as im:
@@ -2355,4 +2413,4 @@ class TestRegionReadRescue:
 
             ImageDraw.Draw(im).rectangle([100, 100, 1500, 1400], outline=0)
             im.save(inked)
-        assert _region_read_rescue(inked, tmp_path, read_crop_fn=lambda *a, **k: None) is None
+        assert _region_read_rescue(inked, tmp_path, engine=None, seams=(lambda *a, **k: None, None)) is None

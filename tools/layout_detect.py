@@ -400,7 +400,7 @@ def _rotated_column_lines(
     lines matched to the measured rows by y-band. The union-boxes are
     the measured line boxes; they remap into the page frame with the
     pinned +90 inverse (x = H' - y', y = x'). All lines carry
-    orientation 90 — they are vertical on the page."""
+    the orientation stamped from the remapped box's shape."""
     from tools.ink import cluster_rows, match_labels, union  # lucidlint: ignore inline-import the rescue's rare path
     from tools.vlm import transcription_system_with_context  # lucidlint: ignore inline-import the same rare path
 
@@ -441,6 +441,13 @@ def _rotated_column_lines(
         # the union is in the ROTATED frame's pixels — the pinned
         # +90 inverse without normalized scaling
         page_box = [rot_h - uy1 + x0, ux0 + y0, rot_h - uy0 + x0, ux1 + y0]
+        # the remap turns the rotated frame's horizontal lines into
+        # vertical page columns — but printed text on the card is
+        # horizontal and remaps to wide boxes. Stamp the orientation
+        # from the remapped box's actual shape.
+        w = page_box[2] - page_box[0]
+        h = page_box[3] - page_box[1]
+        orientation = 90 if h > w else 0
         lines.append(
             {
                 "text": label,
@@ -448,7 +455,7 @@ def _rotated_column_lines(
                 "conf": 1.0,
                 "words": [],
                 "box_source": "ink",
-                "orientation": 90,
+                "orientation": orientation,
             }
         )
         print(

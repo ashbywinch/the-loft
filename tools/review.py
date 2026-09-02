@@ -339,6 +339,10 @@ def investigate(
             "one that concerns a different family member than the claim's person: 'I don't "
             "remember the relationship, but we visited Walter in Seascale' IS relevant — the "
             "recollection is their answer, and the lead is part of it. "
+            'Pure "I don\'t know" or "I never met them" — with no recollection, no '
+            "lead, no detail — is STILL relevant: the reviewer is answering the "
+            "question about the person under review, and the honesty of the "
+            "'I don't know' is their answer. "
             'An answer about a person\'s WHEREABOUTS or a place ("he was in that house", '
             '"she lived in Marlock") that has nothing to do with the claim and no family '
             "history in it is NOT relevant, however "

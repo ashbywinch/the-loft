@@ -138,3 +138,15 @@ for fine boundaries and per-box clip reads for text, this is the
 second candidate mechanism for the per-segment pipeline, alongside
 rec-detect clustering. The design conversation picks between them
 against the requirements.
+
+## Ruling 2026-09-02: no overlapping orientations
+
+The Caradog card's rotated message overlaps the address column's band
+at a different orientation. We have NO requirement to parse text
+where orientations overlap on the page. The Godolphin card
+(`tests/fixtures/godolphin-1906-back.jpg`) is the VR15
+multi-orientation test: rotated margin notes that do NOT overlap
+other text. The Caradog card is a known-unsupported edge case, not an
+eval fixture. The postcard eval uses the Caradog fixtures only because
+they were the first scanned; it should move to a clean
+multi-orientation card (the Godolphin) when the pipeline is ready.

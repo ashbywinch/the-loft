@@ -314,6 +314,49 @@ def _dedupe_region_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return kept
 
 
+def _compute_bands(region_h: int, band_h: int = 600, overlap: int = 40) -> list[tuple[int, int]]:
+    """The overlapping horizontal bands that tile a region's height."""
+    bands: list[tuple[int, int]] = []
+    by = 0
+    while by < region_h:
+        by1 = min(by + band_h, region_h)
+        bands.append((by, by1))
+        if by1 >= region_h:
+            break
+        by = by1 - overlap
+    return bands
+
+
+def _dedupe_region_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Lines whose boxes substantially overlap claim the same region —
+    keep the longer transcription; also drop identical text from the
+    bands' overlap reads."""
+    kept: list[dict[str, Any]] = []
+    for ln in sorted(lines, key=lambda item: -len(item["text"])):
+        box = ln["box"]
+        shadowed = False
+        for k in kept:
+            b = k["box"]
+            ox = min(box[2], b[2]) - max(box[0], b[0])
+            oy = min(box[3], b[3]) - max(box[1], b[1])
+            if ox <= 0 or oy <= 0:
+                continue
+            smaller = min((box[2] - box[0]) * (box[3] - box[1]), (b[2] - b[0]) * (b[3] - b[1]))
+            if smaller and (ox * oy) / smaller > 0.6:
+                shadowed = True
+                break
+        if not shadowed:
+            kept.append(ln)
+    text_seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for ln in kept:
+        key = ln.get("text", "").strip().lower()
+        if key and key not in text_seen:
+            text_seen.add(key)
+            result.append(ln)
+    return result
+
+
 def _read_column_regions(
     image: Path,
     regions: list[tuple[int, int]],
@@ -321,32 +364,39 @@ def _read_column_regions(
     y1: int,
     call: tuple[str, str, str | None, Callable[..., Any] | None],
 ) -> list[dict[str, Any]] | None:
-    """The upright regions' crop reads, the boxes stitched into the page
-    frame (the rotated regions go through _rotated_column_lines). None
-    when there are no regions to read."""
+    """The upright regions' crop reads, tiled into overlapping horizontal
+    bands so the model's coordinate precision holds at every y-position
+    (2026-09-03: the single-pass read on a tall page compressed the
+    model's y-coordinates toward the centre — boxes that were
+    structurally valid but pointed at the wrong part of the page).
+    Results are deduplicated across band overlaps. None when there are
+    no regions to read."""
     # lucidlint: ignore inline-import the rescue's rare path; the harness pulls the VLM stack only when needed
     from tools.eval_crop_grid import read_crop
     from tools.eval_geometry import CropReading  # lucidlint: ignore inline-import the same rare path
 
+    model, base_url, api_key = call[:3]
     do_read = call[3] or read_crop
     if not regions:
         return None
-    _y1 = y1
     lines: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="layout-regions-") as tmp:
         for i, (x0, x1) in enumerate(regions):
-            force = False
-            crop = CropReading(float(x0), float(y0), float(x1 - x0), float(_y1 - y0), [])
-            read = do_read(crop, image, Path(tmp), i, call, force_rotate=force)
-            if read is None:
-                continue
-            region_lines, _used = read
-            for ln in region_lines:
-                box = ln.get("box")
-                if box:
-                    ln["box"] = [box[0] + x0, box[1] + y0, box[2] + x0, box[3] + y0]
-                lines.append(ln)
-    return lines
+            with Image.open(image) as im:
+                region_h = im.crop((x0, y0, x1, y1)).size[1]
+            bands = _compute_bands(region_h)
+            for _bi, (by0, by1) in enumerate(bands):
+                crop = CropReading(float(x0), float(y0 + by0), float(x1 - x0), float(by1 - by0), [])
+                read = do_read(crop, image, Path(tmp), i, model, base_url, api_key)
+                if read is None:
+                    continue
+                region_lines, _used = read
+                for ln in region_lines:
+                    box = ln.get("box")
+                    if box:
+                        ln["box"] = [box[0] + x0, box[1] + y0 + by0, box[2] + x0, box[3] + y0 + by0]
+                    lines.append(ln)
+    return _dedupe_region_lines(lines) if lines else None
 
 
 def _region_orientation(ln_box: list[float], report_lines: list[dict[str, Any]], width: int, height: int) -> int:

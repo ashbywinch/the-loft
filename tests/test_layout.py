@@ -2300,7 +2300,7 @@ class TestRegionReadRescue:
 
         calls: list[tuple] = []
 
-        def fake(crop, image_path, tmp, index, conn, force_rotate=False):
+        def fake(crop, image_path, tmp, index, model, base_url, api_key):
             # the upright address column's crop read (the rotated regions
             # never reach read_crop)
             return (

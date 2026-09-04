@@ -29,7 +29,7 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import Any, NamedTuple
 
 from PIL import Image
 
@@ -328,31 +328,38 @@ def _compute_bands(region_h: int, band_h: int = 600, overlap: int = 40) -> list[
 
 
 def _dedupe_region_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Lines whose boxes substantially overlap claim the same region —
-    keep the longer transcription; also drop identical text from the
-    bands' overlap reads."""
+    """The bands' overlap reads of one physical line: the same region may
+    carry two partial transcriptions. The bar matches Gate E exactly —
+    ``overlap`` >= 0.5 (intersection over the smaller box) — so a pair
+    this dedupe keeps can never die at the write. Same text (normalized)
+    always dedupes; different text keeps the longer transcription."""
+    from tools.box import overlap  # lucidlint: ignore inline-import the shared geometry helper
+    from tools.text import normalize  # lucidlint: ignore inline-import the shared text helper
+
     kept: list[dict[str, Any]] = []
-    for ln in sorted(lines, key=lambda item: -len(item["text"])):
-        box = ln["box"]
+    for ln in sorted(lines, key=lambda item: -len(item.get("text", ""))):
+        box = ln.get("box")
+        if not box:
+            continue
         shadowed = False
         for k in kept:
-            b = k["box"]
-            ox = min(box[2], b[2]) - max(box[0], b[0])
-            oy = min(box[3], b[3]) - max(box[1], b[1])
-            if ox <= 0 or oy <= 0:
-                continue
-            smaller = min((box[2] - box[0]) * (box[3] - box[1]), (b[2] - b[0]) * (b[3] - b[1]))
-            if smaller and (ox * oy) / smaller > 0.6:
+            if overlap(box, k["box"]) >= 0.5 and normalize(ln.get("text", "")) == normalize(k.get("text", "")):
                 shadowed = True
                 break
         if not shadowed:
             kept.append(ln)
-    text_seen: set[str] = set()
+    # different text in one region: the review must see ONE line — keep
+    # the longer transcription (the same bar as the gate, resolved the
+    # same way the anchor arbitration resolves it)
     result: list[dict[str, Any]] = []
     for ln in kept:
-        key = ln.get("text", "").strip().lower()
-        if key and key not in text_seen:
-            text_seen.add(key)
+        box = ln["box"]
+        claimed = False
+        for k in result:
+            if overlap(box, k["box"]) >= 0.5:
+                claimed = True
+                break
+        if not claimed:
             result.append(ln)
     return result
 
@@ -380,6 +387,8 @@ def _read_column_regions(
     if not regions:
         return None
     lines: list[dict[str, Any]] = []
+    with Image.open(image) as im:
+        page_w, page_h = im.size
     with tempfile.TemporaryDirectory(prefix="layout-regions-") as tmp:
         for i, (x0, x1) in enumerate(regions):
             with Image.open(image) as im:
@@ -394,7 +403,18 @@ def _read_column_regions(
                 for ln in region_lines:
                     box = ln.get("box")
                     if box:
-                        ln["box"] = [box[0] + x0, box[1] + y0 + by0, box[2] + x0, box[3] + y0 + by0]
+                        # stitch into the page frame, then clamp to the
+                        # image: the model's boxes can overflow a short
+                        # band's bottom edge and the writer refuses
+                        # out-of-image boxes (2026-09-04: page-01's last
+                        # band was 134px tall; the model returned 219px
+                        # boxes)
+                        ln["box"] = [
+                            max(0.0, min(box[0] + x0, page_w)),
+                            max(0.0, min(box[1] + y0 + by0, page_h)),
+                            max(0.0, min(box[2] + x0, page_w)),
+                            max(0.0, min(box[3] + y0 + by0, page_h)),
+                        ]
                     lines.append(ln)
     return _dedupe_region_lines(lines) if lines else None
 
@@ -557,6 +577,46 @@ def _split_regions_by_report(
     return panel, [(x0, x1) for x0, x1 in regions if _outside(x0, x1)]
 
 
+class _RegionSplit(NamedTuple):
+    """The column regions' split by the orientation report plus the
+    ink band: the geometry one rescue read consumes."""
+
+    panel: tuple[int, int] | None
+    upright: list[tuple[int, int]]
+    y0: int
+    y1: int
+
+
+def _rescue_region_reads(
+    image: Path,
+    split: _RegionSplit,
+    engine: Any,
+    seams: tuple[Callable[..., Any] | None, Callable[..., Any] | None] | None,
+) -> list[dict[str, Any]]:
+    """The rescue's two read routes: the rotated panel through the
+    ink-column recipe, the upright regions through the banded crop
+    reads. ``seams`` = (read_crop_fn, transcribe_fn) — the DI test
+    seams."""
+    read_crop_fn, transcribe_fn = seams or (None, None)
+    panel, upright_regions, y0, y1 = split.panel, split.upright, split.y0, split.y1
+    lines: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory(prefix="layout-regions-") as tmp:
+        if panel:
+            lines.extend(
+                _rotated_column_lines(
+                    image,
+                    panel,
+                    engine,
+                    tmp,
+                    ("dynamic/image", os.environ.get("OPENAI_BASE_URL", ""), None, transcribe_fn),
+                )
+            )
+        if upright_regions:
+            call = ("dynamic/image", os.environ.get("OPENAI_BASE_URL", ""), None, read_crop_fn)
+            lines.extend(_read_column_regions(image, regions=upright_regions, y0=y0, y1=y1, call=call) or [])
+    return lines
+
+
 def _region_read_rescue(
     image: Path,
     work_dir: Path,
@@ -589,21 +649,7 @@ def _region_read_rescue(
     except OSError:
         return None
     panel, upright_regions = _split_regions_by_report(image, regions, report_lines or [])
-    lines: list[dict[str, Any]] = []
-    with tempfile.TemporaryDirectory(prefix="layout-regions-") as tmp:
-        if panel:
-            lines.extend(
-                _rotated_column_lines(
-                    image,
-                    panel,
-                    engine,
-                    tmp,
-                    ("dynamic/image", os.environ.get("OPENAI_BASE_URL", ""), None, transcribe_fn),
-                )
-            )
-        if upright_regions:
-            call = ("dynamic/image", os.environ.get("OPENAI_BASE_URL", ""), None, read_crop_fn)
-            lines.extend(_read_column_regions(image, regions=upright_regions, y0=y0, y1=y1, call=call))
+    lines = _rescue_region_reads(image, _RegionSplit(panel, upright_regions, y0, y1), engine, seams)
     usable = [ln for ln in lines if ln.get("box") and ln["box"][2] > ln["box"][0] and ln["box"][3] > ln["box"][1]]
     usable = _dedupe_region_lines(usable)
     if len(usable) < 2:  # one line is not a layout

@@ -2302,9 +2302,21 @@ class TestRegionReadRescue:
 
         def fake(crop, image_path, tmp, index, model, base_url, api_key):
             # the upright address column's crop read (the rotated regions
-            # never reach read_crop)
+            # never reach read_crop). The line physically sits at region
+            # y 300-520; each band read reports it in the BAND's local
+            # frame — as a real read would — so the two bands' overlap
+            # reads stitch back to the same page box.
+            phys_y0, phys_y1 = 300.0, 520.0
+            local_y0 = phys_y0 - (crop.y - 150.0)
+            local_y1 = phys_y1 - (crop.y - 150.0)
             return (
-                [{"text": "12 Kensington Gore", "box": [8.0, 300.0, 250.0, 520.0], "orientation": 0}],
+                [
+                    {
+                        "text": "12 Kensington Gore",
+                        "box": [8.0, local_y0, 250.0, local_y1],
+                        "orientation": 0,
+                    }
+                ],
                 90,
             )
 

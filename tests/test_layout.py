@@ -294,6 +294,45 @@ class TestWriteLoadLayout:
         write_layout_store(layout, store, path)
         assert load_layout_store(store, path)["revision"] == 2
 
+    def test_every_line_carries_its_index(self, tmp_path) -> None:
+        """2026-09-04 (user: "the transcript on screen is just 'A picture
+        of life in music college' repeated over and over again"): the
+        review surface keys the verify/edit state, the box clicks and the
+        dual-pane links on ``line.index`` — and the pipeline's writers did
+        not all emit it. Every line's index was ``undefined`` in the
+        browser, so ONE "Verified" tap ran
+        ``lines.find(l => l.index === undefined)``, matched the FIRST
+        line, and saved line 0's text as the edit for every row: the
+        whole page rendered as its first line. The writer stamps the
+        position; the reader assigns it for the files already on disk."""
+        layout = {
+            "page": "p.jpg",
+            "width": 100,
+            "height": 100,
+            "lines": [
+                {"text": "one", "box": [0, 0, 90, 18]},
+                {"text": "two", "box": [0, 30, 90, 48]},
+            ],
+            "unmatched": [],
+        }
+        path = tmp_path / "p.layout.json"
+        write_layout(layout, path)
+        # the WRITE stamped the position into the file
+        on_disk = json.loads(path.read_text(encoding="utf-8"))
+        assert [ln["index"] for ln in on_disk["lines"]] == [0, 1]
+        # a file written WITHOUT them (every layout on disk today) loads
+        # with the position assigned
+        bare = {
+            "page": "q.jpg",
+            "width": 100,
+            "height": 100,
+            "lines": [{"text": "one", "box": [0, 0, 90, 18]}, {"text": "two", "box": [0, 30, 90, 48]}],
+        }
+        q = tmp_path / "q.layout.json"
+        q.write_text(json.dumps(bare), encoding="utf-8")
+        loaded = load_layout(q)
+        assert [ln["index"] for ln in loaded["lines"]] == [0, 1]
+
 
 def test_layout_payload_declares_the_box_frame() -> None:
     """2026-08-22: the payload declares the boxes' coordinate frame — the

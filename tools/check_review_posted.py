@@ -151,9 +151,16 @@ def main() -> int:
     # the review posts with the regular header ("## PR Reviewer Guide") or
     # the incremental form ("## Incremental PR Reviewer Guide" — the -i
     # path, 2026-08-11: the first incremental run posted exactly that and
-    # the check missed it, failing a review that had succeeded)
+    # the check missed it, failing a review that had succeeded). A skip
+    # comment ("Incremental Review Skipped / No files were changed") is
+    # also coverage: the bot assessed the head commit and decided nothing
+    # needed review — the restacked-branch force-pushes kept tripping the
+    # gate on exactly that (2026-09-04, PRs 32/33).
     covered = any(
-        c.get("body", "").startswith(("## PR Reviewer Guide", "## Incremental PR Reviewer Guide"))
+        (
+            c.get("body", "").startswith(("## PR Reviewer Guide", "## Incremental PR Reviewer Guide"))
+            or c.get("body", "").startswith("Incremental Review Skipped")
+        )
         and (sha in c.get("body", "") or c.get("created_at", "") >= head_committed_at)
         for c in comments
     )

@@ -1,6 +1,10 @@
 {
   "actions": [
     "docs:AGENTS.md:0:",
-    "docs:docs/plans/lucidlint-review-log.md:0:"
+    "docs:docs/plans/PLAN.md:0:",
+    "docs:docs/plans/lucidlint-review-log.md:0:",
+    "docs:docs/prd/MEMORIES.md:0:",
+    "docs:docs/prd/PRD.md:0:",
+    "long-param-list:tools/check_review_posted.py:64:redirect_request"
   ]
 }

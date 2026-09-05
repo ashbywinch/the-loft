@@ -446,7 +446,257 @@ def test_admit_and_remap_keeps_only_real_text() -> None:
     assert len(rejected) == 3
 
 
-def test_multi_layout_orders_zero_first_then_next_directions() -> None:
+def test_multi_layout_words_carry_text_and_flag_weak_lines() -> None:
+    """The multi-orientation layout's words are reviewable (2026-08-17):
+    each word carries its TEXT (the review renders word.word — a word
+    without it renders blank) and a line the rec read weakly flags its
+    words (conf 0.0 — the red doubt + the mark-fine button, VR4). The
+    reproduced fault: the combined layout's words were {box, conf} only —
+    the postcard's review showed blank lines and no check buttons."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        200,
+        100,
+        [
+            (
+                0,
+                [
+                    {
+                        "text": "weak line",
+                        "box": [1, 1, 5, 5],
+                        "score": 0.9,
+                        "words": [{"box": [1, 1, 2, 2]}, {"box": [3, 1, 5, 2]}],
+                    }
+                ],
+            ),
+            (
+                270,
+                [{"text": "clean", "box": [10, 10, 20, 20], "score": 1.0, "words": [{"box": [10, 10, 20, 20]}]}],
+            ),
+        ],
+    )
+    weak = layout["lines"][0]
+    assert [w["word"] for w in weak["words"]] == ["weak", "line"]
+    assert all(w["conf"] == 0.0 for w in weak["words"])  # the doubt + the check button
+    clean = layout["lines"][1]
+    assert clean["words"][0]["word"] == "clean"
+    assert clean["words"][0]["conf"] == 1.0  # a confident read stays clean
+
+
+def test_multi_layout_orientation_comes_from_the_pass_not_the_report() -> None:
+    """The line's reading orientation is the PASS where the rec read it
+    (the detector's detection pass), not the report's estimated degrees.
+    The report can say 90° while the 270° pass actually read the text —
+    the per-line rotation must use 270° (so the viewRotation makes the
+    text readable). The reproduced fault (2026-08-17): the report's 90°
+    made the per-line rotation 180° off, leaving the text unreadable."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (0, [{"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []}]),
+            (270, [{"text": "onorrow", "box": [501, 201, 899, 399], "score": 0.9, "words": []}]),
+        ],
+        report_lines=[
+            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+            {"index": 1, "box": [500, 200, 900, 400], "degrees": 90},  # the report says 90°
+        ],
+        vlm_text="POST CARD\nWe are from beauford",
+    )
+    message = [ln for ln in layout["lines"] if "beauford" in ln["text"]]
+    assert message, "the message line must be present"
+    assert message[0]["orientation"] == 270, (
+        f"the orientation must be 270 (the pass that read it), was {message[0]['orientation']}"
+    )
+
+
+def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
+    """VR14: every piece of text has a bounding box, and the box holds the
+    words it claims (2026-08-17 — the reproduced fault: the lines carried
+    the rec's fragments mispaired with the det's boxes, so the review's
+    text was nonsense and the boxes didn't match the words). With the
+    model's per-line geometry the lines ARE the model's transcription
+    anchored to its own boxes; a rec detection agreeing on content marks
+    the line confident; rec lines no VLM line claims stay as flagged
+    extras — and the fragment duplicates of an anchored line drop (the
+    dedupe keeps the richer reading)."""
+    from tools.layout import multi_layout
+
+    report_lines = [
+        {"text": "POST CARD", "box": [100, 50, 300, 100], "degrees": 0},
+        {"text": "Printed in Great Britain", "box": [100, 110, 400, 140], "degrees": 0},
+        {"text": "We are from beauford", "box": [500, 200, 900, 400], "degrees": 270},
+    ]
+    passes = [
+        (
+            0,
+            [
+                {"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []},
+                {"text": "Printed in Great Britain", "box": [101, 111, 399, 139], "score": 0.98, "words": []},
+                {"text": "HERNSPETH", "box": [150, 500, 200, 900], "score": 0.95, "words": []},  # the model missed this
+            ],
+        ),
+        (
+            270,
+            [
+                {  # the rec's fragment of the message
+                    "text": "onorrow",
+                    "box": [501, 201, 899, 399],
+                    "score": 0.9,
+                    "words": [],
+                },
+            ],
+        ),
+    ]
+    layout = multi_layout("p1.jpg", 1000, 1000, passes, report_lines=report_lines)
+    texts = [ln["text"] for ln in layout["lines"]]
+    # 0° first (report order, then the extra), then 270°; the fragment
+    # duplicate of the anchored message line drops
+    assert texts == ["POST CARD", "Printed in Great Britain", "HERNSPETH", "We are from beauford"]
+    by_text = {ln["text"]: ln for ln in layout["lines"]}
+    # every line has a box; the anchored lines carry the MODEL's box (scaled
+    # from the normalized 0-1000 frame) — the box holds the words it claims
+    assert by_text["POST CARD"]["box"] == [100.0, 50.0, 300.0, 100.0]
+    assert all(ln["box"] for ln in layout["lines"])
+    # the rec agreed on the header -> confident; the message -> the rec's
+    # fragment did not agree -> flagged (the honest doubt)
+    assert all(w["conf"] == 1.0 for w in by_text["POST CARD"]["words"])
+    assert all(w["conf"] == 0.0 for w in by_text["We are from beauford"]["words"])
+    assert by_text["We are from beauford"]["orientation"] == 270
+    # the model-missed rec line stays, flagged, at its pass orientation
+    assert by_text["HERNSPETH"]["orientation"] == 0
+    assert all(w["conf"] == 0.0 for w in by_text["HERNSPETH"]["words"])
+
+
+def test_dedupe_drops_fragment_duplicates_by_content() -> None:
+    """The fragment extras (2026-08-17 — the real postcard's 'HOUSE,' next
+    to 'HERNSPETH HOUSE,' and 'Printed' next to 'Printed in Great
+    Britain'): a short line whose tokens are a strict subset of another
+    line's is the same text read as a fragment — dropped even when the
+    mirror passes' remaps landed its box elsewhere (the box-overlap rule
+    alone misses them)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                0,
+                [
+                    {"text": "Printed in Great Britain", "box": [100, 100, 500, 140], "score": 0.98, "words": []},
+                    {
+                        "text": "Printed",
+                        "box": [600, 300, 700, 340],
+                        "score": 0.97,
+                        "words": [],
+                    },  # the fragment, far away
+                ],
+            ),
+            (
+                270,
+                [
+                    {"text": "HERNSPETH HOUSE,", "box": [100, 500, 200, 900], "score": 0.99, "words": []},
+                    {"text": "HOUSE,", "box": [400, 500, 500, 900], "score": 0.95, "words": []},  # the fragment
+                ],
+            ),
+        ],
+    )
+    texts = [ln["text"] for ln in layout["lines"]]
+    assert "Printed" not in texts
+    assert "HOUSE," not in texts
+    assert "Printed in Great Britain" in texts
+    assert "HERNSPETH HOUSE," in texts
+
+
+def test_dedupe_never_drops_the_anchored_report_lines() -> None:
+    """The box-overlap dedupe is for the REC extras — the anchored lines
+    are the model's authoritative transcription, and its estimated boxes
+    can overlap between DISTINCT lines (2026-08-17: the eval caught
+    'POST CARD.' being dropped when the model's 180° box overlapped a
+    longer line's box)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [],
+        report_lines=[
+            {"text": "POST CARD.", "box": [100, 100, 900, 140], "degrees": 0},
+            {"text": "ONLY THE ADDRESS TO BE WRITTEN HERE.", "box": [100, 101, 900, 160], "degrees": 0},
+        ],
+    )
+    texts = [ln["text"] for ln in layout["lines"]]
+    assert "POST CARD." in texts  # a real line survives even when its box overlaps
+    assert "ONLY THE ADDRESS TO BE WRITTEN HERE." in texts
+
+
+def test_multi_layout_uses_the_guess_text_located_by_the_report() -> None:
+    """v3 (2026-08-17): the layout's text is the GUESS's authoritative
+    transcription; the report LOCATES each line (box + degrees keyed by
+    the line index) — a partial report degrades only the geometry, never
+    the text (the reproduced fault: the report's own transcription varied
+    between calls and could drop whole paragraphs)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (0, [{"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []}]),
+            (270, [{"text": "onorrow", "box": [501, 201, 899, 399], "score": 0.9, "words": []}]),
+        ],
+        report_lines=[
+            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+            {"index": 1, "box": [500, 200, 900, 400], "degrees": 270},
+            {"index": 2, "box": [0, 0, 0, 0], "degrees": 0},  # not located
+        ],
+        vlm_text="POST CARD\nWe are from beauford\na line the report could not locate",
+    )
+    texts = [ln["text"] for ln in layout["lines"]]
+    assert texts[0] == "POST CARD"
+    assert "We are from beauford" in texts
+    assert "a line the report could not locate" in texts  # the text survives a missing box
+    by_text = {ln["text"]: ln for ln in layout["lines"]}
+    assert by_text["POST CARD"]["box"] == [100.0, 50.0, 300.0, 100.0]  # the report's located box
+    assert by_text["POST CARD"]["conf"] == 1.0  # the rec content-agreed
+    assert by_text["We are from beauford"]["box"] == [500.0, 200.0, 900.0, 400.0]
+    assert all(w["conf"] == 0.0 for w in by_text["We are from beauford"]["words"])  # the rec didn't agree
+    assert by_text["a line the report could not locate"]["box"] is None  # flagged, boxless
+
+
+def test_validate_layout_rejects_bad_boxes() -> None:
+    """The fail-fast guard (2026-08-17): a layout whose line has a box
+    that is degenerate or outside the image must never reach the front
+    end — the reviewer must never see wrong boxes. Returns the
+    violations; a clean layout passes."""
+    from tools.layout import validate_layout
+
+    good = {
+        "width": 1000,
+        "height": 2000,
+        "lines": [
+            {"text": "post card", "box": [100, 100, 300, 140]},
+            {"text": "message", "box": [50, 500, 900, 540]},
+            {"text": "no box", "box": None},
+        ],
+    }
+    assert validate_layout(good) == []
+    bad_out = {"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [100, 100, 1500, 140]}]}
+    assert validate_layout(bad_out), "a box outside the image must fail"
+    bad_degenerate = {"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [100, 100, 100, 200]}]}
+    assert validate_layout(bad_degenerate), "a degenerate box must fail"
+    bad_neg = {"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [-50, 100, 300, 140]}]}
+    assert validate_layout(bad_neg), "a negative coordinate must fail"
+
     """The combined layout shows the 0° lines first, then each next
     direction, each line carrying the orientation it was read at (VR15)."""
     from tools.layout import multi_layout
@@ -496,12 +746,13 @@ def test_load_orientation_hint_needs_two_distinct_directions(tmp_path: Path) -> 
 
     two = tmp_path / "two.json"
     two.write_text(
-        '[{"region": "message", "degrees": 0}, {"region": "address", "degrees": 270}]',
+        '{"orientation_hint": [{"region": "message", "degrees": 0},'
+        ' {"region": "address", "degrees": 270}], "lines": []}',
         encoding="utf-8",
     )
     assert load_orientation_hint(two) == [0, 270]
     one = tmp_path / "one.json"
-    one.write_text('[{"region": "message", "degrees": 0}]', encoding="utf-8")
+    one.write_text('{"orientation_hint": [{"region": "message", "degrees": 0}], "lines": []}', encoding="utf-8")
     assert load_orientation_hint(one) == []
     bad = tmp_path / "bad.json"
     bad.write_text("not json", encoding="utf-8")
@@ -519,3 +770,56 @@ def test_orientation_passes_mirror_a_reported_vertical_direction() -> None:
     assert orientation_passes([0, 90]) == [0, 90, 270]
     assert orientation_passes([0, 270]) == [0, 90, 270]
     assert orientation_passes([0, 180]) == [0, 180]  # no mirror for 0/180
+
+
+def _stub_paddleocr() -> None:
+    """layout_detect imports paddleocr at module top — the main venv has no
+    such module (PaddleOCR lives in .venv-htr). Stub it so the fail-loud
+    logic is testable here without the heavy import."""
+    import sys
+    import types
+
+    if "paddleocr" not in sys.modules:
+        mod = types.ModuleType("paddleocr")
+        mod.PaddleOCR = object  # type: ignore[attr-defined]  # the engine is injected; the class is never constructed
+        sys.modules["paddleocr"] = mod
+
+
+def test_layout_run_batch_fails_loud_on_explicit_page_without_guess(tmp_path: Path) -> None:
+    """A layout for an explicitly requested page with no guess text must
+    fail loudly (return 2), never silently skip — the bad page-02 layout
+    was exactly a geometry-only build (2026-08-20)."""
+    _stub_paddleocr()
+    from tools.layout_detect import run_batch
+
+    work = tmp_path
+    (work / "adopt-0001" / "oriented").mkdir(parents=True)
+    (work / "adopt-0001" / "ocr-guess").mkdir(parents=True)
+    (work / "adopt-0001" / "oriented" / "p1.jpg").write_bytes(b"jpeg")
+
+    class _FakeEngine:
+        def predict(self, *args, **kwargs):  # pragma: no cover — must not be reached
+            raise AssertionError("engine must not run for a missing guess")
+
+    # explicitly requested page with no guess text -> fatal
+    rc = run_batch("adopt-0001", ["p1.jpg"], work, _FakeEngine())
+    assert rc == 2
+
+
+def test_layout_run_batch_skips_implicit_page_without_guess(tmp_path: Path) -> None:
+    """An unrequested page with no guess text is skipped with a stderr
+    warning and a summary — the batch keeps going, but loudly."""
+    _stub_paddleocr()
+    from tools.layout_detect import run_batch
+
+    work = tmp_path
+    (work / "adopt-0001" / "oriented").mkdir(parents=True)
+    (work / "adopt-0001" / "ocr-guess").mkdir(parents=True)
+    (work / "adopt-0001" / "oriented" / "p1.jpg").write_bytes(b"jpeg")
+
+    class _FakeEngine:
+        def predict(self, *args, **kwargs):  # pragma: no cover — must not be reached
+            raise AssertionError("engine must not run for a missing guess")
+
+    rc = run_batch("adopt-0001", None, work, _FakeEngine())
+    assert rc == 0  # batch continues, page skipped loudly

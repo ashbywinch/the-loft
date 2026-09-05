@@ -62,14 +62,14 @@ be corrected.
 boxes, and filled-in forms appear in the transcription in their place —
 the review never loses the layout content the pipeline transcribed (R12).
 
-**VR8 — The review works from the always-on home.** The surface runs on
-the cheap, always-on front end (R14): it reads the machine's drafts and
-writes confirmations over the sync seam, and a failed sync never loses a
-confirmed transcription. The reviewer's tablet is the primary surface —
-**landscape is the natural reviewing posture** (the page and its words
-side by side, per the product's tablet-first platform, PRD §1). The same
-review works on a phone: the handwriting is big enough to read and the
-words are usable on the smaller screen (user, 2026-08-15).
+**VR8 — The review works from the always-on home.** The reviewer can
+review the machine's drafts from the family home's always-on device, and
+their work is never lost — even if the connection goes down. The
+reviewer's tablet is the primary surface — **landscape is the natural
+reviewing posture** (the page and its words side by side, per the
+product's tablet-first platform, PRD §1). The same review works on a
+phone: the handwriting is big enough to read and the words are usable on
+the smaller screen (user, 2026-08-15).
 
 **VR9 — The work is bounded and resumable.** The reviewer can see what
 remains in a batch, leave partway, and come back without re-reading what
@@ -89,7 +89,7 @@ requirement, 2026-08-16).
 pace.** Each page is finished on its own; a document is finished only when
 every one of its pages is finished. The reviewer moves through the pile in
 whatever order suits them — leaving a page or a document and coming back
-later — and the system never loses their place or confuses their
+later — and the reviewer never loses their place or confuses their
 progress. The reviewer moves at their own speed: nothing in the app ever
 slows them down or asks for more than they choose to do (user
 requirement, 2026-08-16: power readers blast through without the app
@@ -120,6 +120,16 @@ processing pipeline keep their memory use steady no matter how long they
 run or how much they process, leave a CPU core free for other work, and
 the heavy analysis tools load only while a piece of work is being
 processed and free themselves afterwards (user requirement, 2026-08-17).
+
+**VR17 — The reviewer can look at the document in any order and never
+lose their place.** Checking the machine's transcription means going
+back and forth between the words on the page and the machine's reading
+of them. The reviewer needs to look at any part of the document closely,
+find the corresponding word in the transcription, and return to where
+they were reading without searching. The reviewer never gets stuck in a
+correction — they can always keep or abandon a change. The reviewer can
+mark a word as verified and change their mind later (user requirement,
+2026-08-17, walkthrough finding 2026-08-17).
 
 ## 3. Acceptance criteria
 
@@ -167,10 +177,13 @@ processed and free themselves afterwards (user requirement, 2026-08-17).
     are redone (VR13).
 19. Leaving and returning restores the exact document and page the
     reviewer was on, with their handled work marked (VR9, VR13).
-20. A page whose text runs in several directions shows all of it, with the
-    0° lines first, then each next direction in turn; the page initially
-    shows the way the pipeline determined is right-way-up — the printed
-    writing upright (VR15).
+20. The transcription presents the text in a coherent order that feels
+    sensible — lines from the same block of writing (a paragraph, a
+    callout box, a marginal note) are kept together, and lines from
+    different blocks are not mixed even if they happen to be at the
+    same height on the page. The page initially shows the way the
+    pipeline determined is right-way-up — the printed writing upright
+    (VR15, user 2026-08-17).
 21. A two-sided item such as a postcard is one document — its picture side
     the first page, its text side the second — identified by the pipeline,
     never corrected by hand (VR6, VR14).
@@ -179,6 +192,21 @@ processed and free themselves afterwards (user requirement, 2026-08-17).
 23. While the pipeline processes a batch, the rest of the laptop keeps
     running smoothly: a core stays free, and the heavy analysis tools
     release their memory when their stage is done (VR16).
+24. The reviewer can look at a different part of the document without
+    losing their place in the transcription (VR17).
+25. The reviewer can tell whether a line has been checked and can change
+    their mind (VR17, walkthrough finding 2026-08-17).
+26. The reviewer can work through the document in whatever order makes
+    sense to them (VR17, user 2026-08-17).
+27. The reviewer can review and confirm the later parts of a document
+    even when the earlier parts are not checked (VR17, user 2026-08-17).
+28. The reviewer can mark a document complete even when some lines are
+    not checked (VR17, user 2026-08-17).
+29. The reviewer can move to the next document without confirming the
+    current one (VR17, user 2026-08-17).
+30. No action is irrevocable — the reviewer can change their mind,
+    including bringing a rejected document back from the bin (VR17, user
+    2026-08-17).
 
 ## 4. Non-goals
 

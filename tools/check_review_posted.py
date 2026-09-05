@@ -60,7 +60,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     the signed Location bare."""
 
     @staticmethod
-    # lucidlint: ignore long-param-list the urllib HTTPRedirectHandler protocol fixes this signature
+    # the urllib HTTPRedirectHandler protocol fixes this signature
     def redirect_request(req, fp, code, msg, headers, newurl):
         return None
 

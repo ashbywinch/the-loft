@@ -180,12 +180,12 @@ def _drop_degenerate_boxes(boxes: dict[int, list[float]]) -> dict[int, list[floa
 def transcribe_image_vlm(
     image: Path,
     *,
-    model: str = "mimo-v2.5",
+    model: str = "dynamic/image",
     system: str = VLM_SYSTEM,
     user_text: str | None = None,
     base_url: str = DEFAULT_BASE_URL,
     api_key: str | None = None,
-    timeout: float = 300.0,
+    timeout: float = 900.0,
 ) -> tuple[str, dict[str, int]]:
     """One multimodal call; returns (text, token usage) — the cost measure.
     ``user_text`` rides the user message alongside the image (the
@@ -204,6 +204,7 @@ def transcribe_image_vlm(
             {"role": "user", "content": user_content},
         ],
         "temperature": 0,
+        "max_tokens": 32000,
     }
     request = urllib.request.Request(
         f"{base_url.rstrip('/')}/chat/completions",
@@ -211,18 +212,31 @@ def transcribe_image_vlm(
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {key}",
-            "User-Agent": "the-loft/0.1",
+            "User-Agent": "opencode/1.14.20",
         },
         method="POST",
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")[:300]
+        raise VlmError(f"vision model call failed: HTTP {e.code} - {detail}") from e
     # lucidlint: ignore broad-except the module's contract — every failure surfaces as VlmError
     except Exception as exc:  # network or API errors surface loudly
         raise VlmError(f"vision model call failed: {exc}") from exc
     try:
-        text = str(body["choices"][0]["message"]["content"])
+        content = (body.get("choices", [{}])[0].get("message") or {}).get("content") or ""
+        finish_reason = body.get("choices", [{}])[0].get("finish_reason")
+        if finish_reason == "length" and not content.strip():
+            raise VlmError(
+                "vision model produced only reasoning tokens, no content — "
+                "the max_tokens limit was hit before the model could produce output. "
+                "Increase max_tokens or reduce the prompt."
+            )
+        if not content.strip():
+            raise VlmError(f"vision model returned empty content (finish_reason={finish_reason})")
+        text = str(content)
         usage = dict(body.get("usage", {}))
     except (KeyError, IndexError, TypeError) as exc:
         raise VlmError(f"unexpected vision response: {json.dumps(body)[:300]}") from exc
@@ -285,30 +299,77 @@ def _extract_json(text: str) -> Any:
 
 _ORIENTATION_SYSTEM = "You analyse document layouts precisely. Reply with the requested JSON only."
 _ORIENTATION_PROMPT = (
-    "This is a photo of a document page. Its text may run in more than one direction "
-    "(for example a message upright and another block rotated 90 degrees). Identify every "
-    "distinct text region and its orientation relative to the image exactly as shown. "
+    "This is a photo of a document page. A previous transcription read the text "
+    "below, ONE LINE PER ENTRY. Some lines may run in a different direction to the "
+    "page. For EVERY line, give its bounding box and its orientation relative to the "
+    "image exactly as shown. If a line cannot be located, give box [0, 0, 0, 0]. "
     "Reply with JSON only: "
-    '{"orientation_hint": [{"region": "<short name>", "degrees": 0|90|180|270, '
-    '"approx_box": [x0, y0, x1, y1]}]}'
+    '{"lines": [{"index": <the line number>, "box": [x0, y0, x1, y1], '
+    '"degrees": 0|90|180|270}]} — box coordinates are 0-1000 fractions of the '
+    "image width and height.\n\nThe transcription:\n"
 )
 
 
-def orientation_report(image: Path) -> list[dict[str, Any]]:
-    """The text orientations present on a page, structured — used by the
-    layout stage when the arbiter's scores suggest more than one direction
-    (PRD VR15). Returns the orientation_hint list; [] when the model sees a
-    single direction or cannot answer."""
-    text, _ = transcribe_image_vlm(
+def _parse_report_lines(raw_lines: list[Any]) -> list[dict[str, Any]]:
+    """The report's located lines: {index, box (0-1000), degrees} — the
+    index keys to the given transcription's line numbers (2026-08-17)."""
+    lines: list[dict[str, Any]] = []
+    for i, entry in enumerate(raw_lines):
+        if not isinstance(entry, dict):
+            continue
+        if not (isinstance(entry.get("box"), list) and len(entry.get("box")) == 4):
+            continue
+        if entry.get("degrees") not in (0, 90, 180, 270):
+            continue
+        lines.append(
+            {
+                "index": int(entry.get("index")) if isinstance(entry.get("index"), int) else i,
+                "box": entry.get("box"),
+                "degrees": entry.get("degrees"),
+            }
+        )
+    return lines
+
+
+def orientation_report(image: Path, text: str | None = None) -> dict[str, Any]:
+    """The page's text geometry, structured — used by the layout stage when
+    the arbiter's scores suggest more than one direction (PRD VR15).
+
+    v3 (2026-08-17): when the page's transcription is known (``text`` —
+    the guess's corrected reading), the report LOCATES that text — the
+    model assigns each known line its box and orientation, so the layout
+    keeps the authoritative text and a partial report degrades only the
+    geometry, never the text (the reproduced fault: the report's own
+    transcription varied between calls and could drop whole paragraphs).
+    Returns {"orientation_hint": [...], "lines": [{"index", "box",
+    "degrees"}]} — the lines keyed to the given text's line numbers."""
+    numbered = "\n".join(f"{i}. {line}" for i, line in enumerate((text or "").splitlines()))
+    prompt = _ORIENTATION_PROMPT + numbered if text else _ORIENTATION_TRANSCRIBE_PROMPT
+    raw, _ = transcribe_image_vlm(
         image,
         system=_ORIENTATION_SYSTEM,
-        user_text=_ORIENTATION_PROMPT,
+        user_text=prompt,
     )
     try:
-        data = _extract_json(text)
+        data = _extract_json(raw)
     except VlmError:
-        return []
-    hints = data.get("orientation_hint") if isinstance(data, dict) else None
-    if not isinstance(hints, list):
-        return []
-    return [h for h in hints if isinstance(h, dict) and h.get("degrees") in (0, 90, 180, 270)]
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    hints = data.get("orientation_hint") if isinstance(data.get("orientation_hint"), list) else []
+    hints = [h for h in hints if isinstance(h, dict) and h.get("degrees") in (0, 90, 180, 270)]
+    raw_lines = data.get("lines") if isinstance(data.get("lines"), list) else []
+    lines = _parse_report_lines(raw_lines)
+    return {"orientation_hint": hints, "lines": lines}
+
+
+_ORIENTATION_TRANSCRIBE_PROMPT = (
+    "This is a photo of a document page. Its text may run in more than one direction "
+    "(for example a message upright and another block rotated 90 degrees). Transcribe ALL "
+    "the text verbatim, ONE LINE PER ENTRY, and for every line give its bounding box and its "
+    "orientation relative to the image exactly as shown. Reply with JSON only: "
+    '{"lines": [{"index": 0, "text": "<one line>", "box": [x0, y0, x1, y1], "degrees": 0|90|180|270}], '
+    '"orientation_hint": [{"region": "<short name>", "degrees": 0|90|180|270, '
+    '"approx_box": [x0, y0, x1, y1]}]} — box coordinates are 0-1000 fractions of the '
+    "image width and height."
+)

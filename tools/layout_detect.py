@@ -32,12 +32,15 @@ from tools.layout import (
     admit_and_remap,
     build_layout,
     load_orientation_hint,
+    load_orientation_report,
     load_vlm_boxes,
     multi_layout,
     orientation_passes,
-    write_layout,
+    write_layout_store,
 )
 from tools.loft_paths import WORK_DIR
+from tools.pipeline_store import PipelineStore
+from tools.store import DiskStore  # noqa: F401
 
 # The proven engine config (spike, 2026-08-15) — the rec model rides along
 # (its noisy text IS the cross-reader confidence signal).
@@ -48,6 +51,14 @@ ENGINE = dict(
     use_doc_unwarping=False,
     use_textline_orientation=False,
     enable_mkldnn=False,
+    # The engine's peak memory scales with the detection input AREA — the
+    # 8GB laptop OOM-killed the layout stage on the full-res phone scans
+    # (3500px) with the default 4000px limit (2026-08-17, repeated kills
+    # at model load + first prediction). 2000px bounds the peak ~4x; the
+    # engine resizes internally and maps the boxes back to the input
+    # image's pixels, so the layout geometry is unchanged — the
+    # coordinate assertion below guards that mapping.
+    text_det_limit_side_len=2000,
 )
 
 # Tolerances for the coordinate-space assertion: the engine maps detections
@@ -150,19 +161,27 @@ def pass_at(
         rotated.unlink(missing_ok=True)
 
 
-def layout_page_multi(engine: Any, image: Path, orientations: list[int]) -> dict[str, Any]:
+def layout_page_multi(
+    engine: Any,
+    image: Path,
+    orientations: list[int],
+    report_lines: list[dict[str, Any]] | None = None,
+    vlm_text: str | None = None,
+) -> dict[str, Any]:
     """The multi-orientation layout (PRD VR15): a detection pass at each
     reported orientation, recognition-driven admission, one combined
-    layout with per-line orientations — 0° lines first, then each next
-    direction. The oriented image is already the pipeline's right way up,
-    so the initial display rotation stays 0."""
+    layout — the guess's authoritative transcription located at the
+    report's per-line boxes (the v3 anchoring, 2026-08-17), the rec
+    passes validating; without the report the rec-based lines fall back.
+    The oriented image is already the pipeline's right way up, so the
+    initial display rotation stays 0."""
     with Image.open(image) as im:
         ow, oh = im.size
     passes: list[tuple[int, list[dict[str, Any]]]] = []
     for degrees in orientations:
         kept, _ = pass_at(engine, image, degrees, ow, oh)
         passes.append((degrees, kept))
-    return multi_layout(image.name, ow, oh, passes)
+    return multi_layout(image.name, ow, oh, passes, report_lines=report_lines, vlm_text=vlm_text)
 
 
 def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engine: Any) -> int:
@@ -177,36 +196,73 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
     # like "1782635795946-5f7905a9~2.jpg" (the PhotoScan batch, 2026-08-16)
     # and must not be silently skipped by the layout pass
     pages = [p for p in sorted(oriented_dir.glob("*.jpg"))]
+    wanted: set[str] = set()
     if page_names:
         wanted = set(page_names)
         pages = [p for p in pages if p.name in wanted]
+    missing: list[str] = []
     for image in pages:
         vlm_path = guess_dir / image.with_suffix(".txt").name
         if not vlm_path.exists():
-            print(f"layout: no guess text for {image.name} — skipping", file=sys.stderr)
+            rc = _warn_missing_guess(image.name, vlm_path.name, page_names, wanted)
+            if rc:
+                return rc
+            missing.append(image.name)
             continue
-        orientations = load_orientation_hint(guess_dir / f"{image.stem}.orientation.json")
-        if orientations:
-            passes = orientation_passes(orientations)
-            layout = layout_page_multi(engine, image, passes)
-            print(
-                f"layout: {image.name} multi-orientation {orientations} "
-                f"(passes {passes}) -> {len(layout['lines'])} lines"
-            )
-        else:
-            selfreport_path = guess_dir / f"{image.stem}.selfreport.json"
-            selfreport = None
-            if selfreport_path.exists():
-                selfreport = json.loads(selfreport_path.read_text(encoding="utf-8"))
-            vlm_boxes = load_vlm_boxes(guess_dir / f"{image.stem}.vlm.json")
-            layout = layout_page(engine, image, vlm_path.read_text(encoding="utf-8"), selfreport, vlm_boxes)
-        out = guess_dir / f"{image.stem}.layout.json"
-        write_layout(layout, out)
-        flagged = sum(1 for line in layout["lines"] for w in line["words"] if w["conf"] == 0.0)
+        _layout_one(engine, image, guess_dir, batch_id)
+    if missing:
         print(
-            f"layout: {image.name} {len(layout['lines'])} lines, "
-            f"{len(layout['unmatched'])} unmatched, {flagged} flagged words -> {out.name}"
+            f"layout: {len(missing)} page(s) skipped — no guess text: {', '.join(sorted(missing))}",
+            file=sys.stderr,
         )
+    return 0
+
+
+def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str) -> None:
+    """Layout ONE page: read its guess/orientation/self-report, run the
+    (multi-orientation) layout build, and persist via the store. Split
+    from run_batch so the per-page path stays under the complexity bar."""
+    vlm_path = guess_dir / image.with_suffix(".txt").name
+    orientations = load_orientation_hint(guess_dir / f"{image.stem}.orientation.json")
+    if orientations:
+        passes = orientation_passes(orientations)
+        report_lines = load_orientation_report(guess_dir / f"{image.stem}.orientation.json").get("lines") or None
+        vlm_text = vlm_path.read_text(encoding="utf-8")
+        layout = layout_page_multi(engine, image, passes, report_lines=report_lines, vlm_text=vlm_text)
+        print(
+            f"layout: {image.name} multi-orientation {orientations} (passes {passes}) -> {len(layout['lines'])} lines"
+        )
+    else:
+        selfreport_path = guess_dir / f"{image.stem}.selfreport.json"
+        selfreport = None
+        if selfreport_path.exists():
+            selfreport = json.loads(selfreport_path.read_text(encoding="utf-8"))
+        vlm_boxes = load_vlm_boxes(guess_dir / f"{image.stem}.vlm.json")
+        layout = layout_page(engine, image, vlm_path.read_text(encoding="utf-8"), selfreport, vlm_boxes)
+    out = guess_dir / f"{image.stem}.layout.json"
+    store = PipelineStore(WORK_DIR)
+    store_path = str(Path(batch_id) / "ocr-guess" / out.name)
+    write_layout_store(layout, store, store_path)
+    flagged = sum(1 for line in layout["lines"] for w in line["words"] if w["conf"] == 0.0)
+    print(
+        f"layout: {image.name} {len(layout['lines'])} lines, "
+        f"{len(layout['unmatched'])} unmatched, {flagged} flagged words -> {out.name}"
+    )
+
+
+def _warn_missing_guess(image_name: str, txt_name: str, page_names: list[str] | None, wanted: set[str]) -> int:
+    """A page with no guess text must never be laid out from geometry alone
+    (2026-08-20 — the bad page-02 layout was exactly that). Explicitly
+    requested pages are fatal (2); implicit pages are skipped loudly with
+    a stderr warning. Returns the exit code to return, 0 to continue."""
+    if page_names and image_name in wanted:
+        print(
+            f"layout: FATAL — no guess text for {image_name} (requested explicitly). "
+            f"Run the guess stage first, or restore {txt_name}.",
+            file=sys.stderr,
+        )
+        return 2
+    print(f"layout: no guess text for {image_name} — skipping", file=sys.stderr)
     return 0
 
 

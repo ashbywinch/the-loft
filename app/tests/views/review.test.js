@@ -14,7 +14,6 @@ import {
   formatParts,
   lineIndexForY,
   loadEdits,
-  nextFlagged,
   outboxAdd,
   outboxDrop,
   outboxPending,
@@ -26,6 +25,7 @@ import {
   saveEdits,
   saveOrientation,
   strikeParts,
+  viewRotation,
   zoomView,
 } from "../../views/review.js";
 
@@ -144,31 +144,8 @@ describe("flag navigation — bounded and resumable (VR9)", () => {
       { page: "p1.jpg", line: 0 },
     ]);
   });
-
-  it("nextFlagged walks forward and wraps; null with nothing left", () => {
-    const positions = flaggedPositions([DOC], 0, {});
-    expect(nextFlagged(positions, null)).toEqual(positions[0]);
-    expect(nextFlagged(positions, positions[0])).toEqual(positions[1]);
-    expect(nextFlagged(positions, positions[1])).toEqual(positions[0]);
-    expect(nextFlagged([], null)).toBeNull();
-  });
-
-  it("nextFlagged continues AFTER an accepted position instead of restarting", () => {
-    // the from's line was accepted (removed from the list) — the tour
-    // must continue after it by order, not blink back at the first flag
-    const positions = [
-      { page: "page-03.jpg", line: 0 },
-      { page: "page-03.jpg", line: 1 },
-      { page: "page-04.jpg", line: 2 },
-    ];
-    expect(nextFlagged(positions, { page: "page-03.jpg", line: 0 })).toEqual(positions[1]);
-    expect(nextFlagged(positions, { page: "page-03.jpg", line: 1 })).toEqual(positions[2]);
-    // the from on a fully-accepted page — continue on the next page
-    expect(nextFlagged(positions, { page: "page-03.jpg", line: 9 })).toEqual(positions[2]);
-    // the from was the LAST position (accepted) — wrap to the start
-    expect(nextFlagged(positions, { page: "page-04.jpg", line: 2 })).toEqual(positions[0]);
-  });
 });
+
 
 describe("the outbox — nothing confirmed is lost to a failed push", () => {
   beforeEach(() => localStorage.clear());
@@ -618,5 +595,83 @@ describe("the document list shows only awaiting documents (user 2026-08-16)", ()
     await vi.waitFor(() => expect(main.textContent).toContain("confirmed."));
     expect(main.querySelectorAll(".rv-card").length).toBe(0);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("a multi-orientation page renders (VR15)", () => {
+  it("shows the line texts, a check button on EVERY line, and the skip button", async () => {
+    // the combined multi layout's shape (tools/layout.multi_layout): the
+    // words carry their text, and a line the rec read weakly flags its
+    // words — the review's red doubt + the check button. The reproduced
+    // fault (2026-08-17, the postcard): the words were {box, conf} only,
+    // so the pane rendered blank lines with no check buttons.
+    const multiDoc = {
+      batch_id: "adopt-1",
+      pages: ["p1.jpg"],
+      texts: { "p1.jpg": "weak line\nclean" },
+      layouts: {
+        "p1.jpg": {
+          page: "p1.jpg",
+          width: 100,
+          height: 100,
+          rotation: 0,
+          lines: [
+            {
+              index: 0,
+              text: "weak line",
+              box: [1, 1, 50, 10],
+              conf: 0.9,
+              orientation: 0,
+              words: [
+                { word: "weak", box: [1, 1, 20, 10], conf: 0.0 },
+                { word: "line", box: [21, 1, 50, 10], conf: 0.0 },
+              ],
+            },
+            {
+              index: 1,
+              text: "clean",
+              box: [1, 20, 50, 30],
+              conf: 1.0,
+              orientation: 270,
+              words: [{ word: "clean", box: [1, 20, 50, 30], conf: 1.0 }],
+            },
+          ],
+          unmatched: [],
+        },
+      },
+      greeting: null,
+      signoff: null,
+      status: "review",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ batch_id: "adopt-1", label: "Pile", documents: [multiDoc], processing: {} }),
+      }),
+    );
+    const main = document.createElement("main");
+    render(main, { name: "review", arg: "adopt-1", rest: ["review", "adopt-1", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-line")).toBeTruthy());
+    // the line TEXTS render — the words carry their text
+    expect(main.textContent).toContain("weak");
+    expect(main.textContent).toContain("clean");
+    // the check (mark-fine) button is on EVERY line — the multi pages are
+    // provisional, the reviewer checks each line as they read it
+    expect(main.querySelectorAll(".rv-line .rv-ok-btn").length).toBe(2);
+    // the action bar: the skip (advance without confirming) + the confirm
+    const skip = [...main.querySelectorAll(".rv-txa button")].find((b) => b.textContent.includes("Skip"));
+    expect(skip).toBeTruthy();
+    expect(main.querySelector(".rv-txa .rv-btn--primary")).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
+
+  it("selecting a non-horizontal line rotates the view to read it", () => {
+    // the per-line read rotation (2026-08-17): a 270° line reads
+    // horizontally when the view turns 90°; a 0° line leaves the view put.
+    expect(viewRotation({ rotation: 0, readRotation: 0 })).toBe(0);
+    expect(viewRotation({ rotation: 0, readRotation: 90 })).toBe(90);
+    expect(viewRotation({ rotation: 90, readRotation: 270 })).toBe(0); // combined mod 360
   });
 });

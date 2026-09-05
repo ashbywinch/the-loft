@@ -21,8 +21,18 @@ from typing import Any, final
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
-DEFAULT_MODEL = "deepseek-v4-flash"
+# The environment provides the Cloudflare AI Gateway URL and token. The
+# OPENAI_BASE_URL convention is the standard (litellm, OpenAI SDK, all
+# compatible clients) — the local proxy at :9123/v1 adds repo metadata
+# and timeout headers. OPENAI_API_KEY is the Cloudflare gateway token.
+# Fallback: LOFT_AI_BASE_URL/LOFT_AI_KEY, then the OpenCode endpoint.
+_DEFAULT_URL = os.environ.get("OPENAI_BASE_URL") or os.environ.get("LOFT_AI_BASE_URL")
+if _DEFAULT_URL:
+    DEFAULT_BASE_URL: str = _DEFAULT_URL
+else:
+    DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
+
+DEFAULT_MODEL = os.environ.get("LOFT_AI_MODEL") or "dynamic/fallback2"
 
 # Providers whose api keys opencode may have stored in its auth.json.
 AUTH_JSON_PROVIDER_HINTS = ("opencode-go", "opencode")
@@ -52,7 +62,13 @@ class AIClient:
     ) -> None:
         self.model: str = model or os.environ.get("LOFT_AI_MODEL") or DEFAULT_MODEL
         self.base_url: str = (base_url or os.environ.get("LOFT_AI_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
-        self.api_key: str = api_key or os.environ.get("LOFT_AI_KEY") or find_api_key()
+        self.api_key: str = (
+            api_key
+            or os.environ.get("OPENAI_API_KEY")
+            or os.environ.get("CLOUDFLARE_AIGATEWAY_TOKEN")
+            or os.environ.get("LOFT_AI_KEY")
+            or find_api_key()
+        )
         self.max_tokens: int = max_tokens
         self.timeout: float = timeout
         self.max_retries: int = max_retries
@@ -169,12 +185,18 @@ class AIClient:
 def find_api_key(_env: Mapping[str, str] | None = None, _home: Path | None = None) -> str:
     """Return the model API key from the environment or opencode's auth file.
     ``_env``/``_home`` are the injectable seams for tests (DI, never
-    monkeypatch); None falls back to the process environment."""
+    monkeypatch); None falls back to the process environment.
+
+    Priority: OPENAI_API_KEY (Cloudflare gateway token),
+    CLOUDFLARE_AIGATEWAY_TOKEN, LOFT_AI_KEY (the Loft env var),
+    OPENCODE_API_KEY (opencode's legacy env), or opencode's auth.json.
+    """
     env = os.environ if _env is None else _env
     home = Path.home() if _home is None else _home
-    env_key = env.get("OPENCODE_API_KEY")
-    if env_key:
-        return env_key
+    for var in ("OPENAI_API_KEY", "CLOUDFLARE_AIGATEWAY_TOKEN", "LOFT_AI_KEY", "OPENCODE_API_KEY"):
+        value = env.get(var)
+        if value:
+            return value
 
     if os.name == "nt":
         base = Path(env.get("APPDATA", "")) / "opencode"

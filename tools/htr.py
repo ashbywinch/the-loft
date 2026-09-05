@@ -33,27 +33,19 @@ from PIL import Image
 # by the local HTR backend (LOFT_HTR_BACKEND=local, the privacy mode). The
 # serving layer imports htr_pages_vlm for the reprocess route, and the
 from tools.atomic import atomic_write
+from tools.loft_paths import WORK_DIR
+from tools.pipeline_store import PipelineStore
+from tools.store import DiskStore  # noqa: F401
 from tools.vlm import parse_transcription_response, transcribe_image_vlm, transcription_system_with_context
 
 # The transformers/TrOCR stack (~450MB of torch+CUDA libs) is ONLY needed
-# by the local HTR backend (LOFT_HTR_BACKEND=local, the privacy mode). The
-# serving layer imports htr_pages_vlm for the reprocess route, and the
-# VLM backend never touches these symbols — so the import is guarded:
-# before 2026-08-17 the top-level import dragged torch into the review
-# server (and every watchfiles reload-spawned copy of it), ~450MB each.
-# The local backend sets the env before the process starts, so the guard
-# matches the call site.
-_LOCAL_HTR_BACKEND = os.environ.get("LOFT_HTR_BACKEND") == "local"
-if _LOCAL_HTR_BACKEND:
-    import torch  # noqa: E402 # guarded: the local backend only (see above)
-    from transformers import TrOCRProcessor, VisionEncoderDecoderModel  # noqa: E402 # guarded: the local backend only
-else:
-    # the guarded import leaves the names None in the default VLM backend —
-    # the assignment is the fallback, not a suppression of a real error
-    torch = None  # type: ignore[assignment] # the VLM backend's fallback for the guarded import
-    TrOCRProcessor = None  # type: ignore[assignment] # the VLM backend's fallback for the guarded import
-    VisionEncoderDecoderModel = None  # type: ignore[assignment] # the VLM backend's fallback for the guarded import
-
+# by the local HTR backend (LOFT_HTR_BACKEND=local, the privacy mode). It
+# is imported INSIDE _trocr_models — the call-site lazy import — so no
+# process that imports tools.htr (the review server included, via
+# htr_pages_vlm) ever loads torch: before 2026-08-17 the top-level import
+# dragged it into the server and every watchfiles reload-spawned copy of
+# it, ~450MB each. The lazy import is the deliberate exception to the
+# imports-at-top standard (lucidlint-review-log §3.3).
 KRAKEN = str(Path(__file__).resolve().parent.parent / ".venv-htr" / "bin" / "kraken")
 ORLI_MODEL = Path.home() / ".local/share/htrmopo/c690cc12-0cf5-59dd-af71-69cdef2392b2/orli_base.safetensors"
 TROCR_MODEL = "microsoft/trocr-small-handwritten"
@@ -168,6 +160,24 @@ def crop_lines(image: Path, boxes: list[tuple[int, int, int, int]]) -> list[Any]
     return crops
 
 
+def _trocr_models() -> tuple[Any, Any]:
+    """The TrOCR recognition stack — loaded ONLY when the local HTR
+    backend actually runs (the call-site lazy import, 2026-08-17: see
+    the module note — no process that never runs htr_pages loads
+    torch). Threads capped at nproc-1 — the ML stages leave a core for
+    the rest of the box."""
+    import torch  # lucidlint: ignore inline-import the lazy local-backend load (module note)
+    from transformers import (  # lucidlint: ignore inline-import the lazy local-backend load (module note)
+        TrOCRProcessor,
+        VisionEncoderDecoderModel,
+    )
+
+    torch.set_num_threads(ML_THREADS)
+    processor = TrOCRProcessor.from_pretrained(TROCR_MODEL)
+    model = VisionEncoderDecoderModel.from_pretrained(TROCR_MODEL)
+    return processor, model
+
+
 def transcribe_lines(crops: list[Any], processor: Any, model: Any) -> str:
     """TrOCR per line; the page text = the lines joined in reading order."""
     texts: list[str] = []
@@ -198,26 +208,22 @@ def htr_page(image: Path, out_path: Path, *, _segment: Any = None, _transcribe: 
     if _transcribe is not None:
         text = _transcribe(crops)
     else:
-        if TrOCRProcessor is None or VisionEncoderDecoderModel is None or torch is None:
-            raise HtrError("the local HTR stack is not loaded — run with LOFT_HTR_BACKEND=local")
-        torch.set_num_threads(ML_THREADS)
-        processor = TrOCRProcessor.from_pretrained(TROCR_MODEL)
-        model = VisionEncoderDecoderModel.from_pretrained(TROCR_MODEL)
+        processor, model = _trocr_models()
         try:
             text = transcribe_lines(crops, processor, model)
         finally:
             del model  # the 3.14 main venv shares RAM with everything else
-    atomic_write(out_path, text)
+    store = PipelineStore(WORK_DIR)
+    batch_id = out_path.parent.parent.name
+    store_path = str(Path(batch_id) / "ocr-guess" / out_path.name)
+    store.write(store_path, text)
+    atomic_write(out_path, text)  # backward compat — htr_pages reads from the old path
     return text
 
 
 def htr_pages(pages: list[tuple[str, Path]], raw_dir: Path) -> None:
     """HTR each (name, page-image) pair into raw_dir/<stem>.txt, in order."""
-    if TrOCRProcessor is None or VisionEncoderDecoderModel is None or torch is None:
-        raise HtrError("the local HTR stack is not loaded — run with LOFT_HTR_BACKEND=local")
-    torch.set_num_threads(ML_THREADS)
-    processor = TrOCRProcessor.from_pretrained(TROCR_MODEL)
-    model = VisionEncoderDecoderModel.from_pretrained(TROCR_MODEL)
+    processor, model = _trocr_models()
     transcribe = partial(transcribe_lines, processor=processor, model=model)
     try:
         for name, image in pages:
@@ -261,16 +267,28 @@ def htr_pages_vlm(
     for name, image in pages:
         out = raw_dir / Path(name).with_suffix(".txt")
         marker = out.with_suffix(".vlm.json")
-        if marker.exists():
+        # Skip only when BOTH the completion marker and the artifact it
+        # promises exist and are non-empty. A marker with a missing or
+        # empty .txt is a stale or partial write (2026-08-20: a bad
+        # layout_detect run left page-02's marker while clearing its
+        # text — the stage "reused" the corrupt guess). Existence alone
+        # is a lie of a completion proxy; validate before skipping.
+        if marker.exists() and out.exists() and out.read_text(encoding="utf-8").strip():
             print(f"vlm: {name} already done — reusing")
-            if out.exists():
-                previous = out.read_text(encoding="utf-8")  # keep the continuity current
+            previous = out.read_text(encoding="utf-8")  # keep the continuity current
             continue
-        print(f"vlm: {name} transcribing…", flush=True)
+        if marker.exists():
+            print(f"vlm: {name} marker present but text missing — re-transcribing")
+        else:
+            print(f"vlm: {name} transcribing…", flush=True)
         system = transcription_system_with_context(people=people, places=places, label=label, previous_page=previous)
         text, usage = call(image, system=system)
         plain, boxes = parse_transcription_response(text)
-        atomic_write(out, plain)
+        atomic_write(out, plain)  # backward compat — callers read from the old path
+        store = PipelineStore(WORK_DIR)
+        batch_id = out.parent.parent.name
+        store_path = str(Path(batch_id) / "ocr-guess" / out.name)
+        store.write(store_path, plain)
         marker_data: dict[str, Any] = dict(usage)
         if boxes is not None:
             # the VLM's own line geometry (normalized 0-1000) — the layout
@@ -280,7 +298,11 @@ def htr_pages_vlm(
             # anchor each line it transcribed). Only the entries with boxes
             # ride along; a page without geometry keeps the old fallback.
             marker_data["lines"] = [{"text": plain.split("\n")[i], "box": boxes[i]} for i in sorted(boxes)]
-        atomic_write(marker, json.dumps(marker_data, ensure_ascii=False))
+        store = PipelineStore(WORK_DIR)
+        batch_id = out.parent.parent.name
+        store_path = str(Path(batch_id) / "ocr-guess" / marker.name)
+        store.write(store_path, json.dumps(marker_data, ensure_ascii=False))
+        atomic_write(marker, json.dumps(marker_data, ensure_ascii=False))  # backward compat — marker.exists()
         previous = plain
         print(f"vlm: {name} -> {out.name} ({usage.get('total_tokens', 0)} tokens)")
 

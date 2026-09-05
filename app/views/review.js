@@ -42,6 +42,55 @@ export function loadEdits(batchId, docIndex) {
   }
 }
 
+/** Reconcile edits against a layout: when the layout changes (new pipeline
+ *  run, re-aligned lines), the edits' line indices can become stale. For
+ *  each edit, if the text at its index no longer matches, try to find the
+ *  edit's text elsewhere in the layout and re-map the index. Edits that
+ *  can't be matched are dropped — the reviewer re-checks those lines.
+ *  Returns a new edits dict with the re-mapped indices. */
+function reconcileEdits(edits, layout) {
+  if (!layout || !layout.lines) return edits;
+  const lines = layout.lines;
+  const result = {};
+  for (const [idxStr, text] of Object.entries(edits)) {
+    const idx = Number(idxStr);
+    // The text at the original index — if it still matches, the edit is valid.
+    const lineAtIdx = lines.find((l) => l.index === idx);
+    if (lineAtIdx && (lineAtIdx.text === text || fuzzyMatch(lineAtIdx.text, text))) {
+      result[idx] = text;
+      continue;
+    }
+    // The line at this index changed or doesn't exist. Try to find the edit's
+    // text somewhere else in the layout.
+    const matched = lines.find((l) => l.text === text || fuzzyMatch(l.text, text));
+    if (matched && !result[matched.index]) {
+      result[matched.index] = text;
+      continue;
+    }
+    // Could not find a match — the edit is orphaned. Drop it.
+  }
+  return result;
+}
+
+/** Fuzzy text match: two strings match if one is a substring of the other
+ *  (case-insensitive, trimmed), or their edit distance is <=3 chars (for
+ *  OCR corrections like "POSTCARD" vs "POST CARD"). */
+function fuzzyMatch(a, b) {
+  if (!a || !b) return false;
+  const sa = a.trim().toLowerCase();
+  const sb = b.trim().toLowerCase();
+  if (sa === sb) return true;
+  if (sa.includes(sb) || sb.includes(sa)) return true;
+  const maxLen = Math.max(sa.length, sb.length);
+  if (maxLen < 3) return false;
+  let diff = 0;
+  for (let i = 0; i < Math.min(sa.length, sb.length); i++) {
+    if (sa[i] !== sb[i]) diff++;
+  }
+  diff += Math.abs(sa.length - sb.length);
+  return diff <= 3;
+}
+
 export function saveEdits(batchId, docIndex, edits) {
   try {
     const all = JSON.parse(localStorage.getItem(EDITS_KEY) || "{}");
@@ -61,6 +110,86 @@ export function clearEdits(batchId, docIndex) {
   } catch {
     // nothing to clear
   }
+}
+/** Save the current page\'s review state (scroll, view, selected line) to
+ * localStorage so the reviewer never loses their place (VR9, VR17).
+ * Keyed by batch + page index; expects the doc index to validate. */
+export function saveResumePosition(batchId, docIndex, pageId, selLine, view, scrollTop, readRotation) {
+  try {
+    const key = `rv-res-${batchId}-${pageId}`;
+    const data = JSON.stringify({ docIndex, selLine, view, scrollTop, readRotation, ts: Date.now() });
+    localStorage.setItem(key, data);
+  } catch { /* quota exceeded */ }
+}
+
+export function loadResumePosition(batchId, pageId) {
+  try {
+    const key = `rv-res-${batchId}-${pageId}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+
+export function clearResumePosition(batchId, pageId) {
+  try {
+    localStorage.removeItem(`rv-res-${batchId}-${pageId}`);
+  } catch { /* ignore */ }
+}
+
+/** Save the current session page's resume position before navigation. */
+function saveCurrentResumePosition(session) {
+  const { batch, docIndex, pageIndex, selLine, view, readRotation } = session;
+  const doc = batch.documents[docIndex];
+  const pageId = doc?.pages?.[pageIndex];
+  if (pageId !== undefined && session.txBody) {
+    saveResumePosition(batch.batchId, docIndex, pageId, selLine, view, session.txBody.scrollTop ?? 0, readRotation);
+  }
+}
+
+/** The full bounding box of all lines in the layout, or null if there
+ * are no line boxes. The margin is the line-0 top: the band anchor\'s
+ * half-line margin. */
+function contentBounds(layout) {
+  const lines = (layout?.lines || []).filter((l) => l.box);
+  if (!lines.length) return null;
+  const allX = lines.flatMap((l) => [l.box[0], l.box[2]]);
+  const allY = lines.flatMap((l) => [l.box[1], l.box[3]]);
+  const r = Math.max(allX[1] - allX[0], allY[1] - allY[0]) * 0.05;
+  return {
+    x: Math.min(...allX) - r,
+    y: Math.min(...allY) - r,
+    width: Math.max(...allX) - Math.min(...allX) + 2 * r,
+    height: Math.max(...allY) - Math.min(...allY) + 2 * r,
+  };
+}
+
+/** Reject (bin) persistence: a simple localStorage marker so the batch
+ *  list filters rejected documents across page loads. The bin is
+ *  recoverable (AC30): clearRejection reinstates the document. */
+export function saveRejection(batchId, docIndex) {
+  try {
+    const key = `rv-rej-${batchId}-${docIndex}`;
+    localStorage.setItem(key, "1");
+  } catch { /* ignore */ }
+}
+
+export function loadRejections(batchId) {
+  try {
+    const prefix = `rv-rej-${batchId}-`;
+    const set = new Set();
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(prefix)) set.add(k.slice(prefix.length));
+    }
+    return set;
+  } catch { return new Set(); }
+}
+
+export function clearRejection(batchId, docIndex) {
+  try {
+    localStorage.removeItem(`rv-rej-${batchId}-${docIndex}`);
+  } catch { /* ignore */ }
 }
 
 // -- pure helpers (exported for tests) ----------------------------------------
@@ -94,26 +223,9 @@ export function flaggedPositions(documents, docIndex, edits) {
   return positions;
 }
 
-/** The next flagged line after ``from`` (wrapping); null when there are
- *  no flags at all. ``from`` is one of the flaggedPositions entries —
- *  OR a position that was since ACCEPTED (removed from the list): the
- *  tour then continues AFTER it by order instead of silently restarting
- *  at the first flag (user 2026-08-16: after an accept, next-flagged
- *  "restarted at the beginning — nothing moved"). */
-export function nextFlagged(positions, from) {
-  if (!positions.length) return null;
-  if (!from) return positions[0];
-  const idx = positions.findIndex((p) => p.page === from.page && p.line === from.line);
-  if (idx !== -1) return positions[(idx + 1) % positions.length];
-  const next = positions.find(
-    (p) => p.page > from.page || (p.page === from.page && p.line > from.line),
-  );
-  return next || positions[0];
-}
-
-/** The remaining flagged lines per page — the navigation strip's flag dots
- *  (2026-08-16: the dots make a cross-page "Next flagged" jump visible
- *  before it happens; the map replaces the hint words). */
+/** The remaining flagged lines per page — the page chips' flag dots
+ *  (2026-08-16: the dots make a cross-page jump visible before any
+ *  press; the map replaces the hint words). */
 export function flaggedByPage(documents, docIndex, edits) {
   const byPage = {};
   for (const { page } of flaggedPositions(documents, docIndex, edits)) {
@@ -420,6 +532,9 @@ async function renderBatch(main, batchId, state, initial = null) {
   // the work still to do (user 2026-08-16: "if it WAS confirmed it
   // shouldn't be listed"). The original documents index is kept for the
   // confirmation payload (the CLI gate's 1-based boundaries order).
+  // apply persisted rejections before filtering
+  const rejectedSet = loadRejections(batchId);
+  documents.forEach((d, i) => { if (rejectedSet.has(String(i))) d.status = "rejected"; });
   const awaiting = documents
     .map((doc, i) => ({ doc, i }))
     .filter(({ doc }) => doc.status !== "confirmed" && doc.status !== "rejected");
@@ -559,10 +674,9 @@ function renderSurface(main, session) {
     session.acked = st.acked;
     session.rotation = deltaOfDesired(st.desired, session.baseRotation);
   }
-  // the count and the dots exclude the rework pages — their flags will
-  // change when the backend re-reads them
+  // the dots exclude the rework pages — their flags will change when the
+  // backend re-reads them
   const positions = availablePositions(session);
-  const toCheck = positions.length;
 
   const root = el("div", { class: "rv" });
   // One bar for the whole chrome: back, the document's name, and BOTH
@@ -571,7 +685,7 @@ function renderSurface(main, session) {
   // page dots; the document boundary and the cross-page jump are visible
   // before any press, so nothing needs explaining).
   const topbar = el("div", { class: "rv-topbar" }, [
-    el("button", { class: "rv-back", onclick: async () => { acceptEdit(session); await queueRotation(session); renderBatch(root, batch.batchId); } }, `← ${batch.label || "Documents"}`),
+    el("button", { class: "rv-back", onclick: async () => { saveCurrentResumePosition(session); acceptEdit(session); await queueRotation(session); navigate(`review/${batch.batchId}`); } }, `← ${batch.label || "Documents"}`),
     el("div", { class: "rv-topbar-titles" }, [
       el("div", { class: "rv-tt" }, docTitle(doc)),
     ]),
@@ -594,6 +708,7 @@ function renderSurface(main, session) {
           onclick: async () => {
             acceptEdit(session);
             await queueRotation(session);
+            saveCurrentResumePosition(session);
             openReview(root, batch, i);
           },
           title: d.greeting || `Document ${i + 1}`,
@@ -619,6 +734,7 @@ function renderSurface(main, session) {
           onclick: async () => {
             acceptEdit(session);
             await queueRotation(session);
+            saveCurrentResumePosition(session);
             session.pageIndex = i;
             session.selLine = null;
             session.editing = null;
@@ -651,6 +767,16 @@ function renderSurface(main, session) {
   // data, not just the view)
   const zoomControls = el("div", { class: "rv-zoom" }, [
     el("button", { class: "rv-zoom-btn", onclick: () => rotatePage(session), title: "Turn the page" }, "↻"),
+    el("button", {
+      class: "rv-zoom-btn",
+      onclick: () => {
+        session.readRotation = 0;
+        session.view = null;
+        renderView(session);
+        if (session.contentTop !== undefined) initialView(session, session.contentTop ?? 0);
+      },
+      title: "Return to the line you were reading",
+    }, "⌖"),
   ]);
   imgPane.append(zoomControls);
   imgPane.append(
@@ -674,7 +800,9 @@ function renderSurface(main, session) {
     if (e.target.closest(".rv-line")) return;
     acceptEdit(session);
   });
-  imgPane.addEventListener("click", () => acceptEdit(session));
+  // The boxes are touchable (the overlay's own click handler) — the
+  // image pane itself does not start edits (2026-08-17: walkthrough
+  // finding — tapping the picture silently edited the text).
 
   // The orientation fix's async half: while the backend re-reads the page's
   // text on the corrected image, the document is greyed with a note and the
@@ -705,18 +833,44 @@ function renderSurface(main, session) {
   }
   session.pageProcessing = pageState;
 
-  const fcBadge = el("span", { class: "rv-fc" }, String(toCheck));
-  const nextBtn = el("button", { class: "rv-fn", onclick: () => jumpNextFlag(session) }, [fcBadge, " Next flagged ↓"]);
+  // Fail-fast (2026-08-17): a page whose layout failed validation is
+  // never shown with wrong boxes — the boxes are withheld and the reason
+  // is stated loudly. The reviewer must never see boxes that don't
+  // correspond to the page.
+  const layoutError = doc.layout_errors?.[page];
+  if (layoutError) {
+    txPane.prepend(
+      el(
+        "div",
+        { class: "rv-note rv-note--fixing" },
+        `This page's word boxes were rejected (${String(layoutError).slice(0, 120)}…) — showing the text without boxes.`,
+      ),
+    );
+  }
+
   // the honest label: only the LAST page's press confirms — earlier pages
-  // just advance (walk finding 3, 2026-08-15); the page rail is the pager
+  // just advance (walk finding 3, 2026-08-15); the page rail is the pager.
+  // The "Next flagged" button is GONE (user, 2026-08-17): the page chips
+  // carry the flag dots — the reviewer taps the flagged chip to jump.
   const isLastPage = session.pageIndex === doc.pages.length - 1;
+  const skipBtn = el(
+    "button",
+    { class: "rv-btn rv-btn--ghost", onclick: () => skipNext(session), title: "Move on without confirming — come back later" },
+    "Skip →",
+  );
+  const rejectBtn = el(
+    "button",
+    { class: "rv-btn rv-btn--ghost", onclick: () => rejectDoc(session), title: "Move this document to the bin — it can be recovered" },
+    "Bin →",
+  );
   const confirmBtn = el(
     "button",
     { class: "rv-btn rv-btn--primary", onclick: () => confirmNext(session), disabled: session.pageProcessing === "transcribing" },
     isLastPage ? "✓ Confirm & Next →" : "Next page →",
   );
   const actionBar = el("div", { class: "rv-txa" }, [
-    nextBtn,
+    skipBtn,
+    rejectBtn,
     el("div", { class: "rv-txa-right" }, [confirmBtn]),
   ]);
 
@@ -725,11 +879,9 @@ function renderSurface(main, session) {
 
   session.root = root;
   session.txBody = txBody;
-  session.fcBadge = fcBadge;
   session.confirmBtn = confirmBtn;
   session.fixingNote = null;
   syncSurfaceUrl(session);
-  session.nextBtn = nextBtn;
   currentSession = session;
   updateFixingState(session);
 
@@ -852,14 +1004,15 @@ export function zoomView(view, k, paneW, paneH, cx, cy, imgW) {
 /** Paint the current view: the layer's transform maps original-image points
  *  to the pane with the view's rectangle at the pane's origin. */
 function renderView(session) {
-  const { imgBox, layer, view, rotation, imgSize } = session;
+  const { imgBox, layer, view, imgSize } = session;
   if (!view || !imgSize || !layer) return;
   const paneW = imgBox.clientWidth;
   const paneH = imgBox.clientHeight;
   if (!paneW || !paneH) return;
   const s = paneW / view.width;
-  const f = displayFrame(rotation, imgSize.w, imgSize.h);
-  layer.style.transform = `translate(${(f.ox - view.x) * s}px, ${(f.oy - view.y) * s}px) scale(${s}) rotate(${rotation}deg)`;
+  const display = viewRotation(session); // the ↻ + the per-line read rotation
+  const f = displayFrame(display, imgSize.w, imgSize.h);
+  layer.style.transform = `translate(${(f.ox - view.x) * s}px, ${(f.oy - view.y) * s}px) scale(${s}) rotate(${display}deg)`;
   syncTxFromImage(session); // the dual-pane link: the words follow the picture
 }
 
@@ -882,7 +1035,7 @@ function openViewer(session, imgBox) {
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page] || null;
 
-  session.resizer?.disconnect();
+session.resizer?.disconnect();
   session.imgBox = imgBox;
   session.layer = null;
   session.img = null;
@@ -891,6 +1044,7 @@ function openViewer(session, imgBox) {
   session.overlays = [];
   session.contentTop = 0;
   session.userMoved = false;
+  session.readRotation = 0; // the per-line read rotation resets per page
 
   const layer = el("div", { class: "rv-layer" });
   const img = el("img", { class: "rv-page", alt: "" });
@@ -924,6 +1078,25 @@ function openViewer(session, imgBox) {
         box.style.width = `${line.box[2] - line.box[0]}px`;
         box.style.height = `${line.box[3] - line.box[1]}px`;
         layer.append(box);
+        box.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const idx = Number(box.dataset.line);
+          if (!isNaN(idx)) {
+            // keep the same page — the box is on this page
+            session.selLine = idx;
+            session.editing = null;
+            // scroll the text to this line
+            const txLine = session.txBody?.querySelector(`.rv-line[data-index="${idx}"]`);
+            if (txLine) txLine.scrollIntoView({ block: "nearest" });
+            // rotate to the line's reading orientation
+            const doc = session.batch.documents[session.docIndex];
+            const page = doc.pages[session.pageIndex];
+            const line = doc.layouts?.[page]?.lines.find((l) => l.index === idx);
+            if (line) session.readRotation = line.orientation || 0;
+            renderView(session);
+            renderTx(session);
+          }
+        });
         session.overlays.push(box);
       });
       session.overlays.forEach((box) => {
@@ -941,10 +1114,36 @@ function openViewer(session, imgBox) {
       // the image "wouldn't let me scroll up at all" (user 2026-08-16).
       session.contentTop = bandAnchor(layout) - bandMargin(layout);
     }
-    if (session.selLine !== null) {
+    // Restore the resume position (2026-08-18): the scroll, image view,
+    // selected line, and read rotation from the last session on this page.
+    const saved = loadResumePosition(batch.batchId, page);
+    if (saved && saved.docIndex === docIndex && saved.selLine !== undefined) {
+      session.selLine = saved.selLine;
+      session.visibleLine = saved.selLine;
+      session.readRotation = saved.readRotation ?? session.readRotation;
+      if (saved.view) {
+        session.view = saved.view;
+        session.contentTop = saved.view.y;
+      } else {
+        initialView(session, session.contentTop);
+      }
+      // RenderView fires syncTxFromImage which sets scrollTop from the
+      // image view. We set the scrollTop AFTER renderView so our saved
+      // scroll position wins (2026-08-18: walkthrough 3 found that
+      // syncTxFromImage pulled the text back to the top).
+      if (session.view) renderView(session);
+      session.txBody.scrollTop = saved.scrollTop ?? 0;
+      // Highlight the selected line without a full renderTx (which would
+      // reset the scroll position). The existing text elements are already
+      // in the DOM from renderSurface's renderTx call.
+      if (saved.selLine !== null) {
+        const prev = session.txBody.querySelector(".rv-line--sel");
+        if (prev) prev.classList.remove("rv-line--sel");
+        const txLine = session.txBody.querySelector(`.rv-line[data-index="${saved.selLine}"]`);
+        if (txLine) txLine.classList.add("rv-line--sel");
+      }
+    } else if (session.selLine !== null) {
       initialView(session, session.contentTop);
-      // the transcription pane is already scrolled to the selected line —
-      // align the image to it (the dual-pane link, same zoom)
       syncImageFromTx(session);
     } else {
       initialView(session, session.contentTop);
@@ -996,7 +1195,7 @@ function openViewer(session, imgBox) {
       const rect = imgBox.getBoundingClientRect();
       const cx = (a.x + b.x) / 2 - rect.left;
       const cy = (a.y + b.y) / 2 - rect.top;
-      const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+      const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
       session.view = zoomView(session.view, k, imgBox.clientWidth, imgBox.clientHeight, cx, cy, f.dw);
       clampView(session); // never zoom off the page's edges
       pinchStart = { dist, view: { ...session.view } };
@@ -1047,7 +1246,7 @@ function openViewer(session, imgBox) {
     const layout = doc.layouts?.[page];
     let idx = null;
     if (layout) {
-      const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+      const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
       for (const line of layout.lines) {
         if (!line.box) continue;
         const r = boxToDisplay(f, line.box);
@@ -1103,9 +1302,21 @@ function syncImageFromTx(session) {
       break;
     }
   }
-  const line = layout.lines.find((l) => l.index === Number(topEl?.dataset.index));
+  const topIndex = Number(topEl?.dataset.index);
+  if (!isNaN(topIndex) && topIndex !== session.visibleLine) {
+    session.visibleLine = topIndex;
+    const doc = session.batch.documents[session.docIndex];
+    const page = doc.pages[session.pageIndex];
+    const line = doc.layouts?.[page]?.lines.find((l) => l.index === topIndex);
+    const newOrientation = line?.orientation ?? 0;
+    if (newOrientation !== session.readRotation) {
+      session.readRotation = newOrientation;
+      renderView(session);
+    }
+  }
+  const line = layout.lines.find((l) => l.index === topIndex);
   if (!line?.box) return;
-  const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+  const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
   const rect = boxToDisplay(f, line.box);
   const margin = session.imgBox.clientHeight * 0.08;
   const y = Math.min(Math.max(rect.y - margin, 0), Math.max(f.dh - session.view.height, 0));
@@ -1141,7 +1352,7 @@ function syncTxFromImage(session) {
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page];
   if (!layout) return;
-  const idx = lineIndexForY(layout, session.rotation, session.imgSize, session.view.y);
+  const idx = lineIndexForY(layout, viewRotation(session), session.imgSize, session.view.y);
   if (idx === null) return;
   const el = txb.querySelector(`[data-index="${idx}"]`);
   if (!el) return;
@@ -1160,9 +1371,9 @@ function syncTxFromImage(session) {
  *  rotated views' floor is the page's own top. */
 function clampView(session) {
   if (!session.view || !session.imgSize) return;
-  const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+  const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
   session.view.x = Math.min(Math.max(session.view.x, 0), Math.max(f.dw - session.view.width, 0));
-  const floor = session.rotation % 180 === 0 ? Math.max(session.contentTop ?? 0, 0) : 0;
+  const floor = viewRotation(session) % 180 === 0 ? Math.max(session.contentTop ?? 0, 0) : 0;
   session.view.y = Math.min(Math.max(session.view.y, floor), Math.max(f.dh - session.view.height, floor));
 }
 
@@ -1174,10 +1385,10 @@ function clampView(session) {
 function fitPage(session, { markMoved = true } = {}) {
   if (!session.imgSize) return;
   if (markMoved) session.userMoved = true;
-  const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+  const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
   const imgBox = session.imgBox;
   const paneAspect = imgBox.clientWidth / Math.max(imgBox.clientHeight, 1);
-  if (session.rotation % 180 === 0 && paneAspect > (f.dw / f.dh) * 1.5) {
+  if (viewRotation(session) % 180 === 0 && paneAspect > (f.dw / f.dh) * 1.5) {
     // the band whose WIDTH is the page's width and whose aspect matches the
     // pane — fitBounds fits both dims, so the page fills the pane's width
     const visibleH = f.dw / paneAspect;
@@ -1225,6 +1436,7 @@ function rotatePage(session) {
   // previous frame's coordinates, and rendering it through the new frame
   // drew the page in the wrong place, unreadable (user 2026-08-16: "it's
   // not drawn in the right place after I rotate it")
+  session.readRotation = 0; // the reviewer's own ↻ overrides the per-line read rotation
   fitPage(session, { markMoved: false });
   updateFixingState(session);
 }
@@ -1283,6 +1495,14 @@ export function isOrientationCovered(covered, baseDeg, desiredQuarters) {
  *  applied rotation. Deterministic and self-contained (VR10). */
 export function deltaOfDesired(desiredQuarters, baseDeg) {
   return (((desiredQuarters * 90 - (baseDeg ?? 0)) % 360) + 360) % 360;
+}
+
+/** The combined display rotation: the reviewer's desired orientation plus
+ *  the per-line read rotation (2026-08-17: selecting a line whose text
+ *  runs sideways turns the view so that line reads horizontally — a pure
+ *  view change, never an owed correction, so the ↻ state is untouched). */
+export function viewRotation(session) {
+  return (((session.rotation ?? 0) + (session.readRotation ?? 0)) % 360 + 360) % 360;
 }
 
 // -- the reviewer's desired orientation (display truth) + the delivery
@@ -1462,17 +1682,33 @@ async function rereadPage(session) {
  *  paper (user 2026-08-16: "I don't see any of the actual document").
  *  Tall panes keep the whole page in view. Records the pane size it fitted
  *  against, so the resize handler can tell a real change from noise. */
+/** The default view: show the FULL bounding box of all line boxes so the
+ *  reviewer sees the entire card at once (the walkthrough finding — the
+ *  postcard's header was visible but the message was off-screen and
+ *  unreachable via pan). On very wide/thin pages the zoom fills the pane
+ *  width with the full height visible. */
 function initialView(session, contentTop = 0) {
   if (!session.imgSize) return;
   session.lastFitSize = [session.imgBox.clientWidth, session.imgBox.clientHeight];
   session.contentTop = contentTop;
-  fitPage(session, { markMoved: false });
+  const doc = session.batch.documents[session.docIndex];
+  const page = doc.pages[session.pageIndex];
+  const layout = doc.layouts?.[page];
+  const bounds = contentBounds(layout);
+  if (bounds) {
+    const paneW = session.imgBox.clientWidth;
+    const paneH = session.imgBox.clientHeight;
+    session.view = fitRect(paneW, paneH, bounds);
+  } else {
+    fitPage(session, { markMoved: false });
+  }
 }
 
 /** Highlight the line's box and the transcription line; the box list is
  *  re-rendered by the caller when the surface is static. */
 function syncSelection(session, lineIndex) {
   session.selLine = lineIndex;
+  session.visibleLine = lineIndex;
   session.editing = null;
   session.overlays.forEach((box) => {
     box.classList.toggle("rv-lb--sel", box.dataset.line === String(lineIndex));
@@ -1500,6 +1736,20 @@ function startEdit(session, lineIndex) {
   if (session.editing !== null && session.editing !== lineIndex) acceptEdit(session);
   syncSelection(session, lineIndex);
   session.editing = lineIndex;
+  // the per-line read rotation: a line whose text runs sideways turns the
+  // view so it reads horizontally (2026-08-17, VR15 — the postcard's 270°
+  // message must be readable without pressing ↻). Pure view: the ↻ state
+  // (desired/acked) is untouched.
+  const doc = session.batch.documents[session.docIndex];
+  const page = doc.pages[session.pageIndex];
+  const line = doc.layouts?.[page]?.lines.find((l) => l.index === lineIndex);
+  const orientation = line?.orientation ?? 0;
+  // the pass at orientation D reads its text with the image rotated CSS D°
+  // (pass_at rotates -D in PIL = D in CSS) — the display rotation is the
+  // orientation itself, not its mirror (2026-08-17: (360-O) put the 270°
+  // message upside down)
+  session.readRotation = orientation;
+  renderView(session); // the view turns to read the line horizontally
   renderTx(session);
 }
 
@@ -1516,9 +1766,6 @@ function applyEdit(session, lineIndex, text) {
   saveEdits(batch.batchId, docIndex, session.edits);
   session.editing = null;
   session.selLine = lineIndex;
-  const toCheck = availablePositions(session).length;
-  session.fcBadge.textContent = String(toCheck);
-  session.nextBtn.disabled = toCheck === 0;
   renderTx(session);
   // The accept ADVANCES the review: a line down, eased, so the next
   // content comes into view — the reviewer never reads a line whose
@@ -1545,7 +1792,7 @@ function applyEdit(session, lineIndex, text) {
     const above = txb.querySelector(`.rv-line[data-index="${Number(el.dataset.index) - 1}"]`);
     const hasLineAbove = above ? above.getBoundingClientRect().bottom > tRect.top : false;
     if (!hasLineAbove) return; // the accepted line is the top visible row — hold
-    const f = displayFrame(session.rotation, session.imgSize.w, session.imgSize.h);
+    const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
     const current = layout?.lines.find((l) => l.index === Number(el.dataset.index));
     const next = layout?.lines.find((l) => l.index === Number(el.dataset.index) + 1);
     const curTop = current?.box ? boxToDisplay(f, current.box).y : null;
@@ -1638,6 +1885,13 @@ function renderTx(session) {
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page] || null;
   const pageEdits = session.edits[page] || {};
+  // reconcile edits when the layout changed (different line indices, new
+  // pipeline run) — stale edits are re-mapped by text or dropped (2026-08-18)
+  const reconciled = reconcileEdits(pageEdits, layout);
+  if (reconciled !== pageEdits) {
+    session.edits[page] = reconciled;
+    saveEdits(batch.batchId, docIndex, session.edits);
+  }
   const txb = session.txBody;
   const savedScroll = txb?.scrollTop ?? 0;
 
@@ -1647,10 +1901,9 @@ function renderTx(session) {
     : (doc.texts?.[page] || "").split("\n").filter(Boolean).map((text, i) => ({ index: i, text, box: null, words: [] }));
 
   lines.forEach((line) => {
-    const corrected = pageEdits[line.index];
+    const corrected = reconciled[line.index];
     const shown = corrected ?? line.text;
     const sel = session.selLine === line.index ? " rv-line--sel" : "";
-    const hasFlags = line.words.some((w) => w.conf === 0) && corrected === undefined;
     // one dense row: the text + the actions — no number gutter (the line
     // numbers ate screen real estate for nothing, user 2026-08-16: "why?")
     const lineEl = el("div", { class: `rv-line${sel}` });
@@ -1693,6 +1946,21 @@ function renderTx(session) {
         onclick: (e) => { e.stopPropagation(); wrapSelection(input, "~"); },
       }, "U");
       input.after(strikeBtn, underBtn);
+      const doneBtn = el("button", {
+        class: "rv-fmtbtn rv-fmtbtn--row",
+        title: "Save correction (Enter)",
+        onclick: (e) => { e.stopPropagation(); applyEdit(session, line.index, input.value); },
+      }, "✓");
+      const cancelBtn = el("button", {
+        class: "rv-fmtbtn rv-fmtbtn--row",
+        title: "Discard correction (Escape)",
+        onclick: (e) => {
+          e.stopPropagation();
+          session.editing = null;
+          renderTx(session);
+        },
+      }, "✕");
+      input.after(doneBtn, cancelBtn);
       input.focus();
     } else {
       const textEl = el("span", { class: "rv-lt" });
@@ -1730,20 +1998,34 @@ function renderTx(session) {
         ));
       }
       lineEl.append(textEl);
-      // "mark this line fine" — a checked line with red squiggles needs no
-      // text change (user, 2026-08-16): the verbatim text counts as verified
-      if (hasFlags) {
-        lineEl.append(
-          el("button", {
-            class: "rv-ok-btn",
-            title: "Mark this line as fine",
-            onclick: (e) => {
-              e.stopPropagation();
+      // "mark this line fine" — a checked line needs no text change (user,
+      // 2026-08-16: the verbatim text counts as verified). On EVERY line
+      // (2026-08-17): the multi-orientation pages are provisional — the
+      // reviewer checks each line as they read it. The button is a toggle:
+      // ○ unchecked (not yet verified), ✓ checked (verified). Clicking a
+      // checked line unchecks it (the edit is removed).
+      const isChecked = corrected !== undefined || pageEdits[line.index] !== undefined;
+      lineEl.append(
+        el("button", {
+          class: "rv-ok-btn" + (isChecked ? " rv-ok-btn--checked" : ""),
+          title: isChecked ? "Mark this line as not checked" : "Mark this line as fine",
+          onclick: (e) => {
+            e.stopPropagation();
+            if (isChecked) {
+              // uncheck — remove the edit for this line
+              const { batch, docIndex, pageIndex } = session;
+              const page = doc.pages[pageIndex];
+              const edits = { ...session.edits[page] };
+              delete edits[line.index];
+              session.edits[page] = edits;
+              saveEdits(batch.batchId, docIndex, session.edits);
+              renderTx(session);
+            } else {
               applyMarkedFine(session, line.index);
-            },
-          }, "✓"),
-        );
-      }
+            }
+          },
+        }, isChecked ? "✓" : "○"),
+      );
       // every line is clickable — one click enters edit (user, 2026-08-16);
       // clicking the already-editing line's own input must not re-render
       lineEl.addEventListener("click", () => {
@@ -1764,27 +2046,49 @@ function renderTx(session) {
   session.lastSelRendered = session.selLine;
 }
 
-/** Jump to the next flagged word (across pages), opening its line for
- *  editing; wraps when the document is done. */
-async function jumpNextFlag(session) {
-  acceptEdit(session);
-  await queueRotation(session);
-  const positions = availablePositions(session);
-  const pos = nextFlagged(positions, session.from);
-  if (!pos) return;
-  session.from = pos;
-  const { batch } = session;
-  const doc = batch.documents[session.docIndex];
-  session.pageIndex = doc.pages.indexOf(pos.page);
-  session.selLine = pos.line;
-  session.editing = pos.line;
-  renderSurface(session.root, session);
-}
-
 /** Confirm & Next: the last page confirms the document through the sync
  *  seam (outbox fallback), then moves on; earlier pages just advance. The
  *  confirmation is blocked while the page's orientation fix is in flight
  *  (the text would be the stale pre-fix reading). */
+/** Skip — advance WITHOUT confirming (user, 2026-08-17: the agreed
+ *  replacement for the next-red-word button — a way to give up on
+ *  something temporarily). The page, and on the last page the document,
+ *  stays unconfirmed — the reviewer can come back to it. */
+function skipNext(session) {
+  acceptEdit(session);
+  const { batch, docIndex } = session;
+  const doc = batch.documents[docIndex];
+  if (session.pageIndex < doc.pages.length - 1) {
+    const next = nextAvailableAfter(doc, batch, session.pageIndex);
+    session.pageIndex = next === -1 ? session.pageIndex + 1 : next;
+    session.selLine = null;
+    session.editing = null;
+    renderSurface(session.root, session);
+    return;
+  }
+  // the last page — the next document, nothing confirmed
+  openReview(session.root, batch, (docIndex + 1) % batch.documents.length);
+}
+
+/** Reject — soft-delete to the recoverable bin (AC30). The document
+ *  disappears from the pending list; the rejection is stored in
+ *  localStorage and survives page reload. A future 'Bin' view will
+ *  list rejected documents and offer a restore button. */
+function rejectDoc(session) {
+  acceptEdit(session);
+  const { batch, docIndex } = session;
+  const doc = batch.documents[docIndex];
+  saveRejection(batch.batchId, docIndex);
+  doc.status = "rejected";
+  // advance to the next document still awaiting review
+  const next = batch.documents.findIndex((d, i) => i > docIndex && d.status !== "confirmed" && d.status !== "rejected");
+  if (next !== -1) {
+    openReview(session.root, batch, next);
+  } else {
+    navigate(`review/${batch.batchId}`);
+  }
+}
+
 async function confirmNext(session) {
   const { batch, docIndex } = session;
   const doc = batch.documents[docIndex];
@@ -1834,7 +2138,7 @@ async function confirmNext(session) {
   if (next !== -1) {
     setTimeout(() => openReview(session.root, batch, next), 1800);
   } else {
-    setTimeout(() => renderBatch(session.root, batch.batchId), 2200);
+    setTimeout(() => navigate(`review/${batch.batchId}`), 2200);
   }
 }
 

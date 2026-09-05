@@ -1922,8 +1922,9 @@ summary:focus-visible {
   /* The boxes must pass drags through to the pane — a box that swallows
      the pointer blocks panning exactly where the reviewer grabs the letter
      (user 2026-08-16). Selection happens on the transcription lines (the
-     walk's actual behaviour); the boxes are visual guides. */
-  pointer-events: none;
+     walk's actual behaviour); the boxes are visual guides. The reviewer
+     can also tap a box to jump to its line (VR17, 2026-08-17). */
+  pointer-events: auto;
 }
 .rv-lb--sel { border-color: var(--accent); background: rgba(180, 85, 45, 0.16); border-width: 2px; }
 /* a positional box (box_source: "positional" — the fallback's reading-order

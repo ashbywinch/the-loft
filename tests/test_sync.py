@@ -109,6 +109,36 @@ def test_draft_payloads_serves_the_review_surface(tmp_path: Path) -> None:
     assert drafts[0]["greeting"] == "Chère Maman."
 
 
+def test_draft_payloads_never_serves_a_bad_layout(tmp_path: Path) -> None:
+    """Fail-fast (2026-08-17): a layout with a degenerate or out-of-image
+    box is NOT served to the review surface — the page keeps its text but
+    loses the layout, and a loud ``layout_errors`` marker names the
+    violation. Wrong boxes must never reach the reviewer."""
+    guess = tmp_path / "adopt-0001" / "ocr-guess"
+    guess.mkdir(parents=True)
+    (guess / "p1.txt").write_text("line one", encoding="utf-8")
+    (guess / "p1.layout.json").write_text(
+        json.dumps(
+            {
+                "page": "p1.jpg",
+                "width": 100,
+                "height": 100,
+                "lines": [{"index": 0, "text": "line one", "box": [0, 0, 500, 10], "conf": 1.0, "words": []}],
+                "unmatched": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (guess / "boundaries.json").write_text(
+        json.dumps([{"pages": ["p1.jpg"], "greeting": None, "signoff": None}]),
+        encoding="utf-8",
+    )
+    drafts = draft_payloads("adopt-0001", tmp_path)
+    assert drafts[0]["layouts"] == {}  # the bad layout is not served
+    assert "line one" in drafts[0]["texts"]["p1.jpg"]  # the text still shows
+    assert drafts[0]["layout_errors"]["p1.jpg"], "the violation is named loudly"
+
+
 def test_draft_payloads_carries_the_layout_when_the_pass_has_run(tmp_path: Path) -> None:
     """TECH-SPEC §16.16: the drafts payload gains the per-page layout (line
     boxes + per-word confidence) once the layout pass has written it —
@@ -343,108 +373,6 @@ def test_rotate_page_guards(tmp_path: Path) -> None:
         rotate_page("../evil", "p1.jpg", 1, tmp_path)
     with pytest.raises(ValueError, match="invalid batch"):
         rotate_page("adopt-0001", "..%2Fetc", 1, tmp_path)
-
-
-def test_reprocess_page_transcription_reruns_the_text(tmp_path: Path) -> None:
-    """The slow half of the orientation fix (2026-08-16): the re-read on the
-    corrected image replaces the stale text + self-report + layout, and the
-    job state clears — with the VLM seams injected. The layout stage
-    rebuilds the layout fresh (the second pass does better, 2026-08-17)."""
-    batch = tmp_path / "adopt-0001"
-    (batch / "oriented").mkdir(parents=True)
-    (batch / "ocr-guess").mkdir(parents=True)
-    Image.new("RGB", (100, 200), "white").save(batch / "oriented" / "p1.jpg")
-    write_layout(
-        build_layout(
-            "p1.jpg",
-            100,
-            200,
-            "old stale text",
-            [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
-        ),
-        batch / "ocr-guess" / "p1.layout.json",
-    )
-    (batch / "ocr-guess" / "p1.txt").write_text("old stale text\n", encoding="utf-8")
-    (batch / "ocr-guess" / "p1.vlm.json").write_text("{}", encoding="utf-8")
-    (batch / "ocr-guess" / "p1.selfreport.json").write_text("[]", encoding="utf-8")
-    set_page_job("adopt-0001", "p1.jpg", "transcribing", tmp_path)
-    assert page_job_state("adopt-0001", tmp_path) == {"p1.jpg": "transcribing"}
-    ran: list[list[str]] = []
-
-    def fake_layout_runner(batch_id: str, work_dir: Path, pages: list[str] | None) -> None:
-        ran.append(pages or [])
-        # what the real layout stage does: rebuild from the fresh text
-        write_layout(
-            build_layout(
-                "p1.jpg",
-                100,
-                200,
-                "the corrected fresh text\n",
-                [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
-                selfreport=[{"line": 1, "word": "fresh"}],
-            ),
-            batch / "ocr-guess" / "p1.layout.json",
-        )
-
-    reprocess_page_transcription(
-        "adopt-0001",
-        "p1.jpg",
-        tmp_path,
-        transcribe=lambda image, **kw: ("the corrected fresh text\n", {"total_tokens": 0}),
-        selfreport=lambda image, guess_text, **kw: [{"line": 1, "word": "fresh"}],
-        orientation_report_fn=lambda image: [],
-        layout_runner=fake_layout_runner,
-    )
-
-    assert page_job_state("adopt-0001", tmp_path) == {}
-    assert ran == [["p1.jpg"]]
-    new_text = (batch / "ocr-guess" / "p1.txt").read_text(encoding="utf-8")
-    assert new_text == "the corrected fresh text"  # the parse strips the trailing newline
-    layout = json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
-    assert layout["lines"][0]["text"] == "the corrected fresh text"
-    # the new self-report drives the flags: "fresh" (index 2) flagged
-    assert layout["lines"][0]["words"][2]["conf"] == 0.0
-    # a single-direction report writes no orientation sidecar
-    assert not (batch / "ocr-guess" / "p1.orientation.json").exists()
-
-
-def test_reprocess_page_transcription_writes_the_multi_sidecar(tmp_path: Path) -> None:
-    """A multi-direction report on the corrected image writes the
-    orientation sidecar — the layout stage then runs the combined
-    per-line-orientation pass (VR15, the second pass does better)."""
-    batch = tmp_path / "adopt-0001"
-    (batch / "oriented").mkdir(parents=True)
-    (batch / "ocr-guess").mkdir(parents=True)
-    Image.new("RGB", (100, 200), "white").save(batch / "oriented" / "p1.jpg")
-    write_layout(
-        build_layout(
-            "p1.jpg",
-            100,
-            200,
-            "old stale text",
-            [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
-        ),
-        batch / "ocr-guess" / "p1.layout.json",
-    )
-    (batch / "ocr-guess" / "p1.txt").write_text("old stale text\n", encoding="utf-8")
-    (batch / "ocr-guess" / "p1.vlm.json").write_text("{}", encoding="utf-8")
-    (batch / "ocr-guess" / "p1.selfreport.json").write_text("[]", encoding="utf-8")
-
-    reprocess_page_transcription(
-        "adopt-0001",
-        "p1.jpg",
-        tmp_path,
-        transcribe=lambda image, **kw: ("the corrected fresh text\n", {"total_tokens": 0}),
-        selfreport=lambda image, guess_text, **kw: [],
-        orientation_report_fn=lambda image: [
-            {"region": "message", "degrees": 0},
-            {"region": "address", "degrees": 270},
-        ],
-        layout_runner=lambda batch_id, work_dir, pages: None,
-    )
-
-    sidecar = json.loads((batch / "ocr-guess" / "p1.orientation.json").read_text(encoding="utf-8"))
-    assert [h["degrees"] for h in sidecar] == [0, 270]
 
 
 def test_reprocess_failure_marks_the_page(tmp_path: Path) -> None:

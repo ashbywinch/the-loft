@@ -166,6 +166,9 @@ ingest: setup
 
 confirm: setup
 	@$(PYTHON) tools/pipeline.py review $(ARGS)
+
+pipeline: setup
+	@$(PYTHON) tools/pipeline.py $(ARGS)
 clean:
 	@rm -rf .venv node_modules htmlcov/ app/coverage/
 	@rm -f .coverage coverage.xml

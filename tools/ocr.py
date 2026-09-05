@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from tools.atomic import atomic_write
+from tools.store import DiskStore  # noqa: F401
 
 TESSERACT = "tesseract"
 MAGICK = "magick"

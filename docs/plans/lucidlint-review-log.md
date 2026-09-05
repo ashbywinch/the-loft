@@ -242,7 +242,7 @@ files are excluded from the branch's commits too. Flagged for the user.
   doc that lives in omp-config, not here. Fixed the reference to name the
   owning repo (matches the file's own convention at line 24).
 - The 3 parent-relative findings are tool bug 1.1.
-- `AGENTS.md` → `docs/IMPORT-WORKED-EXAMPLE.md` unreachable: that file is
+- `AGENTS.md` → `docs/IMPORT-WORKED-EXAMPLE.md` unreachable: that file was
   **gitignored** (the private worked-example doc the AGENTS.md decision
   tree calls "private review doc, not shipped"). The reachability scan
   includes gitignored files (rglob fallback without pygit2) — a false
@@ -430,3 +430,86 @@ strict at genuine terminal boundaries (server.py's reprocess thread), where
 the log is the only surface — but the repo's own test-seam discipline now
 says so explicitly, so a suppression there carries a written, standard-backed
 reason rather than a blanket "log is allowed".
+
+## 9. Open consideration: the gate's leniency is an invisible-debt license (2026-08-17)
+
+An agent here justified NOT fixing a record-shape finding in
+`tests/test_pipeline.py` (the `_flag(...) -> dict[str, object]` pattern) by
+citing the gate: ".lucidlint.toml config-ignores record-shape, the gate only
+fails on new actions beyond the baseline, warnings never fail — the gate
+tolerates it in practice."
+
+The facts are true; the inference is wrong, and it exposed a tool-design gap:
+
+- **Config-ignores are scoped debt acknowledgements, not licenses.** The
+  record-shape ignore for `tools/**` (§2.2) is a reviewed decision for
+  wire-format seams. The agent used it as a blanket reason to skip a
+  finding without evaluating it on its merits (is this dict a wire-format
+  seam?) — "the gate won't fail me" replaced "is this right?".
+- **The acknowledged debt is invisible.** The verdict counts baselined and
+  warning findings, but config-ignored findings are filtered BEFORE the
+  verdict — they vanish entirely. An agent (or human) can grow the
+  config-ignored population without the gate ever showing it.
+- **Warnings-never-fail + baseline + config-ignore compose into "nothing
+  is ever wrong."** Each mechanism is individually principled (debt
+  acknowledgement, no-false-positive drift); together they let the
+  standard drift silently.
+
+Consider for the tool (not decided):
+- the verdict could report config-suppressed counts (a debt ledger: "N
+  acknowledged in baseline, M warnings, K config-suppressed"), so ignoring
+  is visible, not silent;
+- a GROWTH signal: a config-ignored family whose finding count increases
+  across runs is a sign the ignore's scope is wrong — the debt is being
+  added to, not held;
+- prefer per-site suppressions (with whys, which the tool already
+  enforces) over blanket config ignores when a finding is a one-off.
+
+---
+
+## 10. What lucidlint could have caught during a refactor-heavy session (2026-08-20)
+
+The pipeline anti-fragility work (commit 6a6dda3) involved extracting
+helpers to satisfy lucidlint's own complexity/long-param-list findings.
+The extraction itself was where the edits went wrong — four distinct
+mechanical mistakes, none caught by any linter in the stack:
+
+1. **A module-level name collision.** A new `guess_pages()` CLI command
+   shadowed an existing module-level `guess_pages()` helper (the model-
+   inference loop). Legal shadowing — the later definition wins — so
+   neither ruff nor pyrefly flagged it, but the CLI dispatch would have
+   silently called the wrong function.
+2. **Unreachable leftover tails.** After extracting a helper, the old
+   body's closing `if missing: ... return 0` stayed behind as dead code
+   after the helper's `return`.
+3. **A `def` whose parameter list was split from its name** by an
+   insertion that landed inside the parens (`def f(\n<blank>\n  arg:`).
+   Python parses it; it's a structural smell only a formatter/linter
+   notices.
+4. **Orphaned suppression comments** after refactoring moved the def away
+   from its `# lucidlint: ignore` — this one lucidlint's
+   `stale-suppression` rule DID catch, correctly and deterministically.
+
+Deterministic findings lucidlint could add (all correct-by-construction,
+no judgement needed):
+
+- **Duplicate module-scope definition**: two `def <name>` at module level
+  is a shadowing hazard; flag the second. The module's name→line map is
+  already in the tool's graph.
+- **Dead code after a terminal statement**: a statement in a block after
+  `return`/`continue`/`raise` is unreachable. My leftover tails were
+  exactly this; the fix is a deterministic deletion.
+- **A `def` name and its first parameter separated by a blank line**:
+  mechanical formatting smell from an edit tool landing mid-parens.
+
+The session also confirmed what already works well:
+- `stale-suppression` caught the orphaned ignore (finding 4 above) — the
+  suppression-adjacency rule is doing its job;
+- the `--file` LSP mode surfaced the syntax errors from botched edits
+  immediately, before the test gate — worth running after every non-
+  trivial edit sequence;
+- the complexity and long-param-list findings drove exactly the right
+  extractions (`_guess_is_stale`, `_layout_one`, `_regen_boundaries`),
+  and the repo's per-site `# lucidlint: ignore long-param-list` + why
+  pattern (§9's conclusion) held up: only genuinely-single-call-site
+  helpers got the ignore, the rest were refactored.

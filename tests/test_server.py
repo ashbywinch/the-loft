@@ -979,6 +979,49 @@ def test_sync_drafts_serves_the_guessed_texts(server: ServerFixture) -> None:
     assert body["documents"][0]["greeting"] == "Chère Maman."
 
 
+def test_sync_drafts_hides_photo_only_documents(server: ServerFixture) -> None:
+    """The transcription review shows only documents with a text page,
+    and only their TEXT pages (2026-08-17, user): a standalone photo has
+    nothing to transcribe — it belongs to the people/places identification
+    flow, which reads the same structure unfiltered. A two-sided item's
+    picture side stays in the structure but the review pages through only
+    its text side."""
+    import json as _json
+
+    guess = server.work_dir / "adopt-0001" / "ocr-guess"
+    guess.mkdir(parents=True)
+    (guess / "back.txt").write_text("Chère Maman.", encoding="utf-8")
+    (guess / "boundaries.json").write_text(
+        _json.dumps(
+            [
+                {"pages": ["photo1.jpg"], "greeting": None, "signoff": None},
+                {"pages": ["front.jpg", "back.jpg"], "greeting": "Chère Maman.", "signoff": None},
+            ]
+        ),
+        encoding="utf-8",
+    )
+    server.registry_dir.mkdir(parents=True)
+    (server.registry_dir / "adopt-0001.json").write_text(
+        _json.dumps(
+            {
+                "batch_id": "adopt-0001",
+                "path": str(server.data_dir),
+                "status": "review",
+                "boundaries": [
+                    {"pages": ["photo1.jpg"], "status": "review"},
+                    {"pages": ["front.jpg", "back.jpg"], "status": "review"},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    status, raw = server.get("/api/sync/batch/adopt-0001/drafts", cookie=server.cookie)
+    assert status == 200
+    body = _json.loads(raw.decode("utf-8"))
+    docs = body["documents"]
+    assert [d["pages"] for d in docs] == [["back.jpg"]]
+
+
 def test_sync_drafts_rejects_a_traversal_batch_id(server: ServerFixture) -> None:
     _seed_sync_batch(server)
     # the raw-slash form dies at the router (404); every encoded form

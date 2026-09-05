@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from tools.loft_paths import REGISTRY_DIR
+from tools.pipeline_store import VERSION_SUFFIX, PipelineStore
+from tools.store import StoreError
 
 _BATCH_ID = re.compile(r"^[A-Za-z0-9-]+$")
 
@@ -26,19 +28,28 @@ def record_path(batch_id: str, registry_dir: Path = REGISTRY_DIR) -> Path:
 
 
 def load_batch(batch_id: str, registry_dir: Path = REGISTRY_DIR) -> dict[str, Any]:
-    path = record_path(batch_id, registry_dir)
-    if not path.exists():
+    name = f"{batch_id}.json"
+    store = PipelineStore(registry_dir)
+    if not store.exists(name):
         raise RegistryError(f"no registry record for batch {batch_id!r} — adopt it first")
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(store.read_latest(name))
 
 
 def list_batches(registry_dir: Path = REGISTRY_DIR) -> list[dict[str, Any]]:
     """Every batch record, newest first — the review surface's batch list."""
+    store = PipelineStore(registry_dir)
     batches = []
     for path in sorted(registry_dir.glob("*.json")):
+        name = path.name
+        # Skip PipelineStore versioned copies (N >= 2) if the base exists
+        m = VERSION_SUFFIX.search(name)
+        if m and int(m.group(1)) >= 2:
+            base = name[: m.start()] + ".json"
+            if store.exists(base):
+                continue
         try:
-            record = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RegistryError(f"registry record {path.name} is unreadable: {exc}") from exc
+            record = json.loads(store.read_latest(name))
+        except (StoreError, json.JSONDecodeError) as exc:
+            raise RegistryError(f"registry record {name} is unreadable: {exc}") from exc
         batches.append(record)
     return sorted(batches, key=lambda b: str(b.get("arrived_at", "")), reverse=True)

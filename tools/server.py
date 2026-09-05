@@ -230,7 +230,7 @@ def build_app(
     @app.post("/api/assess", response_model=None)
     def assess(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
         mine = narrator(request)
-        # lucidlint: ignore special-case the 401 auth gate IS the absent case — a stand-in would hide the boundary
+        # the 401 auth gate IS the absent case — a stand-in would hide the boundary
         if mine is None:
             return JSONResponse({"ok": False, "error": "sign in to tell a story"}, status_code=401)
         if client is None:
@@ -686,13 +686,27 @@ def build_app(
         try:
             record = load_batch(batch_id, registry_dir)
             by_pages = {tuple(b.get("pages", [])): b.get("status", "review") for b in (record.get("boundaries") or [])}
-            documents = [
-                {
-                    **document,
-                    "status": by_pages.get(tuple(document.get("pages", [])), "review"),
-                }
-                for document in draft_payloads(batch_id, work_dir)
-            ]
+            # The transcription review shows only documents with a text
+            # page, and only their TEXT pages (2026-08-17, user: "we just
+            # don't need to show users any of the photos when they're
+            # checking transcription"). A photo-only item has nothing to
+            # transcribe — it belongs to the people/places identification
+            # flow, which reads the same structure with no filter (the
+            # photo docs stay "review" until that flow claims them). The
+            # picture side of a two-sided item stays in the structure; the
+            # review just does not page through it.
+            documents = []
+            for document in draft_payloads(batch_id, work_dir):
+                texts = document.get("texts") or {}
+                if not texts:
+                    continue
+                documents.append(
+                    {
+                        **document,
+                        "pages": [p for p in document.get("pages", []) if p in texts],
+                        "status": by_pages.get(tuple(document.get("pages", [])), "review"),
+                    }
+                )
             return {
                 "batch_id": batch_id,
                 "label": record.get("label"),
@@ -715,6 +729,13 @@ def build_app(
             return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
         image = work_dir / batch_id / "oriented" / page
         if not image.is_file():
+            # a photo/drawing page skips orientation entirely (2026-08-17:
+            # the grouping scorer puts the postcard's picture side into its
+            # document — the review surface must still see the image)
+            record = load_batch(batch_id, registry_dir)
+            raw = Path(str(record.get("path", ""))) / page
+            if raw.is_file():
+                return FileResponse(raw)
             return JSONResponse({"error": "no such page"}, status_code=404)
         return FileResponse(image)
 

@@ -34,9 +34,10 @@ import math
 import re
 import unicodedata
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from tools.atomic import atomic_write
+from tools.store import DiskStore  # noqa: F401
 
 
 # A PaddleOCR recognition line + its box (the detection stage's output).
@@ -58,6 +59,9 @@ BOX_COORDINATE_COUNT = 4  # a box is [x0, y0, x1, y1]
 # The VLM's box coordinate system: normalized 0-1000 (fractions of the
 # image's width/height, times 1000), rescaled to pixels when anchored.
 NORMALIZED_BOX_SCALE = 1000
+
+# Float tolerance for division-underflow protection.
+_MIN_AREA_EPSILON = 1e-9
 QUARTERS_PER_FULL_TURN = 4  # a full rotation is four quarter-turns (90° each)
 
 # The multi-orientation admission (PRD VR15, 2026-08-16 prototype): a
@@ -67,6 +71,10 @@ QUARTERS_PER_FULL_TURN = 4  # a full rotation is four quarter-turns (90° each)
 REC_SCORE_GATE = 0.85  # recognition confidence: real words read at the right orientation
 MIN_LETTERS = 2  # plausibility: a "real word" has letters, not just shapes
 _DEDUPE_OVERLAP = 0.3  # two passes' lines sharing this much of the smaller box are the same physical region
+# A multi line the rec read below this is doubtful — its words flag (conf
+# 0.0), the review's red doubt + the mark-fine button (VR4, 2026-08-17:
+# the multi path had no self-report, so the rec score is the doubt signal).
+WORD_FLAG_THRESHOLD = 0.95
 
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
 _WS = re.compile(r"\s+")
@@ -155,6 +163,7 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[
                     "rec_words": words(detections[di]["text"]),
                     "det_words": detections[di].get("words", []),
                     "box_source": "content",
+                    "orientation": detections[di].get("orientation", 0),
                 }
             )
     matches.sort(key=lambda m: m["vlm_index"])
@@ -178,6 +187,7 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[
             "rec_words": words(det["text"]),
             "det_words": det.get("words", []),
             "box_source": "positional",
+            "orientation": det.get("orientation", 0),
         }
         for vi, det in zip(boxless, unmatched, strict=False)
     )
@@ -376,6 +386,11 @@ def load_layout(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_layout_store(store: Any, store_path: str) -> dict[str, Any]:
+    """Read the latest version of a layout from a ``PipelineStore``."""
+    return json.loads(store.read_latest(store_path))
+
+
 def load_vlm_boxes(path: Path) -> dict[int, list[float]] | None:
     """The VLM's per-line boxes (normalized 0-1000) from a page's
     transcription sidecar (``page.vlm.json`` — written by
@@ -470,7 +485,7 @@ def _box_overlap(a: list[float], b: list[float]) -> float:
     box still claims the same region."""
     x = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
     y = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-    return (x * y) / min(_box_area(a), _box_area(b), 1e-9)
+    return (x * y) / min(_box_area(a), _box_area(b), _MIN_AREA_EPSILON)
 
 
 def _richness(line: dict[str, Any]) -> tuple[int, float]:
@@ -482,51 +497,244 @@ def _richness(line: dict[str, Any]) -> tuple[int, float]:
     return sum(1 for ch in line["text"] if ch.isalpha()), float(line["conf"])
 
 
+def _drop_fragment_subsets(lines: list[dict[str, Any]], keep: list[bool]) -> None:
+    """The fragment-subset rule (2026-08-17): a SHORT line (<=2 tokens)
+    whose tokens are a strict subset of another line's is the same text
+    read as a fragment — the mirror passes' rec reading a piece of an
+    anchored line ('HOUSE,' next to 'HERNSPETH HOUSE,') — dropped even
+    when its box landed elsewhere."""
+    token_sets = [set(words(line["text"])) for line in lines]
+    for i in range(len(lines)):
+        if not keep[i]:
+            continue
+        ta = token_sets[i]
+        if not (0 < len(ta) <= 2):
+            continue
+        for j in range(len(lines)):
+            if i == j or not keep[j]:
+                continue
+            if ta < token_sets[j]:
+                keep[i] = False
+                break
+
+
 def dedupe_regions(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Drop the weaker readings of the same physical region across
-    orientations: a line is kept only when no other line overlaps its box
-    with a strictly richer reading. Ties keep the earlier line. The
-    survivors keep their index — the caller re-indexes after."""
+    orientations. The anchored lines (the model's authoritative
+    transcription) are never dropped — its estimated boxes can overlap
+    between DISTINCT lines, so the box-overlap rule applies only to the
+    rec extras (2026-08-17: the eval caught 'POST CARD.' being dropped
+    when the model's 180° box overlapped a longer line's box). The
+    fragment-subset rule (a short line whose tokens are a subset of
+    another's) applies to all. The survivors keep their index — the
+    caller re-indexes after."""
     keep = [True] * len(lines)
+    anchored = {i for i, line in enumerate(lines) if line.get("box_source") in ("vlm", "vlm-unconfirmed")}
     for i, a in enumerate(lines):
+        if i in anchored:
+            continue
         for j, b in enumerate(lines):
             if i == j or not keep[i] or not keep[j]:
                 continue
             if _box_overlap(a["box"], b["box"]) > _DEDUPE_OVERLAP and _richness(b) > _richness(a):
                 keep[i] = False
                 break
+    _drop_fragment_subsets(lines, keep)
     return [line for line, k in zip(lines, keep, strict=True) if k]
 
 
+def _multi_line_words(text: str, boxes: list[dict[str, Any]], score: float) -> list[dict[str, Any]]:
+    """The per-word entries for a multi-orientation line: the rec text's
+    tokens (the display words — verbatim, vlm_line_words) paired with the
+    detector's remapped word boxes (extra tokens get no box; extra boxes
+    drop), and the flag convention — a line the rec read weakly flags ALL
+    its words (conf 0.0: the review's red doubt + the mark-fine button).
+    Before 2026-08-17 the words carried no text and never flagged — the
+    review rendered blank lines with no check buttons (reproduced on the
+    Caradog 1915 sample, 2026-08-17)."""
+    tokens = vlm_line_words(text)
+    out: list[dict[str, Any]] = []
+    for i, token in enumerate(tokens):
+        box = boxes[i].get("box") if i < len(boxes) else None
+        out.append({"word": token, "box": box, "conf": 0.0 if score < WORD_FLAG_THRESHOLD else score})
+    return out
+
+
+def _anchored_lines(
+    report_lines: list[dict[str, Any]],
+    confirmed: set[int],
+    width: int,
+    height: int,
+) -> list[dict[str, Any]]:
+    """The model-anchored lines of the multi layout (2026-08-17): the
+    report's transcription lines at their own boxes — the box holds the
+    words it claims (VR14). ``confirmed`` = the report line indices a rec
+    detection content-matched; those read clean, the rest flag."""
+    lines: list[dict[str, Any]] = []
+    for i, report in enumerate(report_lines):
+        text = str(report.get("text", "")).strip()
+        if not text:
+            continue
+        b = report.get("box") or [0, 0, 0, 0]
+        is_confirmed = i in confirmed
+        lines.append(
+            {
+                "index": len(lines),
+                "text": text,
+                "box": [
+                    b[0] / NORMALIZED_BOX_SCALE * width,
+                    b[1] / NORMALIZED_BOX_SCALE * height,
+                    b[2] / NORMALIZED_BOX_SCALE * width,
+                    b[3] / NORMALIZED_BOX_SCALE * height,
+                ],
+                "conf": 1.0 if is_confirmed else 0.0,
+                "orientation": int(report.get("degrees", 0)),
+                "box_source": "vlm" if is_confirmed else "vlm-unconfirmed",
+                "words": [{"word": w, "box": None, "conf": 1.0 if is_confirmed else 0.0} for w in vlm_line_words(text)],
+            }
+        )
+    return lines
+
+
+def _located_box(
+    report: dict[str, Any] | None,
+    match: dict[str, Any] | None,
+    width: int,
+    height: int,
+) -> list[float] | None:
+    """The line's box: the report's located box (normalized 0-1000 scaled
+    to pixels; [0,0,0,0] = not located), else the rec match's box, else
+    None — a boxless line is flagged (2026-08-17)."""
+    b = report.get("box") if report else None
+    if b and (b[2] > b[0] or b[3] > b[1]):
+        return [
+            b[0] / NORMALIZED_BOX_SCALE * width,
+            b[1] / NORMALIZED_BOX_SCALE * height,
+            b[2] / NORMALIZED_BOX_SCALE * width,
+            b[3] / NORMALIZED_BOX_SCALE * height,
+        ]
+    return match["box"] if match else None
+
+
+def _vlm_text_lines(
+    guess_lines: list[str],
+    report_lines: list[dict[str, Any]],
+    matches: list[dict[str, Any]],
+    width: int,
+    height: int,
+) -> list[dict[str, Any]]:
+    """The v3 anchored lines (2026-08-17): the guess's authoritative
+    transcription, each line LOCATED by the report (box + degrees keyed
+    by the line index). A line the report couldn't locate takes its rec
+    match's box, or none — flagged. Only the CONTENT matches confirm
+    (the rec read the same words); a partial report degrades only the
+    geometry, never the text."""
+    by_index = {int(r["index"]): r for r in report_lines if isinstance(r.get("index"), int)}
+    match_by_index = {m["vlm_index"]: m for m in matches}
+    confirmed = {m["vlm_index"] for m in matches if m.get("box_source") == "content"}
+    lines: list[dict[str, Any]] = []
+    for i, line_text in enumerate(guess_lines):
+        r = by_index.get(i)
+        match = match_by_index.get(i)
+        is_confirmed = i in confirmed
+        lines.append(
+            {
+                "index": len(lines),
+                "text": line_text,
+                "box": _located_box(r, match, width, height),
+                "conf": 1.0 if is_confirmed else 0.0,
+                "orientation": int(match["orientation"])
+                if match and isinstance(match.get("orientation"), int)
+                else (int(r.get("degrees", 0)) if r else 0),
+                "box_source": "vlm" if is_confirmed else "vlm-unconfirmed",
+                "words": [
+                    {"word": w, "box": None, "conf": 1.0 if is_confirmed else 0.0} for w in vlm_line_words(line_text)
+                ],
+            }
+        )
+    return lines
+
+
+def _extra_lines(unmatched: list[Detection]) -> list[dict[str, Any]]:
+    """The rec detections no text line claimed — the model-missed text —
+    flagged extras at their pass orientation."""
+    lines: list[dict[str, Any]] = []
+    for det in unmatched:
+        orientation = det.get("orientation")
+        lines.append(
+            {
+                "index": 0,  # provisional — re-indexed after the dedupe + sort
+                "text": det["text"],
+                "box": det["box"],
+                "conf": 0.0,
+                "orientation": orientation if isinstance(orientation, int) else 0,
+                "box_source": "multi",
+                "words": _multi_line_words(det["text"], det.get("words", []), 0.0),
+            }
+        )
+    return lines
+
+
+# the combined layout's heterogeneous inputs — the page identity, geometry, the passes, the report, the text
+# lucidlint: ignore long-param-list a parameter object would obscure the pure function
 def multi_layout(
     page: str,
     width: int,
     height: int,
     passes: list[tuple[int, list[dict[str, Any]]]],
+    report_lines: list[dict[str, Any]] | None = None,
+    vlm_text: str | None = None,
 ) -> dict[str, Any]:
-    """The combined multi-orientation layout (PRD VR15): the admitted
-    lines from each orientation pass, ordered 0° first then each next
-    direction, each line carrying the orientation it was read at. The
-    passes' boxes are already remapped to the original image's pixels;
-    width/height are the original (oriented) image's. The rec text is
-    the provisional transcription (VR14) — the reviewer corrects it.
-    The same physical region read in several passes keeps only its
-    best reading (dedupe_regions)."""
-    lines: list[dict[str, Any]] = []
-    for degrees, admitted in sorted(passes, key=lambda p: p[0]):
-        for entry in admitted:
-            lines.append(
-                {
-                    "index": len(lines),
-                    "text": entry["text"],
-                    "box": entry["box"],
-                    "conf": entry["score"],
-                    "orientation": degrees,
-                    "box_source": "multi",
-                    "words": [{"box": w.get("box"), "conf": entry["score"]} for w in entry.get("words", [])],
-                }
-            )
+    """The combined multi-orientation layout (PRD VR15).
+
+    With the report's per-line geometry (``report_lines`` — box in the
+    normalized 0-1000 frame + degrees, keyed by the line index) AND the
+    page's known transcription (``vlm_text`` — the guess's corrected
+    reading), the lines ARE that authoritative text, each located at its
+    box — the box holds the words it claims (VR14). A rec detection
+    agreeing on content marks the line confident; the rec lines no text
+    line claims stay as flagged extras. Without the report, the
+    rec-based pass lines are the layout (the v1 fallback).
+
+    The lines order 0° first then each next direction; within a group the
+    text order, then the extras by reading position; the same physical
+    region keeps only its best reading (dedupe_regions)."""
+    if report_lines:
+        detections = cast(
+            "list[Detection]",
+            [{**entry, "orientation": degrees} for degrees, admitted in passes for entry in admitted],
+        )
+        if vlm_text:
+            # v3 (2026-08-17): the layout's text is the guess's
+            # authoritative transcription; the report LOCATES each line
+            guess_lines = [ln for ln in vlm_text.split("\n") if ln.strip()]
+            matches, unmatched = associate_lines(guess_lines, detections)
+            lines = _vlm_text_lines(guess_lines, report_lines, matches, width, height)
+        else:
+            # v2: the report's own transcription (no known text was given)
+            report_texts = [str(r.get("text", "")) for r in report_lines]
+            matches, unmatched = associate_lines(report_texts, detections)
+            confirmed = {m["vlm_index"] for m in matches if m.get("box_source") == "content"}
+            lines = _anchored_lines(report_lines, confirmed, width, height)
+        lines += _extra_lines(unmatched)
+    else:
+        lines = [
+            {
+                "index": 0,  # provisional — re-indexed after the dedupe + sort
+                "text": entry["text"],
+                "box": entry["box"],
+                "conf": entry["score"],
+                "orientation": degrees,
+                "box_source": "multi",
+                "words": _multi_line_words(entry["text"], entry.get("words", []), entry["score"]),
+            }
+            for degrees, admitted in sorted(passes, key=lambda p: p[0])
+            for entry in admitted
+        ]
     lines = dedupe_regions(lines)
+    # 0° first, then each next direction — a stable sort keeps the report
+    # order (and the extras' reading position) within each group
+    lines.sort(key=lambda line: line["orientation"])
     for i, line in enumerate(lines):
         line["index"] = i
     return {"page": page, "width": width, "height": height, "lines": lines, "unmatched": []}
@@ -536,15 +744,28 @@ def load_orientation_hint(path: Path) -> list[int]:
     """The page's distinct text orientations (0/90/180/270), written by
     the pipeline stage when the arbiter's scores suggested more than one
     direction (PRD VR15). [] = a single orientation — the plain
-    single-orientation layout path applies."""
+    single-orientation layout path applies. The sidecar is the report
+    dict — the v3 lines carry their own degrees (2026-08-17), so the
+    hints and the lines' degrees both feed the pass set."""
+    report = load_orientation_report(path)
+    degrees = {int(h.get("degrees")) for h in report.get("orientation_hint", [])}
+    degrees |= {int(ln.get("degrees")) for ln in report.get("lines", []) if ln.get("degrees") in (0, 90, 180, 270)}
+    return sorted(degrees) if len(degrees) >= 2 else []
+
+
+def load_orientation_report(path: Path) -> dict[str, Any]:
+    """The orientation report sidecar (the v2 shape, 2026-08-17): the
+    region hints + the model's own per-line transcription with boxes and
+    degrees. {} when absent or unreadable — the plain layout path."""
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(data, list):
-        return []
-    degrees = {int(h.get("degrees")) for h in data if isinstance(h, dict) and h.get("degrees") in (0, 90, 180, 270)}
-    return sorted(degrees) if len(degrees) >= 2 else []
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    hints = [h for h in data.get("orientation_hint", []) if isinstance(h, dict)]
+    lines = [ln for ln in data.get("lines", []) if isinstance(ln, dict)]
+    return {"orientation_hint": hints, "lines": lines}
 
 
 def orientation_passes(degrees: list[int]) -> list[int]:
@@ -555,10 +776,8 @@ def orientation_passes(degrees: list[int]) -> list[int]:
     the block upside-down — the recognition admission then rejects it
     and the text is silently missed. The mirror pass costs one detection
     run (no model call) and admits nothing garbage."""
-    out = set(degrees)
-    for d in degrees:
-        if d in (90, 270):
-            out.add(270 if d == 90 else 90)
+    out = {d for d in degrees}
+    out.update({270 if d == 90 else 90 for d in degrees if d in (90, 270)})
     return sorted(out)
 
 
@@ -609,8 +828,54 @@ def rotate_detections(detections: list[Detection], quarters: int, w: int, h: int
     return rotated
 
 
+def validate_layout(layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
+    """The fail-fast box guard (2026-08-17): a layout whose line has a
+    box that is degenerate or outside the image must NEVER reach the
+    front end — the reviewer must never see wrong boxes (the reproduced
+    incident: page-02's reprocessed layout carried approximate boxes to
+    the review surface silently). Returns the violations; [] = clean.
+    ``None`` boxes are fine (the line is flagged, the review shows it
+    without a box); the tolerance covers the model's estimate slop."""
+    width = int(layout.get("width", 0))
+    height = int(layout.get("height", 0))
+    violations: list[str] = []
+    for line in layout.get("lines", []):
+        box = line.get("box")
+        if box is None:
+            continue
+        if len(box) != 4 or not all(isinstance(v, (int, float)) for v in box):
+            violations.append(f"{line.get('text', '')[:20]!r}: malformed box {box}")
+            continue
+        x0, y0, x1, y1 = box
+        if x1 <= x0 or y1 <= y0:
+            violations.append(f"{line.get('text', '')[:20]!r}: degenerate box {box}")
+        elif x0 < -tolerance or y0 < -tolerance or x1 > width + tolerance or y1 > height + tolerance:
+            violations.append(f"{line.get('text', '')[:20]!r}: box outside the image {box}")
+    return violations
+
+
 def write_layout(layout: dict[str, Any], path: Path) -> None:
     """Publish a page's layout atomically — a reader must never meet a
     half-written layout (house rule: files other code reads are
-    write-then-rename)."""
+    write-then-rename). Fail-fast (2026-08-17): a layout with a
+    degenerate or out-of-image box is REFUSED — a bad layout must never
+    be persisted, let alone served."""
+    violations = validate_layout(layout)
+    if violations:
+        raise ValueError(f"refusing to write an invalid layout: {violations}")
     atomic_write(path, json.dumps(layout, indent=1, ensure_ascii=False) + "\n")
+
+
+def write_layout_store(
+    layout: dict[str, Any],
+    store: Any,
+    store_path: str,
+) -> None:
+    """Versioned layout write via the ``PipelineStore`` — a re-run creates
+    a new version instead of overwriting (2026-08-18: the page-02 incident
+    was a direct atomic_write to a fixed path, which lost the previous
+    good layout)."""
+    violations = validate_layout(layout)
+    if violations:
+        raise ValueError(f"refusing to write an invalid layout: {violations}")
+    store.write(store_path, json.dumps(layout, indent=1, ensure_ascii=False) + "\n")

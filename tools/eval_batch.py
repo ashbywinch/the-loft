@@ -11,18 +11,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import shutil
 import sys
 import tempfile
-from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from time import monotonic
 from typing import Any
 
-import numpy as np
 from PIL import Image
 
 # The rec engine's imports stay INLINE (in _make_engine/_detect_pieces):
@@ -30,23 +27,12 @@ from PIL import Image
 # a module-top import would make this file unimportable (untestable) in
 # the main venv.
 from tools.box import (
-    fragment_violation,
     has_ink,
     orientation_from_aspect,  # noqa: E402
-    projection_runs,
     text_line_count,
 )
 from tools.gates import glyph_extent_violation, validate_layout
-from tools.ink import (
-    cluster_rows,
-    coverage_violations,
-    match_labels,
-    offset_box,
-    split_by_bands,
-    split_row_at_piece_gaps,
-    transcription_line_count_plausible,
-    union,
-)
+from tools.ink import cluster_rows, match_labels, offset_box, split_by_bands, transcription_line_count_plausible, union
 from tools.layout import load_layout_store, write_layout_store  # noqa: E402
 from tools.loft_paths import WORK_DIR  # noqa: E402
 from tools.pipeline_store import PipelineStore  # noqa: E402
@@ -83,13 +69,10 @@ def layout_is_current(layout: dict[str, Any]) -> bool:
 def prep_panel(image_path: Path, layout: dict[str, Any] | None, tmp: Path, page: str) -> dict[str, Any] | None:
     """Crop the page's content region; no layout → the full page."""
     if layout is None:
-        # one open, one save, the with closes the fp — the unclosed
-        # double-open hit a PIL PNG-save race mid-batch ('_idat' has no
-        # fileno, 2026-08-28: the full batch crashed at page-09)
         with Image.open(image_path) as im:
             w, h = im.size
-            panel_path = tmp / f"{page}.png"
-            im.save(panel_path)
+        panel_path = tmp / f"{page}.png"
+        Image.open(image_path).save(panel_path)
         return {"path": str(panel_path), "x0": 0, "y0": 0, "w": w, "h": h}
     boxed = [ln["box"] for ln in layout.get("lines", []) if ln.get("box")]
     unmatched = [u["box"] for u in layout.get("unmatched", []) if u.get("box")]
@@ -108,217 +91,6 @@ def prep_panel(image_path: Path, layout: dict[str, Any] | None, tmp: Path, page:
     return {"path": str(panel_path), "x0": bx0, "y0": by0, "w": bw, "h": bh}
 
 
-_RECALL_ENGINE: Any = None
-
-
-def _recall_detect(_engine: Any, crop_path: Path) -> list[list[float]]:
-    """The recall detector (2026-08-28): a second PaddleOCR instance,
-    created lazily — the main engine is freed before Phase 3 (the OOM
-    discipline). Runs at the ENGINE's normal threshold: the fix is the
-    RESOLUTION (tiles), not the threshold — the 0.86x full-page cap
-    under-segments small handwriting, and at tile resolution the
-    default threshold already finds it (page-01's margin line-starts:
-    28 boxes at 0.3). Boxes come back in crop coordinates; _tile_detect
-    offsets them into page space."""
-    # lucidlint: ignore global-state the lazy recall engine is the .venv-htr seam — created once, freed before it
-    global _RECALL_ENGINE
-    if _RECALL_ENGINE is None:
-        # lucidlint: ignore inline-import the .venv-htr seam — paddleocr lives only in .venv-htr; the main venv lacks it
-        from paddleocr import PaddleOCR  # type: ignore[missing-import]  # paddleocr lives only in .venv-htr
-
-        # lucidlint: ignore inline-import the same seam — ENGINE imports layout_detect, which loads paddleocr
-        from tools.layout_detect import ENGINE
-
-        _RECALL_ENGINE = PaddleOCR(**ENGINE)
-    # lucidlint: ignore inline-import the .venv-htr seam — paddleocr lives only in .venv-htr; the main venv lacks it
-    from tools.layout_detect import detect_page
-
-    raw = detect_page(_RECALL_ENGINE, crop_path)
-    return [[float(v) for v in d["box"]] for d in raw["detections"] if d["box"]]
-
-
-def _tile_detect(image: Any, detect: Any, crop_dir: Path, target: int = 1300, overlap: int = 300) -> list[list[float]]:
-    """The tile pass (2026-08-28): the full-page detection's internal
-    resize is capped by max_side_limit=4000 to ~0.86x of a 2544px-wide
-    page — small handwriting words merge into their neighbours and the
-    line extensions vanish (page-01: the 'margin notes' are the lines'
-    own starts at x~543, merged into the body words at 0.86x). A 2D
-    grid of ~``target``-px tiles gets the short side upscaled to the
-    2000px limit while the long side stays under the 4000px cap:
-    ~1.4-1.5x effective resolution per tile (the 1300px sweet spot:
-    below it the long-side cap binds, above it the upscale shrinks).
-    The overlap keeps lines straddling a tile boundary fully inside
-    one tile. Crop-local boxes offset to page space; near-identical
-    duplicates from the overlap zones dedupe. ``detect(engine,
-    crop_path)`` is the injectable seam."""
-    w, h = image.size
-    n_vert = max(1, math.ceil(w / target))
-    n_horiz = max(1, math.ceil(h / target))
-    xs = _tile_steps(w, n_vert, overlap)
-    ys = _tile_steps(h, n_horiz, overlap)
-    pieces: list[list[float]] = []
-    i = 0
-    for x0, x1 in xs:
-        for y0, y1 in ys:
-            crop = crop_dir / f"tile-{i}.png"
-            i += 1
-            image.crop((x0, y0, x1, y1)).save(crop)
-            for box in detect(None, crop):
-                pieces.append([box[0] + x0, box[1] + y0, box[2] + x0, box[3] + y0])
-    # drop noise slivers (the upscaled tiles over-detect page specks —
-    # 2026-08-28: 17x3px pieces clustered into absurd rows on page-01;
-    # real text at this scan scale is 40-70px tall), then dedupe
-    # near-identical overlap duplicates (all 4 corners within 2px)
-    unique: list[list[float]] = []
-    for p in sorted(pieces, key=lambda b: (b[1], b[0])):
-        if p[2] - p[0] < 20 or p[3] - p[1] < 20:
-            continue
-        if not any(
-            abs(p[0] - q[0]) <= 2 and abs(p[1] - q[1]) <= 2 and abs(p[2] - q[2]) <= 2 and abs(p[3] - q[3]) <= 2
-            for q in unique
-        ):
-            unique.append(p)
-    return unique
-
-
-def _tile_steps(size: int, n: int, overlap: int) -> list[tuple[int, int]]:
-    """The covered, overlapped start/end pairs for one axis of the
-    tile grid: ``n`` tiles, each ``step + overlap`` long, the total
-    covering ``size`` (the last tile ends exactly at ``size``)."""
-    step = max(1, (size + overlap) // n - overlap)
-    spans = []
-    x0 = 0
-    while x0 < size:
-        x1 = min(size, x0 + step + overlap)
-        spans.append((x0, x1))
-        if x1 >= size:
-            break
-        x0 += step
-    return spans
-
-
-def _gap_merged_runs(runs: list[tuple[int, int]], gap: int, last_row: int | None = None) -> list[tuple[int, int]]:
-    """The proj>0 runs, gap-merged within ``gap`` rows — the
-    handwriting's strokes leave 1-row gaps; a sparse row must not
-    split a band (extracted from ink_layout_boxes 2026-08-29 for the
-    complexity bar)."""
-    merged: list[tuple[int, int]] = []
-    for b in runs:
-        if merged and b[0] - merged[-1][1] <= gap:
-            merged[-1] = (merged[-1][0], b[1])
-        else:
-            merged.append(b)
-    return merged
-
-
-def _adaptive_ink(arr: Any) -> tuple[Any, int, int]:
-    """The ink-layout's ink: pixel < local_median - 35 (a 4x4 block
-    median — the pipeline's has_ink threshold; the scan's shading is
-    not ink). Returns (ink-mask, block_rows, width) (extracted from
-    ink_layout_boxes 2026-08-29 for the complexity bar)."""
-    h, w = arr.shape
-    block = 4
-    bh, bw = h // block, w // block
-    a = arr[: bh * block, : bw * block]
-    level = np.repeat(np.repeat(np.median(a.reshape(bh, block, bw, block), axis=(1, 3)), block, axis=0), block, axis=1)
-    return a < (level - 35), bh, w
-
-
-def _text_lines(p: Any, y0: int, y1: int) -> list[tuple[int, int]]:
-    """The band's text lines: the profile's ≥0.12x-max rows, gap-merged
-    within 6 rows (extracted from ink_layout_boxes 2026-08-29 for the
-    complexity bar)."""
-    text_rows = p >= 0.12 * p.max()
-    lines: list[tuple[int, int]] = []
-    s2 = None
-    for i, t in enumerate(text_rows):
-        if t and s2 is None:
-            s2 = i
-        elif not t and s2 is not None:
-            if i - s2 >= 15:
-                lines.append((s2 + y0, i - 1 + y0))
-            s2 = None
-    if s2 is not None and y1 - s2 >= 15:
-        lines.append((s2 + y0, y1))
-    lmerged: list[tuple[int, int]] = []
-    for ln in lines:
-        if lmerged and ln[0] - lmerged[-1][1] <= 6:
-            lmerged[-1] = (lmerged[-1][0], ln[1])
-        else:
-            lmerged.append(ln)
-    return lmerged
-
-
-def _line_ink_boxes(a: Any, ly0: int, ly1: int, word_gap: int, min_w: int) -> list[list[float]]:
-    """One text line's x-runs, split at word gaps into boxes of at
-    least ``min_w`` — the raw ink (< 200) so the boxes cover the
-    gate's measure: the faint marks the adaptive threshold excluded
-    (extracted from ink_layout_boxes 2026-08-29 for the complexity
-    bar)."""
-    lxs = np.where((a[ly0 : ly1 + 1] < 200).sum(axis=0) > 0)[0]
-    if len(lxs) == 0:
-        return []
-    runs: list[tuple[int, int]] = []
-    rs = [int(lxs[0]), int(lxs[0])]
-    for x in lxs[1:]:
-        xi = int(x)
-        if xi - rs[1] <= word_gap:
-            rs[1] = xi
-        else:
-            runs.append((rs[0], rs[1]))
-            rs = [xi, xi]
-    runs.append((rs[0], rs[1]))
-    return [[float(x0b), float(ly0), float(x1b), float(ly1)] for x0b, x1b in runs if x1b - x0b >= min_w]
-
-
-def ink_layout_boxes(image: Any, word_gap: int = 80, min_w: int = 40) -> list[list[float]]:
-    """The ink-layout (2026-08-28): the dense-cursive rescue. A letter's
-    margin notes (annotations) interleave with the main text at the same
-    y-bands; the piece-based line model cannot separate them (the pieces
-    span the interleaving, the boxes double-claim). The ink-layout reads
-    the page DIRECTLY, no detector pieces:
-    - the ADAPTIVE ink: pixel < local_median - 35 (a 4x4 block median —
-      the pipeline's has_ink threshold; the scan's shading is not ink);
-      a line with a real gap (the item's end vs the annotation's start)
-      becomes TWO boxes; a continuous line stays ONE box. The boxes are
-      x-disjoint by construction — no double-claims regardless of the
-      y-interleaving — and they ARE the ink, so coverage and fragments
-      pass by construction. The item and its annotation are separate
-      transcript lines: the letter's own sense is preserved."""
-    arr = np.array(image.convert("L")).astype(np.int16)
-    ink, bh, w = _adaptive_ink(arr)
-    # the MID column: the words' x-height zone (page-01's only clean
-    # band source — the left edge has the scan's shading, the right
-    # edge the interleaving with the annotations)
-    mid = (int(w * 0.30), int(w * 0.57))
-    proj = ink[:, mid[0] : mid[1]].sum(axis=1)
-    # the 7-wide smoothing: the real page's profile is dense (every
-    # row inked), and a wider kernel also bridges the sparse rows of a
-    # synthetic/scan with 3-row stroke gaps without merging the
-    # descender bridges (their counts stay far below the threshold)
-    kernel = np.ones(7) / 7
-    # all proj>0 runs, gap-merged (the handwriting's strokes leave
-    # 1-row gaps — a sparse row must not split a band), then the
-    # min-height applies to the MERGED runs
-    merged = _gap_merged_runs(projection_runs(proj), 8)
-    bands = [b for b in merged if b[1] - b[0] + 1 >= 20]
-    boxes: list[list[float]] = []
-    for y0, y1 in bands:
-        p = np.convolve(proj[y0 : y1 + 1].astype(float), kernel, mode="same")
-        if p.max() <= 0:
-            continue
-        for ly0, ly1 in _text_lines(p, y0, y1):
-            boxes.extend(_line_ink_boxes(arr, ly0, ly1, word_gap, min_w))
-    # the raw-ink x-runs catch the scan's SHADING (light-gray pixels,
-    # no dark text — 2026-08-28: 9 no_ink boxes of 60 on page-01).
-    # has_ink (median - 35) is the honest test: a region whose pixels
-    # are all near its own median is shading, not text.
-    boxes = [b for b in boxes if has_ink(b, image)]
-    # the decoration strips (underlines/swirls, h=14-22 vs the letter's
-    # 27-70px lines) are ink but not text — the min-height drops them
-    return [b for b in boxes if b[3] - b[1] >= 25]
-
-
 def _detect_pieces(engine: Any, panel_path: Path) -> list[list[float]]:
     """The rec's detection pieces (the REAL ink)."""
     # lucidlint: ignore inline-import the .venv-htr seam — paddleocr lives only in .venv-htr
@@ -326,237 +98,6 @@ def _detect_pieces(engine: Any, panel_path: Path) -> list[list[float]]:
 
     raw = detect_page(engine, panel_path)
     return [[float(v) for v in d["box"]] for d in raw["detections"] if d["box"]]
-
-
-def needs_row_reads(row_count: int, line_count: int) -> bool:
-    """Did the model under-read so badly that proportional matching
-    cannot be trusted? (2026-08-26: the birth cert's 40 measured rows
-    vs 16 VLM lines — the model's 40%-plausibility floor let exactly
-    16 lines through and matching smeared them across the rows.) When
-    the line count falls below two-thirds of the rows on a page with
-    at least 10 rows, every row gets its own clip read instead. Tiny
-    pages are exempt (the rec over-splits their fragments into rows)."""
-    return row_count >= 10 and line_count * 3 < row_count * 2
-
-
-def _safe_row_read(read: Any, box: list[float]) -> str | None:
-    """One row clip read that cannot crash the batch — a failure
-    returns None and the row stays empty (the page refuses honestly;
-    2026-08-26: the budget-exhaustion VlmError aborted a whole run)."""
-    try:
-        return read(box)
-    except Exception:
-        return None
-
-
-def _drop_unreadable(boxes: list[list[float]], labels: Sequence[str | None]) -> tuple[list[list[float]], list[str]]:
-    """The ink-layout's edge artifacts (2026-08-28): the scan's
-    right-edge marks (x 2005+) and stray left-edge specks pass has_ink
-    but the VLM reads NOTHING — they are not text. The empty-labeled
-    boxes drop after the fills; their ink stays unboxed and visible,
-    the page's honest boxes serve."""
-    kept: list[list[float]] = []
-    kept_labels: list[str] = []
-    for b, lab in zip(boxes, labels, strict=True):
-        if (lab or "").strip():
-            kept.append(b)
-            kept_labels.append(lab or "")
-    return kept, kept_labels
-
-
-def _violation_indices(
-    page_unions: list[list[float]],
-    labels: list[str],
-    pieces_for_cov: list[list[float]],
-    im: Any,
-    glyph_check: bool,
-) -> tuple[list[int], list[int], list[int], list[int], list[int]]:
-    """(bad, no_ink, multi, fragments, glyph) — the union of every
-    gate's bad indices for one page plus the per-gate breakdown for
-    the report counts (extracted from _gate_layout 2026-08-29)."""
-    no_ink = [i for i, u in enumerate(page_unions) if not has_ink(u, im)]
-    multi = [i for i, u in enumerate(page_unions) if text_line_count(u, im) > 1]
-    fragments = [
-        i
-        for i, u in enumerate(page_unions)
-        if fragment_violation(u, im, siblings=[v for j, v in enumerate(page_unions) if j != i])
-    ]
-    glyph = (
-        [i for i, u in enumerate(page_unions) if glyph_extent_violation(labels[i], u, orientation_from_aspect(u))]
-        if glyph_check
-        else []
-    )
-    all_bad = set(no_ink) | set(multi) | set(fragments) | set(glyph)
-    if coverage_violations(page_unions, pieces_for_cov)[0]:
-        all_bad |= set(range(len(page_unions)))
-    return sorted(all_bad), no_ink, multi, fragments, glyph
-
-
-def _line_records(page_unions: list[list[float]], labels: list[str]) -> list[dict]:
-    """The assembled transcript records for one page (extracted from
-    _gate_layout 2026-08-29 for the complexity bar)."""
-    return [
-        {
-            "index": i,
-            "text": labels[i],
-            "box": [round(v) for v in u],
-            "conf": 1.0,
-            "words": [],
-            "box_source": "ink",
-            "orientation": orientation_from_aspect(u),
-        }
-        for i, u in enumerate(page_unions)
-    ]
-
-
-def _split_row_reads(
-    page_unions: list[list[float]], piece_list: list[list[float]], ox: float, oy: float
-) -> list[list[float]]:
-    """The under-read path's per-row split: a row whose box is wider
-    than 25x its height holds MULTIPLE transcript lines (the model's
-    line count fell below the measured rows, so proportional matching
-    smeared them) — split it at its piece gaps (extracted from
-    assemble 2026-08-29 for the complexity bar)."""
-    read_unions: list[list[float]] = []
-    for u in page_unions:
-        w = u[2] - u[0]
-        h = u[3] - u[1]
-        if h > 0 and w / h > 25:
-            in_row = [
-                p
-                for p in (offset_box(q, ox, oy) for q in piece_list)
-                if u[1] <= (p[1] + p[3]) / 2 <= u[3] and u[0] <= p[0] and p[2] <= u[2]
-            ]
-            parts = split_row_at_piece_gaps(in_row) if in_row else [[u]]
-            read_unions.extend([union(p) for p in parts if p])
-        else:
-            read_unions.append(u)
-    return read_unions
-
-
-def _assemble_page(
-    piece_list: list[list[float]],
-    im: Any,
-    ctx: tuple[float, float, list[str], Any, str],
-    conn: tuple[str, str, str | None],
-    batch_ctx: tuple[int, Path],
-) -> tuple[list[dict], dict[str, int], list[int], list[list[float]], list[str], int, int]:
-    """One page's full assembly from its PIECES: cluster, band-split,
-    label (the under-read path + fills), gates. Unified so the recall
-    pass can re-assemble with merged pieces (hoisted out of the page
-    loop 2026-08-29 — the closure carried every page's captured state
-    into a fresh nested function per page)."""
-    workers, tmp_base = batch_ctx
-    ox, oy, texts, bands, page_name = ctx
-    pw, ph = im.size
-    rows = cluster_rows([offset_box(p, ox, oy) for p in piece_list])
-    page_unions = [
-        part
-        for u in (union(r) for r in rows)
-        for part in (split_by_bands(u, im) if text_line_count(u, im) > 1 else [u])
-    ]
-    labels = match_labels(page_unions, texts, bands)
-    clip_dir = Path(tempfile.mkdtemp(prefix="eval-clip-", dir=str(tmp_base)))
-    read_clip = _make_row_reader(im, clip_dir, page_name, conn)
-
-    # The under-read path: when the model's line count falls far
-    # below the measured rows, proportional matching smears lines
-    # across rows — every inky row gets its own clip read.
-    if needs_row_reads(len(page_unions), len(texts)):
-        read_unions = _split_row_reads(page_unions, piece_list, ox, oy)
-        with ThreadPoolExecutor(max_workers=min(4, workers)) as pool:
-            read_results = list(pool.map(lambda u: _safe_row_read(read_clip, u), read_unions))
-        labels = [r or "" for r in read_results]
-        page_unions = read_unions
-        print(f"  {page_name}: row-read path ({len(labels)} rows)", file=sys.stderr)
-    labels = fill_unlabeled_labels(labels, page_unions, im, read_clip)
-    shutil.rmtree(clip_dir, ignore_errors=True)
-    all_pieces_for_cov = [offset_box(p, ox, oy) for p in piece_list]
-    out_lines, counts, bad = _gate_layout(page_unions, labels, all_pieces_for_cov, im)
-    return out_lines, counts, bad, page_unions, labels, pw, ph
-
-
-def _gate_layout(
-    page_unions: list[list[float]],
-    labels: list[str],
-    pieces_for_cov: list[list[float]],
-    im: Any,
-    glyph_check: bool = True,
-) -> tuple[list[dict], dict[str, int], list[int]]:
-    """The gates for an assembled page (2026-08-28: extracted from
-    assemble so the ink-layout's rescue path runs the SAME checks —
-    one contract for every box source). ``glyph_check`` stays on for
-    the PIECES-based paths (a label-vs-extent mismatch means a wrong
-    box); the ink-layout's boxes ARE the ink, so a mismatch can only
-    be the VLM read's fault — the reviewer's to fix, not a refusal."""
-    bad, no_ink, multi, fragments, glyph = _violation_indices(page_unions, labels, pieces_for_cov, im, glyph_check)
-    uncovered = len(coverage_violations(page_unions, pieces_for_cov)[0])
-    double_claims = coverage_violations(page_unions, pieces_for_cov)[1]
-    out_lines = _line_records(page_unions, labels)
-    counts = {
-        "no_ink": len(no_ink),
-        "multi": len(multi),
-        "fragments": len(fragments),
-        "uncovered": uncovered,
-        "double": double_claims,
-        "glyph": len(glyph),
-    }
-    return out_lines, counts, bad
-
-
-def _make_row_reader(image: Any, clip_dir: Path, page_name: str, conn: tuple[str, str, str | None]) -> Any:
-    model, base_url, api_key = conn
-    """The per-box clip reader (2026-08-28: extracted from assemble so
-    the ink-layout's rescue labels its boxes with the SAME cached-VLM
-    seam — sha256-keyed, zero tokens on a hit)."""
-
-    def read(box: list[float]) -> str:
-        clip = clip_dir / f"{page_name}-{int(box[0])}-{int(box[1])}.png"
-        image.crop((int(box[0]), int(box[1]), int(box[2]), int(box[3]))).save(clip)
-        spec = {"model": model, "max_tokens": 4000}
-        cached = load_cached_read(clip, spec)
-        if cached is not None:
-            return cached[0]
-        text, usage = transcribe_image_vlm(
-            clip,
-            model=model,
-            system=transcription_system_with_context(request_boxes=False),
-            base_url=base_url,
-            api_key=api_key,
-            max_tokens=4000,
-        )
-        store_read(clip, spec, text, int(usage.get("total_tokens", 0) or 0))
-        return text
-
-    return read
-
-
-def fill_unlabeled_labels(labels: Sequence[str | None], unions: list[list[float]], image: Any, read: Any) -> list[str]:
-    """Rows the VLM left unlabeled get ONE targeted read of their own
-    clip (2026-08-26, the label-completeness lever: page-12 and the
-    birth certs refuse on empty-text rows although the ink is there —
-    the model under-read). Only inky, unlabeled rows are read; a failed
-    read leaves the row empty and the page refuses honestly — never an
-    invented label."""
-    out = list(labels)
-    for i, label in enumerate(labels):
-        # a None label (a failed _safe_row_read) is an empty label —
-        # the ink-layout path crashed the batch on label.strip() here
-        # (2026-08-28)
-        if (label or "").strip() or not has_ink(unions[i], image):
-            continue
-        try:
-            text = read(unions[i])
-        # lucidlint: ignore swallow a failing clip read must never abort the batch; the row stays empty
-        except Exception:
-            # VlmError crashed the whole run mid-photos)
-            text = None
-        if text and text.strip():
-            out[i] = text.strip().split("\n")[0]
-    # a failed read leaves the row EMPTY — never None (2026-08-28:
-    # the ink-layout's labels escaped as None and the gates crashed
-    # on text.strip())
-    return [lab or "" for lab in out]
 
 
 def normalized_bands(
@@ -654,6 +195,7 @@ def _vlm_read(
 
 
 def main(argv: list[str] | None = None) -> int:
+
     parser = argparse.ArgumentParser(prog="eval_batch")
     parser.add_argument("batch_ids", nargs="+")
     parser.add_argument("--model", default="z-ai/glm-4.6v")
@@ -701,24 +243,21 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _detect_phase(
-    pages_with_text: list[Path],
-    engine: Any,
-    panel_dir: Path,
-    batch: tuple[str, PipelineStore, Path],
-    panels: dict[str, dict[str, Any]],
-) -> None:
-    """Phase 1: rec-detect each page's content panel (local, sequential).
-    A stored clean layout skips its page (extracted from _process_batch
-    2026-08-29 for the complexity bar). ``batch`` = (batch_id, store,
-    tmp_base)."""
-    batch_id, store, _tmp_base = batch
+    pages_with_text: list[Path], batch: tuple[str, Path, Any], panel_dir: Path, engine: Any
+) -> dict[str, dict[str, Any]]:
+    """Phase 1 of the batch (extracted 2026-08-29 for the complexity
+    bar): detect each page's content panel. A page whose stored layout
+    is current and clean skips the rec entirely."""
+    batch_id, guess_dir, store = batch
+    panels: dict[str, dict[str, Any]] = {}
     for ip in pages_with_text:
         pg = ip.stem
         lp = f"{batch_id}/ocr-guess/{pg}.layout.json"
         try:
             layout = load_layout_store(store, lp)
         # lucidlint: ignore swallow a stored layout unreadable falls back to a fresh run; the error is surfaced
-        except Exception:
+        except Exception as exc:
+            print(f"  {pg}: stored layout unreadable ({str(exc)[:60]}) — reprocessing", file=sys.stderr)
             layout = None
         if layout is not None and layout_is_current(layout) and not validate_layout(layout):
             print(f"  {pg}: stored layout clean, skipping", file=sys.stderr)
@@ -736,29 +275,32 @@ def _detect_phase(
                 "x0": prep["x0"],
                 "y0": prep["y0"],
                 "unions": unions,
-                "pieces": pieces,
             }
         # lucidlint: ignore swallow the batch isolates one page's failure; the rec error is surfaced above
         except Exception as exc:
             print(f"  rec {pg} FAILED: {str(exc)[:80]}", file=sys.stderr)
+    return panels
+
+
+def _make_engine() -> Any:
+    pass  # type: ignore[missing-import]  # paddleocr lives only in .venv-htr
 
 
 def _vlm_read_phase(
-    panels: dict[str, dict[str, Any]],
-    workers: int,
-    conn: tuple[str, str, str | None],
-    oriented_dir: Path,
-    vlm_results: dict[str, tuple[list[str], list[tuple[float, float, str]], int, list[dict]]],
-) -> None:
-    """Phase 2: VLM-read all panels (parallel, network-bound). One
-    page's failure is surfaced and isolated; the batch continues
-    (extracted from _process_batch 2026-08-29 for the complexity bar)."""
+    panels: dict[str, dict[str, Any]], conn: tuple[str, str, str | None], workers: int
+) -> tuple[dict[str, tuple[list[str], list[tuple[float, float, str]], int, list[dict]]], float]:
+    """Phase 2 of the batch (extracted 2026-08-29 for the complexity
+    bar): read every panel's text with the VLM in parallel. The read is
+    a pure function of the panel bytes + the call spec, so the cache
+    makes unchanged pages free."""
     model, base_url, api_key = conn
-    futures = {}
+    t0 = monotonic()
+    vlm_results: dict[str, tuple[list[str], list[tuple[float, float, str]], int, list[dict]]] = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {}
         for pg, panel in panels.items():
             row_count = len(panel["unions"])
-            futures[pool.submit(_vlm_read, panel["path"], panel["h"], row_count, (model, base_url, api_key))] = pg
+            futures[pool.submit(_vlm_read, panel["path"], panel["h"], row_count, conn)] = pg
         for future in as_completed(futures):
             pg = futures[future]
             try:
@@ -769,104 +311,72 @@ def _vlm_read_phase(
             # lucidlint: ignore swallow one page's VLM failure; surfaced above, the batch continues
             except Exception as exc:
                 print(f"  vlm {pg} FAILED: {exc}", file=sys.stderr)
+    return vlm_results, round(monotonic() - t0, 1)
 
 
-def _box_dims(page_unions: list[list[float]], i: int) -> str:
-    """One bad box's WxH for the refusal detail line (hoisted from the
-    refusal branch 2026-08-29 — the nested closure broke the closures
-    rule)."""
-    b = page_unions[i]
-    return f"{int(b[2] - b[0])}x{int(b[3] - b[1])}"
+def _page_gate_bad(page_unions: list[list[float]], labels: list[str], im: Any) -> list[int]:
+    """The image-aware gates (extracted 2026-08-29 for the complexity
+    bar): ink under every box, one text band per box, a glyph-plausible
+    label. A page failing here writes nothing — refusal is the system
+    telling the truth."""
+    return [
+        i
+        for i, u in enumerate(page_unions)
+        if not has_ink(u, im)
+        or text_line_count(u, im) > 1
+        or glyph_extent_violation(labels[i], u, orientation_from_aspect(u))
+    ]
 
 
-def _rescue_page(
-    page: tuple[str, Any, list[list[float]], float, float, list[str], Any],
-    batch_ctx: tuple[tuple[str, str, str | None], int, Path],
-    current: tuple[list[dict], dict[str, int], list[int], int, int],
-) -> tuple[list[dict], dict[str, int], list[int], int, int]:
-    """The rescue passes for a page that refused on fragments/glyph
-    (extracted from _assemble_phase 2026-08-29 for the complexity bar):
-    (1) the tile recall — the full-page detection under-segmented at
-    ~0.86x internal resize; detect in overlapped tiles at ~1.5x and
-    MERGE the new pieces into the base (the tile set ALONE
-    over-segments: 29 fragments on page-01 vs 8 for the merge —
-    2026-08-28); (2) the ink-layout — the dense-cursive rescue, reading
-    the page directly (2026-08-28). ``page`` = (pg, im, base_pieces,
-    x0, y0, texts, bands); ``batch_ctx`` = (conn, workers, tmp_base);
-    ``current`` = the best (out_lines, counts, bad, pw, ph) found.
-    Returns the best (out_lines, counts, bad, pw, ph) found."""
-    pg, im, base_pieces, x0, y0, texts, bands = page
-    conn, workers, tmp_base = batch_ctx
-    out_lines, counts, bad, pw, ph = current
-    model, base_url, api_key = conn
-    recall_dir = Path(tempfile.mkdtemp(prefix="eval-recall-", dir=str(tmp_base)))
-    try:
-        new_pieces = _tile_detect(im, _recall_detect, recall_dir)
-    finally:
-        shutil.rmtree(recall_dir, ignore_errors=True)
-    print(f"  {pg}: recall tile pieces={len(new_pieces)}", file=sys.stderr)
-    if new_pieces:
-        # The tile set MERGES into the base: the base's coarse pieces
-        # are the reliable word anchors, the tile pieces fill the
-        # under-segmented gaps.
-        merged = base_pieces + new_pieces
-        out_lines2, counts2, bad2, _u2, _l2, _pw2, _ph2 = _assemble_page(
-            merged, im, (x0, y0, texts, bands, pg), conn, (workers, tmp_base)
-        )
-        if not bad2:
-            out_lines, counts, bad = out_lines2, counts2, bad2
-            print(f"  {pg}: recall rescued ({len(merged)} merged pieces)", file=sys.stderr)
-        else:
-            print(f"  {pg}: recall reassemble still bad {counts2}", file=sys.stderr)
-    if bad:
-        # The ink-layout (2026-08-28): the dense-cursive rescue. Margin
-        # notes interleave with the main text at the same y-bands; the
-        # piece model cannot separate them (the pieces span the
-        # interleaving, the boxes double-claim). The ink-layout reads
-        # the page DIRECTLY: lines from the adaptive ink, each line's
-        # x-runs — a line with a real gap becomes TWO boxes (the item +
-        # its annotation, transcribed separately: the letter's sense is
-        # preserved), a continuous line stays ONE box. X-disjoint by
-        # construction: no double-claims, fragments pass.
-        ink_boxes = ink_layout_boxes(im)
-        print(f"  {pg}: ink-layout boxes={len(ink_boxes)}", file=sys.stderr)
-        if ink_boxes:
-            clip_dir = Path(tempfile.mkdtemp(prefix="eval-ink-", dir=str(tmp_base)))
-            try:
-                ink_read = _make_row_reader(im, clip_dir, pg, conn)
-                with ThreadPoolExecutor(max_workers=min(4, workers)) as pool:
-                    ink_labels = list(pool.map(lambda u, _r=ink_read: _safe_row_read(_r, u), ink_boxes))
-                ink_labels = fill_unlabeled_labels(ink_labels, ink_boxes, im, ink_read)
-            finally:
-                shutil.rmtree(clip_dir, ignore_errors=True)
-            ink_boxes, ink_labels = _drop_unreadable(ink_boxes, ink_labels)
-            ink_pieces = [offset_box(p, x0, y0) for p in base_pieces] + new_pieces
-            # the ink-layout's boxes ARE the ink — the glyph gate's
-            # label-vs-extent mismatch is the READ's fault (the
-            # reviewer's fix), never a wrong box
-            out_lines3, counts3, bad3 = _gate_layout(ink_boxes, ink_labels, ink_pieces, im, glyph_check=False)
-            for ln in out_lines3:
-                ln["box_source"] = "ink-layout"  # Gate B skips the read-fault labels
-            if not bad3:
-                out_lines, counts, bad = out_lines3, counts3, bad3
-                pw, ph = im.size
-                print(f"  {pg}: ink-layout rescued ({len(ink_boxes)} boxes)", file=sys.stderr)
-            else:
-                print(f"  {pg}: ink-layout still bad {counts3}", file=sys.stderr)
-    return out_lines, counts, bad, pw, ph
+def _assemble_page(
+    page: tuple[str, list[str], Any, list[dict], list[list[float]], float, float],
+    batch_ctx: tuple[Path, Any, str, tuple[str, str, str | None], int],
+) -> tuple[list[dict], list[int], int, int]:
+    """One page's assembly (extracted 2026-08-29 for the complexity
+    bar): the unions to page space, the label matching, the image-aware
+    gates, the self-report flags. The refusal counters and the write
+    stay in the caller."""
+    pg, texts, bands, report, unions, x0, y0 = page
+    oriented_dir, _store, _batch_id, _conn, _workers = batch_ctx
+    with Image.open(oriented_dir / f"{pg}.jpg") as im:
+        pw, ph = im.size
+        page_unions = [
+            part
+            for u in (offset_box(v, x0, y0) for v in unions)
+            for part in (split_by_bands(u, im) if text_line_count(u, im) > 1 else [u])
+        ]
+        labels = match_labels(page_unions, texts, bands)
+        bad = _page_gate_bad(page_unions, labels, im)
+    out_lines = [
+        {
+            "index": i,
+            "text": labels[i],
+            "box": [round(v) for v in u],
+            "conf": 1.0,
+            "words": [],
+            "box_source": "ink",
+            "orientation": orientation_from_aspect(u),
+        }
+        for i, u in enumerate(page_unions)
+    ]
+    by_line = selfreport_words_by_line([ln["text"] for ln in out_lines], report)
+    flagged = sum(len(v) for v in by_line.values())
+    if flagged:
+        print(f"  {pg}: {flagged} self-flagged words", file=sys.stderr)
+    for ln in out_lines:
+        ln["words"] = flag_line_words(ln["text"], by_line.get(ln["index"], set()))
+    return out_lines, bad, pw, ph
 
 
 def _assemble_phase(
     panels: dict[str, dict[str, Any]],
     vlm_results: dict[str, tuple[list[str], list[tuple[float, float, str]], int, list[dict]]],
-    batch_ctx: tuple[Path, tuple[str, str, str | None], int, Path, PipelineStore, str],
+    batch_ctx: tuple[Path, Any, str, tuple[str, str, str | None], int],
 ) -> tuple[int, int]:
-    """Phase 3: assemble each page, run the rescue passes (tile recall,
-    ink-layout) on refusals, validate and write. Returns (written,
-    refused) (extracted from _process_batch 2026-08-29 for the
-    complexity bar). ``batch_ctx`` = (oriented_dir, conn, workers,
-    tmp_base, store, batch_id)."""
-    oriented_dir, conn, workers, tmp_base, store, batch_id = batch_ctx
+    """Phase 3 of the batch (extracted 2026-08-29 for the complexity
+    bar): assemble, validate and write each page's layout. The per-page
+    recall/rescue passes fire only on the gates' refusals."""
+    oriented_dir, store, batch_id, conn, workers = batch_ctx
     model, base_url, api_key = conn
     written = 0
     refused = 0
@@ -875,40 +385,13 @@ def _assemble_phase(
         if not result:
             continue
         texts, bands, _tok, report = result
-        x0, y0 = panels[pg]["x0"], panels[pg]["y0"]
-
-        with Image.open(oriented_dir / f"{pg}.jpg") as im:
-            out_lines, counts, bad, page_unions, labels, pw, ph = _assemble_page(
-                panels[pg]["pieces"], im, (x0, y0, texts, bands, pg), (model, base_url, api_key), (workers, tmp_base)
-            )
-            if bad and (counts["fragments"] or counts["glyph"]):
-                out_lines, counts, bad, pw, ph = _rescue_page(
-                    (pg, im, panels[pg]["pieces"], x0, y0, texts, bands),
-                    ((model, base_url, api_key), workers, tmp_base),
-                    (out_lines, counts, bad, pw, ph),
-                )
-
+        page = (pg, texts, bands, report, panels[pg]["unions"], panels[pg]["x0"], panels[pg]["y0"])
+        out_lines, bad, pw, ph = _assemble_page(page, batch_ctx)
         if bad:
             refused += 1
-            detail = ", ".join(f"{i}:{labels[i][:16]!r}({_box_dims(page_unions, i)})" for i in bad[:8])
-            print(
-                f"  {pg} REFUSED (no-ink={counts['no_ink']} multi-band={counts['multi']} "
-                f"glyph={counts['glyph']} fragment={counts['fragments']} "
-                f"uncovered={counts['uncovered']} double={counts['double']}): {detail}",
-                file=sys.stderr,
-            )
+            print(f"  {pg} REFUSED (image gates): {len(bad)} boxes off-ink or multi-line", file=sys.stderr)
             continue
-        # The self-report stage: the model's doubt flags (collected in
-        # Phase 2, where the panel exists) mark the UI's "red words" —
-        # flags-only, never a gate.
-        by_line = selfreport_words_by_line([ln["text"] for ln in out_lines], report)
-        flagged = sum(len(v) for v in by_line.values())
-        if flagged:
-            print(f"  {pg}: {flagged} self-flagged words", file=sys.stderr)
-        for ln in out_lines:
-            ln["words"] = flag_line_words(ln["text"], by_line.get(ln["index"], set()))
         assembled = {"page": pg, "width": pw, "height": ph, "lines": out_lines, "unmatched": []}
-
         violations = validate_layout(assembled)
         if violations:
             refused += 1
@@ -931,11 +414,6 @@ def _process_batch(
     oriented_dir = work_dir / batch_id / "oriented"
     guess_dir = work_dir / batch_id / "ocr-guess"
     store = PipelineStore(work_dir)
-    # the batch's temp panels/tiles/clips live on the WORK DISK, not
-    # /tmp: the shared tmpfs fills with other sessions' work and the
-    # PNG saves hit 'Disk quota exceeded' mid-batch (2026-08-28)
-    tmp_base = work_dir / "tmp"
-    tmp_base.mkdir(exist_ok=True)
     image_paths = sorted(oriented_dir.glob("*.jpg"))
 
     pages_with_text = [p for p in image_paths if (guess_dir / p.with_suffix(".txt").name).exists()]
@@ -943,54 +421,39 @@ def _process_batch(
         pages_with_text = [p for p in pages_with_text if p.stem in wanted]
     print(f"batch {batch_id}: {len(pages_with_text)} pages", file=sys.stderr)
 
-    panels: dict[str, dict[str, Any]] = {}
+    # Phase 1: rec-detect each page's content panel (local, sequential);
+    # Phase 2: the VLM reads (parallel, network-bound). The panels must
+    # live through BOTH — a TemporaryDirectory here would delete them
+    # before Phase 2 reads them (2026-08-22); cleanup waits for the
+    # finally below.
     engine = _make_engine()
-    # The engine is freed after Phase 1 — the recall pass's low-sensitivity
-    # engine must never coexist with it (the OOM history; two PaddleOCR
-    # instances is a full page of RAM each).
-    # The panels persist through BOTH phases — a TemporaryDirectory here
-    # would delete them before Phase 2 reads them (2026-08-22).
-    panel_dir = Path(tempfile.mkdtemp(prefix="eval-batch-", dir=str(tmp_base)))
+    panel_dir = Path(tempfile.mkdtemp(prefix="eval-batch-"))
     try:
-        _detect_phase(pages_with_text, engine, panel_dir, (batch_id, store, tmp_base), panels)
-        # Phase 2: VLM-read all panels (parallel, network-bound) — INSIDE
-        # this try: the panels must live through it; cleanup waits for
-        # the finally below.
-        vlm_results: dict[str, tuple[list[str], list[tuple[float, float, str]], int, list[dict]]] = {}
-        _vlm_read_phase(panels, workers, conn, oriented_dir, vlm_results)
+        panels = _detect_phase(pages_with_text, (batch_id, guess_dir, store), panel_dir, engine)
+        vlm_results, vlm_elapsed = _vlm_read_phase(panels, (model, base_url, api_key), workers)
     finally:
-        del engine  # free the main engine BEFORE the recall pass can spawn its own
         # the panels must live through Phase 2 (2026-08-22) — and die
         # after it: the uncleaned mkdtemp dirs leaked ~2.8G of full-page
         # PNGs into /tmp across five batch runs and filled the tmpfs
         # that pytest's own tempdir shares (2026-08-26).
         shutil.rmtree(panel_dir, ignore_errors=True)
 
-    # Phase 3: assemble + validate + write
-    written, refused = _assemble_phase(
-        panels, vlm_results, (oriented_dir, (model, base_url, api_key), workers, tmp_base, store, batch_id)
-    )
-    batch_tokens = sum(r[2] for r in vlm_results.values())
-
+    batch_ctx = (oriented_dir, store, batch_id, (model, base_url, api_key), workers)
+    written, refused = _assemble_phase(panels, vlm_results, batch_ctx)
     return {
         "batch": batch_id,
         "pages": len(pages_with_text),
         "written": written,
         "refused": refused,
-        "tokens": batch_tokens,
-        "vlm_elapsed_s": round(sum(r[2] for r in vlm_results.values()) / 100, 1),
+        "tokens": sum(r[2] for r in vlm_results.values()),
+        "vlm_elapsed_s": vlm_elapsed,
     }
 
 
-def _make_engine() -> Any:
-    # lucidlint: ignore inline-import the .venv-htr seam — paddleocr lives only in .venv-htr; the main venv lacks it
-    from paddleocr import PaddleOCR  # type: ignore[missing-import]  # paddleocr lives only in .venv-htr
+def _detect_pieces(engine: Any, panel_path: Path) -> list[list[float]]:
+    """The rec's detection pieces (the REAL ink)."""
+    # lucidlint: ignore inline-import the .venv-htr seam — paddleocr lives only in .venv-htr
+    from tools.layout_detect import detect_page
 
-    # lucidlint: ignore inline-import the same seam — ENGINE imports layout_detect, which loads paddleocr
-    from tools.layout_detect import ENGINE
-
-    return PaddleOCR(**ENGINE)
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    raw = detect_page(engine, panel_path)
+    return [[float(v) for v in d["box"]] for d in raw["detections"] if d["box"]]

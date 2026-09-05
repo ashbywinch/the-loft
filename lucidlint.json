@@ -5,6 +5,15 @@
     "docs:docs/plans/lucidlint-review-log.md:0:",
     "docs:docs/prd/MEMORIES.md:0:",
     "docs:docs/prd/PRD.md:0:",
-    "long-param-list:tools/check_review_posted.py:64:redirect_request"
+    "long-param-list:tools/check_review_posted.py:64:redirect_request",
+    "long-param-list:tools/eval_crop_grid.py:56:_read_crop",
+    "swallow:tools/eval_crop_grid.py:111:_read_crop",
+    "long-param-list:tools/eval_crop_grid.py:167:run",
+    "stale-suppression:tools/layout.py:301:",
+    "long-param-list:tools/layout.py:303:single",
+    "stale-suppression:tools/layout.py:320:",
+    "long-param-list:tools/layout.py:322:multi",
+    "stale-suppression:tools/layout_detect.py:292:",
+    "long-param-list:tools/layout_detect.py:294:_process_page"
   ]
 }

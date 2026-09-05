@@ -47,10 +47,10 @@ jobs:
               req = urllib.request.Request(url, data=body, headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
               try:
                   with urllib.request.urlopen(req, timeout=60) as r:
-                      print(f"attempt {attempt}: HTTP {r.status}")
+                      print(f"::notice::gateway diagnostic attempt {attempt}: HTTP {r.status}")
               except urllib.error.HTTPError as e:
                   snippet = e.read().decode("utf-8", "replace")[:120]
-                  print(f"attempt {attempt}: HTTP {e.code} {snippet}")
+                  print(f"::error::gateway diagnostic attempt {attempt}: HTTP {e.code} {snippet}")
               time.sleep(5)
           PY
       # Fail loud: a silently-failed review reads as a green check. The check

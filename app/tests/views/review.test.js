@@ -8,6 +8,7 @@ import {
   correctedPageText,
   displayFrame,
   fitRect,
+  widthFitRect,
   flaggedByPage,
   flaggedCount,
   flaggedPositions,
@@ -369,6 +370,20 @@ describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)",
     expect(view.width).toBeCloseTo(79 * (812 / 131), 5);
   });
 
+  it("widthFitRect: the letter's width fills the pane; the height follows the aspect — the vertical scroll has room (user 2026-08-22)", () => {
+    // page-06-like: the tall letter [481, 2246, 1881, 4642] in a 654×524
+    // pane. The old whole-letter fit made the letter one screen tall —
+    // nothing to pan, tiny text. The width-fit: the letter's x-extent
+    // fills the pane, the height follows the pane's aspect (the pan
+    // reveals the rest), and the letter's center lands at the view's.
+    const view = widthFitRect(654, 524, { x: 481, y: 2246, width: 1400, height: 2396 });
+    expect(view.width).toBe(1400);
+    expect(view.height).toBeCloseTo(1400 * (524 / 654), 5); // ~1121 < 2396 — the pan room!
+    expect(view.x).toBe(481);
+    expect(view.y).toBe(2246);
+  });
+
+
   it("zoomView: the image point under the cursor stays put when zooming", () => {
     const paneW = 812, paneH = 131;
     const before = { x: 0, y: 100, width: 2544, height: 410 };
@@ -392,7 +407,28 @@ describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)",
     const deep = zoomView({ x: 0, y: 0, width: 2544, height: 410 }, 0.0001, paneW, paneH, 0, 0, 2544);
     expect(deep.width).toBe(2544 * 8);
   });
+
+  it("initialViewRect spans the WHOLE letter, not the first line (user 2026-08-22)", async () => {
+    const { initialViewRect } = await import("../../views/review.js");
+    // page-01-like: the reading-first line sits mid-letter; other lines
+    // extend LEFT (the P.S. margin at x 526) and RIGHT (2017). The old
+    // view anchored the first line's left edge — every other line needed
+    // a jog; the view must cover the LETTER so the vertical scroll just
+    // goes down.
+    const layout = {
+      lines: [
+        { text: "A picture of life in Music College.", box: [757, 2252, 1547, 2365] },
+        { text: "P.S. I had a whole Grade 3A", box: [526, 2247, 1044, 2294] },
+        { text: "Orchestra for 3 performances of operas b", box: [547, 2600, 2017, 2690] },
+      ],
+    };
+    const rect = initialViewRect(layout);
+    expect(rect.x).toBeLessThanOrEqual(526); // the letter's left edge
+    expect(rect.x + rect.width).toBeGreaterThanOrEqual(2017); // the letter's right edge
+    expect(rect.y).toBeLessThanOrEqual(2247); // the letter's top, not below it
+  });
 });
+
 
 describe("the reviewer's orientation — { desired, acked } per page, set only by ↻ (VR10)", () => {
   beforeEach(() => localStorage.clear());
@@ -673,5 +709,100 @@ describe("a multi-orientation page renders (VR15)", () => {
     expect(viewRotation({ rotation: 0, readRotation: 0 })).toBe(0);
     expect(viewRotation({ rotation: 0, readRotation: 90 })).toBe(90);
     expect(viewRotation({ rotation: 90, readRotation: 270 })).toBe(0); // combined mod 360
+  });
+});
+
+describe("reconcileEdits", () => {
+  const layout = {
+    lines: [
+      { index: 0, text: "P.S. I had a whole Grade 3A" },
+      { index: 1, text: "theory paper to work before" },
+      { index: 2, text: "my first Theory lesson today." },
+    ],
+  };
+
+  it("keeps an edit whose line's text is unchanged", async () => {
+    const { reconcileEdits } = await import("../../views/review.js");
+    expect(reconcileEdits({ 1: "theory paper to work before" }, layout)).toEqual({
+      1: "theory paper to work before",
+    });
+  });
+
+  it("re-maps an edit by exact text when the index moved", async () => {
+    const { reconcileEdits } = await import("../../views/review.js");
+    expect(reconcileEdits({ 5: "theory paper to work before" }, layout)).toEqual({
+      1: "theory paper to work before",
+    });
+  });
+
+  it("orphans an edit whose line's transcription changed (no fuzzy re-map)", async () => {
+    const { reconcileEdits } = await import("../../views/review.js");
+    // the rebuilt transcription differs from the corrected text by 1 char —
+    // the OLD fuzzy match (edit distance <=3) kept it, attaching the user's
+    // correction to a changed line; the exact rule orphans it (the user
+    // re-verifies the changed line)
+    expect(reconcileEdits({ 0: "P.S.] I had a whole Grade 3A" }, layout)).toEqual({});
+  });
+});
+
+describe("lineScrollFor", () => {
+  // the page-03-like structure: the transcription's DISPLAY order (the
+  // reading order — the P.S. block first, then the address, then the body)
+  // vs the image's physical y positions
+  const LAYOUT = {
+    lines: [
+      { text: "P.S. I had a whole Grade 3A", box: [526, 2247, 1044, 2294] },
+      { text: "theory paper to work before", box: [540, 2297, 1042, 2340] },
+      { text: "Queen Alexandra's House,", box: [1176, 2272, 1925, 2370] },
+      { text: "Chere Maman.", box: [628, 2551, 1140, 2655] },
+      { text: "I've come to the conclusion", box: [620, 2628, 1905, 2757] },
+    ],
+  };
+  const FRAME = { a: 1, b: 0, c: 0, d: 1, ox: 0, oy: 0, dw: 2544, dh: 4642 };
+  // the transcript's DOM offsets for the five lines, in display order
+  const OFFSETS = [0, 40, 80, 120, 160];
+
+  it("scrolls the transcript to the line at the image's view top — NOT the proportional fraction", async () => {
+    const { lineScrollFor } = await import("../../views/review.js");
+    // the image view at y 2600: the physical line there is the body's
+    // "Chere Maman." (y 2551-2655) — display index 3 — offset 120
+    expect(lineScrollFor(2600, LAYOUT, FRAME, OFFSETS)).toBe(120);
+    // the view at y 2300: the physical line there is "theory paper" (the
+    // P.S. block, y 2297-2340 — the first display-order line containing it)
+    expect(lineScrollFor(2300, LAYOUT, FRAME, OFFSETS)).toBe(40);
+  });
+
+  it("clamps to the first line when the view is above all boxes", async () => {
+    const { lineScrollFor } = await import("../../views/review.js");
+    expect(lineScrollFor(100, LAYOUT, FRAME, OFFSETS)).toBe(0);
+  });
+});
+
+describe("layout staleness — the drafts' revisions vs the rendered layout", () => {
+  it("collectLayoutRevisions records each page's layout revision", async () => {
+    const { collectLayoutRevisions } = await import("../../views/review.js");
+    const docs = [
+      { pages: ["p1.jpg", "p2.jpg"], layouts: { "p1.jpg": { revision: 3 }, "p2.jpg": { revision: 1 } } },
+      { pages: ["p3.jpg"], layouts: {} },
+    ];
+    expect(collectLayoutRevisions(docs)).toEqual({ "p1.jpg": 3, "p2.jpg": 1 });
+  });
+
+  it("staleLayoutPages finds the pages whose layout revision changed", async () => {
+    const { staleLayoutPages } = await import("../../views/review.js");
+    const docs = [{ pages: ["p1.jpg", "p2.jpg"], layouts: { "p1.jpg": { revision: 3 }, "p2.jpg": { revision: 4 } } }];
+    expect(staleLayoutPages({ "p1.jpg": 3, "p2.jpg": 1 }, docs)).toEqual(["p2.jpg"]);
+  });
+
+  it("staleLayoutPages finds a page that gained a layout since the render", async () => {
+    const { staleLayoutPages } = await import("../../views/review.js");
+    const docs = [{ pages: ["p1.jpg"], layouts: { "p1.jpg": { revision: 1 } } }];
+    expect(staleLayoutPages({}, docs)).toEqual(["p1.jpg"]);
+  });
+
+  it("staleLayoutPages ignores pages without a layout", async () => {
+    const { staleLayoutPages } = await import("../../views/review.js");
+    const docs = [{ pages: ["p1.jpg"], layouts: {} }];
+    expect(staleLayoutPages({}, docs)).toEqual([]);
   });
 });

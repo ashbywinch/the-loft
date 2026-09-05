@@ -12,6 +12,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+from PIL import Image
+
 from tools.layout import (
     MATCH_THRESHOLD,
     Detection,
@@ -96,11 +99,11 @@ class TestAssociateLines:
         # with the detection's geometry (2026-08-16: cursive pages never
         # content-match; the box is real, the text anchor is not)
         vlm = ["the quick brown fox"]
-        dets = [_det([0, 0, 10, 10], "zzz qqq wwww eeee rrrr")]
+        dets = [_det([0, 0, 200, 20], "zzz qqq wwww eeee rrrr")]
         matches, unmatched = associate_lines(vlm, dets)
         assert len(matches) == 1
         assert matches[0]["box_source"] == "positional"
-        assert matches[0]["box"] == [0, 0, 10, 10]
+        assert matches[0]["box"] == [0, 0, 200, 20]
         assert unmatched == []
 
     def test_one_to_one_each_direction(self) -> None:
@@ -122,9 +125,9 @@ class TestAssociateLines:
         # y-top, whatever the detection order in the input
         vlm = ["line one", "line two", "line three"]
         dets = [
-            _det([0, 200, 10, 210], "noise zzz"),
-            _det([0, 0, 10, 10], "noise yyy"),
-            _det([0, 100, 10, 110], "noise xxx"),
+            _det([0, 200, 100, 220], "noise zzz"),
+            _det([0, 0, 100, 20], "noise yyy"),
+            _det([0, 100, 100, 120], "noise xxx"),
         ]
         matches, unmatched = associate_lines(vlm, dets)
         by_index = {m["vlm_index"]: m for m in matches}
@@ -267,11 +270,79 @@ class TestSelfReportFlags:
 
 class TestWriteLoadLayout:
     def test_atomic_round_trip(self, tmp_path) -> None:
-        layout = build_layout("p.jpg", 100, 100, "one line", [_det([0, 0, 10, 10], "one line")])
+        layout = build_layout("p.jpg", 100, 100, "one line", [_det([0, 0, 100, 20], "one line")])
         path = tmp_path / "p.layout.json"
         write_layout(layout, path)
         assert json.loads(path.read_text(encoding="utf-8")) == layout
         assert load_layout(path) == layout
+
+    def test_write_layout_store_stamps_the_store_version(self, tmp_path) -> None:
+        """The layout's revision (2026-08-22): every store write stamps
+        the version — a rebuild creates a NEW revision, and the drafts
+        payload carries it so the review surface can DETECT a stale
+        layout instead of rendering yesterday's boxes (the architectural
+        gap: five copies of a layout, no way to tell which is newest).
+        The same path re-run: 1, then 2."""
+        from tools.layout import load_layout_store, write_layout_store
+        from tools.pipeline_store import PipelineStore
+
+        store = PipelineStore(tmp_path)
+        layout = {"page": "p1.jpg", "width": 100, "height": 100, "lines": [], "unmatched": []}
+        path = "b/ocr-guess/p1.layout.json"
+        write_layout_store(layout, store, path)
+        assert load_layout_store(store, path)["revision"] == 1
+        write_layout_store(layout, store, path)
+        assert load_layout_store(store, path)["revision"] == 2
+
+
+def test_layout_payload_declares_the_box_frame() -> None:
+    """2026-08-22: the payload declares the boxes' coordinate frame — the
+    ORIGINAL image's pixels, the same space as width/height — so a reader
+    can check, never assume (the VLM-canvas drift was a box in the wrong
+    frame that looked valid: right size, right proportions, gates pass)."""
+    from tools.layout import Layout
+
+    layout = Layout("p.jpg", 100, 200, [], [])
+    assert layout.to_dict()["box_space"] == "original-image"
+
+
+def test_validate_layout_rejects_a_boxless_line() -> None:
+    """2026-08-22 (user: "I want boxless lines to fail during the pipeline
+    run so we can figure out how to fix our pipeline!"): a line without a
+    box is an unfinished pipeline result — the page must FAIL loudly at
+    the write, never reach the review as a flag-riddled layout."""
+    from tools.gates import validate_layout
+
+    layout = {
+        "page": "p1.jpg",
+        "width": 100,
+        "height": 100,
+        "lines": [
+            {"index": 0, "text": "boxed line", "box": [0, 0, 50, 10], "conf": 1.0, "words": []},
+            {"index": 1, "text": "boxless line", "box": None, "conf": 0.0, "words": []},
+        ],
+        "unmatched": [],
+    }
+    assert validate_layout(layout)
+
+
+def test_write_layout_store_refuses_a_boxless_line(tmp_path: Path) -> None:
+    """The write gate (2026-08-22): a layout with a boxless line is
+    refused — the pipeline run fails loudly for that page, and the
+    reviewer never sees a half-anchored layout."""
+    from tools.layout import write_layout_store
+    from tools.pipeline_store import PipelineStore
+
+    store = PipelineStore(tmp_path)
+    layout = {
+        "page": "p1.jpg",
+        "width": 100,
+        "height": 100,
+        "lines": [{"index": 0, "text": "boxless line", "box": None, "conf": 0.0, "words": []}],
+        "unmatched": [],
+    }
+    with pytest.raises(ValueError, match="boxless"):
+        write_layout_store(layout, store, "b/ocr-guess/p1.layout.json")
 
 
 class TestRotateDetections:
@@ -316,13 +387,13 @@ class TestLayoutDetections:
             100,
             100,
             "line one\nline two",
-            [_det([0, 0, 10, 10], "line one"), _det([0, 50, 10, 60], "noise")],
+            [_det([0, 0, 100, 20], "line one"), _det([0, 50, 120, 70], "noise")],
         )
         dets = layout_detections(layout)
         assert len(dets) == 2
         by_box = {tuple(d["box"]): d for d in dets}
-        assert by_box[(0, 0, 10, 10)]["text"] == "line one"
-        assert by_box[(0, 50, 10, 60)]["text"] == "noise"
+        assert by_box[(0, 0, 100, 20)]["text"] == "line one"
+        assert by_box[(0, 50, 120, 70)]["text"] == "noise"
         # re-running the association on the reconstruction reproduces the layout
         rebuilt = build_layout("p.jpg", 100, 100, "line one\nline two", dets)
         assert rebuilt["lines"][0]["box"] == layout["lines"][0]["box"]
@@ -352,8 +423,8 @@ def test_build_layout_uses_the_vlm_boxes_when_present(tmp_path: Path) -> None:
         vlm_boxes={0: [219, 496, 760, 526], 1: [234, 513, 733, 543]},
     )
     assert layout["lines"][0]["box"] == [219.0, 992.0, 760.0, 1052.0]  # x*1000/1000, y*2000/1000
-    assert layout["lines"][0]["box_source"] == "vlm"
-    assert layout["lines"][1]["box_source"] == "vlm"
+    assert layout["lines"][0]["box_source"] == "report"
+    assert layout["lines"][1]["box_source"] == "report"
     # a line the VLM gave no box for falls back to the old association
     assert layout["lines"][0]["text"] == "piano-practising facilities. At the"
 
@@ -406,7 +477,7 @@ def test_layout_detections_keeps_the_vlm_text_as_the_anchor(tmp_path: Path) -> N
 def test_admission_gate_requires_real_text_at_the_orientation() -> None:
     """A line is admitted only when the recognizer read real text:
     confidence AND plausibility — never on box shape alone (VR15)."""
-    from tools.layout import admission_gate
+    from tools.layout import is_admissible as admission_gate
 
     assert admission_gate("HERNSPETH HOUSE", 0.93)
     assert not admission_gate("mo", 0.5)  # two letters but low confidence
@@ -420,11 +491,18 @@ def test_remap_box_maps_back_to_the_original_frame() -> None:
     from tools.layout import remap_box
 
     # 200x100 original; rotated -90° (clockwise, expand) the frame is
-    # 100x200. A box at the top of the rotated frame (centered) lands on
-    # the original's right edge, vertically centered.
+    # 100x200. A box at the top of the rotated frame (y=0-20) maps back
+    # to the original's LEFT edge, vertically centered (2026-08-20: the
+    # old matrix form mirrored this to the right edge — page-03's rebuilt
+    # layout put the letter's lines at the image top).
     box = remap_box([40, 0, 60, 20], 90, (200, 100), (100, 200))
-    assert box[2] > 195  # the far edge touches the right side (200)
+    assert box[0] < 5  # the far edge touches the left side (0)
     assert 30 < box[1] < 70 and 30 < box[3] < 70  # y near the center (50)
+    # 270° (CCW): the top of the rotated frame maps back to the original's
+    # right edge — the mirror of the 90° case.
+    box270 = remap_box([40, 0, 60, 20], 270, (200, 100), (100, 200))
+    assert box270[2] > 195  # the far edge touches the right side (200)
+    assert 30 < box270[1] < 70 and 30 < box270[3] < 70
 
 
 def test_admit_and_remap_keeps_only_real_text() -> None:
@@ -442,7 +520,7 @@ def test_admit_and_remap_keeps_only_real_text() -> None:
     kept, rejected = admit_and_remap(dets, 90, (200, 100), (100, 200))
     assert len(kept) == 1
     assert kept[0]["text"] == "HERNSPETH HOUSE"
-    assert kept[0]["box"][2] > 195  # remapped to the original frame (right edge)
+    assert kept[0]["box"][0] < 5  # remapped to the original frame (left edge — 2026-08-20 fix)
     assert len(rejected) == 3
 
 
@@ -555,9 +633,11 @@ def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
     ]
     layout = multi_layout("p1.jpg", 1000, 1000, passes, report_lines=report_lines)
     texts = [ln["text"] for ln in layout["lines"]]
-    # 0° first (report order, then the extra), then 270°; the fragment
-    # duplicate of the anchored message line drops
-    assert texts == ["POST CARD", "Printed in Great Britain", "HERNSPETH", "We are from beauford"]
+    # physical reading order (2026-08-20): the reading-start corner sorts
+    # top-to-bottom — POST CARD (y50), Printed (y110), the 270° message
+    # (start y400), then the extra HERNSPETH (y500). The fragment duplicate
+    # of the anchored message line drops.
+    assert texts == ["POST CARD", "Printed in Great Britain", "We are from beauford", "HERNSPETH"]
     by_text = {ln["text"]: ln for ln in layout["lines"]}
     # every line has a box; the anchored lines carry the MODEL's box (scaled
     # from the normalized 0-1000 frame) — the box holds the words it claims
@@ -571,6 +651,90 @@ def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
     # the model-missed rec line stays, flagged, at its pass orientation
     assert by_text["HERNSPETH"]["orientation"] == 0
     assert all(w["conf"] == 0.0 for w in by_text["HERNSPETH"]["words"])
+
+
+def test_anchor_prefers_the_disjoint_positional_ink_when_the_rec_read_the_line() -> None:
+    """page-01 (2026-08-22): the location report's boxes sit in the VLM's
+    compressed canvas — the whole letter squeezed into the top of the
+    0-1000 frame — so the scaled report box lands ~500px ABOVE the real
+    text (the title region claimed by 'Last term I was called upon').
+    The positional match's box is only the line's real region when the
+    rec READ the line's text there (the rec_words agree) — then the
+    ink wins over the disjoint estimate. The review's dual-pane
+    alignment (the line at the image's view) is only as true as the
+    boxes."""
+    from tools.layout import Anchor
+
+    anchor = Anchor(
+        report_line={"text": "Last term I was called upon to play in t", "box": [220, 481, 790, 494], "degrees": 0},
+        match={
+            "vlm": "Last term I was called upon to play in t",
+            "vlm_index": 10,
+            "box": [560, 2600, 2010, 2660],  # the rec's ink — the REAL region
+            "box_source": "positional",
+            "orientation": 0,
+            "rec_words": ["last", "term", "i", "was", "called", "upon", "to", "play", "in", "the", "college", "opera"],
+        },
+        text="Last term I was called upon to play in the Orchestra",
+        width=2544,
+        height=4642,
+    )
+    assert anchor.box == [560, 2600, 2010, 2660]
+    assert anchor.box_source == "positional"
+
+
+def test_anchor_disjoint_positional_with_unrelated_reading_keeps_the_report_box() -> None:
+    """The other half of the same rule (2026-08-22): the order-based
+    fallback CAN mispair — the rec's 17 detections vs the guess's 31
+    lines means the tail's positional boxes are the wrong lines' ink.
+    When the rec did NOT read the line's text at the match's box (the
+    rec_words disagree), the match's box is unrelated ink and must not
+    displace a good report box — the pre-existing test
+    (report_box_anchors_over_a_positional_match) pins the same case at
+    the layout level."""
+    from tools.layout import Anchor
+
+    anchor = Anchor(
+        report_line={"text": "Last term I was called upon to play in t", "box": [220, 481, 790, 494], "degrees": 0},
+        match={
+            "vlm": "Last term I was called upon to play in t",
+            "vlm_index": 10,
+            "box": [560, 2600, 2010, 2660],
+            "box_source": "positional",
+            "orientation": 0,
+            "rec_words": ["ortra", "for", "3", "eope"],  # the rec read a DIFFERENT line there
+        },
+        text="Last term I was called upon to play in the Orchestra",
+        width=2544,
+        height=4642,
+    )
+    assert anchor.box == [559.68, 2232.802, 2009.76, 2293.148]
+    assert anchor.box_source == "report"
+
+
+def test_anchor_report_box_still_refines_an_agreeing_positional_box() -> None:
+    """The regression guard: when the report's estimate AGREES with the
+    positional ink (the same region), the report box is the per-line
+    refinement and wins — the pre-2026-08-22 behavior stays for the
+    normal pages (02-12), where the report's boxes are on the text."""
+    from tools.layout import Anchor
+
+    anchor = Anchor(
+        report_line={"text": "Last term I was called upon to play in t", "box": [220, 481, 790, 494], "degrees": 0},
+        match={
+            "vlm": "Last term I was called upon to play in t",
+            "vlm_index": 10,
+            "box": [560, 2230, 2010, 2300],  # overlaps the report's scaled box
+            "box_source": "positional",
+            "orientation": 0,
+            "rec_words": ["last", "term", "i", "was", "called"],
+        },
+        text="Last term I was called upon to play in the Orchestra",
+        width=2544,
+        height=4642,
+    )
+    assert anchor.box == [559.68, 2232.802, 2009.76, 2293.148]
+    assert anchor.box_source == "report"
 
 
 def test_dedupe_drops_fragment_duplicates_by_content() -> None:
@@ -685,8 +849,7 @@ def test_validate_layout_rejects_bad_boxes() -> None:
         "height": 2000,
         "lines": [
             {"text": "post card", "box": [100, 100, 300, 140]},
-            {"text": "message", "box": [50, 500, 900, 540]},
-            {"text": "no box", "box": None},
+            {"text": "message", "box": [50, 500, 250, 540]},
         ],
     }
     assert validate_layout(good) == []
@@ -697,8 +860,26 @@ def test_validate_layout_rejects_bad_boxes() -> None:
     bad_neg = {"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [-50, 100, 300, 140]}]}
     assert validate_layout(bad_neg), "a negative coordinate must fail"
 
+
+def test_stitch_crop_box_maps_the_crop_local_frame_into_the_page() -> None:
+    """The crop-grid's stitch (2026-08-22): the model measures each line
+    within a crop's own frame (normalized 0-1000 in the crop); the
+    stitch maps that local box into the page by the crop's known
+    offset — the page box, exactly."""
+    from tools.eval_geometry import CropReading, stitch_crop_box
+
+    crop = CropReading(x=500.0, y=700.0, w=400.0, h=300.0, lines=[])
+
+    local: list[float] = [100, 200, 600, 250]  # normalized 0-1000 in the crop
+    assert stitch_crop_box(crop, local) == [540.0, 760.0, 740.0, 775.0]
+    # the crop's origin adds, the crop's size scales
+    assert stitch_crop_box(crop, [0, 0, 1000, 1000]) == [500.0, 700.0, 900.0, 1000.0]
+
+
+def test_multi_layout_orders_zero_first_then_each_next_direction() -> None:
     """The combined layout shows the 0° lines first, then each next
     direction, each line carrying the orientation it was read at (VR15)."""
+
     from tools.layout import multi_layout
 
     layout = multi_layout(
@@ -823,3 +1004,903 @@ def test_layout_run_batch_skips_implicit_page_without_guess(tmp_path: Path) -> N
 
     rc = run_batch("adopt-0001", None, work, _FakeEngine())
     assert rc == 0  # batch continues, page skipped loudly
+
+
+def test_reading_order_sorts_top_to_bottom_then_left_to_right() -> None:
+    """The block order clusters the lines by ink and reads the blocks
+    top-to-bottom; same-y-band blocks keep their input order (the old
+    reading-start sort's left-to-right tie-break is subsumed by the
+    block clustering — side-by-side blocks are separate clusters)."""
+    from tools.reading import order_lines as order_lines_by_blocks
+
+    lines = [
+        {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
+        {"index": 1, "box": [100, 100, 300, 120], "orientation": 0},
+        {"index": 2, "box": [400, 100, 600, 120], "orientation": 0},
+    ]
+    ordered = order_lines_by_blocks(lines)
+    assert [ln["index"] for ln in ordered] == [1, 2, 0]  # top band first, then the lower line
+
+
+def test_layout_run_batch_returns_1_when_a_page_is_refused(tmp_path: Path) -> None:
+    """2026-08-22 (user: boxless lines must FAIL the pipeline run): a page
+    whose layout the gates refuse (a boxless line) makes the run FAIL —
+    return 1, never a silent 0 with the page missing from the output."""
+    from PIL import Image
+
+    _stub_paddleocr()
+    from tools.layout_detect import run_batch
+
+    work = tmp_path
+    (work / "adopt-0001" / "oriented").mkdir(parents=True)
+    (work / "adopt-0001" / "ocr-guess").mkdir(parents=True)
+    Image.new("RGB", (200, 100), (200, 200, 200)).save(work / "adopt-0001" / "oriented" / "p1.jpg")
+    (work / "adopt-0001" / "ocr-guess" / "p1.txt").write_text("boxed line\nboxless line", encoding="utf-8")
+
+    class _FakeEngine:
+        def predict(self, input, return_word_box=False):
+            return [
+                {
+                    "dt_polys": [[[0, 0], [100, 0], [100, 20], [0, 20]]],
+                    "rec_texts": ["boxed line"],
+                    "rec_scores": [0.9],
+                    "text_word_region": [],
+                }
+            ]
+
+    rc = run_batch("adopt-0001", None, work, _FakeEngine())
+    assert rc == 1
+
+
+def test_reading_order_180_line_reads_after_the_upright_header() -> None:
+    """An upside-down (180°) line's block sorts by its box top — a block
+    physically higher reads first; the orientation itself is untouched
+    (never rounded)."""
+    from tools.reading import order_lines as order_lines_by_blocks
+
+    lines = [
+        {"index": 0, "box": [100, 100, 300, 120], "orientation": 180},
+        {"index": 1, "box": [100, 200, 300, 220], "orientation": 0},
+    ]
+    ordered = order_lines_by_blocks(lines)
+    assert [ln["index"] for ln in ordered] == [0, 1]
+    assert ordered[0]["orientation"] == 180  # the exact angle survives
+
+
+def test_reading_order_handles_exact_near_cardinal_angles() -> None:
+    """The clip classifier returns exact angles (88.4, 271.2, 358.7); the
+    block order clusters by ink (orientation-independent) and never
+    rounds the stored orientation."""
+    from tools.reading import order_lines as order_lines_by_blocks
+
+    lines = [
+        {"index": 0, "box": [100, 400, 300, 420], "orientation": 88.4},
+        {"index": 1, "box": [100, 100, 300, 120], "orientation": 358.7},
+    ]
+    ordered = order_lines_by_blocks(lines)
+    assert [ln["index"] for ln in ordered] == [1, 0]
+    assert ordered[1]["orientation"] == 88.4
+
+
+def test_reading_order_preserves_line_index() -> None:
+    """The ordering reorders the display list but keeps each line's index —
+    the review surface keys edits and selections by index."""
+    from tools.reading import order_lines as order_lines_by_blocks
+
+    lines = [
+        {"index": 7, "box": [100, 300, 300, 320], "orientation": 0},
+        {"index": 3, "box": [100, 100, 300, 120], "orientation": 0},
+    ]
+    ordered = order_lines_by_blocks(lines)
+    assert [ln["index"] for ln in ordered] == [3, 7]
+
+
+def test_reading_order_boxless_lines_last_in_input_order() -> None:
+    from tools.reading import order_lines as order_lines_by_blocks
+
+    lines = [
+        {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
+        {"index": 1, "text": "no box"},
+        {"index": 2, "box": [100, 100, 300, 120], "orientation": 0},
+    ]
+    ordered = order_lines_by_blocks(lines)
+    assert [ln["index"] for ln in ordered] == [2, 0, 1]
+
+
+def test_reading_order_is_stable_for_equal_starts() -> None:
+    from tools.reading import order_lines as order_lines_by_blocks
+
+    lines = [
+        {"index": 0, "box": [100, 100, 300, 120], "orientation": 0},
+        {"index": 1, "box": [100, 100, 300, 120], "orientation": 0},
+    ]
+    ordered = order_lines_by_blocks(lines)
+    assert [ln["index"] for ln in ordered] == [0, 1]  # ties keep input order
+
+
+def test_reading_order_degenerate_box_does_not_crash() -> None:
+    from tools.reading import order_lines as order_lines_by_blocks
+
+    lines = [
+        {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
+        {"index": 1, "box": [50, 50, 50, 50], "orientation": 0},  # zero-area
+        {"index": 2, "box": [0, 0, 10, 10], "orientation": 0},
+    ]
+    ordered = order_lines_by_blocks(lines)
+    assert len(ordered) == 3
+
+
+def test_validate_layout_orientation_matches_box_aspect() -> None:
+    """Gate A (2026-08-20): a line's orientation must be consistent with its
+    box's aspect. A wide box (width >> height) holds horizontal text (axis
+    near 0/180); a tall box holds vertical text (axis near 90/270). The
+    check uses the orientation's AXIS (mod 180) so exact angles work —
+    a 88.4° line is vertical-axis and must have a tall box. Fails only on
+    the CLEARLY wrong cases (aspect >= 2x against a clearly-opposite
+    axis); diagonal angles and near-square boxes pass (lenient)."""
+    from tools.layout import validate_layout
+
+    def _layout(lines):
+        return {"width": 1000, "height": 1000, "lines": lines}
+
+    # clearly-wide box labeled with a vertical axis -> violation
+    assert validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 90}]))
+    assert validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 88.4}]))
+    assert validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 271.2}]))
+    # clearly-tall box labeled with a horizontal axis -> violation
+    assert validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 0}]))
+    assert validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 358.7}]))
+    assert validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 180}]))
+
+
+def test_validate_layout_orientation_consistent_cases_pass() -> None:
+    from tools.layout import validate_layout
+
+    def _layout(lines):
+        return {"width": 1000, "height": 1000, "lines": lines}
+
+    # wide box with horizontal axis -> pass
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 0}]))
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 180}]))
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 358.7}]))
+    # tall box with vertical axis -> pass
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 90}]))
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 271.2}]))
+    # near-square box -> pass regardless (ambiguous, skip)
+    assert not validate_layout(_layout([{"text": "x" * 5, "box": [0, 0, 60, 50], "orientation": 90}]))
+    # diagonal axis with a wide box -> pass (lenient; a 45° line is diagonal)
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 300], "orientation": 45}]))
+    # moderate aspect (1.5x) against a vertical axis -> pass (not clearly wrong)
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 300, 200], "orientation": 90}]))
+    # no orientation field -> pass (nothing to check)
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50]}]))
+    # no box -> FAILS (2026-08-22, user: boxless lines must fail the
+    # pipeline run so the geometry pass gets fixed — the older
+    # boxless-passes rule is superseded)
+    assert validate_layout(_layout([{"text": "x" * 25, "orientation": 90}]))
+
+
+def test_validate_layout_text_length_matches_box_extent() -> None:
+    """Gate B (2026-08-20): a line's recognized text length must not be
+    WILDLY out of sync with the box's reading-axis extent. The reading
+    axis is the width for a horizontal line (axis near 0/180) and the
+    height for a vertical one (axis near 90/270). A 500px-wide box holding
+    3 characters is absurd (the box is empty or the text is truncated);
+    a 50px box holding 40 characters is also absurd. The gate is LOOSE —
+    only the wildly-out cases (outside ~3-80 px per character) fail, so
+    handwriting variance and short fragments never false-positive."""
+    from tools.layout import validate_layout
+
+    def _layout(lines):
+        return {"width": 1000, "height": 1000, "lines": lines}
+
+    # a wide box (500px) with a 3-char text -> ~167 px/char: wildly out
+    assert validate_layout(_layout([{"text": "abc", "box": [0, 0, 500, 50], "orientation": 0}]))
+    # a narrow box (50px) with a 40-char text -> ~1.25 px/char: wildly out
+    assert validate_layout(_layout([{"text": "x" * 40, "box": [0, 0, 50, 50], "orientation": 0}]))
+    # a tall box (500px) with a 3-char text at 90° -> the axis is the height
+    assert validate_layout(_layout([{"text": "abc", "box": [0, 0, 50, 500], "orientation": 90}]))
+    # an empty text with a box -> wildly out (nothing there)
+    assert validate_layout(_layout([{"text": "", "box": [0, 0, 500, 50], "orientation": 0}]))
+
+
+def test_validate_layout_text_length_reasonable_cases_pass() -> None:
+    from tools.layout import validate_layout
+
+    def _layout(lines):
+        return {"width": 1000, "height": 1000, "lines": lines}
+
+    # a 500px box with ~25 chars -> ~20 px/char: plausible handwriting
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 0}]))
+    # a short fragment ("N.B") in a small box -> plausible
+    assert not validate_layout(_layout([{"text": "N.B", "box": [0, 0, 120, 50], "orientation": 0}]))
+    # a vertical 500px box with ~25 chars at 90° -> axis is the height
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 90}]))
+    # no box -> FAILS (2026-08-22, user: boxless lines must fail the
+    # pipeline run so the geometry pass gets fixed)
+    assert validate_layout(_layout([{"text": "anything", "orientation": 0}]))
+    # no orientation -> the axis defaults to the width (horizontal)
+    assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50]}]))
+
+
+class TestRecognizeExtra:
+    """The clip->rotate->recognize flow for extra (rec-only) lines
+    (2026-08-20, user's direction): a line the rec engine read as a
+    fragment is clipped from the ORIGINAL image, rotated UPRIGHT by its
+    orientation, and recognized there — the de-rotated reading, never
+    the rotated-frame garbage. Fail fast (drop the line) when the clip
+    is out of bounds, recognition returns nothing, or the recognized
+    text is wildly out of sync with the box's reading axis (Gate C)."""
+
+    def _png(self, tmp_path, w: int, h: int, rgb=(40, 40, 40)) -> Path:
+        img = Image.new("RGB", (w, h), rgb)
+        path = tmp_path / "page.png"
+        img.save(path)
+        return path
+
+    def test_clip_is_rotated_upright_before_recognition(self, tmp_path) -> None:
+        """A 90° line's clip must reach the recognizer UPRIGHT — the
+        box [0, 0, 50, 100] in a 100x100 image holds vertical text; the
+        recognizer must see the 100x50 (de-rotated) crop, not the tall
+        sliver. A fragment is the rec's rotated-frame reading; the
+        upright clip is what the model can actually read."""
+        from tools.layout import recognize_extra
+
+        image = self._png(tmp_path, 100, 100)
+        seen: list[Path] = []
+
+        def fake_recognize(crop: Path) -> str | None:
+            seen.append(crop)
+            with Image.open(crop) as im:
+                assert im.size == (100, 50), f"clip must be upright 100x50, got {im.size}"
+            return "the upright line"
+
+        text = recognize_extra(image, [0, 0, 50, 100], 90, fake_recognize)
+        assert text == "the upright line"
+        assert len(seen) == 1
+
+    def test_180_flips_the_clip(self, tmp_path) -> None:
+        from tools.layout import recognize_extra
+
+        image = self._png(tmp_path, 100, 60)
+        seen: list[Path] = []
+
+        def fake_recognize(crop: Path) -> str | None:
+            seen.append(crop)
+            with Image.open(crop) as im:
+                assert im.size == (100, 60)
+            return "flipped line"
+
+        assert recognize_extra(image, [0, 0, 100, 60], 180, fake_recognize) == "flipped line"
+        assert len(seen) == 1
+
+    def test_empty_recognition_drops_the_line(self, tmp_path) -> None:
+        """Gate C: recognition that returns nothing must DROP the line —
+        never admit garbage or a blank line with a box."""
+        from tools.layout import recognize_extra
+
+        image = self._png(tmp_path, 100, 100)
+        assert recognize_extra(image, [0, 0, 100, 20], 0, lambda crop: None) is None
+        assert recognize_extra(image, [0, 0, 100, 20], 0, lambda crop: "   ") is None
+
+    def test_out_of_sync_text_drops_the_line(self, tmp_path) -> None:
+        """Gate C: the recognized text must match the box's proportions
+        — 40 characters in a 50px reading axis is impossible; the line
+        is dropped (a wildly wrong clip read must not anchor)."""
+        from tools.layout import recognize_extra
+
+        image = self._png(tmp_path, 100, 100)
+        long = "x" * 40
+        assert recognize_extra(image, [0, 0, 50, 20], 0, lambda crop: long) is None
+
+    def test_out_of_bounds_box_drops_without_calling(self, tmp_path) -> None:
+        from tools.layout import recognize_extra
+
+        image = self._png(tmp_path, 100, 100)
+        called = False
+
+        def fake_recognize(crop: Path) -> str | None:
+            nonlocal called
+            called = True
+            return "never"
+
+        assert recognize_extra(image, [80, 0, 150, 20], 0, fake_recognize) is None
+        assert not called
+
+    def test_multi_layout_extras_use_the_recognized_text(self, tmp_path) -> None:
+        """The wire-through: multi_layout's extra lines are replaced by
+        the clip-recognized reading; a failed recognition DROPS the
+        line entirely — the rec fragment never reaches the review."""
+        from tools.layout import multi_layout
+
+        image = self._png(tmp_path, 200, 200)
+        passes = [
+            (
+                0,
+                [
+                    {
+                        "text": "anchored line",
+                        "box": [10, 10, 150, 30],
+                        "score": 0.9,
+                        "words": [],
+                    }
+                ],
+            ),
+            (
+                90,
+                [
+                    {
+                        "text": "frag",
+                        "box": [10, 50, 30, 150],
+                        "score": 0.8,
+                        "words": [],
+                    }
+                ],
+            ),
+        ]
+        recognized: list[str] = []
+
+        def fake_recognize(crop: Path) -> str | None:
+            recognized.append(crop.name)
+            return "the true text" if len(recognized) == 1 else None
+
+        layout = multi_layout(
+            "p1.jpg",
+            200,
+            200,
+            passes,
+            report_lines=[{"index": 0, "box": [50, 50, 750, 150], "degrees": 0, "text": "anchored line"}],
+            vlm_text="anchored line",
+            image=image,
+            recognize=fake_recognize,
+        )
+        texts = [ln["text"] for ln in layout["lines"]]
+        assert "anchored line" in texts
+        assert "the true text" in texts  # the first extra recognized
+        assert "frag" not in texts  # the second extra's recognition failed -> dropped
+
+
+def test_multi_layout_trusts_clip_report_degrees_over_the_pass() -> None:
+    """A clip-sourced report's located degrees are the line's TRUE
+    orientation (the clip classifier measures the exact angle of the
+    actual text — the designed fix for the full-page call's 90-vs-270
+    flip). The pass orientation is a rotated-frame artifact: page-03's
+    horizontal lines were content-matched during the mirrored 90° pass
+    and labeled 90° — wrong for the UI rotation and the reading order.
+    With ``trust_report_degrees`` (the clip source), the located degrees
+    win; without it the full-page report's estimates stay untrusted
+    (the 2026-08-17 decision, test above)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (0, [{"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []}]),
+            (90, [{"text": "my first Theory", "box": [501, 201, 999, 252], "score": 0.9, "words": []}]),
+        ],
+        report_lines=[
+            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+            # the clip classifier located the line at 0 (it IS horizontal);
+            # the 90° pass merely read the mirrored frame
+            {"index": 1, "box": [500, 200, 1000, 252], "degrees": 0},
+        ],
+        vlm_text="POST CARD\nmy first Theory lesson to",
+        trust_report_degrees=True,
+    )
+    line = [ln for ln in layout["lines"] if "Theory" in ln["text"]][0]
+    assert line["orientation"] == 0, f"the located degrees must win over the pass, was {line['orientation']}"
+
+
+def test_multi_layout_uses_the_match_box_when_the_report_box_misses_the_ink() -> None:
+    """The report's located box is an anchor only when it claims the same
+    ink the rec matched — page-03's transcription boxes sat ~200px above
+    the real text (the model's estimate failed), while the detector found
+    the line. A report box disjoint from the matched detection is an
+    estimate, not geometry: the layout must use the rec match's box
+    (2026-08-20)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                0,
+                [
+                    {
+                        "text": "P.S. I had a whole Grade 3A",
+                        "box": [100, 400, 480, 440],  # the rec found the text HERE
+                        "score": 0.95,
+                        "words": [],
+                    }
+                ],
+            ),
+        ],
+        report_lines=[
+            # the report claims the line ~200px ABOVE the actual text
+            {"index": 0, "box": [100, 150, 480, 190], "degrees": 0},
+        ],
+        vlm_text="P.S. I had a whole Grade 3A",
+    )
+    line = layout["lines"][0]
+    assert line["box"] == [100, 400, 480, 440], f"the rec match's box must win, was {line['box']}"
+
+
+def test_multi_layout_rejects_an_inconsistent_report_angle_on_a_wide_box() -> None:
+    """Even a TRUSTED (clip) report's angle must be geometry-validated:
+    a 90° label on a 501x51 (wide) box is the classifier's error — the
+    box says horizontal text, so the line's orientation resolves to the
+    aspect-consistent 0 (2026-08-20: the clip classifier misread 2 of
+    page-03's tiny crops as 90°)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                90,
+                [
+                    {
+                        "text": "my first Theory lesson",
+                        "box": [100, 200, 601, 251],  # wide: horizontal text
+                        "score": 0.9,
+                        "words": [],
+                    }
+                ],
+            ),
+        ],
+        report_lines=[{"index": 0, "box": [100, 200, 601, 251], "degrees": 90}],
+        vlm_text="my first Theory lesson",
+        trust_report_degrees=True,
+    )
+    line = layout["lines"][0]
+    assert line["orientation"] == 0, f"the wide box must force 0, was {line['orientation']}"
+
+
+def test_multi_layout_extras_force_the_aspect_consistent_orientation() -> None:
+    """The extras' orientations are geometry-validated too: an extra
+    detected during the 90° pass but with a wide (merged) box is
+    horizontal text — the pass label is a rotated-frame artifact, the
+    line's orientation is 0 (2026-08-20: page-03's refused rebuild)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                90,
+                [
+                    {
+                        "text": "When Dr W. saw & di",
+                        "box": [100, 100, 351, 220],  # wide -> horizontal
+                        "score": 0.9,
+                        "words": [],
+                    }
+                ],
+            ),
+        ],
+        report_lines=None,
+    )
+    line = layout["lines"][0]
+    assert line["orientation"] == 0, f"the wide extra box must force 0, was {line['orientation']}"
+
+
+def test_build_layout_leaves_a_wildly_oversized_positional_box_boxless() -> None:
+    """The positional fallback's guard (2026-08-20): a boxless VLM line
+    takes an unmatched detection's box ONLY when the box plausibly holds
+    the line's text — page-05's '③' (one glyph) was paired with a 552px
+    detection box, which refused the whole page at the write gate. The
+    absurd box is dropped (the line stays boxless, flagged), never
+    assigned — the page stays reviewable."""
+    from tools.layout import build_layout
+
+    layout = build_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        "a real line\n③",
+        [
+            {"box": [100, 100, 600, 140], "text": "a real line", "score": 0.95, "words": []},
+            {"box": [50, 500, 602, 589], "text": "garbage", "score": 0.9, "words": []},  # 552px wide
+        ],
+    )
+    by_text = {ln["text"]: ln for ln in layout["lines"]}
+    assert by_text["a real line"]["box"] == [100, 100, 600, 140]
+    assert by_text["③"]["box"] is None, "the absurd positional box must be dropped, not assigned"
+    # the drop is per-line: a plausible positional box still anchors
+    layout2 = build_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        "a real line\nN.B",
+        [
+            {"box": [100, 100, 600, 140], "text": "a real line", "score": 0.95, "words": []},
+            {"box": [50, 500, 150, 540], "text": "garbage", "score": 0.9, "words": []},  # 100px for 3 chars
+        ],
+    )
+    by2 = {ln["text"]: ln for ln in layout2["lines"]}
+    assert by2["N.B"]["box"] == [50, 500, 150, 540]
+
+
+def test_multi_layout_report_box_anchors_over_a_positional_match() -> None:
+    """The report's located box is the v3 anchor for a line the rec never
+    content-matched: the POSITIONAL match's box is unrelated ink (the
+    k-th unmatched detection), not evidence — a good report box must win
+    over it (2026-08-20: layout-5's correct anchors would have been
+    replaced by the positional boxes). A CONTENT match's box still wins
+    when the report box misses the ink (the disjoint case, tested
+    above)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                0,
+                [
+                    {
+                        "text": "POST CARD",
+                        "box": [101, 51, 299, 99],
+                        "score": 0.99,
+                        "words": [],
+                    },
+                ],
+            ),
+        ],
+        report_lines=[
+            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+            # the report located line 1 at the left margin; the positional
+            # match box is the unrelated HERNSPETH detection
+            {"index": 1, "box": [50, 400, 100, 500], "degrees": 0},
+        ],
+        vlm_text="POST CARD\ncritic's view. To quote:",
+    )
+    by_text = {ln["text"]: ln for ln in layout["lines"]}
+    critic = by_text["critic's view. To quote:"]
+    assert critic["box_source"] == "report-unconfirmed"
+    assert critic["box"] == [50.0, 400.0, 100.0, 500.0], f"the report's box must anchor, was {critic['box']}"
+
+
+def test_multi_layout_false_content_match_cannot_override_the_report_box() -> None:
+    """The postcard (2026-08-20): a 2-word line ('E    R') false-matches a
+    rec detection whose box is a 1341px merged band — the rec read the
+    stamp region as a few words containing 'e'/'r', clearing the Jaccard
+    bar. A content match's box only overrides the report's location when
+    the box plausibly holds the line's text (Gate B's own rule): the
+    1341px band for 6 characters is a false match; the report's located
+    box anchors instead."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        3500,
+        2215,
+        [
+            (
+                0,
+                [
+                    {
+                        "text": "e r",  # the rec's noisy stamp reading
+                        "box": [1998, 988, 3339, 1316],  # a 1341px merged band
+                        "score": 0.95,
+                        "words": [],
+                    }
+                ],
+            ),
+        ],
+        report_lines=[
+            {"index": 0, "box": [900, 76, 950, 101], "degrees": 0},  # the located stamp text, tight
+        ],
+        vlm_text="E    R",
+    )
+    line = layout["lines"][0]
+    assert line["text"] == "E    R"
+    # the report's scaled box: 900/1000*3500 = 3150 ... 950/1000*3500 = 3325
+    assert line["box"][0] == 3150, f"the report's located box must anchor, was {line['box']}"
+    assert line["box"][2] == 3325
+
+
+def test_multi_layout_drops_the_box_when_no_candidate_holds_the_text() -> None:
+    """When neither the report's box nor the match's box plausibly holds
+    the line's text (the postcard's stamp lines — the location call's
+    boxes are loose for printed graphics), the line goes BOXLESS (flagged)
+    rather than anchoring a wildly wrong box that refuses the whole page
+    (2026-08-20)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        3500,
+        2215,
+        [
+            (
+                0,
+                [
+                    {
+                        "text": "e r",
+                        "box": [1998, 988, 3339, 1316],
+                        "score": 0.95,
+                        "words": [],
+                    }
+                ],
+            ),
+        ],
+        report_lines=[
+            {"index": 0, "box": [821, 76, 964, 101], "degrees": 0},  # 501px for 'E    R' — still too loose
+        ],
+        vlm_text="E    R",
+    )
+    assert layout["lines"][0]["box"] is None, "no candidate holds the text — boxless, flagged"
+
+
+def test_build_layout_keeps_the_transcription_order_for_margin_blocks() -> None:
+    """The single-orientation reading order (2026-08-20, user's
+    requirement): a page's transcription order IS the block-aware reading
+    — the model read the page block-by-block (page-03: the P.S. margin
+    top-to-bottom, then the address block, then the body; each block's
+    text order = its physical order). The reading-start sort read
+    ROW-by-row across the same y-band, interleaving the margin blocks
+    (P.S. line, Postmark, theory line, Queen's House — 10+ image
+    bounces). The single path keeps the transcription order: the display
+    matches the transcription, and the image moves block-by-block (one
+    jump), never bouncing."""
+    from tools.layout import build_layout
+
+    layout = build_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        "P.S. line one\ntheory paper\nPostmark 27.9.63\nQueen's House",
+        [
+            {"box": [100, 100, 300, 140], "text": "P.S. line one", "score": 0.95, "words": []},
+            {"box": [100, 150, 300, 190], "text": "theory paper", "score": 0.95, "words": []},
+            {"box": [400, 102, 600, 142], "text": "Postmark", "score": 0.95, "words": []},
+            {"box": [400, 152, 600, 192], "text": "Queen's House", "score": 0.95, "words": []},
+        ],
+    )
+    texts = [ln["text"] for ln in layout["lines"]]
+    # the transcription order — NOT the reading-start interleave
+    assert texts == ["P.S. line one", "theory paper", "Postmark 27.9.63", "Queen's House"], texts
+
+
+def test_multi_layout_keeps_the_physical_reading_order() -> None:
+    """The multi-orientation reading order (the postcard, 2026-08-20):
+    the transcription order scrambled the multi reading (the 90° body's
+    top fragments sorted before the 0° margin), so the physical
+    reading-start sort in the dominant frame still applies — each
+    orientation block reads top-to-bottom in its frame position, the
+    rotations change once per block, never per line."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                270,
+                [
+                    {
+                        "text": "message line",
+                        "box": [700, 400, 900, 900],  # the 270° message at the bottom-right
+                        "score": 0.9,
+                        "words": [],
+                    }
+                ],
+            ),
+            (
+                0,
+                [
+                    {"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []},
+                ],
+            ),
+        ],
+        report_lines=[
+            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+            {"index": 1, "box": [700, 400, 900, 900], "degrees": 270},
+        ],
+        vlm_text="POST CARD\nmessage line",
+    )
+    texts = [ln["text"] for ln in layout["lines"]]
+    # the 270° message reads upright with its reading-start ABOVE the
+    # 0° POST CARD? No — POST CARD (y50) is physically above the message
+    # (y400): the physical order reads POST CARD first.
+    assert texts == ["POST CARD", "message line"], texts
+    # and the 270° line keeps its orientation (the reading frame, not a
+    # per-line rotation flip)
+    msg = [ln for ln in layout["lines"] if ln["text"] == "message line"][0]
+    assert msg["orientation"] == 270
+
+
+def test_dedupe_regions_survives_boxless_lines() -> None:
+    """The boxless anchored lines (2026-08-20 — the arbitration drops a
+    box when no candidate holds the text) must not crash the dedupe: the
+    region-overlap check skips lines without a box — the postcard's
+    rebuild crashed on a None box in _box_area."""
+    from tools.layout import dedupe_regions
+
+    lines = [
+        {"index": 0, "text": "E    R", "box": None, "conf": 0.0, "box_source": "report-unconfirmed"},
+        {"index": 1, "text": "extra fragment", "box": [0, 0, 100, 20], "conf": 0.0, "box_source": "multi"},
+    ]
+    out = dedupe_regions(lines)
+    assert [ln["text"] for ln in out] == ["E    R", "extra fragment"]
+
+
+def test_multi_layout_keeps_text_order_when_orientations_resolve_single() -> None:
+    """page-03 (2026-08-20): a single-orientation letter took the multi
+    path because the report's line degrees ({0, 90}) triggered it — but
+    the aspect rule corrected every line to 0 (wide boxes). With ONE
+    resolved orientation, the reading order is the TRANSCRIPTION order
+    (the margin blocks read block-by-block, never interleaved); the
+    physical sort applies only to genuinely multi-orientation pages
+    (the postcard)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        1000,
+        1000,
+        [
+            (
+                90,
+                [
+                    # the rec read the horizontal lines during the 90° pass
+                    {"text": "P.S. line one", "box": [100, 100, 300, 140], "score": 0.9, "words": []},
+                    {"text": "theory paper", "box": [100, 150, 300, 190], "score": 0.9, "words": []},
+                    {"text": "Postmark", "box": [400, 102, 600, 142], "score": 0.9, "words": []},
+                ],
+            ),
+        ],
+        report_lines=[
+            {"index": 0, "box": [100, 100, 300, 140], "degrees": 0},
+            {"index": 1, "box": [100, 150, 300, 190], "degrees": 0},
+            {"index": 2, "box": [400, 102, 600, 142], "degrees": 90},  # a garbage label — aspect-corrected to 0
+        ],
+        vlm_text="P.S. line one\ntheory paper\nPostmark",
+        trust_report_degrees=True,
+    )
+    texts = [ln["text"] for ln in layout["lines"]]
+    assert texts == ["P.S. line one", "theory paper", "Postmark"], texts
+    assert all(ln["orientation"] == 0 for ln in layout["lines"])
+
+
+def test_block_order_reads_each_block_whole() -> None:
+    """The block-aware reading order (2026-08-20, user's requirement): the
+    lines cluster into physical blocks (lines sharing ink), each block
+    reads WHOLE — the postcard's printed top (0°), then the vertical
+    message, then the address — never the reading-start sort's row-by-row
+    interleave of overlapping blocks (the 0° top and the 90° message
+    bounced per line). Within a block, the TRANSCRIPTION order is
+    preserved."""
+    from tools.reading import order_lines as order_lines_by_blocks
+
+    lines = [
+        {"index": 0, "text": "POST CARD", "box": [1575, 73, 2240, 222], "orientation": 0},
+        {"index": 1, "text": "Printed in Great Britain", "box": [1295, 246, 1995, 301], "orientation": 0},
+        {"index": 2, "text": "We are from", "box": [1277, 343, 1540, 975], "orientation": 90},
+        {"index": 3, "text": "beauford & Mrs", "box": [1505, 235, 1662, 1108], "orientation": 90},
+        {"index": 4, "text": "Paul Wink", "box": [1999, 988, 3339, 1316], "orientation": 0},
+        {"index": 5, "text": "47 Brighton Grove", "box": [2142, 1376, 3479, 1692], "orientation": 0},
+    ]
+    ordered = order_lines_by_blocks(lines)
+    texts = [ln["text"] for ln in ordered]
+    # the printed top (block 1), then the message (block 2), then the
+    # address (block 3) — each whole, no interleave
+    assert texts == [
+        "POST CARD",
+        "Printed in Great Britain",
+        "We are from",
+        "beauford & Mrs",
+        "Paul Wink",
+        "47 Brighton Grove",
+    ], texts
+
+
+def test_block_order_keeps_boxless_lines_in_place() -> None:
+    """A boxless line has no block — it stays in its transcription
+    position (the postcard's stamp lines, boxless after the arbitration,
+    read after the address block)."""
+    from tools.reading import order_lines as order_lines_by_blocks
+
+    lines = [
+        {"index": 0, "text": "message line", "box": [100, 100, 200, 900], "orientation": 90},
+        {"index": 1, "text": "POSTAGE", "box": None, "orientation": 0},
+    ]
+    assert [ln["text"] for ln in order_lines_by_blocks(lines)] == ["message line", "POSTAGE"]
+
+
+def test_validate_layout_catches_duplicate_region_claims() -> None:
+    """Gate E (2026-08-20): two lines whose boxes claim the same region
+    with DIFFERENT text is a geometry failing — the postcard's location
+    report gave 'We are from' and 'beauford & Mrs' the SAME box (the
+    model's message geometry duplicated). The same text in one region is
+    the dedupe's job (a fragment); different texts in one region is
+    ambiguity the review must see."""
+    from tools.layout import validate_layout
+
+    layout = {
+        "width": 3500,
+        "height": 2215,
+        "lines": [
+            {"text": "We are from", "box": [1505, 235, 1662, 1108], "orientation": 90},
+            {"text": "beauford & Mrs", "box": [1505, 235, 1662, 1108], "orientation": 90},  # the same box
+        ],
+    }
+    viol = validate_layout(layout)
+    assert any("same region" in v for v in viol), viol
+    # the same text in one region is NOT a duplicate-region violation
+    layout["lines"][1]["text"] = "We are from"
+    assert not [v for v in validate_layout(layout) if "same region" in v]
+
+
+def test_drop_inkless_boxes_removes_blank_estimates(tmp_path) -> None:
+    """Gate D (2026-08-20): a line's box must contain the ink it claims —
+    page-03's transcription boxes sat ~200px above the real text, and a
+    well-proportioned box in a blank region is an ESTIMATE, not an
+    anchor (the gates cannot see it: in-bounds, aspect-consistent,
+    text-synced). The layout stage checks the ink and drops the box —
+    the line stays flagged, the page stays reviewable."""
+    from tools.layout import drop_inkless_boxes
+
+    img = Image.new("RGB", (200, 200), (255, 255, 255))
+    for x in range(100, 140):
+        for y in range(20, 40):
+            img.putpixel((x, y), (40, 40, 40))  # ink at the TOP
+    img.save(tmp_path / "p1.png")
+    lines = [
+        {"index": 0, "text": "real line", "box": [100, 20, 140, 40]},  # on the ink
+        {"index": 1, "text": "P.S. I had a whole", "box": [100, 150, 180, 190]},  # blank region
+    ]
+    dropped = drop_inkless_boxes(lines, tmp_path / "p1.png")
+    assert dropped == 1
+    assert lines[0]["box"] == [100, 20, 140, 40]
+    assert lines[1]["box"] is None, "the blank-region box is an estimate — dropped, flagged"
+
+
+def test_box_overlap_is_intersection_over_the_smaller_box() -> None:
+    """2026-08-20: the zero-division guard was ``min(a, b, eps)`` — the
+    epsilon is the MINIMUM, so every overlap divided by 1e-9 and any
+    1px intersection read as ~1e12. The dedupe, the anchor arbitration
+    and Gate E all consumed the inflated value. The overlap is the
+    intersection over the SMALLER box: identical = 1, disjoint = 0,
+    half-covered = 0.5."""
+    from tools.box import overlap as _box_overlap
+
+    assert _box_overlap([0, 0, 100, 100], [0, 0, 100, 100]) == 1.0
+    assert _box_overlap([0, 0, 100, 100], [200, 200, 300, 300]) == 0.0
+    # the taller strip covers half the wide box's area, the wide box
+    # fully contains the strip — over the SMALLER (the strip) = 1.0
+    assert _box_overlap([0, 0, 100, 100], [25, 0, 75, 100]) == 1.0
+    # half the smaller box's area is inside the other
+    assert _box_overlap([0, 0, 100, 100], [50, 0, 150, 100]) == 0.5
+
+
+def test_drop_conflicting_boxes_keeps_the_confirmed_anchor() -> None:
+    """Gate E as a correction (2026-08-22): when two lines claim the same
+    region with DIFFERENT text, the lower-confidence line's box is an
+    estimate that shadows the confirmed anchor — page-03's boxless
+    'critic's view. To quote:' box sat on the P.S. margin, refusing the
+    whole page at the serve gate. The lower-conf box drops (the line
+    stays flagged); the confirmed anchor keeps its region."""
+    from tools.layout import drop_conflicting_boxes
+
+    lines = [
+        {"index": 0, "text": "P.S. I had a whole Grade 3A", "box": [526, 2247, 1044, 2294], "conf": 1.0},
+        {"index": 1, "text": "critic's view. To quote:", "box": [517, 2247, 1048, 2302], "conf": 0.0},
+        {"index": 2, "text": "theory paper", "box": [540, 2297, 1042, 2340], "conf": 1.0},
+    ]
+    dropped = drop_conflicting_boxes(lines)
+    assert dropped == 1
+    assert lines[0]["box"] == [526, 2247, 1044, 2294]
+    assert lines[1]["box"] is None, "the unconfirmed claim on the anchor's region must drop"
+    assert lines[2]["box"] == [540, 2297, 1042, 2340]

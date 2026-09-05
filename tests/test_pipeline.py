@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from tools.pipeline import _guess_prompt, apply_routes, guess_pages, review
+from tools.pipeline_store import PipelineStore
 from tools.registry import RegistryError
 
 
@@ -311,3 +312,135 @@ def test_orientation_hints_write_the_sidecar_for_ambiguous_pages(tmp_path: Path)
 
     _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _single)
     assert not (guess / "p1.orientation.json").exists()
+
+
+def test_guess_is_stale_when_raw_transcriptions_change(tmp_path: Path) -> None:
+    """The guess's boundaries.inputs.json records each raw text's
+    fingerprint; a mismatch (a re-orientation regenerated ocr-raw) makes
+    the guess stale and deletes the boundaries so the next run re-guesses
+    (2026-08-20)."""
+    from tools.pipeline import _guess_is_stale
+
+    raw = tmp_path / "ocr-raw"
+    guess = tmp_path / "ocr-guess"
+    raw.mkdir(parents=True)
+    guess.mkdir(parents=True)
+    boundaries = guess / "boundaries.json"
+
+    # A completed guess: text present, boundaries + inputs sidecar matching.
+    (guess / "p1.txt").write_text("guess text", encoding="utf-8")
+    (boundaries).write_text("[]", encoding="utf-8")
+    (guess / "boundaries.inputs.json").write_text(
+        '{"p1.jpg": "' + __import__("hashlib").sha256(b"raw v1").hexdigest() + '"}',
+        encoding="utf-8",
+    )
+    (raw / "p1.txt").write_text("raw v1", encoding="utf-8")
+
+    assert not _guess_is_stale(["p1.jpg"], raw, guess, boundaries)
+
+    # The raw transcription changed (re-orientation regenerated it).
+    (raw / "p1.txt").write_text("raw v2", encoding="utf-8")
+    assert _guess_is_stale(["p1.jpg"], raw, guess, boundaries)
+    assert not boundaries.exists(), "stale boundaries must be deleted for the re-run"
+
+
+def test_guess_is_stale_when_boundaries_lack_fingerprint_sidecar(tmp_path: Path) -> None:
+    """A pre-fingerprint boundaries (no inputs sidecar) cannot prove its
+    inputs — treat as stale once so the next run re-guesses."""
+    from tools.pipeline import _guess_is_stale
+
+    raw = tmp_path / "ocr-raw"
+    guess = tmp_path / "ocr-guess"
+    raw.mkdir(parents=True)
+    guess.mkdir(parents=True)
+    boundaries = guess / "boundaries.json"
+    (guess / "p1.txt").write_text("guess text", encoding="utf-8")
+    boundaries.write_text("[]", encoding="utf-8")
+    (raw / "p1.txt").write_text("raw v1", encoding="utf-8")
+
+    assert _guess_is_stale(["p1.jpg"], raw, guess, boundaries)
+
+
+def test_orientation_hints_failure_is_recorded_not_fatal(tmp_path: Path) -> None:
+    """A failing orientation report must NOT kill the batch (2026-08-20:
+    the heavy location task burns 64K reasoning tokens with no content,
+    non-deterministically). The failure is recorded — accumulating across
+    passes — and the page is left without a report so the next pass
+    retries and the layout falls back to single-orientation."""
+    from tools.pipeline import _write_orientation_hints
+
+    batch_work = tmp_path / "work" / "adopt-0001"
+    oriented = batch_work / "oriented"
+    guess = batch_work / "ocr-guess"
+    oriented.mkdir(parents=True)
+    guess.mkdir(parents=True)
+    (oriented / "rotations.json").write_text(
+        json.dumps({"p1.jpg": {"degrees": 0, "strong": 16, "scores": {"0": 16, "90": 4, "180": 7, "270": 9}}}),
+        encoding="utf-8",
+    )
+    (oriented / "p1.jpg").write_text("image", encoding="utf-8")
+
+    def _failing_report(_image: Path, _text: str) -> dict[str, object]:
+        raise RuntimeError("model produced only reasoning tokens, no content")
+
+    _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _failing_report)
+    # no report written, failure recorded
+    assert not (guess / "p1.orientation.json").exists()
+    trail = json.loads((guess / "orientation.failed.json").read_text(encoding="utf-8"))
+    assert len(trail) == 1
+    assert trail[0]["page"] == "p1.jpg"
+    assert trail[0]["attempt"] == 1
+    assert "reasoning tokens" in trail[0]["error"]
+
+    # a second pass appends, not overwrites — the trail accumulates
+    _write_orientation_hints(["p1.jpg"], batch_work, oriented, guess, _failing_report)
+    trail = json.loads((guess / "orientation.failed.json").read_text(encoding="utf-8"))
+    assert len(trail) == 2
+    assert trail[1]["attempt"] == 2
+
+
+def test_clip_report_falls_back_to_the_located_report_boxes(tmp_path: Path) -> None:
+    """The postcard (2026-08-20): the transcription returned NO per-line
+    geometry (the marker has no lines), but the full-page location call's
+    report has the located boxes — the clip path must classify THOSE (the
+    exact per-line angle the full-page estimate cannot resolve: the
+    90-vs-270 flip) instead of giving up to the flaky full-page call."""
+    from PIL import Image
+
+    from tools.pipeline import _try_clip_report
+
+    batch_work = tmp_path / "work" / "adopt-0001"
+    oriented = batch_work / "oriented"
+    raw = batch_work / "ocr-raw"
+    guess = batch_work / "ocr-guess"
+    oriented.mkdir(parents=True)
+    raw.mkdir(parents=True)
+    guess.mkdir(parents=True)
+    Image.new("RGB", (1000, 1500), (255, 255, 255)).save(oriented / "p1.jpg")
+    (raw / "p1.vlm.json").write_text(json.dumps({"total_tokens": 100}), encoding="utf-8")  # NO lines
+    (guess / "p1.orientation.json").write_text(
+        json.dumps(
+            {
+                "orientation_hint": [],
+                "lines": [
+                    {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+                    {"index": 1, "box": [500, 200, 900, 400], "degrees": 90},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    seen: list[float] = []
+
+    def _fake_classify(_crop: Path) -> float:
+        seen.append(1.0)
+        return 1.0
+
+    store = PipelineStore(batch_work.parent)
+    report = _try_clip_report(store, "adopt-0001", "p1.jpg", oriented, classify=_fake_classify)
+    assert report is not None
+    assert seen, "the report's boxes must have been clipped and classified"
+    assert len(report["lines"]) == 2
+    assert report["lines"][0]["box"] == [100, 50, 300, 100]
+    assert report["lines"][0]["degrees"] == 0
+    assert report["source"] == "clip"

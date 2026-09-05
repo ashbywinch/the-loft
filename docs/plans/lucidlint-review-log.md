@@ -467,12 +467,13 @@ Consider for the tool (not decided):
 
 ---
 
-## 10. What lucidlint could have caught during a refactor-heavy session (2026-08-20)
+## 10. The extraction findings were right; the hand-implementation of them was the failure (2026-08-20)
 
-The pipeline anti-fragility work (commit 6a6dda3) involved extracting
-helpers to satisfy lucidlint's own complexity/long-param-list findings.
-The extraction itself was where the edits went wrong — four distinct
-mechanical mistakes, none caught by any linter in the stack:
+The pipeline anti-fragility work (commit 6a6dda3) was driven by lucidlint's
+complexity and long-param-list findings — and every finding was correct.
+Where the session went wrong was in IMPLEMENTING the extractions by hand
+with a text editor: four distinct mechanical mistakes, none caught by any
+linter in the stack:
 
 1. **A module-level name collision.** A new `guess_pages()` CLI command
    shadowed an existing module-level `guess_pages()` helper (the model-
@@ -490,26 +491,170 @@ mechanical mistakes, none caught by any linter in the stack:
    from its `# lucidlint: ignore` — this one lucidlint's
    `stale-suppression` rule DID catch, correctly and deterministically.
 
-Deterministic findings lucidlint could add (all correct-by-construction,
-no judgement needed):
+**The core lesson: the fix engine already does these extractions
+deterministically — the session should have used it instead of hand-
+editing.** `lucidlint fix --kind extract-method --file F --line N`
+previews the seam (libcst-based, bounded to ≤13 decisions so the result
+lands under the CC-15 gate, made private by construction), and applying
+with `--name` is the commitment. Run against the pre-refactor
+`tools/layout_detect.py`, it proposed exactly the loop-body seam the
+session extracted by hand (`for image in pages:` → a private method, call
+site replaced) — correctly, in one preview, before any edit landed.
+`unreachable`/`noop-statement` fix kinds delete dead tails like finding 2
+deterministically. The tool's R27 ("agents never compute line numbers —
+the tool owns its own coordinates") exists precisely so an agent does not
+hand-apply these.
 
+The fix surface needs `libcst` in the running venv (the engine refuses
+without it: "the Python fix engine requires libcst"). Added to the dev
+dependency group so the fix commands work in this repo.
+
+**The corrected process for a complexity/long-param-list finding:**
+1. `lucidlint fix --kind extract-method --file F --line N` (no name) →
+   read the proposed diff + the seam's first lines;
+2. judge the seam (is this the right split? — the engine proposes, the
+   agent decides); if wrong, the preview is discarded, nothing changed;
+3. apply with `--name _private_helper --confirm` (the name is the
+   commitment);
+4. `lucidlint fix --kind unreachable --file F --line N` for any dead
+   tails the move left behind;
+5. re-run the gate. Hand-editing is the fallback only when the engine's
+   seam is genuinely wrong — not the default.
+
+**Findings lucidlint could still add** (correct-by-construction, beyond
+what the fix engine covers):
 - **Duplicate module-scope definition**: two `def <name>` at module level
   is a shadowing hazard; flag the second. The module's name→line map is
-  already in the tool's graph.
-- **Dead code after a terminal statement**: a statement in a block after
-  `return`/`continue`/`raise` is unreachable. My leftover tails were
-  exactly this; the fix is a deterministic deletion.
+  already in the tool's graph. (Finding 1 — no existing rule covers it.)
 - **A `def` name and its first parameter separated by a blank line**:
   mechanical formatting smell from an edit tool landing mid-parens.
+  (Finding 3.)
 
-The session also confirmed what already works well:
-- `stale-suppression` caught the orphaned ignore (finding 4 above) — the
-  suppression-adjacency rule is doing its job;
-- the `--file` LSP mode surfaced the syntax errors from botched edits
-  immediately, before the test gate — worth running after every non-
-  trivial edit sequence;
-- the complexity and long-param-list findings drove exactly the right
-  extractions (`_guess_is_stale`, `_layout_one`, `_regen_boundaries`),
-  and the repo's per-site `# lucidlint: ignore long-param-list` + why
-  pattern (§9's conclusion) held up: only genuinely-single-call-site
-  helpers got the ignore, the rest were refactored.
+**Confirmed again by the fingerprint work (2026-08-20, commit 4ce0500):**
+the same hand-edit failure class recurred three times in one small change,
+with one NEW shape:
+- **A duplicated statement block.** A `PUT` that replaced a loop header
+  left the old body in place — two identical
+  `transcribe → write → marker` sequences in one function. The silent
+  consequence: every page would be transcribed and billed TWICE. This is
+  deterministic to detect — two identical statement sequences in one
+  function body (AST subtree equality) — and worth a "duplicate code
+  block" rule; the existing "duplicate" rule covers imports/keys, not
+  statement blocks.
+- The two known shapes recurred: a helper inserted mid-import-block
+  (def-in-imports) and an import dropped by a repair edit (undefined
+  name — pyflakes F821, but only caught at the gate, not at edit time).
+- The available-but-unused tool: `ast_edit` (structural AST rewrites)
+  was in the toolbelt the whole session and would have applied these
+  changes atomically. The lesson from §10 extends: for structural
+  changes, prefer the AST tool or the fix engine — the text editor is
+  the wrong instrument, and the recurring mistakes are the evidence.
+
+The actionable affordance remains the same, sharpened: the per-file LSP
+mode should run the FULL rule set (undefined names, duplicate blocks,
+def-in-imports) so transient states are flagged at edit time — the
+syntax-only stream caught nothing about these.
+
+**Affordance findings (what the tool could change, beyond the process):**
+- **What is NOT attachable to a finding: the exact output.** The
+  structural fixes are name-driven by design — "structural kinds need a
+  name (agent-supplied via --fix-name... they are never applied blindly)".
+  extract-method's function name, long-param-list's parameter-object
+  shape, extract-class's split are all the agent's commitment; the result
+  is genuinely novel, which is exactly why those kinds preview a diff
+  before --confirm. Attaching "the expected output" to the finding is
+  impossible and would be wrong.
+- **What IS deterministic and attachable: the seam.** The name-free
+  preview already computes which block would move (bounded to ≤13
+  decisions, made private by construction) and shows it with a
+  placeholder name — the session's pre-refactor run_batch preview showed
+  the whole `for image in pages:` loop with `_extracted` as the
+  placeholder. The finding message could surface the seam's start line and
+  first statement (name-independent), so the agent can judge whether the
+  split is right at finding time; the full diff comes from the one-command
+  name-free preview. The tool's own workflow — "naming AFTER seeing the
+  diff, not before" — is the correct process; the gap was the session
+  never ran that preview before hand-editing.
+- **The per-file LSP mode should run the full rule set, not just syntax.**
+  The LSP diagnostics caught the syntax errors from botched edits
+  instantly; it would have caught the transient duplicate-def and
+  undefined-name states too if the same rule set ran per-file. The
+  transient mistakes were never linted because they were fixed before the
+  next gate run — only the always-on LSP stream saw them.
+- **`unreachable` exists as a rule and fix, but would NOT have fired on
+  this session's leftover tails** — they were reachable-but-broken code
+  referencing undefined names (`missing`, `cursive`), not statements after
+  a `return`. The genuinely missing piece is the duplicate module-scope
+  definition rule (catches both the `guess_pages` shadowing and the
+  double-`def` edit mistakes) plus undefined-name flagging in the LSP
+  stream.
+
+**What already worked well:** `stale-suppression` caught the orphaned
+ignore (finding 4) — the suppression-adjacency rule is doing its job; the
+`--file` LSP mode surfaced syntax errors from botched edits immediately,
+before the test gate; the complexity/long-param-list findings drove the
+right extractions, and the repo's per-site `# lucidlint: ignore
+long-param-list` + why pattern (§9's conclusion) held up — only genuinely
+single-call-site helpers got the ignore, the rest were refactored.
+
+## 11. How lucidlint could have deterministically found the architecture pass's improvements (2026-08-20)
+
+The architecture pass (commit e576086) split the 1342-line
+`tools/layout.py` into `text.py` / `box.py` / `gates.py` / `reading.py` +
+the layout model, renamed the misleading identifiers, removed the dead
+reading-start sort, and cut the "what" comments. Every one of those
+improvements was found because the user PROMPTED for them — none of it
+was flagged by a tool. What a deterministic linter could have said:
+
+1. **The module-cohesion bar (the biggest miss).** `layout.py` held
+   seven responsibilities — the tokenization, the box math, the
+   validation gates, the reading order, the association, the anchor
+   arbitration, and the clip flow — interleaved in 54 functions. The
+   priority ranking already computes the per-file edge count (it
+   reported the P99 hotspot function) but never the MODULE's cohesion:
+   a module whose edges cross any sane bar AND whose private functions
+   span several sub-domains is a split candidate. Rule shape: the file
+   edge count over the fail bar + the number of distinct module-scope
+   groups → "split the module at the domain seams". Deterministic,
+   data-only, and it would have fired years of debt ago.
+2. **The dead code after a refactor.** When the block-aware order
+   replaced the reading-start sort, `reading_start` and
+   `order_lines_by_reading` survived as unused module functions for a
+   full commit. `unreachable` catches statements-after-return, not
+   orphaned functions; `stale-suppression` caught the orphaned ignores
+   but not the dead bodies. Rule shape: a module-scope def never
+   referenced anywhere in the repo (excluding the re-export pattern, the
+   test imports, and the `__main__` dispatch) → flag. Cheap, exact,
+   and it would have deleted the dead sort at the same commit.
+3. **The name collisions.** `admission_gate` (the rec admission rule)
+   sat beside the `Gate` classes (the validation gates) — the same term
+   for two different concepts, legible only with the context the
+   context-free agent lacks. Rule shape: a repo's domain-term registry
+   (the class names) + the flagging of a function whose name reuses a
+   class term for a different concept. Heuristic, but the collisions are
+   exactly what the AST can see.
+4. **The near-duplicates.** The aspect-consistency rule and the
+   text-extent rule each lived in BOTH the gates and the layout's
+   arbitration (the `_box_sync` / `_aspect_consistent` copies) before
+   the split. Rule shape: the same body in two module-scope defs (the
+   AST-equality or the normalized-token-equality) → "extract the shared
+   module" — the extract-method engine already has the machinery.
+5. **The "what" comments.** The heaviest comment load restated the body
+   ("the line's orientation must be consistent with its box's aspect"
+   beside the four lines that say exactly that). Rule shape: a
+   docstring whose content words are a subset of the body's tokens →
+   "the docstring restates the code — name the concept instead". This
+   is the user's "great naming over comments" direction, mechanizable.
+
+**What lucidlint DID catch deterministically during the pass, and steered
+it:** the cyclomatic spikes drove every extraction (the gates, the
+dedupe, `multi_layout`, `_try_clip_report`, `_clip_source_boxes` — each
+went over CC-15 and each was split at the seam the tool named); the
+`stale-suppression` rule caught the orphaned ignores when the defs moved;
+the module-level mutable `GATES` collection was flagged; the
+long-param-list findings forced the suppression-with-a-real-why pattern.
+The tool's current rules are complexity-shaped — they shaped HOW the
+refactor happened but never WHERE. The five rules above are the missing
+"where": module cohesion, dead symbols, name collisions, near-duplicates,
+restating docstrings — all implementable on the AST the tool already
+walks, all deterministic, and all would have fired unprompted.

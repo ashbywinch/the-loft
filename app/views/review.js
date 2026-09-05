@@ -48,47 +48,67 @@ export function loadEdits(batchId, docIndex) {
  *  edit's text elsewhere in the layout and re-map the index. Edits that
  *  can't be matched are dropped — the reviewer re-checks those lines.
  *  Returns a new edits dict with the re-mapped indices. */
-function reconcileEdits(edits, layout) {
+export function reconcileEdits(edits, layout) {
+  // An edit (a corrected text, or a "mark fine" of the verbatim text)
+  // stays valid ONLY while the line it belongs to still carries the same
+  // text. When the pipeline rebuilds a page and the transcription changes,
+  // the old edits must ORPHAN — the reviewer re-verifies the changed lines
+  // (user, 2026-08-22: "keeping the state if the new boxes or guessed
+  // transcriptions are different would also be bad"). The match is EXACT —
+  // a fuzzy re-map (edit distance <=3) attached old corrections to the
+  // wrong lines after a rebuild, mixing the user's verified text with the
+  // raw transcription.
   if (!layout || !layout.lines) return edits;
   const lines = layout.lines;
   const result = {};
   for (const [idxStr, text] of Object.entries(edits)) {
     const idx = Number(idxStr);
-    // The text at the original index — if it still matches, the edit is valid.
     const lineAtIdx = lines.find((l) => l.index === idx);
-    if (lineAtIdx && (lineAtIdx.text === text || fuzzyMatch(lineAtIdx.text, text))) {
-      result[idx] = text;
+    if (lineAtIdx && lineAtIdx.text === text) {
+      result[idx] = text; // the line's text is unchanged — the edit holds
       continue;
     }
-    // The line at this index changed or doesn't exist. Try to find the edit's
-    // text somewhere else in the layout.
-    const matched = lines.find((l) => l.text === text || fuzzyMatch(l.text, text));
+    // The line at this index changed (or moved). Keep the edit only when
+    // its exact text exists elsewhere in the layout.
+    const matched = lines.find((l) => l.text === text);
     if (matched && !result[matched.index]) {
       result[matched.index] = text;
       continue;
     }
-    // Could not find a match — the edit is orphaned. Drop it.
+    // The transcription changed under this edit — orphan it.
   }
   return result;
 }
 
-/** Fuzzy text match: two strings match if one is a substring of the other
- *  (case-insensitive, trimmed), or their edit distance is <=3 chars (for
- *  OCR corrections like "POSTCARD" vs "POST CARD"). */
-function fuzzyMatch(a, b) {
-  if (!a || !b) return false;
-  const sa = a.trim().toLowerCase();
-  const sb = b.trim().toLowerCase();
-  if (sa === sb) return true;
-  if (sa.includes(sb) || sb.includes(sa)) return true;
-  const maxLen = Math.max(sa.length, sb.length);
-  if (maxLen < 3) return false;
-  let diff = 0;
-  for (let i = 0; i < Math.min(sa.length, sb.length); i++) {
-    if (sa[i] !== sb[i]) diff++;
+/** The layout revisions of every page in a drafts payload — the
+ *  rendered page must refresh when the server's revision moves on
+ *  (2026-08-22: a layout rebuilt while the page was open stayed stale
+ *  until something forced a re-fetch — five copies of a layout, no way
+ *  to tell which was newest). */
+export function collectLayoutRevisions(documents) {
+  const revisions = {};
+  for (const doc of documents || []) {
+    for (const page of doc.pages || []) {
+      const revision = doc.layouts?.[page]?.revision;
+      if (revision !== undefined) revisions[page] = revision;
+    }
   }
-  diff += Math.abs(sa.length - sb.length);
-  return diff <= 3;
+  return revisions;
+}
+
+/** The pages whose server-side layout revision differs from the one the
+ *  surface rendered — the stale set the refresh acts on. A page that
+ *  gained a layout since the render is stale too (the recorded revision
+ *  is absent); a page without a layout on either side is not. */
+export function staleLayoutPages(recorded, documents) {
+  const stale = [];
+  for (const doc of documents || []) {
+    for (const page of doc.pages || []) {
+      const revision = doc.layouts?.[page]?.revision;
+      if (revision !== undefined && recorded?.[page] !== revision) stale.push(page);
+    }
+  }
+  return stale;
 }
 
 export function saveEdits(batchId, docIndex, edits) {
@@ -150,6 +170,17 @@ function saveCurrentResumePosition(session) {
 /** The full bounding box of all lines in the layout, or null if there
  * are no line boxes. The margin is the line-0 top: the band anchor\'s
  * half-line margin. */
+export function initialViewRect(layout) {
+  // The WHOLE letter, centered — 2026-08-22 (user: "the first line
+  // appears anchored at the top left, instead of the letter itself being
+  // centered so that as we continue on down we can display all the lines
+  // without having to jog the letter left and right"). The first-line
+  // zoom was the wrong anchor: every other line's x-extent needed a jog.
+  // The letter's full extent fills the pane; the vertical scroll then
+  // reveals the rest with the letter centered the whole way down.
+  return contentBounds(layout);
+}
+
 function contentBounds(layout) {
   const lines = (layout?.lines || []).filter((l) => l.box);
   if (!lines.length) return null;
@@ -589,6 +620,9 @@ function syncSurfaceUrl(session) {
 
 function makeSession(batch, docIndex) {
   return {
+    layoutRevisions: collectLayoutRevisions(batch.documents), // page -> revision, the staleness baseline
+    processingWas: false, // the re-read poll's previous processing state
+    visHandler: null, // the visibility-change refresh handler
     batch,
     docIndex,
     pageIndex: 0,
@@ -885,32 +919,73 @@ function renderSurface(main, session) {
   currentSession = session;
   updateFixingState(session);
 
+
+/** Re-fetch the drafts and re-render when the server's state moved on —
+ *  the page's re-read landed (the old transcription is gone, the stale
+ *  edits orphan) OR any layout revision changed (a rebuild while the
+ *  page was open — 2026-08-22: five copies of a layout, and the page
+ *  rendered yesterday's boxes until something forced a re-fetch). The
+ *  view/selection survive (they live on the session); the edits
+ *  reconcile against the new layout at the re-render (the exact-text
+ *  rule). Returns true when the surface re-rendered. */
+async function refreshBatchState(session) {
+  const { batch, docIndex } = session;
+  const page = batch.documents?.[docIndex]?.pages?.[session.pageIndex];
+  if (!page) return false;
+  try {
+    const data = await (
+      await fetch(`/api/sync/batch/${encodeURIComponent(batch.batchId)}/drafts`, {
+        headers: { Accept: "application/json" },
+      })
+    ).json();
+    if (!Array.isArray(data.documents)) return false;
+    const stale = staleLayoutPages(session.layoutRevisions, data.documents);
+    const reReadLanded = session.processingWas && !(data.processing || {})[page];
+    if (!stale.length && !reReadLanded) return false;
+    const currentChanged = collectLayoutRevisions(data.documents)[page] !== session.layoutRevisions?.[page];
+    session.processingWas = !!(data.processing || {})[page];
+    session.batch.documents = data.documents;
+    session.batch.processing = data.processing || {};
+    session.layoutRevisions = collectLayoutRevisions(data.documents);
+    if (reReadLanded) {
+      delete session.edits[page];
+      saveEdits(batch.batchId, docIndex, session.edits);
+      session.from = null;
+    }
+    // re-render only when THIS page's layout moved on (a rebuild of
+    // another document must not yank the reviewer's position — the
+    // batch's fresh data is there for the next navigation)
+    if (currentChanged || reReadLanded) {
+      renderSurface(session.root, session);
+      return true;
+    }
+    return false;
+  } catch {
+    // backend unreachable — retry next tick / next focus
+    return false;
+  }
+}
+
   // the poll: while the backend re-reads this page's text, refresh when the
   // re-read lands (the old transcription is replaced, the stale edits
   // cleared, the flags recomputed from the new self-report)
   clearInterval(session.processingTimer);
   session.processingTimer = null;
+  session.processingWas = !!(session.batch.processing || {})[page];
   if (pageState === "transcribing") {
-    session.processingTimer = setInterval(async () => {
-      try {
-        const data = await (
-          await fetch(`/api/sync/batch/${encodeURIComponent(batch.batchId)}/drafts`, {
-            headers: { Accept: "application/json" },
-          })
-        ).json();
-        if ((data.processing || {})[page] || !Array.isArray(data.documents)) return;
-        delete session.edits[page];
-        saveEdits(batch.batchId, docIndex, session.edits);
-        session.from = null;
-        session.batch.documents = data.documents;
-        session.batch.processing = data.processing || {};
-        renderSurface(session.root, session);
-      } catch {
-        // backend unreachable — retry next tick
-      }
+    session.processingTimer = setInterval(() => {
+      void refreshBatchState(session);
     }, 5000);
   }
-
+  // the rebuild-while-open staleness (2026-08-22): when the reviewer
+  // comes back to the tab, re-check the layouts and refresh if the
+  // server's moved on — the only moment the stale geometry matters is
+  // the moment it is looked at.
+  if (currentSession?.visHandler) document.removeEventListener("visibilitychange", currentSession.visHandler);
+  session.visHandler = () => {
+    if (document.visibilityState === "visible") void refreshBatchState(session);
+  };
+  document.addEventListener("visibilitychange", session.visHandler);
   renderTx(session);
   openViewer(session, imgBox);
 }
@@ -977,16 +1052,6 @@ export function bandMargin(layout) {
   return (top.box[3] - top.box[1]) / 2;
 }
 
-/** The view that shows ``rect`` (display px) in a pane: the rect fills one
- *  dimension, the pane's aspect rules the other (fitBounds semantics). */
-export function fitRect(paneW, paneH, rect) {
-  const paneAspect = paneW / paneH;
-  const rectAspect = rect.width / rect.height;
-  if (rectAspect >= paneAspect) {
-    return { x: rect.x, y: rect.y, width: rect.width, height: rect.width / paneAspect };
-  }
-  return { x: rect.x, y: rect.y, width: rect.height * paneAspect, height: rect.height };
-}
 
 /** Zoom the view by ``k`` around the pane point (cx, cy) — the image point
  *  under the cursor stays put. The visible width is clamped to
@@ -999,6 +1064,28 @@ export function zoomView(view, k, paneW, paneH, cx, cy, imgW) {
   const height = (width * paneH) / paneW;
   const s2 = paneW / width;
   return { x: ix - cx / s2, y: iy - cy / s2, width, height };
+}
+
+/** The view that shows ``rect`` (display px) in a pane: the rect fills one
+ *  dimension, the pane's aspect rules the other (fitBounds semantics). */
+export function fitRect(paneW, paneH, rect) {
+  const paneAspect = paneW / paneH;
+  const rectAspect = rect.width / rect.height;
+  if (rectAspect >= paneAspect) {
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.width / paneAspect };
+  }
+  return { x: rect.x, y: rect.y, width: rect.height * paneAspect, height: rect.height };
+}
+
+/** The width-fit — the letter's horizontal extent fills the pane, the
+ *  height follows the pane's aspect. The initial view's fit (2026-08-22,
+ *  user: "as we continue on down we can display all the lines without
+ *  having to jog the letter left and right"): the whole-letter height-fit
+ *  made the letter one screen tall — nothing to pan, tiny text. The
+ *  width-fit keeps the letter readable AND centered (the x-extent fills
+ *  the view), and the vertical scroll reveals the rest. */
+export function widthFitRect(paneW, paneH, rect) {
+  return { x: rect.x, y: rect.y, width: rect.width, height: (rect.width * paneH) / paneW };
 }
 
 /** Paint the current view: the layer's transform maps original-image points
@@ -1144,9 +1231,15 @@ session.resizer?.disconnect();
       }
     } else if (session.selLine !== null) {
       initialView(session, session.contentTop);
+      // The fit MUST paint before the pan — syncImageFromTx returns early
+      // when the y already matches (no render!), leaving the layer
+      // untransformed (2026-08-22: the first visit showed the image at
+      // natural size — the blank top-left — "no text visible").
+      renderView(session);
       syncImageFromTx(session);
     } else {
       initialView(session, session.contentTop);
+      renderView(session);
     }
   };
   img.onerror = () => {
@@ -1165,7 +1258,14 @@ session.resizer?.disconnect();
     if (imgBox.clientHeight <= 0) return;
     const size = [imgBox.clientWidth, imgBox.clientHeight];
     if (session.lastFitSize && size[0] === session.lastFitSize[0] && size[1] === session.lastFitSize[1]) return;
-    if (session.imgSize) initialView(session, session.contentTop ?? 0);
+    if (session.imgSize) {
+      initialView(session, session.contentTop ?? 0);
+      // The re-fit must PAINT — the onload's fit may have hit the hidden
+      // 0-sized pane and returned without rendering, and this resize is
+      // the pane becoming visible (2026-08-22: the first visit showed the
+      // image at natural size — the blank top-left — "no text visible").
+      renderView(session);
+    }
   });
   session.resizer.observe(imgBox);
 
@@ -1343,6 +1443,32 @@ function syncImageFromTx(session) {
  *  the image-side sync and fight the drag (2026-08-16: the guard cleared
  *  too early — the panes ping-ponged, "jumps about disconcertingly" — the
  *  established dual-pane pattern: isSyncing + requestAnimationFrame). */
+export function lineScrollFor(viewY, layout, frame, offsets) {
+  // The transcript shows the LINE at the image's view top (2026-08-22,
+  // user: the proportional fraction "tracks along but doesn't display the
+  // actual line from the image"). The physical y selects the line whose
+  // box is there (the first below when the view sits in a gap), and the
+  // transcript scrolls to THAT line's offset — the transcript's top is
+  // the actual line from the image.
+  const lines = layout?.lines || [];
+  let firstBelow = null;
+  let idx = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.box) continue;
+    const rect = boxToDisplay(frame, line.box);
+    if (viewY >= rect.y && viewY <= rect.y + rect.height) {
+      idx = i;
+      break;
+    }
+    if (rect.y >= viewY && (firstBelow === null || rect.y < firstBelow.y)) {
+      firstBelow = { y: rect.y, i };
+    }
+  }
+  if (idx === null && firstBelow !== null) idx = firstBelow.i;
+  return idx === null ? 0 : (offsets[idx] ?? 0);
+}
+
 function syncTxFromImage(session) {
   if (session.syncLock || !session.view || !session.imgSize) return;
   const txb = session.txBody;
@@ -1352,14 +1478,13 @@ function syncTxFromImage(session) {
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page];
   if (!layout) return;
-  const idx = lineIndexForY(layout, viewRotation(session), session.imgSize, session.view.y);
-  if (idx === null) return;
-  const el = txb.querySelector(`[data-index="${idx}"]`);
-  if (!el) return;
-  const delta = el.getBoundingClientRect().top - txb.getBoundingClientRect().top;
-  if (Math.abs(delta) < 4) return;
+  const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
+  const base = txb.offsetTop;
+  const offsets = session.txOffsets || [...txb.querySelectorAll(".rv-line")].map((el) => el.offsetTop - base);
+  const target = lineScrollFor(session.view.y, layout, f, offsets);
+  if (Math.abs(txb.scrollTop - target) < 2) return;
   session.syncLock = true;
-  txb.scrollTop += delta - 8; // a small breathing room at the pane's top
+  txb.scrollTop = target;
   requestAnimationFrame(() => {
     session.syncLock = false;
   });
@@ -1694,11 +1819,11 @@ function initialView(session, contentTop = 0) {
   const doc = session.batch.documents[session.docIndex];
   const page = doc.pages[session.pageIndex];
   const layout = doc.layouts?.[page];
-  const bounds = contentBounds(layout);
+  const bounds = initialViewRect(layout) ?? contentBounds(layout);
   if (bounds) {
     const paneW = session.imgBox.clientWidth;
     const paneH = session.imgBox.clientHeight;
-    session.view = fitRect(paneW, paneH, bounds);
+    session.view = widthFitRect(paneW, paneH, bounds);
   } else {
     fitPage(session, { markMoved: false });
   }
@@ -1749,7 +1874,26 @@ function startEdit(session, lineIndex) {
   // orientation itself, not its mirror (2026-08-17: (360-O) put the 270°
   // message upside down)
   session.readRotation = orientation;
-  renderView(session); // the view turns to read the line horizontally
+  // Zoom the image to the focused line (2026-08-20 — the recorded "never
+  // zoom" decision is superseded: the reviewer must SEE the line's
+  // original at a readable scale, not just a same-zoom pan). The line
+  // fills the pane with a margin; the read rotation is already in the
+  // frame. A boxless line keeps the old turn-only view.
+  if (line?.box && session.imgBox?.clientWidth && session.view) {
+    const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
+    const rect = boxToDisplay(f, line.box);
+    const pad = Math.max(rect.width, rect.height) * 0.04;
+    fitBounds(session, {
+      x: rect.x - pad,
+      y: rect.y - pad,
+      width: rect.width + 2 * pad,
+      height: rect.height + 2 * pad,
+    });
+    clampView(session);
+    session.userMoved = true; // a deliberate zoom — stop the auto-fit follow
+  } else {
+    renderView(session); // the view turns to read the line horizontally
+  }
   renderTx(session);
 }
 
@@ -2044,6 +2188,12 @@ function renderTx(session) {
     session.txBody.querySelector(".rv-line--sel")?.scrollIntoView({ block: "nearest" });
   }
   session.lastSelRendered = session.selLine;
+  // the dual-pane sync's offsets — recorded at the render, used by the
+  // sync (2026-08-22: the sync re-queried the DOM per event, so a render
+  // between the query and the scroll could hand it stale positions; the
+  // render's own data is the only source the sync should read)
+  const base = txb.offsetTop;
+  session.txOffsets = [...txb.querySelectorAll(".rv-line")].map((el) => el.offsetTop - base);
 }
 
 /** Confirm & Next: the last page confirms the document through the sync

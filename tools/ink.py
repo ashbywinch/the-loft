@@ -160,6 +160,106 @@ def split_by_bands(box: Sequence[float], image: Any) -> list[list[float]]:
     return parts or [list(box)]
 
 
+def split_by_column_gaps(box: list[float], image: Any, min_gap_fraction: float = 0.12) -> list[list[float]]:
+    """A wide row divided at its COLUMN gaps (2026-08-26, the form-
+    header class): the birth cert's column headers merged into one
+    rec row — "Name, if any" in a 2927px box, "Sex" in 1988px. Cell
+    gaps are far wider than word gaps; splitting at empty column runs
+    longer than ``min_gap_fraction`` of the crop width gives each cell
+    its own box. Word gaps inside a cell stay below the threshold. The
+    crop is normalized to 1000 columns, so the fraction is
+    scale-invariant."""
+    x0, y0, x1, y1 = (int(v) for v in box)
+    w, h = image.size
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(w, x1), min(h, y1)
+    if x1 <= x0 or y1 <= y0:
+        return [list(box)]
+    gray = image.crop((x0, y0, x1, y1)).convert("L")
+    norm = gray.resize((1000, max(1, round(gray.height * 1000 / max(1, gray.width)))))
+    scale_x = gray.width / norm.width
+    ink = norm.point(lambda p: 255 - p)
+    cols = ink.getprojection()[0]
+    min_gap = int(min_gap_fraction * len(cols))
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for i, c in enumerate(cols):
+        if c and start is None:
+            start = i
+        elif not c and start is not None:
+            runs.append((start, i - 1))
+            start = None
+    if start is not None:
+        runs.append((start, len(cols) - 1))
+    parts: list[list[float]] = []
+    if not runs:
+        return [list(box)]
+    cur_s, cur_e = runs[0]
+    for s, e in runs[1:]:
+        if s - cur_e - 1 >= min_gap:
+            parts.append([x0 + cur_s * scale_x, float(y0), x0 + cur_e * scale_x, float(y1)])
+            cur_s, cur_e = s, e
+        else:
+            cur_e = e  # a word gap — the run joins the current cell
+    parts.append([x0 + cur_s * scale_x, float(y0), x0 + cur_e * scale_x, float(y1)])
+    return parts
+
+
+def split_row_at_piece_gaps(pieces: list[list[float]], x_gap: float | None = None) -> list[list[list[float]]]:
+    """A row's pieces divided at their measured x-gaps (2026-08-26,
+    the form-header fix): ink-column projections fail on header rows
+    because a full-width printed rule touches every column — the rec's
+    PIECES are the structure, each cell a detection. Groups split at
+    gaps wider than 1.5x the median piece width, the same
+    scale-invariant rule as cluster_rows' x-split."""
+    if not pieces:
+        return []
+    widths = [b[2] - b[0] for b in pieces]
+    gap = x_gap if x_gap is not None else _median(widths, 200.0) * 1.5
+    ordered = sorted(pieces, key=lambda b: b[0])
+    groups: list[list[list[float]]] = [[ordered[0]]]
+    for b in ordered[1:]:
+        if b[0] - groups[-1][-1][2] > gap:
+            groups.append([b])
+        else:
+            groups[-1].append(b)
+    return groups
+
+
+def merge_near_duplicate_rows(
+    rows: list[list[list[float]]], y_overlap: float = 0.3, x_overlap: float = 0.9
+) -> list[list[list[float]]]:
+    """The double-read merge (2026-08-26): the coverage gate quantified
+    33 overlapping box pairs on one page at IoU 0.3-0.5 — wide boxes
+    whose y-bands overlap heavily = the SAME line detected twice with
+    a y jitter (the LONDON BOROUGH class from the first diagnosis).
+    Rows whose x-spans overlap ``x_overlap`` of the narrower AND whose
+    y-intervals overlap ``y_overlap`` of the shorter are one physical
+    line; their pieces merge. Different columns at the same y are
+    untouched."""
+    merged: list[list[list[float]]] = []
+    for row in rows:
+        rx0 = min(b[0] for b in row)
+        rx1 = max(b[2] for b in row)
+        ry0 = min(b[1] for b in row)
+        ry1 = max(b[3] for b in row)
+        joined = False
+        for existing in merged:
+            ex0 = min(b[0] for b in existing)
+            ex1 = max(b[2] for b in existing)
+            ey0 = min(b[1] for b in existing)
+            ey1 = max(b[3] for b in existing)
+            x_ov = min(rx1, ex1) - max(rx0, ex0)
+            y_ov = min(ry1, ey1) - max(ry0, ey0)
+            if x_ov >= x_overlap * min(rx1 - rx0, ex1 - ex0) and y_ov >= y_overlap * min(ry1 - ry0, ey1 - ey0):
+                existing.extend(row)
+                joined = True
+                break
+        if not joined:
+            merged.append(list(row))
+    return merged
+
+
 def cluster_rows(
     boxes: list[list[float]], gap: float | None = None, x_gap: float | None = None
 ) -> list[list[list[float]]]:
@@ -191,8 +291,43 @@ def cluster_rows(
             rows[-1].append(b)
         else:
             rows.append([b])
-    treated = [sub for row in rows for sub in _split_tall_row(row)]
+    treated = merge_near_duplicate_rows(rows)
+    treated = [sub for row in treated for sub in _split_tall_row(row)]
     return [part for row in treated for part in _split_by_x_gap(row, x_split)]
+
+
+def coverage_violations(
+    boxes: list[list[float]], pieces: list[list[float]], noise_ratio: float = 2.0
+) -> tuple[list[list[float]], int]:
+    """The box-coverage gate (2026-08-26): every rec detection piece
+    must be covered by EXACTLY ONE final box — the user's reframe:
+    wrong text is fixable in review, an uncovered text region or a
+    double claim is not (the surface has no box-fixing interaction).
+    A piece is covered when its center lies inside a box. Uncovered
+    pieces are missed text ONLY when they are significant — bigger
+    than ``noise_ratio`` x the median piece area (the rec over-
+    detects small specks; a large unboxed region is real text the
+    pipeline dropped). Returns the significant uncovered pieces and
+    the count of double-claimed pieces."""
+    areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in pieces]
+    median = sorted(areas)[len(areas) // 2] if areas else 0.0
+
+    def covered(p: list[float]) -> int:
+        cx = (p[0] + p[2]) / 2
+        cy = (p[1] + p[3]) / 2
+        return sum(1 for b in boxes if b[0] < cx < b[2] and b[1] < cy < b[3])
+
+    uncovered: list[list[float]] = []
+    double = 0
+    for p in pieces:
+        n = covered(p)
+        if n == 0:
+            area = (p[2] - p[0]) * (p[3] - p[1])
+            if median <= 0 or area > noise_ratio * median:
+                uncovered.append(p)
+        elif n > 1:
+            double += 1
+    return uncovered, double
 
 
 def union(boxes: list[list[float]]) -> list[float]:

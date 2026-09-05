@@ -4,8 +4,14 @@ api_base = "https://gateway.ai.cloudflare.com/v1/e21a5be58ac1e8f7d5619539feb2dc3
 
 [config]
 model = "openai/dynamic/fallback2"
-custom_model_max_tokens = 128000
-max_model_tokens = 128000
+# 64000, not 128000: the full reviews' bodies (the pruned diff + the
+# repo_context_files) exceeded the AI Gateway plan's per-request size and
+# the gateway returned 428 Precondition Required — the review died
+# mid-prediction on every large PR (2026-09-05, the split's piece PRs).
+# 64000 halves the prompt body under the cap; the pruner cuts the diff
+# harder and the review still reads the change.
+custom_model_max_tokens = 64000
+max_model_tokens = 64000
 ai_timeout = 1800
 # the intermittent gateway-layer 401 (2026-09-04/05: "Invalid API key"
 # mid-run, self-recovering) killed whole reviews — one model, no second

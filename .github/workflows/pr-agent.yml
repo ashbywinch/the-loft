@@ -23,6 +23,10 @@ jobs:
       - uses: the-pr-agent/pr-agent@v0.41.1 # pin a real release tag — @latest does not resolve
         id: pr-agent
         env:
+          # the Cloudflare AI Gateway — exactly the local setup (the
+          # OPENAI_API_KEY secret holds the gateway's cfut_ token; the
+          # previous env pointed the bot at opencode.ai's zen endpoint
+          # with a dead key, and every review died on AuthError 401)
           OPENAI_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: https://gateway.ai.cloudflare.com/v1/e21a5be58ac1e8f7d5619539feb2dc3d/default/compat
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -30,6 +34,28 @@ jobs:
           # never the PR head (a same-repo branch could ship its own
           # api_base/config and exfiltrate the key) — mirrors omp-config.
           PR_AGENT_CONFIG_BRANCH: pr-agent-config
+      # TEMPORARY diagnostic (2026-09-05): fingerprint the CI credential
+      # (length + suffix, never the value) and probe the gateway, so the
+      # CI-vs-local 401 discrepancy is grounded in evidence.
+      - name: Gateway auth diagnostic
+        env:
+          GW_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GW_URL: ${{ secrets.OPENAI_BASE_URL }}
+        run: |
+          python3 -c "
+          import json, os, urllib.request, urllib.error
+          key = os.environ['GW_KEY']
+          print(f'::notice::credential len={len(key)} suffix=...{key[-4:]} prefix={key[:5]}')
+          url = os.environ.get('GW_URL', '').rstrip('/') + '/chat/completions'
+          print(f'::notice::url={url}')
+          body = json.dumps({'model': 'dynamic/fallback2', 'messages': [{'role': 'user', 'content': 'say ok'}], 'max_tokens': 5}).encode()
+          req = urllib.request.Request(url, data=body, headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json', 'User-Agent': 'opencode/1.14.20'})
+          try:
+              r = urllib.request.urlopen(req, timeout=60)
+              print(f'::notice::probe HTTP {r.status}')
+          except urllib.error.HTTPError as e:
+              print(f'::error::gateway probe HTTP {e.code} {e.read().decode(chr(117)+chr(116)+chr(102)+chr(45)+chr(56), chr(114)+chr(101)+chr(112)+chr(108)+chr(97)+chr(99)+chr(101))[:100]}')
+          "
       # Fail loud: a silently-failed review reads as a green check. The check
       # matches "## PR Reviewer Guide" comments (the review never contains the
       # head SHA — v0.41.1 posts it without the marker) or one posted after

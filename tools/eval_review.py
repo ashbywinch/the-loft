@@ -180,7 +180,11 @@ PERSONA_JARGON = (
     "import proposes",
     "the archive has a record for",
     "awaiting",
-    "link",
+    # bare "link" fired on natural genealogical prose ("his link to
+    # Pearl" — 2026-09-04 eval run); R1's own vocabulary is "the link",
+    # so the guard matches the article — the possessive passes, the
+    # process phrasing ("the link between the two records") still trips
+    "the link",
     "status",
     "estimated",
     "proposed",

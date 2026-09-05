@@ -10,8 +10,6 @@ permissions:
   pull-requests: write # the coverage comment step needs it
 jobs:
   build-and-test:
-    env:
-      LOFT_AI_KEY: ${{ secrets.LOFT_AI_KEY }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -43,14 +41,15 @@ jobs:
       - name: Provision .venv-htr for the evals' layout subprocess
         run: make setup-htr
       - name: Real-model evals
-        # the key-existence guard: the LOFT legacy key left the repo's
-        # secrets (2026-09-05, the split) — the era's unconditional run
-        # assumed a configured key. The fail-fast rule governs a BAD key,
-        # not a MISSING one; the final convention (2bae422) gates on
-        # presence for the same reason. The guard reads the JOB env —
-        # the secrets context is not available in a step-level if.
-        if: env.LOFT_AI_KEY != ''
+        # runs unconditionally: a missing key FAILS the gate loudly (fail-fast
+        # rule) — never test for key presence, never silently skip (2026-08-14)
         run: make evals
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          # CI has no work disk — the VLM cache must not try to mkdir the
+          # family's mount (loft_paths' designed override)
+          LOFT_DISK_ROOT: ${{ runner.temp }}/loft-disk
       - name: Coverage summary (Python tools)
         uses: irongut/CodeCoverageSummary@v1.3.0
         with:

@@ -64,8 +64,13 @@ push_commands = ["/review -i", "/improve"]
 # the gateway retries are disabled repo-wide (client owns retries — the
 # 2026-08-19 decision, skill://cloudflare-ai-gateway) and a long review gets
 # a first-byte window.
-extra_headers = '{"cf-aig-max-attempts": "0", "cf-aig-request-timeout": "300000"}'
-
+extra_headers = '{"User-Agent": "opencode/1.14.20", "cf-aig-max-attempts": "0", "cf-aig-request-timeout": "300000"}'
+# the User-Agent is load-bearing: Cloudflare's WAF bans unknown client
+# signatures from datacenter ranges (error 1010 class) and GitHub
+# runners' litellm UA trips it — the review leg died with 401/2009
+# envelopes while an opencode-UA probe from the same job got 200
+# (2026-09-05, verified by the CI diagnostic step). The same UA is set
+# in tools/ai_client.py for the same reason.
 [github]
 # The review publishes as a COMPLETED "PR Agent - Review" check run on the
 # head commit — created only with the review output text in hand

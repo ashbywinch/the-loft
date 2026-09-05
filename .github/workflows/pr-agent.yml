@@ -29,31 +29,6 @@ jobs:
           # never the PR head (a same-repo branch could ship its own
           # api_base/config and exfiltrate the key) — mirrors omp-config.
           PR_AGENT_CONFIG_BRANCH: pr-agent-config
-      # TEMPORARY diagnostic (2026-09-05): the bot's gateway calls 401
-      # from CI while the identical route+token class works locally —
-      # print the CI secret's HTTP codes only (never the key) to
-      # localize the failure to the environment vs the credential.
-      - name: Gateway auth diagnostic
-        env:
-          GW_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          python3 - <<'PY'
-          import json, os, time, urllib.request, urllib.error
-          base = os.environ["OPENAI_BASE_URL"].rstrip("/")
-          url = base + "/chat/completions"
-          key = os.environ["GW_KEY"]
-          print(f"::notice::credential fingerprint: len={len(key)} suffix=...{key[-4:]} prefix={key[:5]}...")
-          for attempt in range(2):
-              body = json.dumps({"model": "dynamic/fallback2", "messages": [{"role": "user", "content": "say ok"}], "max_tokens": 5}).encode()
-              req = urllib.request.Request(url, data=body, headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
-              try:
-                  with urllib.request.urlopen(req, timeout=60) as r:
-                      print(f"::notice::gateway diagnostic attempt {attempt}: HTTP {r.status}")
-              except urllib.error.HTTPError as e:
-                  snippet = e.read().decode("utf-8", "replace")[:120]
-                  print(f"::error::gateway diagnostic attempt {attempt}: HTTP {e.code} {snippet}")
-              time.sleep(5)
-          PY
       # Fail loud: a silently-failed review reads as a green check. The check
       # matches "## PR Reviewer Guide" comments (the review never contains the
       # head SHA — v0.41.1 posts it without the marker) or one posted after

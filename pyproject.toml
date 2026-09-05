@@ -12,6 +12,8 @@ dependencies = [
     "transformers>=4.44,<5",
     "sentencepiece>=0.2.2",
     "protobuf>=7.35.1",
+    "torch>=2.0",
+    "torchvision>=0.28",  # paired CPU build — open-clip-torch pulls it; the index pin below keeps it off PyPI's CUDA build
 ]
 
 [dependency-groups]
@@ -35,6 +37,14 @@ dev = [
 [build-system]
 requires = ["setuptools>=64.0"]
 build-backend = "setuptools.build_meta"
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+# explicit=true: the CPU index serves only torch (and torchvision); without
+# it the first-index strategy shadows PyPI for common packages and resolves
+# older versions of them (2026-08-29, uv add --index downgraded tqdm/urllib3).
+explicit = true
 
 [tool.setuptools.packages.find]
 include = ["tools*"]
@@ -70,4 +80,8 @@ markers = [
 
 [tool.coverage.run]
 omit = ["*/__main__.py"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+torchvision = { index = "pytorch-cpu" }  # open-clip-torch pulls it; PyPI's build is CUDA
 

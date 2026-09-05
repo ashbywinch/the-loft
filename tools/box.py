@@ -6,6 +6,7 @@ and the aspect-consistency rule the orientation gates share.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 # The float tolerance for division-underflow protection: a zero-area box
@@ -59,17 +60,36 @@ def aspect_consistent(orientation: float, box: list[float] | None) -> bool:
     return not horizontal  # clearly tall: vertical text only
 
 
+def orientation_from_aspect(box: list[float] | None) -> int:
+    """The reading direction the box's shape implies — aspect_consistent's
+    inverse, used when labelling ink-measured rows (the batch runner,
+    2026-08-25): a clearly-tall union is vertical text (90°), everything
+    else defaults horizontal. Near-square boxes are lenient under Gate A,
+    so the horizontal default is always safe there. Hardcoding 0 for
+    every row refused seven photo pages ('orientation 0.0° inconsistent
+    with a 65x396 box')."""
+    if not box:
+        return 0
+    box_w = box[2] - box[0]
+    box_h = box[3] - box[1]
+    return 90 if box_h > box_w * 1.5 else 0
+
+
 # A line clip must carry >= 0.1% dark pixels — a blank clip has nothing
 # to recognize (the clip guard) and a box whose region is blank is an
 # estimate, not an anchor (Gate D).
 INK_MIN = 0.001
 
 
-def has_ink(box: list[float], image: Any) -> bool:
-    """Does the box's region contain the ink it claims? (Gate D,
-    2026-08-20: page-01's transcription boxes sat ~770px above the real
-    text — a well-proportioned box in a blank region is an estimate, not
-    an anchor.)"""
+def has_ink(box: Sequence[float], image: Any) -> bool:
+    """Does the box's region contain ink relative to its OWN paper
+    level? (Gate D, 2026-08-20: page-01's transcription boxes sat
+    ~770px above the real text — a well-proportioned box in a blank
+    region is an estimate, not an anchor. 2026-08-26: the fixed <128
+    cutoff was tuned for pen on white and called every pencil note on
+    cream photo-card blank; the threshold is now the crop's median
+    level minus 35, so faint-but-darker-than-paper marks count and
+    blank paper never does.)"""
     x0, y0, x1, y1 = (int(v) for v in box)
     w, h = image.size
     x0, y0 = max(0, x0), max(0, y0)
@@ -77,4 +97,57 @@ def has_ink(box: list[float], image: Any) -> bool:
     if x1 <= x0 or y1 <= y0:
         return False
     gray = image.crop((x0, y0, x1, y1)).convert("L")
-    return sum(gray.histogram()[:128]) >= INK_MIN * gray.width * gray.height
+    hist = gray.histogram()
+    total = gray.width * gray.height
+    median = total / 2
+    level = 0
+    acc = 0
+    for value in range(256):
+        acc += hist[value]
+        if acc >= median:
+            level = value
+            break
+    ink_level = max(1, level - 35)
+    return sum(hist[:ink_level]) >= INK_MIN * total
+
+
+def text_line_count(box: Sequence[float], image: Any, *, min_band_rows: int = 3, min_gap_rows: int = 3) -> int:
+    """How many separated ink bands the box's region holds — the cheap
+    multi-line gate (2026-08-25): the vision audit caught stale boxes
+    enclosing 3-4 handwriting lines apiece. The crop's row-projection
+    (PIL getprojection — no numpy, no model) counts bands; runs merged
+    across gaps shorter than ``min_gap_rows`` are one band, and only
+    bands of at least ``min_band_rows`` rows count (noise filter). The
+    crop is normalized to 100 rows first, so the thresholds are
+    scale-invariant."""
+    x0, y0, x1, y1 = (int(v) for v in box)
+    w, h = image.size
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(w, x1), min(h, y1)
+    if x1 <= x0 or y1 <= y0:
+        return 0
+    gray = image.crop((x0, y0, x1, y1)).convert("L")
+    norm = gray.resize((max(1, round(gray.width * 100 / max(1, gray.height))), 100))
+    ink = norm.point(lambda p: 255 - p)  # ink becomes nonzero for getprojection
+    rows = ink.getprojection()[1]
+    runs: list[tuple[int, int]] = []
+    start: int | None = None
+    for i, r in enumerate(rows):
+        if r and start is None:
+            start = i
+        elif not r and start is not None:
+            runs.append((start, i - 1))
+            start = None
+    if start is not None:
+        runs.append((start, len(rows) - 1))
+    merged: list[tuple[int, int]] = []
+    _merge_gap_runs(merged, min_gap_rows, runs)
+    return sum(1 for s, e in merged if e - s + 1 >= min_band_rows)
+
+
+def _merge_gap_runs(merged, min_gap_rows, runs):
+    for s, e in runs:
+        if merged and s - merged[-1][1] - 1 < min_gap_rows:
+            merged[-1] = (merged[-1][0], e)
+        else:
+            merged.append((s, e))

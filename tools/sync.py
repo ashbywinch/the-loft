@@ -260,7 +260,17 @@ def _recover_crashed_layout(
                 recovery = (intended - stale) % FULL_ROTATION_DEGREES
                 if recovery:
                     steps = recovery // QUARTER_TURN_DEGREES
-                    detections = rotate_detections(layout_detections(layout), steps, image.width, image.height)
+                    # the stale boxes live in the PRE-turn frame — rotate
+                    # them by the STALE LAYOUT's recorded dims, not the
+                    # current image's (2026-08-26: the swapped image's
+                    # height sent every recovered box off-image; same
+                    # coordinate-frame class as the crop-origin bug)
+                    detections = rotate_detections(
+                        layout_detections(layout),
+                        steps,
+                        int(layout.get("width", image.width)),
+                        int(layout.get("height", image.height)),
+                    )
                     vlm_text = "\n".join(line["text"] for line in layout.get("lines", []))
                     selfreport_path = work_dir / batch_id / "ocr-guess" / Path(page).with_suffix(".selfreport.json")
                     selfreport = (
@@ -487,6 +497,9 @@ def reprocess_page_transcription(
             people=people,
             places=places,
             label=label,
+            # the reprocess's own root — never the global WORK_DIR
+            # (the hermetic tests, 2026-08-29)
+            store_root=work_dir,
         )
         new_text = (raw_dir / Path(page).with_suffix(".txt")).read_text(encoding="utf-8")
         report = (

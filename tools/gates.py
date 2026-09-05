@@ -83,12 +83,50 @@ def text_extent_violation(text: str, box: list[float], orientation: float | None
     if not text.strip() and axis > 0:
         return f"{text[:20]!r}: empty text in a {int(box[2] - box[0])}x{int(box[3] - box[1])} box"
     if text.strip():
-        px_per_char = axis / len(text.strip())
-        if px_per_char < 2 or px_per_char > 80:
+        # spaces carry no ink — density is judged on real glyphs only
+        glyphs = len(text.strip().replace(" ", ""))
+        px_per_char = axis / max(1, glyphs)
+        # perpendicular extent (2026-08-26): a letter's advance is
+        # proportional to its own height, so big print (the Heinz
+        # crest's '57 Varieties' at 90 px/char, 'REMINDER', 'POST
+        # CARD') is legitimate where the old absolute 80 refused it.
+        # The DENSITY floor stays absolute here (2 px/char):
+        # association candidates include roomy boxes where a sparse
+        # advance is fine — the strict glyph-relative pair lives in
+        # glyph_extent_violation for measured ink unions only.
+        vertical = orientation is not None and orientation % 180 != 0
+        perpendicular = (box[2] - box[0]) if vertical else (box[3] - box[1])
+        ceiling = max(30.0, perpendicular * 1.7)
+        if px_per_char < 2 or px_per_char > ceiling:
             return (
                 f"{text[:20]!r}: text length {len(text.strip())} wildly out of "
                 f"sync with a {int(axis)}px reading axis ({px_per_char:.0f} px/char)"
             )
+    return None
+
+
+def glyph_extent_violation(text: str, box: list[float], orientation: float | None) -> str | None:
+    """The STRICT pair for MEASURED ink unions (2026-08-26): the batch's
+    boxes come from the rec's detection pieces, so their perpendicular
+    extent IS the glyph size — both bounds go glyph-relative (advance
+    within [0.12, 1.7] × perpendicular; ground truth: audited-correct
+    letter rows sit >= 0.17, the birth certificate's crushed 67-char
+    column at 0.10). Association candidates must not use this — their
+    boxes are roomier than their ink."""
+    axis = reading_axis(box, orientation)
+    vertical = orientation is not None and orientation % 180 != 0
+    perpendicular = (box[2] - box[0]) if vertical else (box[3] - box[1])
+    if not text.strip():
+        return None  # emptiness is text_extent_violation's business
+    glyphs = len(text.strip().replace(" ", ""))
+    px_per_char = axis / max(1, glyphs)
+    floor = max(2.0, perpendicular * 0.12)
+    ceiling = max(30.0, perpendicular * 1.7)
+    if px_per_char < floor or px_per_char > ceiling:
+        return (
+            f"{text[:20]!r}: text length {len(text.strip())} wildly out of "
+            f"sync with a {int(axis)}px reading axis ({px_per_char:.0f} px/char)"
+        )
     return None
 
 

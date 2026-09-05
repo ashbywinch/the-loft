@@ -39,7 +39,9 @@ jobs:
       - run: make lint-github
       - run: make coverage # the gate: lint + typecheck + the suites ONCE, instrumented (2026-08-11: make test + make coverage used to run pytest and vitest twice)
       - run: make verify # the archive-quality data checks — the gate keeps them; they skip in CI (no archive in the checkout) and run locally
-      - run: make lucidlint # the code-health gate, wired from its own repo (github.com/ashbywinch/lucidlint); baseline acknowledges the 4 known docs findings (2026-08-16)
+      - run: make lucidlint # the code-health gate, wired from its own repo (github.com/ashbywinch/lucidlint); no baseline — a finding fails the gate and must be fixed (2026-08-29)
+      - name: Provision .venv-htr for the evals' layout subprocess
+        run: make setup-htr
       - name: Real-model evals
         # the key-existence guard: the LOFT legacy key left the repo's
         # secrets (2026-09-05, the split) — the era's unconditional run

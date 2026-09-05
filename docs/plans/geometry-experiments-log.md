@@ -283,3 +283,379 @@ LESSON: the rotation concept is right; the CROPS must be the REGION
 (the message's full panel, or a tall strip), not a uniform grid quarter
 — the vertical-text regions need crops that, when rotated, fit the
 full line length. The spike's panel read is the reference.
+
+## 2026-08-22 — the ink-column experiment: the postcard's BOXES are right
+
+The decisive pivot: the model's boxes are schematic EVEN locally (the
+rotated panel's read returned even 100px row-bands, not measured
+extents); the rec's recognition is garbage but its DETECTION pieces are
+real ink. The experiment (tools/eval_columns.py):
+
+1. The message panel (x 100-1700, y 150-2100) rotated +90.
+2. The rec's detection pieces (55) on the rotated panel.
+3. The pieces clustered by Y into the message's rows (the lines are
+   horizontal in the rotated frame — the first attempt clustered by X,
+   the wrong axis, and merged the message).
+4. Each row's union-box is the MEASURED line box (the ink's extent).
+5. The VLM reads each row's clip and labels it.
+6. The union-boxes remapped into the page frame.
+
+RESULT: 10 lines, 0 boxless, ~12.5k tokens, ~5 min. The visual
+verification (2026-08-30 correction): an overlay with green strips was
+generated and inspected by the AGENT, not by the user — the user never
+saw it, and it must not be cited as user-verified. The boxes measured
+plausibly from the rec's ink, not the model's attention — but the
+verification bar for "right" is the review surface, not an
+agent-generated overlay.
+
+The remap had two bugs found along the way (both fixed + verified):
+the normalized boxes must scale to the rotated frame's pixels before
+the inverse; and the union-boxes (pixels) need the unscaled inverse.
+
+The remaining imperfection: the per-row clip labels are noisy ("ceut
+day forworre" for "decent day tomorrow") — the text needs the cleaner
+source (the panel's full read, or the label matching).
+
+## 2026-08-22 — the text refinement + the UI attempt's honest blockers
+
+The ink-column's per-row clip labels were noisy; the fix (2be75dc):
+read the whole rotated panel ONCE (the spike's clean read), match its
+lines to the measured rows by y-overlap — the text from the read that
+reads well, the boxes from the ink that measures well. The postcard's
+labels are now clean ("decent day tomorrow", the ~~strike~~), ~8-9k
+tokens (one read vs ten). The script generalizes to upright pages
+(--rot 0).
+
+The UI attempt (the user: "get the docs in the UI") exposed the honest
+blockers — the serve's validation refuses both layouts:
+
+- The LETTER's crop-grid output (49dc1df's run) is degenerate: 12
+  lines share one box [526,2238,1325,3083] (the P.S. margin block —
+  the model's schematic read). The earlier "~100% one-line" visual was
+  the 43 distinct boxes; the P.S. block's 12 identical boxes were
+  hidden under the one visible rectangle.
+- The rec's ink on the LETTER is coarse too: 26-28 clustered rows vs
+  ~35 lines (its det merges cursive lines at any gap 20-50).
+- The POSTCARD's vertical message lines sit at the Gate B 80px/char
+  boundary (81-82) — the legitimate vertical handwriting's glyph
+  height, a borderline false-positive of the "wildly out" threshold.
+- The label y-matching fails when the model's boxes are schematic (the
+  letter's full-page read: every row matched the first band) — order-
+  based matching is the next candidate.
+
+DECISION: the layouts stay out of the UI until they pass the serve's
+validation (the user's "no faults" gate). The next candidates: the
+P.S. block's rec-ink rows (the letter), the order-based label
+matching, and the Gate B threshold's honest calibration for vertical
+text.
+
+## 2026-08-22 — the order-based matching verified + the UI's remaining blockers
+
+Item 2 (8a23326): tools/ink.py's match_labels — the proportional
+order-based assignment (each row's y-center, as a fraction of the
+content's span, picks the line at the same fraction), with the
+y-overlap refinement gated by the degenerate-detector (<60% distinct
+bands -> fall back). The tests pin the 1:1, the merged rows, the
+degenerate fallback, and the non-degenerate refinement.
+
+VERIFIED on both docs: the letter's 22 rows now carry the clean
+transcription in order (Chère Maman, Queen Alexandra's House, the
+whole letter — the 'all rows -> first band' collapse is gone); the
+postcard's message rows read cleanly (If it is at all a / decent day
+tomorrow / can so as ~~to~~ get a / walk in the morning / I hope N
+will be better / Than today! / With Greetings and Best Wishes).
+
+The UI's remaining blockers (the serve validation refuses):
+- The postcard's row 0: the rec merged the date and the HERNSPETH into
+  one wide row [208,147-1900,219]; its label ('13.11.63') is 8 chars
+  vs the 1692px axis = 212 px/char. The rec's top-row merge, not the
+  matching.
+- The letter's 'London ~S.W.7.~': 15 chars in a 1280px rec-union =
+  85 px/char — 5 over the horizontal 80 ceiling. The rec-union's width
+  includes the inter-word gaps; the line's real glyph extent is
+  tighter.
+
+DECISION: the machinery is verified; the layouts need (a) the rec's
+row-union x-tightening (the pieces' glyph extents, not the full
+width) and (b) the postcard's top-row merge handling. The docs stay
+out of the UI until the validation is clean.
+
+## 2026-08-22 — the carry-on: the order-based matching's residual error
+
+The UI's two remaining rows were inspected (the user: carry on):
+
+1. The postcard's row 0 is a REC MERGE of two lines sharing a y-band:
+   the date's pieces (x 208-241) + the HERNSPETH's (x 1206-1900). An
+   x-split is needed — but the DISTINCTION matters: the letter's row 5
+   has a similar x-gap WITHIN one line (the words at the two ends, the
+   blank middle — the inspector confirmed "send something of interest
+   each week." is one line). The gap size alone cannot distinguish a
+   line boundary from word spacing.
+2. The letter's row 5's LABEL is wrong: the order-based proportional
+   assigned "London ~S.W.7.~" but the row's actual ink is "send
+   something of interest each week." — the rows' merges + the uneven
+   spacing + the line-count mismatch (22 rows vs ~40 transcription
+   lines) skew the fraction-based index.
+
+DECISION: the labels need a per-row VERIFICATION — accept a label only
+when the model's read has a line whose text plausibly matches the
+row's rec-read pieces (the rec reads the ink; the model reads it
+cleanly); otherwise the row stays flagged rather than carrying a wrong
+label. The x-split (for the true two-line merges like the postcard's
+row 0) follows the same verification — split only when the two sides'
+rec-read texts differ. This is the next micro-step; the docs stay out
+of the UI until the validation is clean.
+
+## 2026-08-22 — the letter is in the UI with the ink-measured boxes
+
+The x-split (tools/ink.py's cluster_rows): split each row at its wide
+x-gaps — the fix for BOTH the postcard's date+HERNSPETH merge and the
+letter's two-end words with a blank middle (the union must not span
+the blank). Test-first (the side-by-side split + the close-words
+kept-together).
+
+RESULT: the letter (page-03) validates CLEAN (24 lines) and is served
+in the UI — the reviewer sees the ink-measured boxes, one line each,
+aligned with the handwriting (the visual: 14/15 fully-visible boxes
+correct). THE LETTER'S GEOMETRY IS DONE.
+
+The transcription's labels are imperfect (the model's read: some
+duplicates, some readings differ from the handwriting — "No pears eh!
+Huh!" vs the actual "No peace eh! Huh!") — the text refinement (the
+label verification: accept only when the row's rec-read overlaps the
+assigned line) is the next micro-step.
+
+The postcard REGRESSED under the x-split: the HERNSPETH's pieces sit
+at scattered y's (358, 838, 1356) and became separate rows, and the
+message's rows got duplicate labels. The previous 10-row state had the
+clean message + the top's mismatch; the x-split's over-splitting needs
+the rec-union refinement (the scattered pieces' handling). The
+postcard is not served.
+
+## The batch runs + the VLM escalation ladder (2026-08-25)
+
+**The scale-up** (`7c3b083`): `tools/eval_batch.py` ran every page
+through the ink-column pipeline — the rec sequential, the VLM reads
+4-at-a-time (independent HTTP). Three bugs from the first untested run,
+each pinned by a failing-test-first test: 37 photo pages skipped for
+want of a full-page fallback (`prep_panel(None)`); good layouts
+overwritten by worse re-runs (a stored layout that validates clean now
+skips); orientation hardcoded 0 failing Gate A on tall boxes
+(`orientation_from_aspect` added beside its inverse `aspect_consistent`,
+with the both-agree property test).
+
+**Run results across the three runs:**
+
+| run | letters clean | photos clean | wrong-stuff failures |
+|---|---|---|---|
+| first (untested) | 4 / 12 | 0 / 38 | ~8 raw-JSON/empty |
+| tested (`7c3b083`) | 9 / 12 | 11 / 38 | ~5 raw-JSON, 1 empty, collapses |
+| ladder (`0a59a1d`) | 9 / 12 | 11 / 38 | **0** |
+
+**The escalation ladder** (`0a59a1d`, user's challenge: "could we just
+have a better prompt?"): partly yes. The empty-content and truncated
+`{"lines": ...` echoes are completion-BUDGET failures (glm-4.6v's
+reasoning eats the 8000 tokens — the trial saw this on multi-image
+prompts), and the ink-column pipeline measures geometry from ink so the
+boxed JSON buys it almost nothing. The ladder per page: [boxed JSON
+@ glm-4.6v] → [plain text @ glm-4.6v] (no format to fail mid-echoing, a
+fraction of the tokens) → [plain text @ glm-4.5v] (the trial's
+runner-up; page-02 emitted the IDENTICAL raw JSON in two runs, so
+same-model retry alone would repeat). `transcription_problem` decides;
+`transcribe_with_fallbacks` escalates with stderr evidence; every
+fall-through logged. A response must also plausibly cover the measured
+rows (`transcription_line_count_plausible`: >=40% when >=10 rows) — the
+birth certificates' collapse folded 26 rows into one 323-char line.
+
+Result: zero wrong-stuff responses in the ladder run (was ~14% of
+pages). Every page got a read. One page exhausted all three attempts
+honestly (1697895793138, the Leigh-on-Sea photo — its remaining refusal
+is a Gate B extent mismatch, not response quality).
+
+**The honest state**: 20 of 50 pages serve clean layouts (9 letters +
+11 photos). The 30 refusals are NO LONGER response-quality failures —
+they are the deeper clustering/matching problem on sparse-photo layouts:
+short labels on long rows ('POST CARD' 9 chars on a 1206px axis),
+long labels on tiny rows ('1938 BIRTH...' 67 chars on a 46px axis),
+empty noise rows. The next lever is the clustering/matching quality for
+scattered captions, not the model call.
+
+## Caption clustering: the runaway-row fix (2026-08-25, `6b9cc44`)
+
+The user pointed at caption clustering. Diagnosis from piece-level
+dumps: single-linkage chaining — every ADJACENT center-gap small —
+builds rows spanning many real lines. The birth certificate's form
+table chained 40 cells into one 290px row (6.2x its own piece scale);
+a photo's big handwriting chained 13 pieces into 1077px (6.3x).
+
+cluster_rows now splits over-tall rows at internal y-gaps until every
+part is within 2.5x its own median piece height (ascenders/slant live
+under that; tables hit 6+), before the x-split. Own-scale thresholds:
+resolution-invariant. Evidence: birth cert 27->40 rows, 0 implausible;
+photo 5->10; council letter 33; postcard 37 (3 remaining talls are the
+ROTATED message judged upright — region separation, still open).
+
+Re-run: page-10 (26 lines) and the Liber Wedding photo (6 lines) now
+write clean. Total 22/50 (10 letters + 12 photos).
+
+The 28 remaining refusals decompose (each its own lever):
+A. Matching count-mismatch: 40 measured rows vs ~25 transcribed lines
+   — proportional assignment hands long labels to fragment rows (the
+   birth certificates).
+B. Gate B assumes handwriting scale: 'NHS' at 109 px/char and
+   '~PAUL WINCH~' at 126 px/char may be BIG print/handwriting on
+   photos — the 80 px/char ceiling needs the row's own letter size.
+C. Mixed orientations on one page (the postcard's message panel):
+   needs region separation before clustering.
+D. Noise rows: non-text detections become empty-box lines.
+
+## The contact-sheet walk: what "serving" actually looked like (2026-08-25, `712eb9d`+`196ddbb`)
+
+The user asked "will the first page of the first letter look correct?"
+It would not have. The new instrument (tools/walk_review.py — every
+stored layout drawn onto its own scan) + a vision audit of ALL 26
+boxed pages found:
+
+- **page-01 WRONG** (stale old-pipeline layout, structurally valid,
+  geometrically garbage — the clean-skip had protected it from every
+  fix since), **page-05, page-09 WRONG**, and **page-10's boxes all
+  floating above the writing**: the crop-origin offset bug
+  (`712eb9d` — detection in crop space written verbatim into page
+  space; full-page-fallback pages immune).
+- Photos: postcard/3940169... the audit also caught MY transposed-id
+  deletion (took out Heinz `…f652d938`, audited CORRECT, instead of
+  `…5f7905a9`); Heinz reprocessed and now refuses on Gate B at exactly
+  the handwriting-scale ceiling (135 px/char big print) — lever B.
+  `1782635795946` (multi-line boxes, pre-tall-split stale) invalidated.
+
+After invalidation + reprocessing with fixed code: every wrong layout
+is OUT of the UI; the affected pages refuse loudly. Serving now:
+letters 03/04 (vision-correct) + 06/07/08/11/12 (mostly, 1-2 residual
+boxes each); photos 818826(+~2), 363276, 07449, 752512 mostly-good,
+307227 has 1 misplaced box of 3, Liber Wedding serves word-level
+fragments (on ink, not clean one-liners). ~15 pages verified-acceptable;
+everything else refuses rather than lies.
+
+**The ensure-mechanism** (the user's question): (1) the sheets exist —
+rerun `walk_review` after ANY layout write; (2) no "it works" claim
+without the per-document vision-audit table in list order; (3) the
+gates stay loud — a refusal is the system telling the truth. Still to
+wire: the structural serve-walk as an archive-marked test in make verify.
+
+## Source-level improvements + the honest coverage drop (2026-08-26, `1cb4dab`)
+
+Three pipeline changes so mistakes stop being MADE, not just caught:
+provenance-gated skip (layout_is_current — only ink-provenanced layouts
+earn protection); split_by_bands (multi-band unions divide along their
+own ink before label matching); image-aware gates at write time
+(previous turn). Plus the panel-tmpdir leak fix, and Phase 2 moved back
+inside Phase 1's try after my restructuring briefly resurrected the
+delete-before-read bug (run16 caught it in minutes — the gates work).
+
+Run17's honest outcome: letters serve 03/04/11/12 (+08 refused on one
+empty-label row); 06/07 LOST their rough old layouts to the provenance
+reprocess and refuse on empty-label rows; photos: several former
+rough-serving pages now refuse at the image gates. Coverage ~13 pages,
+every one of them gate-clean; everything else refuses loudly.
+
+The residual failure classes, precisely:
+1. Over-wide single-band rows from sparse-caption clustering ('Windsor.'
+   8 chars on a 1156px axis) — needs caption-scale clustering.
+2. Label count mismatch persisting after band-split (model under-reads;
+   empty-text rows).
+3. Gate B assumes handwriting scale — big print ('57 Varieties' 90-135
+   px/char) fails though correctly boxed.
+4. Duplicate region claims from overlapping unions (page-01/09).
+
+## The token-economy layer: the VLM read cache (2026-08-26, `4475300`)
+
+The user's question — future passes must not re-pay tokens for pages
+that didn't change. Answer: tools/vlm_cache.py. A read is a pure
+function of (panel bytes, call spec); persist it keyed by
+sha256(panel)+sha256(spec) and every subsequent run hits for free.
+Demonstrated live: same page, cold 7,926 tok → warm "CACHED",
+"tokens": 0. Gate/assembly iterations over the whole archive are now
+free; only changed panels or changed PROMPTS re-read.
+
+Same cycle, Gate B recalibrated (`e72b4b2`): the ceiling is the box's
+own perpendicular extent ×1.7 (big print legitimate), density counts
+non-whitespace glyphs ('E    R' stays rejected), and the STRICT pair
+(glyph_extent_violation: [0.12, 1.7]×perpendicular) applies at batch
+write-time to measured unions only. Plus `_recover_crashed_layout`
+now rotates by the stale layout's recorded pre-turn dims — the
+coordinate-frame class again, caught by scaled fixtures.
+
+## Run 18: the cache-population pass + the fragment-box false pass (2026-08-26)
+
+Full re-run under the scale-aware Gate B with the write-time image
+gates. HONEST spend note: this pass paid fresh tokens (~400k) — the
+cache only covers reads made after it existed, so run18 populated it;
+every LATER iteration is free.
+
+Letters: page-10 newly written (21 lines, vision-CORRECT — 25 boxes
+each on one line) -> 5 serving (03/04/11/12 + 10). Photos: 7808715
+(2 lines, vision-correct) newly written; 071639 written then
+INVALIDATED — vision caught the fragment-box false pass: ink present,
+single band, but the box covered only part of the text while the real
+line sat rotated beside it. The mechanical gates cannot see that class
+(boxes are on ink); it must not serve. ~12-13 photos serving.
+
+New failure class named: the fragment box (union covers part of a
+line). Cheap next gate: the box's ink band extends beyond its x-range —
+compare the box width against its band's contiguous ink extent (>=60%
+or refuse). Also: the image-gate refusal message should name WHICH
+gate and the box indexes (off-ink vs multi-band vs glyph-density) —
+today it lumps them.
+
+## The HTR head-to-head: existing tools vs our pipeline (2026-08-26)
+
+The user's challenge — "should we be using existing tools?" — answered
+empirically on 5 real pages (tools/eval_htr_trial.py, outputs in
+work/eval-htr/). CER vs a vision-model reference read (directional,
+not human GT):
+
+| page | tesseract | kraken | ours (served) |
+|---|---|---|---|
+| page-03 cursive | 66.8% (conf 37) | 87.3% | 33.5% |
+| page-10 cursive | 79.3% (conf 33) | 92.8% | 23.5% |
+| postcard | 78.0% (conf 26) | 96.6% | 100% (no layout) |
+| birth cert printed | 42.4% (conf 79) | 95.3% | 100% (no layout) |
+| photo captions | garbage (707%) | 100% | 96.3% |
+
+Verdicts:
+1. kraken's historical-script models cannot read 20th-century family
+   cursive (87-97% CER) — switching recognizers would be a regression.
+2. tesseract is faithful-but-unable on cursive and genuinely useful on
+   PRINTED forms (42% CER, and its confidence 79 vs 26-37 is exactly
+   the research's point: confidence correlates with quality). Its
+   confidence could be a second opinion on print pages; our own rec
+   confidence should be used the same way.
+3. Our pipeline's problem is COVERAGE (nothing serves for refused
+   pages), not recognition quality — 2-3x better wherever it serves.
+4. Transkribus (cloud, needs user account) remains the only untested
+   option; local alternatives do not change the calculus.
+
+## Transkribus trial: infrastructure verdict (2026-08-26)
+
+The user created a Google-login account; Transkribus issues no API keys
+— OIDC password-grant after setting an account password. Credentials
+worked (token minted; legacy REST /rest/collections returned 200 with
+the user's collections). But:
+
+- The documented Text Recognition API (processing/v1; the docs' v2
+  path 404s) REJECTS the token: its audience is TrpServer (legacy),
+  not the processing service. Likely an account/API-activation issue
+  on READ-COOP's side ("Get API access with a free account" — no
+  self-serve activation found in the app).
+- The legacy REST flow the token DOES authorize needs the full
+  document lifecycle (create doc, multipart upload, HTR job, poll,
+  fetch PAGE XML) and its model-listing endpoints 404 at every
+  documented guess — real integration work on an under-documented API.
+
+Verdict pending user choice: invest in the legacy flow (~an hour of
+endpoint archaeology), or treat the head-to-head as settled on
+tesseract/kraken/ours + the research (recognition quality is not the
+gap — coverage is), or ask READ-COOP support how to enable the
+processing API on a Google-login free account. Tunnel + file server
+used for the abortive imageUrl path were torn down; the trial leg now
+uses base64 (no tunnel needed).

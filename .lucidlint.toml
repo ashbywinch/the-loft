@@ -44,3 +44,11 @@ ignore = ["fakefs"]
 ignore = ["unused"]
 [lucidlint."tools/eval_review.py"]
 ignore = ["unused"]
+
+# lucidlint-dist: the vendored release bundle the make target downloads
+# (gitignored — the repo's own code never lives there). Its findings are
+# the tool reviewing itself; the next download overwrites any edit, and
+# the make target verifies the SHA256SUMS, so the bundle is immutable
+# input, not repo code (2026-08-29).
+[lucidlint."lucidlint-dist/**"]
+ignore = ["standard", "detached-method", "loop-pipeline", "conditional-polymorphism", "middle-man"]

@@ -298,8 +298,8 @@ class Layout:
         self.unmatched = unmatched
 
     # the single-path build's inputs mirror build_layout's — a parameter object would obscure the pure pass
-    # lucidlint: ignore long-param-list a parameter object would obscure the pure pass
     @classmethod
+    # lucidlint: ignore long-param-list the single-path build's inputs mirror build_layout's — no param object
     def single(
         cls,
         page: str,
@@ -317,8 +317,8 @@ class Layout:
         )
 
     # the multi-path build's inputs mirror multi_layout's — a parameter object would obscure the combined pass
-    # lucidlint: ignore long-param-list a parameter object would obscure the combined pass
     @classmethod
+    # lucidlint: ignore long-param-list the multi-path build's inputs mirror multi_layout's — no param object
     def multi(
         cls,
         page: str,
@@ -521,14 +521,33 @@ def _selfreport_by_line(selfreport: list[dict[str, Any]] | None, n_lines: int) -
     return report_by_line
 
 
+def _index_lines(layout: dict[str, Any]) -> dict[str, Any]:
+    """Every line carries its position: the review surface keys the
+    edit/verify state, the box clicks and the dual-pane links on
+    ``line.index``. The pipeline's writers did not all emit it — a line
+    without an index made ``lines.find(l => l.index === undefined)``
+    match the FIRST line, so one "Verified" tap saved line 0's text as
+    the edit for every row and the whole page rendered as the first
+    line, over and over (user, 2026-09-04: "the transcript on screen is
+    just 'A picture of life in music college' repeated over and over
+    again"). Readers assign the position when the file lacks it — the
+    layouts already on disk load correctly without a rewrite."""
+    lines = layout.get("lines")
+    if isinstance(lines, list):
+        for i, line in enumerate(lines):
+            if isinstance(line, dict) and line.get("index") is None:
+                line["index"] = i
+    return layout
+
+
 def load_layout(path: Path) -> dict[str, Any]:
     """Read a page's layout JSON (the drafts payload reads these)."""
-    return json.loads(path.read_text(encoding="utf-8"))
+    return _index_lines(json.loads(path.read_text(encoding="utf-8")))
 
 
 def load_layout_store(store: Any, store_path: str) -> dict[str, Any]:
     """Read the latest version of a layout from a ``PipelineStore``."""
-    return json.loads(store.read_latest(store_path))
+    return _index_lines(json.loads(store.read_latest(store_path)))
 
 
 def load_vlm_boxes(path: Path) -> dict[int, list[float]] | None:
@@ -1250,6 +1269,7 @@ def write_layout(layout: dict[str, Any], path: Path) -> None:
     violations = validate_layout(layout)
     if violations:
         raise ValueError(f"refusing to write an invalid layout: {violations}")
+    _index_lines(layout)
     atomic_write(path, json.dumps(layout, indent=1, ensure_ascii=False) + "\n")
 
 
@@ -1269,6 +1289,7 @@ def write_layout_store(
     violations = validate_layout(layout)
     if violations:
         raise ValueError(f"refusing to write an invalid layout: {violations}")
+    _index_lines(layout)
     versions = store.versions(store_path)
     revision = (versions[-1] + 1) if versions else 1
     stamped = {**layout, "revision": revision}

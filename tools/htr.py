@@ -266,6 +266,7 @@ def htr_pages_vlm(
     people: list[str] | None = None,
     places: list[str] | None = None,
     label: str | None = None,
+    store_root: Path = WORK_DIR,
 ) -> None:
     """The vision-model backend (the 2026-08-14 decision): each page in,
     verbatim text out, token usage recorded in a sidecar so re-runs skip
@@ -306,7 +307,7 @@ def htr_pages_vlm(
         text, usage = call(image, system=system)
         plain, boxes = parse_transcription_response(text)
         atomic_write(out, plain)  # backward compat — callers read from the old path
-        store = PipelineStore(WORK_DIR)
+        store = PipelineStore(store_root)
         batch_id = out.parent.parent.name
         store_path = str(Path(batch_id) / "ocr-guess" / out.name)
         store.write(store_path, plain)
@@ -320,7 +321,7 @@ def htr_pages_vlm(
             # anchor each line it transcribed). Only the entries with boxes
             # ride along; a page without geometry keeps the old fallback.
             marker_data["lines"] = [{"text": plain.split("\n")[i], "box": boxes[i]} for i in sorted(boxes)]
-        store = PipelineStore(WORK_DIR)
+        store = PipelineStore(store_root)
         batch_id = out.parent.parent.name
         store_path = str(Path(batch_id) / "ocr-guess" / marker.name)
         store.write(store_path, json.dumps(marker_data, ensure_ascii=False))

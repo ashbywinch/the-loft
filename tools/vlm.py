@@ -17,14 +17,19 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import re
+import sys
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from tools.ai_client import DEFAULT_BASE_URL, find_api_key
 
-VLM_SYSTEM = (
+logger = logging.getLogger(__name__)
+
+_VLM_READING_RULES = (
     "You transcribe scanned family documents verbatim. Rules: the document's own "
     "words, nothing added, nothing removed — fix nothing, summarize nothing, invent "
     "nothing. Keep the line structure. For printed text and handwriting alike. "
@@ -33,12 +38,29 @@ VLM_SYSTEM = (
     "writer CROSSED OUT is marked ~~word~~ (double tildes either side); a word the "
     "writer UNDERLINED is marked ~word~ (single tildes either side, the in-house "
     "sibling of the strike convention — markdown has no standard underline). "
+)
+
+VLM_FORMAT_JSON = (
     'Return ONLY JSON: {"lines": [{"text": "the line verbatim", "box": '
     "[x0, y0, x1, y1]}]} — one entry per line IN READING ORDER, top to bottom. "
     '"box" is the line\'s bounding box in NORMALIZED coordinates 0-1000 '
     "(fractions of the image's width and height, times 1000); it must enclose "
     "every glyph of that line, nothing else."
 )
+
+# The no-boxes format (2026-08-25): the ink-column pipeline measures
+# geometry from the rec's ink, so its reads need no coordinates. Plain
+# text costs a fraction of the tokens — headroom the reasoning budget
+# was eating (empty content and truncated '{"lines": ...' echoes were
+# both completion-budget failures) — and gives the model no structure
+# to fail mid-echoing.
+VLM_FORMAT_PLAIN = (
+    "Return ONLY the transcription as plain text: one output line per line of "
+    "the document, in reading order, top to bottom; skip blank lines. No "
+    "coordinates, no JSON, no commentary — just the lines."
+)
+
+VLM_SYSTEM = _VLM_READING_RULES + VLM_FORMAT_JSON
 # line falls back to the detector's association.
 DEGENERATE_BOX_DIVISOR = 3
 
@@ -54,13 +76,18 @@ def transcription_system_with_context(
     places: list[str] | None = None,
     label: str | None = None,
     previous_page: str | None = None,
+    request_boxes: bool = True,
 ) -> str:
     """The verbatim-transcription system prompt plus the context that helps
     the model READ: the family's known names (a familiar name is read
     correctly, not guessed letter-by-letter), the places, the pile's label,
     and the previous page's text for continuity (user, 2026-08-15: "whatever
-    useful context we have to help it guess better")."""
-    lines = [VLM_SYSTEM]
+    useful context we have to help it guess better").
+
+    ``request_boxes=False`` swaps the JSON-and-coordinates format for
+    plain text — for callers whose geometry comes from elsewhere (the
+    ink-column batch measures from the rec's ink; 2026-08-25)."""
+    lines = [_VLM_READING_RULES + (VLM_FORMAT_JSON if request_boxes else VLM_FORMAT_PLAIN)]
     if people or places:
         lines.append(
             "Context to help you read — known family people: "
@@ -131,6 +158,72 @@ def parse_transcription_response(text: str) -> tuple[str, dict[int, list[float]]
     return "\n".join(texts), (_drop_degenerate_boxes(boxes) or None)
 
 
+def transcription_problem(text: str) -> str | None:
+    """Why this transcription response cannot build a layout — None when
+    it can. The retry ladder's decision (2026-08-25): page-02 emitted the
+    identical raw-JSON prefix in two separate runs, and empty content is
+    the same completion-budget failure; both are worth a re-read rather
+    than letting the gates refuse the page on garbage. Usable: plain
+    text, or JSON in the requested structure (parse_transcription_response
+    extracts it). Unusable: blank, an unparseable JSON echo (the model
+    wrote the requested format instead of transcribing), or parsed JSON
+    without the "lines" structure."""
+    if not text or not text.strip():
+        return "empty response"
+    try:
+        data = _extract_json(text)
+    except VlmError:
+        first = text.lstrip()[:1]
+        if first in ("{", "["):
+            return "unparseable JSON echo"
+        return None  # plain text — the fine case
+    if isinstance(data, dict) and isinstance(data.get("lines"), list):
+        return None  # the model followed the requested structure
+    return "JSON without the lines structure"
+
+
+def transcribe_with_fallbacks(
+    image: Path,
+    variants: list[dict[str, Any]],
+    *,
+    usable: Callable[[str], bool] | None = None,
+    transcribe: Callable[..., tuple[str, dict[str, int]]] | None = None,
+) -> tuple[str, dict[str, int]]:
+    """Try each call spec in order; return the first usable response as
+    (text, usage). A variant dict passes straight to transcribe_image_vlm
+    (model, system, max_tokens, ...). Unusable responses and call errors
+    print their reason to stderr and fall through to the next variant.
+    When every variant is exhausted: the LAST unusable response comes
+    back (the gates refuse it downstream — never a silent drop) unless
+    every attempt ERRORED, in which case the last exception re-raises.
+    The returned usage sums every attempt's tokens — the honest cost."""
+    usable = usable or (lambda text: transcription_problem(text) is None)
+    # the injectable seam (2026-08-29): the tests pass a fake instead of
+    # monkeypatching the module attribute
+    call = transcribe or transcribe_image_vlm
+    last_error: Exception | None = None
+    last_text: str | None = None
+    total_tokens = 0
+    name = getattr(image, "name", str(image))
+    for attempt, spec in enumerate(variants, start=1):
+        try:
+            text, usage = call(image, **spec)
+        except Exception as exc:
+            last_error = exc
+            print(f"vlm {name} attempt {attempt}/{len(variants)}: {exc}", file=sys.stderr)
+            continue
+        total_tokens += int(usage.get("total_tokens", 0) or 0)
+        problem = None if usable(text) else (transcription_problem(text) or "failed the caller's checks")
+        if problem is None:
+            return text, {"total_tokens": total_tokens}
+        last_text = text
+        print(f"vlm {name} attempt {attempt}/{len(variants)} unusable ({problem}) — falling back", file=sys.stderr)
+    if last_text is None and last_error is not None:
+        raise last_error
+    assert last_text is not None  # exhausted on unusable responses
+    return last_text, {"total_tokens": total_tokens}
+
+
 def _collect_line_entries(entries: list[Any]) -> tuple[list[str], dict[int, list[float]]] | None:
     """The transcription lines and their boxes from the model's "lines"
     array — blank lines carry no box (the .txt's own split skips them too,
@@ -185,46 +278,40 @@ def transcribe_image_vlm(
     api_key: str | None = None,
     timeout: float = 900.0,
     max_tokens: int = 64000,
+    urlopen: Callable[..., Any] | None = None,
 ) -> tuple[str, dict[str, int]]:
     """One multimodal call; returns (text, token usage) — the cost measure.
     ``user_text`` rides the user message alongside the image. ``max_tokens``
     bounds the completion: reasoning models need large headroom for
     location tasks (64000) but a line-crop classification is done with a
-    small budget (1000)."""
-    key = api_key or find_api_key()
+    small budget (1000). ``urlopen`` is the test seam (DI, never
+    monkeypatch); None uses urllib.request.urlopen."""
     mime = _MIME_BY_SUFFIX.get(image.suffix.lower(), "application/octet-stream")
     data_url = f"data:{mime};base64," + base64.b64encode(image.read_bytes()).decode("ascii")
     user_content: list[dict[str, Any]] = [{"type": "image_url", "image_url": {"url": data_url}}]
     if user_text:
         user_content.append({"type": "text", "text": user_text})
-    payload = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_content},
-        ],
-        "temperature": 0,
-        "max_tokens": max_tokens,
-    }
-    request = urllib.request.Request(
-        f"{base_url.rstrip('/')}/chat/completions",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {key}",
-            "User-Agent": "opencode/1.14.20",
+    body = _vision_post(
+        base_url=base_url,
+        key=api_key or find_api_key(),
+        payload={
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_content},
+            ],
+            "temperature": 0,
+            "max_tokens": max_tokens,
+            # thinking disabled: transcription is an extraction task, not a
+            # judgment — a reasoning model will otherwise spend the whole
+            # budget reasoning and return empty content (2026-08-30: the
+            # CI's postcard eval). A model that rejects the param gets one
+            # retry without it (the AIClient house pattern).
+            "thinking": {"type": "disabled"},
         },
-        method="POST",
+        timeout=timeout,
+        urlopen=urlopen,
     )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="replace")[:300]
-        raise VlmError(f"vision model call failed: HTTP {e.code} - {detail}") from e
-    # lucidlint: ignore broad-except the module's contract — every failure surfaces as VlmError
-    except Exception as exc:  # network or API errors surface loudly
-        raise VlmError(f"vision model call failed: {exc}") from exc
     try:
         choice = body.get("choices", [{}])[0]
         message = choice.get("message") or {}
@@ -252,6 +339,53 @@ def transcribe_image_vlm(
     except (KeyError, IndexError, TypeError) as exc:
         raise VlmError(f"unexpected vision response: {json.dumps(body)[:300]}") from exc
     return text, usage
+
+
+def _vision_post(
+    *,
+    base_url: str,
+    key: str,
+    payload: dict[str, Any],
+    timeout: float,
+    urlopen: Callable[..., Any] | None,
+) -> dict[str, Any]:
+    """POST one chat-completions payload. On a 400/422 that the model
+    blames on the ``thinking`` param, retry once without it; every other
+    failure surfaces as VlmError (the module's contract)."""
+    do_open = urlopen or urllib.request.urlopen
+    while True:
+        try:
+            with do_open(
+                urllib.request.Request(
+                    f"{base_url.rstrip('/')}/chat/completions",
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {key}",
+                        # Cloudflare in front of the API rejects the urllib default UA
+                        "User-Agent": "opencode/1.14.20",
+                    },
+                    method="POST",
+                ),
+                timeout=timeout,
+            ) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="replace")[:300]
+            if e.code in (400, 422) and "thinking" in payload:
+                # model doesn't understand the thinking param — retry once
+                # without it (mirrors AIClient._post)
+                payload.pop("thinking")
+                logger.info(
+                    "model %s rejected the thinking param (HTTP %d); retrying without it",
+                    payload.get("model"),
+                    e.code,
+                )
+                continue
+            raise VlmError(f"vision model call failed: HTTP {e.code} - {detail}") from e
+        # lucidlint: ignore broad-except the module's contract — every failure surfaces as VlmError
+        except Exception as exc:  # network or API errors surface loudly
+            raise VlmError(f"vision model call failed: {exc}") from exc
 
 
 ANGLE_PROMPT = (

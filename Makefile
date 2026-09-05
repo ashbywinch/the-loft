@@ -27,6 +27,7 @@ help:
 	@echo "  ${GREEN}make format${NC}       Auto-fix formatting issues"
 	@echo "  ${GREEN}make coverage${NC}     Run tests with coverage report"
 	@echo "  ${GREEN}make evals${NC}        Run the real-model evals (pytest -m eval — needs the API key; select pieces with -k)"
+	@echo "  ${GREEN}make setup-htr${NC}    Provision .venv-htr (Python 3.13 + PaddleOCR) for the layout/eval stages"
 	@echo "  ${GREEN}make verify${NC}       Run the archive-quality data checks (pytest -m archive — the drift guard, completeness, no-PII)"
 	@echo "  ${GREEN}make eval-changed${NC} Run only the evals the current changes affect"
 	@echo "  ${GREEN}make scan-docs${NC}    Scan documents from the FF-680W into ~/loft/inbox (ARGS=\"--job …\")"
@@ -79,6 +80,16 @@ setup: install-tools
 	@uv run pre-commit install
 	@[ -f .env ] || cp .env.example .env
 
+# The layout stage and the real-model evals spawn .venv-htr/bin/python
+# (PaddleOCR lives there; the main venv never imports it). Provisioned
+# on demand — the full paddle stack is ~1.5 GB, so make setup does not
+# pay for it; machines that run layout or evals do (2026-08-30: CI's
+# evals died on the missing interpreter).
+.PHONY: setup-htr
+setup-htr:
+	@test -x .venv-htr/bin/python || uv venv .venv-htr --python 3.13
+	@uv pip install --python .venv-htr/bin/python "paddlepaddle==3.3.1" "paddleocr==3.7.0"
+
 serve: setup
 	@./loft serve --host 0.0.0.0 --port 8000 --reload
 
@@ -113,13 +124,30 @@ evals: setup
 # provisions its own environment — this target downloads the self-contained
 # release bundle (SHA256SUMS-verified) into lucidlint-dist/ (gitignored), so
 # CI == developer on the same compiled binary.
+#
+# The pin is authoritative (2026-08-29): install-lucidlint verifies the
+# installed bundle's version marker against LUCIDLINT_VERSION and re-downloads
+# only on a mismatch or a missing marker. A bare file-existence guard let a
+# stale bundle from an earlier release sit in the gitignored dist (never
+# refreshed on pull), so the local gate ran an old binary while CI's fresh
+# checkout ran the pinned version and failed 28 findings the old binary never
+# saw. The marker is written only by the verified download; a bundle whose
+# marker matches the pin IS the pinned version.
 .PHONY: install-lucidlint lucidlint
 LUCIDLINT_VERSION ?= 0.1.0
 LUCIDLINT_ARCH ?= x86_64-unknown-linux-musl
 LUCIDLINT_DIST := lucidlint-dist
 LUCIDLINT_BUNDLE := $(LUCIDLINT_DIST)/lucidlint.py
+LUCIDLINT_VERSION_FILE := $(LUCIDLINT_DIST)/.version
 
-install-lucidlint: $(LUCIDLINT_BUNDLE)
+install-lucidlint:
+	@if [ -f $(LUCIDLINT_BUNDLE) ] && [ "$$(cat $(LUCIDLINT_VERSION_FILE) 2>/dev/null)" = "$(LUCIDLINT_VERSION)" ]; then \
+		echo "== lucidlint v$(LUCIDLINT_VERSION) (installed, pin-matched) =="; \
+	else \
+		echo "== lucidlint: installed bundle is not v$(LUCIDLINT_VERSION) — re-downloading the pinned release =="; \
+		rm -rf $(LUCIDLINT_DIST); \
+		$(MAKE) --no-print-directory $(LUCIDLINT_BUNDLE); \
+	fi
 
 $(LUCIDLINT_BUNDLE):
 	@mkdir -p $(LUCIDLINT_DIST)
@@ -128,10 +156,13 @@ $(LUCIDLINT_BUNDLE):
 	@cd $(LUCIDLINT_DIST) && grep "lucidlint-v$(LUCIDLINT_VERSION)-$(LUCIDLINT_ARCH).tar.gz" SHA256SUMS | sha256sum --check --status
 	@tar -xzf $(LUCIDLINT_DIST)/lucidlint-v$(LUCIDLINT_VERSION)-$(LUCIDLINT_ARCH).tar.gz -C $(LUCIDLINT_DIST) --strip-components=1
 	@rm -f $(LUCIDLINT_DIST)/lucidlint-v$(LUCIDLINT_VERSION)-$(LUCIDLINT_ARCH).tar.gz $(LUCIDLINT_DIST)/SHA256SUMS
+	@echo "$(LUCIDLINT_VERSION)" > $(LUCIDLINT_VERSION_FILE)
 
 lucidlint: install-lucidlint
 	@echo "== lucidlint gate =="
-	@$(PYTHON) $(LUCIDLINT_BUNDLE) --repo . --baseline lucidlint.json
+	# NO baseline (user, 2026-08-29): the gate fails on EVERY finding —
+	# a gate failure means the finding gets fixed, never locked
+	@$(PYTHON) $(LUCIDLINT_BUNDLE) --repo .
 
 eval: evals
 

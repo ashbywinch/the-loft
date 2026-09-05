@@ -294,6 +294,56 @@ class TestWriteLoadLayout:
         write_layout_store(layout, store, path)
         assert load_layout_store(store, path)["revision"] == 2
 
+    def test_every_line_carries_its_index(self, tmp_path) -> None:
+        """2026-09-04 (user: "the transcript on screen is just 'A picture
+        of life in music college' repeated over and over again"): the
+        review surface keys the verify/edit state, the box clicks and the
+        dual-pane links on ``line.index`` — and the pipeline's writers did
+        not all emit it. Every line's index was ``undefined`` in the
+        browser, so ONE "Verified" tap ran
+        ``lines.find(l => l.index === undefined)``, matched the FIRST
+        line, and saved line 0's text as the edit for every row: the
+        whole page rendered as its first line. The writer stamps the
+        position; the reader assigns it for the files already on disk."""
+        layout = {
+            "page": "p.jpg",
+            "width": 100,
+            "height": 100,
+            "lines": [
+                {"text": "one", "box": [0, 0, 90, 18]},
+                {"text": "two", "box": [0, 30, 90, 48]},
+            ],
+            "unmatched": [],
+        }
+        path = tmp_path / "p.layout.json"
+        write_layout(layout, path)
+        # the WRITE stamped the position into the file
+        on_disk = json.loads(path.read_text(encoding="utf-8"))
+        assert [ln["index"] for ln in on_disk["lines"]] == [0, 1]
+        # a file written WITHOUT them (every layout on disk today) loads
+        # with the position assigned
+        bare = {
+            "page": "q.jpg",
+            "width": 100,
+            "height": 100,
+            "lines": [{"text": "one", "box": [0, 0, 90, 18]}, {"text": "two", "box": [0, 30, 90, 48]}],
+        }
+        q = tmp_path / "q.layout.json"
+        q.write_text(json.dumps(bare), encoding="utf-8")
+        loaded = load_layout(q)
+        assert [ln["index"] for ln in loaded["lines"]] == [0, 1]
+        # the store path too — the drafts payload's actual consumer
+        # (review finding, PR 30: the plain-file assertions left the
+        # versioned store's index assignment untested)
+        from tools.layout import load_layout_store, write_layout_store
+        from tools.pipeline_store import PipelineStore
+
+        store = PipelineStore(tmp_path)
+        spath = "b/ocr-guess/p.layout.json"
+        write_layout_store(bare, store, spath)
+        on_store = load_layout_store(store, spath)
+        assert [ln["index"] for ln in on_store["lines"]] == [0, 1]
+
 
 def test_layout_payload_declares_the_box_frame() -> None:
     """2026-08-22: the payload declares the boxes' coordinate frame — the
@@ -874,6 +924,194 @@ def test_stitch_crop_box_maps_the_crop_local_frame_into_the_page() -> None:
     assert stitch_crop_box(crop, local) == [540.0, 760.0, 740.0, 775.0]
     # the crop's origin adds, the crop's size scales
     assert stitch_crop_box(crop, [0, 0, 1000, 1000]) == [500.0, 700.0, 900.0, 1000.0]
+
+
+def test_gate_b_calibrates_the_ceiling_by_glyph_size() -> None:
+    """2026-08-22's absolute 80/160 ceilings assumed handwriting scale;
+    2026-08-26 replaced them with a ceiling that scales with the box's
+    OWN perpendicular extent (x1.7, floor 30) — a letter's advance is
+    proportional to its glyph size, so big print is legitimate while
+    mislabeled normal-height rows stay tight. This test pins both the
+    survivors and the consciously-flipped assertions."""
+    from tools.gates import text_extent_violation
+
+    # the postcard's message line: 19 chars in a 1539px-tall vertical
+    # box, width 169 -> ceiling 287: passes (as before)
+    assert text_extent_violation("decent day tomorrow", [215, 544, 384, 2083], 90) is None
+    # the absurd vertical: 3 chars in a 1500px box -> 500 px/char vs a
+    # 50px-wide column's ceiling of 85: still caught
+    assert text_extent_violation("abc", [0, 0, 50, 1500], 90) is not None
+    # FLIPPED (2026-08-26): 81 px/char on a 50px-tall row is now
+    # plausible big-ish handwriting (ceiling 85) — the old horizontal
+    # 80 absolute ceiling refused it; sparsity is judged per glyph size
+    assert text_extent_violation("abc", [0, 0, 243, 50], 0) is None
+    # FLIPPED (2026-08-26): 10 chars at 150 px/char along a 50px-wide
+    # vertical column means 150px between 50px-tall glyphs — absurd
+    # sparsity under the glyph-size rule (ceiling 85): now caught,
+    # where the old 160 vertical ceiling let it through
+    assert text_extent_violation("x" * 10, [0, 0, 50, 1500], 90) is not None
+
+
+def test_transcription_line_count_plausible() -> None:
+    """The collapse detector (2026-08-25): the birth certificate's model
+    read folded 26 measured rows into one line — every row then carried
+    the same 323-char blob and Gate B refused the page. Conservative:
+    only pages with >= 10 measured rows are judged (photo captions
+    fragment into more rows than real lines)."""
+    from tools.ink import transcription_line_count_plausible as plausible
+
+    assert not plausible(2, 26)  # the birth-cert collapse
+    assert plausible(24, 26)  # a healthy letter
+    assert plausible(11, 26)  # the 40% floor
+    assert plausible(1, 5)  # few rows: any count accepted
+    assert plausible(4, 10)  # exactly 40% passes
+
+
+def test_ink_match_labels_assigns_by_order() -> None:
+    """The order-based label matching (2026-08-22, the user's item 2):
+    each row's y-center, as a fraction of the content's span, picks the
+    transcription line at the same fraction — the 1:1 case."""
+    from tools.ink import match_labels
+
+    # three rows evenly spaced down a 900px span
+    rows = [[0.0, 0.0, 100.0, 100.0], [0.0, 300.0, 100.0, 400.0], [0.0, 600.0, 100.0, 700.0]]
+    lines = ["first line", "second line", "third line"]
+    assert match_labels(rows, lines) == lines
+
+
+def test_ink_match_labels_handles_merged_rows() -> None:
+    """The rec's rows can merge two lines (its det is coarse on
+    cursive) — a merged row gets the line at its center, and the
+    assignment never collapses to one band."""
+    from tools.ink import match_labels
+
+    rows = [
+        [0.0, 0.0, 100.0, 100.0],
+        [0.0, 180.0, 100.0, 280.0],
+        [0.0, 360.0, 100.0, 460.0],
+        [0.0, 540.0, 100.0, 640.0],
+        [0.0, 720.0, 100.0, 820.0],
+    ]
+    lines = ["one", "two", "three", "four", "five"]
+    labels = match_labels(rows, lines)
+    assert len(set(labels)) >= 4, f"the assignment must not collapse: {labels}"
+
+
+def test_ink_match_labels_falls_back_when_the_overlap_is_degenerate() -> None:
+    """The schematic full-page boxes (every row matches the same band —
+    the letter's read) must fall back to the proportional assignment,
+    not label every row with the first line."""
+    from tools.ink import match_labels
+
+    rows = [[0.0, 0.0, 100.0, 100.0], [0.0, 300.0, 100.0, 400.0], [0.0, 600.0, 100.0, 700.0]]
+    lines = ["first line", "second line", "third line"]
+    bands = [(0.0, 50.0, lines[0]), (0.0, 50.0, lines[0]), (0.0, 50.0, lines[0])]
+    assert match_labels(rows, lines, bands) == lines
+
+
+def test_ink_match_labels_keeps_the_overlap_when_it_is_not_degenerate() -> None:
+    """The rotated panel's trustworthy bands (the postcard) keep the
+    y-overlap refinement — the proportional is the fallback."""
+    from tools.ink import match_labels
+
+    rows = [[0.0, 0.0, 100.0, 100.0], [0.0, 300.0, 100.0, 400.0], [0.0, 600.0, 100.0, 700.0]]
+    lines = ["first line", "second line", "third line"]
+    bands = [(0.0, 150.0, "first line"), (250.0, 450.0, "second line"), (550.0, 750.0, "third line")]
+    assert match_labels(rows, lines, bands) == lines
+
+
+def test_ink_cluster_rows_splits_side_by_side_pieces() -> None:
+    """The x-split (2026-08-22): the rec's y-band clustering can merge
+    side-by-side pieces - the postcard's date and the HERNSPETH sharing
+    a band - and the union would span the blank middle, tripping the
+    text-extent gates. The split at wide x-gaps gives each side its own
+    row with a tighter box."""
+    from tools.ink import cluster_rows, union
+
+    pieces = [
+        [208.0, 188.0, 241.0, 206.0],
+        [1206.0, 147.0, 1589.0, 216.0],
+        [1604.0, 147.0, 1900.0, 214.0],
+    ]
+    rows = cluster_rows(pieces)
+    assert len(rows) == 2
+    left = union(rows[0])
+    right = union(rows[1])
+    assert left[2] - left[0] < 100
+    assert right[0] > 1100
+
+
+def test_ink_cluster_rows_keeps_a_lines_words_together() -> None:
+    """The split must NOT break a single line whose words sit close
+    together (the normal case) - only the wide gaps split."""
+    from tools.ink import cluster_rows
+
+    pieces = [[0.0, 0.0, 100.0, 20.0], [110.0, 0.0, 220.0, 20.0], [240.0, 0.0, 350.0, 20.0]]
+    rows = cluster_rows(pieces)
+    assert len(rows) == 1
+
+
+def test_ink_cluster_row_thresholds_are_scale_invariant() -> None:
+    """The thresholds derive from the measured piece sizes (2026-08-22):
+    the same layout at half the scan resolution must cluster the same
+    way - the absolute pixel gaps were tuned on one batch and would
+    merge every row at a different scale."""
+    from tools.ink import cluster_rows
+
+    def page(scale: float) -> list[list[float]]:
+        out = []
+        for r in range(3):
+            for c in range(3):
+                x = (c * 300 + 50) * scale
+                y = (r * 90 + 20) * scale
+                out.append([x, y, x + 200 * scale, y + 40 * scale])
+        return out
+
+    full = cluster_rows(page(1.0))
+    half = cluster_rows(page(0.5))
+    assert len(full) == 3 and len(half) == 3, (
+        f"the scale must not change the clustering: full={len(full)}, half={len(half)}"
+    )
+
+
+def test_ink_cluster_rows_splits_a_runaway_row() -> None:
+    """The tall-split (2026-08-25): single-linkage chaining merges
+    pieces whose every ADJACENT gap is small into a row spanning many
+    real lines - the birth certificate's form table chained 40 cells
+    into one 290px row (6.2x its own piece scale), the photo's big
+    handwriting 13 pieces into 1077px (6.3x). One line's extent cannot
+    exceed ~2.5x its own pieces' median height; an over-tall row splits
+    at its internal gaps until every part is plausible."""
+    from tools.ink import cluster_rows, union
+
+    # three tight text bands (h=40) at staggered x's, centers 25px
+    # apart - every adjacent pair chains under the y-gap threshold,
+    # total extent 190px = 4.75x the piece height
+    pieces = []
+    for i in range(8):
+        y = 100.0 + i * 25.0
+        x = 100.0 + (i % 3) * 400.0
+        pieces.append([x, y, x + 150.0, y + 40.0])
+    rows = cluster_rows(pieces)
+    assert len(rows) >= 3, f"chained into {len(rows)} row(s)"
+    for row in rows:
+        u = union(row)
+        assert u[3] - u[1] <= 2.5 * 40.0 + 1e-9
+
+
+def test_ink_cluster_rows_keeps_a_tall_but_legitimate_line() -> None:
+    """A slanting cursive line with ascenders is ONE row: its extent
+    stays within ~2x its pieces' scale. The split must not shred real
+    lines - only the implausible ones."""
+    from tools.ink import cluster_rows
+
+    pieces = [
+        [100.0, 100.0, 300.0, 150.0],  # h=50
+        [320.0, 115.0, 520.0, 165.0],
+        [540.0, 130.0, 740.0, 180.0],  # drift 30px over the line; extent 80px = 1.6x
+    ]
+    rows = cluster_rows(pieces)
+    assert len(rows) == 1
 
 
 def test_multi_layout_orders_zero_first_then_each_next_direction() -> None:
@@ -1904,3 +2142,337 @@ def test_drop_conflicting_boxes_keeps_the_confirmed_anchor() -> None:
     assert lines[0]["box"] == [526, 2247, 1044, 2294]
     assert lines[1]["box"] is None, "the unconfirmed claim on the anchor's region must drop"
     assert lines[2]["box"] == [540, 2297, 1042, 2340]
+
+
+def test_box_line_count_by_projection() -> None:
+    """The cheap multi-line gate (2026-08-25): the vision audit caught
+    boxes enclosing 3-4 handwriting lines apiece (1782635795946's stale
+    layout). A box's row-projection counts the separated ink bands it
+    holds — pure PIL, no model. Bands separated by a clear blank gap
+    are distinct lines; a line's own ascender/descender gaps are too
+    small to split it."""
+    from PIL import Image, ImageDraw
+
+    from tools.box import text_line_count
+
+    # one line of "writing": a wavy band with internal thin gaps
+    im = Image.new("L", (400, 200), 255)
+    d = ImageDraw.Draw(im)
+    for x0 in range(40, 360, 21):
+        d.rectangle([x0, 90, min(x0 + 13, 360), 111], fill=0)
+    assert text_line_count([0, 0, 400, 200], im) == 1
+
+    # two clean lines with a real leading gap between them
+    im2 = Image.new("L", (400, 200), 255)
+    d2 = ImageDraw.Draw(im2)
+    d2.rectangle([40, 30, 360, 51], fill=0)
+    d2.rectangle([40, 120, 360, 141], fill=0)
+    assert text_line_count([0, 0, 400, 200], im2) == 2
+
+
+def test_empty_box_has_no_lines() -> None:
+    from PIL import Image
+
+    from tools.box import text_line_count
+
+    im = Image.new("L", (200, 100), 255)
+    assert text_line_count([10, 10, 190, 90], im) == 0
+
+
+def test_has_ink_sees_pencil_on_photo_paper() -> None:
+    """Faint-pencil regression (2026-08-26): the Silver-Wedding photo's
+    annotations are pencil (~level 170) on cream card (~220) — the fixed
+    <128 cutoff called every box blank and the serve-walk refused pages
+    whose boxes were visibly on the writing. Ink must be measured
+    against the crop's OWN paper level."""
+    from PIL import Image, ImageDraw
+
+    from tools.box import has_ink
+
+    im = Image.new("L", (300, 100), 220)
+    d = ImageDraw.Draw(im)
+    d.rectangle([20, 45, 280, 54], fill=168)
+    assert has_ink([0, 0, 300, 100], im)
+
+    blank = Image.new("L", (300, 100), 235)
+    assert not has_ink([0, 0, 300, 100], blank)
+
+
+def test_split_by_bands_divides_a_multi_line_union() -> None:
+    """Band-split feedback (2026-08-26): when a measured union spans
+    several handwriting lines, the image itself gives the true line
+    boundaries — the projection's ink bands. Splitting before label
+    matching turns too-few-rows into accurate-rows instead of refusing
+    the page (the birth certificates' 40-vs-25 mismatch)."""
+    from PIL import Image, ImageDraw
+
+    from tools.ink import split_by_bands
+
+    im = Image.new("L", (400, 200), 255)
+    d = ImageDraw.Draw(im)
+    d.rectangle([40, 30, 360, 51], fill=0)
+    d.rectangle([60, 120, 340, 141], fill=0)
+    parts = split_by_bands([20, 10, 380, 190], im)
+    assert len(parts) == 2
+    top, bottom = sorted(parts, key=lambda b: b[1])
+    assert 25 <= top[1] <= 35 and 45 <= top[3] <= 58  # the first band's rows
+    assert 115 <= bottom[1] <= 125 and 135 <= bottom[3] <= 148
+
+
+def test_split_by_bands_keeps_single_line_boxes_whole() -> None:
+    from PIL import Image, ImageDraw
+
+    from tools.ink import split_by_bands
+
+    im = Image.new("L", (400, 200), 255)
+    d = ImageDraw.Draw(im)
+    d.rectangle([40, 90, 360, 111], fill=0)
+    box = [20, 80, 380, 120]
+    assert split_by_bands(box, im) == [box]
+
+
+def test_layout_skip_requires_ink_provenance() -> None:
+    """The stale-shield fix (2026-08-26): page-01/08/11 served garbage
+    for days because their OLD-pipeline layouts validated structurally
+    clean, so the clean-skip protected them from every pipeline fix.
+    Only layouts written by the current ink machinery (every line
+    carrying box_source='ink') earn the skip."""
+    from tools.eval_batch import layout_is_current
+
+    assert layout_is_current({"lines": [{"box_source": "ink", "box": [0, 0, 1, 1]}]})
+    assert not layout_is_current({"lines": [{"box_source": "model", "box": [0, 0, 1, 1]}]})
+    assert not layout_is_current({"lines": [{"box": [0, 0, 1, 1]}]})
+    assert not layout_is_current({"lines": []})
+
+
+def test_gate_b_ceiling_scales_with_glyph_size() -> None:
+    """The scale-aware Gate B (2026-08-26): the absolute px/char ceiling
+    assumed handwriting scale and refused correctly-boxed BIG print —
+    '57 Varieties' at 90 px/char on the Heinz crest, 'REMINDER',
+    'POST CARD'. A letter's advance scales with its own glyph size, so
+    the ceiling is the box's PERPENDICULAR extent × 1.7: big-print rows
+    are also tall, mislabeled normal-height rows stay tight."""
+    from tools.gates import glyph_extent_violation
+
+    # big print: tall row, few large characters — legitimately 90px/char
+    assert glyph_extent_violation("57 Varieties", [0, 0, 1080, 220], 0) is None
+    # normal-height row, sparse text: still refused (the mismatch guard)
+    assert glyph_extent_violation("Windsor.", [0, 0, 1150, 55], 0) is not None
+
+
+def test_gate_b_density_direction_unchanged() -> None:
+    """Too-many-chars-in-a-small-box still fails exactly as before —
+    the birth certificates' 67-char labels on tiny rows."""
+    from tools.gates import glyph_extent_violation
+
+    assert glyph_extent_violation("x" * 67, [0, 0, 45, 300], 90) is not None
+
+
+def test_selfreport_flags_mark_words_in_the_layout() -> None:
+    """The wiring seam (2026-08-26): the self-report stage exists
+    (selfreport_words + build_layout's conf-0.0 flagging) but the batch
+    never runs it — the UI's "red words are ones the machine wasn't
+    sure of" promise goes unmet on every served layout. These helpers
+    are the missing link: tokenize a line into the layout's word dicts
+    and mark the flagged ones."""
+    from tools.text import flag_line_words, selfreport_by_line
+
+    words = flag_line_words("No peace eh? Hah !", {"peace"})
+    flagged = [w["word"] for w in words if w["conf"] == 0.0]
+    assert flagged == ["peace"], flagged
+    assert all(w["conf"] == 1.0 for w in words if w["word"] != "peace")
+
+    # the report cites "Peace" — matching is case/punct-insensitive
+    words2 = flag_line_words("No peace eh?", {"Peace"})
+    assert [w["word"] for w in words2 if w["conf"] == 0.0] == ["peace"]
+
+    # the line→flags map, 0-based, keyed per line index
+    report = [{"line": 2, "word": "gen"}, {"line": 1, "word": "qualms"}]
+    by_line = selfreport_by_line(report, 3)
+    assert by_line == {0: {"qualms"}, 1: {"gen"}}
+
+    # out-of-range lines are ignored; empty report maps to nothing
+    assert selfreport_by_line([{"line": 9, "word": "x"}], 3) == {}
+    assert selfreport_by_line([], 2) == {}
+
+
+def test_selfreport_flags_match_by_word_content() -> None:
+    """The index-misalignment fix (2026-08-26): the self-report cites
+    line numbers of the RAW VLM text, but out_lines' indices come from
+    proportional matching — the numbers drift when the raw text has
+    empty lines. The word is the reliable key: match each flagged word
+    against the lines that actually contain it."""
+    from tools.text import selfreport_words_by_line
+
+    lines = ["No peace eh?", "Have the gen", "So much for your qualms"]
+    by_line = selfreport_words_by_line(lines, [{"line": 1, "word": "Peace"}, {"line": 2, "word": "GEN"}])
+    assert by_line == {0: {"peace"}, 1: {"gen"}}, by_line
+
+    # a cited word that drifted to the wrong line number still lands on
+    # the line that contains it
+    shifted = selfreport_words_by_line(lines, [{"line": 3, "word": "peace"}])
+    assert shifted == {0: {"peace"}}, shifted
+
+    # a word nowhere in the text flags nothing
+    assert selfreport_words_by_line(lines, [{"line": 1, "word": "nonexistent"}]) == {}
+
+
+class TestRegionReadRescue:
+    """The rotated-region rescue (model-trial-report §6): when the plain
+    or multi-orientation build refuses (the detector misses boxes on
+    rotated text), the ink's x-projection regions are each read by the
+    VLM at their own orientation and the layout rebuilt from those
+    reads (2026-08-30 — the postcard eval's boxless refusals)."""
+
+    @staticmethod
+    def _fake_read(lines_per_region: dict[int, list[dict]]):
+        def fake(crop, image_path, tmp, index, model, base_url, api_key):
+            lines = lines_per_region.get(index)
+            if lines is None:
+                return None
+            return ([{**ln} for ln in lines], 100)
+
+        return fake
+
+    def test_stitches_region_lines_into_the_page_frame(self, tmp_path: Path) -> None:
+        from tools.layout_detect import _region_read_rescue
+
+        image = tmp_path / "back.jpg"
+        # two ink columns so the x-projection finds two regions (the
+        # message column and the address column, as on the postcard)
+        with Image.new("L", (2000, 1500), 255) as im:
+            from PIL import ImageDraw
+
+            d = ImageDraw.Draw(im)
+            d.rectangle([100, 200, 800, 1300], fill=0)
+            d.rectangle([1200, 150, 1900, 600], fill=0)
+            im.save(image)
+
+        calls: list[tuple] = []
+
+        def fake(crop, image_path, tmp, index, model, base_url, api_key):
+            # the upright address column's crop read (the rotated regions
+            # never reach read_crop). The line physically sits at region
+            # y 300-520; each band read reports it in the BAND's local
+            # frame — as a real read would — so the two bands' overlap
+            # reads stitch back to the same page box.
+            phys_y0, phys_y1 = 300.0, 520.0
+            local_y0 = phys_y0 - (crop.y - 150.0)
+            local_y1 = phys_y1 - (crop.y - 150.0)
+            return (
+                [
+                    {
+                        "text": "12 Kensington Gore",
+                        "box": [8.0, local_y0, 250.0, local_y1],
+                        "orientation": 0,
+                    }
+                ],
+                90,
+            )
+
+        # the pipeline's orientation report locates the known text: the
+        # message panel's lines at 90°, the address upright
+        report_lines = [
+            {"index": 0, "box": [50, 50, 950, 120], "degrees": 0},
+            {"index": 1, "box": [50, 150, 600, 400], "degrees": 90},
+        ]
+
+        class _FakeRotEngine:
+            """Serves the rotated panel's rec pass: three piece-boxes
+            aligned with the panel-read's bands so the row-clustering
+            measures the message's lines."""
+
+            def predict(self, input, return_word_box=False):
+                return [
+                    {
+                        "dt_polys": [
+                            [[100, 1121], [300, 1121], [300, 1168], [100, 1168]],
+                            [[100, 472], [300, 472], [300, 519], [100, 519]],
+                            [[100, 118], [300, 118], [300, 165], [100, 165]],
+                        ],
+                        "rec_texts": ["noise", "noise", "noise"],
+                        "rec_scores": [0.9, 0.9, 0.9],
+                    }
+                ]
+
+        import json as _json
+
+        def fake_transcribe(panel_path, *, model, system, base_url, api_key, max_tokens):
+            # the model's read of the whole rotated panel: the JSON the
+            # system prompt requests — clean lines + normalized boxes as
+            # y-bands across the rotated panel
+            return (
+                _json.dumps(
+                    {
+                        "lines": [
+                            {"text": "POST CARD.", "box": [10, 950, 990, 990]},
+                            {"text": "the message line", "box": [10, 400, 990, 440]},
+                            {"text": "With greetings", "box": [10, 100, 990, 140]},
+                        ]
+                    }
+                ),
+                {"total_tokens": 120},
+            )
+
+        layout = _region_read_rescue(
+            image,
+            tmp_path,
+            _FakeRotEngine(),
+            report_lines=report_lines,
+            seams=(fake, fake_transcribe),
+        )
+        assert layout is not None
+        # every contract line is present: the rotated panel's three lines
+        # plus the upright address column's read
+        # the reading order: the rotated columns' remapped x-positions
+        # left-to-right, then the upright address column
+        texts = [ln["text"] for ln in layout["lines"]]
+        assert texts == [
+            "POST CARD.",
+            "the message line",
+            "With greetings",
+            "12 Kensington Gore",
+        ], texts
+        # the rotated column's lines carry the vertical orientation (the
+        # ≥2-orientation contract); the upright region's stays 0
+        by_text = {ln["text"]: ln for ln in layout["lines"]}
+        assert by_text["the message line"]["orientation"] == 90, by_text["the message line"]
+        assert by_text["With greetings"]["orientation"] == 90
+        assert by_text["12 Kensington Gore"]["orientation"] == 0
+        # every stitched box stays inside the page and carries words with
+        # text (the review renders them)
+        for ln in layout["lines"]:
+            box = ln["box"]
+            assert 0 <= box[0] < box[2] <= layout["width"] and 0 <= box[1] < box[3] <= layout["height"], box
+            assert ln["words"] and all(w["word"] for w in ln["words"])
+        # the model used is the image route
+        assert all(c[4] == "dynamic/image" for c in calls)
+
+    def test_dedupe_drops_slabs_shadowed_by_longer_lines(self) -> None:
+        """§6 step 6: overlapping boxes claim the same region — keep the
+        longer transcription."""
+        from tools.layout_detect import _dedupe_region_lines
+
+        lines = [
+            {"text": "the message line", "box": [105, 250, 700, 290]},
+            {"text": "the mess", "box": [104, 248, 300, 292]},
+            {"text": "with greetings", "box": [110, 500, 400, 540]},
+        ]
+        kept = _dedupe_region_lines(lines)
+        assert [ln["text"] for ln in kept] == ["the message line", "with greetings"]
+
+    def test_returns_none_when_no_regions_or_no_reads(self, tmp_path: Path) -> None:
+        from tools.layout_detect import _region_read_rescue
+
+        blank = tmp_path / "blank.jpg"
+        Image.new("L", (800, 600), 255).save(blank)  # no ink — no regions
+        assert _region_read_rescue(blank, tmp_path, engine=None, seams=(self._fake_read({}), None)) is None
+
+        inked = tmp_path / "inked.jpg"
+        with Image.new("L", (2000, 1500), 255) as im:
+            # ink exists but every read fails
+            from PIL import ImageDraw
+
+            ImageDraw.Draw(im).rectangle([100, 100, 1500, 1400], outline=0)
+            im.save(inked)
+        assert _region_read_rescue(inked, tmp_path, engine=None, seams=(lambda *a, **k: None, None)) is None

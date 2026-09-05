@@ -332,6 +332,17 @@ class TestWriteLoadLayout:
         q.write_text(json.dumps(bare), encoding="utf-8")
         loaded = load_layout(q)
         assert [ln["index"] for ln in loaded["lines"]] == [0, 1]
+        # the store path too — the drafts payload's actual consumer
+        # (review finding, PR 30: the plain-file assertions left the
+        # versioned store's index assignment untested)
+        from tools.layout import load_layout_store, write_layout_store
+        from tools.pipeline_store import PipelineStore
+
+        store = PipelineStore(tmp_path)
+        spath = "b/ocr-guess/p.layout.json"
+        write_layout_store(bare, store, spath)
+        on_store = load_layout_store(store, spath)
+        assert [ln["index"] for ln in on_store["lines"]] == [0, 1]
 
 
 def test_layout_payload_declares_the_box_frame() -> None:

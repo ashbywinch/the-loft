@@ -18,13 +18,13 @@ import {
   outboxAdd,
   outboxDrop,
   outboxPending,
-  desiredQuarters,
-  pendingRotationQuarters,
+  deltaOfDesired,
+  deliverOwed,
+  isOrientationCovered,
+  orientationState,
   render,
-  rotateDrop,
-  rotatePending,
-  rotateUpsert,
   saveEdits,
+  saveOrientation,
   strikeParts,
   zoomView,
 } from "../../views/review.js";
@@ -417,40 +417,105 @@ describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)",
   });
 });
 
-describe("the rotation outbox — the orientation fix survives an offline backend", () => {
+describe("the reviewer's orientation — { desired, acked } per page, set only by ↻ (VR10)", () => {
   beforeEach(() => localStorage.clear());
 
-  it("upserts one intent per page — the latest wins (multiple presses coalesce, 2026-08-16)", () => {
-    rotateUpsert("adopt-1", "p1.jpg", 2);
-    rotateUpsert("adopt-1", "p1.jpg", 3);
-    expect(rotatePending()).toEqual([{ batch_id: "adopt-1", page: "p1.jpg", quarters: 3 }]);
-    expect(pendingRotationQuarters("adopt-1", "p1.jpg")).toBe(3);
+  it("deltaOfDesired shows the reviewer's desired orientation on top of the served image", () => {
+    // desired absolute minus the backend's applied rotation — deterministic
+    expect(deltaOfDesired(0, 0)).toBe(0); // settled page, never rotated
+    expect(deltaOfDesired(1, 0)).toBe(90); // one press from upright
+    expect(deltaOfDesired(1, 90)).toBe(0); // backend already caught up
+    expect(deltaOfDesired(2, 0)).toBe(180); // two presses
+    expect(deltaOfDesired(0, 90)).toBe(270); // rotate-back to the ORIGINAL
   });
 
-  it("different pages keep their own intents", () => {
-    rotateUpsert("adopt-1", "p1.jpg", 1);
-    rotateUpsert("adopt-1", "p2.jpg", 2);
-    expect(rotatePending().length).toBe(2);
-    expect(pendingRotationQuarters("adopt-1", "p1.jpg")).toBe(1);
-    expect(pendingRotationQuarters("adopt-1", "p2.jpg")).toBe(2);
+  it("a page never pressed has no stored state — the display falls back to the backend orientation", () => {
+    expect(orientationState("adopt-1", "p1.jpg")).toBeNull();
+    // a never-pressed page shows the file as-is, whatever the backend's
+    // applied rotation — a stale legacy entry cannot reorient it
+    expect(deltaOfDesired(0, 90)).toBe(270); // base 90, nothing pressed → the file's own orientation
   });
 
-  it("drops the intent once the backend records it", () => {
-    rotateUpsert("adopt-1", "p1.jpg", 1);
-    rotateDrop("adopt-1", "p1.jpg");
-    expect(rotatePending()).toEqual([]);
-    expect(pendingRotationQuarters("adopt-1", "p1.jpg")).toBe(0);
+  it("a rotate to a covered orientation is view-only; an uncovered one is owed (VR15)", () => {
+    // the postcard: the pipeline read 0° + 90° + 270° — a plain layout
+    // ([0]) covers only the image's upright; no layout covers nothing
+    expect(isOrientationCovered([0, 90, 270], 0, 0)).toBe(true);
+    expect(isOrientationCovered([0, 90, 270], 0, 1)).toBe(true); // 90°
+    expect(isOrientationCovered([0, 90, 270], 0, 2)).toBe(false); // 180° — missed
+    expect(isOrientationCovered([0, 90, 270], 0, 3)).toBe(true); // 270°
+    expect(isOrientationCovered([0], 0, 1)).toBe(false); // plain page → 90° queues the re-read
+    expect(isOrientationCovered(undefined, 0, 1)).toBe(false); // no layout → nothing covered
+    // the covered set is relative to the served image: after the backend
+    // applied +180°, the page's 0° text displays at quarter 2
+    expect(isOrientationCovered([0], 180, 2)).toBe(true);
+    expect(isOrientationCovered([0], 180, 0)).toBe(false);
   });
 
-  it("desiredQuarters: the rotate-back to the ORIGINAL is a real 0 intent", () => {
-    // a reviewer over-correcting an already-rotated page: the layout is at
-    // 90 and the view is rotated -90 — the desired is 0, which the backend
-    // must receive (bot review, 2026-08-16: dropping it left the page
-    // wrongly rotated and the confirm blocked)
-    expect(desiredQuarters(90, -90)).toBe(0);
-    expect(desiredQuarters(0, 90)).toBe(1);
-    expect(desiredQuarters(90, 180)).toBe(3);
-    expect(desiredQuarters(270, 90)).toBe(0);
+  it("persists the reviewer's desired per page, independently of the backend", () => {
+    saveOrientation("adopt-1", "p1.jpg", { desired: 1, acked: 0 }); // pressed, not yet delivered
+    expect(orientationState("adopt-1", "p1.jpg")).toEqual({ desired: 1, acked: 0 });
+  });
+
+  it("different pages keep their own orientation", () => {
+    saveOrientation("adopt-1", "p1.jpg", { desired: 1, acked: 0 });
+    saveOrientation("adopt-1", "p2.jpg", { desired: 2, acked: 2 });
+    expect(orientationState("adopt-1", "p1.jpg")).toEqual({ desired: 1, acked: 0 });
+    expect(orientationState("adopt-1", "p2.jpg")).toEqual({ desired: 2, acked: 2 });
+  });
+
+  it("acknowledging a delivery sets acked = desired — nothing owed thereafter", () => {
+    saveOrientation("adopt-1", "p1.jpg", { desired: 1, acked: 0 });
+    saveOrientation("adopt-1", "p1.jpg", { desired: 1, acked: 1 });
+    expect(orientationState("adopt-1", "p1.jpg")).toEqual({ desired: 1, acked: 1 });
+    // the desired never reverts when the backend catches up — the delta
+    // just goes to zero
+    expect(deltaOfDesired(1, 90)).toBe(0);
+  });
+
+  it("deliverOwed posts each owed reorientation and acks it without touching the display", async () => {
+    saveOrientation("adopt-1", "p1.jpg", { desired: 2, acked: 0 }); // pressed twice, not yet delivered
+    const calls = [];
+    const fetchMock = vi.fn(async (url, opts) => {
+      calls.push([url, opts]);
+      return { ok: true };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await deliverOwed();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0]).toBe("/api/sync/batch/adopt-1/page/p1.jpg/rotate");
+    expect(JSON.parse(calls[0][1].body)).toEqual({ quarters: 2 });
+    // acked — nothing owed; the display's desired is untouched
+    expect(orientationState("adopt-1", "p1.jpg")).toEqual({ desired: 2, acked: 2 });
+  });
+
+  it("deliverOwed can never replay a page the reviewer didn't press — nothing owned, nothing posted", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await deliverOwed();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("deliverOwed leaves an owed rotation alone when the backend is unreachable", async () => {
+    saveOrientation("adopt-1", "p1.jpg", { desired: 1, acked: 0 }); // owed
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError("network down");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      await deliverOwed();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    // still owed — acked unchanged, retried on the next open/commit
+    expect(orientationState("adopt-1", "p1.jpg")).toEqual({ desired: 1, acked: 0 });
   });
 });
 
@@ -491,6 +556,21 @@ describe("marking a line fine — the verbatim text counts as verified", () => {
     expect(flaggedCount([DOC], 0, { "p1.jpg": { 0: "line one", 1: "line two" } })).toBe(0);
     // the corrected document text keeps the verbatim line unchanged
     expect(correctedDocumentText(DOC, { "p1.jpg": { 0: "line one" } })).toBe("line one\nline two\nline three");
+  });
+
+  it("a line checked off stays handled in a fresh session — the reviewer never redoes it (VR13)", () => {
+    localStorage.clear();
+    // session 1: the reviewer marks the flagged line fine without editing —
+    // the persisted effect is an edit equal to the line's own verbatim text
+    saveEdits("adopt-1", 0, { "p1.jpg": { 0: "line one" } });
+    expect(flaggedPositions([DOC], 0, { "p1.jpg": { 0: "line one" } })).toEqual([{ page: "p1.jpg", line: 1 }]);
+    // session 2: the reviewer returns — the handled line is still handled,
+    // only the unhandled line remains in the work set
+    const edits = loadEdits("adopt-1", 0);
+    expect(flaggedPositions([DOC], 0, edits)).toEqual([{ page: "p1.jpg", line: 1 }]);
+    expect(flaggedCount([DOC], 0, edits)).toBe(1);
+    // and the confirmed text is exactly what the reviewer verified (verbatim)
+    expect(correctedDocumentText(DOC, edits)).toBe("line one\nline two\nline three");
   });
 });
 

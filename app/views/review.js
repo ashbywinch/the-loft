@@ -205,6 +205,12 @@ async function retryOutbox() {
 // -- the view -----------------------------------------------------------------
 
 export function render(main, ctx, state) {
+  // The pre-VR10 rotation outbox (`loft-review-rotates`) was an array of
+  // auto-delivered intents that could reorient a page the reviewer never
+  // touched. It is gone — the reviewer's orientation now lives as
+  // { desired, acked } in `loft-review-orientations`, set only by ↻. Drop
+  // any stale legacy entries so they can never re-deliver (2026-08-16).
+  localStorage.removeItem("loft-review-rotates");
   if (ctx.arg) {
     // #/review/<batch>/<doc>/<page> — the surface's position lives in the
     // URL (user 2026-08-16: refreshing the browser must restore the page
@@ -379,21 +385,10 @@ async function renderBatch(main, batchId, state, initial = null) {
     return;
   }
   await retryOutbox();
-  const delivered = await syncRotations();
-  if (delivered) {
-    // a queued rotation was delivered — the backend started the re-read;
-    // refetch so the processing state (and the rework-page skip) is current
-    try {
-      const fresh = await (
-        await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/drafts`, {
-          headers: { Accept: "application/json" },
-        })
-      ).json();
-      if (Array.isArray(fresh.documents)) data = fresh;
-    } catch {
-      // best-effort — the next visit refreshes
-    }
-  }
+  // safely attempt any owed reorientations (the display never reads the
+  // delivery state, so this cannot reorient a page the reviewer didn't
+  // press — VR10 AC13); fire-and-forget: the batch list renders now
+  void deliverOwed();
   const documents = data.documents || [];
   const confirmed = documents.filter((d) => d.status === "confirmed").length;
   const root = el("div", { class: "rv" }, [
@@ -553,13 +548,16 @@ function renderSurface(main, session) {
   }
   if (session.lastPage !== page) {
     session.lastPage = page;
-    // The display rotation is the reviewer's correction RELATIVE to the
-    // file as served: a pending intent is the desired absolute (minus the
-    // backend's applied rotation); no pending intent means the file is
-    // already the truth — display it as-is.
-    const pendingQ = pendingRotationQuarters(batch.batchId, page);
-    session.rotation =
-      pendingQ > 0 ? (((pendingQ * 90 - session.baseRotation) % 360) + 360) % 360 : 0;
+    // The display rotation = the reviewer's DESIRED orientation minus the
+    // backend's applied rotation. The desired is an absolute quarter-turn
+    // that only a ↻ press changes; a page never pressed shows the backend
+    // orientation as-is (desired == base → delta 0). It is never derived
+    // from a delivery queue, so nothing stale can reorient the view.
+    const st =
+      orientationState(batch.batchId, page) || { desired: baseQuarters(session.baseRotation), acked: baseQuarters(session.baseRotation) };
+    session.desired = st.desired;
+    session.acked = st.acked;
+    session.rotation = deltaOfDesired(st.desired, session.baseRotation);
   }
   // the count and the dots exclude the rework pages — their flags will
   // change when the backend re-reads them
@@ -686,13 +684,24 @@ function renderSurface(main, session) {
   // this term is the holding of a"). The reviewer navigates on; a poll
   // refreshes the page when the re-read lands.
   const pageState = (batch.processing || {})[page];
-  const serverNote = pageState === "transcribing"
-    ? "Fixing this page's text — it was read before the page's orientation was fixed. You can review another document meanwhile."
-    : pageState === "failed"
-      ? "Couldn't re-read this page's text — the reading model was unreachable. The text below was read before the orientation fix and may be wrong."
-      : null;
-  if (serverNote) {
-    txPane.prepend(el("div", { class: "rv-note rv-note--fixing" }, serverNote));
+  // The re-read's async state, stated honestly (PRD VR10 AC12/AC14): a page
+  // being re-read, or one whose re-read failed, is flagged — the text was
+  // read before the page's orientation changed, so it may be stale until the
+  // re-read lands. Never blames a correction the reviewer didn't make.
+  if (pageState === "transcribing" || pageState === "failed") {
+    const note = el(
+      "div",
+      { class: "rv-note rv-note--fixing" },
+      pageState === "transcribing"
+        ? "Re-reading this page's text — it was read before the page's orientation changed. You can review another document meanwhile."
+        : "This page's re-read failed — the reading model was unreachable. The text below may be stale.",
+    );
+    if (pageState === "failed") {
+      note.append(
+        el("button", { class: "rv-btn rv-btn--ghost", onclick: () => rereadPage(session) }, "Re-read the page"),
+      );
+    }
+    txPane.prepend(note);
   }
   session.pageProcessing = pageState;
 
@@ -1191,7 +1200,27 @@ function fitPage(session, { markMoved = true } = {}) {
 function rotatePage(session) {
   if (!session.imgSize) return;
   session.userMoved = true;
-  session.rotation = ((session.rotation ?? 0) + 90) % 360;
+  // Only pressing ↻ reorients: step the DESIRED absolute orientation up one
+  // quarter-turn, persist it, re-derive the display delta. The desired is
+  // self-contained (never a carried session delta), so there is nothing to
+  // accumulate across visits.
+  const { batchId, page } = currentPage(session);
+  const base = session.desired ?? baseQuarters(session.baseRotation);
+  session.desired = (base + 1) % 4;
+  session.rotation = deltaOfDesired(session.desired, session.baseRotation);
+  // The view-only rotate rule (VR15, 2026-08-17): a desired orientation
+  // the pipeline already READ rotates the view only — nothing owed, no
+  // re-read queued. An uncovered orientation is the signal the first pass
+  // missed something: the correction stays owed (acked unchanged) and the
+  // backend re-reads it (the second pass does better).
+  const doc = session.batch.documents[session.docIndex];
+  const covered = doc?.orientations?.[page];
+  if (isOrientationCovered(covered, session.baseRotation, session.desired)) {
+    session.acked = session.desired;
+    saveOrientation(batchId, page, { desired: session.desired, acked: session.desired });
+  } else {
+    saveOrientation(batchId, page, { desired: session.desired, acked: session.acked });
+  }
   // re-fit the view for the rotated frame — the view rect lives in the
   // previous frame's coordinates, and rendering it through the new frame
   // drew the page in the wrong place, unreadable (user 2026-08-16: "it's
@@ -1201,10 +1230,12 @@ function rotatePage(session) {
 }
 
 /** The in-place fixing state: the waiting note + the confirm gate follow
- *  the LIVE rotation (the presses are uncommitted until the next
- *  navigation) and the backend's reprocess state — no re-render needed. */
+ *  an OWED correction (desired != acked — a reorientation not yet delivered
+ *  to, and confirmed by, the backend) and the backend's reprocess state. The
+ *  displayed orientation is always the desired one regardless (VR10) — the
+ *  note is about the text, which is stale until the re-read lands. */
 function updateFixingState(session) {
-  const waiting = (session.rotation ?? 0) !== 0;
+  const waiting = (session.desired ?? 0) !== (session.acked ?? 0);
   const fixing = waiting || session.pageProcessing === "transcribing";
   if (session.confirmBtn) session.confirmBtn.disabled = fixing;
   const note = session.fixingNote;
@@ -1212,7 +1243,7 @@ function updateFixingState(session) {
     session.fixingNote = el(
       "div",
       { class: "rv-note rv-note--fixing" },
-      "The page's fix is waiting to reach the archive's computer — the text below was read before the fix.",
+      "The page's rotation is waiting to reach the archive's computer — the text below was read before your rotation and will be re-read.",
     );
     session.root.querySelector(".rv-txpane")?.prepend(session.fixingNote);
   } else if (!waiting && note) {
@@ -1221,19 +1252,53 @@ function updateFixingState(session) {
   }
 }
 
-// -- the rotation outbox (the JS mirror of the sync seam: a correction is
-//    never lost to an offline backend) ---------------------------------------
+/** The current (batch id, page name) the session is showing. */
+function currentPage(session) {
+  const doc = session.batch.documents[session.docIndex];
+  return { batchId: session.batch.batchId, page: doc.pages[session.pageIndex] };
+}
 
-/** A page being reworked on the backend: its orientation fix is queued
- *  (the local outbox) or its transcription re-read is in flight — it must
- *  not appear in the review flow until the backend has updated it (user
- *  2026-08-16: "it shouldn't have shown me it at all once we'd established
- *  that it needed rework on the back end"). */
+/** The backend's applied rotation as whole quarter-turns (0-3). */
+function baseQuarters(baseDeg) {
+  return Math.round(baseDeg / 90) % 4;
+}
+
+/** Whether the pipeline has already READ the page at the reviewer's
+ *  DESIRED orientation — the view-only rotate rule (2026-08-17, VR15):
+ *  the covered set is the layout's per-line orientations, relative to
+ *  the served image; the desired is absolute quarter-turns, so the set
+ *  shifts by the backend's applied rotation. A covered rotate changes
+ *  only the view (no queued re-read); an uncovered one queues the old
+ *  path — the reviewer's rotate is the signal the first pass missed an
+ *  orientation. A page with no layout (no entry) covers nothing. */
+export function isOrientationCovered(covered, baseDeg, desiredQuarters) {
+  if (!Array.isArray(covered) || covered.length === 0) return false;
+  const base = baseQuarters(baseDeg);
+  const absolute = new Set(covered.map((deg) => (Math.round(deg / 90) + base) % 4));
+  return absolute.has(desiredQuarters);
+}
+
+/** The CSS rotation (degrees) that shows the reviewer's DESIRED orientation
+ *  on top of the served image — the desired absolute minus the backend's
+ *  applied rotation. Deterministic and self-contained (VR10). */
+export function deltaOfDesired(desiredQuarters, baseDeg) {
+  return (((desiredQuarters * 90 - (baseDeg ?? 0)) % 360) + 360) % 360;
+}
+
+// -- the reviewer's desired orientation (display truth) + the delivery
+//    obligation. The front end never consumes its own delivery queue to
+//    decide what to display: display reads the stored `desired` (set only
+//    by a ↻ press); delivery is outbound and committed on navigation. -----
+
+/** A page being reworked on the backend: its transcription re-read is in
+ *  flight (the async treat after a rotate) — it must not appear in the
+ *  review flow until the backend has updated it (user 2026-08-16: "it
+ *  shouldn't have shown me it at all once we'd established that it needed
+ *  rework on the back end"). A page the reviewer merely reoriented is
+ *  shown as its desired orientation (VR10) — reworking is about the text,
+ *  not the orientation. */
 export function isReworking(batch, page) {
-  return (
-    pendingRotationQuarters(batch?.batchId, page) > 0 ||
-    (batch?.processing || {})[page] === "transcribing"
-  );
+  return (batch?.processing || {})[page] === "transcribing";
 }
 
 /** The flagged positions the reviewer can act on — the rework pages'
@@ -1255,99 +1320,67 @@ function nextAvailableAfter(doc, batch, from) {
   return -1;
 }
 
-const ROTATE_KEY = "loft-review-rotates";
+const ORIENT_KEY = "loft-review-orientations";
 
-export function rotatePending() {
+/** The persisted reviewer orientation for a page: { desired, acked } in
+ *  quarter-turns (0-3), or null when the page has never been rotated
+ *  (display then defaults to the backend orientation). `desired` is set
+ *  only by a ↻ press; `acked` is the last desired the backend confirmed. */
+export function orientationState(batchId, page) {
   try {
-    const items = JSON.parse(localStorage.getItem(ROTATE_KEY) || "[]");
-    return Array.isArray(items) ? items : [];
+    const m = JSON.parse(localStorage.getItem(ORIENT_KEY) || "{}") || {};
+    return m[`${batchId}|${page}`] ?? null;
   } catch {
-    return [];
+    return null;
   }
 }
 
-export function rotateUpsert(batchId, page, quarters) {
-  const items = rotatePending().filter((p) => !(p.batch_id === batchId && p.page === page));
-  items.push({ batch_id: batchId, page, quarters });
-  localStorage.setItem(ROTATE_KEY, JSON.stringify(items));
-}
-
-export function rotateDrop(batchId, page) {
-  localStorage.setItem(
-    ROTATE_KEY,
-    JSON.stringify(rotatePending().filter((p) => !(p.batch_id === batchId && p.page === page))),
-  );
-}
-
-/** The pending DESIRED cumulative rotation (quarter-turns) for a page. */
-export function pendingRotationQuarters(batchId, page) {
-  const item = rotatePending().find((p) => p.batch_id === batchId && p.page === page);
-  return item ? item.quarters % 4 : 0;
+/** Persist { desired, acked } for a page. Passing acked = desired is how a
+ *  delivered correction is acknowledged (nothing owed). */
+export function saveOrientation(batchId, page, state) {
+  let m = {};
+  try {
+    const stored = JSON.parse(localStorage.getItem(ORIENT_KEY) || "{}");
+    if (stored && typeof stored === "object") m = stored;
+  } catch {
+    // corrupt storage — start fresh from the empty map
+  }
+  const key = `${batchId}|${page}`;
+  if (state.desired == null) m[key] = null;
+  else m[key] = { desired: state.desired, acked: state.acked ?? state.desired };
+  if (m[key] == null) delete m[key];
+  localStorage.setItem(ORIENT_KEY, JSON.stringify(m));
 }
 
 /** Push the queued corrections to the backend (the fast rotation applies
  *  there; the slow re-transcription runs as its async job). Drop each
  *  intent once the backend records it. Returns whether anything was
  *  delivered. */
-async function syncRotations() {
-  let delivered = false;
-  for (const item of rotatePending()) {
-    try {
-      const res = await fetch(
-        `/api/sync/batch/${encodeURIComponent(item.batch_id)}/page/${encodeURIComponent(item.page)}/rotate`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ quarters: item.quarters }),
-        },
-      );
-      if (!res.ok) throw new Error(`rotate rejected (${res.status})`);
-      rotateDrop(item.batch_id, item.page);
-      delivered = true;
-    } catch {
-      return delivered; // backend unreachable — leave the rest queued
-    }
-  }
-  return delivered;
-}
-
-/** The DESIRED cumulative rotation in quarter-turns (the layout's applied
- *  rotation in degrees + the reviewer's live view rotation). The result
- *  CAN be 0 — the rotate-back to the ORIGINAL orientation — which is a
- *  real intent, not "nothing to do" (bot review, 2026-08-16). Exported
- *  for tests. */
-export function desiredQuarters(baseDeg, viewRotationDeg) {
-  return (((baseDeg + viewRotationDeg) / 90) % 4 + 4) % 4;
-}
-
-/** Commit the current page's view rotation: the intent is the DESIRED
- *  cumulative (the layout's applied rotation + the reviewer's delta), so
- *  the backend applies an idempotent delta — a retried intent is a no-op.
- *  A delivered intent is followed by a drafts refetch so the surface picks
- *  up the reprocess state (the grey-out note) and the corrected layout. */
+/** Commit the current page's owed reorientation: if the reviewer's desired
+ *  orientation is not yet acknowledged by the backend, deliver it (the
+ *  rotate route applies an idempotent delta — a retried intent is a no-op)
+ *  and ack on success. Outbound only: the delivery state is never read back
+ *  into the display. A failed delivery leaves `acked` unchanged, so the
+ *  next commit retries (VR8 reliability). */
 async function queueRotation(session) {
-  const { batch, docIndex, pageIndex } = session;
-  const doc = batch.documents[docIndex];
-  if (!doc) return;
-  const page = doc.pages[pageIndex];
-  const rotation = session.rotation ?? 0;
-  if (rotation === 0) return;
-  const base = doc.layouts?.[page]?.rotation ?? 0;
-  const quarters = desiredQuarters(base, rotation);
-  // The desired CAN be 0 — a reviewer over-correcting an already-rotated
-  // page presses back to the original: the base is 90, the view rotation
-  // -90, the desired 0. Dropping it left the page wrongly rotated on the
-  // backend, a reload showed it wrong-way again, and the confirm stayed
-  // blocked by the live rotation (bot review, 2026-08-16). The 0 is a
-  // real intent — the backend applies the delta to return to the original.
-  rotateUpsert(batch.batchId, page, quarters);
-  const delivered = await syncRotations();
-  if (delivered) {
+  const { batchId, page } = currentPage(session);
+  const st = orientationState(batchId, page);
+  if (!st || st.desired === st.acked) return; // nothing owed
+  try {
+    const res = await fetch(
+      `/api/sync/batch/${encodeURIComponent(batchId)}/page/${encodeURIComponent(page)}/rotate`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quarters: st.desired }) },
+    );
+    if (!res.ok) throw new Error(`rotate rejected (${res.status})`);
+    // acknowledged — the backend has applied the rotation to its image
+    session.acked = st.desired;
+    saveOrientation(batchId, page, { desired: st.desired, acked: st.desired });
+    updateFixingState(session);
+    // refresh the drafts so the reprocess state (grey-out note) and the
+    // corrected layout surface; best-effort
     try {
       const data = await (
-        await fetch(`/api/sync/batch/${encodeURIComponent(batch.batchId)}/drafts`, {
-          headers: { Accept: "application/json" },
-        })
+        await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/drafts`, { headers: { Accept: "application/json" } })
       ).json();
       if (Array.isArray(data.documents)) {
         session.batch.documents = data.documents;
@@ -1356,7 +1389,69 @@ async function queueRotation(session) {
     } catch {
       // the refetch is best-effort — the next visit refreshes
     }
+  } catch {
+    // backend unreachable — acked unchanged, so it stays owed and the next
+    // commit retries (idempotent backend makes a duplicate delivery a no-op)
   }
+}
+
+/** Deliver every OWED reorientation to the backend (the reliable half of
+ *  the rotate seam): one attempt whenever the app opens a batch list, ack
+ *  on success, leave owed on failure (retried next open/commit). Outbound
+ *  only — it never feeds the display, so it cannot reorient anything. It is
+ *  safe BECAUSE an entry exists only for a page the reviewer actually
+ *  pressed (VR10 AC13): a page with no stored desired owes nothing, so a
+ *  stale value cannot be replayed. */
+export async function deliverOwed() {
+  let m = {};
+  try {
+    const stored = JSON.parse(localStorage.getItem(ORIENT_KEY) || "{}");
+    if (stored && typeof stored === "object") m = stored;
+  } catch {
+    // corrupt storage — nothing owned
+  }
+  for (const [key, s] of Object.entries(m)) {
+    if (!s || s.desired == null || s.desired === s.acked) continue; // not owed
+    const sep = key.indexOf("|");
+    const batchId = key.slice(0, sep);
+    const page = key.slice(sep + 1);
+    try {
+      const res = await fetch(
+        `/api/sync/batch/${encodeURIComponent(batchId)}/page/${encodeURIComponent(page)}/rotate`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quarters: s.desired }) },
+      );
+      if (!res.ok) throw new Error(`rotate rejected (${res.status})`);
+      // acknowledge ONLY the delivery — the display keeps reading `desired`
+      saveOrientation(batchId, page, { desired: s.desired, acked: s.desired });
+    } catch {
+      // backend unreachable — leave owed; retried on the next open/commit
+    }
+  }
+}
+
+/** Retry a failed re-read (PRD VR10 AC14): ask the backend to re-run the
+ *  reprocess over the current image, then re-render. Orientation is
+ *  untouched — this only re-runs OCR. */
+async function rereadPage(session) {
+  const { batchId, page } = currentPage(session);
+  try {
+    const res = await fetch(
+      `/api/sync/batch/${encodeURIComponent(batchId)}/page/${encodeURIComponent(page)}/reread`,
+      { method: "POST" },
+    );
+    if (!res.ok) return;
+    const data = await (
+      await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/drafts`, { headers: { Accept: "application/json" } })
+    ).json();
+    if (Array.isArray(data.documents)) {
+      session.batch.documents = data.documents;
+      session.batch.processing = data.processing || {};
+    }
+  } catch {
+    // backend unreachable — the failed note stays; the reviewer can retry
+  }
+  const main = session.root?.parentElement;
+  if (main) renderSurface(main, session);
 }
 
 /** The default view: on a short pane (the phone's horizontal split) the

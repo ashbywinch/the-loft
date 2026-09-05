@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 
 from tools.memory import ElicitationError
-from tools.server import create_server
+from tools.server import ServerConfig, create_server
 from tools.store import ImmutableStoreError, MemoryStore
 from tools.sync import Outbox
 
@@ -59,9 +59,12 @@ def make_app_data(tmp_path: Path) -> Path:
 
 
 class ServerFixture:
-    def __init__(self, data_dir: Path, store: MemoryStore, client: Any | None = None) -> None:
+    def __init__(
+        self, data_dir: Path, store: MemoryStore, client: Any | None = None, _reprocess: Any | None = None
+    ) -> None:
         self.store: MemoryStore = store
         self.data_dir: Path = data_dir
+        self._reprocess: Any | None = _reprocess
         # the session secret before any app build — the server refuses to
         # start without it (2026-08-14 review: forgeable sessions otherwise)
         import os
@@ -100,15 +103,18 @@ class ServerFixture:
 
         os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
         self.server = create_server(
-            store,
-            data_dir,
-            client=client,
-            app_dir=data_dir.parent,
+            ServerConfig(
+                store,
+                data_dir,
+                client=client,
+                app_dir=data_dir.parent,
+                work_dir=self.work_dir,
+                outbox=self.outbox,
+                registry_dir=self.registry_dir,
+            ),
             host="127.0.0.1",
             port=0,
-            work_dir=self.work_dir,
-            outbox=self.outbox,
-            registry_dir=self.registry_dir,
+            _reprocess=_reprocess,
         )
         self.thread: threading.Thread = threading.Thread(target=self.server.run, daemon=True)
         self.thread.start()
@@ -1142,21 +1148,24 @@ def test_sync_confirmations_rejects_a_non_scalar_doc_index(server: ServerFixture
     assert status == 400
 
 
-def test_serve_app_factory_builds_from_the_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_serve_app_factory_builds_from_the_environment(tmp_path: Path) -> None:
     """The uvicorn factory for --reload (2026-08-16: make serve always
     auto-reloads): the server's configuration travels via the environment
     the CLI set, so the reloader's subprocess can rebuild the app fresh on
     every source change."""
     app_data = make_app_data(tmp_path)
     (tmp_path / "archive").mkdir()
-    monkeypatch.setenv("THE_LOFT_SESSION_SECRET", "test-secret")
-    monkeypatch.setenv("LOFT_ARCHIVE", str(tmp_path / "archive"))
-    monkeypatch.setenv("LOFT_DATA", str(app_data))
-    monkeypatch.setenv("LOFT_APP", str(tmp_path))
 
     from tools.cli import serve_app
 
-    app = serve_app()
+    app = serve_app(
+        _env={
+            "THE_LOFT_SESSION_SECRET": "test-secret",
+            "LOFT_ARCHIVE": str(tmp_path / "archive"),
+            "LOFT_DATA": str(app_data),
+            "LOFT_APP": str(tmp_path),
+        }
+    )
     assert any(getattr(route, "path", None) == "/api/health" for route in app.routes)
 
 
@@ -1188,3 +1197,42 @@ def test_sync_rotate_accepts_the_desired_zero(server: ServerFixture) -> None:
     assert body["processing"] is False  # the desired 0 with nothing rotated is a no-op, never a +90
     layout = _json.loads((server.work_dir / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
     assert layout.get("rotation", 0) == 0  # the layout carries no rotation until a rotate applies one
+
+
+def test_sync_reread_retries_a_failed_re_read_without_reorienting(tmp_path: Path) -> None:
+    """PRD VR10 AC14 — a failed re-read can be retried without touching the
+    orientation: the reread route clears the failed state, marks the page
+    transcribing, and re-runs the reprocess over the CURRENT image. The
+    reprocess is stubbed so the test never calls the reading model."""
+    import json as _json
+
+    from PIL import Image
+
+    from tools.layout import Detection, build_layout, write_layout
+    from tools.sync import page_job_state, set_page_job
+
+    fixture = ServerFixture(make_app_data(tmp_path), MemoryStore(), _reprocess=lambda b, p: None)
+    _seed_sync_batch(fixture)
+    oriented = fixture.work_dir / "adopt-0001" / "oriented"
+    oriented.mkdir(parents=True)
+    Image.new("RGB", (100, 200), "white").save(oriented / "p1.jpg")
+    layout_path = fixture.work_dir / "adopt-0001" / "ocr-guess" / "p1.layout.json"
+    write_layout(
+        build_layout(
+            "p1.jpg",
+            100,
+            200,
+            "Chère Maman.",
+            [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
+        ),
+        layout_path,
+    )
+    set_page_job("adopt-0001", "p1.jpg", "failed", fixture.work_dir)
+    status, body = fixture.post("/api/sync/batch/adopt-0001/page/p1.jpg/reread", {})
+    assert status == 200
+    assert body["processing"] is True
+    # the failed state is cleared to transcribing (the re-read is in flight)
+    assert page_job_state("adopt-0001", fixture.work_dir)["p1.jpg"] == "transcribing"
+    # a reread never re-orients — the rotation is untouched
+    layout = _json.loads(layout_path.read_text(encoding="utf-8"))
+    assert layout.get("rotation", 0) == 0

@@ -22,9 +22,10 @@ from __future__ import annotations
 
 import datetime
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC
-from typing import Any, Literal, cast
+from typing import Any, Literal, TypeVar, cast
 
 RELATIONSHIP_KINDS = frozenset({"spouse", "parent", "sibling", "inlaw", "teacher"})
 
@@ -64,6 +65,8 @@ EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 RECORD_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
+MONTHS_IN_YEAR = 12  # the date-form validation's month bound
+
 
 def is_valid_record_id(record_id: str) -> bool:
     return bool(RECORD_ID_RE.fullmatch(record_id))
@@ -77,8 +80,9 @@ def _viable_date(value: str) -> bool:
     m = re.fullmatch(r"(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?", value)
     if not m:
         return False
-    month, day = m.group(2), m.group(3)
-    if month and not 1 <= int(month) <= 12:
+    month, day = m.group(2), m.group(3)  # lucidlint: ignore magic-number fixed regex capture-group
+    # indices — (\d{4})(?:-(\d{2})(?:-(\d{2}))?)?
+    if month and not 1 <= int(month) <= MONTHS_IN_YEAR:
         return False
     if day:
         try:
@@ -138,6 +142,25 @@ def _status(raw: dict[str, Any]) -> Literal["confirmed", "proposed", "estimated"
     if status not in RECORD_STATUSES:
         raise ValueError(f"bad record status: {status!r}")
     return cast(Literal["confirmed", "proposed", "estimated"], status)
+
+
+TRecord = TypeVar("TRecord")
+
+
+def _unique_records(  # noqa: UP047  # pyrefly cannot infer PEP-695 T from the Callable argument; the TypeVar infers at each call site
+    raw: dict[str, Any], key: str, record_type: Callable[[dict[str, Any]], TRecord], label: str
+) -> tuple[TRecord, ...]:
+    """Parse one identity table's records and enforce unique ids — the
+    shared construction of the people/places/orgs tables."""
+    records = tuple(record_type(r) for r in raw.get(key, []))
+    # the constructor contract: every record class passed here (Person,
+    # Place, Org) carries ``id`` — pyrefly cannot express that bound for
+    # frozen dataclasses, so the cast states the proven contract
+    ids = [cast(Any, r).id for r in records]
+    if len(ids) != len(set(ids)):
+        dupes = sorted({i for i in ids if ids.count(i) > 1})
+        raise ValueError(f"duplicate {label} ids: {dupes}")
+    return records
 
 
 @dataclass(frozen=True)
@@ -380,13 +403,9 @@ class PeopleTable:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> PeopleTable:
-        people = tuple(Person.from_dict(p) for p in raw.get("people", []))
-        ids = [p.id for p in people]
-        if len(ids) != len(set(ids)):
-            dupes = sorted({i for i in ids if ids.count(i) > 1})
-            raise ValueError(f"duplicate person ids: {dupes}")
+        people = _unique_records(raw, key="people", record_type=Person.from_dict, label="person")
         relationships = tuple(Relationship.from_dict(r) for r in raw.get("relationships", []))
-        known = set(ids)
+        known = {p.id for p in people}
         for rel in relationships:
             for end in (rel.a, rel.b):
                 if end not in known:
@@ -409,12 +428,10 @@ class PlacesTable:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> PlacesTable:
-        places = tuple(Place.from_dict(p) for p in raw.get("places", []))
-        ids = [p.id for p in places]
-        if len(ids) != len(set(ids)):
-            dupes = sorted({i for i in ids if ids.count(i) > 1})
-            raise ValueError(f"duplicate place ids: {dupes}")
-        return cls(places=places, supersedes=raw.get("supersedes"))
+        return cls(
+            places=_unique_records(raw, key="places", record_type=Place.from_dict, label="place"),
+            supersedes=raw.get("supersedes"),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {"places": [p.to_dict() for p in self.places]}
@@ -482,12 +499,10 @@ class OrgsTable:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> OrgsTable:
-        orgs = tuple(Org.from_dict(o) for o in raw.get("orgs", []))
-        ids = [o.id for o in orgs]
-        if len(ids) != len(set(ids)):
-            dupes = sorted({i for i in ids if ids.count(i) > 1})
-            raise ValueError(f"duplicate org ids: {dupes}")
-        return cls(orgs=orgs, supersedes=raw.get("supersedes"))
+        return cls(
+            orgs=_unique_records(raw, key="orgs", record_type=Org.from_dict, label="org"),
+            supersedes=raw.get("supersedes"),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {"orgs": [o.to_dict() for o in self.orgs]}
@@ -698,6 +713,40 @@ class ReviewQueue:
     already: int
 
 
+# The item's primary content, held outside the sidecar (docs/TECH-SPEC.md
+# §3): a story is story.txt, a letter or document's transcription is
+# transcription.txt. Content files version with their sidecar: v1 ->
+# story.txt, v2 -> story-2.txt, … (append-only).
+CONTENT_FILES: dict[str, str] = {"story": "story.txt", "transcription": "transcription.txt"}
+CONTENT_CAPTIONS: dict[str, str] = {"story": "The story, verbatim", "transcription": "The transcription"}
+
+
+def split_content(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """Separate primary content from metadata at the write seam (capture,
+    import): the story text (story-type items) and the transcription
+    (letters/documents) become content files; descriptions — the story field
+    on photos and objects — stay as metadata. Returns (sidecar, content);
+    feed both to ``Archive.save_item``. The inverse of the derive engine's
+    embedding (tools/derive.py)."""
+    sidecar = dict(item)
+    content: dict[str, str] = {}
+    item_type = sidecar["type"]
+    if item_type == "story":
+        story = sidecar.pop("story", "") or ""
+        transcription = sidecar.pop("transcription", "") or ""
+        if story:
+            content["story"] = story
+        if transcription:  # a recorded testimony with a transcription keeps it
+            content["transcription"] = transcription
+    elif item_type in ("letter", "document"):
+        transcription = sidecar.pop("transcription", "") or ""
+        if transcription:
+            content["transcription"] = transcription
+    else:  # photo, object — the story field is a description, keep it
+        sidecar.pop("transcription", None)
+    return sidecar, content
+
+
 @dataclass(frozen=True)
 class Item:
     """An archive item — the sidecar wire format (letter, document, photo,
@@ -740,7 +789,7 @@ class Item:
 
     @property
     def sensitive(self) -> bool:
-        return bool(self.raw.get("sensitive", False))
+        return bool(self.raw.get("sensitive"))
 
     @property
     def story(self) -> str:

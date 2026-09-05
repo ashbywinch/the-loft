@@ -9,13 +9,12 @@ Usage: python -m tools.layout_apply_selfreport <batch_id> [page ...]
 
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from pathlib import Path
 
 from tools.layout import is_struck, normalize, write_layout
-from tools.loft_paths import WORK_DIR
+from tools.selfreport_driver import run_cli
 
 REPORT_NAME = "selfreport.json"
 
@@ -81,15 +80,13 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path) -> in
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
+    return run_cli(
+        argv,
         prog="layout_apply_selfreport",
         description="Apply the self-report to existing layouts (no re-detection, ~1s per page).",
+        pages_help="optional page stems (e.g. page-03) to limit",
+        runner=run_batch,
     )
-    parser.add_argument("batch_id")
-    parser.add_argument("pages", nargs="*", help="optional page stems (e.g. page-03) to limit")
-    parser.add_argument("--work-dir", type=Path, default=WORK_DIR)
-    args = parser.parse_args(argv)
-    return run_batch(args.batch_id, args.pages or None, args.work_dir)
 
 
 if __name__ == "__main__":

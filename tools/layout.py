@@ -30,6 +30,7 @@ assigned (their geometry is real; a confident text anchor is not — conf 0).
 from __future__ import annotations
 
 import json
+import math
 import re
 import unicodedata
 from pathlib import Path
@@ -51,6 +52,21 @@ class Detection(TypedDict):
 # line. The rec text is noisy on cursive — that noise IS the confidence
 # signal — so the matcher tolerates it: one word in common is not a match.
 MATCH_THRESHOLD = 0.34
+
+BOX_COORDINATE_COUNT = 4  # a box is [x0, y0, x1, y1]
+
+# The VLM's box coordinate system: normalized 0-1000 (fractions of the
+# image's width/height, times 1000), rescaled to pixels when anchored.
+NORMALIZED_BOX_SCALE = 1000
+QUARTERS_PER_FULL_TURN = 4  # a full rotation is four quarter-turns (90° each)
+
+# The multi-orientation admission (PRD VR15, 2026-08-16 prototype): a
+# detected line is admitted only when the recognizer read REAL text at
+# that orientation — confidence + plausibility — never on box shape
+# alone, so an accidental upside-down pass's boxes are rejected.
+REC_SCORE_GATE = 0.85  # recognition confidence: real words read at the right orientation
+MIN_LETTERS = 2  # plausibility: a "real word" has letters, not just shapes
+_DEDUPE_OVERLAP = 0.3  # two passes' lines sharing this much of the smaller box are the same physical region
 
 _PUNCT = re.compile(r"[^\w\s]", re.UNICODE)
 _WS = re.compile(r"\s+")
@@ -92,6 +108,7 @@ def _overlap(a: set[str], b: set[str]) -> float:
     return len(a & b) / len(a | b)
 
 
+# lucidlint: ignore closures one coherent greedy-match algorithm — the closures are sort keys
 def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[list[dict[str, Any]], list[Detection]]:
     """Match detector lines to VLM transcription lines by content.
 
@@ -151,19 +168,19 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> tuple[
     # marks it, and the surface renders positional boxes dashed.
     boxless = [vi for vi in range(len(vlm_lines)) if vi not in used_vlm]
     unmatched.sort(key=lambda d: d["box"][1])
-    for vi, det in zip(boxless, unmatched, strict=False):
-        matches.append(
-            {
-                "vlm": vlm_lines[vi],
-                "vlm_index": vi,
-                "box": det["box"],
-                "rec_text": det["text"],
-                "rec_score": det["score"],
-                "rec_words": words(det["text"]),
-                "det_words": det.get("words", []),
-                "box_source": "positional",
-            }
-        )
+    matches.extend(
+        {
+            "vlm": vlm_lines[vi],
+            "vlm_index": vi,
+            "box": det["box"],
+            "rec_text": det["text"],
+            "rec_score": det["score"],
+            "rec_words": words(det["text"]),
+            "det_words": det.get("words", []),
+            "box_source": "positional",
+        }
+        for vi, det in zip(boxless, unmatched, strict=False)
+    )
     matches.sort(key=lambda m: m["vlm_index"])
     return matches, unmatched[len(boxless) :]
 
@@ -236,6 +253,8 @@ def _words_out(
     return out
 
 
+# detections, self-report, VLM boxes — each consumed once by the pure pass; no second function shares the group
+# lucidlint: ignore long-param-list the layout pass's heterogeneous inputs — page identity, geometry, transcription,
 def build_layout(
     page: str,
     width: int,
@@ -263,12 +282,7 @@ def build_layout(
     matches, unmatched = associate_lines(vlm_lines, detections)
     by_index = {m["vlm_index"]: m for m in matches}
     # the self-report cites 1-based line numbers; the layout lines are 0-based
-    report_by_line: dict[int, set[str]] = {}
-    if selfreport:
-        for entry in selfreport:
-            line_no = entry.get("line")
-            if isinstance(line_no, int) and 1 <= line_no <= len(vlm_lines):
-                report_by_line.setdefault(line_no - 1, set()).add(normalize(entry.get("word", "")))
+    report_by_line = _selfreport_by_line(selfreport, len(vlm_lines))
     use_selfreport = selfreport is not None
     lines: list[dict[str, Any]] = []
     for vi, line in enumerate(vlm_lines):
@@ -282,15 +296,16 @@ def build_layout(
                 use_selfreport=use_selfreport,
             )
             line_conf = (sum(w["conf"] for w in words_out) / len(words_out)) if words_out else 0.0
+            x0, y0, x1, y1 = b
             lines.append(
                 {
                     "index": vi,
                     "text": line,
                     "box": [
-                        b[0] / 1000 * width,
-                        b[1] / 1000 * height,
-                        b[2] / 1000 * width,
-                        b[3] / 1000 * height,
+                        x0 / NORMALIZED_BOX_SCALE * width,
+                        y0 / NORMALIZED_BOX_SCALE * height,
+                        x1 / NORMALIZED_BOX_SCALE * width,
+                        y1 / NORMALIZED_BOX_SCALE * height,
                     ],
                     "conf": line_conf,
                     "words": words_out,
@@ -344,6 +359,18 @@ def build_layout(
     }
 
 
+def _selfreport_by_line(selfreport: list[dict[str, Any]] | None, n_lines: int) -> dict[int, set[str]]:
+    """The self-report words keyed by 0-based line index — the report
+    cites 1-based line numbers; the layout lines are 0-based."""
+    report_by_line: dict[int, set[str]] = {}
+    if selfreport:
+        for entry in selfreport:
+            line_no = entry.get("line")
+            if isinstance(line_no, int) and 1 <= line_no <= n_lines:
+                report_by_line.setdefault(line_no - 1, set()).add(normalize(entry.get("word", "")))
+    return report_by_line
+
+
 def load_layout(path: Path) -> dict[str, Any]:
     """Read a page's layout JSON (the drafts payload reads these)."""
     return json.loads(path.read_text(encoding="utf-8"))
@@ -367,9 +394,172 @@ def load_vlm_boxes(path: Path) -> dict[int, list[float]] | None:
     boxes: dict[int, list[float]] = {}
     for i, entry in enumerate(entries):
         b = entry.get("box") if isinstance(entry, dict) else None
-        if isinstance(b, list) and len(b) == 4 and all(isinstance(v, (int, float)) and v == v for v in b):
+        if (
+            isinstance(b, list)
+            and len(b) == BOX_COORDINATE_COUNT
+            and all(isinstance(v, (int, float)) and v == v for v in b)
+        ):
             boxes[i] = [float(v) for v in b]
     return boxes or None
+
+
+def admission_gate(text: str, score: float) -> bool:
+    """Admit a detected line only when the recognizer read real text at
+    this orientation (confidence + plausibility) — never on box shape
+    alone (PRD VR15)."""
+    return float(score) >= REC_SCORE_GATE and sum(1 for ch in text if ch.isalpha()) >= MIN_LETTERS
+
+
+def remap_box(
+    box: list[float],
+    degrees: int,
+    original: tuple[int, int],
+    rotated: tuple[int, int],
+) -> list[float]:
+    """A box from the rotated frame (rotated = rw×rh) mapped back to the
+    original image (original = ow×oh) — the inverse of the applied
+    rotation, exact for a rigid quarter-turn."""
+    ow, oh = original
+    rw, rh = rotated
+    rad = math.radians(degrees)
+    ox, oy = ow / 2, oh / 2
+    rx, ry = rw / 2, rh / 2
+    xs: list[float] = []
+    ys: list[float] = []
+    for x, y in ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])):
+        dx, dy = x - rx, y - ry
+        xs.append(dx * math.cos(rad) - dy * math.sin(rad) + ox)
+        ys.append(dx * math.sin(rad) + dy * math.cos(rad) + oy)
+    return [round(min(xs), 1), round(min(ys), 1), round(max(xs), 1), round(max(ys), 1)]
+
+
+def admit_and_remap(
+    detections: list[Detection],
+    degrees: int,
+    original: tuple[int, int],
+    rotated: tuple[int, int],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Admit the detector's lines read as real text at this orientation
+    (recognition-driven, never shape-only) and remap their boxes from the
+    rotated frame back to the original image. Returns (kept, rejected)."""
+    kept: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for det in detections:
+        text = det["text"].strip()
+        score = float(det["score"])
+        entry: dict[str, Any] = {
+            "text": text,
+            "score": round(score, 2),
+            "words": [{"box": remap_box(w["box"], degrees, original, rotated)} for w in det.get("words", [])],
+        }
+        if admission_gate(text, score):
+            entry["box"] = remap_box(det["box"], degrees, original, rotated)
+            kept.append(entry)
+        else:
+            entry["box"] = [round(v, 1) for v in det["box"]]
+            rejected.append(entry)
+    return kept, rejected
+
+
+def _box_area(box: list[float]) -> float:
+    return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+
+
+def _box_overlap(a: list[float], b: list[float]) -> float:
+    """The intersection over the SMALLER box — a tall strip inside a wide
+    box still claims the same region."""
+    x = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    y = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    return (x * y) / min(_box_area(a), _box_area(b), 1e-9)
+
+
+def _richness(line: dict[str, Any]) -> tuple[int, float]:
+    """The reading's strength — more letters beat fewer; ties by score.
+    The dedupe keeps the BEST reading of a physical region across the
+    orientation passes (2026-08-17: the postcard's vertical strips were
+    read at 0°, 90° AND 270° — 'MHOTH' (90°) vs 'HARBOTTLE, MORPETH'
+    (270°) share a box at IoU 0.97; only the richer survives)."""
+    return sum(1 for ch in line["text"] if ch.isalpha()), float(line["conf"])
+
+
+def dedupe_regions(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop the weaker readings of the same physical region across
+    orientations: a line is kept only when no other line overlaps its box
+    with a strictly richer reading. Ties keep the earlier line. The
+    survivors keep their index — the caller re-indexes after."""
+    keep = [True] * len(lines)
+    for i, a in enumerate(lines):
+        for j, b in enumerate(lines):
+            if i == j or not keep[i] or not keep[j]:
+                continue
+            if _box_overlap(a["box"], b["box"]) > _DEDUPE_OVERLAP and _richness(b) > _richness(a):
+                keep[i] = False
+                break
+    return [line for line, k in zip(lines, keep, strict=True) if k]
+
+
+def multi_layout(
+    page: str,
+    width: int,
+    height: int,
+    passes: list[tuple[int, list[dict[str, Any]]]],
+) -> dict[str, Any]:
+    """The combined multi-orientation layout (PRD VR15): the admitted
+    lines from each orientation pass, ordered 0° first then each next
+    direction, each line carrying the orientation it was read at. The
+    passes' boxes are already remapped to the original image's pixels;
+    width/height are the original (oriented) image's. The rec text is
+    the provisional transcription (VR14) — the reviewer corrects it.
+    The same physical region read in several passes keeps only its
+    best reading (dedupe_regions)."""
+    lines: list[dict[str, Any]] = []
+    for degrees, admitted in sorted(passes, key=lambda p: p[0]):
+        for entry in admitted:
+            lines.append(
+                {
+                    "index": len(lines),
+                    "text": entry["text"],
+                    "box": entry["box"],
+                    "conf": entry["score"],
+                    "orientation": degrees,
+                    "box_source": "multi",
+                    "words": [{"box": w.get("box"), "conf": entry["score"]} for w in entry.get("words", [])],
+                }
+            )
+    lines = dedupe_regions(lines)
+    for i, line in enumerate(lines):
+        line["index"] = i
+    return {"page": page, "width": width, "height": height, "lines": lines, "unmatched": []}
+
+
+def load_orientation_hint(path: Path) -> list[int]:
+    """The page's distinct text orientations (0/90/180/270), written by
+    the pipeline stage when the arbiter's scores suggested more than one
+    direction (PRD VR15). [] = a single orientation — the plain
+    single-orientation layout path applies."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    degrees = {int(h.get("degrees")) for h in data if isinstance(h, dict) and h.get("degrees") in (0, 90, 180, 270)}
+    return sorted(degrees) if len(degrees) >= 2 else []
+
+
+def orientation_passes(degrees: list[int]) -> list[int]:
+    """The detection passes for a page's reported orientations. A
+    reported vertical direction (90 or 270) runs BOTH its mirrors: the
+    vision model flips between 90 and 270 for the same physical block
+    between calls (2026-08-17), and a pass at the wrong direction leaves
+    the block upside-down — the recognition admission then rejects it
+    and the text is silently missed. The mirror pass costs one detection
+    run (no model call) and admits nothing garbage."""
+    out = set(degrees)
+    for d in degrees:
+        if d in (90, 270):
+            out.add(270 if d == 90 else 90)
+    return sorted(out)
 
 
 def layout_detections(layout: dict[str, Any]) -> list[Detection]:
@@ -379,21 +569,22 @@ def layout_detections(layout: dict[str, Any]) -> list[Detection]:
     along with their geometry. The texts are rotation-invariant, so the
     reconstruction is exact for a rigid rotation."""
     detections: list[Detection] = []
-    for line in layout.get("lines", []):
-        if line.get("box"):
-            detections.append(
-                Detection(
-                    box=line["box"],
-                    # the VLM-anchored lines carry no rec text — their OWN
-                    # text is the content anchor, so the rotation's rebuild
-                    # re-associates them exactly (2026-08-16)
-                    text=line.get("rec_text") or line.get("text", ""),
-                    score=line.get("rec_score", 0.0),
-                    words=line.get("det_words") or [],
-                )
-            )
-    for u in layout.get("unmatched", []):
-        detections.append(Detection(box=u["box"], text=u.get("text", ""), score=0.0, words=[]))
+    detections.extend(
+        Detection(
+            box=line["box"],
+            # the VLM-anchored lines carry no rec text — their OWN
+            # text is the content anchor, so the rotation's rebuild
+            # re-associates them exactly (2026-08-16)
+            text=line.get("rec_text") or line.get("text", ""),
+            score=line.get("rec_score", 0.0),
+            words=line.get("det_words") or [],
+        )
+        for line in layout.get("lines", [])
+        if line.get("box")
+    )
+    detections.extend(
+        Detection(box=u["box"], text=u.get("text", ""), score=0.0, words=[]) for u in layout.get("unmatched", [])
+    )
     return detections
 
 
@@ -402,7 +593,7 @@ def rotate_detections(detections: list[Detection], quarters: int, w: int, h: int
     in a w×h image — a rigid remap, exact for a rotation (2026-08-16: the
     reviewer's orientation fix re-anchors the boxes without re-OCR). For an
     odd number of quarters the image dims swap."""
-    q = quarters % 4
+    q = quarters % QUARTERS_PER_FULL_TURN
     if q == 0:
         return list(detections)
     rotated: list[Detection] = []

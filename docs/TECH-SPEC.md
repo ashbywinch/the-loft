@@ -616,10 +616,10 @@ mixed-layout transcription (page-03's callout box, postmark, address and
 salutation all read correctly); ~85% word accuracy on the medal card's
 hardest element (handwritten digits in a dense form); ~11K tokens/page
 (~$2–15 per 1,000 pages at mid-tier rates). The local orli+TrOCR stack
-(segmentation OK, recognition garbage on the test pages) and the
-specialist OCR APIs (Azure Read `tools/ocr_azure.py` — client ready,
-untested on real pages; Transkribus — UI-bound on individual plans,
-~10× the price) remain as alternatives behind the same seam
+stack (segmentation OK, recognition garbage on the test pages) and the
+specialist OCR APIs (Azure Read — removed as dead code 2026-08-16, never
+referenced; Transkribus — UI-bound on individual plans, ~10× the price)
+remain as alternatives behind the same seam
 (`LOFT_HTR_BACKEND=vlm|local`, env-selected). The per-page VLM output
 is recorded in a sidecar (`ocr-raw/<stem>.vlm.json`, the token usage) so
 re-runs skip transcribed pages and the cost is auditable.
@@ -629,6 +629,78 @@ scan time: `make scan-docs ARGS="--label 'Box 1 — Letters 1977'"`, or a
 prompt when no `--label` is given ("Envelope/pile label — what's written
 on it?"). The label is written into the registry record at scan time
 (never into the folder name) and rides through to the review prompts.
+
+### 16.14.1 The pipeline picture and the layout stage (2026-08-16)
+
+```mermaid
+flowchart TB
+    subgraph ingest["make ingest — pipeline.process"]
+        A["adopt / scan"] --> B["classify — photos/drawings skip"]
+        B --> C["orient — one rotation per page (Rule J)"]
+        C --> D["ocr-raw — tesseract"]
+        D --> E["route — print vs cursive"]
+        E --> F["transcribe — the vision model (cursive)"]
+        F --> G["guess — document grouping + provisional transcription"]
+    end
+    G --> L["layout — boxes + per-word flags"]
+    L --> R["review — boxes + draft text + flags"]
+    R --> P["archive"]
+    L -. "not wired: run by hand today" .-> R
+```
+
+| Phase | What it does | Output |
+|---|---|---|
+| adopt / scan | register the pages | registry record + `pages` |
+| classify | photo/drawing vs text (open_clip) | `classify.json` |
+| orient | the one best rotation per page (Rule J arbiter) | `oriented/` + `rotations.json` |
+| ocr-raw | tesseract read of the oriented page | `ocr-raw/*.txt` |
+| route | print vs cursive from strong-word density | `classify.json` |
+| transcribe | the vision model reads cursive pages | `ocr-raw/*.vlm.json` |
+| guess | group the documents + the provisional transcription | `ocr-guess/*.txt`, `boundaries.json` |
+| **layout** | **detect text lines + per-word boxes/flags (paddleocr + build_layout)** | **`ocr-guess/*.layout.json`** |
+| review | the reviewer verifies/corrects the draft | confirmed text |
+
+**The gap (PRD VR14):** the layout stage — the producer of the bounding
+boxes and per-word confidence flags the review surface needs (VR1/VR4) —
+exists (`tools/layout_detect.py`) but is **not wired into `process`**: it
+is run by hand
+(`.venv-htr/bin/python -m tools.layout_detect <batch>`). A batch that
+nobody manually layouted reaches the review with draft text and **no
+boxes and no flags** (batch `adopt-20260813-201024` was exactly this).
+The simplest thing meeting VR14: make the layout stage a `process` step
+after `guess` — the logic already exists, it only needs wiring.
+
+**Multi-orientation pages (PRD VR15) — the postcard finding.** A
+postcard with text running in several directions defeats the single-
+rotation assumptions: running the layout pass on one (`adopt-20260813-
+201024`, page `1697568038221-…`) produced 21 lines with mis-associated
+boxes (a "our visit to you" line box 10×10 px), 32 unmatched detection
+fragments, and 45 flagged words — the per-orientation text is garbled
+rather than separated. The design direction (user, 2026-08-16): the vision
+model reports, in a structured way, the text orientations present on the
+page (with regions); detection and reading then run **per region** at the
+region's orientation, and a region's boxes are admitted only when the
+reading at that orientation produced real text — never on shape alone, so
+an accidental upside-down pass's boxes are discarded. This is the
+candidate approach for VR15; it is being prototyped on the postcard.
+
+**Prototype outcome (2026-08-16, the postcard).** The approach was tried
+end to end: one vision-model call returned the transcription + a
+structured `orientation_hint` (text at 0° and 270°, with regions — the
+model sees multi-direction text reliably); then a detection pass ran at
+each reported orientation and a line was admitted only when the
+recognizer read real text there (rec score ≥ 0.85 and ≥ 2 letters), with
+its box remapped to the original image. It works: the 270° block's text
+(`HERNSPETH HOUSE,`, `HARBOTTLE, MORPETH`, `With Greetings and`) is
+admitted in the 270° pass with correct in-image boxes, while
+wrong-orientation reads (`Bbesrwishesl`, `Greetig and`) are rejected.
+Two follow-ups before this is production-ready: (1) **line assembly** —
+the recognizer emits word fragments on rotated text, so admitted pieces
+must be merged into lines (as `build_layout` already does for single
+orientation); (2) **admission tuning** — single-letter pieces (the
+stamp's "E R") are dropped by the ≥2-letter rule; and the orientation
+report should be folded into the existing transcription call (one model
+pass) rather than a separate call, to avoid the extra ~12K tokens.
 
 
 **Decisions — RESOLVED (user, 2026-08-03):** managed Postgres + pgvector on **Supabase**; **a small number of family curators** (a simple per-field last-write-wins + audit-log conflict story suffices; the far-future possibility of hosting *other families* that must never see our content is a tenant-isolation seam — the existing contributor-ID namespacing, §14 — and is not built now); the generation batch runs on **the reviewer's laptop**.

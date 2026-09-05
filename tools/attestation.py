@@ -19,7 +19,7 @@ from typing import Any
 # text patterns -> the edge kind the claim asserts. Parent links may name
 # one or both parents ("son of ? Corbett and Harper Pryce") — the first named
 # parent suffices for the check.
-PATTERNS: list[tuple[re.Pattern[str], str]] = [
+PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"married ([A-Z][\w' -]+?)(?:,|\.|\(|\b\d|$)"), "spouse"),
     (re.compile(r"([A-Z][\w' -]+?)'s husband"), "spouse"),
     (re.compile(r"([A-Z][\w' -]+?)'s wife"), "spouse"),
@@ -32,7 +32,7 @@ PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"mother of ([A-Z][\w' -]+?)(?: and |\.|$)"), "parent"),
     (re.compile(r"sister-in-law of ([A-Z][\w' -]+)"), "inlaw"),
     (re.compile(r"brother-in-law of ([A-Z][\w' -]+)"), "inlaw"),
-]
+)
 
 
 def _resolve_candidates(name: str, people: list[dict[str, Any]]) -> list[str]:

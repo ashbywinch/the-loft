@@ -84,6 +84,13 @@ _COMMON_WORDS = {
     "city",
 }
 
+# Date markers are identifying only as full dates — bare years ("2026") are
+# story years and are left out; the shortest kept form is YYYY-MM (7 chars).
+_DATE_MARKER_MIN_LEN = 6
+# 4+ decimal places in a coordinate is street precision — identifying;
+# coarse 1-2 decimals collide with versions and CSS and are not.
+_STREET_PRECISION_DECIMALS = 4
+
 
 def _latest(paths: list[Path]) -> Path:
     best: tuple[int, Path] | None = None
@@ -129,7 +136,7 @@ def _date_markers(record: dict[str, Any]) -> set[str]:
             markers.add(str(value["date"]))
         elif isinstance(value, str):
             markers.add(value)
-    return {m for m in markers if len(m) > 6}
+    return {m for m in markers if len(m) > _DATE_MARKER_MIN_LEN}
 
 
 def _geo_markers(record: dict[str, Any]) -> set[str]:
@@ -140,7 +147,7 @@ def _geo_markers(record: dict[str, Any]) -> set[str]:
         value = record.get(field)
         if isinstance(value, (int, float)):
             text = str(value)
-            if "." in text and len(text) - text.index(".") - 1 >= 4:
+            if "." in text and len(text) - text.index(".") - 1 >= _STREET_PRECISION_DECIMALS:
                 markers.add(text)
     return markers
 

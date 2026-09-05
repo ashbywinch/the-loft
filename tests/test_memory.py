@@ -12,6 +12,7 @@ from tools.memory import (
     ElicitationError,
     Knowledge,
     Person,
+    StoryRequest,
     assess,
     build_story,
 )
@@ -442,6 +443,7 @@ def test_facts_respect_the_locale_for_ambiguous_values(monkeypatch: pytest.Monke
     )
     assert result["facts"][0]["value"] == "1981-09"
 
+    # lucidlint: ignore monkeypatch LOFT_LOCALE is the env seam the locale-aware date parser reads
     monkeypatch.setenv("LOFT_LOCALE", "en_US")
     client = make_client(
         [
@@ -483,15 +485,17 @@ def test_standing_knowledge_includes_dob_and_items() -> None:
 def test_build_story_dates_events_from_dob_and_age_facts() -> None:
     with_ashby = PEOPLE + [{"id": "p-alex", "name": "Alex Hale", "aliases": ["Alex"]}]
     story, _, _ = build_story(
-        anchor=ANCHOR,
-        who="Alex",
-        title="T",
-        account="When I was three or so I went to the boatyard.",
-        extractions=[],
-        facts=[
-            {"kind": "dob", "entity": "p-alex", "text": "15/09/1981", "value": "1981-09-15", "precision": "exact"},
-            {"kind": "age", "text": "three or so", "value": 3, "precision": "approx"},
-        ],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Alex",
+            title="T",
+            account="When I was three or so I went to the boatyard.",
+            extractions=[],
+            facts=[
+                {"kind": "dob", "entity": "p-alex", "text": "15/09/1981", "value": "1981-09-15", "precision": "exact"},
+                {"kind": "age", "text": "three or so", "value": 3, "precision": "approx"},
+            ],
+        ),
         knowledge=make_knowledge(people=with_ashby),
         existing_ids=set(),
         recorded="2026-08-03",
@@ -506,22 +510,24 @@ def test_build_story_answered_dob_is_confirmed() -> None:
     confirmed, not proposed — the answer IS the assertion (2026-08-03)."""
     with_ashby = PEOPLE + [{"id": "p-alex", "name": "Alex Hale", "aliases": ["Alex"]}]
     story, _, _ = build_story(
-        anchor=ANCHOR,
-        who="Alex",
-        title="T",
-        account="That was the year.",
-        extractions=[],
-        facts=[
-            {
-                "kind": "dob",
-                "entity": "p-alex",
-                "text": "",
-                "value": "1981-09-15",
-                "precision": "exact",
-                "status": "confirmed",
-            },
-            EVENT_DATE,
-        ],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Alex",
+            title="T",
+            account="That was the year.",
+            extractions=[],
+            facts=[
+                {
+                    "kind": "dob",
+                    "entity": "p-alex",
+                    "text": "",
+                    "value": "1981-09-15",
+                    "precision": "exact",
+                    "status": "confirmed",
+                },
+                EVENT_DATE,
+            ],
+        ),
         knowledge=make_knowledge(people=with_ashby),
         existing_ids=set(),
         recorded="2026-08-03",
@@ -533,12 +539,14 @@ def test_build_story_answered_dob_is_confirmed() -> None:
 
 def test_build_story_event_date_fact_wins() -> None:
     story, _, _ = build_story(
-        anchor=ANCHOR,
-        who="Alex",
-        title="T",
-        account="We went to Marlock.",
-        extractions=[],
-        facts=[{"kind": "event_date", "text": "May 1963", "value": "1963-05", "precision": "month"}],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Alex",
+            title="T",
+            account="We went to Marlock.",
+            extractions=[],
+            facts=[{"kind": "event_date", "text": "May 1963", "value": "1963-05", "precision": "month"}],
+        ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
@@ -550,15 +558,17 @@ def test_build_story_unparseable_dob_stays_verbatim_for_the_keeper() -> None:
     """An unparseable dob phrase is recorded verbatim for a person to
     resolve — and the story still needs its events date (2026-08-05)."""
     story, _, _ = build_story(
-        anchor=ANCHOR,
-        who="Alex",
-        title="T",
-        account="I was born one winter.",
-        extractions=[],
-        facts=[
-            {"kind": "dob", "entity": None, "text": "born one winter", "value": None, "precision": None},
-            EVENT_DATE,
-        ],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Alex",
+            title="T",
+            account="I was born one winter.",
+            extractions=[],
+            facts=[
+                {"kind": "dob", "entity": None, "text": "born one winter", "value": None, "precision": None},
+                EVENT_DATE,
+            ],
+        ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
@@ -571,15 +581,17 @@ def test_build_story_unparseable_dob_stays_verbatim_for_the_keeper() -> None:
 
 def test_build_story_new_narrator_record_carries_the_stated_dob() -> None:
     story, new_people, _ = build_story(
-        anchor=ANCHOR,
-        who="Zofia",
-        title="T",
-        account="I was eight then.",
-        extractions=[],
-        facts=[
-            {"kind": "dob", "entity": None, "text": "born 15/09/1984", "value": "1984-09-15", "precision": "exact"},
-            {"kind": "age", "text": "I was eight", "value": 8, "precision": "approx"},
-        ],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Zofia",
+            title="T",
+            account="I was eight then.",
+            extractions=[],
+            facts=[
+                {"kind": "dob", "entity": None, "text": "born 15/09/1984", "value": "1984-09-15", "precision": "exact"},
+                {"kind": "age", "text": "I was eight", "value": 8, "precision": "approx"},
+            ],
+        ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
@@ -591,15 +603,17 @@ def test_build_story_new_narrator_record_carries_the_stated_dob() -> None:
 
 def test_build_story_links_artifacts_and_leaves_unknowns_unresolved() -> None:
     story, _, _ = build_story(
-        anchor=ANCHOR,
-        who="Alex",
-        title="T",
-        account="We sailed Sunlight and later a new boat Dad was building.",
-        extractions=[
-            {"kind": "item", "name": "Sunlight", "match": "object-sunlight", "bucket": "proposed", "reason": ""},
-            {"kind": "item", "name": "the new boat", "match": None, "bucket": "unresolved", "reason": "no match"},
-        ],
-        facts=[EVENT_DATE],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Alex",
+            title="T",
+            account="We sailed Sunlight and later a new boat Dad was building.",
+            extractions=[
+                {"kind": "item", "name": "Sunlight", "match": "object-sunlight", "bucket": "proposed", "reason": ""},
+                {"kind": "item", "name": "the new boat", "match": None, "bucket": "unresolved", "reason": "no match"},
+            ],
+            facts=[EVENT_DATE],
+        ),
         knowledge=make_knowledge(),
         existing_ids=set(),
     )
@@ -613,20 +627,22 @@ def test_build_story_catalogued_item_link_to_draft_artifact_is_proposed() -> Non
     (2026-08-05 — story-2026-08-03-05 confirmed a draft object-sb-mirosa,
     leaving a dangling link)."""
     story, _, _ = build_story(
-        anchor=ANCHOR,
-        who="Alex",
-        title="T",
-        account="We were babysat by the crew of the Mirosa.",
-        extractions=[
-            {"kind": "item", "name": "SB Mirosa", "match": "object-sb-mirosa", "bucket": "proposed", "reason": ""},
-        ],
-        facts=[EVENT_DATE],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Alex",
+            title="T",
+            account="We were babysat by the crew of the Mirosa.",
+            extractions=[
+                {"kind": "item", "name": "SB Mirosa", "match": "object-sb-mirosa", "bucket": "proposed", "reason": ""},
+            ],
+            facts=[EVENT_DATE],
+            status="catalogued",
+        ),
         knowledge=make_knowledge(
             items=[{"id": "object-sb-mirosa", "title": "SB Mirosa", "type": "object", "status": "draft"}]
         ),
         existing_ids=set(),
         recorded="2026-08-03",
-        status="catalogued",
     )
     assert {"id": "object-sb-mirosa", "status": "proposed"} in story["items"]
 
@@ -635,20 +651,22 @@ def test_build_story_catalogued_item_link_to_catalogued_artifact_is_confirmed() 
     """A catalogued artifact is a fair target for a confirmed link — the
     downgrade applies to drafts only."""
     story, _, _ = build_story(
-        anchor=ANCHOR,
-        who="Alex",
-        title="T",
-        account="We sailed Sunlight.",
-        extractions=[
-            {"kind": "item", "name": "Sunlight", "match": "object-sunlight", "bucket": "proposed", "reason": ""},
-        ],
-        facts=[EVENT_DATE],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Alex",
+            title="T",
+            account="We sailed Sunlight.",
+            extractions=[
+                {"kind": "item", "name": "Sunlight", "match": "object-sunlight", "bucket": "proposed", "reason": ""},
+            ],
+            facts=[EVENT_DATE],
+            status="catalogued",
+        ),
         knowledge=make_knowledge(
             items=[{"id": "object-sunlight", "title": "Sunlight", "type": "object", "status": "catalogued"}]
         ),
         existing_ids=set(),
         recorded="2026-08-03",
-        status="catalogued",
     )
     assert {"id": "object-sunlight", "status": "confirmed"} in story["items"]
 
@@ -733,18 +751,20 @@ def test_build_story_reuses_an_existing_place_by_name() -> None:
     moored-barges ×3 came from minting one id per story mention,
     2026-08-05)."""
     story, _, new_places = build_story(
-        anchor=ANCHOR,
-        who="Alex",
-        title="T",
-        account="We moored among the moored barges.",
-        extractions=[
-            {"kind": "place", "name": "the moored barges", "match": None, "bucket": "proposed", "reason": ""},
-        ],
-        facts=[EVENT_DATE],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Alex",
+            title="T",
+            account="We moored among the moored barges.",
+            extractions=[
+                {"kind": "place", "name": "the moored barges", "match": None, "bucket": "proposed", "reason": ""},
+            ],
+            facts=[EVENT_DATE],
+            status="catalogued",
+        ),
         knowledge=make_knowledge(places=[{"id": "pl-the-moored-barges", "name": "the moored barges"}]),
         existing_ids=set(),
         recorded="2026-08-03",
-        status="catalogued",
     )
     assert {"id": "pl-the-moored-barges", "status": "confirmed"} in story["places"]
     assert new_places == []  # no duplicate record minted
@@ -755,18 +775,20 @@ def test_build_story_reuses_an_existing_person_by_name() -> None:
     id — never mints a duplicate (the person analog of the place name-dedup,
     2026-08-05 bot review)."""
     story, new_people, _ = build_story(
-        anchor=ANCHOR,
-        who="Alex",
-        title="T",
-        account="Nora was there.",
-        extractions=[
-            {"kind": "person", "name": "Nora Smith", "match": None, "bucket": "proposed", "reason": ""},
-        ],
-        facts=[EVENT_DATE],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Alex",
+            title="T",
+            account="Nora was there.",
+            extractions=[
+                {"kind": "person", "name": "Nora Smith", "match": None, "bucket": "proposed", "reason": ""},
+            ],
+            facts=[EVENT_DATE],
+            status="catalogued",
+        ),
         knowledge=make_knowledge(people=PEOPLE + [{"id": "p-nora", "name": "Nora Smith", "aliases": []}]),
         existing_ids=set(),
         recorded="2026-08-03",
-        status="catalogued",
     )
     assert {"id": "p-nora", "status": "confirmed"} in story["people"]
     assert new_people == []  # no duplicate record minted
@@ -780,18 +802,20 @@ def test_build_story_kinship_term_reuses_an_existing_proposed_record() -> None:
     still never reused for a kinship term — fail closed; only another
     proposed record is."""
     first, new_people, _ = build_story(
-        anchor=ANCHOR,
-        who="Alex",
-        title="T1",
-        account="Grandma came.",
-        extractions=[
-            {"kind": "person", "name": "Grandma", "match": None, "bucket": "proposed", "reason": ""},
-        ],
-        facts=[EVENT_DATE],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Alex",
+            title="T1",
+            account="Grandma came.",
+            extractions=[
+                {"kind": "person", "name": "Grandma", "match": None, "bucket": "proposed", "reason": ""},
+            ],
+            facts=[EVENT_DATE],
+            status="catalogued",
+        ),
         knowledge=make_knowledge(people=PEOPLE),
         existing_ids=set(),
         recorded="2026-08-03",
-        status="catalogued",
     )
     assert len(new_people) == 1 and new_people[0]["name"] == "Grandma"
     grandma_id = new_people[0]["id"]
@@ -801,18 +825,20 @@ def test_build_story_kinship_term_reuses_an_existing_proposed_record() -> None:
     # marks it when the first story saves)
     queued = [{**new_people[0], "status": "proposed"}]
     second, new_people2, _ = build_story(
-        anchor=ANCHOR,
-        who="Eli",
-        title="T2",
-        account="Grandma came too.",
-        extractions=[
-            {"kind": "person", "name": "Grandma", "match": None, "bucket": "proposed", "reason": ""},
-        ],
-        facts=[EVENT_DATE],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Eli",
+            title="T2",
+            account="Grandma came too.",
+            extractions=[
+                {"kind": "person", "name": "Grandma", "match": None, "bucket": "proposed", "reason": ""},
+            ],
+            facts=[EVENT_DATE],
+            status="catalogued",
+        ),
         knowledge=make_knowledge(people=PEOPLE + queued),
         existing_ids={grandma_id},
         recorded="2026-08-03",
-        status="catalogued",
     )
     assert grandma_id in {r["id"] for r in second["people"]}
     # no duplicate Grandma mint — the only new record is the narrator Eli
@@ -826,18 +852,20 @@ def test_build_story_kinship_term_stays_proposed_not_reused() -> None:
     proposed for the writer to identify (the kinship filter's strip stays
     effective, 2026-08-05)."""
     story, new_people, _ = build_story(
-        anchor=ANCHOR,
-        who="Alex",
-        title="T",
-        account="Grandma came.",
-        extractions=[
-            {"kind": "person", "name": "Grandma", "match": None, "bucket": "proposed", "reason": ""},
-        ],
-        facts=[EVENT_DATE],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Alex",
+            title="T",
+            account="Grandma came.",
+            extractions=[
+                {"kind": "person", "name": "Grandma", "match": None, "bucket": "proposed", "reason": ""},
+            ],
+            facts=[EVENT_DATE],
+            status="catalogued",
+        ),
         knowledge=make_knowledge(people=PEOPLE + [{"id": "p-x", "name": "X", "aliases": ["Grandma"]}]),
         existing_ids=set(),
         recorded="2026-08-03",
-        status="catalogued",
     )
     assert {"id": "p-x", "status": "confirmed"} not in story["people"]
     assert len(new_people) == 1 and new_people[0]["name"] == "Grandma"
@@ -867,12 +895,16 @@ def test_fact_round_trip_and_validation() -> None:
 def test_build_story_dedupes_anchor_and_extraction_refs() -> None:
     """The starting page and an extraction may name the same entity — one ref."""
     story, _, _ = build_story(
-        anchor={"kind": "place", "id": "pl-seagate", "name": "Seagate"},
-        who="Alex",
-        title="T",
-        account="We sailed around Seagate.",
-        extractions=[{"kind": "place", "name": "Seagate", "match": "pl-seagate", "bucket": "proposed", "reason": ""}],
-        facts=[EVENT_DATE],
+        request=StoryRequest(
+            anchor={"kind": "place", "id": "pl-seagate", "name": "Seagate"},
+            who="Alex",
+            title="T",
+            account="We sailed around Seagate.",
+            extractions=[
+                {"kind": "place", "name": "Seagate", "match": "pl-seagate", "bucket": "proposed", "reason": ""},
+            ],
+            facts=[EVENT_DATE],
+        ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
@@ -885,31 +917,39 @@ def test_build_story_verified_save_is_catalogued_with_confirmed_refs() -> None:
     reviewed save is catalogued and its kept links are confirmed; an
     abandoned one stays draft with proposed links (docs/CONTRIBUTIONS.md)."""
     verified, _, _ = build_story(
-        anchor={"kind": "place", "id": "pl-seagate", "name": "Seagate"},
-        who="Alex",
-        title="T",
-        account="We sailed around Seagate.",
-        extractions=[{"kind": "place", "name": "Seagate", "match": "pl-seagate", "bucket": "proposed", "reason": ""}],
-        facts=[EVENT_DATE],
+        request=StoryRequest(
+            anchor={"kind": "place", "id": "pl-seagate", "name": "Seagate"},
+            who="Alex",
+            title="T",
+            extractions=[
+                {"kind": "place", "name": "Seagate", "match": "pl-seagate", "bucket": "proposed", "reason": ""},
+            ],
+            account="We sailed around Seagate.",
+            facts=[EVENT_DATE],
+            status="catalogued",
+        ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
-        status="catalogued",
     )
     assert verified["status"] == "catalogued"
     assert verified["places"] == [{"id": "pl-seagate", "status": "confirmed"}]
 
     abandoned, _, _ = build_story(
-        anchor={"kind": "place", "id": "pl-seagate", "name": "Seagate"},
-        who="Alex",
-        title="T",
-        account="We sailed around Seagate.",
-        extractions=[{"kind": "place", "name": "Seagate", "match": "pl-seagate", "bucket": "proposed", "reason": ""}],
-        facts=[EVENT_DATE],
+        request=StoryRequest(
+            anchor={},
+            who="Alex",
+            title="T",
+            account="We sailed around Seagate.",
+            extractions=[
+                {"kind": "place", "name": "Seagate", "match": "pl-seagate", "bucket": "proposed", "reason": ""},
+            ],
+            facts=[EVENT_DATE],
+            status="draft",
+        ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
-        status="draft",
     )
     assert abandoned["status"] == "draft"
     assert abandoned["places"] == [{"id": "pl-seagate", "status": "proposed"}]
@@ -918,12 +958,14 @@ def test_build_story_verified_save_is_catalogued_with_confirmed_refs() -> None:
 def test_build_story_ids_are_unique() -> None:
     existing = {"story-2026-08-03-01"}
     story, _, _ = build_story(
-        anchor=ANCHOR,
-        who="Alex",
-        title="T",
-        account="x",
-        extractions=[],
-        facts=[EVENT_DATE],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Alex",
+            title="T",
+            account="x",
+            extractions=[],
+            facts=[EVENT_DATE],
+        ),
         knowledge=make_knowledge(),
         existing_ids=existing,
         recorded="2026-08-03",
@@ -1114,12 +1156,14 @@ def test_build_story_emits_kind_text_for_testimony() -> None:
     """PRD §19.2: every testimony carries kind (audio|text) alongside speaker
     and recorded date — a capture story is typed, so it is text."""
     story, _, _ = build_story(
-        anchor=ANCHOR,
-        who="Alex",
-        title="T",
-        account="We went to Marlock.",
-        extractions=[],
-        facts=[EVENT_DATE],
+        request=StoryRequest(
+            anchor=ANCHOR,
+            who="Alex",
+            title="T",
+            account="We went to Marlock.",
+            extractions=[],
+            facts=[EVENT_DATE],
+        ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
@@ -1135,12 +1179,14 @@ def test_build_story_requires_an_event_date() -> None:
     never `date`."""
     with pytest.raises(ValueError, match="events date"):
         build_story(
-            anchor=ANCHOR,
-            who="Alex",
-            title="T",
-            account="text",
-            extractions=[],
-            facts=[],  # no event date — the narrator skipped or declined
+            request=StoryRequest(
+                anchor=ANCHOR,
+                who="Alex",
+                title="T",
+                account="text",
+                extractions=[],
+                facts=[],
+            ),
             knowledge=make_knowledge(),
             existing_ids=set(),
             recorded="2026-08-03",

@@ -1,9 +1,10 @@
 # Makefile for The Loft — family history museum web app.
 # Single dev entry point: every dev action goes through make.
-# CI runs exactly: make setup && make lint-github && make coverage — the
-# suites run ONCE (inside coverage), never twice (2026-08-11: make test +
-# make coverage both re-ran pytest and vitest in CI). make test stays as
-# the local fast gate.
+# CI runs exactly: make setup && make lint-github && make coverage && make
+# verify — then make lucidlint (the code-health gate, from its own repo) — the
+# suites run ONCE (inside coverage), never twice (2026-08-11: make test + make
+# coverage both re-ran pytest and vitest in CI). make test stays as the local
+# fast gate.
 .PHONY: help setup serve lint lint-github typecheck test coverage format clean eval evals eval-changed verify scan-docs scan-photos adopt ingest confirm
 
 PYTHON := .venv/bin/python
@@ -105,6 +106,32 @@ coverage: setup lint typecheck
 
 evals: setup
 	@$(PYTHON) -m pytest -m eval -q
+
+# lucidlint (github.com/ashbywinch/lucidlint) — the deterministic code-health
+# gate, wired from its own repo per the project decision (2026-08-16, user):
+# the in-repo code-health tools were deleted in its favour. The gate
+# provisions its own environment — this target downloads the self-contained
+# release bundle (SHA256SUMS-verified) into lucidlint-dist/ (gitignored), so
+# CI == developer on the same compiled binary.
+.PHONY: install-lucidlint lucidlint
+LUCIDLINT_VERSION ?= 0.1.0
+LUCIDLINT_ARCH ?= x86_64-unknown-linux-musl
+LUCIDLINT_DIST := lucidlint-dist
+LUCIDLINT_BUNDLE := $(LUCIDLINT_DIST)/lucidlint.py
+
+install-lucidlint: $(LUCIDLINT_BUNDLE)
+
+$(LUCIDLINT_BUNDLE):
+	@mkdir -p $(LUCIDLINT_DIST)
+	@curl -fsSLo $(LUCIDLINT_DIST)/lucidlint-v$(LUCIDLINT_VERSION)-$(LUCIDLINT_ARCH).tar.gz https://github.com/ashbywinch/lucidlint/releases/download/v$(LUCIDLINT_VERSION)/lucidlint-v$(LUCIDLINT_VERSION)-$(LUCIDLINT_ARCH).tar.gz
+	@curl -fsSLo $(LUCIDLINT_DIST)/SHA256SUMS https://github.com/ashbywinch/lucidlint/releases/download/v$(LUCIDLINT_VERSION)/SHA256SUMS
+	@cd $(LUCIDLINT_DIST) && grep "lucidlint-v$(LUCIDLINT_VERSION)-$(LUCIDLINT_ARCH).tar.gz" SHA256SUMS | sha256sum --check --status
+	@tar -xzf $(LUCIDLINT_DIST)/lucidlint-v$(LUCIDLINT_VERSION)-$(LUCIDLINT_ARCH).tar.gz -C $(LUCIDLINT_DIST) --strip-components=1
+	@rm -f $(LUCIDLINT_DIST)/lucidlint-v$(LUCIDLINT_VERSION)-$(LUCIDLINT_ARCH).tar.gz $(LUCIDLINT_DIST)/SHA256SUMS
+
+lucidlint: install-lucidlint
+	@echo "== lucidlint gate =="
+	@$(PYTHON) $(LUCIDLINT_BUNDLE) --repo . --baseline lucidlint.json
 
 eval: evals
 

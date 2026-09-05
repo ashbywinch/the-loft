@@ -75,6 +75,52 @@ words are usable on the smaller screen (user, 2026-08-15).
 remains in a batch, leave partway, and come back without re-reading what
 they already handled. Progress is visible.
 
+**VR10 — Reorientation is the reviewer's act, immediate and reliable.**
+A page's orientation changes only because the reviewer changed it — never
+on its own, even after a reload or a return visit. When the reviewer does
+change it: (i) the page shows the corrected way round instantly and stays
+that way on every look thereafter, whatever else is happening — what the
+reviewer set is what they see, and it never reverts; and (ii) the
+corrected transcription reliably arrives, and when it arrives late it
+updates the text, never the orientation the reviewer set (user
+requirement, 2026-08-16).
+
+**VR11 — The review proceeds page by page, in any order, at the reviewer's
+pace.** Each page is finished on its own; a document is finished only when
+every one of its pages is finished. The reviewer moves through the pile in
+whatever order suits them — leaving a page or a document and coming back
+later — and the system never loses their place or confuses their
+progress. The reviewer moves at their own speed: nothing in the app ever
+slows them down or asks for more than they choose to do (user
+requirement, 2026-08-16: power readers blast through without the app
+getting in their way).
+
+**VR12 — Fully reviewed work leaves the pending pile.** A document whose
+pages are all finished is done: it disappears from the list of work still
+to be reviewed (user requirement, 2026-08-16).
+
+**VR13 — Completed work is visibly marked, so nothing is redone.** Lines
+and pages the reviewer has already handled stay clearly marked; returning
+to the batch shows exactly what remains, so no finished work is re-checked
+(user requirement, 2026-08-16).
+
+**VR14 — Every page arrives fully processed by the pipeline.** For every
+page, the pipeline identifies the text, produces its bounding boxes, and
+provisionally transcribes it. A page that reaches the review without all
+three is a pipeline failure — the review never works around it by hand
+(user requirement, 2026-08-16).
+
+**VR15 — Text in any direction is captured.** A page whose text runs in
+more than one direction — a postcard with a rotated message — still has
+every word identified, boxed, and provisionally transcribed: nothing is
+missed because of its orientation (user requirement, 2026-08-16).
+
+**VR16 — The app runs lightly on this laptop.** The review app and the
+processing pipeline keep their memory use steady no matter how long they
+run or how much they process, leave a CPU core free for other work, and
+the heavy analysis tools load only while a piece of work is being
+processed and free themselves afterwards (user requirement, 2026-08-17).
+
 ## 3. Acceptance criteria
 
 1. A reviewer opening a batch knows at a glance what each document is and
@@ -99,6 +145,40 @@ they already handled. Progress is visible.
    confirmed (VR8, R14).
 10. Leaving a batch and returning resumes where the reviewer stopped,
     with progress visible (VR9).
+11. Turning a page shows it the corrected way round immediately, and it
+    stays that way on every subsequent visit, whatever else is happening
+    (VR10).
+12. The corrected transcription for a reoriented page reliably arrives;
+    when it arrives late it updates the text, never the orientation
+    (VR10).
+13. A page's orientation changes only because the reviewer changed it —
+    never on its own, even after a reload or a return visit (VR10).
+14. When the corrected transcription can't arrive, the surface says so
+    plainly — it never implies the text is fine, and never blames a change
+    the reviewer didn't make (VR10, VR8).
+15. A fast reader can move through the batch at full speed, with nothing
+    in the app making them do extra steps (VR11).
+16. Finishing a page moves the reviewer on; a page or document they left
+    unfinished is exactly where they left it when they return, in any
+    order (VR11, VR9).
+17. A document whose pages are all finished is no longer listed as pending
+    work (VR12).
+18. Lines and pages already handled are visibly marked on return, so none
+    are redone (VR13).
+19. Leaving and returning restores the exact document and page the
+    reviewer was on, with their handled work marked (VR9, VR13).
+20. A page whose text runs in several directions shows all of it, with the
+    0° lines first, then each next direction in turn; the page initially
+    shows the way the pipeline determined is right-way-up — the printed
+    writing upright (VR15).
+21. A two-sided item such as a postcard is one document — its picture side
+    the first page, its text side the second — identified by the pipeline,
+    never corrected by hand (VR6, VR14).
+22. The review app's memory use stays flat however long it runs and
+    whatever it processes — it never grows with use (VR16).
+23. While the pipeline processes a batch, the rest of the laptop keeps
+    running smoothly: a core stays free, and the heavy analysis tools
+    release their memory when their stage is done (VR16).
 
 ## 4. Non-goals
 

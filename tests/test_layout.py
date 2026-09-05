@@ -401,3 +401,121 @@ def test_layout_detections_keeps_the_vlm_text_as_the_anchor(tmp_path: Path) -> N
     dets = layout_detections(layout)
     assert dets[0]["text"] == "line one"
     assert dets[0]["box"] == layout["lines"][0]["box"]
+
+
+def test_admission_gate_requires_real_text_at_the_orientation() -> None:
+    """A line is admitted only when the recognizer read real text:
+    confidence AND plausibility — never on box shape alone (VR15)."""
+    from tools.layout import admission_gate
+
+    assert admission_gate("HERNSPETH HOUSE", 0.93)
+    assert not admission_gate("mo", 0.5)  # two letters but low confidence
+    assert not admission_gate("m", 0.99)  # confident but a single letter
+    assert not admission_gate("", 0.99)
+
+
+def test_remap_box_maps_back_to_the_original_frame() -> None:
+    """A 90° pass's rotated-frame box maps back to the original image —
+    the top of the rotated frame is the original's right edge."""
+    from tools.layout import remap_box
+
+    # 200x100 original; rotated -90° (clockwise, expand) the frame is
+    # 100x200. A box at the top of the rotated frame (centered) lands on
+    # the original's right edge, vertically centered.
+    box = remap_box([40, 0, 60, 20], 90, (200, 100), (100, 200))
+    assert box[2] > 195  # the far edge touches the right side (200)
+    assert 30 < box[1] < 70 and 30 < box[3] < 70  # y near the center (50)
+
+
+def test_admit_and_remap_keeps_only_real_text() -> None:
+    """The recognition-driven admission: real words at the orientation
+    are kept and remapped; garbage (single letters, low confidence) is
+    rejected — its box is NOT remapped (no claimed geometry)."""
+    from tools.layout import admit_and_remap
+
+    dets: list[Detection] = [
+        {"box": [40, 0, 60, 20], "text": "HERNSPETH HOUSE", "score": 0.93, "words": []},
+        {"box": [0, 0, 10, 10], "text": "mo", "score": 0.5, "words": []},
+        {"box": [5, 5, 15, 15], "text": "HERNSPETH HOUSE", "score": 0.5, "words": []},
+        {"box": [10, 10, 20, 20], "text": "m", "score": 0.99, "words": []},
+    ]
+    kept, rejected = admit_and_remap(dets, 90, (200, 100), (100, 200))
+    assert len(kept) == 1
+    assert kept[0]["text"] == "HERNSPETH HOUSE"
+    assert kept[0]["box"][2] > 195  # remapped to the original frame (right edge)
+    assert len(rejected) == 3
+
+
+def test_multi_layout_orders_zero_first_then_next_directions() -> None:
+    """The combined layout shows the 0° lines first, then each next
+    direction, each line carrying the orientation it was read at (VR15)."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        200,
+        100,
+        [
+            (270, [{"text": "HARBOTTLE, MORPETH", "box": [10, 10, 20, 20], "score": 0.9, "words": []}]),
+            (0, [{"text": "We are from beauford", "box": [1, 1, 5, 5], "score": 0.95, "words": []}]),
+        ],
+    )
+    assert [line["text"] for line in layout["lines"]] == ["We are from beauford", "HARBOTTLE, MORPETH"]
+    assert [line["orientation"] for line in layout["lines"]] == [0, 270]
+    assert layout["unmatched"] == []
+
+
+def test_multi_layout_keeps_only_the_best_reading_of_a_region() -> None:
+    """The same physical strip read in several passes keeps only the
+    richest reading — the postcard's vertical text read at 0°, 90° and
+    270° (MHOTH vs HARBOTTLE, MORPETH at IoU 0.97): the wrong-direction
+    garbage must not survive next to the real text."""
+    from tools.layout import multi_layout
+
+    layout = multi_layout(
+        "p1.jpg",
+        200,
+        100,
+        [
+            (90, [{"text": "MHOTH", "box": [10, 10, 20, 60], "score": 0.9, "words": []}]),
+            (270, [{"text": "HARBOTTLE, MORPETH", "box": [10, 10, 20, 60], "score": 0.9, "words": []}]),
+            (0, [{"text": "With Greetings", "box": [30, 30, 40, 80], "score": 0.95, "words": []}]),
+        ],
+    )
+    texts = [line["text"] for line in layout["lines"]]
+    assert "MHOTH" not in texts
+    assert "HARBOTTLE, MORPETH" in texts
+    assert "With Greetings" in texts
+    assert len(layout["lines"]) == 2
+
+
+def test_load_orientation_hint_needs_two_distinct_directions(tmp_path: Path) -> None:
+    """The sidecar is honoured only when it reports at least two distinct
+    orientations — a single-direction report keeps the plain path."""
+    from tools.layout import load_orientation_hint
+
+    two = tmp_path / "two.json"
+    two.write_text(
+        '[{"region": "message", "degrees": 0}, {"region": "address", "degrees": 270}]',
+        encoding="utf-8",
+    )
+    assert load_orientation_hint(two) == [0, 270]
+    one = tmp_path / "one.json"
+    one.write_text('[{"region": "message", "degrees": 0}]', encoding="utf-8")
+    assert load_orientation_hint(one) == []
+    bad = tmp_path / "bad.json"
+    bad.write_text("not json", encoding="utf-8")
+    assert load_orientation_hint(bad) == []
+    assert load_orientation_hint(tmp_path / "missing.json") == []
+
+
+def test_orientation_passes_mirror_a_reported_vertical_direction() -> None:
+    """A reported 90 (or 270) also runs its mirror pass — the model flips
+    between the two for the same physical block between calls, and the
+    wrong direction leaves the block upside-down (rejected, silently
+    missed). The mirror costs one detection run, no model call."""
+    from tools.layout import orientation_passes
+
+    assert orientation_passes([0, 90]) == [0, 90, 270]
+    assert orientation_passes([0, 270]) == [0, 90, 270]
+    assert orientation_passes([0, 180]) == [0, 180]  # no mirror for 0/180

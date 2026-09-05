@@ -19,25 +19,30 @@ import json
 import logging
 import os
 import socket
+import subprocess
 import threading
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from tools import auth, memory, review
 from tools.ai_client import AIClient
-from tools.archive import Archive, ArchiveError, split_content
+from tools.archive import Archive, ArchiveError
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.memory import ElicitationError, Knowledge
-from tools.records import Person, ReviewContext, ReviewDecision
+from tools.records import Person, ReviewContext, ReviewDecision, split_content
 from tools.registry import RegistryError, list_batches, load_batch
 from tools.store import FileStore
 from tools.sync import (
     BATCH_ID,
+    QUARTERS_PER_TURN,
     Outbox,
     demote_stale_jobs,
     draft_payloads,
@@ -54,6 +59,8 @@ logger = logging.getLogger(__name__)
 
 MAX_BODY_BYTES = 1_000_000
 
+TRANSCRIPTION_PREFIX_BYTES = 4096  # the first-chunk transcription read — enough to spot a mention, never the whole file
+
 
 def _atomic_write(path: Path, data: Any) -> None:
     """Replace a derived file atomically (temp + rename) — never half-written.
@@ -63,26 +70,43 @@ def _atomic_write(path: Path, data: Any) -> None:
     os.replace(tmp, path)
 
 
+@dataclass(frozen=True)
+class ServerConfig:
+    """The server's construction dependencies — the store, the model client,
+    and the directories the app binds. The group travels together into
+    build_app, create_server, and Server (docs/coding-standards.md: a group
+    that travels together is a type)."""
+
+    store: FileStore
+    data_dir: Path
+    client: AIClient | None
+    app_dir: Path
+    work_dir: Path | None = None
+    outbox: Outbox | None = None
+    registry_dir: Path | None = None
+
+
+# The route closures ARE the FastAPI registration idiom — DI'd deps are
+# lucidlint: ignore closures explicit params, not hidden state
 def build_app(
-    store: FileStore,
-    data_dir: Path,
-    client: AIClient | None,
-    app_dir: Path,
-    work_dir: Path | None = None,
-    outbox: Outbox | None = None,
-    registry_dir: Path | None = None,
+    config: ServerConfig,
+    _env: Mapping[str, str] | None = None,
+    _reprocess: Callable[[str, str], None] | None = None,
 ) -> FastAPI:
-    """The FastAPI app with the store/client/dirs bound (DI for tests)."""
-    if not auth.session_secret():
+    """The FastAPI app with the store/client/dirs bound (DI for tests).
+    ``_env`` overrides the process environment for the build-time checks
+    (the session secret); None reads os.environ."""
+    if not auth.session_secret(_env):
         # an empty signing key means forgeable sessions — and the sync write
         # seam rides the session (2026-08-14 review): refuse to start
         raise RuntimeError("THE_LOFT_SESSION_SECRET is not set — refusing to start with forgeable sessions")
-    archive = Archive(store)
-    data_dir = Path(data_dir)
-    app_dir = Path(app_dir)
-    work_dir = Path(work_dir) if work_dir else WORK_DIR
-    registry_dir = Path(registry_dir) if registry_dir else REGISTRY_DIR
-    outbox = outbox if outbox is not None else Outbox(WORK_DIR.parent / "sync-outbox")
+    archive = Archive(config.store)
+    client = config.client
+    data_dir = Path(config.data_dir)
+    app_dir = Path(config.app_dir)
+    work_dir = Path(config.work_dir) if config.work_dir else WORK_DIR
+    registry_dir = Path(config.registry_dir) if config.registry_dir else REGISTRY_DIR
+    outbox = config.outbox if config.outbox is not None else Outbox(WORK_DIR.parent / "sync-outbox")
 
     app = FastAPI(title="The Loft", docs_url=None, redoc_url=None)
 
@@ -109,10 +133,10 @@ def build_app(
 
     def knowledge() -> Knowledge:
         return Knowledge.from_projection(
-            people=_read_projection("people.json", "people"),
-            places=_read_projection("places.json", "places"),
-            themes=_read_projection("themes.json", "themes"),
-            items=_read_projection("index.json", "items"),
+            people=_read_projection(filename="people.json", key="people"),
+            places=_read_projection(filename="places.json", key="places"),
+            themes=_read_projection(filename="themes.json", key="themes"),
+            items=_read_projection(filename="index.json", key="items"),
         )
 
     def _read_projection(filename: str, key: str) -> list[dict[str, Any]]:
@@ -122,7 +146,7 @@ def build_app(
         return json.loads(path.read_text(encoding="utf-8")).get(key, [])
 
     def existing_ids() -> set[str]:
-        ids = {it["id"] for it in _read_projection("index.json", "items")}
+        ids = {it["id"] for it in _read_projection(filename="index.json", key="items")}
         ids |= set(archive.item_ids()) | archive.proposed_ids()
         return ids
 
@@ -195,7 +219,7 @@ def build_app(
         response.set_cookie(
             auth.COOKIE_NAME,
             cookie,
-            max_age=30 * 24 * 3600,
+            max_age=int(auth.SESSION_MAX_AGE.total_seconds()),
             httponly=True,
             samesite="lax",
             path="/",
@@ -206,6 +230,7 @@ def build_app(
     @app.post("/api/assess", response_model=None)
     def assess(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
         mine = narrator(request)
+        # lucidlint: ignore special-case the 401 auth gate IS the absent case — a stand-in would hide the boundary
         if mine is None:
             return JSONResponse({"ok": False, "error": "sign in to tell a story"}, status_code=401)
         if client is None:
@@ -229,17 +254,19 @@ def build_app(
         # validates; offline, the pending fact stays for a person to resolve
         facts = memory.resolve_pending_facts(client, body.get("facts", []))
         story, new_people, new_places = memory.build_story(
-            anchor=body.get("anchor", {}),
-            who=mine["who"],  # the verified session, never the client
-            title=str(body.get("title", "")),
-            account=str(body.get("account", "")),
-            extractions=body.get("extractions", []),
-            facts=facts,
+            request=memory.StoryRequest(
+                anchor=body.get("anchor", {}),
+                who=mine["who"],  # the verified session, never the client
+                title=str(body.get("title", "")),
+                account=str(body.get("account", "")),
+                extractions=body.get("extractions", []),
+                facts=facts,
+                status=str(body.get("status", "draft")),
+                story_id=body.get("id"),
+                chat=body.get("chat"),
+            ),
             knowledge=knowledge(),
             existing_ids=existing_ids(),
-            status=str(body.get("status", "draft")),
-            story_id=body.get("id"),
-            chat=body.get("chat"),
         )
         # drafts are committed during dev (user, 2026-08-03): the archive
         # store holds the canonical sidecar, and the projection is refreshed
@@ -482,7 +509,9 @@ def build_app(
                     # people refs yet) must still reach the model — the
                     # transcription is the evidence, never the summary
                     # (2026-08-11 review)
-                    transcription = archive.read_content_prefix(item_id, "transcription.txt", 4096) or ""
+                    transcription = (
+                        archive.read_content_prefix(item_id, "transcription.txt", TRANSCRIPTION_PREFIX_BYTES) or ""
+                    )
                     if not any(n in transcription.lower() for n in needles):
                         continue
                     item_text = transcription
@@ -580,8 +609,8 @@ def build_app(
             items.sort(key=lambda it: it["date"])
             index["items"] = items
             _atomic_write(index_path, index)
-        _merge_records("people.json", "people", new_people)
-        _merge_records("places.json", "places", new_places)
+        _merge_records(filename="people.json", key="people", records=new_people)
+        _merge_records(filename="places.json", key="places", records=new_places)
 
     def _merge_records(filename: str, key: str, records: list[dict[str, Any]]) -> None:
         if not records:
@@ -657,14 +686,13 @@ def build_app(
         try:
             record = load_batch(batch_id, registry_dir)
             by_pages = {tuple(b.get("pages", [])): b.get("status", "review") for b in (record.get("boundaries") or [])}
-            documents = []
-            for document in draft_payloads(batch_id, work_dir):
-                documents.append(
-                    {
-                        **document,
-                        "status": by_pages.get(tuple(document.get("pages", [])), "review"),
-                    }
-                )
+            documents = [
+                {
+                    **document,
+                    "status": by_pages.get(tuple(document.get("pages", [])), "review"),
+                }
+                for document in draft_payloads(batch_id, work_dir)
+            ]
             return {
                 "batch_id": batch_id,
                 "label": record.get("label"),
@@ -690,6 +718,31 @@ def build_app(
             return JSONResponse({"error": "no such page"}, status_code=404)
         return FileResponse(image)
 
+    def _reprocess_page(batch_id: str, page: str) -> None:
+        """Re-run a page's transcription in a background thread — the async
+        half of the rotate and re-read routes (one way through the reprocess
+        seam). The reprocess owns the page's job state itself: it clears it
+        on success, marks it failed on error."""
+
+        def _job() -> None:
+            try:
+                people = [
+                    str(p["name"]) for p in _read_projection(filename="people.json", key="people") if p.get("name")
+                ]
+                places = [
+                    str(p["name"]) for p in _read_projection(filename="places.json", key="places") if p.get("name")
+                ]
+                label = None
+                with contextlib.suppress(RegistryError):
+                    label = load_batch(batch_id, registry_dir).get("label")
+                reprocess_page_transcription(batch_id, page, work_dir, people=people, places=places, label=label)
+            # The background thread's terminal handler — logger.exception
+            # lucidlint: ignore swallow is the observable surface; the thread ends
+            except Exception:
+                logger.exception("reprocess failed for %s/%s", batch_id, page)
+
+        threading.Thread(target=_job, daemon=True).start()
+
     @app.post("/api/sync/batch/{batch_id}/page/{page}/rotate")
     def sync_rotate_page(batch_id: str, page: str, request: Request, body: dict[str, Any] | None = None) -> Any:
         """The reviewer's orientation fix (2026-08-16). The intent is the
@@ -705,7 +758,7 @@ def build_app(
         # 0 is a real intent: the reviewer's rotate-back to the ORIGINAL
         # orientation (the UI's % 4 range) — rejecting it defaulted to a
         # wrong +90 (bot review, 2026-08-16)
-        if body and isinstance(body.get("quarters"), int) and 0 <= body["quarters"] <= 3:
+        if body and isinstance(body.get("quarters"), int) and body["quarters"] in range(QUARTERS_PER_TURN):
             quarters = body["quarters"]
         try:
             rotated = rotate_page(batch_id, page, quarters, work_dir)
@@ -714,19 +767,21 @@ def build_app(
         if not rotated:
             return {"ok": True, "batch_id": batch_id, "page": page, "processing": False}
         set_page_job(batch_id, page, "transcribing", work_dir)
+        (_reprocess or _reprocess_page)(batch_id, page)
+        return {"ok": True, "batch_id": batch_id, "page": page, "processing": True}
 
-        def _job() -> None:
-            try:
-                people = [str(p["name"]) for p in _read_projection("people.json", "people") if p.get("name")]
-                places = [str(p["name"]) for p in _read_projection("places.json", "places") if p.get("name")]
-                label = None
-                with contextlib.suppress(RegistryError):
-                    label = load_batch(batch_id, registry_dir).get("label")
-                reprocess_page_transcription(batch_id, page, work_dir, people=people, places=places, label=label)
-            except Exception:
-                logger.exception("reprocess failed for %s/%s", batch_id, page)
-
-        threading.Thread(target=_job, daemon=True).start()
+    @app.post("/api/sync/batch/{batch_id}/page/{page}/reread")
+    def sync_reread_page(batch_id: str, page: str, request: Request) -> Any:
+        """Retry a page's re-read after its last one failed (the reading
+        model was unreachable): clear the failed state, mark transcribing,
+        and re-run the reprocess over the CURRENT image. Orientation is
+        untouched — this only re-runs OCR (2026-08-16, PRD VR10 AC14)."""
+        if session_user(request) is None:
+            return JSONResponse({"ok": False, "error": "sign in to re-read pages"}, status_code=401)
+        if not BATCH_ID.match(batch_id) or not safe_page_name(page):
+            return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
+        set_page_job(batch_id, page, "transcribing", work_dir)
+        (_reprocess or _reprocess_page)(batch_id, page)
         return {"ok": True, "batch_id": batch_id, "page": page, "processing": True}
 
     @app.post("/api/sync/confirmations")
@@ -773,7 +828,7 @@ def build_app(
     return app
 
 
-def _lan_urls(port: int) -> list[str]:
+def lan_urls(port: int) -> list[str]:
     """Every non-loopback address this machine answers on, as http URLs.
     gethostbyname_ex misses hosts whose name doesn't resolve to the LAN
     interface — fall back to `hostname -I` (2026-08-05: this machine's
@@ -781,33 +836,34 @@ def _lan_urls(port: int) -> list[str]:
     try:
         addresses = socket.gethostbyname_ex(socket.gethostname())[2]
     except OSError:
-        addresses = []
+        return _urls_from(_hostname_i_addresses(), port)
     if not any(not a.startswith("127.") for a in addresses):
-        import subprocess
+        addresses = _hostname_i_addresses()
+    return _urls_from(addresses, port)
 
-        try:
-            addresses = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5).stdout.split()
-        except (OSError, subprocess.TimeoutExpired):
-            addresses = []
+
+def _hostname_i_addresses() -> list[str]:
+    """`hostname -I` output split on whitespace, or [] when it fails."""
+    try:
+        return subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5).stdout.split()
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+
+
+def _urls_from(addresses: list[str], port: int) -> list[str]:
     return [f"http://{addr}:{port}" for addr in addresses if not addr.startswith("127.")]
 
 
 def create_server(
-    store: FileStore,
-    data_dir: Path,
-    client: AIClient | None,
-    app_dir: Path,
+    config: ServerConfig,
     host: str = "127.0.0.1",
     port: int = 8124,
-    work_dir: Path | None = None,
-    outbox: Outbox | None = None,
-    registry_dir: Path | None = None,
+    _reprocess: Callable[[str, str], None] | None = None,
 ) -> Any:
-    """Build the uvicorn server with the given store/client/dirs (DI for
-    tests). ``Server`` is the running noun; tests drive this one."""
-    import uvicorn
-
-    app = build_app(store, data_dir, client, app_dir, work_dir=work_dir, outbox=outbox, registry_dir=registry_dir)
+    """Build the uvicorn server with the given config (DI for tests).
+    ``Server`` is the running noun; tests drive this one. ``_reprocess`` is
+    the injectable reprocess seam (tests stub it to avoid the real model)."""
+    app = build_app(config, _reprocess=_reprocess)
     return uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
 
 
@@ -822,32 +878,24 @@ class Server:
 
     def __init__(
         self,
-        store: FileStore,
-        data_dir: Path,
-        client: AIClient | None,
-        app_dir: Path,
+        config: ServerConfig,
         host: str = "127.0.0.1",
         port: int = 8124,
     ) -> None:
-        self.store = store
-        self.data_dir = Path(data_dir)
-        self.client = client
-        self.app_dir = Path(app_dir)
+        self.config = config
         self.host = host
         self.port = port
 
     def serve(self) -> None:
         """Run until interrupted — the surface the `loft serve` command starts."""
-        import uvicorn
-
         # a previous run's reprocess threads died with the process — any page
         # left "transcribing" demotes to "failed" (its text is stale; the
         # warning shows, never a silent half-done page, 2026-08-16)
         demote_stale_jobs(WORK_DIR)
-        app = build_app(self.store, self.data_dir, self.client, self.app_dir)
+        app = build_app(self.config)
         if self.host == "0.0.0.0":
-            for url in _lan_urls(self.port):
-                print(f"Serving {self.app_dir} at {url} (no-cache)")
+            for url in lan_urls(self.port):
+                print(f"Serving {self.config.app_dir} at {url} (no-cache)")
         else:
-            print(f"Serving {self.app_dir} on {self.host}:{self.port} (no-cache)")
+            print(f"Serving {self.config.app_dir} on {self.host}:{self.port} (no-cache)")
         uvicorn.run(app, host=self.host, port=self.port, log_level="info")

@@ -25,7 +25,18 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from tools.layout import build_layout, load_vlm_boxes, write_layout
+from paddleocr import PaddleOCR
+from PIL import Image
+
+from tools.layout import (
+    admit_and_remap,
+    build_layout,
+    load_orientation_hint,
+    load_vlm_boxes,
+    multi_layout,
+    orientation_passes,
+    write_layout,
+)
 from tools.loft_paths import WORK_DIR
 
 # The proven engine config (spike, 2026-08-15) — the rec model rides along
@@ -73,8 +84,6 @@ def _bbox(poly: list[Any]) -> list[float]:
 def detect_page(engine: Any, image: Path) -> dict[str, Any]:
     """The raw detection output for one page: lines + per-word boxes in the
     original image's pixels."""
-    from PIL import Image
-
     with Image.open(image) as im:
         width, height = im.size
     first = engine.predict(input=str(image), return_word_box=True)[0]
@@ -85,10 +94,8 @@ def detect_page(engine: Any, image: Path) -> dict[str, Any]:
     _assert_original_space(polys, width, height)
     detections = []
     for i, poly in enumerate(polys):
-        words_out: list[dict[str, Any]] = []
         regions = word_regions[i] if word_regions is not None and i < len(word_regions) else []
-        for region in regions:
-            words_out.append({"box": _bbox(region)})
+        words_out: list[dict[str, Any]] = [{"box": _bbox(region)} for region in regions]
         detections.append(
             {
                 "box": _bbox(poly),
@@ -127,6 +134,37 @@ def layout_page(
     )
 
 
+def pass_at(
+    engine: Any, image: Path, degrees: int, ow: int, oh: int
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """One orientation pass (PRD VR15): rotate the page so that
+    orientation is upright, detect, and admit only the lines the
+    recognizer reads as real text at this orientation — remapped to the
+    original image's frame. Returns (kept, rejected)."""
+    rotated = image.with_name(f"{image.stem}.rot{degrees}.png")
+    Image.open(image).rotate(-degrees, expand=True).save(rotated)
+    try:
+        raw = detect_page(engine, rotated)
+        return admit_and_remap(raw["detections"], degrees, (ow, oh), (raw["width"], raw["height"]))
+    finally:
+        rotated.unlink(missing_ok=True)
+
+
+def layout_page_multi(engine: Any, image: Path, orientations: list[int]) -> dict[str, Any]:
+    """The multi-orientation layout (PRD VR15): a detection pass at each
+    reported orientation, recognition-driven admission, one combined
+    layout with per-line orientations — 0° lines first, then each next
+    direction. The oriented image is already the pipeline's right way up,
+    so the initial display rotation stays 0."""
+    with Image.open(image) as im:
+        ow, oh = im.size
+    passes: list[tuple[int, list[dict[str, Any]]]] = []
+    for degrees in orientations:
+        kept, _ = pass_at(engine, image, degrees, ow, oh)
+        passes.append((degrees, kept))
+    return multi_layout(image.name, ow, oh, passes)
+
+
 def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engine: Any) -> int:
     """Layout the batch's oriented pages; page_names narrows the set (None =
     every oriented page). Returns 0 on success."""
@@ -147,12 +185,21 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
         if not vlm_path.exists():
             print(f"layout: no guess text for {image.name} — skipping", file=sys.stderr)
             continue
-        selfreport_path = guess_dir / f"{image.stem}.selfreport.json"
-        selfreport = None
-        if selfreport_path.exists():
-            selfreport = json.loads(selfreport_path.read_text(encoding="utf-8"))
-        vlm_boxes = load_vlm_boxes(guess_dir / f"{image.stem}.vlm.json")
-        layout = layout_page(engine, image, vlm_path.read_text(encoding="utf-8"), selfreport, vlm_boxes)
+        orientations = load_orientation_hint(guess_dir / f"{image.stem}.orientation.json")
+        if orientations:
+            passes = orientation_passes(orientations)
+            layout = layout_page_multi(engine, image, passes)
+            print(
+                f"layout: {image.name} multi-orientation {orientations} "
+                f"(passes {passes}) -> {len(layout['lines'])} lines"
+            )
+        else:
+            selfreport_path = guess_dir / f"{image.stem}.selfreport.json"
+            selfreport = None
+            if selfreport_path.exists():
+                selfreport = json.loads(selfreport_path.read_text(encoding="utf-8"))
+            vlm_boxes = load_vlm_boxes(guess_dir / f"{image.stem}.vlm.json")
+            layout = layout_page(engine, image, vlm_path.read_text(encoding="utf-8"), selfreport, vlm_boxes)
         out = guess_dir / f"{image.stem}.layout.json"
         write_layout(layout, out)
         flagged = sum(1 for line in layout["lines"] for w in line["words"] if w["conf"] == 0.0)
@@ -164,8 +211,6 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
 
 
 def main(argv: list[str] | None = None) -> int:
-    from paddleocr import PaddleOCR
-
     parser = argparse.ArgumentParser(prog="layout_detect", description="The layout pass per batch")
     parser.add_argument("batch_id")
     parser.add_argument("pages", nargs="*", help="optional page names to limit the pass")

@@ -39,6 +39,16 @@ VLM_SYSTEM = (
     "every glyph of that line, nothing else."
 )
 
+# A box smaller than a third of the median line height is degenerate — the
+# model's boxes collapse at the page's bottom edge (2026-08-16), so the
+# line falls back to the detector's association.
+DEGENERATE_BOX_DIVISOR = 3
+
+BOX_COORDINATE_COUNT = 4  # a box is [x0, y0, x1, y1]
+
+_CODE_FENCE = "```"  # the markdown fence the model sometimes wraps its JSON in
+_CODE_FENCE_LEN = len(_CODE_FENCE)
+
 
 def transcription_system_with_context(
     *,
@@ -116,11 +126,23 @@ def parse_transcription_response(text: str) -> tuple[str, dict[int, list[float]]
     entries = data.get("lines")
     if not isinstance(entries, list):
         return text.strip(), None
+    collected = _collect_line_entries(entries)
+    if collected is None:
+        return text.strip(), None
+    texts, boxes = collected
+    return "\n".join(texts), (_drop_degenerate_boxes(boxes) or None)
+
+
+def _collect_line_entries(entries: list[Any]) -> tuple[list[str], dict[int, list[float]]] | None:
+    """The transcription lines and their boxes from the model's "lines"
+    array — blank lines carry no box (the .txt's own split skips them too,
+    so the indexes stay aligned). None when an entry is not a usable
+    object — the caller falls back to the plain-text form."""
     texts: list[str] = []
     boxes: dict[int, list[float]] = {}
     for entry in entries:
         if not isinstance(entry, dict):
-            return text.strip(), None
+            return None
         t = entry.get("text")
         if not isinstance(t, str) or not t.strip():
             continue  # blank lines carry no box — the .txt split skips them too
@@ -128,21 +150,33 @@ def parse_transcription_response(text: str) -> tuple[str, dict[int, list[float]]
         texts.append(t)
         b = entry.get("box")
         if (
-            isinstance(b, list) and len(b) == 4 and all(isinstance(v, (int, float)) and v == v for v in b)  # not NaN
+            isinstance(b, list)
+            and len(b) == BOX_COORDINATE_COUNT
+            and all(isinstance(v, (int, float)) and v == v for v in b)
         ):
             boxes[i] = [float(v) for v in b]
-    # Sanity: the model's boxes COLLAPSE at the page's bottom edge (page-05's
-    # last four lines came back as a 9px sliver at y4633-4642, 2026-08-16) —
-    # any box smaller than a third of the median line height is degenerate;
-    # the line falls back to the detector's association.
-    if boxes:
-        heights = sorted(b[3] - b[1] for b in boxes.values())
-        median_h = heights[len(heights) // 2]
-        if median_h > 0:
-            boxes = {i: b for i, b in boxes.items() if b[3] - b[1] >= median_h / 3}
-    return "\n".join(texts), (boxes or None)
+    return texts, boxes
 
 
+def _drop_degenerate_boxes(boxes: dict[int, list[float]]) -> dict[int, list[float]]:
+    """Drop the model's degenerate boxes — they COLLAPSE at the page's
+    bottom edge (page-05's last four lines came back as a 9px sliver at
+    y4633-4642, 2026-08-16): any box smaller than a third of the median
+    line height is unusable; the line falls back to the detector's
+    association."""
+    if not boxes:
+        return boxes
+    heights = sorted(y1 - y0 for x0, y0, x1, y1 in boxes.values())
+    median_h = heights[len(heights) // 2]
+    if median_h > 0:
+        boxes = {
+            i: [x0, y0, x1, y1] for i, (x0, y0, x1, y1) in boxes.items() if y1 - y0 >= median_h / DEGENERATE_BOX_DIVISOR
+        }
+    return boxes
+
+
+# (model/system/user_text/base_url/api_key/timeout) — a parameter object would add a type for the one required argument
+# lucidlint: ignore long-param-list one required argument (image) plus defaulted call options
 def transcribe_image_vlm(
     image: Path,
     *,
@@ -184,6 +218,7 @@ def transcribe_image_vlm(
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = json.loads(response.read().decode("utf-8"))
+    # lucidlint: ignore broad-except the module's contract — every failure surfaces as VlmError
     except Exception as exc:  # network or API errors surface loudly
         raise VlmError(f"vision model call failed: {exc}") from exc
     try:
@@ -234,8 +269,8 @@ def _extract_json(text: str) -> Any:
     stripped = text.strip()
     if stripped.startswith("```"):
         stripped = stripped.split("\n", 1)[-1]
-        if stripped.endswith("```"):
-            stripped = stripped[:-3]
+        if stripped.endswith(_CODE_FENCE):
+            stripped = stripped[:-_CODE_FENCE_LEN]
     try:
         return json.loads(stripped)
     except json.JSONDecodeError:
@@ -244,5 +279,36 @@ def _extract_json(text: str) -> Any:
             try:
                 return json.loads(stripped[start : end + 1])
             except json.JSONDecodeError:
-                pass
+                raise VlmError(f"self-report returned no JSON: {text[:300]}") from None
         raise VlmError(f"self-report returned no JSON: {text[:300]}") from None
+
+
+_ORIENTATION_SYSTEM = "You analyse document layouts precisely. Reply with the requested JSON only."
+_ORIENTATION_PROMPT = (
+    "This is a photo of a document page. Its text may run in more than one direction "
+    "(for example a message upright and another block rotated 90 degrees). Identify every "
+    "distinct text region and its orientation relative to the image exactly as shown. "
+    "Reply with JSON only: "
+    '{"orientation_hint": [{"region": "<short name>", "degrees": 0|90|180|270, '
+    '"approx_box": [x0, y0, x1, y1]}]}'
+)
+
+
+def orientation_report(image: Path) -> list[dict[str, Any]]:
+    """The text orientations present on a page, structured — used by the
+    layout stage when the arbiter's scores suggest more than one direction
+    (PRD VR15). Returns the orientation_hint list; [] when the model sees a
+    single direction or cannot answer."""
+    text, _ = transcribe_image_vlm(
+        image,
+        system=_ORIENTATION_SYSTEM,
+        user_text=_ORIENTATION_PROMPT,
+    )
+    try:
+        data = _extract_json(text)
+    except VlmError:
+        return []
+    hints = data.get("orientation_hint") if isinstance(data, dict) else None
+    if not isinstance(hints, list):
+        return []
+    return [h for h in hints if isinstance(h, dict) and h.get("degrees") in (0, 90, 180, 270)]

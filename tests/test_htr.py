@@ -27,4 +27,3 @@ def test_line_boxes_orders_by_reading_order() -> None:
     ]
     boxes = line_boxes(lines)
     assert boxes[0][1] < boxes[1][1]  # top-to-bottom, not detection order
-

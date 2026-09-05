@@ -16,6 +16,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: write
+      checks: write # the bot publishes its review as a check run (github.publish_as_check_run)
       actions: read # the fail-loud check reads the bot's own log for the failure reason
     steps:
       - uses: actions/checkout@v7

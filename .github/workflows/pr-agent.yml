@@ -43,13 +43,15 @@ jobs:
           print(f'::notice::credential len={len(key)} suffix=...{key[-4:]} prefix={key[:5]}')
           url = os.environ.get('GW_URL', '').rstrip('/') + '/chat/completions'
           print(f'::notice::probe url={url}')
-          body = json.dumps({'model': 'dynamic/fallback2', 'messages': [{'role': 'user', 'content': 'say ok'}], 'max_tokens': 5}).encode()
-          req = urllib.request.Request(url, data=body, headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json', 'User-Agent': 'opencode/1.14.20'})
-          try:
-              r = urllib.request.urlopen(req, timeout=60)
-              print(f'::notice::probe HTTP {r.status}')
-          except urllib.error.HTTPError as e:
-              print(f'::error::probe HTTP {e.code} {e.read().decode(chr(117)+chr(116)+chr(102)+chr(45)+chr(56), chr(114)+chr(101)+chr(112)+chr(108)+chr(97)+chr(99)+chr(101))[:120]}')
+          for label, fill in (('small', 10), ('large', 20000)):
+              content = 'review this diff. ' + ('context line about the layout pipeline bands. ' * fill)
+              body = json.dumps({'model': 'dynamic/fallback2', 'messages': [{'role': 'user', 'content': content}], 'max_tokens': 5}).encode()
+              req = urllib.request.Request(url, data=body, headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json', 'User-Agent': 'opencode/1.14.20'})
+              try:
+                  r = urllib.request.urlopen(req, timeout=120)
+                  print(f'::notice::{label} ({len(body)//1024}KB) probe HTTP {r.status}')
+              except urllib.error.HTTPError as e:
+                  print(f'::error::{label} ({len(body)//1024}KB) probe HTTP {e.code} {e.read().decode(chr(117)+chr(116)+chr(102)+chr(45)+chr(56), chr(114)+chr(101)+chr(112)+chr(108)+chr(97)+chr(99)+chr(101))[:100]}')
           "
       # Fail loud: a silently-failed review reads as a green check. The check
       # matches "## PR Reviewer Guide" comments (the review never contains the

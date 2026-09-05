@@ -61,18 +61,21 @@ export function reconcileEdits(edits, layout) {
   if (!layout || !layout.lines) return edits;
   const lines = layout.lines;
   const result = {};
-  for (const [idxStr, text] of Object.entries(edits)) {
+  for (const [idxStr, edit] of Object.entries(edits)) {
     const idx = Number(idxStr);
+    // the old string format (the verbatim mark-fine) doubles as its own
+    // original; the object format records what it changed FROM
+    const original = typeof edit === "string" ? edit : (edit?.original ?? "");
     const lineAtIdx = lines.find((l) => l.index === idx);
-    if (lineAtIdx && lineAtIdx.text === text) {
-      result[idx] = text; // the line's text is unchanged — the edit holds
+    if (lineAtIdx && lineAtIdx.text === original) {
+      result[idx] = edit; // the line still carries what the edit changed FROM
       continue;
     }
     // The line at this index changed (or moved). Keep the edit only when
-    // its exact text exists elsewhere in the layout.
-    const matched = lines.find((l) => l.text === text);
+    // its ORIGINAL text exists elsewhere in the layout.
+    const matched = lines.find((l) => l.text === original);
     if (matched && !result[matched.index]) {
-      result[matched.index] = text;
+      result[matched.index] = edit;
       continue;
     }
     // The transcription changed under this edit — orphan it.
@@ -271,7 +274,7 @@ export function correctedPageText(doc, page, edits) {
   const layout = doc.layouts?.[page];
   if (layout) {
     const pageEdits = edits[page] || {};
-    return layout.lines.map((l) => pageEdits[l.index] ?? l.text).join("\n");
+    return layout.lines.map((l) => pageEdits[l.index]?.text ?? pageEdits[l.index] ?? l.text).join("\n");
   }
   return doc.texts?.[page] || "";
 }
@@ -1085,7 +1088,34 @@ export function fitRect(paneW, paneH, rect) {
  *  width-fit keeps the letter readable AND centered (the x-extent fills
  *  the view), and the vertical scroll reveals the rest. */
 export function widthFitRect(paneW, paneH, rect) {
-  return { x: rect.x, y: rect.y, width: rect.width, height: (rect.width * paneH) / paneW };
+  // The height cap (2026-08-28): on a pane taller than the content's
+  // aspect, the aspect-slice exceeds the content — the view shows the
+  // WHOLE writing, the pan range is ~0, and the wheel's pan is
+  // swallowed (page-01's fit: view 2376px vs writing 2336px, the
+  // range 25px of margin — the third round of the sync bug). Capping
+  // the view at 80% of the content guarantees the pan room; the
+  // vertical scroll reveals the rest, and the transcript can follow.
+  return {
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: Math.min((rect.width * paneH) / paneW, rect.height * 0.8),
+  };
+}
+
+/** The wheel's two behaviors (2026-08-28): PAN when the view shows a
+ *  slice of the writing (the transcript-follow works), ZOOM when the
+ *  view shows ~all of the writing's vertical extent — the degenerate
+ *  state where the pan can never change the visible line (the
+ *  pinch-zoom-out can reach it; the fit's cap cannot). A pure
+ *  classifier, testable without the DOM. */
+export function wheelZoomOrPan(view, layout) {
+  const lines = (layout?.lines || []).filter((l) => l.box);
+  if (!lines.length) return "pan"; // the layout-less pages: the band fit always leaves the room
+  const tops = lines.map((l) => l.box[1]);
+  const bottoms = lines.map((l) => l.box[3]);
+  const writingH = Math.max(...bottoms) - Math.min(...tops);
+  return view.height >= writingH * 0.9 ? "zoom" : "pan";
 }
 
 /** Paint the current view: the layer's transform maps original-image points
@@ -1209,8 +1239,13 @@ session.resizer?.disconnect();
       session.visibleLine = saved.selLine;
       session.readRotation = saved.readRotation ?? session.readRotation;
       if (saved.view) {
+        // Restore the view, but NOT contentTop: the pan floor is the
+        // PAGE's writing-top anchor (the bandAnchor computed above, 0
+        // for a layout-less page) — overwriting it with the saved
+        // position made the image unable to pan back up, and the
+        // layout-less fractional sync mapped through the wrong range
+        // (2026-08-28: page-01's transcript would not show its top).
         session.view = saved.view;
-        session.contentTop = saved.view.y;
       } else {
         initialView(session, session.contentTop);
       }
@@ -1329,10 +1364,52 @@ session.resizer?.disconnect();
     window.addEventListener("pointercancel", onUp);
   };
   imgBox.addEventListener("pointerdown", onDown);
-  // clicking the image's text opens that line's edit (user 2026-08-16:
-  // "the edit box should open if I click on the corresponding text on the
-  // image"); a click on empty image (a margin) accepts the open edit. The
-  // click after a real drag is suppressed by the browser (a moved drag is
+  // Mouse-wheel pans the image vertically (user, 2026-08-26: "when I
+  // scroll the image the transcript isn't scrolling with it" — there
+  // was NO wheel handler at all: the wheel scrolled the page, the view
+  // never moved, and the dual-pane sync never fired). The pan runs
+  // through renderView, which syncs the transcript.
+  imgBox.addEventListener(
+    "wheel",
+    (e) => {
+      if (!session.view) return;
+      e.preventDefault();
+      // The fit zoom shows the whole writing — the view's height ~=
+      // the writing's height, so the pan never changes the visible
+      // line and the transcript can never follow (user, 2026-08-28:
+      // "it STILL doesn't scroll the transcript when you scroll the
+      // image"; page-01's fit: view 2376px vs writing 2336px, the pan
+      // range 25px of margin). When the view shows ~all of the
+      // writing's vertical extent the wheel ZOOMS — the standard
+      // image-viewer behavior — giving the view a pan range, after
+      // which the pan + the transcript-follow work.
+      const layout = doc.layouts?.[page];
+      if (wheelZoomOrPan(session.view, layout) === "zoom") {
+        const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
+        const k = e.deltaY > 0 ? 1.35 : 1 / 1.35;
+        const rect = imgBox.getBoundingClientRect();
+        session.view = zoomView(
+          session.view,
+          k,
+          imgBox.clientWidth,
+          imgBox.clientHeight,
+          e.clientX - rect.left,
+          e.clientY - rect.top,
+          f.dw,
+        );
+        clampView(session);
+        session.userMoved = true;
+        renderView(session);
+        return;
+      }
+      const s = paneScale(session);
+      session.view.y += e.deltaY / s;
+      clampView(session);
+      session.userMoved = true;
+      renderView(session);
+    },
+    { passive: false },
+  );
   // not a click).
   imgBox.addEventListener("click", (e) => {
     e.stopPropagation(); // the imgPane's click-away must not fight this
@@ -1341,7 +1418,6 @@ session.resizer?.disconnect();
     const s = paneScale(session);
     const imageX = session.view.x + (e.clientX - rect.left) / s;
     const imageY = session.view.y + (e.clientY - rect.top) / s;
-    // the click must land INSIDE a line's box (x and y) — a click on the
     // blank margin is a click-away, not a selection (user 2026-08-16)
     const layout = doc.layouts?.[page];
     let idx = null;
@@ -1388,9 +1464,20 @@ function syncImageFromTx(session) {
   const doc = batch.documents[docIndex];
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page];
-  if (!layout) return;
-  // the top visible line: the first whose CONTENT position crosses the
-  // scroll — offsetTop is root-relative, scrollTop is content-relative,
+  if (!layout) {
+    // A LAYOUT-LESS page (the refused set): no boxes to pan to, but
+    // the document still has position — the transcript's scroll
+    // FRACTION maps to the same fraction of the page height (user,
+    // 2026-08-26: "scrolling the transcript still does nothing to the
+    // image" on the phone — doc 0's refused pages).
+    const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
+    const span = Math.max(1, txb.scrollHeight - txb.clientHeight);
+    const frac = Math.min(1, Math.max(0, txb.scrollTop / span));
+    session.view.y = frac * Math.max(0, f.dh - session.view.height);
+    clampView(session);
+    renderView(session);
+    return;
+  }
   // so subtract the pane's own root offset (2026-08-16: comparing them
   // raw picked a line ~6 rows off on the phone — the panes drifted apart)
   const base = txb.offsetTop;
@@ -1477,10 +1564,31 @@ function syncTxFromImage(session) {
   const doc = batch.documents[docIndex];
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page];
-  if (!layout) return;
+  if (!layout) {
+    // The refused set's fractional mirror: the view's fraction of the
+    // page height maps to the transcript's scroll fraction (user,
+    // 2026-08-26 — the phone report).
+    const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
+    const span = Math.max(1, txb.scrollHeight - txb.clientHeight);
+    const frac = Math.min(1, Math.max(0, session.view.y / Math.max(1, f.dh - session.view.height)));
+    const target = frac * span;
+    if (Math.abs(txb.scrollTop - target) < 2) return;
+    session.syncLock = true;
+    txb.scrollTop = target;
+    requestAnimationFrame(() => {
+      session.syncLock = false;
+    });
+    return;
+  }
   const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
+  // The offsets are re-queried AT the sync (2026-08-28): the query,
+  // the target, and the scrollTop assignment are synchronous — no
+  // render can interleave — so the cached copy added staleness (a
+  // render after the cache with different content) without protection
+  // (the 2026-08-22 render-between-query bug needs an async gap the
+  // sync no longer has).
   const base = txb.offsetTop;
-  const offsets = session.txOffsets || [...txb.querySelectorAll(".rv-line")].map((el) => el.offsetTop - base);
+  const offsets = [...txb.querySelectorAll(".rv-line")].map((el) => el.offsetTop - base);
   const target = lineScrollFor(session.view.y, layout, f, offsets);
   if (Math.abs(txb.scrollTop - target) < 2) return;
   session.syncLock = true;
@@ -1905,7 +2013,15 @@ function applyEdit(session, lineIndex, text) {
   const doc = batch.documents[docIndex];
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page] || null;
-  session.edits[page] = { ...(session.edits[page] || {}), [lineIndex]: text };
+  // The edit records what it CHANGED FROM (2026-08-28): the reconcile's
+  // exact-match must compare the line's CURRENT text against the
+  // ORIGINAL — matching against the correction itself could never hold,
+  // so every correction was orphaned at the next render and the user's
+  // edits never applied. The layout-less pages (no line) record an
+  // empty original; their edits are never reconciled.
+  const line = layout?.lines.find((l) => l.index === lineIndex);
+  const original = line?.text ?? "";
+  session.edits[page] = { ...(session.edits[page] || {}), [lineIndex]: { text, original } };
   session.from = { page, line: lineIndex }; // the tour continues AFTER this line (finding 2)
   saveEdits(batch.batchId, docIndex, session.edits);
   session.editing = null;
@@ -1957,10 +2073,18 @@ function applyMarkedFine(session, lineIndex) {
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page];
   const line = layout?.lines.find((l) => l.index === lineIndex);
-  if (!line) return;
-  applyEdit(session, lineIndex, line.text);
+  if (line) {
+    applyEdit(session, lineIndex, line.text);
+    return;
+  }
+  // A LAYOUT-LESS page (the refused set — doc 0's pages): the surface
+  // falls back to the raw guess lines, which still get approve buttons.
+  // The old code silently returned here — the FIRST click did nothing
+  // (user, 2026-08-26: "the check boxes don't work the first time").
+  const fallback = (doc.texts?.[page] || "").split("\n").filter(Boolean);
+  const text = fallback[lineIndex];
+  if (text !== undefined) applyEdit(session, lineIndex, text);
 }
-
 /** Wrap the input's selection in a format marker (~~ strike, ~ underline)
  *  and keep the selection on the wrapped text — the edit row's format
  *  buttons (2026-08-16). With no selection, drop the markers at the cursor
@@ -2046,7 +2170,7 @@ function renderTx(session) {
 
   lines.forEach((line) => {
     const corrected = reconciled[line.index];
-    const shown = corrected ?? line.text;
+    const shown = corrected?.text ?? corrected ?? line.text;
     const sel = session.selLine === line.index ? " rv-line--sel" : "";
     // one dense row: the text + the actions — no number gutter (the line
     // numbers ate screen real estate for nothing, user 2026-08-16: "why?")
@@ -2142,17 +2266,22 @@ function renderTx(session) {
         ));
       }
       lineEl.append(textEl);
-      // "mark this line fine" — a checked line needs no text change (user,
-      // 2026-08-16: the verbatim text counts as verified). On EVERY line
-      // (2026-08-17): the multi-orientation pages are provisional — the
-      // reviewer checks each line as they read it. The button is a toggle:
-      // ○ unchecked (not yet verified), ✓ checked (verified). Clicking a
-      // checked line unchecks it (the edit is removed).
+      // "Mark this line as verified" — a checked line needs no text
+      // change (user, 2026-08-16: the verbatim text counts as
+      // verified). On EVERY line (2026-08-17): the multi-orientation
+      // pages are provisional — the reviewer checks each line as they
+      // read it. The control is the pattern library's LABELLED CHECKBOX
+      // (docs/UI.md: "labelled checkbox, obvious state") — the old
+      // icon-only ○/✓ circle with a hover tooltip told a first-time
+      // reviewer nothing, and the tooltip is invisible on mobile
+      // (user, 2026-08-28). The label's text names the action; the
+      // checkbox's state shows it. Clicking a checked line unchecks it
+      // (the edit is removed).
       const isChecked = corrected !== undefined || pageEdits[line.index] !== undefined;
       lineEl.append(
-        el("button", {
-          class: "rv-ok-btn" + (isChecked ? " rv-ok-btn--checked" : ""),
-          title: isChecked ? "Mark this line as not checked" : "Mark this line as fine",
+        el("label", {
+          class: "rv-ok" + (isChecked ? " rv-ok--checked" : ""),
+          title: isChecked ? "Mark this line as not verified" : "Mark this line as verified",
           onclick: (e) => {
             e.stopPropagation();
             if (isChecked) {
@@ -2168,7 +2297,10 @@ function renderTx(session) {
               applyMarkedFine(session, line.index);
             }
           },
-        }, isChecked ? "✓" : "○"),
+        }, [
+          el("input", { type: "checkbox", checked: isChecked }),
+          el("span", {}, "Verified"),
+        ]),
       );
       // every line is clickable — one click enters edit (user, 2026-08-16);
       // clicking the already-editing line's own input must not re-render
@@ -2188,12 +2320,6 @@ function renderTx(session) {
     session.txBody.querySelector(".rv-line--sel")?.scrollIntoView({ block: "nearest" });
   }
   session.lastSelRendered = session.selLine;
-  // the dual-pane sync's offsets — recorded at the render, used by the
-  // sync (2026-08-22: the sync re-queried the DOM per event, so a render
-  // between the query and the scroll could hand it stale positions; the
-  // render's own data is the only source the sync should read)
-  const base = txb.offsetTop;
-  session.txOffsets = [...txb.querySelectorAll(".rv-line")].map((el) => el.offsetTop - base);
 }
 
 /** Confirm & Next: the last page confirms the document through the sync

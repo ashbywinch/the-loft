@@ -142,6 +142,13 @@ class TextExtentGate(Gate):
     def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
         findings: list[str] = []
         for line in layout.get("lines", []):
+            # the ink-layout's labels are the VLM's reads of its
+            # ink-truth boxes (2026-08-28): a short read is a TEXT
+            # error the reviewer fixes in the UI — the box-level gates
+            # already vetted the geometry. The pieces-based lines
+            # keep the check (a mismatch there means a wrong box).
+            if line.get("box_source") == "ink-layout":
+                continue
             box = _boxed(line)
             if not box:
                 continue

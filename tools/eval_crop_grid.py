@@ -53,7 +53,7 @@ def _content_bounds(layout: dict[str, Any]) -> tuple[float, float, float, float]
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def _read_crop(
+def read_crop(
     crop: CropReading,
     image_path: Path,
     tmp: Path,
@@ -115,7 +115,7 @@ def _read_crop(
             # the +90 rotation's inverse: the rotated frame's height is
             # the crop's width (pinned empirically 2026-08-22)
             rot_h = int(crop.w)
-            boxes2 = {li: _remap_rotated(b, rot_h) for li, b in boxes2.items()}
+            boxes2 = {li: remap_rotated(b, int(crop.h), rot_h) for li, b in boxes2.items()}
             plain, boxes, tokens = plain2, boxes2, tokens + int(usage2.get("total_tokens", 0) or 0)
             print(f"crop {index}: vertical text — rotated +90 and re-read", file=sys.stderr)
     if plain is None:
@@ -140,12 +140,21 @@ def _vertical_boxes(boxes: dict[int, list[float]]) -> bool:
     return hs[len(hs) // 2] > ws[len(ws) // 2] * 1.2
 
 
-def _remap_rotated(box: list[float], rot_h: int) -> list[float]:
-    """The box in the +90-rotated frame -> the original crop frame. The
-    +90 rotation maps (x, y) -> (y, H' - x); the inverse is
-    x = H' - y', y = x' — pinned empirically (2026-08-22)."""
-    x0, y0, x1, y1 = box
-    return [float(rot_h - y1), float(x0), float(rot_h - y0), float(x1)]
+def remap_rotated(box: list[float], rot_w: int, rot_h: int) -> list[float]:
+    """The NORMALIZED box (0-1000) in the +90-rotated frame -> the
+    original crop frame's pixels. The +90 rotation maps (x, y) -> (y,
+    H' - x); the inverse is x = H' - y', y = x'. The normalized box
+    must scale to the rotated frame's pixels FIRST — the 2026-08-22
+    bug used the normalized y' directly against the pixel height, and
+    the message's strips landed ~1000px off. The x-order flips too
+    (the panel's x increases as the rotated frame's y decreases)."""
+    x0n, y0n, x1n, y1n = box
+    return [
+        rot_h - (y1n / 1000) * rot_h,
+        (x0n / 1000) * rot_w,
+        rot_h - (y0n / 1000) * rot_h,
+        (x1n / 1000) * rot_w,
+    ]
 
 
 def _anchor_agreement(assembled: dict[str, Any], layout: dict[str, Any]) -> tuple[list[float], int]:
@@ -191,7 +200,7 @@ def run(
     started = monotonic()
     with tempfile.TemporaryDirectory() as tmp:
         for i, crop in enumerate(crops):
-            read = _read_crop(crop, image_path, Path(tmp), i, model, base_url, api_key)
+            read = read_crop(crop, image_path, Path(tmp), i, model, base_url, api_key)
             if read is None:
                 failed += 1
                 continue

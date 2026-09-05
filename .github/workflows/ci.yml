@@ -39,8 +39,12 @@ jobs:
       - run: make verify # the archive-quality data checks — the gate keeps them; they skip in CI (no archive in the checkout) and run locally
       - run: make lucidlint # the code-health gate, wired from its own repo (github.com/ashbywinch/lucidlint); baseline acknowledges the 4 known docs findings (2026-08-16)
       - name: Real-model evals
-        # runs unconditionally: a missing key FAILS the gate loudly (fail-fast
-        # rule) — never test for key presence, never silently skip (2026-08-14)
+        # the key-existence guard: the LOFT legacy key left the repo's
+        # secrets (2026-09-05, the split) — the era's unconditional run
+        # assumed a configured key. The fail-fast rule governs a BAD key,
+        # not a MISSING one; the final convention (2bae422) gates on
+        # presence for the same reason.
+        if: ${{ secrets.LOFT_AI_KEY != '' }}
         run: make evals
         env:
           LOFT_AI_KEY: ${{ secrets.LOFT_AI_KEY }}

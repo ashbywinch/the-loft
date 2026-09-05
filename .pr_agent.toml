@@ -7,7 +7,11 @@ model = "openai/dynamic/fallback2"
 custom_model_max_tokens = 128000
 max_model_tokens = 128000
 ai_timeout = 1800
-fallback_models = []
+# the intermittent gateway-layer 401 (2026-09-04/05: "Invalid API key"
+# mid-run, self-recovering) killed whole reviews — one model, no second
+# chance. The client owns retries (2026-08-19 decision), and this is the
+# model-level retry: the second route rides out a transient rejection.
+fallback_models = ["openai/dynamic/fallback"]
 repo_context_from_default_branch = false
 repo_context_files = [
     "docs/prd/PRD.md",
@@ -55,3 +59,13 @@ push_commands = ["/review -i", "/improve"]
 # 2026-08-19 decision, skill://cloudflare-ai-gateway) and a long review gets
 # a first-byte window.
 extra_headers = '{"cf-aig-max-attempts": "0", "cf-aig-request-timeout": "300000"}'
+
+[github]
+# The review publishes as a COMPLETED "PR Agent - Review" check run on the
+# head commit — created only with the review output text in hand
+# (v0.41.1 github_provider._publish_check_run), so the repo's fail-loud
+# gate (tools/check_review_posted.py) can key on the output artifact
+# instead of trusting that the action step "succeeded" (the 2026-09-04
+# 401 incident ran to completion while producing nothing). The workflow
+# grants checks: write for this.
+publish_as_check_run = true

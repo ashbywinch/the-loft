@@ -9,7 +9,7 @@ dependencies = [
     "dateparser>=1.2.0",
     "uncertainties>=3.2.3",
     "open-clip-torch>=2.24",
-    "transformers>=4.44,<5",
+    "transformers>=4.44,<6",
     "sentencepiece>=0.2.2",
     "protobuf>=7.35.1",
 ]

@@ -34,6 +34,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
 from urllib.error import HTTPError
 
@@ -210,7 +211,7 @@ def run_review_gate(fetch, env, failure_reason=None) -> int:
     commit = fetch(f"https://api.github.com/repos/{repo}/commits/{sha}", token)
     head_committed_at = commit["commit"]["committer"]["date"]
 
-    comments = fetch(f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments", token)
+    comments = _fetch_comments(fetch, f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments", token)
     # the review posts with the regular header ("## PR Reviewer Guide") or
     # the incremental form ("## Incremental PR Reviewer Guide" — the -i
     # path, 2026-08-11: the first incremental run posted exactly that and
@@ -232,6 +233,25 @@ def run_review_gate(fetch, env, failure_reason=None) -> int:
         print(f"::error::AI review did not post for commit {sha} — {reason}.")
         return 1
     return 0
+
+
+def _fetch_comments(fetch, url: str, token: str, attempts: int = 4, delay_s: float = 8.0) -> list:
+    """The comments list, polled: the bot posts its guide at the very end
+    of its step and GitHub's comments API lags a just-created comment by
+    seconds — a single immediate fetch raced the post and the gate failed
+    reviews that had succeeded (2026-09-06: PR 38's guide landed at
+    06:48:05Z while the gate's fetch at ~06:48:03 saw nothing). Poll until
+    the list is stable or the attempts are exhausted; the failure path
+    then reports the real absence, not the race."""
+    for attempt in range(attempts):
+        comments = fetch(url, token)
+        covered = any(
+            c.get("body", "").startswith(("## PR Reviewer Guide", "## Incremental PR Reviewer Guide")) for c in comments
+        )
+        if covered or attempt == attempts - 1:
+            return comments
+        time.sleep(delay_s)
+    return comments
 
 
 def main() -> int:

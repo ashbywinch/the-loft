@@ -13,9 +13,11 @@ import os
 import subprocess
 from pathlib import Path
 
-# The layout stage's interpreter (2026-08-15): PaddleOCR lives in the
-# .venv-htr venv — the htr.py KRAKEN precedent.
-LAYOUT_INTERP = str(Path(__file__).resolve().parent.parent / ".venv-htr" / "bin" / "python")
+# The layout stage's interpreter: §16.17's single-pass stage needs only
+# the main venv (urllib + PIL) — no detector engine, no .venv-htr
+# (2026-09-06: the paddle stack left the layout path with the
+# detect-then-match pipeline it served).
+LAYOUT_INTERP = str(Path(__file__).resolve().parent.parent / ".venv" / "bin" / "python")
 
 
 def run_layout(batch_id: str, work_dir: Path, page_names: list[str] | None = None) -> None:

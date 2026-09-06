@@ -123,6 +123,30 @@ def test_silent_skip_is_still_coverage_via_the_comment() -> None:
     )
 
 
+def test_comments_fetch_filters_since_the_head_commit() -> None:
+    """The comments fetch carries the since filter and a wide page: the
+    guide for the head commit must be server-side visible regardless of
+    how many older comments the PR carries (2026-09-06: PR 31's guide
+    sat beyond the default first-30 page and the gate never saw it)."""
+    seen: list[str] = []
+
+    def fetch(url: str, token: str):
+        seen.append(url)
+        if "check-runs" in url:
+            return {"check_runs": []}
+        if "/commits/" in url:
+            return {"commit": {"committer": {"date": "2026-09-06T06:45:58Z"}}}
+        if "comments" in url:
+            return []
+        raise AssertionError(url)
+
+    env = {"SHA": _SHA, "GITHUB_REPOSITORY": "org/repo", "PR_NUMBER": "7", "GITHUB_TOKEN": "t"}
+    gate.run_review_gate(fetch, env, failure_reason=lambda *a: "x", poll_attempts=1)
+    comments_calls = [u for u in seen if "comments" in u]
+    assert comments_calls, "the gate never fetched the comments"
+    assert "since=" in comments_calls[0] and "per_page=100" in comments_calls[0]
+
+
 def test_poll_catches_a_review_that_lands_moments_later() -> None:
     """The gate races the bot's publish: the guide posts at the very end
     of the bot step and the comments API lags it by seconds. The poll must

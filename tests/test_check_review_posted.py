@@ -16,7 +16,8 @@ _GUIDE = {"body": "## Incremental PR Reviewer Guide 🔍", "created_at": "2026-0
 def _gate(responses: dict, failure_reason=None) -> int:
     """The gate with an injected fetch and a stubbed failure-reason read —
     the repo's DI convention (fakes are objects/functions passed in, the
-    global environment never touched)."""
+    global environment never touched). The poll delay is zeroed: a test
+    never sleeps on wall-clock time (docs/testing-standards.md)."""
     env = {
         "SHA": _SHA,
         "GITHUB_REPOSITORY": "org/repo",
@@ -30,7 +31,7 @@ def _gate(responses: dict, failure_reason=None) -> int:
                 return payload
         raise AssertionError(f"unexpected URL: {url}")
 
-    return gate.run_review_gate(fetch, env, failure_reason=failure_reason)
+    return gate.run_review_gate(fetch, env, failure_reason=failure_reason, poll_delay_s=0.0)
 
 
 def _review_check(status: str) -> dict:
@@ -126,7 +127,7 @@ def test_poll_catches_a_review_that_lands_moments_later() -> None:
         return _COMMIT
 
     env = {"SHA": _SHA, "GITHUB_REPOSITORY": "org/repo", "PR_NUMBER": "7", "GITHUB_TOKEN": "t"}
-    code = gate.run_review_gate(fetch, env, failure_reason=lambda *a: "unused")
+    code = gate.run_review_gate(fetch, env, failure_reason=lambda *a: "unused", poll_delay_s=0.0)
     assert code == 0
     assert state["calls"] >= 2
 

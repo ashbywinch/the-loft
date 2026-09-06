@@ -1221,7 +1221,7 @@ def test_layout_run_batch_fails_loud_on_explicit_page_without_guess(tmp_path: Pa
             raise AssertionError("engine must not run for a missing guess")
 
     # explicitly requested page with no guess text -> fatal
-    rc = run_batch("adopt-0001", ["p1.jpg"], work, _FakeEngine())
+    rc = run_batch("adopt-0001", ["p1.jpg"], work)
     assert rc == 2
 
 
@@ -1240,7 +1240,7 @@ def test_layout_run_batch_skips_implicit_page_without_guess(tmp_path: Path) -> N
         def predict(self, *args, **kwargs):  # pragma: no cover — must not be reached
             raise AssertionError("engine must not run for a missing guess")
 
-    rc = run_batch("adopt-0001", None, work, _FakeEngine())
+    rc = run_batch("adopt-0001", None, work)
     assert rc == 0  # batch continues, page skipped loudly
 
 
@@ -1261,12 +1261,13 @@ def test_reading_order_sorts_top_to_bottom_then_left_to_right() -> None:
 
 
 def test_layout_run_batch_returns_1_when_a_page_is_refused(tmp_path: Path) -> None:
-    """2026-08-22 (user: boxless lines must FAIL the pipeline run): a page
-    whose layout the gates refuse (a boxless line) makes the run FAIL —
-    return 1, never a silent 0 with the page missing from the output."""
-    from PIL import Image
+    """2026-08-22 (user: boxless lines must FAIL the pipeline run), now
+    via the single pass: a page whose segment response violates the
+    contract refuses the run — return 1, never a silent 0 with the page
+    missing from the output, and NEVER a fallback to the old
+    detect-then-match path (user, 2026-09-06)."""
+    import json as _json
 
-    _stub_paddleocr()
     from tools.layout_detect import run_batch
 
     work = tmp_path
@@ -1275,18 +1276,24 @@ def test_layout_run_batch_returns_1_when_a_page_is_refused(tmp_path: Path) -> No
     Image.new("RGB", (200, 100), (200, 200, 200)).save(work / "adopt-0001" / "oriented" / "p1.jpg")
     (work / "adopt-0001" / "ocr-guess" / "p1.txt").write_text("boxed line\nboxless line", encoding="utf-8")
 
-    class _FakeEngine:
-        def predict(self, input, return_word_box=False):
-            return [
-                {
-                    "dt_polys": [[[0, 0], [100, 0], [100, 20], [0, 20]]],
-                    "rec_texts": ["boxed line"],
-                    "rec_scores": [0.9],
-                    "text_word_region": [],
-                }
-            ]
+    payload = _json.dumps(
+        {"choices": [{"message": {"content": "I see a postcard."}, "finish_reason": "stop"}]}
+    ).encode()
 
-    rc = run_batch("adopt-0001", None, work, _FakeEngine())
+    def garbage_urlopen(req, timeout: float = 0):
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self) -> bytes:
+                return payload
+
+        return _Resp()
+
+    rc = run_batch("adopt-0001", None, work, urlopen=garbage_urlopen, api_key="test-key")
     assert rc == 1
 
 
@@ -2231,20 +2238,6 @@ def test_split_by_bands_keeps_single_line_boxes_whole() -> None:
     assert split_by_bands(box, im) == [box]
 
 
-def test_layout_skip_requires_ink_provenance() -> None:
-    """The stale-shield fix (2026-08-26): page-01/08/11 served garbage
-    for days because their OLD-pipeline layouts validated structurally
-    clean, so the clean-skip protected them from every pipeline fix.
-    Only layouts written by the current ink machinery (every line
-    carrying box_source='ink') earn the skip."""
-    from tools.eval_batch import layout_is_current
-
-    assert layout_is_current({"lines": [{"box_source": "ink", "box": [0, 0, 1, 1]}]})
-    assert not layout_is_current({"lines": [{"box_source": "model", "box": [0, 0, 1, 1]}]})
-    assert not layout_is_current({"lines": [{"box": [0, 0, 1, 1]}]})
-    assert not layout_is_current({"lines": []})
-
-
 def test_gate_b_ceiling_scales_with_glyph_size() -> None:
     """The scale-aware Gate B (2026-08-26): the absolute px/char ceiling
     assumed handwriting scale and refused correctly-boxed BIG print —
@@ -2315,434 +2308,3 @@ def test_selfreport_flags_match_by_word_content() -> None:
 
     # a word nowhere in the text flags nothing
     assert selfreport_words_by_line(lines, [{"line": 1, "word": "nonexistent"}]) == {}
-
-
-class TestRegionReadRescue:
-    """The rotated-region rescue (model-trial-report §6): when the plain
-    or multi-orientation build refuses (the detector misses boxes on
-    rotated text), the ink's x-projection regions are each read by the
-    VLM at their own orientation and the layout rebuilt from those
-    reads (2026-08-30 — the postcard eval's boxless refusals)."""
-
-    @staticmethod
-    def _fake_read(lines_per_region: dict[int, list[dict]]):
-        def fake(crop, image_path, tmp, index, model, base_url, api_key):
-            lines = lines_per_region.get(index)
-            if lines is None:
-                return None
-            return ([{**ln} for ln in lines], 100)
-
-        return fake
-
-    def test_stitches_region_lines_into_the_page_frame(self, tmp_path: Path) -> None:
-        from tools.layout_detect import _region_read_rescue
-
-        image = tmp_path / "back.jpg"
-        # two ink columns so the x-projection finds two regions (the
-        # message column and the address column, as on the postcard)
-        with Image.new("L", (2000, 1500), 255) as im:
-            from PIL import ImageDraw
-
-            d = ImageDraw.Draw(im)
-            d.rectangle([100, 200, 800, 1300], fill=0)
-            d.rectangle([1200, 150, 1900, 600], fill=0)
-            im.save(image)
-
-        calls: list[tuple] = []
-
-        def fake(crop, image_path, tmp, index, model, base_url, api_key):
-            # the upright address column's crop read (the rotated regions
-            # never reach read_crop). The line physically sits at region
-            # y 300-520; each band read reports it in the BAND's local
-            # frame — as a real read would — so the two bands' overlap
-            # reads stitch back to the same page box.
-            phys_y0, phys_y1 = 300.0, 520.0
-            local_y0 = phys_y0 - (crop.y - 150.0)
-            local_y1 = phys_y1 - (crop.y - 150.0)
-            return (
-                [
-                    {
-                        "text": "12 Kensington Gore",
-                        "box": [8.0, local_y0, 250.0, local_y1],
-                        "orientation": 0,
-                    }
-                ],
-                90,
-            )
-
-        # the pipeline's orientation report locates the known text: the
-        # message panel's lines at 90°, the address upright
-        report_lines = [
-            {"index": 0, "box": [50, 50, 950, 120], "degrees": 0},
-            {"index": 1, "box": [50, 150, 600, 400], "degrees": 90},
-        ]
-
-        class _FakeRotEngine:
-            """Serves the rotated panel's rec pass: three piece-boxes
-            aligned with the panel-read's bands so the row-clustering
-            measures the message's lines."""
-
-            def predict(self, input, return_word_box=False):
-                return [
-                    {
-                        "dt_polys": [
-                            [[100, 1121], [300, 1121], [300, 1168], [100, 1168]],
-                            [[100, 472], [300, 472], [300, 519], [100, 519]],
-                            [[100, 118], [300, 118], [300, 165], [100, 165]],
-                        ],
-                        "rec_texts": ["noise", "noise", "noise"],
-                        "rec_scores": [0.9, 0.9, 0.9],
-                    }
-                ]
-
-        import json as _json
-
-        def fake_transcribe(panel_path, *, model, system, base_url, api_key, max_tokens):
-            # the model's read of the whole rotated panel: the JSON the
-            # system prompt requests — clean lines + normalized boxes as
-            # y-bands across the rotated panel
-            return (
-                _json.dumps(
-                    {
-                        "lines": [
-                            {"text": "POST CARD.", "box": [10, 950, 990, 990]},
-                            {"text": "the message line", "box": [10, 400, 990, 440]},
-                            {"text": "With greetings", "box": [10, 100, 990, 140]},
-                        ]
-                    }
-                ),
-                {"total_tokens": 120},
-            )
-
-        layout = _region_read_rescue(
-            image,
-            tmp_path,
-            _FakeRotEngine(),
-            report_lines=report_lines,
-            seams=(fake, fake_transcribe),
-        )
-        assert layout is not None
-        # every contract line is present: the rotated panel's three lines
-        # plus the upright address column's read
-        # the reading order: the rotated columns' remapped x-positions
-        # left-to-right, then the upright address column
-        texts = [ln["text"] for ln in layout["lines"]]
-        assert texts == [
-            "POST CARD.",
-            "the message line",
-            "With greetings",
-            "12 Kensington Gore",
-        ], texts
-        # the rotated column's lines carry the vertical orientation (the
-        # ≥2-orientation contract); the upright region's stays 0
-        by_text = {ln["text"]: ln for ln in layout["lines"]}
-        assert by_text["the message line"]["orientation"] == 90, by_text["the message line"]
-        assert by_text["With greetings"]["orientation"] == 90
-        assert by_text["12 Kensington Gore"]["orientation"] == 0
-        # every stitched box stays inside the page and carries words with
-        # text (the review renders them)
-        for ln in layout["lines"]:
-            box = ln["box"]
-            assert 0 <= box[0] < box[2] <= layout["width"] and 0 <= box[1] < box[3] <= layout["height"], box
-            assert ln["words"] and all(w["word"] for w in ln["words"])
-        # the model used is the image route
-        assert all(c[4] == "dynamic/image" for c in calls)
-
-    def test_dedupe_drops_slabs_shadowed_by_longer_lines(self) -> None:
-        """§6 step 6: overlapping boxes claim the same region — keep the
-        longer transcription."""
-        from tools.layout_detect import _dedupe_region_lines
-
-        lines = [
-            {"text": "the message line", "box": [105, 250, 700, 290]},
-            {"text": "the mess", "box": [104, 248, 300, 292]},
-            {"text": "with greetings", "box": [110, 500, 400, 540]},
-        ]
-        kept = _dedupe_region_lines(lines)
-        assert [ln["text"] for ln in kept] == ["the message line", "with greetings"]
-
-    def test_returns_none_when_no_regions_or_no_reads(self, tmp_path: Path) -> None:
-        from tools.layout_detect import _region_read_rescue
-
-        blank = tmp_path / "blank.jpg"
-        Image.new("L", (800, 600), 255).save(blank)  # no ink — no regions
-        assert _region_read_rescue(blank, tmp_path, engine=None, seams=(self._fake_read({}), None)) is None
-
-        inked = tmp_path / "inked.jpg"
-        with Image.new("L", (2000, 1500), 255) as im:
-            # ink exists but every read fails
-            from PIL import ImageDraw
-
-            ImageDraw.Draw(im).rectangle([100, 100, 1500, 1400], outline=0)
-            im.save(inked)
-        assert _region_read_rescue(inked, tmp_path, engine=None, seams=(lambda *a, **k: None, None)) is None
-
-        assert _region_read_rescue(inked, tmp_path, engine=None, seams=(lambda *a, **k: None, None)) is None
-
-
-def test_split_by_column_gaps_separates_form_cells() -> None:
-    """The form-header class (2026-08-26): the birth cert's column
-    headers merged into one wide rec row — "Name, if any" in a 2927px
-    box, "Sex" in 1988px. The row-read path must split wide rows at
-    their COLUMN gaps first, so each cell gets its own clip and label.
-    Word gaps inside a cell must NOT split it."""
-    from PIL import Image, ImageDraw
-
-    from tools.ink import split_by_column_gaps
-
-    im = Image.new("L", (1000, 80), 255)
-    d = ImageDraw.Draw(im)
-    d.rectangle([20, 30, 180, 50], fill=0)  # cell 1: "No."
-    d.rectangle([450, 30, 700, 50], fill=0)  # cell 2: "When and where"
-    d.rectangle([720, 30, 800, 50], fill=0)  # cell 2 continues (word gap)
-    parts = split_by_column_gaps([0.0, 0.0, 1000.0, 80.0], im)
-    assert len(parts) == 2, parts
-    left, right = sorted(parts, key=lambda b: b[0])
-    assert left[2] < 250 and right[0] > 400
-
-    # a single spaced-out line stays whole
-    im2 = Image.new("L", (1000, 80), 255)
-    ImageDraw.Draw(im2).rectangle([20, 30, 180, 50], fill=0)
-    ImageDraw.Draw(im2).rectangle([220, 30, 400, 50], fill=0)
-    assert len(split_by_column_gaps([0.0, 0.0, 1000.0, 80.0], im2)) == 1
-
-
-def test_split_row_at_piece_gaps_uses_the_measured_scale() -> None:
-    """The form-header fix, piece-based (2026-08-26): ink-column
-    projections fail on header rows because a full-width printed rule
-    touches every column. The rec's PIECES are the structure — each
-    cell is a detection. Split a row's pieces at x-gaps wider than
-    1.5x their median width (the same scale-invariant rule as
-    cluster_rows' x-split)."""
-    from tools.ink import split_row_at_piece_gaps
-
-    pieces = [
-        [20.0, 0.0, 180.0, 50.0],  # cell 1 "No."
-        [220.0, 0.0, 380.0, 50.0],  # cell 1 continues (word gap, 40px)
-        [720.0, 0.0, 900.0, 50.0],  # cell 2 — the 340px inter-cell gap
-        [930.0, 0.0, 1050.0, 50.0],  # cell 2 continues (word gap)
-    ]
-    parts = split_row_at_piece_gaps(pieces)
-    assert len(parts) == 2, parts
-    left = max(p[2] for p in parts[0])
-    right = min(p[0] for p in parts[1])
-    assert left < right
-
-    # a single cluster of words stays one part
-    one = split_row_at_piece_gaps([[10.0, 0, 100.0, 40], [110.0, 0, 200.0, 40]])
-    assert len(one) == 1
-
-
-def test_fragment_violation_catches_partial_boxes() -> None:
-    """The fragment-box gate (2026-08-26): 071639 served a box covering
-    part of a line while the real text sat elsewhere — ink present,
-    single band, glyph-plausible label, WRONG box. A box must cover at
-    least 60% of the contiguous ink run in its band, or it is a
-    fragment: refuse it rather than serve it."""
-    from PIL import Image, ImageDraw
-
-    from tools.box import fragment_violation
-
-    im = Image.new("L", (1000, 80), 255)
-    ImageDraw.Draw(im).rectangle([100, 30, 900, 50], fill=0)  # one full line
-
-    # a box covering the left third of the line: fragment
-    assert fragment_violation([100.0, 20.0, 400.0, 60.0], im)
-    # a box covering 80% of the line: fine
-    assert not fragment_violation([100.0, 20.0, 740.0, 60.0], im)
-    # the full line: fine
-    assert not fragment_violation([90.0, 20.0, 910.0, 60.0], im)
-    # a box slightly INSIDE the ink run (margins): still fine
-    assert not fragment_violation([120.0, 25.0, 880.0, 55.0], im)
-
-
-def test_coverage_violations_find_uncovered_and_double_claimed_text() -> None:
-    """The box-coverage gate (2026-08-26, the user's reframe: text
-    errors are user-fixable, box errors are NOT — the review surface
-    has no box-fixing interaction). Every rec detection piece must be
-    covered by exactly one final box: uncovered SIGNIFICANT pieces are
-    missed text (refuse); pieces inside two boxes are double claims.
-    Small uncovered pieces (noise specks) are tolerated — the rec
-    over-detects; big ones are text the pipeline dropped."""
-    from tools.ink import coverage_violations
-
-    boxes = [[100.0, 100.0, 500.0, 140.0], [600.0, 100.0, 900.0, 140.0]]
-    pieces = [
-        [150.0, 105.0, 400.0, 135.0],  # in box 0
-        [650.0, 105.0, 800.0, 135.0],  # in box 1
-        [950.0, 105.0, 1400.0, 195.0],  # uncovered, 3x median area -> missed text
-        [200.0, 300.0, 220.0, 320.0],  # uncovered, small -> noise, tolerated
-        [700.0, 105.0, 850.0, 135.0],  # in box 1 only
-    ]
-    v_uncovered, v_double = coverage_violations(boxes, pieces)
-    assert v_uncovered == [[950.0, 105.0, 1400.0, 195.0]], v_uncovered
-    assert v_double == 0, v_double
-
-    # a piece spanning two boxes' boundary is a double claim
-    boxes2 = [[0.0, 0.0, 500.0, 100.0], [400.0, 0.0, 900.0, 100.0]]
-    pieces2 = [[450.0, 10.0, 480.0, 90.0]]
-    assert coverage_violations(boxes2, pieces2)[1] == 1
-
-
-def test_fragment_gate_ignores_other_columns_at_the_same_y() -> None:
-    """The two-column false positive (2026-08-26): page-01's margin
-    notes at the same y flagged every body row as a fragment — the
-    full-width strip caught the OTHER column's ink. A line
-    continuation has a SMALL gap from the box edge; a separate column
-    has a wide gutter. Fragment only when the outside ink starts
-    within 2x the box height of the edge."""
-    from PIL import Image, ImageDraw
-
-    from tools.box import fragment_violation
-
-    im = Image.new("L", (1600, 80), 255)
-    d = ImageDraw.Draw(im)
-    d.rectangle([100, 30, 900, 50], fill=0)  # the line (partly boxed)
-    d.rectangle([1400, 30, 1500, 50], fill=0)  # the margin note, far away
-
-    # a box over the left of the line: fragment (continuation is near)
-    assert fragment_violation([100.0, 20.0, 400.0, 60.0], im)
-    # a box ending before the margin note's gutter: NOT a fragment —
-    # the outside ink is a separate column (gap >> line height)
-    assert not fragment_violation([100.0, 20.0, 1300.0, 60.0], im)
-
-    # the line CONTINUES at a small gap: still a fragment
-    im2 = Image.new("L", (1600, 80), 255)
-    ImageDraw.Draw(im2).rectangle([100, 30, 900, 50], fill=0)
-    ImageDraw.Draw(im2).rectangle([940, 30, 1200, 50], fill=0)  # 40px gap
-    assert fragment_violation([100.0, 20.0, 400.0, 60.0], im2)
-
-
-def test_cluster_rows_merges_double_read_rows() -> None:
-    """The double-read class (2026-08-26, quantified by the coverage
-    gate: 33 overlapping box pairs on one page, IoU 0.3-0.5 on wide
-    boxes = the same line detected twice with a y jitter). Rows whose
-    x-spans overlap heavily AND whose y-intervals overlap >= 40% of
-    the shorter are one physical line — merged before union, so the
-    double claim never reaches the boxes."""
-    from tools.ink import cluster_rows, union
-
-    # the same line detected twice (y jitter) + a real next line
-    pieces = [
-        [100.0, 100.0, 500.0, 140.0],  # read 1
-        [100.0, 115.0, 500.0, 155.0],  # read 2, 62% y-overlap
-        [100.0, 300.0, 500.0, 340.0],  # the real next line
-    ]
-    rows = cluster_rows(pieces)
-    assert len(rows) == 2, rows
-    u = union(rows[0])
-    assert u[3] - u[1] <= 60  # merged row is one line tall, not two
-
-    # different columns at the same y are separate rows (no merge)
-    pieces2 = [
-        [100.0, 100.0, 500.0, 140.0],
-        [1400.0, 100.0, 1800.0, 140.0],  # same y, disjoint x (wide gap)
-    ]
-    assert len(cluster_rows(pieces2)) == 2
-
-
-def test_fragment_gate_respects_sibling_boxes() -> None:
-    """The multi-region fix (2026-08-26): page-01's margin notes at the
-    same y flagged every body row as a fragment — the outside ink was
-    OTHER text WITH ITS OWN BOX. Outside ink claimed by a sibling box
-    is not a continuation of this line; only ink in NO box is."""
-    from PIL import Image, ImageDraw
-
-    from tools.box import fragment_violation
-
-    im = Image.new("L", (1600, 80), 255)
-    d = ImageDraw.Draw(im)
-    d.rectangle([100, 30, 900, 50], fill=0)  # body line
-    d.rectangle([1200, 30, 1500, 50], fill=0)  # margin note
-
-    # the body box + the margin box as siblings: neither is a fragment
-    body = [100.0, 20.0, 900.0, 60.0]
-    margin = [1200.0, 20.0, 1500.0, 60.0]
-    assert not fragment_violation(body, im, siblings=[margin])
-    assert not fragment_violation(margin, im, siblings=[body])
-
-    # the body box with NO sibling for the margin: still a fragment
-    assert fragment_violation([100.0, 20.0, 400.0, 60.0], im)
-
-
-def test_fragment_regions_returns_the_unclaimed_outside_ink() -> None:
-    """The recall seam (2026-08-26): the fragment gate sees unboxed ink
-    at a box's band — page-01's margin notes the rec never detected.
-    fragment_regions returns the MISSED AREAS (the outside ink not
-    claimed by any sibling box) so a low-sensitivity detection pass can
-    crop exactly those regions and find the notes. Only the unclaimed
-    outside ink is a missed region — sibling-claimed ink is not."""
-    from PIL import Image, ImageDraw
-
-    from tools.box import fragment_regions
-
-    im = Image.new("L", (1600, 80), 255)
-    d = ImageDraw.Draw(im)
-    d.rectangle([100, 30, 900, 50], fill=0)  # the boxed line
-    d.rectangle([1200, 30, 1500, 50], fill=0)  # the missed margin note
-
-    body = [100.0, 20.0, 900.0, 60.0]
-    regions = fragment_regions(body, im, siblings=[])
-    # one missed region to the right: from the box edge through the note
-    assert len(regions) == 1, regions
-    r = regions[0]
-    assert r[0] >= 900 and r[2] > 1200 and r[2] <= 1600  # covers the note
-    assert 25 <= r[1] <= 35 and 45 <= r[3] <= 55  # the band's rows
-
-    # with the note's own box as a sibling, nothing is missed
-    margin = [1200.0, 20.0, 1500.0, 60.0]
-    assert fragment_regions(body, im, siblings=[margin]) == []
-
-
-def test_fragment_gate_ignores_speck_noise_outside_the_box() -> None:
-    """The ink-layout's false positives (2026-08-28): the strip
-    normalization to 100 rows makes EVERY column 'inked' when the scan
-    has page-wide specks (1-3px marks at x 463-503 flagged 23 of 32
-    honest ink-layout boxes on page-01). A 2px speck is not a line
-    continuation — the outside ink must be text-sized (>= 5% of the
-    band's rows) to count as a fragment."""
-    from PIL import Image, ImageDraw
-
-    from tools.box import fragment_violation
-
-    im = Image.new("L", (1000, 80), 255)
-    d = ImageDraw.Draw(im)
-    d.rectangle([100, 30, 900, 50], fill=0)  # one full line
-    # a 2px speck far left of the box — noise, not a continuation
-    d.rectangle([30, 38, 31, 39], fill=0)
-    # the full-line box must NOT flag on the speck (the text-sized
-    # outside-ink detection is covered by the partial-box tests above)
-    assert not fragment_violation([90.0, 20.0, 910.0, 60.0], im)
-
-
-def test_text_extent_gate_skips_ink_layout_lines() -> None:
-    """The ink-layout's labels are the VLM's reads of its ink-truth boxes
-    (2026-08-28): a short read ('1 a' for the ditto item) is a TEXT
-    error the reviewer fixes in the UI — the user's contract. The
-    box-level gates (coverage, fragments, doubles) already vetted the
-    geometry; the label-extent gates must not refuse the page on a
-    read. The pieces-based lines keep the check."""
-    from tools.gates import validate_layout
-
-    layout = {
-        "page": "p1.jpg",
-        "width": 3000,
-        "height": 5000,
-        "lines": [
-            # the ink-layout line: a 167px box with the short read
-            {
-                "index": 0,
-                "text": "1 a",
-                "box": [684, 2528, 851, 2573],
-                "conf": 1.0,
-                "words": [],
-                "box_source": "ink-layout",
-            },
-            # the pieces-based line: the same short label MUST fail
-            {"index": 1, "text": "1 a", "box": [684, 2528, 851, 2573], "conf": 1.0, "words": [], "box_source": "ink"},
-        ],
-        "unmatched": [],
-    }
-    violations = validate_layout(layout)
-    assert len(violations) == 1, violations
-    assert "167px" in violations[0], violations

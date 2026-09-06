@@ -42,6 +42,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 |UX loop working log (statuses, open items)|`docs/plans/ux-fixes-plan.md`|
 |Design decisions with rationale (the register)|`docs/plans/design-decisions.md`|
 | Precedent research | `docs/PRECEDENT.md` |
+| Sign in and verify the rendered review surface (boxes on text) | `docs/review-surface.md` |
 | Project plan, slices, urgency | `docs/plans/PLAN.md` |
 | Code conventions | `docs/coding-standards.md` |
 | Test conventions | `docs/testing-standards.md` |

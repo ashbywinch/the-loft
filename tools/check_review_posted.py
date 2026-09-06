@@ -98,8 +98,18 @@ def _job_log(repo: str, token: str) -> str | None:
         except HTTPError as e:
             if e.code != http.HTTPStatus.FOUND:
                 raise
-            return urllib.request.urlopen(e.headers["Location"]).read().decode("utf-8", errors="replace")
-    except (HTTPError, KeyError, ValueError):
+            # the signed blob host rejects bare urllib (the WAF's UA rule);
+            # fetch the Location bare — a refusal here degrades to None
+            # (the generic message), never a crash (2026-09-06: the blob
+            # host 404'd/URLError'd in CI and the gate crashed instead of
+            # reporting the reason)
+            try:
+                return (
+                    urllib.request.urlopen(e.headers["Location"], timeout=60).read().decode("utf-8", errors="replace")
+                )
+            except (urllib.error.URLError, OSError):
+                return None
+    except (HTTPError, KeyError, ValueError, urllib.error.URLError, OSError):
         return None
 
 

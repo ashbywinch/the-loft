@@ -107,6 +107,30 @@ def test_silent_skip_is_still_coverage_via_the_comment() -> None:
     )
 
 
+def test_poll_catches_a_review_that_lands_moments_later() -> None:
+    """The gate races the bot's publish: the guide posts at the very end
+    of the bot step and the comments API lags it by seconds. The poll must
+    re-fetch — a review that lands during the window is coverage, not a
+    failure (2026-09-06: PR 38's guide at 06:48:05Z beat the gate's first
+    fetch, failing a review that had succeeded)."""
+    state = {"calls": 0}
+
+    def fetch(url: str, token: str):
+        state["calls"] += 1
+        if "comments" in url:
+            if state["calls"] > 1:
+                return [_GUIDE]
+            return []
+        if "check-runs" in url:
+            return {"check_runs": []}
+        return _COMMIT
+
+    env = {"SHA": _SHA, "GITHUB_REPOSITORY": "org/repo", "PR_NUMBER": "7", "GITHUB_TOKEN": "t"}
+    code = gate.run_review_gate(fetch, env, failure_reason=lambda *a: "unused")
+    assert code == 0
+    assert state["calls"] >= 2
+
+
 def test_no_artifact_and_no_comment_fails_loud(capsys) -> None:
     """The bot ran and produced nothing — the gate must fail, not pass on
     the action's word (the original bug: a green step claims nothing)."""

@@ -129,3 +129,55 @@ def test_postcard_groups_two_sides_and_boxes_the_transcription(tmp_path: Path) -
 
     process(BATCH, registry_dir=registry, work_dir=work)
     _assert_contracts(registry, work)
+
+
+# ---------------------------------------------------------------- the
+# §16.17 single-pass segment stage: ONE multimodal call returns every
+# text segment with verbatim text, orientation, and a pixel box — the
+# redesign the detect-then-match pipeline was to be replaced by. This
+# eval validates THAT path (the stage under eval, not the pipeline's
+# detection+matching).
+
+
+@pytest.mark.eval
+@pytest.mark.skipif(not BACK.exists(), reason="the public-domain fixture image is missing")
+def test_single_pass_segments_the_postcard_back(tmp_path: Path) -> None:
+    """ONE VLM call on the postcard's back: every text segment carries
+    verbatim text, a pixel box inside the image, and its orientation —
+    VR15's multi-orientation acceptance answered by the single pass."""
+    from tools.segment_page import segment_page
+
+    segments, usage = segment_page(BACK)
+
+    assert segments, "the single pass returned no segments"
+    assert usage.get("total_tokens", 0) > 0, "no tokens billed — the call did not run"
+
+    texts = [s["text"] for s in segments]
+    # the printed header the card is known by
+    assert any("POST CARD" in t for t in texts), f"the header missing: {texts[:6]}"
+    # the address block is on the card (the keyword of its address line)
+    assert any("MISS" in t.upper() or "MRS" in t.upper() or "ESQ" in t.upper() for t in texts), (
+        f"no addressee block: {texts[:8]}"
+    )
+
+    from PIL import Image
+
+    for seg in segments:
+        box = seg["box"]
+        assert box[2] > box[0] and box[3] > box[1], f"degenerate box: {seg['text'][:30]}"
+        with Image.open(BACK) as im:
+            assert box[0] >= 0 and box[2] <= im.width, f"x outside the image: {seg['text'][:30]}"
+            assert box[1] >= 0 and box[3] <= im.height, f"y outside the image: {seg['text'][:30]}"
+        assert seg["orientation"] in (0, 90, 180, 270), seg
+
+    # VR15: the card's text runs at more than one orientation — the
+    # single pass must report the rotation per line (the old pipeline
+    # needed a separate orientation pass to know this)
+    orientations = {s["orientation"] for s in segments}
+    assert len(orientations) >= 2, f"expected multi-orientation segments: {orientations}"
+    # the contract is PER LINE: the card carries ~15 lines of writing and
+    # the segments must not merge them into paragraph blocks (the
+    # address's five lines are the canary — they stay separate)
+    assert len(segments) >= 12, f"expected per-line segments, got {len(segments)}"
+    address_lines = [t for t in texts if "Ritchie" in t or "Talbourne" in t or t.strip() == "S.W."]
+    assert len(address_lines) >= 2, f"the address lines were merged: {address_lines}"

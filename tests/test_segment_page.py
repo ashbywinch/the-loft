@@ -117,7 +117,7 @@ def test_garbage_response_fails_loud(tmp_path: Path) -> None:
     a pipeline that never ran)."""
     payload = json.dumps({"choices": [{"message": {"content": "I see a postcard."}, "finish_reason": "stop"}]}).encode()
     with pytest.raises(SegmentPageError, match="no JSON"):
-        segment_page(_image(tmp_path), urlopen=_urlopen_returning(payload))
+        segment_page(_image(tmp_path), urlopen=_urlopen_returning(payload), api_key="test-key")
 
 
 def test_segment_without_text_fails_loud(tmp_path: Path) -> None:

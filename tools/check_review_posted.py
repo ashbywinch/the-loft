@@ -270,16 +270,6 @@ def run_review_gate(
         for c in comments
     )
     if not covered:
-        # the bot's own job log is the ground truth: a review that
-        # generated its output logs "PR output" (the artifact record) even
-        # when the comment publish failed silently (2026-09-06: the
-        # reviews on PRs 31/32/33 generated their guides but the comment
-        # API never showed them — the job log had the full record). A
-        # completed generation IS a review that ran.
-        log = _job_log(repo, token)
-        if log and "PR output" in log:
-            print("::notice::the review generated its output (per the bot's log); treating the head as covered")
-            return 0
         reason = (failure_reason or _bot_failure_reason)(repo, token)
         print(f"::error::AI review did not post for commit {sha} — {reason}.")
         return 1

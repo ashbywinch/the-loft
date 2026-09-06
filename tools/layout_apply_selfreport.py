@@ -13,8 +13,11 @@ import json
 import sys
 from pathlib import Path
 
-from tools.layout import is_struck, normalize, write_layout
+from tools.layout import is_struck, normalize, write_layout_store
+from tools.loft_paths import WORK_DIR
+from tools.pipeline_store import PipelineStore
 from tools.selfreport_driver import run_cli
+from tools.store import DiskStore  # noqa: F401
 
 REPORT_NAME = "selfreport.json"
 
@@ -73,7 +76,7 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path) -> in
         layout = json.loads(layout_path.read_text(encoding="utf-8"))
         selfreport = json.loads(report.read_text(encoding="utf-8"))
         apply_selfreport(layout, selfreport)
-        write_layout(layout, layout_path)
+        write_layout_store(layout, PipelineStore(WORK_DIR), str(layout_path.relative_to(WORK_DIR)))
         flagged = sum(1 for line in layout["lines"] for w in line["words"] if w["conf"] == 0.0)
         print(f"layout: applied self-report to {layout_path.name} -> {flagged} flagged words")
     return 0

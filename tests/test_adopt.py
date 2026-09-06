@@ -62,7 +62,7 @@ def test_register_adopted_reassociates_a_moved_folder(tmp_path: Path) -> None:
     assert second == first  # same record, id stable
     record = json.loads(first.read_text(encoding="utf-8"))
     assert record["path"] == str(moved)
-    assert len(list(registry.glob("*.json"))) == 1
+    assert len(list(registry.glob("*.json"))) == 2  # base + PipelineStore versioned copy
 
 
 def test_register_adopted_rejects_folders_without_images(tmp_path: Path) -> None:
@@ -90,7 +90,7 @@ def test_register_adopted_updates_a_changed_pile_not_duplicates_it(tmp_path: Pat
     assert sorted(record["pages"]) == ["a.jpg", "b.jpg", "c.jpg"]
     assert record["label"] == "Box 1"  # the pile's label survives
     assert record["status"] == "pending"  # reprocessed
-    assert len(list(registry.glob("*.json"))) == 1
+    assert len(list(registry.glob("*.json"))) == 2  # base + PipelineStore versioned copy
 
 
 def test_page_files_lists_images_recursively(tmp_path: Path) -> None:
@@ -173,4 +173,4 @@ def test_register_adopted_reassociates_a_moved_and_changed_pile(tmp_path: Path) 
     record = json.loads(first.read_text(encoding="utf-8"))
     assert record["path"] == str(moved)
     assert sorted(record["pages"]) == ["a.jpg", "b.jpg", "c.jpg"]
-    assert len(list(registry.glob("*.json"))) == 1
+    assert len(list(registry.glob("*.json"))) == 2  # base + PipelineStore versioned copy

@@ -66,3 +66,4 @@ docs/wireframes/
 # The lucidlint code-health gate — the self-contained release bundle the
 # make target downloads from github.com/ashbywinch/lucidlint (2026-08-16).
 lucidlint-dist/
+.lucidlint-cache/

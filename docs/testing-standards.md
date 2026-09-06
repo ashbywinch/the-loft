@@ -40,6 +40,16 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
   `app/bar.js` → `app/tests/bar.test.js`.
 - **Deterministic, always.** No wall-clock, no network, no order dependence,
   no unseeded randomness. Fake data uses seeded generators.
+- **Never sleep.** A test must not wait wall-clock — `time.sleep`,
+  `await sleep`, a busy-wait loop, or a fixed tick count in a test is a
+  bug, not a convenience: it makes the suite order- and
+  machine-dependent and slow (2026-09-06: the review-posted gate's
+  polling loop burned ~72s per test run before the delay was made
+  injectable). Production code that legitimately waits (retries,
+  polling, backoff) takes its delay as a parameter — the DI seam — so
+  tests inject `0` and the same code path runs instantly and
+  deterministically. A rule that needs "if not CI: sleep" to pass is
+  written wrong.
 - **No fire-and-forget leaks.** An app-under-test that fires fetch calls
   without awaiting them (a `recordMessage`-style `fetch().catch()`) can
   keep running after the test ends: a chain still in flight when the next

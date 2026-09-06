@@ -1055,3 +1055,39 @@ fall back to a real anchor. Proven: page-05 re-read through the pipeline
 — all 26 lines boxed in reading order, first line at the true top (2312
 vs the ink 2302), zero dashed. The surface margin stays for the
 rec-fallback pages.
+
+## The review's navigation and focus model (VR17, user + walkthrough, 2026-08-17)
+
+The fake-user walkthrough (Sam, 2026-08-17) and the UX research
+(Preview Panel, Master-Detail, Overview+Detail, Inline Edit patterns)
+established the focus model:
+
+**The focused line** is the line at the top of the text pane's viewport.
+Scrolling the text changes the focus. The image follows (pans to the
+focused line's box, rotates to the line's reading orientation).
+Panning/zooming the image does NOT change the focus — the reviewer can
+explore the scan freely.
+
+**The image is the navigation surface.** The box overlays are touchable
+(pointers auto, not none). Tapping a box scrolls the text to the
+corresponding line and rotates the image. A "return" button in the image
+toolbar re-centres on the focused line.
+
+**The inline edit** has a visible Done (✓, commits) and Cancel (✕,
+discards) — the standard Inline Edit pattern. The Escape key cancels; the
+keyboard's Done key commits.
+
+**The verification tick** is a toggle: unchecked (○ outline) and checked
+(✓ filled). Clicking a checked line unchecks it. The line's background
+turns cream when checked.
+
+**The image pane's initial view** shows the document's full content area
+at a readable zoom level (all boxes' min/max y, not just the first
+line).
+
+**Implemented:** (pending — the model API hit its monthly limit, which
+blocked the page-02 rebuild; the front-end changes are API-independent
+and ready to build.)
+
+**Decision:** VR17 and acceptance criteria 24-28 recorded in the PRD.
+The focus model is the reference for the usability test.

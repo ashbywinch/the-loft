@@ -3,7 +3,8 @@
 Adapted from books_to_anki/src/book_to_flashcards/opencode_translator.py (the
 house pattern): urllib-only, retry/backoff on 429/5xx, thinking-disable
 fallback, injectable urlopen for tests. The key comes from the environment,
-never from code — `LOFT_AI_KEY`, else `OPENCODE_API_KEY`, else opencode's
+never from code — `OPENAI_API_KEY` (the Cloudflare gateway token), else
+`CLOUDFLARE_AIGATEWAY_TOKEN`, else `OPENCODE_API_KEY`, else opencode's
 auth.json (docs/coding-standards.md — secrets are shell-env only).
 """
 
@@ -21,8 +22,18 @@ from typing import Any, final
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
-DEFAULT_MODEL = "deepseek-v4-flash"
+# The environment provides the Cloudflare AI Gateway URL and token. The
+# OPENAI_BASE_URL convention is the standard (litellm, OpenAI SDK, all
+# compatible clients) — the local proxy at :9123/v1 adds repo metadata
+# and timeout headers. OPENAI_API_KEY is the Cloudflare gateway token.
+# Fallback: the OpenCode endpoint (the legacy direct route).
+_DEFAULT_URL = os.environ.get("OPENAI_BASE_URL")
+if _DEFAULT_URL:
+    DEFAULT_BASE_URL: str = _DEFAULT_URL
+else:
+    DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
+
+DEFAULT_MODEL = "dynamic/fallback2"
 
 # Providers whose api keys opencode may have stored in its auth.json.
 AUTH_JSON_PROVIDER_HINTS = ("opencode-go", "opencode")
@@ -50,9 +61,14 @@ class AIClient:
         urlopen: Callable[..., Any] | None = None,
         _sleep: Callable[[float], None] | None = None,
     ) -> None:
-        self.model: str = model or os.environ.get("LOFT_AI_MODEL") or DEFAULT_MODEL
-        self.base_url: str = (base_url or os.environ.get("LOFT_AI_BASE_URL") or DEFAULT_BASE_URL).rstrip("/")
-        self.api_key: str = api_key or os.environ.get("LOFT_AI_KEY") or find_api_key()
+        self.model: str = model or DEFAULT_MODEL
+        self.base_url: str = (base_url or DEFAULT_BASE_URL).rstrip("/")
+        self.api_key: str = (
+            api_key
+            or os.environ.get("OPENAI_API_KEY")
+            or os.environ.get("CLOUDFLARE_AIGATEWAY_TOKEN")
+            or find_api_key()
+        )
         self.max_tokens: int = max_tokens
         self.timeout: float = timeout
         self.max_retries: int = max_retries
@@ -169,12 +185,18 @@ class AIClient:
 def find_api_key(_env: Mapping[str, str] | None = None, _home: Path | None = None) -> str:
     """Return the model API key from the environment or opencode's auth file.
     ``_env``/``_home`` are the injectable seams for tests (DI, never
-    monkeypatch); None falls back to the process environment."""
+    monkeypatch); None falls back to the process environment.
+
+    Priority: OPENAI_API_KEY (Cloudflare gateway token),
+    CLOUDFLARE_AIGATEWAY_TOKEN, OPENCODE_API_KEY (opencode's legacy env),
+    or opencode's auth.json.
+    """
     env = os.environ if _env is None else _env
     home = Path.home() if _home is None else _home
-    env_key = env.get("OPENCODE_API_KEY")
-    if env_key:
-        return env_key
+    for var in ("OPENAI_API_KEY", "CLOUDFLARE_AIGATEWAY_TOKEN", "OPENCODE_API_KEY"):
+        value = env.get(var)
+        if value:
+            return value
 
     if os.name == "nt":
         base = Path(env.get("APPDATA", "")) / "opencode"
@@ -192,7 +214,7 @@ def find_api_key(_env: Mapping[str, str] | None = None, _home: Path | None = Non
             if isinstance(entry, dict) and entry.get("type") == "api" and entry.get("key"):
                 return entry["key"]
     raise AIClientError(
-        "No API key found. Set LOFT_AI_KEY or OPENCODE_API_KEY, or log in with `opencode` "
+        "No API key found. Set OPENAI_API_KEY or OPENCODE_API_KEY, or log in with `opencode` "
         "(its auth file is read automatically)."
     )
 

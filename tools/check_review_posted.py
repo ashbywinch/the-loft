@@ -1,6 +1,14 @@
 """Called by .github/workflows/pr-agent.yml — fail the PR if the review bot
-did not post a "PR Reviewer Guide" comment covering the head commit.
-The review may have failed silently; this check prevents merging unreviewed.
+did not produce a review covering the head commit. The review may have
+failed silently; this check prevents merging unreviewed.
+
+Coverage, in order: a COMPLETED "PR Agent - Review" check run on the head
+SHA — the output artifact the bot publishes only with the review text in
+hand (github.publish_as_check_run; v0.41.1 _publish_check_run) — then the
+comment trail below. The bot's own step conclusion is NEVER trusted: as
+the 2026-08-11 v0.41.1 reading found (and the 2026-09-04 401 incident
+confirmed in the wild), the action exits 0 whether or not the review
+happened, so a green step claims nothing about a review existing.
 
 A comment covers the head commit when its body references the commit's SHA
 (the incremental-review form, "Starting from commit .../<SHA>") or it was
@@ -26,6 +34,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
 from urllib.error import HTTPError
 
@@ -88,9 +97,44 @@ def _job_log(repo: str, token: str) -> str | None:
         except HTTPError as e:
             if e.code != http.HTTPStatus.FOUND:
                 raise
-            return urllib.request.urlopen(e.headers["Location"]).read().decode("utf-8", errors="replace")
-    except (HTTPError, KeyError, ValueError):
+            # the signed blob host rejects bare urllib (the WAF's UA rule);
+            # fetch the Location bare — a refusal here degrades to None
+            # (the generic message), never a crash (2026-09-06: the blob
+            # host 404'd/URLError'd in CI and the gate crashed instead of
+            # reporting the reason)
+            try:
+                return (
+                    urllib.request.urlopen(e.headers["Location"], timeout=60).read().decode("utf-8", errors="replace")
+                )
+            except (urllib.error.URLError, OSError):
+                return None
+    except (HTTPError, KeyError, ValueError, urllib.error.URLError, OSError):
         return None
+
+
+def _completed_review_check_run(fetch, repo: str, sha: str) -> bool:
+    """Is there a COMPLETED "PR Agent - Review" check run on the head
+    commit? The bot creates it ONLY with the review output text in hand
+    (github_provider._publish_check_run in v0.41.1: called from
+    publish_persistent_comment with the review text; a failed or skipped
+    review produces no check). It is the output artifact, not the step's
+    self-reported success — the 2026-09-04 401 incident ran the action to
+    completion while producing nothing, so a step-conclusion gate would
+    have passed a review that never happened. (User, 2026-09-05: "isn't
+    this re-introducing our original bug where it just claims it's
+    successful even when it's not?".) The conclusion is always "neutral"
+    in v0.41.1; completed-neutral means the review text was published.
+    Any query failure degrades to False — the comment trail decides; a
+    crashed gate is the worst outcome (2026-09-06: the URL briefly used a
+    placeholder repo, the API 404'd, the HTTPError escaped and every
+    pr-review failed with a traceback, not a verdict)."""
+    try:
+        runs = fetch(f"https://api.github.com/repos/{repo}/commits/{sha}/check-runs", "")
+        return any(
+            r.get("name") == "PR Agent - Review" and r.get("status") == "completed" for r in runs.get("check_runs", [])
+        )
+    except (KeyError, ValueError, AttributeError, OSError):
+        return False
 
 
 def _bot_failure_reason(repo: str, token: str) -> str:
@@ -138,30 +182,112 @@ def _error_marker_reason(bot_lines: list[str]) -> str | None:
     return None
 
 
-def main() -> int:
-    sha = os.environ["SHA"]
-    repo = os.environ["GITHUB_REPOSITORY"]
-    pr_number = os.environ["PR_NUMBER"]
-    token = os.environ["GITHUB_TOKEN"]
+def _completed_review_check_run(fetch, repo: str, sha: str) -> bool:
+    """Is there a COMPLETED "PR Agent - Review" check run on the head
+    commit? The bot creates it ONLY with the review output text in hand
+    (github_provider._publish_check_run in v0.41.1: called from
+    publish_persistent_comment with the review text; a failed or skipped
+    review produces no check). It is the output artifact, not the step's
+    self-reported success — the 2026-09-04 401 incident ran the action to
+    completion while producing nothing, so a step-conclusion gate would
+    have passed a review that never happened. (User, 2026-09-05: "isn't
+    this re-introducing our original bug where it just claims it's
+    successful even when it's not?".) The conclusion is always "neutral"
+    in v0.41.1; completed-neutral means the review text was published.
+    Any query failure degrades to False — the comment trail decides; a
+    crashed gate is the worst outcome (2026-09-06: the URL briefly used a
+    placeholder repo, the API 404'd, the HTTPError escaped and every
+    pr-review failed with a traceback, not a verdict)."""
+    try:
+        runs = fetch(f"https://api.github.com/repos/{repo}/commits/{sha}/check-runs", "")
+        return any(
+            r.get("name") == "PR Agent - Review" and r.get("status") == "completed" for r in runs.get("check_runs", [])
+        )
+    except (KeyError, ValueError, AttributeError, OSError):
+        return False
 
-    commit = _get_json(f"https://api.github.com/repos/{repo}/commits/{sha}", token)
+
+def run_review_gate(
+    fetch,
+    env,
+    failure_reason=None,
+    poll_attempts: int = 4,
+    poll_delay_s: float = 8.0,
+) -> int:
+    """The gate as a pure function: ``fetch(url, token)`` -> parsed JSON,
+    ``env`` the CI environment mapping, ``failure_reason(repo, token)``
+    the bot's own words about a death. Testable by injection — the repo's
+    DI convention; never monkeypatch. The polling knobs let the tests
+    zero the delay — a test must never sleep on wall-clock time (docs/
+    testing-standards.md)."""
+    sha = env["SHA"]
+    repo = env["GITHUB_REPOSITORY"]
+    pr_number = env["PR_NUMBER"]
+    token = env["GITHUB_TOKEN"]
+
+    # The authoritative coverage signal: a COMPLETED "PR Agent - Review"
+    # check run on the head commit — the artifact the bot publishes only
+    # with the review text in hand (2026-09-05, enabled via
+    # github.publish_as_check_run). The comment trail below remains the
+    # fallback for runs from before the check was enabled and for the
+    # incremental skip that posts a comment.
+    if _completed_review_check_run(fetch, repo, sha):
+        return 0
+
+    commit = fetch(f"https://api.github.com/repos/{repo}/commits/{sha}", token)
     head_committed_at = commit["commit"]["committer"]["date"]
 
-    comments = _get_json(f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments", token)
+    comments = _fetch_comments(
+        fetch,
+        f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments",
+        token,
+        attempts=poll_attempts,
+        delay_s=poll_delay_s,
+    )
     # the review posts with the regular header ("## PR Reviewer Guide") or
     # the incremental form ("## Incremental PR Reviewer Guide" — the -i
     # path, 2026-08-11: the first incremental run posted exactly that and
-    # the check missed it, failing a review that had succeeded)
+    # the check missed it, failing a review that had succeeded). A skip
+    # comment ("Incremental Review Skipped / No files were changed") is
+    # also coverage: the bot assessed the head commit and decided nothing
+    # needed review — the restacked-branch force-pushes kept tripping the
+    # gate on exactly that (2026-09-04, PRs 32/33).
     covered = any(
-        c.get("body", "").startswith(("## PR Reviewer Guide", "## Incremental PR Reviewer Guide"))
+        (
+            c.get("body", "").startswith(("## PR Reviewer Guide", "## Incremental PR Reviewer Guide"))
+            or c.get("body", "").startswith("Incremental Review Skipped")
+        )
         and (sha in c.get("body", "") or c.get("created_at", "") >= head_committed_at)
         for c in comments
     )
     if not covered:
-        reason = _bot_failure_reason(repo, token)
+        reason = (failure_reason or _bot_failure_reason)(repo, token)
         print(f"::error::AI review did not post for commit {sha} — {reason}.")
         return 1
     return 0
+
+
+def _fetch_comments(fetch, url: str, token: str, attempts: int = 4, delay_s: float = 8.0) -> list:
+    """The comments list, polled: the bot posts its guide at the very end
+    of its step and GitHub's comments API lags a just-created comment by
+    seconds — a single immediate fetch raced the post and the gate failed
+    reviews that had succeeded (2026-09-06: PR 38's guide landed at
+    06:48:05Z while the gate's fetch at ~06:48:03 saw nothing). Poll until
+    the list is stable or the attempts are exhausted; the failure path
+    then reports the real absence, not the race."""
+    for attempt in range(attempts):
+        comments = fetch(url, token)
+        covered = any(
+            c.get("body", "").startswith(("## PR Reviewer Guide", "## Incremental PR Reviewer Guide")) for c in comments
+        )
+        if covered or attempt == attempts - 1:
+            return comments
+        time.sleep(delay_s)
+    return comments
+
+
+def main() -> int:
+    return run_review_gate(_get_json, os.environ)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 """Eval for the elicitation assessment — run against the real model.
 
 Not part of `make test` (tests never hit the network): this needs a network
-and a configured key (LOFT_AI_KEY / OPENCODE_API_KEY / opencode auth.json).
+and a configured key (OPENAI_API_KEY / OPENCODE_API_KEY / opencode auth.json).
 Run with `loft eval-memory` (tools/cli.py).
 
 The cases cover the family's own stories AND a fictional family (the

@@ -1777,19 +1777,28 @@ summary:focus-visible {
 .rv-line:hover { background: var(--paper); }
 .rv-line--sel { background: var(--accent-soft); border-left-color: var(--accent); }
 .rv-lt { flex: 1; min-width: 0; font-size: 0.88rem; line-height: 1.3; }
-/* "✓" — mark a flagged line as checked without editing it (user,
-   2026-08-16: a line can be fine even with red squiggles) */
-.rv-ok-btn {
-  border: 1px solid #5a8a5a;
-  background: #e3efe3;
-  color: #3a6a3a;
-  border-radius: 50%;
-  width: 22px;
-  height: 22px;
+/* "Verified" — mark a flagged line as checked without editing it
+   (user, 2026-08-16: a line can be fine even with red squiggles). The
+   pattern library's labelled checkbox (docs/UI.md: "labelled checkbox,
+   obvious state") — the old icon-only circle told a first-time
+   reviewer nothing and the tooltip was invisible on mobile
+   (user, 2026-08-28). */
+.rv-ok {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   flex-shrink: 0;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   line-height: 1;
-  font-family: var(--serif);
+  color: #3a6a3a;
+  cursor: pointer;
+  user-select: none;
+}
+.rv-ok input {
+  margin: 0;
+  accent-color: #3a6a3a;
+  width: 15px;
+  height: 15px;
   cursor: pointer;
 }
 .rv-wc {
@@ -1922,8 +1931,9 @@ summary:focus-visible {
   /* The boxes must pass drags through to the pane — a box that swallows
      the pointer blocks panning exactly where the reviewer grabs the letter
      (user 2026-08-16). Selection happens on the transcription lines (the
-     walk's actual behaviour); the boxes are visual guides. */
-  pointer-events: none;
+     walk's actual behaviour); the boxes are visual guides. The reviewer
+     can also tap a box to jump to its line (VR17, 2026-08-17). */
+  pointer-events: auto;
 }
 .rv-lb--sel { border-color: var(--accent); background: rgba(180, 85, 45, 0.16); border-width: 2px; }
 /* a positional box (box_source: "positional" — the fallback's reading-order
@@ -2044,4 +2054,11 @@ summary:focus-visible {
   cursor: pointer;
   padding: 4px 8px 4px 0;
   line-height: 1;
+}
+
+/* The approval toggle's CHECKED state (2026-08-22, the prior-art standard):
+ * the filled circle + white check — the unchecked outline circle reads as
+ * the empty checkbox; the checked fill reads as the approval at a glance. */
+.rv-ok--checked {
+  color: #3a6a3a;
 }

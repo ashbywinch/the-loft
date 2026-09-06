@@ -1,7 +1,7 @@
 # Project Plan — The Loft
 
 - **Status:** v0.1 — approved shape, sequencing open to adjustment
-- **Date:** 2026-08-02 · Companion to `../prd/PRD.md` v0.6 and `TECH-SPEC.md` v0.2
+- **Date:** 2026-08-02 · Companion to `docs/prd/PRD.md` v0.6 and `TECH-SPEC.md` v0.2
 
 ## The urgency
 
@@ -215,4 +215,4 @@ from his phone, end to end. The backup ritual is documented and run once.
 
 Social feeds, public sharing of any kind, family tree view, the ML models
 themselves (labels, OCR, alt text, and story suggestions plug into the seam
-later). Accounts are Should — mechanism TBD (`../prd/PRD.md` §15).
+later). Accounts are Should — mechanism TBD (`docs/prd/PRD.md` §15).

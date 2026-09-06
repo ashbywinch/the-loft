@@ -59,7 +59,7 @@ def _dismiss_apply(person_id: str, table: dict[str, Any] | None) -> dict[str, An
     double dismiss is an error, never a silent no-op)."""
     assert table is not None, "archive has no people table"
     person = next((p for p in table["people"] if p["id"] == person_id), None)
-    # lucidlint: ignore special-case a missing person is an error to raise, never a silent stand-in
+    # a missing person is an error to raise, never a silent stand-in
     if person is None:
         raise KeyError(f"no person {person_id}")
     if person.get("status") != "proposed":
@@ -99,7 +99,7 @@ def _import_session_apply(table: dict[str, Any] | None) -> dict[str, Any]:
             "attempts": [],
         }
     ).to_dict()
-    # lucidlint: ignore special-case a missing table is an error to raise, never a silent stand-in
+    # a missing table is an error to raise, never a silent stand-in
     if table is None:
         return {"imports": [record]}
     if any(s.get("id") == "import-documents" for s in table["imports"]):

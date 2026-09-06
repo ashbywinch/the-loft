@@ -1,7 +1,7 @@
 """Eval for the import-review relevance check — run against the real model.
 
 Not part of `make test` (tests never hit the network): this needs a network
-and a configured key (LOFT_AI_KEY / OPENCODE_API_KEY / opencode auth.json).
+and a configured key (OPENAI_API_KEY / OPENCODE_API_KEY / opencode auth.json).
 Run with `loft eval-review` (tools/cli.py).
 
 The cases cover the review flow's model behaviours (2026-08-09, user):
@@ -180,7 +180,11 @@ PERSONA_JARGON = (
     "import proposes",
     "the archive has a record for",
     "awaiting",
-    "link",
+    # bare "link" fired on natural genealogical prose ("his link to
+    # Pearl" — 2026-09-04 eval run); R1's own vocabulary is "the link",
+    # so the guard matches the article — the possessive passes, the
+    # process phrasing ("the link between the two records") still trips
+    "the link",
     "status",
     "estimated",
     "proposed",

@@ -26,7 +26,18 @@ def run_layout(batch_id: str, work_dir: Path, page_names: list[str] | None = Non
     engine at nproc-1 cores — the ML stages leave a core for the rest of
     the box (2026-08-17, the laptop requirement)."""
     threads = max(1, (os.cpu_count() or 2) - 1)
-    env = {**os.environ, "OMP_NUM_THREADS": str(threads), "FLAGS_paddle_num_threads": str(threads)}
+    env = {
+        **os.environ,
+        "OMP_NUM_THREADS": str(threads),
+        "FLAGS_paddle_num_threads": str(threads),
+        # The engine's peak on the 8GB laptop (2026-08-17): the det input
+        # is bounded (text_det_limit_side_len in the ENGINE config) and
+        # the framework allocates ON DEMAND — the default arena
+        # pre-allocates a huge block up front, which is what pushed the
+        # stage over the available memory even before the first prediction.
+        "FLAGS_allocator_strategy": "auto_growth",
+        "FLAGS_use_system_allocator": "1",
+    }
     args = [LAYOUT_INTERP, "-m", "tools.layout_detect", batch_id, "--work-dir", str(work_dir)]
     if page_names:
         args.extend(page_names)

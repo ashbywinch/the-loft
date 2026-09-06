@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach, vi } from "vitest";
+import { afterEach, describe, expect, it, beforeEach, vi } from "vitest";
 import {
   bandAnchor,
   bandMargin,
@@ -8,13 +8,13 @@ import {
   correctedPageText,
   displayFrame,
   fitRect,
+  widthFitRect,
   flaggedByPage,
   flaggedCount,
   flaggedPositions,
   formatParts,
   lineIndexForY,
   loadEdits,
-  nextFlagged,
   outboxAdd,
   outboxDrop,
   outboxPending,
@@ -26,6 +26,7 @@ import {
   saveEdits,
   saveOrientation,
   strikeParts,
+  viewRotation,
   zoomView,
 } from "../../views/review.js";
 
@@ -144,31 +145,8 @@ describe("flag navigation — bounded and resumable (VR9)", () => {
       { page: "p1.jpg", line: 0 },
     ]);
   });
-
-  it("nextFlagged walks forward and wraps; null with nothing left", () => {
-    const positions = flaggedPositions([DOC], 0, {});
-    expect(nextFlagged(positions, null)).toEqual(positions[0]);
-    expect(nextFlagged(positions, positions[0])).toEqual(positions[1]);
-    expect(nextFlagged(positions, positions[1])).toEqual(positions[0]);
-    expect(nextFlagged([], null)).toBeNull();
-  });
-
-  it("nextFlagged continues AFTER an accepted position instead of restarting", () => {
-    // the from's line was accepted (removed from the list) — the tour
-    // must continue after it by order, not blink back at the first flag
-    const positions = [
-      { page: "page-03.jpg", line: 0 },
-      { page: "page-03.jpg", line: 1 },
-      { page: "page-04.jpg", line: 2 },
-    ];
-    expect(nextFlagged(positions, { page: "page-03.jpg", line: 0 })).toEqual(positions[1]);
-    expect(nextFlagged(positions, { page: "page-03.jpg", line: 1 })).toEqual(positions[2]);
-    // the from on a fully-accepted page — continue on the next page
-    expect(nextFlagged(positions, { page: "page-03.jpg", line: 9 })).toEqual(positions[2]);
-    // the from was the LAST position (accepted) — wrap to the start
-    expect(nextFlagged(positions, { page: "page-04.jpg", line: 2 })).toEqual(positions[0]);
-  });
 });
+
 
 describe("the outbox — nothing confirmed is lost to a failed push", () => {
   beforeEach(() => localStorage.clear());
@@ -392,6 +370,20 @@ describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)",
     expect(view.width).toBeCloseTo(79 * (812 / 131), 5);
   });
 
+  it("widthFitRect: the letter's width fills the pane; the height follows the aspect — the vertical scroll has room (user 2026-08-22)", () => {
+    // page-06-like: the tall letter [481, 2246, 1881, 4642] in a 654×524
+    // pane. The old whole-letter fit made the letter one screen tall —
+    // nothing to pan, tiny text. The width-fit: the letter's x-extent
+    // fills the pane, the height follows the pane's aspect (the pan
+    // reveals the rest), and the letter's center lands at the view's.
+    const view = widthFitRect(654, 524, { x: 481, y: 2246, width: 1400, height: 2396 });
+    expect(view.width).toBe(1400);
+    expect(view.height).toBeCloseTo(1400 * (524 / 654), 5); // ~1121 < 2396 — the pan room!
+    expect(view.x).toBe(481);
+    expect(view.y).toBe(2246);
+  });
+
+
   it("zoomView: the image point under the cursor stays put when zooming", () => {
     const paneW = 812, paneH = 131;
     const before = { x: 0, y: 100, width: 2544, height: 410 };
@@ -415,7 +407,28 @@ describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)",
     const deep = zoomView({ x: 0, y: 0, width: 2544, height: 410 }, 0.0001, paneW, paneH, 0, 0, 2544);
     expect(deep.width).toBe(2544 * 8);
   });
+
+  it("initialViewRect spans the WHOLE letter, not the first line (user 2026-08-22)", async () => {
+    const { initialViewRect } = await import("../../views/review.js");
+    // page-01-like: the reading-first line sits mid-letter; other lines
+    // extend LEFT (the P.S. margin at x 526) and RIGHT (2017). The old
+    // view anchored the first line's left edge — every other line needed
+    // a jog; the view must cover the LETTER so the vertical scroll just
+    // goes down.
+    const layout = {
+      lines: [
+        { text: "A picture of life in Music College.", box: [757, 2252, 1547, 2365] },
+        { text: "P.S. I had a whole Grade 3A", box: [526, 2247, 1044, 2294] },
+        { text: "Orchestra for 3 performances of operas b", box: [547, 2600, 2017, 2690] },
+      ],
+    };
+    const rect = initialViewRect(layout);
+    expect(rect.x).toBeLessThanOrEqual(526); // the letter's left edge
+    expect(rect.x + rect.width).toBeGreaterThanOrEqual(2017); // the letter's right edge
+    expect(rect.y).toBeLessThanOrEqual(2247); // the letter's top, not below it
+  });
 });
+
 
 describe("the reviewer's orientation — { desired, acked } per page, set only by ↻ (VR10)", () => {
   beforeEach(() => localStorage.clear());
@@ -618,5 +631,623 @@ describe("the document list shows only awaiting documents (user 2026-08-16)", ()
     await vi.waitFor(() => expect(main.textContent).toContain("confirmed."));
     expect(main.querySelectorAll(".rv-card").length).toBe(0);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("a multi-orientation page renders (VR15)", () => {
+  it("shows the line texts, a check button on EVERY line, and the skip button", async () => {
+    // the combined multi layout's shape (tools/layout.multi_layout): the
+    // words carry their text, and a line the rec read weakly flags its
+    // words — the review's red doubt + the check button. The reproduced
+    // fault (2026-08-17, the postcard): the words were {box, conf} only,
+    // so the pane rendered blank lines with no check buttons.
+    const multiDoc = {
+      batch_id: "adopt-1",
+      pages: ["p1.jpg"],
+      texts: { "p1.jpg": "weak line\nclean" },
+      layouts: {
+        "p1.jpg": {
+          page: "p1.jpg",
+          width: 100,
+          height: 100,
+          rotation: 0,
+          lines: [
+            {
+              index: 0,
+              text: "weak line",
+              box: [1, 1, 50, 10],
+              conf: 0.9,
+              orientation: 0,
+              words: [
+                { word: "weak", box: [1, 1, 20, 10], conf: 0.0 },
+                { word: "line", box: [21, 1, 50, 10], conf: 0.0 },
+              ],
+            },
+            {
+              index: 1,
+              text: "clean",
+              box: [1, 20, 50, 30],
+              conf: 1.0,
+              orientation: 270,
+              words: [{ word: "clean", box: [1, 20, 50, 30], conf: 1.0 }],
+            },
+          ],
+          unmatched: [],
+        },
+      },
+      greeting: null,
+      signoff: null,
+      status: "review",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ batch_id: "adopt-1", label: "Pile", documents: [multiDoc], processing: {} }),
+      }),
+    );
+    const main = document.createElement("main");
+    render(main, { name: "review", arg: "adopt-1", rest: ["review", "adopt-1", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-line")).toBeTruthy());
+    // the line TEXTS render — the words carry their text
+    expect(main.textContent).toContain("weak");
+    expect(main.textContent).toContain("clean");
+    // the check (mark-fine) button is on EVERY line — the multi pages are
+    // provisional, the reviewer checks each line as they read it
+    expect(main.querySelectorAll(".rv-line .rv-ok").length).toBe(2);
+    // the action bar: the skip (advance without confirming) + the confirm
+    const skip = [...main.querySelectorAll(".rv-txa button")].find((b) => b.textContent.includes("Skip"));
+    expect(skip).toBeTruthy();
+    expect(main.querySelector(".rv-txa .rv-btn--primary")).toBeTruthy();
+    vi.unstubAllGlobals();
+  });
+
+  it("selecting a non-horizontal line rotates the view to read it", () => {
+    // the per-line read rotation (2026-08-17): a 270° line reads
+    // horizontally when the view turns 90°; a 0° line leaves the view put.
+    expect(viewRotation({ rotation: 0, readRotation: 0 })).toBe(0);
+    expect(viewRotation({ rotation: 0, readRotation: 90 })).toBe(90);
+    expect(viewRotation({ rotation: 90, readRotation: 270 })).toBe(0); // combined mod 360
+  });
+});
+
+describe("reconcileEdits", () => {
+  const layout = {
+    lines: [
+      { index: 0, text: "P.S. I had a whole Grade 3A" },
+      { index: 1, text: "theory paper to work before" },
+      { index: 2, text: "my first Theory lesson today." },
+    ],
+  };
+
+  it("keeps an edit whose line's text is unchanged", async () => {
+    const { reconcileEdits } = await import("../../views/review.js");
+    expect(reconcileEdits({ 1: "theory paper to work before" }, layout)).toEqual({
+      1: "theory paper to work before",
+    });
+  });
+
+  it("re-maps an edit by exact text when the index moved", async () => {
+    const { reconcileEdits } = await import("../../views/review.js");
+    expect(reconcileEdits({ 5: "theory paper to work before" }, layout)).toEqual({
+      1: "theory paper to work before",
+    });
+  });
+
+  it("orphans an edit whose line's transcription changed (no fuzzy re-map)", async () => {
+    const { reconcileEdits } = await import("../../views/review.js");
+    // the rebuilt transcription differs from the corrected text by 1 char —
+    // the OLD fuzzy match (edit distance <=3) kept it, attaching the user's
+    // correction to a changed line; the exact rule orphans it (the user
+    // re-verifies the changed line)
+    expect(reconcileEdits({ 0: "P.S.] I had a whole Grade 3A" }, layout)).toEqual({});
+  });
+});
+
+describe("lineScrollFor", () => {
+  // the page-03-like structure: the transcription's DISPLAY order (the
+  // reading order — the P.S. block first, then the address, then the body)
+  // vs the image's physical y positions
+  const LAYOUT = {
+    lines: [
+      { text: "P.S. I had a whole Grade 3A", box: [526, 2247, 1044, 2294] },
+      { text: "theory paper to work before", box: [540, 2297, 1042, 2340] },
+      { text: "Queen Alexandra's House,", box: [1176, 2272, 1925, 2370] },
+      { text: "Chere Maman.", box: [628, 2551, 1140, 2655] },
+      { text: "I've come to the conclusion", box: [620, 2628, 1905, 2757] },
+    ],
+  };
+  const FRAME = { a: 1, b: 0, c: 0, d: 1, ox: 0, oy: 0, dw: 2544, dh: 4642 };
+  // the transcript's DOM offsets for the five lines, in display order
+  const OFFSETS = [0, 40, 80, 120, 160];
+
+  it("scrolls the transcript to the line at the image's view top — NOT the proportional fraction", async () => {
+    const { lineScrollFor } = await import("../../views/review.js");
+    // the image view at y 2600: the physical line there is the body's
+    // "Chere Maman." (y 2551-2655) — display index 3 — offset 120
+    expect(lineScrollFor(2600, LAYOUT, FRAME, OFFSETS)).toBe(120);
+    // the view at y 2300: the physical line there is "theory paper" (the
+    // P.S. block, y 2297-2340 — the first display-order line containing it)
+    expect(lineScrollFor(2300, LAYOUT, FRAME, OFFSETS)).toBe(40);
+  });
+
+  it("clamps to the first line when the view is above all boxes", async () => {
+    const { lineScrollFor } = await import("../../views/review.js");
+    expect(lineScrollFor(100, LAYOUT, FRAME, OFFSETS)).toBe(0);
+  });
+});
+
+describe("layout staleness — the drafts' revisions vs the rendered layout", () => {
+  it("collectLayoutRevisions records each page's layout revision", async () => {
+    const { collectLayoutRevisions } = await import("../../views/review.js");
+    const docs = [
+      { pages: ["p1.jpg", "p2.jpg"], layouts: { "p1.jpg": { revision: 3 }, "p2.jpg": { revision: 1 } } },
+      { pages: ["p3.jpg"], layouts: {} },
+    ];
+    expect(collectLayoutRevisions(docs)).toEqual({ "p1.jpg": 3, "p2.jpg": 1 });
+  });
+
+  it("staleLayoutPages finds the pages whose layout revision changed", async () => {
+    const { staleLayoutPages } = await import("../../views/review.js");
+    const docs = [{ pages: ["p1.jpg", "p2.jpg"], layouts: { "p1.jpg": { revision: 3 }, "p2.jpg": { revision: 4 } } }];
+    expect(staleLayoutPages({ "p1.jpg": 3, "p2.jpg": 1 }, docs)).toEqual(["p2.jpg"]);
+  });
+
+  it("staleLayoutPages finds a page that gained a layout since the render", async () => {
+    const { staleLayoutPages } = await import("../../views/review.js");
+    const docs = [{ pages: ["p1.jpg"], layouts: { "p1.jpg": { revision: 1 } } }];
+    expect(staleLayoutPages({}, docs)).toEqual(["p1.jpg"]);
+  });
+
+  it("staleLayoutPages ignores pages without a layout", async () => {
+    const { staleLayoutPages } = await import("../../views/review.js");
+    const docs = [{ pages: ["p1.jpg"], layouts: {} }];
+    expect(staleLayoutPages({}, docs)).toEqual([]);
+  });
+});
+
+/** The behavior tests for the 2026-08-26 user report: the approve tick
+ *  needs TWO clicks on refused pages, and scrolling the image leaves
+ *  the transcript behind. Behavior, not implementation. */
+
+const LONG_DOC = (batchId, n) => ({
+  batch_id: batchId,
+  label: "Long pile",
+  documents: [
+    {
+      pages: ["p1.jpg"],
+      texts: { "p1.jpg": Array.from({ length: n }, (_, i) => `line number ${i}`).join("\n") },
+      layouts: {
+        "p1.jpg": {
+          page: "p1.jpg",
+          width: 100,
+          height: 1500,
+          lines: Array.from({ length: n }, (_, i) => ({
+            index: i,
+            text: `line number ${i}`,
+            box: [0, i * 40, 100, i * 40 + 30],
+            conf: 1,
+            words: [],
+          })),
+        },
+      },
+      status: "review",
+    },
+  ],
+  processing: {},
+});
+
+describe("the check control — a labelled checkbox (the pattern library: 'labelled checkbox, obvious state')", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b1", 3) }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("the control is a real checkbox with a visible label saying what it is for", async () => {
+    // The user's report (2026-08-28): the check marks "STILL do not use
+    // UI components that would help a user understand what they are
+    // actually for" — the old control was an icon-only ○/✓ circle with a
+    // hover tooltip (invisible on mobile). The house pattern (docs/UI.md
+    // .link-toggle) is a labelled checkbox with an obvious state.
+    const main = document.createElement("main");
+    render(main, { arg: "b1", rest: ["review", "b1", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-ok")).toBeTruthy());
+    const input = main.querySelector(".rv-ok input");
+    expect(input?.type).toBe("checkbox");
+    expect(main.querySelector(".rv-ok span")?.textContent.trim()).toBe("Verified");
+    expect(input.checked).toBe(false);
+    // the label's click checks the box AND records the edit (one click)
+    main.querySelector(".rv-ok").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => {
+      const fresh = main.querySelector(".rv-ok input");
+      expect(fresh.checked).toBe(true);
+    });
+    const edits = JSON.parse(localStorage.getItem("loft-review-edits") || "{}");
+    const stored = edits["b1"]?.["0"]?.["p1.jpg"]?.["0"];
+    expect(stored?.text ?? stored).toBe("line number 0");
+  });
+});
+
+describe("the approve tick — one click marks the line fine", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b1", 3) }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("the FIRST click on an unchecked line's ○ marks it ✓ and records the edit", async () => {
+    const main = document.createElement("main");
+    render(main, { arg: "b1", rest: ["review", "b1", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-ok")).toBeTruthy());
+    const btn = main.querySelector(".rv-ok");
+    expect(btn.classList.contains("rv-ok--checked")).toBe(false);
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    // renderTx replaces the DOM — re-query (the user's report: the tick
+    // needed two clicks)
+    await vi.waitFor(() => {
+      const fresh = main.querySelector(".rv-ok");
+      expect(fresh.classList.contains("rv-ok--checked")).toBe(true);
+    });
+    const edits = JSON.parse(localStorage.getItem("loft-review-edits") || "{}");
+    const stored = edits["b1"]?.["0"]?.["p1.jpg"]?.["0"];
+    expect(stored?.text ?? stored).toBe("line number 0");
+  });
+});
+
+describe("the approve tick on a LAYOUT-LESS page (the refused set)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          batch_id: "b2",
+          label: "Refused pile",
+          documents: [
+            {
+              pages: ["p1.jpg"],
+              texts: { "p1.jpg": "raw line one\nraw line two" },
+              layouts: {}, // no layout — the page was refused
+              status: "review",
+            },
+          ],
+          processing: {},
+        }),
+      }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("one click marks the raw line fine (doc 0's refused pages)", async () => {
+    const main = document.createElement("main");
+    render(main, { arg: "b2", rest: ["review", "b2", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-ok")).toBeTruthy());
+    const btn = main.querySelector(".rv-ok");
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => {
+      const fresh = main.querySelector(".rv-ok");
+      expect(fresh.classList.contains("rv-ok--checked")).toBe(true);
+    });
+    const edits = JSON.parse(localStorage.getItem("loft-review-edits") || "{}");
+    const stored = edits["b2"]?.["0"]?.["p1.jpg"]?.["0"];
+    expect(stored?.text ?? stored).toBe("raw line one");
+  });
+});
+
+describe("the dual-pane link — scrolling the image pans the transcript", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    // jsdom reports offsetTop 0 for everything — stub the line offsets
+    // at the PROTOTYPE, BEFORE the render: renderTx re-creates the
+    // .rv-line elements, and the sync reads the offsets the render
+    // recorded — a per-element stub would die with the elements, and a
+    // post-render stub would arrive after the record. Each line's
+    // offset is its data-index x 40, the same state a real browser has.
+    Object.defineProperty(HTMLElement.prototype, "offsetTop", {
+      configurable: true,
+      get() {
+        const idx = this.dataset && this.dataset.index;
+        return idx === undefined ? 0 : Number(idx) * 40;
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b3", 30) }),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    const orig = Object.getOwnPropertyDescriptor(Element.prototype, "offsetTop");
+    if (orig && orig.get && orig.get.__orig) orig.get.__orig();
+  });
+
+  it("a wheel over the image pans the view AND the transcript follows", async () => {
+    const main = document.createElement("main");
+    render(main, { arg: "b3", rest: ["review", "b3", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-page")).toBeTruthy());
+    // jsdom never loads images or lays out — drive both so the view
+    // initializes and the transcript can overflow
+    const img = main.querySelector(".rv-page");
+    Object.defineProperty(img, "naturalWidth", { value: 100, configurable: true });
+    Object.defineProperty(img, "naturalHeight", { value: 1500, configurable: true });
+    const imgbox = main.querySelector(".rv-imgbox");
+    Object.defineProperty(imgbox, "clientWidth", { value: 500, configurable: true });
+    Object.defineProperty(imgbox, "clientHeight", { value: 800, configurable: true });
+    const txb = main.querySelector(".rv-txb");
+    Object.defineProperty(txb, "clientHeight", { value: 300, configurable: true });
+    img.dispatchEvent(new Event("load"));
+    const layer = main.querySelector(".rv-layer");
+    await vi.waitFor(() => expect(layer.style.transform).not.toBe(""));
+    const beforeTransform = layer.style.transform;
+    imgbox.dispatchEvent(new WheelEvent("wheel", { deltaY: 240, bubbles: true, cancelable: true }));
+    // The wheel must PAN the image — renderView re-runs and the layer
+    // moves — AND the transcript must follow: the sync inside
+    // renderView scrolls it to the line now at the view's top. The
+    // third round of this bug (2026-08-28, page-01's serving layout):
+    // the previous tests only asserted the pan, never the follow.
+    await vi.waitFor(() => expect(layer.style.transform).not.toBe(beforeTransform));
+    await vi.waitFor(() => expect(txb.scrollTop).toBeGreaterThan(0));
+  });
+});
+
+describe("the dual-pane link on LAYOUT-LESS pages (the refused set, phone report)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    const raw = Array.from({ length: 30 }, (_, i) => `raw line ${i}`).join("\n");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          batch_id: "b4",
+          label: "Refused long pile",
+          documents: [
+            {
+              pages: ["p1.jpg"],
+              texts: { "p1.jpg": raw },
+              layouts: {}, // refused: no geometry
+              status: "review",
+            },
+          ],
+          processing: {},
+        }),
+      }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("scrolling the transcript pans the image by the same FRACTION", async () => {
+    const main = document.createElement("main");
+    render(main, { arg: "b4", rest: ["review", "b4", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-page")).toBeTruthy());
+    const img = main.querySelector(".rv-page");
+    Object.defineProperty(img, "naturalWidth", { value: 100, configurable: true });
+    Object.defineProperty(img, "naturalHeight", { value: 1500, configurable: true });
+    const imgbox = main.querySelector(".rv-imgbox");
+    Object.defineProperty(imgbox, "clientWidth", { value: 500, configurable: true });
+    Object.defineProperty(imgbox, "clientHeight", { value: 800, configurable: true });
+    const txb = main.querySelector(".rv-txb");
+    Object.defineProperty(txb, "clientHeight", { value: 300, configurable: true });
+    Object.defineProperty(txb, "scrollHeight", { value: 1200, configurable: true });
+    Array.from(main.querySelectorAll(".rv-line")).forEach((el, i) => {
+      Object.defineProperty(el, "offsetTop", { value: i * 40, configurable: true });
+      Object.defineProperty(el, "offsetHeight", { value: 30, configurable: true });
+    });
+    img.dispatchEvent(new Event("load"));
+    const layer = main.querySelector(".rv-layer");
+    await vi.waitFor(() => expect(layer.style.transform).not.toBe(""));
+    const before = layer.style.transform;
+    // scroll the transcript halfway -> the image pans halfway down
+    txb.scrollTop = 600;
+    txb.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => expect(layer.style.transform).not.toBe(before));
+  });
+
+  it("dragging the image scrolls the transcript by the same FRACTION", async () => {
+    const main = document.createElement("main");
+    render(main, { arg: "b4", rest: ["review", "b4", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-page")).toBeTruthy());
+    const img = main.querySelector(".rv-page");
+    Object.defineProperty(img, "naturalWidth", { value: 100, configurable: true });
+    Object.defineProperty(img, "naturalHeight", { value: 1500, configurable: true });
+    const imgbox = main.querySelector(".rv-imgbox");
+    Object.defineProperty(imgbox, "clientWidth", { value: 500, configurable: true });
+    Object.defineProperty(imgbox, "clientHeight", { value: 800, configurable: true });
+    const txb = main.querySelector(".rv-txb");
+    Object.defineProperty(txb, "clientHeight", { value: 300, configurable: true });
+    Object.defineProperty(txb, "scrollHeight", { value: 1200, configurable: true });
+    Array.from(main.querySelectorAll(".rv-line")).forEach((el, i) => {
+      Object.defineProperty(el, "offsetTop", { value: i * 40, configurable: true });
+      Object.defineProperty(el, "offsetHeight", { value: 30, configurable: true });
+    });
+    img.dispatchEvent(new Event("load"));
+    // drag the image down 200px: the view pans, the transcript follows
+    imgbox.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: 100, clientY: 300, pointerType: "touch" }));
+    window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: 100, clientY: 100, pointerType: "touch" }));
+    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, clientX: 100, clientY: 100, pointerType: "touch" }));
+    await vi.waitFor(() => expect(txb.scrollTop).toBeGreaterThan(0));
+  });
+});
+
+describe("the layout-less resume must not corrupt the pan floor", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    const raw = Array.from({ length: 30 }, (_, i) => `raw line ${i}`).join("\n");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          batch_id: "b5",
+          label: "Refused resume",
+          documents: [
+            {
+              pages: ["p1.jpg"],
+              texts: { "p1.jpg": raw },
+              layouts: {}, // refused: no geometry
+              status: "review",
+            },
+          ],
+          processing: {},
+        }),
+      }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("scrolling the transcript to the top after a mid-page resume shows the image top", async () => {
+    // The user panned the image to the middle (saved view.y = 600) while
+    // the transcript stayed at the top (saved scrollTop = 0). On re-open
+    // the resume must restore BOTH positions — and the pan floor (the
+    // page's writing top, 0 for a layout-less page) must NOT be the saved
+    // position: the image must still be able to reach the top.
+    const { saveResumePosition } = await import("../../views/review.js");
+    saveResumePosition("b5", 0, "p1.jpg", 0, { x: 0, y: 600, width: 500, height: 800 }, 0, 0);
+
+    const main = document.createElement("main");
+    render(main, { arg: "b5", rest: ["review", "b5", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-page")).toBeTruthy());
+    const img = main.querySelector(".rv-page");
+    Object.defineProperty(img, "naturalWidth", { value: 100, configurable: true });
+    Object.defineProperty(img, "naturalHeight", { value: 1500, configurable: true });
+    const imgbox = main.querySelector(".rv-imgbox");
+    Object.defineProperty(imgbox, "clientWidth", { value: 500, configurable: true });
+    Object.defineProperty(imgbox, "clientHeight", { value: 800, configurable: true });
+    const txb = main.querySelector(".rv-txb");
+    Object.defineProperty(txb, "clientHeight", { value: 300, configurable: true });
+    Object.defineProperty(txb, "scrollHeight", { value: 1200, configurable: true });
+    Array.from(main.querySelectorAll(".rv-line")).forEach((el, i) => {
+      Object.defineProperty(el, "offsetTop", { value: i * 40, configurable: true });
+      Object.defineProperty(el, "offsetHeight", { value: 30, configurable: true });
+    });
+    img.dispatchEvent(new Event("load"));
+    const layer = main.querySelector(".rv-layer");
+    await vi.waitFor(() => expect(layer.style.transform).not.toBe(""));
+    // let the resume's syncLock release (released on the next rAF) — the
+    // user's scroll happens after the page settles
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    // scroll the transcript back to the very top — the image must pan
+    // all the way up (translateY 0 = the image's top at the pane's top)
+    txb.scrollTop = 0;
+    txb.dispatchEvent(new Event("scroll"));
+    await vi.waitFor(() => {
+      const m = layer.style.transform.match(/translate\(([-\d.]+)px,\s*([-\d.]+)px\)/);
+      expect(m).toBeTruthy();
+      expect(Number(m[2])).toBe(0); // the pan floor was NOT the saved y
+    });
+  });
+});
+
+describe("the fit guarantees a pan range (the wheel is never swallowed)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    Object.defineProperty(HTMLElement.prototype, "offsetTop", {
+      configurable: true,
+      get() {
+        const idx = this.dataset && this.dataset.index;
+        return idx === undefined ? 0 : Number(idx) * 40;
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b7", 30) }),
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete HTMLElement.prototype.offsetTop;
+  });
+
+  it("the width fit caps the view at 80% of the content — the pan room exists on the tall pane, and the wheel pans + the transcript follows", async () => {
+    const main = document.createElement("main");
+    render(main, { arg: "b7", rest: ["review", "b7", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-page")).toBeTruthy());
+    const img = main.querySelector(".rv-page");
+    Object.defineProperty(img, "naturalWidth", { value: 100, configurable: true });
+    Object.defineProperty(img, "naturalHeight", { value: 1500, configurable: true });
+    const imgbox = main.querySelector(".rv-imgbox");
+    Object.defineProperty(imgbox, "clientWidth", { value: 500, configurable: true });
+    Object.defineProperty(imgbox, "clientHeight", { value: 8000, configurable: true }); // the tall pane
+    const txb = main.querySelector(".rv-txb");
+    Object.defineProperty(txb, "clientHeight", { value: 300, configurable: true });
+    img.dispatchEvent(new Event("load"));
+    const layer = main.querySelector(".rv-layer");
+    await vi.waitFor(() => expect(layer.style.transform).not.toBe(""));
+    const scale = (t) => Number((t.match(/scale\(([\d.]+)\)/) || [0, 0])[1]);
+    const beforeScale = scale(layer.style.transform);
+    const beforeScroll = txb.scrollTop;
+    imgbox.dispatchEvent(new WheelEvent("wheel", { deltaY: 240, bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(txb.scrollTop).not.toBe(beforeScroll));
+    // the wheel PANNED (the scale unchanged — the fit left the room)
+    expect(scale(layer.style.transform)).toBe(beforeScale);
+  });
+});
+
+describe("wheelZoomOrPan — the degenerate view (the whole writing visible) zooms, the rest pans", () => {
+  it("classifies the view against the writing's extent", async () => {
+    const { wheelZoomOrPan } = await import("../../views/review.js");
+    const layout = {
+      lines: [
+        { box: [100, 2280, 500, 2323] },
+        { box: [100, 2365, 500, 2400] },
+        { box: [100, 2448, 500, 2495] },
+      ],
+    };
+    // the view shows the whole writing (the degenerate fit) -> zoom
+    expect(wheelZoomOrPan({ width: 500, height: 240 }, layout)).toBe("zoom");
+    // the view shows a slice -> pan
+    expect(wheelZoomOrPan({ width: 500, height: 100 }, layout)).toBe("pan");
+    // no layout (the layout-less pages: the band fit always leaves room) -> pan
+    expect(wheelZoomOrPan({ width: 500, height: 300 }, null)).toBe("pan");
+  });
+});
+
+describe("editing a line applies the correction", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b8", 3) }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("a corrected line keeps the correction after the accept's re-render", async () => {
+    // The user's report (2026-08-28): "when I edit a line my edits don't
+    // get applied". The accept stores the edit and re-renders; the render
+    // reconciles the edits against the layout — and the exact-match rule
+    // (`lineAtIdx.text === text`) only survives edits that EQUAL the
+    // layout's line text (the mark-fine ticks). A correction differs from
+    // the line, falls into the re-map branch, and gets orphaned — the
+    // original text comes back. The correction must survive: the edit
+    // records what it CHANGED FROM, and the reconcile matches that.
+    const main = document.createElement("main");
+    render(main, { arg: "b8", rest: ["review", "b8", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-line")).toBeTruthy());
+    const line = main.querySelector('.rv-line[data-index="0"]');
+    line.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.waitFor(() => expect(main.querySelector(".rv-wfi")).toBeTruthy());
+    const input = main.querySelector(".rv-wfi");
+    input.value = "my correction";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await vi.waitFor(() => {
+      const shown = main.querySelector('.rv-line[data-index="0"] .rv-lt');
+      expect(shown?.textContent).toBe("my correction");
+    });
+    const edits = JSON.parse(localStorage.getItem("loft-review-edits") || "{}");
+    expect(edits["b8"]?.["0"]?.["p1.jpg"]?.["0"]?.text ?? edits["b8"]?.["0"]?.["p1.jpg"]?.["0"]).toBe("my correction");
   });
 });

@@ -640,9 +640,10 @@ flowchart TB
         C --> D["ocr-raw — tesseract"]
         D --> E["route — print vs cursive"]
         E --> F["transcribe — the vision model (cursive)"]
-        F --> G["guess — document grouping + provisional transcription"]
+        F --> G["guess — corrected transcription (vision model)"]
+        G --> H["group — full-sequence boundaries (scored grouping)"]
     end
-    G --> L["layout — boxes + per-word flags"]
+    H --> L["layout — boxes + per-word flags"]
     L --> R["review — boxes + draft text + flags"]
     R --> P["archive"]
     L -. "not wired: run by hand today" .-> R
@@ -656,7 +657,8 @@ flowchart TB
 | ocr-raw | tesseract read of the oriented page | `ocr-raw/*.txt` |
 | route | print vs cursive from strong-word density | `classify.json` |
 | transcribe | the vision model reads cursive pages | `ocr-raw/*.vlm.json` |
-| guess | group the documents + the provisional transcription | `ocr-guess/*.txt`, `boundaries.json` |
+| guess | corrected transcription per page (the vision model) | `ocr-guess/*.txt` |
+| **group** | **full-sequence grouping by physical evidence: duplex sides, paper size, page numbers, the model's flags (tools/grouping.py)** | **`boundaries.json` — the grouping scorer supersedes the model's text-only grouping** |
 | **layout** | **detect text lines + per-word boxes/flags (paddleocr + build_layout)** | **`ocr-guess/*.layout.json`** |
 | review | the reviewer verifies/corrects the draft | confirmed text |
 
@@ -669,6 +671,32 @@ nobody manually layouted reaches the review with draft text and **no
 boxes and no flags** (batch `adopt-20260813-201024` was exactly this).
 The simplest thing meeting VR14: make the layout stage a `process` step
 after `guess` — the logic already exists, it only needs wiring.
+
+**The grouping scorer (VR6 — the grouping is part of the review; AC21 —
+two-sided item).** The guess stage's model groups TEXT pages only by
+greeting/sign-off boundaries, so a photo page (the picture side of a
+postcard) can never join its document. The grouping scorer
+(`tools/grouping.py`, 2026-08-17) replaces the model's text-only
+grouping with a full-sequence pass over ALL pages (photos included), in
+scan order. The evidence hierarchy, priority-ordered:
+
+1. **Duplex sides (strongest):** a photo/drawing page adjacent to a text
+   page of the same paper (normalised aspect within 12%, the phone-scan
+   proxy for paper size) is the two sides of one sheet — same document,
+   the picture side first. The pairs are greedy (a page never pairs with
+   both neighbours), so concurrent [back1, front1, back2, front2] pairs
+   disjointly.
+2. **Paper size:** different papers are probably not the same document
+   (the 12% tolerance is deliberately soft — phone-scan aspect variance
+   is the same order as paper differences).
+3. **Page numbers:** a page starting "2" continues its document; a fresh
+   "1" starts one.
+4. **The model's greeting/sign-off flags:** the fallback for text pages.
+
+The transcription review's drafts route (`tools/server.py`) filters out
+photo-only documents and shows only the TEXT pages of each document
+(the picture side stays in the structure for the future people/places
+identification flow, but the review never pages through a photo).
 
 **Multi-orientation pages (PRD VR15) — the postcard finding.** A
 postcard with text running in several directions defeats the single-
@@ -701,6 +729,59 @@ orientation); (2) **admission tuning** — single-letter pieces (the
 stamp's "E R") are dropped by the ≥2-letter rule; and the orientation
 report should be folded into the existing transcription call (one model
 pass) rather than a separate call, to avoid the extra ~12K tokens.
+
+### 16.14.2 Pipeline reliability — completion markers, fail-loud, and surgical recovery (2026-08-20)
+
+**Completion markers.** Each stage treats an output artifact's existence as
+its completion marker: `ocr-raw/<stem>.vlm.json` marks the transcription,
+`ocr-guess/<stem>.txt` the guess, `boundaries.json` the grouping, and
+`ocr-guess/<stem>.layout.json` the layout. Re-running a stage skips pages
+whose marker exists — that is what makes re-runs cheap.
+
+**The marker rule: existence of the marker alone is not completion.** A
+marker promises its artifact; a marker whose artifact is missing or empty
+is a stale or partial write and must be re-done, not "reused". Concretely:
+`htr_pages_vlm` skips only when BOTH the `.vlm.json` and a non-empty
+`.txt` exist; `process` re-runs the guess when any text page's `.txt` is
+missing (the stale `boundaries.json` is deleted and regenerated); the
+layout stage refuses (exit 2) to build a page with no guess text when that
+page was explicitly requested, and skips with a stderr summary otherwise.
+The 2026-08-17 page-02 incident — a layout written from geometry alone
+over a cleared guess — is the canonical failure this rule prevents.
+
+**Fail-loud over silent no-op.** A stage that cannot do its job for a
+requested input fails loudly with the remedy in the message. Never a
+geometry-only build, never a "reused" corrupt guess, never an output that
+looks done but isn't.
+
+**Surgical recovery.** Fixing one page must not re-pay model calls for the
+whole batch. The pipeline exposes per-page stage commands:
+
+```bash
+make pipeline ARGS="guess <batch> [page...]"   # re-transcribe pages + regen boundaries
+make pipeline ARGS="layout <batch> [page...]"  # layout specific pages only
+```
+
+`guess` re-transcribes only the named pages (empty = all cursive) then
+regenerates boundaries from the full set (the grouping scorer needs the
+whole sequence). `layout` runs the PaddleOCR stage for the named pages
+only, inheriting its fail-loud missing-input check. The general
+`process <batch>` remains the whole-chain entry point.
+
+**The model-API contract (the client side of the Cloudflare gateway).**
+The VLM client must send a User-Agent the gateway's WAF accepts
+(`opencode/1.14.20`), and must give reasoning models `max_tokens` headroom
+(≥32000 for vision/geometry tasks — a reasoning model with a small budget
+returns `finish_reason: "length"` and zero content). HTTP errors surface
+with the response body; empty-content and budget-exhaustion failures are
+raised as actionable `VlmError`s. See the `cloudflare-ai-gateway` skill
+for the route-side configuration.
+
+**Versioned persistence.** All pipeline artifact writes go through
+`PipelineStore` (`tools/pipeline_store.py`), which preserves the previous
+version at `-2.ext` before overwriting the base path — an overwrite is
+always recoverable, and the append-only invariant is enforced at the write
+seam rather than hoped for.
 
 
 **Decisions — RESOLVED (user, 2026-08-03):** managed Postgres + pgvector on **Supabase**; **a small number of family curators** (a simple per-field last-write-wins + audit-log conflict story suffices; the far-future possibility of hosting *other families* that must never see our content is a tenant-isolation seam — the existing contributor-ID namespacing, §14 — and is not built now); the generation batch runs on **the reviewer's laptop**.
@@ -870,6 +951,22 @@ matched pair, the per-word flags come from the model's self-report
 as data. Word boxes without a confident line match are still carried (their
 geometry is real) with a line confidence of 0.
 
+**The fail-fast box guard (VR14 — every page reaches the review with
+valid boxes).** A layout with a degenerate or out-of-image box must never
+reach the review surface — the reviewer must never see a box that doesn't
+correspond to the page. Two boundaries enforce this (2026-08-17):
+
+- *Write-time:* `write_layout` runs `validate_layout` before persisting.
+  A line whose box is degenerate (x1 ≤ x0 or y1 ≤ y0) or outside the image
+  (with a 4 px tolerance) raises `ValueError` — the layout is never
+  written (VR14 — a bad layout cannot be persisted).
+- *Serve-time:* `draft_payloads` runs `validate_layout` on every layout
+  before serving it. A layout that fails validation is excluded from the
+  drafts payload; the page keeps its text but loses its boxes, and the
+  `layout_errors` dict names the violation per page. The review surface
+  shows a loud note (VR14 — the reviewer never sees wrong boxes, even
+  from a pre-existing bad layout on disk).
+
 **The front-end surface (VR1/VR4 of the review PRD).** The drafts payload
 (`draft_payloads`, §16.15) gains the per-page layout: each transcription
 line's box + per-word confidence. The review view renders the page image
@@ -934,8 +1031,9 @@ backend has it):
 
 **The navigation model (2026-08-16).** The review surface shows two nested
 sequences — pages inside a document, documents inside the batch — as ONE
-compact strip under the top bar: the batch's documents as numbered chips
-(✓ confirmed) and the current document's pages as numbered chips (the
+compact strip under the top bar: the batch's documents as chips showing
+the document's greeting (or a numbered fallback), with ✓ confirmed and ✗
+rejected status marks; the current document's pages as numbered chips (the
 current page filled; a red dot marks pages with lines still to check). Tap
 a chip to navigate. The strip replaces the top-bar subtitle and the
 Prev/Next page buttons: the document boundary is visible before the last
@@ -944,6 +1042,41 @@ page, and a cross-page "Next flagged" jump is visible before it happens
 added words (prior art: spatial page maps — CHI space-filling thumbnails;
 per-page review status — FromThePage). Flagged words render with a wavy red
 underline (the spell-check convention) at rest, not only in edit.
+
+**The reading order (VR15, AC20 — coherent, not dislocating).** The
+transcription presents the text in a coherent order: lines from the same
+block of writing (a paragraph, a callout box, a marginal note) are kept
+together, and lines from different blocks are not mixed even if they
+happen to be at the same height on the page. The layout achieves this
+by running a detection pass per orientation (the multi-orientation layout
+anchors lines from each pass separately), then ordering the combined
+lines by orientation (0° first, then 90°, 180°, 270°) — the reading
+direction the user naturally expects. Within each orientation group, the
+lines stay in the detector's reading order (top-to-bottom in the
+rotated frame), so a callout box's lines stay together and are not
+interleaved with the main text column. The initial display shows the
+page the way the pipeline determined is right-way-up — the printed
+writing upright (the oriented image).
+
+**The three outcomes (VR5 — confirm or reject; VR17 — defer; AC30 — no
+action is irrevocable).** Every document reaches one of three states, and
+none is irrevocable:
+
+- **Confirmed** — the reviewer is confident in the transcription. The
+  document is published to the archive and removed from the pending queue
+  ("✓ Confirm & Next →" button). The confirm button is always available
+  (it is not blocked by unchecked lines, unverified lines, or any other
+  pre-condition — the reviewer's own confidence is the only gate; VR5,
+  AC27, AC28).
+- **Rejected** — the document does not belong in the archive (an
+  accidental import such as petrol receipts, an unreadable scan, one too
+  embarrassing to keep — user, 2026-08-17). The rejection is a
+  soft-delete: the document moves to a recoverable bin and leaves the
+  pending queue; the reviewer can bring it back. Not yet implemented.
+- **Deferred** — the document belongs in the archive but the reviewer
+  cannot finish it now (needs to ask a family member, come back later).
+  It stays in the pending queue, unconfirmed ("Skip →" button,
+  implemented 2026-08-17).
 
 **The correction interaction (2026-08-15, grounded in the prior art).** The
 reviewer's correction model follows Trove/Transkribus: **per-line inline
@@ -978,3 +1111,81 @@ tablet and phone-landscape instead of a second stacked mobile layout
   projection failed globally).
 - The Azure subscription, once it exists, is the cloud fallback for the
   same mechanism (real boxes + confidence, handwriting-capable).
+- **Grouping correction (VR6).** The reviewer can see the document grouping
+  (the navigation strip) but has no way to correct a wrong page-to-document
+  assignment — split a document, merge two, or move a page. The design is
+  deferred until a real example of a wrong grouping surfaces in testing
+  (user, 2026-08-17).
+
+**The navigation and focus model (2026-08-17, VR17, walkthrough finding).**
+
+The fake-user walkthrough (Sam, 2026-08-17) + the UX research (Preview
+Panel, Master-Detail, Overview+Detail, Inline Edit patterns) established
+the focus model:
+
+*The focused line* is the line at the top of the text pane's viewport.
+Scrolling the text changes the focus. The image follows — pans to the
+focused line's box, rotates to the line's reading orientation.
+Panning/zooming the image does NOT change the focus; the reviewer can
+explore the scan freely. A "return" button in the image toolbar
+re-centres on the focused line.
+
+*The image is the navigation surface.* The box overlays are touchable
+(`pointer-events: auto`). Tapping a box scrolls the text to the
+corresponding line and rotates the image to make it readable. The image
+pane's click handler that silently edits the text is removed.
+
+*The inline edit* has a visible Done (✓, commits) and Cancel (✕,
+discards) — the standard Inline Edit pattern. The Escape key cancels;
+the keyboard's Done key commits. The edit row shows the format buttons + Done + Cancel.
+
+*The verification tick* is a toggle: unchecked (○ outline) and checked
+(✓ filled). Clicking a checked line unchecks it (the edit is removed,
+the line returns to its unchecked state). The line's background turns
+cream when checked.
+
+*The image pane's initial view* fits the document's full content area
+(all boxes' min/max y, not just the first line) at a readable zoom
+level — the reviewer sees the full card and can scroll to the message.
+
+*Returning to a page restores the exact view.* The document and page
+are already in the URL (`syncSurfaceUrl`). The image view rectangle
+(the pan position and zoom level) and the text scroll position are
+persisted to `localStorage` keyed by `{batch}|{page}` — the same store
+as the rotation outbox — and restored on return. The focused line, the
+scroll position, and the image view are always in sync: the "no
+dislocating moves" rule (P18 from the walkthrough, 2026-08-16) applies
+to every re-render, not just within the session (VR9, AC19).
+
+*The per-line rotation* uses the pass orientation (the detector's
+reading direction), not the report's estimated degrees. The
+`_vlm_text_lines` anchoring: the line's orientation = the matched
+detection's pass orientation when a rec match exists, else the report's
+degrees (the best available estimate). This makes the viewRotation work
+correctly for the dual-pane link and the per-line reading rotation.
+
+**Resource management (VR16 — the app runs lightly on this laptop).**
+
+The layout stage (PaddleOCR) is the only heavy component in the review
+pipeline. Three measures bound its footprint:
+
+- *The detection input is bounded.* The engine's `text_det_limit_side_len`
+  is set to 2000px (the default is 4000px). The engine resizes the input
+  image internally and maps the boxes back to the original pixels (the
+  coordinate assertion in `detect_page` guards that mapping). The
+  prediction arrays drop ~4× in size, and the per-rotation passes (the
+  multi-orientation path) stay within the same bound (VR16 — the
+  pipeline's peak memory is bounded, not the scan's native resolution).
+- *The allocator uses on-demand growth.* The layout subprocess sets
+  `FLAGS_allocator_strategy=auto_growth` and
+  `FLAGS_use_system_allocator=1` — the framework allocates per-operation
+  instead of reserving a large arena up front (VR16 — the framework's
+  base footprint is the floor, not an arena that doubles the peak).
+- *The thread count leaves a core free.* The layout subprocess caps
+  `OMP_NUM_THREADS` and `FLAGS_paddle_num_threads` at `nproc-1`
+  (2026-08-17: the 8‑core machine leaves one core for the rest of the
+  box) (VR16 — a core is free for other work while the engine runs).
+
+*Implementation status:* The front-end changes are API-independent and
+ready to build. The page-02 rebuild (201004) needs the model API
+(monthly limit reached 2026-08-17).

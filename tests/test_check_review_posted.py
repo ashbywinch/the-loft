@@ -1,0 +1,166 @@
+"""The review-posted gate's contract: the head commit counts as reviewed
+ONLY when an output artifact exists — a completed "PR Agent - Review"
+check run, or a guide/skip comment covering the commit. Nothing else:
+the action exits 0 whether or not the review happened (v0.41.1
+PRAgent.handle_request swallows every exception; the 2026-09-04 401
+incident ran to completion producing nothing), so a gate that trusts the
+bot's own word re-introduces the exact bug it exists to catch."""
+
+from tools import check_review_posted as gate
+
+_SHA = "abc123"
+_COMMIT = {"commit": {"committer": {"date": "2026-09-05T10:00:00Z"}}}
+_GUIDE = {"body": "## Incremental PR Reviewer Guide 🔍", "created_at": "2026-09-05T10:05:00Z"}
+
+
+def _gate(responses: dict, failure_reason=None, fetch_hook=None) -> int:
+    """fetch_hook validates the outgoing URL before delegating to the
+    scripted responses — the gate's URL construction is part of the
+    contract (2026-09-06: a placeholder repo in the check-run query 404'd
+    in production and every pr-review crashed)."""
+    """The gate with an injected fetch and a stubbed failure-reason read —
+    the repo's DI convention (fakes are objects/functions passed in, the
+    global environment never touched). The poll delay is zeroed: a test
+    never sleeps on wall-clock time (docs/testing-standards.md)."""
+    env = {
+        "SHA": _SHA,
+        "GITHUB_REPOSITORY": "org/repo",
+        "PR_NUMBER": "7",
+        "GITHUB_TOKEN": "t",
+    }
+
+    def fetch(url: str, token: str):
+        if fetch_hook:
+            fetch_hook(url)
+        for fragment, payload in responses.items():
+            if fragment in url:
+                return payload
+        raise AssertionError(f"unexpected URL: {url}")
+
+    return gate.run_review_gate(fetch, env, failure_reason=failure_reason, poll_delay_s=0.0)
+
+
+def _review_check(status: str) -> dict:
+    return {"name": "PR Agent - Review", "status": status, "conclusion": "neutral"}
+
+
+def test_completed_review_check_run_covers_the_head() -> None:
+    """The artifact path: the bot published its review as a check —
+    covered even when the comment trail is empty. The query must target
+    the actual repo — the placeholder-repo variant 404'd in production
+    and crashed the gate (2026-09-06)."""
+    seen: list[str] = []
+
+    def hook(url: str) -> None:
+        seen.append(url)
+
+    assert (
+        _gate(
+            {
+                "/commits/abc123/check-runs": {"check_runs": [_review_check("completed")]},
+            },
+            fetch_hook=hook,
+        )
+        == 0
+    )
+    assert any("repos/org/repo/commits/abc123/check-runs" in u for u in seen), seen
+
+
+def test_in_progress_check_run_is_not_coverage() -> None:
+    """A check that never completed means the review never produced its
+    verdict — the gate fails loud; the reason names the bot, not a guess."""
+    reasons: list[str] = []
+
+    def reason(repo: str, token: str) -> str:
+        reasons.append("the review died before publishing")
+        return reasons[-1]
+
+    code = _gate(
+        {
+            "/commits/abc123/check-runs": {"check_runs": [_review_check("in_progress")]},
+            "/commits/abc123": _COMMIT,
+            "/issues/7/comments": [],
+        },
+        failure_reason=reason,
+    )
+    assert code == 1
+    assert reasons == ["the review died before publishing"]
+
+
+def test_comment_covering_the_head_is_coverage() -> None:
+    """The fallback path: no check run (the configs before
+    publish_as_check_run), but a guide comment posted after the head
+    commit landed."""
+    assert (
+        _gate(
+            {
+                "/commits/abc123/check-runs": {"check_runs": []},
+                "/commits/abc123": _COMMIT,
+                "/issues/7/comments": [_GUIDE],
+            }
+        )
+        == 0
+    )
+
+
+def test_silent_skip_is_still_coverage_via_the_comment() -> None:
+    """The incremental review's silent decision to skip — nothing new to
+    read — is coverage when it says so: the bot assessed the head and
+    concluded the existing review holds."""
+    skip = {
+        "body": "Incremental Review Skipped\nNo files were changed since the previous review",
+        "created_at": "2026-09-05T10:06:00Z",
+    }
+    assert (
+        _gate(
+            {
+                "/commits/abc123/check-runs": {"check_runs": []},
+                "/commits/abc123": _COMMIT,
+                "/issues/7/comments": [skip],
+            }
+        )
+        == 0
+    )
+
+
+def test_poll_catches_a_review_that_lands_moments_later() -> None:
+    """The gate races the bot's publish: the guide posts at the very end
+    of the bot step and the comments API lags it by seconds. The poll must
+    re-fetch — a review that lands during the window is coverage, not a
+    failure (2026-09-06: PR 38's guide at 06:48:05Z beat the gate's first
+    fetch, failing a review that had succeeded)."""
+    state = {"calls": 0}
+
+    def fetch(url: str, token: str):
+        state["calls"] += 1
+        if "comments" in url:
+            if state["calls"] > 1:
+                return [_GUIDE]
+            return []
+        if "check-runs" in url:
+            return {"check_runs": []}
+        return _COMMIT
+
+    env = {"SHA": _SHA, "GITHUB_REPOSITORY": "org/repo", "PR_NUMBER": "7", "GITHUB_TOKEN": "t"}
+    code = gate.run_review_gate(fetch, env, failure_reason=lambda *a: "unused", poll_delay_s=0.0)
+    assert code == 0
+    assert state["calls"] >= 2
+
+
+def test_no_artifact_and_no_comment_fails_loud(capsys) -> None:
+    """The bot ran and produced nothing — the gate must fail, not pass on
+    the action's word (the original bug: a green step claims nothing)."""
+
+    def reason(repo: str, token: str) -> str:
+        return "the bot's log could not be read from the checks API"
+
+    code = _gate(
+        {
+            "/commits/abc123/check-runs": {"check_runs": []},
+            "/commits/abc123": _COMMIT,
+            "/issues/7/comments": [],
+        },
+        failure_reason=reason,
+    )
+    assert code == 1
+    assert "AI review did not post" in capsys.readouterr().out

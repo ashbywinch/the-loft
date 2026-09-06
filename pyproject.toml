@@ -29,6 +29,7 @@ dev = [
     "uvicorn>=0.30.0",  # the ASGI server
     "watchfiles>=1.0.0",  # the reloader's watcher (make serve --reload): enables the reload-excludes (2026-08-16)
     "pillow>=11.0.0",
+    "libcst>=1.5.0",  # the lucidlint fix engine's structural-edit core (extract-method, unreachable deletion)
 ]
 
 [build-system]

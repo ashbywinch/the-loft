@@ -102,7 +102,7 @@ def _job_log(repo: str, token: str) -> str | None:
         return None
 
 
-def _completed_review_check_run(fetch, sha: str) -> bool:
+def _completed_review_check_run(fetch, repo: str, sha: str) -> bool:
     """Is there a COMPLETED "PR Agent - Review" check run on the head
     commit? The bot creates it ONLY with the review output text in hand
     (github_provider._publish_check_run in v0.41.1: called from
@@ -113,13 +113,17 @@ def _completed_review_check_run(fetch, sha: str) -> bool:
     have passed a review that never happened. (User, 2026-09-05: "isn't
     this re-introducing our original bug where it just claims it's
     successful even when it's not?".) The conclusion is always "neutral"
-    in v0.41.1; completed-neutral means the review text was published."""
+    in v0.41.1; completed-neutral means the review text was published.
+    Any query failure degrades to False — the comment trail decides; a
+    crashed gate is the worst outcome (2026-09-06: the URL briefly used a
+    placeholder repo, the API 404'd, the HTTPError escaped and every
+    pr-review failed with a traceback, not a verdict)."""
     try:
-        runs = fetch(f"https://api.github.com/repos/x/y/commits/{sha}/check-runs", "")
+        runs = fetch(f"https://api.github.com/repos/{repo}/commits/{sha}/check-runs", "")
         return any(
             r.get("name") == "PR Agent - Review" and r.get("status") == "completed" for r in runs.get("check_runs", [])
         )
-    except (KeyError, ValueError, AttributeError):
+    except (KeyError, ValueError, AttributeError, OSError):
         return False
 
 
@@ -168,7 +172,7 @@ def _error_marker_reason(bot_lines: list[str]) -> str | None:
     return None
 
 
-def _completed_review_check_run(fetch, sha: str) -> bool:
+def _completed_review_check_run(fetch, repo: str, sha: str) -> bool:
     """Is there a COMPLETED "PR Agent - Review" check run on the head
     commit? The bot creates it ONLY with the review output text in hand
     (github_provider._publish_check_run in v0.41.1: called from
@@ -179,13 +183,17 @@ def _completed_review_check_run(fetch, sha: str) -> bool:
     have passed a review that never happened. (User, 2026-09-05: "isn't
     this re-introducing our original bug where it just claims it's
     successful even when it's not?".) The conclusion is always "neutral"
-    in v0.41.1; completed-neutral means the review text was published."""
+    in v0.41.1; completed-neutral means the review text was published.
+    Any query failure degrades to False — the comment trail decides; a
+    crashed gate is the worst outcome (2026-09-06: the URL briefly used a
+    placeholder repo, the API 404'd, the HTTPError escaped and every
+    pr-review failed with a traceback, not a verdict)."""
     try:
-        runs = fetch(f"https://api.github.com/repos/x/y/commits/{sha}/check-runs", "")
+        runs = fetch(f"https://api.github.com/repos/{repo}/commits/{sha}/check-runs", "")
         return any(
             r.get("name") == "PR Agent - Review" and r.get("status") == "completed" for r in runs.get("check_runs", [])
         )
-    except (KeyError, ValueError, AttributeError):
+    except (KeyError, ValueError, AttributeError, OSError):
         return False
 
 
@@ -213,7 +221,7 @@ def run_review_gate(
     # github.publish_as_check_run). The comment trail below remains the
     # fallback for runs from before the check was enabled and for the
     # incremental skip that posts a comment.
-    if _completed_review_check_run(fetch, sha):
+    if _completed_review_check_run(fetch, repo, sha):
         return 0
 
     commit = fetch(f"https://api.github.com/repos/{repo}/commits/{sha}", token)

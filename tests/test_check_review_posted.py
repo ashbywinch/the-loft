@@ -13,7 +13,11 @@ _COMMIT = {"commit": {"committer": {"date": "2026-09-05T10:00:00Z"}}}
 _GUIDE = {"body": "## Incremental PR Reviewer Guide 🔍", "created_at": "2026-09-05T10:05:00Z"}
 
 
-def _gate(responses: dict, failure_reason=None) -> int:
+def _gate(responses: dict, failure_reason=None, fetch_hook=None) -> int:
+    """fetch_hook validates the outgoing URL before delegating to the
+    scripted responses — the gate's URL construction is part of the
+    contract (2026-09-06: a placeholder repo in the check-run query 404'd
+    in production and every pr-review crashed)."""
     """The gate with an injected fetch and a stubbed failure-reason read —
     the repo's DI convention (fakes are objects/functions passed in, the
     global environment never touched). The poll delay is zeroed: a test
@@ -26,6 +30,8 @@ def _gate(responses: dict, failure_reason=None) -> int:
     }
 
     def fetch(url: str, token: str):
+        if fetch_hook:
+            fetch_hook(url)
         for fragment, payload in responses.items():
             if fragment in url:
                 return payload
@@ -40,15 +46,24 @@ def _review_check(status: str) -> dict:
 
 def test_completed_review_check_run_covers_the_head() -> None:
     """The artifact path: the bot published its review as a check —
-    covered even when the comment trail is empty."""
+    covered even when the comment trail is empty. The query must target
+    the actual repo — the placeholder-repo variant 404'd in production
+    and crashed the gate (2026-09-06)."""
+    seen: list[str] = []
+
+    def hook(url: str) -> None:
+        seen.append(url)
+
     assert (
         _gate(
             {
                 "/commits/abc123/check-runs": {"check_runs": [_review_check("completed")]},
-            }
+            },
+            fetch_hook=hook,
         )
         == 0
     )
+    assert any("repos/org/repo/commits/abc123/check-runs" in u for u in seen), seen
 
 
 def test_in_progress_check_run_is_not_coverage() -> None:

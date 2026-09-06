@@ -241,6 +241,7 @@ def run_batch(
     page_names: list[str] | None,
     work_dir: Path,
     urlopen=None,
+    api_key=None,
 ) -> int:
     """Layout the batch's oriented pages; page_names narrows the set (None =
     every oriented page). Returns 0 on success. Every run's diagnostics —
@@ -272,7 +273,8 @@ def run_batch(
             )
             return 2
     outcomes = [
-        _process_page(image, guess_dir, (batch_id, page_names, wanted, work_dir), urlopen=urlopen) for image in pages
+        _process_page(image, guess_dir, (batch_id, page_names, wanted, work_dir), urlopen=urlopen, api_key=api_key)
+        for image in pages
     ]
     if 2 in outcomes:
         return 2
@@ -687,6 +689,7 @@ def _process_page(
     guess_dir: Path,
     batch: tuple[str, list[str] | None, set[str], Path],
     urlopen=None,
+    api_key=None,
 ) -> int:
     """Lay ONE page out — 0 = laid out or quietly skipped, 1 = refused
     (the gates: boxless lines now fail the run, 2026-08-22), 2 = fatal
@@ -699,7 +702,7 @@ def _process_page(
         rc = _warn_missing_guess(image.name, vlm_path.name, page_names, wanted)
         return 2 if rc else 0
     try:
-        _layout_one(image, guess_dir, batch_id, work_dir, urlopen=urlopen)
+        _layout_one(image, guess_dir, batch_id, work_dir, urlopen=urlopen, api_key=api_key)
         return 0
     except (ValueError, SegmentPageError) as exc:
         # the refusal is recorded, not fatal (the per-page pattern) — and
@@ -711,7 +714,7 @@ def _process_page(
         return 1
 
 
-def _build_page_layout(image: Path, guess_dir: Path, urlopen=None):
+def _build_page_layout(image: Path, guess_dir: Path, urlopen=None, api_key=None):
     """The §16.17 single-pass build: ONE multimodal call returns every
     text segment with verbatim text, orientation, and a pixel box — text
     detection, box detection and transcription in one pass. No detector,
@@ -719,7 +722,7 @@ def _build_page_layout(image: Path, guess_dir: Path, urlopen=None):
     nothing to join (2026-09-06, the user: the old detect-then-match path
     does not work — do not fall back to it). The self-report's red-word
     flags apply to the words by line index, as before."""
-    segments, _usage = segment_page(image, urlopen=urlopen)
+    segments, _usage = segment_page(image, urlopen=urlopen, api_key=api_key)
     vlm_text = "\n".join(s["text"] for s in segments)
 
     selfreport_path = guess_dir / f"{image.stem}.selfreport.json"
@@ -763,11 +766,18 @@ def _build_page_layout(image: Path, guess_dir: Path, urlopen=None):
     return Layout(image.stem, width, height, lines, [])
 
 
-def _layout_one(image: Path, guess_dir: Path, batch_id: str, work_dir: Path, urlopen=None) -> None:
+def _layout_one(
+    image: Path,
+    guess_dir: Path,
+    batch_id: str,
+    work_dir: Path,
+    urlopen=None,
+    api_key=None,
+) -> None:
     """Layout ONE page: read its guess/orientation/self-report, run the
     (multi-orientation) layout build, and persist via the store. Split
     from run_batch so the per-page path stays under the complexity bar."""
-    layout = _build_page_layout(image, guess_dir, urlopen=urlopen)
+    layout = _build_page_layout(image, guess_dir, urlopen=urlopen, api_key=api_key)
     # Gate D (2026-08-20): a boxed line must contain the ink it claims —
     # page-03's transcription boxes sat ~200px above the real text, and
     # a well-proportioned box in a blank region is an estimate, not an

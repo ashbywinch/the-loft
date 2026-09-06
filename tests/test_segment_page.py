@@ -76,7 +76,7 @@ def test_segments_parse_normalize_and_carry_orientation(tmp_path: Path) -> None:
         {"label": "note", "text": "sideways message", "orientation": 90, "box_2d": [20, 200, 120, 800]},
     ]
     seen, urlopen = _captured_requests(_response(segments))
-    got, usage = segment_page(_image(tmp_path), urlopen=urlopen)
+    got, usage = segment_page(_image(tmp_path), urlopen=urlopen, api_key="test-key")
 
     assert [s["text"] for s in got] == ["POST CARD.", "sideways message"]
     assert [s["orientation"] for s in got] == [0, 90]
@@ -99,7 +99,7 @@ def test_fenced_json_is_stripped(tmp_path: Path) -> None:
         "\n```"
     )
     payload = json.dumps({"choices": [{"message": {"content": fenced}, "finish_reason": "stop"}]}).encode()
-    got, _usage = segment_page(image, urlopen=_urlopen_returning(payload))
+    got, _usage = segment_page(image, urlopen=_urlopen_returning(payload), api_key="test-key")
     assert got[0]["text"] == "POST CARD."
 
 
@@ -107,7 +107,7 @@ def test_boxes_clamp_to_the_image(tmp_path: Path) -> None:
     """A box poking past the image edge clamps to the border — the
     layout writer refuses out-of-image boxes downstream."""
     segments = [{"label": "header", "text": "POST CARD.", "orientation": 0, "box_2d": [-5, -5, 1005, 1005]}]
-    got, _ = segment_page(_image(tmp_path), urlopen=_urlopen_returning(_response(segments)))
+    got, _ = segment_page(_image(tmp_path), urlopen=_urlopen_returning(_response(segments)), api_key="test-key")
     assert got[0]["box"] == [0.0, 0.0, 2000.0, 1000.0]
 
 
@@ -123,16 +123,16 @@ def test_garbage_response_fails_loud(tmp_path: Path) -> None:
 def test_segment_without_text_fails_loud(tmp_path: Path) -> None:
     segments = [{"label": "header", "text": "", "orientation": 0, "box_2d": [10, 10, 90, 90]}]
     with pytest.raises(SegmentPageError, match="no text"):
-        segment_page(_image(tmp_path), urlopen=_urlopen_returning(_response(segments)))
+        segment_page(_image(tmp_path), urlopen=_urlopen_returning(_response(segments)), api_key="test-key")
 
 
 def test_unknown_orientation_fails_loud(tmp_path: Path) -> None:
     segments = [{"label": "header", "text": "POST CARD.", "orientation": 45, "box_2d": [10, 10, 90, 90]}]
     with pytest.raises(SegmentPageError, match="0/90/180/270"):
-        segment_page(_image(tmp_path), urlopen=_urlopen_returning(_response(segments)))
+        segment_page(_image(tmp_path), urlopen=_urlopen_returning(_response(segments)), api_key="test-key")
 
 
 def test_malformed_box_fails_loud(tmp_path: Path) -> None:
     segments = [{"label": "header", "text": "POST CARD.", "orientation": 0, "box_2d": [10, 10]}]
     with pytest.raises(SegmentPageError, match="not \\[x0, y0, x1, y1\\]"):
-        segment_page(_image(tmp_path), urlopen=_urlopen_returning(_response(segments)))
+        segment_page(_image(tmp_path), urlopen=_urlopen_returning(_response(segments)), api_key="test-key")

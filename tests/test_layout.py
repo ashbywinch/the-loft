@@ -1293,7 +1293,7 @@ def test_layout_run_batch_returns_1_when_a_page_is_refused(tmp_path: Path) -> No
 
         return _Resp()
 
-    rc = run_batch("adopt-0001", None, work, urlopen=garbage_urlopen)
+    rc = run_batch("adopt-0001", None, work, urlopen=garbage_urlopen, api_key="test-key")
     assert rc == 1
 
 

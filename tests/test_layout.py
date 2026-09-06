@@ -1221,7 +1221,7 @@ def test_layout_run_batch_fails_loud_on_explicit_page_without_guess(tmp_path: Pa
             raise AssertionError("engine must not run for a missing guess")
 
     # explicitly requested page with no guess text -> fatal
-    rc = run_batch("adopt-0001", ["p1.jpg"], work, _FakeEngine())
+    rc = run_batch("adopt-0001", ["p1.jpg"], work)
     assert rc == 2
 
 
@@ -1240,7 +1240,7 @@ def test_layout_run_batch_skips_implicit_page_without_guess(tmp_path: Path) -> N
         def predict(self, *args, **kwargs):  # pragma: no cover — must not be reached
             raise AssertionError("engine must not run for a missing guess")
 
-    rc = run_batch("adopt-0001", None, work, _FakeEngine())
+    rc = run_batch("adopt-0001", None, work)
     assert rc == 0  # batch continues, page skipped loudly
 
 
@@ -1261,12 +1261,13 @@ def test_reading_order_sorts_top_to_bottom_then_left_to_right() -> None:
 
 
 def test_layout_run_batch_returns_1_when_a_page_is_refused(tmp_path: Path) -> None:
-    """2026-08-22 (user: boxless lines must FAIL the pipeline run): a page
-    whose layout the gates refuse (a boxless line) makes the run FAIL —
-    return 1, never a silent 0 with the page missing from the output."""
-    from PIL import Image
+    """2026-08-22 (user: boxless lines must FAIL the pipeline run), now
+    via the single pass: a page whose segment response violates the
+    contract refuses the run — return 1, never a silent 0 with the page
+    missing from the output, and NEVER a fallback to the old
+    detect-then-match path (user, 2026-09-06)."""
+    import json as _json
 
-    _stub_paddleocr()
     from tools.layout_detect import run_batch
 
     work = tmp_path
@@ -1275,18 +1276,24 @@ def test_layout_run_batch_returns_1_when_a_page_is_refused(tmp_path: Path) -> No
     Image.new("RGB", (200, 100), (200, 200, 200)).save(work / "adopt-0001" / "oriented" / "p1.jpg")
     (work / "adopt-0001" / "ocr-guess" / "p1.txt").write_text("boxed line\nboxless line", encoding="utf-8")
 
-    class _FakeEngine:
-        def predict(self, input, return_word_box=False):
-            return [
-                {
-                    "dt_polys": [[[0, 0], [100, 0], [100, 20], [0, 20]]],
-                    "rec_texts": ["boxed line"],
-                    "rec_scores": [0.9],
-                    "text_word_region": [],
-                }
-            ]
+    payload = _json.dumps(
+        {"choices": [{"message": {"content": "I see a postcard."}, "finish_reason": "stop"}]}
+    ).encode()
 
-    rc = run_batch("adopt-0001", None, work, _FakeEngine())
+    def garbage_urlopen(req, timeout: float = 0):
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self) -> bytes:
+                return payload
+
+        return _Resp()
+
+    rc = run_batch("adopt-0001", None, work, urlopen=garbage_urlopen)
     assert rc == 1
 
 

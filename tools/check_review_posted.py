@@ -35,6 +35,7 @@ import os
 import re
 import sys
 import time
+import urllib.parse
 import urllib.request
 from urllib.error import HTTPError
 
@@ -227,9 +228,17 @@ def run_review_gate(
     commit = fetch(f"https://api.github.com/repos/{repo}/commits/{sha}", token)
     head_committed_at = commit["commit"]["committer"]["date"]
 
+    # the comments fetch must be server-filtered: the bot's own guide for
+    # THIS head commit posts at the end of its run, and a PR that has run
+    # the bot many times carries dozens of older comments — the default
+    # first-30 page pushed the guide onto a page the gate never fetched,
+    # failing reviews that had succeeded (2026-09-06: PR 31's guide at
+    # 19:59Z invisible among 30 older comments). `since` asks GitHub to
+    # filter server-side to the comments in the head commit's window.
     comments = _fetch_comments(
         fetch,
-        f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments",
+        f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
+        f"?since={urllib.parse.quote(head_committed_at)}&per_page=100",
         token,
         attempts=poll_attempts,
         delay_s=poll_delay_s,

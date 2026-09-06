@@ -33,18 +33,17 @@ from typing import Any, NamedTuple
 
 from PIL import Image
 
-from tools.layout import (
+from tools.layout import (  # lucidlint: ignore private-import the single-pass build consumes the house per-word builder
     Layout,
+    _words_out,
     admit_and_remap,
-    load_orientation_hint,
-    load_orientation_report,
-    load_vlm_boxes,
-    orientation_passes,
     write_layout_store,
 )
 from tools.loft_paths import WORK_DIR
 from tools.pipeline_store import PipelineStore
+from tools.segment_page import SegmentPageError, segment_page
 from tools.store import DiskStore  # noqa: F401
+from tools.text import vlm_line_words
 from tools.vlm import VlmError, parse_transcription_response, transcribe_image_vlm
 
 # The proven engine config (spike, 2026-08-15) — the rec model rides along
@@ -237,7 +236,12 @@ def layout_page_multi(
     )
 
 
-def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engine: Any) -> int:
+def run_batch(
+    batch_id: str,
+    page_names: list[str] | None,
+    work_dir: Path,
+    urlopen=None,
+) -> int:
     """Layout the batch's oriented pages; page_names narrows the set (None =
     every oriented page). Returns 0 on success. Every run's diagnostics —
     the per-clip VLM calls (timing + tokens + failures), the drops, the
@@ -267,7 +271,9 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path, engin
                 file=sys.stderr,
             )
             return 2
-    outcomes = [_process_page(engine, image, guess_dir, (batch_id, page_names, wanted, work_dir)) for image in pages]
+    outcomes = [
+        _process_page(image, guess_dir, (batch_id, page_names, wanted, work_dir), urlopen=urlopen) for image in pages
+    ]
     if 2 in outcomes:
         return 2
     refused = outcomes.count(1)
@@ -677,10 +683,10 @@ def _region_read_rescue(
 
 
 def _process_page(
-    engine: Any,
     image: Path,
     guess_dir: Path,
     batch: tuple[str, list[str] | None, set[str], Path],
+    urlopen=None,
 ) -> int:
     """Lay ONE page out — 0 = laid out or quietly skipped, 1 = refused
     (the gates: boxless lines now fail the run, 2026-08-22), 2 = fatal
@@ -693,55 +699,75 @@ def _process_page(
         rc = _warn_missing_guess(image.name, vlm_path.name, page_names, wanted)
         return 2 if rc else 0
     try:
-        _layout_one(engine, image, guess_dir, batch_id, work_dir)
+        _layout_one(image, guess_dir, batch_id, work_dir, urlopen=urlopen)
         return 0
-    except ValueError as exc:
+    except (ValueError, SegmentPageError) as exc:
+        # the refusal is recorded, not fatal (the per-page pattern) — and
+        # the single pass's garbage-response failure refuses the page the
+        # same way: no fallback to the old detect-then-match path
+        # (2026-09-06, user: "do NOT fall back to the old path, it
+        # doesn't work").
         print(f"layout: {image.name} refused — {str(exc)[:160]}", file=sys.stderr)
         return 1
 
 
-def _build_page_layout(engine: Any, image: Path, guess_dir: Path) -> Any:
-    """Run the multi-orientation build when the orientation hints or the
-    report's line evidence say the page needs it, else the plain build
-    (extracted from _layout_one 2026-08-30 for the complexity bar)."""
-    report = load_orientation_report(guess_dir / f"{image.stem}.orientation.json")
-    orientations = load_orientation_hint(guess_dir / f"{image.stem}.orientation.json")
-    # The multi path needs either the hint OR the report's line evidence.
-    # The v3 report's multi-direction evidence lives in the LINES' degrees
-    # (the model locates the known text; the orientation_hint may be empty
-    # — 2026-08-20: page-03's empty-hints report fell to the plain path and
-    # the good anchored text was replaced by detection fragments).
-    if not orientations:
-        located = report.get("lines", []) if isinstance(report, dict) else []
-        line_degrees = {int(ln.get("degrees")) for ln in located if ln.get("degrees") in (0, 90, 180, 270)}
-        if len(line_degrees) >= 2:
-            orientations = sorted(line_degrees)
-    vlm_text = (guess_dir / image.with_suffix(".txt").name).read_text(encoding="utf-8")
-    if orientations:
-        passes = orientation_passes(orientations)
-        layout = layout_page_multi(
-            engine,
-            image,
-            passes,
-            report_lines=report.get("lines") or None,
-            vlm_text=vlm_text,
-            trust_report_degrees=report.get("source") == "clip",
-        )
-        print(f"layout: {image.name} multi-orientation {orientations} (passes {passes}) -> {len(layout.lines)} lines")
-        return layout
+def _build_page_layout(image: Path, guess_dir: Path, urlopen=None):
+    """The §16.17 single-pass build: ONE multimodal call returns every
+    text segment with verbatim text, orientation, and a pixel box — text
+    detection, box detection and transcription in one pass. No detector,
+    no matching: the segments carry text and box together, so there is
+    nothing to join (2026-09-06, the user: the old detect-then-match path
+    does not work — do not fall back to it). The self-report's red-word
+    flags apply to the words by line index, as before."""
+    segments, _usage = segment_page(image, urlopen=urlopen)
+    vlm_text = "\n".join(s["text"] for s in segments)
+
     selfreport_path = guess_dir / f"{image.stem}.selfreport.json"
     selfreport = None
     if selfreport_path.exists():
         selfreport = json.loads(selfreport_path.read_text(encoding="utf-8"))
-    vlm_boxes = load_vlm_boxes(guess_dir / f"{image.stem}.vlm.json")
-    return layout_page(engine, image, vlm_text, selfreport, vlm_boxes)
+    report_by_line: dict[int, set[str]] = {}
+    use_selfreport = selfreport is not None
+    if selfreport:
+        for entry in selfreport:
+            line_no = entry.get("line")
+            if isinstance(line_no, int) and 1 <= line_no <= len(segments):
+                report_by_line.setdefault(line_no - 1, set()).add(str(entry.get("word", "")))
+
+    with Image.open(image) as im:
+        width, height = im.size
+
+    lines: list[dict[str, Any]] = []
+    for i, seg in enumerate(segments):
+        vw = vlm_line_words(seg["text"])
+        words_out = _words_out(
+            vw,
+            selfreport_line=report_by_line.get(i),
+            rec_words=[],
+            use_selfreport=use_selfreport,
+        )
+        line_conf = (sum(w["conf"] for w in words_out) / len(words_out)) if words_out else 0.0
+        lines.append(
+            {
+                "index": i,
+                "text": seg["text"],
+                "box": seg["box"],
+                "conf": line_conf,
+                "words": words_out,
+                "orientation": seg["orientation"],
+                "box_source": "segment",
+            }
+        )
+    vlm_path = guess_dir / image.with_suffix(".txt").name
+    vlm_path.write_text(vlm_text + "\n", encoding="utf-8")
+    return Layout(image.stem, width, height, lines, [])
 
 
-def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str, work_dir: Path) -> None:
+def _layout_one(image: Path, guess_dir: Path, batch_id: str, work_dir: Path, urlopen=None) -> None:
     """Layout ONE page: read its guess/orientation/self-report, run the
     (multi-orientation) layout build, and persist via the store. Split
     from run_batch so the per-page path stays under the complexity bar."""
-    layout = _build_page_layout(engine, image, guess_dir)
+    layout = _build_page_layout(image, guess_dir, urlopen=urlopen)
     # Gate D (2026-08-20): a boxed line must contain the ink it claims —
     # page-03's transcription boxes sat ~200px above the real text, and
     # a well-proportioned box in a blank region is an estimate, not an
@@ -763,27 +789,7 @@ def _layout_one(engine: Any, image: Path, guess_dir: Path, batch_id: str, work_d
     # the build-and-test failure on all four PRs)
     store = PipelineStore(work_dir)
     store_path = str(Path(batch_id) / "ocr-guess" / out.name)
-    try:
-        write_layout_store(layout.to_dict(), store, store_path)
-    except ValueError:
-        # The plain/multi build refused (the detector misses boxes on
-        # rotated text — the postcard's back). The rotated-region rescue
-        # (§6) reads each ink-column at its own orientation instead; the
-        # re-write re-validates, so a still-bad rescue refuses honestly.
-        report = load_orientation_report(guess_dir / f"{image.stem}.orientation.json")
-        rescued = _region_read_rescue(
-            image,
-            work_dir,
-            engine,
-            report_lines=(report.get("lines") or []) if isinstance(report, dict) else [],
-        )
-        if rescued is None:
-            raise
-        print(
-            f"layout: {image.name} region-read rescue ({len(rescued['lines'])} lines)",
-            file=sys.stderr,
-        )
-        write_layout_store(rescued, store, store_path)
+    write_layout_store(layout.to_dict(), store, store_path)
     flagged = sum(1 for line in layout.lines for w in line["words"] if w["conf"] == 0.0)
     print(
         f"layout: {image.name} {len(layout.lines)} lines, "
@@ -846,15 +852,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     with _run_log(args.work_dir, args.batch_id) as log_path:
         print(f"layout: run log -> {log_path}", file=sys.stderr)
-        # paddleocr lives only in .venv-htr; the main venv's tests import this module for the rescue helpers
-        # lucidlint: ignore inline-import the paddle stack must load only in the .venv-htr interpreter
-        from paddleocr import PaddleOCR
-
-        engine = PaddleOCR(**ENGINE)
-        try:
-            return run_batch(args.batch_id, args.pages or None, args.work_dir, engine)
-        finally:
-            del engine  # drop the weights promptly — the 3.13 venv shares RAM with the main venv
+        # §16.17: the single-pass segment stage IS the layout build — one
+        # VLM call per page for text, boxes and orientation. No detector
+        # engine: the paddle stack (and the .venv-htr interpreter it
+        # required) is gone from the layout path (2026-09-06).
+        return run_batch(args.batch_id, args.pages or None, args.work_dir)
 
 
 if __name__ == "__main__":

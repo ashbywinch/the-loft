@@ -48,6 +48,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The story-capture flow spec ("Add your memory") | `docs/PRD/MEMORIES.md` |
 | The artifact-import flow spec + its rules (A–S) | `docs/PRD/IMPORT-PRD.md` — the ingest-side planning spec: `docs/PRD/INGEST-PRD.md` |
 | The transcription-review surface spec | `docs/PRD/TRANSCRIPTION-REVIEW-PRD.md` |
+| Sign in and verify the rendered review surface (boxes on text) | `docs/review-surface.md` |
 | The projection / sqlite plans + the research corpus | `docs/sqlite-projection-plan.md`; `research/archive-longevity-research.md`, `research/ocr-correction-ux-tools-guide.md` |
 | The multi-document capture seam (batches, hashes, sidecars, labels) | `docs/PRD/MULTI-DOC-IMPORT-PRD.md` |
 | UI / visual conventions (the pattern library) | `docs/UI.md` |

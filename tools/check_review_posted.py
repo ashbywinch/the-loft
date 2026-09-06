@@ -189,11 +189,19 @@ def _completed_review_check_run(fetch, sha: str) -> bool:
         return False
 
 
-def run_review_gate(fetch, env, failure_reason=None) -> int:
+def run_review_gate(
+    fetch,
+    env,
+    failure_reason=None,
+    poll_attempts: int = 4,
+    poll_delay_s: float = 8.0,
+) -> int:
     """The gate as a pure function: ``fetch(url, token)`` -> parsed JSON,
     ``env`` the CI environment mapping, ``failure_reason(repo, token)``
     the bot's own words about a death. Testable by injection — the repo's
-    DI convention; never monkeypatch."""
+    DI convention; never monkeypatch. The polling knobs let the tests
+    zero the delay — a test must never sleep on wall-clock time (docs/
+    testing-standards.md)."""
     sha = env["SHA"]
     repo = env["GITHUB_REPOSITORY"]
     pr_number = env["PR_NUMBER"]
@@ -211,7 +219,13 @@ def run_review_gate(fetch, env, failure_reason=None) -> int:
     commit = fetch(f"https://api.github.com/repos/{repo}/commits/{sha}", token)
     head_committed_at = commit["commit"]["committer"]["date"]
 
-    comments = _fetch_comments(fetch, f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments", token)
+    comments = _fetch_comments(
+        fetch,
+        f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments",
+        token,
+        attempts=poll_attempts,
+        delay_s=poll_delay_s,
+    )
     # the review posts with the regular header ("## PR Reviewer Guide") or
     # the incremental form ("## Incremental PR Reviewer Guide" — the -i
     # path, 2026-08-11: the first incremental run posted exactly that and

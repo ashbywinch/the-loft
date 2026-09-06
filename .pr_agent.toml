@@ -71,12 +71,9 @@ extra_headers = '{"User-Agent": "opencode/1.14.20", "cf-aig-max-attempts": "0", 
 # envelopes while an opencode-UA probe from the same job got 200
 # (2026-09-05, verified by the CI diagnostic step). The same UA is set
 # in tools/ai_client.py for the same reason.
-[github]
-# The review publishes as a COMPLETED "PR Agent - Review" check run on the
-# head commit — created only with the review output text in hand
-# (v0.41.1 github_provider._publish_check_run), so the repo's fail-loud
-# gate (tools/check_review_posted.py) can key on the output artifact
-# instead of trusting that the action step "succeeded" (the 2026-09-04
-# 401 incident ran to completion while producing nothing). The workflow
-# grants checks: write for this.
-publish_as_check_run = true
+# publish_as_check_run is NOT set: v0.41.1's check-run publish redirects
+# the review's comment path and silently no-ops on these PRs (the review
+# generated in the run log but neither check nor comment appeared —
+# 2026-09-06, PRs 31/32/33/38). The known-good omp-config setup does not
+# set it; its reviews post comments normally. The gate's comment trail
+# accepts those.

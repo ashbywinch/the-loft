@@ -4,14 +4,13 @@ api_base = "https://gateway.ai.cloudflare.com/v1/e21a5be58ac1e8f7d5619539feb2dc3
 
 [config]
 model = "openai/dynamic/fallback2"
-# The gateway (not the model) is the binding constraint: since
-# 2026-09-05 it returns 428 Precondition Required on bodies over a size
-# far below the model's context — the 128k and 64000-token budgets both
-# 428'd (twenty 428s in the 16:45 run). 32000 keeps the pruner's cut
-# under the cap: reviews run on every piece PR, prioritising the most
-# relevant files, with the overflow listed honestly in the log.
-custom_model_max_tokens = 32000
-max_model_tokens = 32000
+# full context: the earlier 32000/64000 reductions chased a misread —
+# the "HTTP 428" strings in the run logs were reviewed diff text
+# (tools/auth.py's Google-flow comment), never gateway responses; the
+# real failure was the WAF/UA 401s, fixed by the User-Agent header
+# (2026-09-06). Full reviews verified end-to-end at this budget.
+custom_model_max_tokens = 128000
+max_model_tokens = 128000
 ai_timeout = 1800
 # the intermittent gateway-layer 401 (2026-09-04/05: "Invalid API key"
 # mid-run, self-recovering) killed whole reviews — one model, no second

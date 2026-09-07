@@ -63,7 +63,7 @@ def _segments_format(grid: bool) -> str:
     )
 
 
-_GRID_SPACING_PX = 100
+_GRID_SPACING_PX = 50
 
 _GRID_PROMPT = (
     f" A coordinate grid is drawn on the page: thin lines every "
@@ -311,18 +311,40 @@ _VERIFY_SYSTEM = (
     "it, never mixes hands. Check every numbered rectangle against that "
     "definition and against the page: a rectangle that sits on blank "
     "card, spans two columns, covers neighboring lines, or runs past the "
-    "page edge is wrong. For each wrong one, give the corrected box in "
-    "grid-read pixels; if a segment's text does not actually appear on "
-    "the page, declare it in not_present. The texts are fixed data: "
-    "never invent, never re-transcribe. " + _VERIFY_FORMAT
+    "page edge is wrong. Segments whose entry carries a CHECK FAILED "
+    "finding were measured by an automated checker: the finding names "
+    "exactly what was measured wrong — read it, fix that rectangle "
+    "accordingly, and do not move segments whose entry has no finding "
+    "unless you can see they are wrong. For each wrong one, give the "
+    "corrected box in grid-read pixels; if a segment's text does not "
+    "actually appear on the page, declare it in not_present. The texts "
+    "are fixed data: never invent, never re-transcribe. " + _VERIFY_FORMAT
 )
 
 
-def build_verify_prompt(segments: list[dict[str, Any]], width: int, height: int) -> str:
+def build_verify_prompt(
+    segments: list[dict[str, Any]],
+    width: int,
+    height: int,
+    errors: dict[int, str] | None = None,
+) -> str:
     """The verification pass's user prompt — generated deterministically
-    from the reported segments (the same report yields the same bytes)."""
-    listed = "\n".join(f"- index {i}: text {str(s.get('text', ''))!r}" for i, s in enumerate(segments))
-    return f"The page is {width}x{height} px. Your reported segments:\n{listed}"
+    from the reported segments and the checker's findings (the same
+    report and findings yield the same bytes). A CHECK FAILED finding is
+    a gate measurement: that rectangle is proven wrong, and the finding
+    names how."""
+    listed = []
+    for i, s in enumerate(segments):
+        entry = f"- index {i}: text {str(s.get('text', ''))!r}"
+        if errors and i in errors:
+            entry += f"\n  CHECK FAILED: {errors[i]}"
+        listed.append(entry)
+    findings = (
+        f"\n{len(errors or {})} of them carry CHECK FAILED findings — those are gate measurements, proven wrong."
+        if errors
+        else ""
+    )
+    return f"The page is {width}x{height} px. Your reported segments:\n" + "\n".join(listed) + findings
 
 
 def _segment_index(value: Any) -> int:
@@ -395,6 +417,7 @@ def verify_segments(  # lucidlint: ignore long-param-list one required argument 
     image: Path,
     segments: list[dict[str, Any]],
     *,
+    errors: dict[int, str] | None = None,
     model: str = "dynamic/image",
     base_url: str = DEFAULT_BASE_URL,
     api_key: str | None = None,
@@ -422,7 +445,7 @@ def verify_segments(  # lucidlint: ignore long-param-list one required argument 
             annotated,
             model=model,
             system=_VERIFY_SYSTEM,
-            user_text=build_verify_prompt(segments, width, height),
+            user_text=build_verify_prompt(segments, width, height, errors),
             base_url=base_url,
             api_key=api_key,
             max_tokens=max_tokens,

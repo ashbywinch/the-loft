@@ -2402,8 +2402,10 @@ def test_layout_verification_corrects_a_misplaced_box(tmp_path: Path) -> None:
     ghost = next(ln for ln in layout["lines"] if ln["text"] == "ghost line")
     # JPEG bleed: the tightened box hugs the drawn ink within a couple of px
     assert all(abs(a - b) <= 2 for a, b in zip(ghost["box"], [1800, 800, 1900, 850], strict=True))
-    # the verification call carries every reported segment for checking
+    # the verification call carries every reported segment for checking,
+    # with the checker's own findings as its error messages
     assert "ghost line" in json.dumps(seen[1])
+    assert "CHECK FAILED" in json.dumps(seen[1])
 
 
 def test_layout_verification_drops_an_invented_segment(tmp_path: Path, capsys) -> None:

@@ -22,6 +22,7 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -226,6 +227,29 @@ def _apply_geometry_gates(image: Path, layout: Layout) -> tuple[int, int]:
     return inkless, degenerate
 
 
+def _gate_findings(layout: Layout, violations: list[str]) -> dict[int, str]:
+    """The checker's per-segment findings for the verification pass —
+    the model's error messages, keyed by segment index. A boxless line's
+    rectangle was dropped by the geometry gates; the remaining
+    violations carry the line's text prefix (the gates quote it)."""
+    findings: dict[int, str] = {}
+    boxless = re.compile(r"^line (\d+) is boxless")
+    for violation in violations:
+        match = boxless.match(violation)
+        if match:
+            findings[int(match.group(1))] = (
+                "your rectangle was dropped — it held no ink or shadowed "
+                "another segment's region; re-read that part of the page "
+                "and give the true box"
+            )
+            continue
+        for line in layout.lines:
+            if violation.startswith(repr(str(line.get("text", ""))[:20])):
+                findings[int(line["index"])] = f"the checker measured: {violation}"
+                break
+    return findings
+
+
 def _layout_one(
     image: Path,
     guess_dir: Path,
@@ -245,14 +269,12 @@ def _layout_one(
         # the visual verification pass (2026-09-07, user: draw the boxes
         # on the image and give it back so the model can learn from its
         # mistakes): the reported boxes drawn on the page in red and
-        # numbered; the model corrects the wrong rectangles and declares
-        # the invented segments. ONE bounded round — the gates re-judge
-        # after, and a page that still fails refuses exactly as before.
-        print(
-            f"layout: {image.name} — the first read failed its checks; running the visual verification pass",
-            file=sys.stderr,
-        )
-        segments, _usage = verify_segments(image, segments, urlopen=urlopen, api_key=api_key)
+        # numbered, and the checker's own findings riding to the model
+        # as the error messages — WHAT was measured wrong, per segment
+        # (2026-09-07, user: get better at giving it good error
+        # messages)
+        errors = _gate_findings(layout, violations)
+        segments, _usage = verify_segments(image, segments, errors=errors, urlopen=urlopen, api_key=api_key)
         layout = _layout_from_segments(image, segments, guess_dir)
         _apply_geometry_gates(image, layout)
     out = guess_dir / f"{image.stem}.layout.json"

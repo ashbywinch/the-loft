@@ -131,6 +131,15 @@ correction — they can always keep or abandon a change. The reviewer can
 mark a word as verified and change their mind later (user requirement,
 2026-08-17, walkthrough finding 2026-08-17).
 
+**VR18 — Rotated text can be read upright for validation.** The reviewer
+validates a segment's transcription by reading it, so a segment the
+pipeline captured in a rotated direction (VR15) can be shown in its
+correct orientation — turned upright for reading — without losing its
+place on the page and without changing the page's own orientation (user
+requirement, 2026-09-07). (What makes this possible — each segment's
+orientation stored as data, the fidelity ruling — is pipeline capability;
+the requirement is the reviewer's experience.)
+
 ## 3. Acceptance criteria
 
 1. A reviewer opening a batch knows at a glance what each document is and
@@ -207,6 +216,9 @@ mark a word as verified and change their mind later (user requirement,
 30. No action is irrevocable — the reviewer can change their mind,
     including bringing a rejected document back from the bin (VR17, user
     2026-08-17).
+31. A segment captured in a rotated direction can be viewed upright for
+    validation while staying in its place on the page; the page's own
+    orientation is untouched by the view (VR18, user 2026-09-07).
 
 ## 4. Non-goals
 

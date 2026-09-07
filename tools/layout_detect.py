@@ -213,6 +213,12 @@ def _layout_one(
     inkless = layout.drop_inkless(image)
     if inkless:
         print(f"layout: {image.name} — {inkless} box(es) with no ink dropped (Gate D)", file=sys.stderr)
+    # a zero-extent box skips the ink probe (nothing to crop) — retire it
+    # here so the second pass can re-ask (2026-09-07)
+    degenerate = _drop_degenerate_boxes(layout.lines)
+    if degenerate:
+        print(f"layout: {image.name} — {degenerate} degenerate box(es) dropped", file=sys.stderr)
+    if inkless or degenerate:
         _second_pass(image, layout, boxes_before_gate_d, urlopen=urlopen, api_key=api_key)
     # Gate E as a correction (2026-08-22): a box that claims another
     # line's region with different text shadows the confirmed anchor —
@@ -236,6 +242,20 @@ def _layout_one(
     )
 
 
+def _drop_degenerate_boxes(lines: list[dict[str, Any]]) -> int:
+    """Gate D's blind spot: a zero-extent box (the model sat a line on
+    the page's edge) has nothing to crop, so the ink probe skips it.
+    Retire the box here — the second pass is the line's way back in
+    (2026-09-07). Returns the count retired."""
+    dropped = 0
+    for line in lines:
+        box = line.get("box")
+        if isinstance(box, list) and len(box) == 4 and (box[2] <= box[0] or box[3] <= box[1]):
+            line["box"] = None
+            dropped += 1
+    return dropped
+
+
 def _second_pass(
     image: Path,
     layout: Layout,
@@ -244,20 +264,26 @@ def _second_pass(
     api_key=None,
 ) -> None:
     """The bounded second pass (2026-09-07, user: no use spending tokens
-    on things that are already correct): the lines Gate D left boxless
-    get ONE repair call naming only them, prompted by the recorded
-    failure facts. A relocated box must clear the SAME ink gate — the
-    gate is the arbiter, never the model — and a "not present" verdict
-    drops the segment loudly (a first-pass invention is not evidence).
-    Anything unresolved stays boxless for Gate F to refuse, exactly as
-    without the pass."""
+    on things that are already correct): the lines whose geometry failed
+    — Gate D's blank-card boxes AND degenerate boxes (zero extent, or
+    sitting off the page) — get ONE repair call naming only them,
+    prompted by the recorded failure facts. A relocated box must clear
+    the SAME checks — non-degenerate, and carrying ink: the gates are
+    the arbiter, never the model — and a "not present" verdict drops the
+    segment loudly (a first-pass invention is not evidence). Anything
+    unresolved stays boxless for Gate F to refuse, exactly as without
+    the pass."""
     with Image.open(image) as im:
         width, height = im.size
+
+    def _degenerate(box: Any) -> bool:
+        return isinstance(box, list) and len(box) == 4 and (box[2] <= box[0] or box[3] <= box[1])
+
     failures = []
     for line in layout.lines:
+        rejected = boxes_before.get(line.get("index"))
         if line.get("box") is not None:
             continue
-        rejected = boxes_before.get(line.get("index"))
         if not isinstance(rejected, list) or len(rejected) != 4:
             continue
         failures.append(
@@ -271,6 +297,11 @@ def _second_pass(
                     rejected[2] * 1000.0 / width,
                     rejected[3] * 1000.0 / height,
                 ],
+                "reason": (
+                    "the box is degenerate (zero extent) or sits outside the page"
+                    if _degenerate(rejected)
+                    else "the box holds no ink"
+                ),
             }
         )
     if not failures:
@@ -280,13 +311,14 @@ def _second_pass(
     for index, px_box in answer["relocated"].items():
         line = by_index[index]
         probe = [{"box": list(px_box)}]
-        if drop_inkless_boxes(probe, image) == 0:
+        usable = px_box[2] > px_box[0] and px_box[3] > px_box[1]
+        if usable and drop_inkless_boxes(probe, image) == 0:
             line["box"] = probe[0]["box"]
             line["box_source"] = "repaired"
             print(f"layout: {image.name} line {index} — the second pass relocated it", file=sys.stderr)
         else:
             print(
-                f"layout: {image.name} line {index} — the second pass's box holds no ink either; Gate F will refuse",
+                f"layout: {image.name} line {index} — the second pass's box fails the checks too; Gate F will refuse",
                 file=sys.stderr,
             )
     for index in answer["not_present"]:

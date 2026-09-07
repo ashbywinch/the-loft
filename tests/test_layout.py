@@ -2343,13 +2343,13 @@ def _segments_payload(segments: list[dict]) -> bytes:
     return _json.dumps(body).encode()
 
 
-def _repair_payload(relocated: list[dict], not_present: list[int]) -> bytes:
+def _verify_payload(corrections: list[dict], not_present: list[int]) -> bytes:
     import json as _json
 
     body = {
         "choices": [
             {
-                "message": {"content": _json.dumps({"relocated": relocated, "not_present": not_present})},
+                "message": {"content": _json.dumps({"corrections": corrections, "not_present": not_present})},
                 "finish_reason": "stop",
             }
         ]
@@ -2357,10 +2357,11 @@ def _repair_payload(relocated: list[dict], not_present: list[int]) -> bytes:
     return _json.dumps(body).encode()
 
 
-def _repair_fixture(tmp_path):
+def _verify_fixture(tmp_path):
     """A 2000x1000 page with two inked regions; the first-pass response
     reads one line on each — except the second line's box is placed on
-    blank card, so Gate D drops it and the second pass must answer."""
+    blank card, so Gate D drops it and the visual verification pass must
+    answer."""
     from PIL import ImageDraw
 
     work = tmp_path
@@ -2369,7 +2370,7 @@ def _repair_fixture(tmp_path):
     image = Image.new("L", (2000, 1000), 255)
     draw = ImageDraw.Draw(image)
     draw.rectangle((200, 100, 600, 140), fill=0)  # under 'good line'
-    draw.rectangle((1800, 800, 1900, 850), fill=0)  # where the repair should land
+    draw.rectangle((1800, 800, 1900, 850), fill=0)  # where the correction should land
     image.save(work / "adopt-0001" / "oriented" / "p1.jpg")
     (work / "adopt-0001" / "ocr-guess" / "p1.txt").write_text("good line\nghost line", encoding="utf-8")
     first = _segments_payload(
@@ -2381,17 +2382,18 @@ def _repair_fixture(tmp_path):
     return work, first
 
 
-def test_layout_second_pass_repairs_an_inkless_box(tmp_path: Path) -> None:
-    """The bounded second pass (2026-09-07, user: no use spending tokens
-    on things that are already correct): when Gate D drops a box, ONE
-    repair call covering ONLY the dropped lines re-asks for their true
-    geometry. The prompt is the recorded failure facts — deterministic —
-    and the gates stay the arbiter: the repaired box must carry ink."""
+def test_layout_verification_corrects_a_misplaced_box(tmp_path: Path) -> None:
+    """The visual verification pass (2026-09-07, user: draw the boxes on
+    the image and give it back so the model can learn from its
+    mistakes): when the first read fails its gates, the reported boxes
+    are drawn on the page in red and numbered — ONE round in which the
+    model corrects what it sees. The gates re-judge: a corrected box
+    serves only when it carries ink."""
     from tools.layout_detect import run_batch
 
-    work, first = _repair_fixture(tmp_path)
-    repair = _repair_payload([{"index": 1, "box_2d": [900, 800, 950, 850]}], [])
-    seen, urlopen = _two_call_urlopen([first, repair])
+    work, first = _verify_fixture(tmp_path)
+    verify = _verify_payload([{"index": 1, "box_2d": [900, 800, 950, 850]}], [])
+    seen, urlopen = _two_call_urlopen([first, verify])
 
     rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
 
@@ -2399,21 +2401,20 @@ def test_layout_second_pass_repairs_an_inkless_box(tmp_path: Path) -> None:
     layout = json.loads((work / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
     ghost = next(ln for ln in layout["lines"] if ln["text"] == "ghost line")
     assert [round(v) for v in ghost["box"]] == [1800, 800, 1900, 850]
-    assert ghost["box_source"] == "repaired"
-    # the repair call named only the failed line — never the correct one
+    assert ghost["box_source"] == "verified"
+    # the verification call carries every reported segment for checking
     assert "ghost line" in json.dumps(seen[1])
-    assert "good line" not in json.dumps(seen[1])
 
 
-def test_layout_second_pass_drops_a_segment_the_model_cannot_place(tmp_path: Path, capsys) -> None:
-    """When the second pass declares the text not present — a first-pass
+def test_layout_verification_drops_an_invented_segment(tmp_path: Path, capsys) -> None:
+    """When the verification declares the text not present — a first-pass
     invention, the godolphin £4-0s. case — the segment is dropped
-    LOUDLY (the refusal names it) and the rest of the page serves."""
+    LOUDLY (the run log names it) and the rest of the page serves."""
     from tools.layout_detect import run_batch
 
-    work, first = _repair_fixture(tmp_path)
-    repair = _repair_payload([], [1])
-    _, urlopen = _two_call_urlopen([first, repair])
+    work, first = _verify_fixture(tmp_path)
+    verify = _verify_payload([], [1])
+    _, urlopen = _two_call_urlopen([first, verify])
 
     rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
 
@@ -2423,14 +2424,14 @@ def test_layout_second_pass_drops_a_segment_the_model_cannot_place(tmp_path: Pat
     assert "ghost line" in capsys.readouterr().err  # the drop is loud, never silent
 
 
-def test_layout_second_pass_cannot_overrule_the_ink_gate(tmp_path: Path) -> None:
-    """A relocated box that STILL holds no ink changes nothing: the line
+def test_layout_verification_cannot_overrule_the_ink_gate(tmp_path: Path) -> None:
+    """A corrected box that STILL holds no ink changes nothing: the line
     stays boxless and Gate F refuses the page exactly as before."""
     from tools.layout_detect import run_batch
 
-    work, first = _repair_fixture(tmp_path)
-    repair = _repair_payload([{"index": 1, "box_2d": [300, 700, 400, 730]}], [])  # also blank card
-    _, urlopen = _two_call_urlopen([first, repair])
+    work, first = _verify_fixture(tmp_path)
+    verify = _verify_payload([{"index": 1, "box_2d": [300, 700, 400, 730]}], [])  # also blank card
+    _, urlopen = _two_call_urlopen([first, verify])
 
     rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
 
@@ -2438,10 +2439,10 @@ def test_layout_second_pass_cannot_overrule_the_ink_gate(tmp_path: Path) -> None
     assert not (work / "adopt-0001" / "ocr-guess" / "p1.layout.json").exists()
 
 
-def test_layout_second_pass_repairs_a_degenerate_box(tmp_path: Path) -> None:
+def test_layout_verification_corrects_a_degenerate_box(tmp_path: Path) -> None:
     """A degenerate first-pass box (zero extent — the model sat it on the
-    page's edge) joins the inkless boxes in the second pass: relocated
-    onto real ink, the line serves with box_source 'repaired'."""
+    page's edge) triggers the verification pass like any failed gate:
+    corrected onto real ink, the line serves with box_source 'verified'."""
     from PIL import ImageDraw
 
     from tools.layout_detect import run_batch
@@ -2463,8 +2464,8 @@ def test_layout_second_pass_repairs_a_degenerate_box(tmp_path: Path) -> None:
             {"text": "edge line", "orientation": 0, "box_2d": [100, 1000, 300, 1000]},
         ]
     )
-    repair = _repair_payload([{"index": 1, "box_2d": [900, 800, 950, 850]}], [])
-    _, urlopen = _two_call_urlopen([first, repair])
+    verify = _verify_payload([{"index": 1, "box_2d": [900, 800, 950, 850]}], [])
+    _, urlopen = _two_call_urlopen([first, verify])
 
     rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
 
@@ -2472,7 +2473,7 @@ def test_layout_second_pass_repairs_a_degenerate_box(tmp_path: Path) -> None:
     layout = json.loads((work / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
     edge = next(ln for ln in layout["lines"] if ln["text"] == "edge line")
     assert [round(v) for v in edge["box"]] == [1800, 800, 1900, 850]
-    assert edge["box_source"] == "repaired"
+    assert edge["box_source"] == "verified"
 
 
 def test_layout_tall_pages_read_as_two_halves(tmp_path: Path) -> None:

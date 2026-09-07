@@ -2438,3 +2438,40 @@ def test_layout_second_pass_cannot_overrule_the_ink_gate(tmp_path: Path) -> None
 
     assert rc == 1
     assert not (work / "adopt-0001" / "ocr-guess" / "p1.layout.json").exists()
+
+
+def test_layout_second_pass_repairs_a_degenerate_box(tmp_path: Path) -> None:
+    """A degenerate first-pass box (zero extent — the model sat it on the
+    page's edge) joins the inkless boxes in the second pass: relocated
+    onto real ink, the line serves with box_source 'repaired'."""
+    from PIL import ImageDraw
+
+    from tools.layout_detect import run_batch
+
+    work = tmp_path
+    (work / "adopt-0001" / "oriented").mkdir(parents=True)
+    (work / "adopt-0001" / "ocr-guess").mkdir(parents=True)
+    image = Image.new("L", (2000, 1000), 255)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((200, 100, 600, 140), fill=0)
+    draw.rectangle((1800, 800, 1900, 850), fill=0)
+    image.save(work / "adopt-0001" / "oriented" / "p1.jpg")
+    (work / "adopt-0001" / "ocr-guess" / "p1.txt").write_text("good line\nedge line", encoding="utf-8")
+
+    first = _segments_payload(
+        [
+            {"text": "good line", "orientation": 0, "box_2d": [100, 100, 300, 140]},
+            # zero height: y0 == y1 — the model sat the line on the page's edge
+            {"text": "edge line", "orientation": 0, "box_2d": [100, 1000, 300, 1000]},
+        ]
+    )
+    repair = _repair_payload([{"index": 1, "box_2d": [900, 800, 950, 850]}], [])
+    _, urlopen = _two_call_urlopen([first, repair])
+
+    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
+
+    assert rc == 0
+    layout = json.loads((work / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
+    edge = next(ln for ln in layout["lines"] if ln["text"] == "edge line")
+    assert [round(v) for v in edge["box"]] == [1800, 800, 1900, 850]
+    assert edge["box_source"] == "repaired"

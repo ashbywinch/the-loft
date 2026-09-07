@@ -1,9 +1,7 @@
-"""The layout pass's pure logic (tools/layout.py) — association + confidence.
-
-The detection stage (tools/layout_detect.py) runs PaddleOCR under the
-.venv-htr interpreter and is exercised against the real pages separately;
-these tests pin the deterministic half: normalization, content-based line
-association across reading orders, cross-reader word confidence, and the
+"""The layout pass's logic (tools/layout.py) — association + confidence,
+and the layout stage's contract (tools/layout_detect.py) against hermetic
+pages: normalization, content-based line association across reading
+orders, cross-reader word confidence, the bounded second pass, and the
 published layout shape.
 """
 

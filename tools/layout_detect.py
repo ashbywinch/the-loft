@@ -155,7 +155,7 @@ def _page_segments(image: Path, urlopen=None, api_key=None) -> tuple[list[dict[s
     not work — do not fall back to it). Returns (segments, usage)."""
     if page_needs_two_pass(image):
         return segment_page_two_pass(image, urlopen=urlopen, api_key=api_key)
-    return segment_page(image, urlopen=urlopen, api_key=api_key)
+    return segment_page(image, grid=True, urlopen=urlopen, api_key=api_key)
 
 
 def _layout_from_segments(image: Path, segments: list[dict[str, Any]], guess_dir: Path) -> Layout:

@@ -29,10 +29,10 @@ from typing import Any
 
 from PIL import Image
 
+from tools.gates import validate_layout
 from tools.layout import (  # lucidlint: ignore private-import the single-pass build consumes the house per-word builder
     Layout,
     _words_out,
-    drop_inkless_boxes,
     write_layout_store,
 )
 from tools.loft_paths import WORK_DIR
@@ -40,9 +40,9 @@ from tools.pipeline_store import PipelineStore
 from tools.segment_page import (
     SegmentPageError,
     page_needs_two_pass,
-    relocate_segments,
     segment_page,
     segment_page_two_pass,
+    verify_segments,
 )
 from tools.store import DiskStore  # noqa: F401
 from tools.text import vlm_line_words
@@ -147,18 +147,23 @@ def _process_page(
         return 1
 
 
-def _build_page_layout(image: Path, guess_dir: Path, urlopen=None, api_key=None):
-    """The §16.17 single-pass build: ONE multimodal call returns every
-    text segment with verbatim text, orientation, and a pixel box — text
-    detection, box detection and transcription in one pass. No detector,
-    no matching: the segments carry text and box together, so there is
-    nothing to join (2026-09-06, the user: the old detect-then-match path
-    does not work — do not fall back to it). The self-report's red-word
-    flags apply to the words by line index, as before."""
+def _page_segments(image: Path, urlopen=None, api_key=None) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """The page's segments: ONE multimodal call for small cards, the
+    two-pass read for portrait sheets (the model's geometry is local per
+    half). No detector, no matching: the segments carry text and box
+    together (2026-09-06, the user: the old detect-then-match path does
+    not work — do not fall back to it). Returns (segments, usage)."""
     if page_needs_two_pass(image):
-        segments, _usage = segment_page_two_pass(image, urlopen=urlopen, api_key=api_key)
-    else:
-        segments, _usage = segment_page(image, urlopen=urlopen, api_key=api_key)
+        return segment_page_two_pass(image, urlopen=urlopen, api_key=api_key)
+    return segment_page(image, urlopen=urlopen, api_key=api_key)
+
+
+def _layout_from_segments(image: Path, segments: list[dict[str, Any]], guess_dir: Path) -> Layout:
+    """The §16.17 layout build from the page's segments: verbatim text,
+    orientation, and a pixel box per segment — there is nothing to join.
+    The self-report's red-word flags apply to the words by segment index
+    (a rebuilt segment list can re-number them — the flags are the
+    review's doubt marks, not facts)."""
     vlm_text = "\n".join(s["text"] for s in segments)
 
     selfreport_path = guess_dir / f"{image.stem}.selfreport.json"
@@ -194,12 +199,31 @@ def _build_page_layout(image: Path, guess_dir: Path, urlopen=None, api_key=None)
                 "conf": line_conf,
                 "words": words_out,
                 "orientation": seg["orientation"],
-                "box_source": "segment",
+                "box_source": seg.get("box_source", "segment"),
             }
         )
     vlm_path = guess_dir / image.with_suffix(".txt").name
     vlm_path.write_text(vlm_text + "\n", encoding="utf-8")
     return Layout(image.stem, width, height, lines, [])
+
+
+def _apply_geometry_gates(image: Path, layout: Layout) -> tuple[int, int]:
+    """Gate D (2026-08-20): a boxed line must contain the ink it claims —
+    a well-proportioned box in a blank region is an estimate, not an
+    anchor; the box is dropped. A zero-extent box skips the ink probe
+    (nothing to crop) and is retired here. Gate E (2026-08-22): a box
+    that claims another line's region with different text drops. Returns
+    (inkless, degenerate) — the visual verification pass's trigger."""
+    inkless = layout.drop_inkless(image)
+    if inkless:
+        print(f"layout: {image.name} — {inkless} box(es) with no ink dropped (Gate D)", file=sys.stderr)
+    degenerate = _drop_degenerate_boxes(layout.lines)
+    if degenerate:
+        print(f"layout: {image.name} — {degenerate} degenerate box(es) dropped", file=sys.stderr)
+    conflicts = layout.drop_conflicts()
+    if conflicts:
+        print(f"layout: {image.name} — {conflicts} conflicting box(es) dropped (Gate E)", file=sys.stderr)
+    return inkless, degenerate
 
 
 def _layout_one(
@@ -213,29 +237,24 @@ def _layout_one(
     single-pass layout build, and persist via the store. ``batch`` =
     (batch_id, page_names, wanted, work_dir)."""
     batch_id, page_names, wanted, work_dir = batch
-    layout = _build_page_layout(image, guess_dir, urlopen=urlopen, api_key=api_key)
-    boxes_before_gate_d = {ln.get("index"): ln.get("box") for ln in layout.lines}
-    # Gate D (2026-08-20): a boxed line must contain the ink it claims —
-    # page-03's transcription boxes sat ~200px above the real text, and
-    # a well-proportioned box in a blank region is an estimate, not an
-    # anchor; the box is dropped (the line stays flagged).
-    inkless = layout.drop_inkless(image)
-    if inkless:
-        print(f"layout: {image.name} — {inkless} box(es) with no ink dropped (Gate D)", file=sys.stderr)
-    # a zero-extent box skips the ink probe (nothing to crop) — retire it
-    # here so the second pass can re-ask (2026-09-07)
-    degenerate = _drop_degenerate_boxes(layout.lines)
-    if degenerate:
-        print(f"layout: {image.name} — {degenerate} degenerate box(es) dropped", file=sys.stderr)
-    if inkless or degenerate:
-        _second_pass(image, layout, boxes_before_gate_d, urlopen=urlopen, api_key=api_key)
-    # Gate E as a correction (2026-08-22): a box that claims another
-    # line's region with different text shadows the confirmed anchor —
-    # page-03's boxless lines sat on the P.S. margin, refusing the page
-    # at the serve gate. The lower-confidence box drops.
-    conflicts = layout.drop_conflicts()
-    if conflicts:
-        print(f"layout: {image.name} — {conflicts} conflicting box(es) dropped (Gate E)", file=sys.stderr)
+    segments, _usage = _page_segments(image, urlopen=urlopen, api_key=api_key)
+    layout = _layout_from_segments(image, segments, guess_dir)
+    inkless, degenerate = _apply_geometry_gates(image, layout)
+    violations = validate_layout(layout.to_dict())
+    if inkless or degenerate or violations:
+        # the visual verification pass (2026-09-07, user: draw the boxes
+        # on the image and give it back so the model can learn from its
+        # mistakes): the reported boxes drawn on the page in red and
+        # numbered; the model corrects the wrong rectangles and declares
+        # the invented segments. ONE bounded round — the gates re-judge
+        # after, and a page that still fails refuses exactly as before.
+        print(
+            f"layout: {image.name} — the first read failed its checks; running the visual verification pass",
+            file=sys.stderr,
+        )
+        segments, _usage = verify_segments(image, segments, urlopen=urlopen, api_key=api_key)
+        layout = _layout_from_segments(image, segments, guess_dir)
+        _apply_geometry_gates(image, layout)
     out = guess_dir / f"{image.stem}.layout.json"
     # the store roots at the work_dir this run was GIVEN, not the global
     # WORK_DIR: the hermetic tests pass a tmp dir, and the hardcoded root
@@ -263,81 +282,6 @@ def _drop_degenerate_boxes(lines: list[dict[str, Any]]) -> int:
             line["box"] = None
             dropped += 1
     return dropped
-
-
-def _second_pass(
-    image: Path,
-    layout: Layout,
-    boxes_before: dict[int, list[float] | None],
-    urlopen=None,
-    api_key=None,
-) -> None:
-    """The bounded second pass (2026-09-07, user: no use spending tokens
-    on things that are already correct): the lines whose geometry failed
-    — Gate D's blank-card boxes AND degenerate boxes (zero extent, or
-    sitting off the page) — get ONE repair call naming only them,
-    prompted by the recorded failure facts. A relocated box must clear
-    the SAME checks — non-degenerate, and carrying ink: the gates are
-    the arbiter, never the model — and a "not present" verdict drops the
-    segment loudly (a first-pass invention is not evidence). Anything
-    unresolved stays boxless for Gate F to refuse, exactly as without
-    the pass."""
-    with Image.open(image) as im:
-        width, height = im.size
-
-    def _degenerate(box: Any) -> bool:
-        return isinstance(box, list) and len(box) == 4 and (box[2] <= box[0] or box[3] <= box[1])
-
-    failures = []
-    for line in layout.lines:
-        rejected = boxes_before.get(line.get("index"))
-        if line.get("box") is not None:
-            continue
-        if not isinstance(rejected, list) or len(rejected) != 4:
-            continue
-        failures.append(
-            {
-                "index": int(line["index"]),
-                "text": str(line.get("text", "")),
-                "px": rejected,
-                "box_2d": [
-                    rejected[0] * 1000.0 / width,
-                    rejected[1] * 1000.0 / height,
-                    rejected[2] * 1000.0 / width,
-                    rejected[3] * 1000.0 / height,
-                ],
-                "reason": (
-                    "the box is degenerate (zero extent) or sits outside the page"
-                    if _degenerate(rejected)
-                    else "the box holds no ink"
-                ),
-            }
-        )
-    if not failures:
-        return
-    answer = relocate_segments(image, failures, urlopen=urlopen, api_key=api_key)
-    by_index = {int(ln["index"]): ln for ln in layout.lines}
-    for index, px_box in answer["relocated"].items():
-        line = by_index[index]
-        probe = [{"box": list(px_box)}]
-        usable = px_box[2] > px_box[0] and px_box[3] > px_box[1]
-        if usable and drop_inkless_boxes(probe, image) == 0:
-            line["box"] = probe[0]["box"]
-            line["box_source"] = "repaired"
-            print(f"layout: {image.name} line {index} — the second pass relocated it", file=sys.stderr)
-        else:
-            print(
-                f"layout: {image.name} line {index} — the second pass's box fails the checks too; Gate F will refuse",
-                file=sys.stderr,
-            )
-    for index in answer["not_present"]:
-        line = by_index[index]
-        layout.lines.remove(line)
-        print(
-            f"layout: {image.name} line {index} ({str(line.get('text', ''))[:30]!r}) — "
-            "the second pass found no such text on the page; segment dropped",
-            file=sys.stderr,
-        )
 
 
 def _warn_missing_guess(image_name: str, txt_name: str, page_names: list[str] | None, wanted: set[str]) -> int:

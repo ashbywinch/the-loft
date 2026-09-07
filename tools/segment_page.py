@@ -18,6 +18,7 @@ with boxes converted to ORIGINAL-IMAGE PIXELS."""
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
@@ -30,31 +31,41 @@ from tools.text import normalize
 from tools.vlm import DEFAULT_BASE_URL, transcribe_image_vlm
 
 _SEGMENTS_FORMAT = (
-    'Return ONLY JSON: {"segments": [{"text": "the line verbatim", '
-    '"orientation": 0, "box_2d": [x0, y0, x1, y1]}]} — ONE ENTRY PER LINE '
-    "of writing, in reading order (top to bottom; a rotated block's lines "
-    "in its own reading direction). Every handwritten or printed line is "
-    "its own entry — never merge lines into a paragraph block. "
-    '"orientation" is the line\'s reading rotation in degrees: 0 '
+    'Return ONLY JSON: {"segments": [{"text": "the segment verbatim", '
+    '"orientation": 0, "box_2d": [x0, y0, x1, y1]}]} — one entry per '
+    "segment, in reading order. "
+    '"orientation" is the segment\'s reading rotation in degrees: 0 '
     "(upright), 90, 180 or 270 — a margin note running up the page's edge "
-    "is 90 or 270, and each of its lines gets its own entry. "
-    '"box_2d" is the line\'s bounding box in NORMALIZED coordinates '
-    "0-1000 (fractions of the image's width and height, times 1000); it "
-    "must enclose every glyph of that line, nothing else."
+    "is 90 or 270, and each of its written lines gets its own entry. "
+    '"box_2d" is the segment\'s bounding box in NORMALIZED coordinates '
+    "0-1000 (fractions of the image's width and height, times 1000)."
 )
 
 _SEGMENT_SYSTEM = (
     "You transcribe scanned family documents verbatim and locate every "
-    "block of text on the page in one pass. Rules: the document's own "
+    "segment of writing on the page in one pass. Rules: the document's own "
     "words, nothing added, nothing removed — fix nothing, summarize "
-    "nothing, invent nothing. Keep the line structure inside each segment. "
-    "For printed text and handwriting alike, at any orientation — read "
-    "each block in its own direction and report that direction. Unreadable "
-    "words: transcribe your best literal guess. Formatting that matters — "
-    "keep the markers, they are content: a word the writer CROSSED OUT is "
-    "marked ~~word~~ (double tildes either side); a word the writer "
-    "UNDERLINED is marked ~word~ (single tildes either side, the in-house "
-    "sibling of the strike convention — markdown has no standard underline). " + _SEGMENTS_FORMAT
+    "nothing, invent nothing. Unreadable words: transcribe your best "
+    "literal guess. Formatting that matters — keep the markers, they are "
+    "content: a word the writer CROSSED OUT is marked ~~word~~ (double "
+    "tildes either side); a word the writer UNDERLINED is marked ~word~ "
+    "(single tildes either side, the in-house sibling of the strike "
+    "convention — markdown has no standard underline). For printed text "
+    "and handwriting alike, at any orientation — read each block in its "
+    "own direction and report that direction. "
+    + _SEGMENTS_FORMAT
+    + " A segment is the longest run of text on a single line that belongs "
+    "together, and the definition is exact — do NOT:"
+    " merge consecutive written lines of a paragraph into one segment "
+    "(each written line is its own segment);"
+    " let a segment cross a column boundary (each column's lines are "
+    "their own segments);"
+    " merge a margin annotation or side note with the body line it sits "
+    "beside (the note is its own segment);"
+    " merge text in a different hand into the same segment;"
+    " let a box enclose anything but its own segment's writing — never "
+    "the neighboring column, never the lines above or below, never blank "
+    "card, never past the page edge."
 )
 
 _FENCE = "```"  # the markdown fence the model wraps its JSON in (tools/vlm.py)
@@ -167,109 +178,135 @@ def segment_page(  # lucidlint: ignore long-param-list one required argument (im
     return segments, usage
 
 
-_REPAIR_FORMAT = (
-    'Return ONLY JSON: {"relocated": [{"index": 16, "box_2d": [x0, y0, x1, y1]}], '
-    '"not_present": []} — every index you were given appears in exactly one of '
-    "the two lists. box_2d is NORMALIZED 0-1000 and must enclose every glyph "
-    "of that line, nothing else."
+_VERIFY_FORMAT = (
+    'Return ONLY JSON: {"corrections": [{"index": 2, "box_2d": [x0, y0, x1, y1]}], '
+    '"not_present": []} — list ONLY the segments whose rectangle is wrong; a '
+    "rectangle that already encloses exactly its own writing must not appear. "
+    "box_2d is NORMALIZED 0-1000."
 )
 
-_REPAIR_SYSTEM = (
-    "You are correcting one pass of a scanned-document transcription. The "
-    "lines listed below were reported on this page, but each one's reported "
-    "box landed where the page has no ink. For each line: either locate "
-    "that exact text on the page and return its true bounding box, or — if "
-    "the text does not actually appear on the page — declare it in "
-    "not_present. The text is fixed data: never invent, never "
-    "re-transcribe. " + _REPAIR_FORMAT
+_VERIFY_SYSTEM = (
+    "You are checking your own segmentation of a scanned family document. "
+    "The image has your reported rectangles drawn on it in red and "
+    "numbered — the number beside a rectangle is that segment's index. A "
+    "segment is the longest run of text on a single line that belongs "
+    "together: it never crosses a column boundary, never includes a "
+    "neighboring written line, never merges a margin note with the body "
+    "line beside it, never mixes hands. Check every numbered rectangle "
+    "against that definition and against the page: a rectangle that sits "
+    "on blank card, spans two columns, covers neighboring lines, or runs "
+    "past the page edge is wrong. For each wrong one, give the corrected "
+    "box; if a segment's text does not actually appear on the page, "
+    "declare it in not_present. The texts are fixed data: never invent, "
+    "never re-transcribe. " + _VERIFY_FORMAT
 )
 
 
-def build_repair_prompt(failures: list[dict[str, Any]], width: int, height: int) -> str:
-    """The second pass's user prompt — generated deterministically from
-    the first pass's recorded failure facts (the same failure yields the
-    same bytes), naming ONLY the failed lines: tokens are not spent
-    re-asking about the segments that were already correct (2026-09-07,
-    user)."""
-    listed = "\n".join(
-        f"- index {f['index']}: text {f['text']!r}; rejected box, normalized: "
-        f"[{f['box_2d'][0]:.0f}, {f['box_2d'][1]:.0f}, {f['box_2d'][2]:.0f}, {f['box_2d'][3]:.0f}]; "
-        f"in pixels: [{f['px'][0]:.0f}, {f['px'][1]:.0f}, {f['px'][2]:.0f}, {f['px'][3]:.0f}]"
-        for f in failures
-    )
-    return (
-        f"The page is {width}x{height} px. These reported lines failed the "
-        f"ink check — their boxes hold no writing:\n{listed}"
-    )
+def build_verify_prompt(segments: list[dict[str, Any]], width: int, height: int) -> str:
+    """The verification pass's user prompt — generated deterministically
+    from the reported segments (the same report yields the same bytes)."""
+    listed = "\n".join(f"- index {i}: text {str(s.get('text', ''))!r}" for i, s in enumerate(segments))
+    return f"The page is {width}x{height} px. Your reported segments:\n{listed}"
 
 
-def _repair_index(value: Any) -> int:
+def _segment_index(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise SegmentPageError(f"the repair's answer has no usable index: {value!r}")
+        raise SegmentPageError(f"the verification's answer has no usable index: {value!r}")
     return int(value)
 
 
-def relocate_segments(
+def _draw_reported_boxes(image: Path, segments: list[dict[str, Any]], path: Path) -> None:
+    """The reported boxes drawn on the page in red, numbered — the model
+    critiques what it sees, not what it remembers (Set-of-Mark, 2023)."""
+    from PIL import ImageDraw
+
+    with Image.open(image) as im:
+        annotated = im.convert("RGB").copy()
+    draw = ImageDraw.Draw(annotated)
+    for i, s in enumerate(segments):
+        box = s.get("box")
+        if not isinstance(box, list) or len(box) != 4:
+            continue
+        x0, y0, x1, y1 = (int(v) for v in box)
+        draw.rectangle((x0, y0, x1, y1), outline=(255, 0, 0), width=3)
+        draw.text((x0 + 4, max(0, y0 - 18)), str(i), fill=(255, 0, 0))
+    annotated.save(path)
+
+
+def verify_segments(
     image: Path,
-    failures: list[dict[str, Any]],
+    segments: list[dict[str, Any]],
     *,
     model: str = "dynamic/image",
     base_url: str = DEFAULT_BASE_URL,
     api_key: str | None = None,
     max_tokens: int = 32000,
     urlopen: Callable[..., Any] | None = None,
-) -> dict[str, Any]:
-    """The bounded second pass: ONE call covering only the lines the ink
-    gate dropped, prompted by the deterministic repair prompt. Returns
-    {"relocated": {index: pixel box}, "not_present": [index, ...]} —
-    every failed index answered exactly once. A contract violation
-    raises SegmentPageError (the page refuses); the gates, never this
-    pass, decide what serves."""
-    if not failures:
-        return {"relocated": {}, "not_present": []}
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """The visual verification pass (2026-09-07, user: draw the boxes on
+    the image and give it back so the model can learn from its
+    mistakes). ONE call: the reported boxes drawn on the page in red and
+    numbered; the model corrects the wrong rectangles and declares the
+    invented segments. Same contract as segment_page — the segments come
+    back with corrected boxes (marked box_source "verified") and the
+    not-present segments removed. A contract violation raises
+    SegmentPageError (the page refuses); the gates, never this pass,
+    decide what serves."""
+    if not segments:
+        return segments, {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     with Image.open(image) as im:
         width, height = im.size
 
-    text, _usage = transcribe_image_vlm(
-        image,
-        model=model,
-        system=_REPAIR_SYSTEM,
-        user_text=build_repair_prompt(failures, width, height),
-        base_url=base_url,
-        api_key=api_key,
-        max_tokens=max_tokens,
-        urlopen=urlopen,
-    )
+    with tempfile.TemporaryDirectory() as tmp:
+        annotated = Path(tmp) / "reported.png"
+        _draw_reported_boxes(image, segments, annotated)
+        text, usage = transcribe_image_vlm(
+            annotated,
+            model=model,
+            system=_VERIFY_SYSTEM,
+            user_text=build_verify_prompt(segments, width, height),
+            base_url=base_url,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            urlopen=urlopen,
+        )
 
-    answer = _parse_json_object(text, "repair response")
-    given = {int(f["index"]) for f in failures}
-    relocated: dict[int, list[float]] = {}
-    for entry in answer.get("relocated", []):
+    answer = _parse_json_object(text, "verification response")
+    corrected = [dict(s) for s in segments]
+    corrections: set[int] = set()
+    for entry in answer.get("corrections", []):
         if not isinstance(entry, dict):
-            raise SegmentPageError(f"the repair's relocated entry is not an object: {entry!r}")
-        index = _repair_index(entry.get("index"))
-        if index not in given or index in relocated:
-            raise SegmentPageError(f"the repair answered index {index} twice or unasked")
+            raise SegmentPageError(f"the verification's correction is not an object: {entry!r}")
+        index = _segment_index(entry.get("index"))
+        if not 0 <= index < len(segments) or index in corrections:
+            raise SegmentPageError(f"the verification corrected index {index} unasked or twice")
+        corrections.add(index)
         box_2d = entry.get("box_2d")
         if not isinstance(box_2d, list) or len(box_2d) != 4:
-            raise SegmentPageError(f"a relocated box_2d is not [x0, y0, x1, y1]: {entry!r}")
+            raise SegmentPageError(f"a corrected box_2d is not [x0, y0, x1, y1]: {entry!r}")
         x0, y0, x1, y1 = (float(v) for v in box_2d)
-        relocated[index] = [
+        corrected[index]["box"] = [
             max(0.0, min(x0 * width / 1000, width)),
             max(0.0, min(y0 * height / 1000, height)),
             max(0.0, min(x1 * width / 1000, width)),
             max(0.0, min(y1 * height / 1000, height)),
         ]
+        corrected[index]["box_source"] = "verified"
     not_present: list[int] = []
     for value in answer.get("not_present", []):
-        index = _repair_index(value)
-        if index not in given or index in relocated or index in not_present:
-            raise SegmentPageError(f"the repair answered index {index} twice or unasked")
+        index = _segment_index(value)
+        if not 0 <= index < len(segments) or index in not_present:
+            raise SegmentPageError(f"the verification declared index {index} unasked or twice")
+        if index in corrections:
+            raise SegmentPageError(f"the verification answered index {index} twice")
         not_present.append(index)
-    missing = sorted(given - set(relocated) - set(not_present))
-    if missing:
-        raise SegmentPageError(f"the repair never answered index {missing[0]}")
-    return {"relocated": relocated, "not_present": not_present}
+    for i in not_present:
+        print(
+            f"segment {i} ({str(segments[i]['text'])[:30]!r}) — the verification "
+            "found no such text on the page; segment dropped",
+            file=sys.stderr,
+        )
+    return [s for i, s in enumerate(corrected) if i not in not_present], usage
 
 
 TWO_PASS_ASPECT = 1.2  # taller than this and the model's full-page box placement degrades down the page

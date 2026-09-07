@@ -1,10 +1,10 @@
 """The layout stage's subprocess launcher (TECH-SPEC §16.16, VR14).
 
-The detection pass (tools.layout_detect) runs PaddleOCR under the
-.venv-htr interpreter — the main venv never imports it. Both the ingest
-pipeline (tools.pipeline) and the server's reprocess (tools.sync) spawn
-it; this module is the one launcher, importable by either without
-dragging torch or paddle into the process.
+The layout stage (tools.layout_detect) is §16.17's single pass — one VLM
+call per page, on the main venv interpreter; no detector engine, no
+.venv-htr. Both the ingest pipeline (tools.pipeline) and the server's
+reprocess (tools.sync) spawn it; this module is the one launcher,
+importable by either.
 """
 
 from __future__ import annotations

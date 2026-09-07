@@ -43,32 +43,25 @@ _SEGMENTS_FORMAT = (
     "0-1000 (fractions of the image's width and height, times 1000)."
 )
 
-_SEGMENT_SYSTEM = (
-    "You transcribe scanned family documents verbatim and locate every "
-    "segment of writing on the page in one pass. Rules: the document's own "
-    "words, nothing added, nothing removed — fix nothing, summarize "
-    "nothing, invent nothing. Unreadable words: transcribe your best "
-    "literal guess. Formatting that matters — keep the markers, they are "
-    "content: a word the writer CROSSED OUT is marked ~~word~~ (double "
-    "tildes either side); a word the writer UNDERLINED is marked ~word~ "
-    "(single tildes either side, the in-house sibling of the strike "
-    "convention — markdown has no standard underline). For printed text "
-    "and handwriting alike, at any orientation — read each block in its "
-    "own direction and report that direction. "
-    + _SEGMENTS_FORMAT
-    + " A segment is the longest run of text on a single line that belongs "
-    "together, and the definition is exact — do NOT:"
-    " merge consecutive written lines of a paragraph into one segment "
-    "(each written line is its own segment);"
-    " let a segment cross a column boundary (each column's lines are "
-    "their own segments);"
-    " merge a margin annotation or side note with the body line it sits "
-    "beside (the note is its own segment);"
-    " merge text in a different hand into the same segment;"
-    " let a box enclose anything but its own segment's writing — never "
-    "the neighboring column, never the lines above or below, never blank "
-    "card, never past the page edge."
-)
+
+def _segments_format(grid: bool) -> str:
+    """The response format, in the mode's own units: the grid mode reads
+    PIXELS off the drawn ruler, so its template must say box_px
+    (2026-09-07: the model followed the template's key, not the grid
+    blurb's, and the mismatch refused good reads)."""
+    if not grid:
+        return _SEGMENTS_FORMAT
+    return (
+        'Return ONLY JSON: {"segments": [{"text": "the segment verbatim", '
+        '"orientation": 0, "box_px": [x0, y0, x1, y1]}]} — one entry per '
+        "segment, in reading order. "
+        '"orientation" is the segment\'s reading rotation in degrees: 0 '
+        "(upright), 90, 180 or 270 — a margin note running up the page's "
+        "edge is 90 or 270, and each of its written lines gets its own "
+        'entry. "box_px" is the segment\'s bounding box in PIXELS — the '
+        "same units the grid is labeled in."
+    )
+
 
 _GRID_SPACING_PX = 100
 
@@ -85,6 +78,42 @@ _GRID_PROMPT = (
 _FENCE = "```"  # the markdown fence the model wraps its JSON in (tools/vlm.py)
 
 _ORIENTATIONS = {0, 90, 180, 270}
+_segment_system_cache: dict[bool, str] = {}
+
+
+def _segment_system(grid: bool) -> str:
+    """The system prompt, in the mode's own units (see _segments_format)."""
+    if grid not in _segment_system_cache:
+        _segment_system_cache[grid] = (
+            "You transcribe scanned family documents verbatim and locate "
+            "every segment of writing on the page in one pass. Rules: the "
+            "document's own words, nothing added, nothing removed — fix "
+            "nothing, summarize nothing, invent nothing. Unreadable "
+            "words: transcribe your best literal guess. Formatting that "
+            "matters — keep the markers, they are content: a word the "
+            "writer CROSSED OUT is marked ~~word~~ (double tildes either "
+            "side); a word the writer UNDERLINED is marked ~word~ "
+            "(single tildes either side, the in-house sibling of the "
+            "strike convention — markdown has no standard underline). "
+            "For printed text and handwriting alike, at any orientation "
+            "— read each block in its own direction and report that "
+            "direction. "
+            + _segments_format(grid)
+            + (_GRID_PROMPT if grid else "")
+            + " A segment is the longest run of text on a single line "
+            "that belongs together, and the definition is exact — do NOT:"
+            " merge consecutive written lines of a paragraph into one "
+            "segment (each written line is its own segment);"
+            " let a segment cross a column boundary (each column's lines "
+            "are their own segments);"
+            " merge a margin annotation or side note with the body line "
+            "it sits beside (the note is its own segment);"
+            " merge text in a different hand into the same segment;"
+            " let a box enclose anything but its own segment's writing — "
+            "never the neighboring column, never the lines above or "
+            "below, never blank card, never past the page edge."
+        )
+    return _segment_system_cache[grid]
 
 
 def _draw_coordinate_grid(image: Path, out: Path) -> None:
@@ -226,7 +255,7 @@ def segment_page(  # lucidlint: ignore long-param-list one required argument (im
     fail loudly, never skip."""
     with Image.open(image) as im:
         width, height = im.size
-    system = _SEGMENT_SYSTEM + (_GRID_PROMPT if grid else "")
+    system = _segment_system(grid)
     call_image = image
     with tempfile.TemporaryDirectory() as tmp:
         if grid:

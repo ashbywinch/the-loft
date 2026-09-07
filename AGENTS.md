@@ -36,7 +36,6 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | Pipeline stages, completion markers, and per-page recovery (`make pipeline ARGS="guess\|layout <batch> [page...]"`) | `docs/TECH-SPEC.md` §16.14.2 |
 | Layout / geometry experiments ledger (the ink work's measured findings) | `docs/plans/geometry-experiments-log.md` |
 | The plans/ work logs (trial reports, walkthrough records, snags) | `docs/plans/` — `docs/plans/ocr-verification-research.md`, `docs/plans/model-trial-report.md`, `docs/plans/lucidlint-snag.md`, `docs/plans/ux-review-chat-solution.md`, `docs/plans/INGEST-PLAN.md` |
-| Finishing the §16.17 single-pass landing (close the superseded PRs, the confirm-flow audit) | `docs/plans/single-pass-landing-plan.md` |
 | Acting on lucidlint findings (fix-engine workflow, baseline, per-file checks) | `skill://lucidlint-workflow`; the repo's findings log at `docs/plans/lucidlint-review-log.md` |
 | Layout redesign requirements (the adjudication draft — layout-requirements-draft) | `docs/plans/layout-requirements-draft.md` |
 |Interview/observation instruments|`docs/DISCOVERY.md`, private session records|

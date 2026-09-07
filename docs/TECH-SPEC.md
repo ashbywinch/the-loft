@@ -632,6 +632,11 @@ on it?"). The label is written into the registry record at scan time
 
 ### 16.14.1 The pipeline picture and the layout stage (2026-08-16)
 
+**2026-09-07:** the layout row and this section's paddleocr description
+predate the single-pass redesign — the layout stage now makes one VLM
+call per page (per-line segments with text, orientation, and boxes;
+paddleocr is gone from the layout path). The current verified state and
+the landing record: `docs/plans/single-pass-landing-plan.md`.
 ```mermaid
 flowchart TB
     subgraph ingest["make ingest — pipeline.process"]

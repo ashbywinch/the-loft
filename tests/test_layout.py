@@ -2308,3 +2308,133 @@ def test_selfreport_flags_match_by_word_content() -> None:
 
     # a word nowhere in the text flags nothing
     assert selfreport_words_by_line(lines, [{"line": 1, "word": "nonexistent"}]) == {}
+
+
+def _two_call_urlopen(payloads: list[bytes]):
+    """A fake urlopen answering each request with the next payload —
+    call 1 is the segment pass, call 2 the repair pass."""
+    import json as _json
+
+    seen: list[dict] = []
+    state = {"n": 0}
+
+    def urlopen(req, timeout: float = 0):
+        seen.append(_json.loads(req.data.decode("utf-8")))
+        payload = payloads[min(state["n"], len(payloads) - 1)]
+        state["n"] += 1
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self) -> bytes:
+                return payload
+
+        return _Resp()
+
+    return seen, urlopen
+
+
+def _segments_payload(segments: list[dict]) -> bytes:
+    import json as _json
+
+    body = {"choices": [{"message": {"content": _json.dumps({"segments": segments})}, "finish_reason": "stop"}]}
+    return _json.dumps(body).encode()
+
+
+def _repair_payload(relocated: list[dict], not_present: list[int]) -> bytes:
+    import json as _json
+
+    body = {
+        "choices": [
+            {
+                "message": {"content": _json.dumps({"relocated": relocated, "not_present": not_present})},
+                "finish_reason": "stop",
+            }
+        ]
+    }
+    return _json.dumps(body).encode()
+
+
+def _repair_fixture(tmp_path):
+    """A 2000x1000 page with two inked regions; the first-pass response
+    reads one line on each — except the second line's box is placed on
+    blank card, so Gate D drops it and the second pass must answer."""
+    from PIL import ImageDraw
+
+    work = tmp_path
+    (work / "adopt-0001" / "oriented").mkdir(parents=True)
+    (work / "adopt-0001" / "ocr-guess").mkdir(parents=True)
+    image = Image.new("L", (2000, 1000), 255)
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((200, 100, 600, 140), fill=0)  # under 'good line'
+    draw.rectangle((1800, 800, 1900, 850), fill=0)  # where the repair should land
+    image.save(work / "adopt-0001" / "oriented" / "p1.jpg")
+    (work / "adopt-0001" / "ocr-guess" / "p1.txt").write_text("good line\nghost line", encoding="utf-8")
+    first = _segments_payload(
+        [
+            {"text": "good line", "orientation": 0, "box_2d": [100, 100, 300, 140]},
+            {"text": "ghost line", "orientation": 0, "box_2d": [700, 700, 800, 730]},  # blank card
+        ]
+    )
+    return work, first
+
+
+def test_layout_second_pass_repairs_an_inkless_box(tmp_path: Path) -> None:
+    """The bounded second pass (2026-09-07, user: no use spending tokens
+    on things that are already correct): when Gate D drops a box, ONE
+    repair call covering ONLY the dropped lines re-asks for their true
+    geometry. The prompt is the recorded failure facts — deterministic —
+    and the gates stay the arbiter: the repaired box must carry ink."""
+    from tools.layout_detect import run_batch
+
+    work, first = _repair_fixture(tmp_path)
+    repair = _repair_payload([{"index": 1, "box_2d": [900, 800, 950, 850]}], [])
+    seen, urlopen = _two_call_urlopen([first, repair])
+
+    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
+
+    assert rc == 0
+    layout = json.loads((work / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
+    ghost = next(ln for ln in layout["lines"] if ln["text"] == "ghost line")
+    assert [round(v) for v in ghost["box"]] == [1800, 800, 1900, 850]
+    assert ghost["box_source"] == "repaired"
+    # the repair call named only the failed line — never the correct one
+    assert "ghost line" in json.dumps(seen[1])
+    assert "good line" not in json.dumps(seen[1])
+
+
+def test_layout_second_pass_drops_a_segment_the_model_cannot_place(tmp_path: Path, capsys) -> None:
+    """When the second pass declares the text not present — a first-pass
+    invention, the godolphin £4-0s. case — the segment is dropped
+    LOUDLY (the refusal names it) and the rest of the page serves."""
+    from tools.layout_detect import run_batch
+
+    work, first = _repair_fixture(tmp_path)
+    repair = _repair_payload([], [1])
+    _, urlopen = _two_call_urlopen([first, repair])
+
+    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
+
+    assert rc == 0
+    layout = json.loads((work / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
+    assert [ln["text"] for ln in layout["lines"]] == ["good line"]
+    assert "ghost line" in capsys.readouterr().err  # the drop is loud, never silent
+
+
+def test_layout_second_pass_cannot_overrule_the_ink_gate(tmp_path: Path) -> None:
+    """A relocated box that STILL holds no ink changes nothing: the line
+    stays boxless and Gate F refuses the page exactly as before."""
+    from tools.layout_detect import run_batch
+
+    work, first = _repair_fixture(tmp_path)
+    repair = _repair_payload([{"index": 1, "box_2d": [300, 700, 400, 730]}], [])  # also blank card
+    _, urlopen = _two_call_urlopen([first, repair])
+
+    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
+
+    assert rc == 1
+    assert not (work / "adopt-0001" / "ocr-guess" / "p1.layout.json").exists()

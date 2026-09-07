@@ -75,10 +75,10 @@ def _strip_fences(text: str) -> str:
     return stripped.strip()
 
 
-def _parse_segments(text: str) -> list[dict[str, Any]]:
-    """The parsed segments array — the model's JSON, tolerating a
-    code-fence wrapper with a language tag (```json … ```) and locating
-    the outermost braces (the house tolerance, tools/vlm.py
+def _parse_json_object(text: str, what: str) -> dict[str, Any]:
+    """The model's JSON object, tolerating a code-fence wrapper with a
+    language tag (```json … ```) and locating the outermost braces when
+    bare parsing fails (the house tolerance, tools/vlm.py
     _extract_json)."""
     stripped = text.strip()
     if stripped.startswith(_FENCE):
@@ -90,13 +90,19 @@ def _parse_segments(text: str) -> list[dict[str, Any]]:
     except json.JSONDecodeError:
         start, end = stripped.find("{"), stripped.rfind("}")
         if start < 0 or end <= start:
-            raise SegmentPageError(f"the segment response has no JSON: {text[:200]}") from None
+            raise SegmentPageError(f"the {what} has no JSON: {text[:200]}") from None
         parsed = json.loads(stripped[start : end + 1])
-    if isinstance(parsed, dict):
-        parsed = parsed.get("segments")
-    if not isinstance(parsed, list):
-        raise SegmentPageError(f"the segment response has no segments array: {text[:200]}")
+    if not isinstance(parsed, dict):
+        raise SegmentPageError(f"the {what} is not a JSON object: {text[:200]}")
     return parsed
+
+
+def _parse_segments(text: str) -> list[dict[str, Any]]:
+    """The parsed segments array — the model's JSON, fence-tolerant."""
+    segments = _parse_json_object(text, "segment response").get("segments")
+    if not isinstance(segments, list):
+        raise SegmentPageError(f"the segment response has no segments array: {text[:200]}")
+    return segments
 
 
 def segment_page(  # lucidlint: ignore long-param-list one required argument (image) plus defaulted call options
@@ -156,3 +162,108 @@ def segment_page(  # lucidlint: ignore long-param-list one required argument (im
             }
         )
     return segments, usage
+
+
+_REPAIR_FORMAT = (
+    'Return ONLY JSON: {"relocated": [{"index": 16, "box_2d": [x0, y0, x1, y1]}], '
+    '"not_present": []} — every index you were given appears in exactly one of '
+    "the two lists. box_2d is NORMALIZED 0-1000 and must enclose every glyph "
+    "of that line, nothing else."
+)
+
+_REPAIR_SYSTEM = (
+    "You are correcting one pass of a scanned-document transcription. The "
+    "lines listed below were reported on this page, but each one's reported "
+    "box landed where the page has no ink. For each line: either locate "
+    "that exact text on the page and return its true bounding box, or — if "
+    "the text does not actually appear on the page — declare it in "
+    "not_present. The text is fixed data: never invent, never "
+    "re-transcribe. " + _REPAIR_FORMAT
+)
+
+
+def build_repair_prompt(failures: list[dict[str, Any]], width: int, height: int) -> str:
+    """The second pass's user prompt — generated deterministically from
+    the first pass's recorded failure facts (the same failure yields the
+    same bytes), naming ONLY the failed lines: tokens are not spent
+    re-asking about the segments that were already correct (2026-09-07,
+    user)."""
+    listed = "\n".join(
+        f"- index {f['index']}: text {f['text']!r}; rejected box, normalized: "
+        f"[{f['box_2d'][0]:.0f}, {f['box_2d'][1]:.0f}, {f['box_2d'][2]:.0f}, {f['box_2d'][3]:.0f}]; "
+        f"in pixels: [{f['px'][0]:.0f}, {f['px'][1]:.0f}, {f['px'][2]:.0f}, {f['px'][3]:.0f}]"
+        for f in failures
+    )
+    return (
+        f"The page is {width}x{height} px. These reported lines failed the "
+        f"ink check — their boxes hold no writing:\n{listed}"
+    )
+
+
+def _repair_index(value: Any) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise SegmentPageError(f"the repair's answer has no usable index: {value!r}")
+    return int(value)
+
+
+def relocate_segments(
+    image: Path,
+    failures: list[dict[str, Any]],
+    *,
+    model: str = "dynamic/image",
+    base_url: str = DEFAULT_BASE_URL,
+    api_key: str | None = None,
+    max_tokens: int = 32000,
+    urlopen: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
+    """The bounded second pass: ONE call covering only the lines the ink
+    gate dropped, prompted by the deterministic repair prompt. Returns
+    {"relocated": {index: pixel box}, "not_present": [index, ...]} —
+    every failed index answered exactly once. A contract violation
+    raises SegmentPageError (the page refuses); the gates, never this
+    pass, decide what serves."""
+    if not failures:
+        return {"relocated": {}, "not_present": []}
+    with Image.open(image) as im:
+        width, height = im.size
+
+    text, _usage = transcribe_image_vlm(
+        image,
+        model=model,
+        system=_REPAIR_SYSTEM,
+        user_text=build_repair_prompt(failures, width, height),
+        base_url=base_url,
+        api_key=api_key,
+        max_tokens=max_tokens,
+        urlopen=urlopen,
+    )
+
+    answer = _parse_json_object(text, "repair response")
+    given = {int(f["index"]) for f in failures}
+    relocated: dict[int, list[float]] = {}
+    for entry in answer.get("relocated", []):
+        if not isinstance(entry, dict):
+            raise SegmentPageError(f"the repair's relocated entry is not an object: {entry!r}")
+        index = _repair_index(entry.get("index"))
+        if index not in given or index in relocated:
+            raise SegmentPageError(f"the repair answered index {index} twice or unasked")
+        box_2d = entry.get("box_2d")
+        if not isinstance(box_2d, list) or len(box_2d) != 4:
+            raise SegmentPageError(f"a relocated box_2d is not [x0, y0, x1, y1]: {entry!r}")
+        x0, y0, x1, y1 = (float(v) for v in box_2d)
+        relocated[index] = [
+            max(0.0, min(x0 * width / 1000, width)),
+            max(0.0, min(y0 * height / 1000, height)),
+            max(0.0, min(x1 * width / 1000, width)),
+            max(0.0, min(y1 * height / 1000, height)),
+        ]
+    not_present: list[int] = []
+    for value in answer.get("not_present", []):
+        index = _repair_index(value)
+        if index not in given or index in relocated or index in not_present:
+            raise SegmentPageError(f"the repair answered index {index} twice or unasked")
+        not_present.append(index)
+    missing = sorted(given - set(relocated) - set(not_present))
+    if missing:
+        raise SegmentPageError(f"the repair never answered index {missing[0]}")
+    return {"relocated": relocated, "not_present": not_present}

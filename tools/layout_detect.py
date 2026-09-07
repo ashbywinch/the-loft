@@ -1,20 +1,19 @@
-"""The layout pass's detection stage (TECH-SPEC §16.16, 2026-08-15).
+"""The layout pass's segment stage (TECH-SPEC §16.16/§16.17).
 
-Runs under the .venv-htr interpreter (py3.13 — PaddleOCR lives there;
-the main venv never imports it; the PIL/paddleocr imports are inline,
-matching tools/htr.py's pattern for the same situation). Detects the
-page's text lines + per-word boxes with PP-OCRv5 mobile det
-(enable_mkldnn=False — the oneDNN/PIR path crashes on this CPU;
-orientation/unwarping/line-orientation off — the oriented pages are
-already upright), then associates the detections with the VLM guess
-(tools.layout) and writes the page layout JSON atomically.
+The §16.17 single pass: ONE multimodal call per page returns every text
+segment with verbatim text, orientation, and a pixel box
+(tools.segment_page); this module builds the page Layout from those
+segments and persists it through the store. When the ink gate (Gate D)
+finds a box on blank card, a bounded SECOND pass re-asks for just the
+failed lines with a deterministic, failure-facts prompt
+(_second_pass) — the gates stay the arbiter of what serves.
 
-Proven on the live pages (2026-08-15): 40 line boxes on page-03, all with
-real ink; the engine returns coordinates in the ORIGINAL image's pixels
-(mapped back after its internal <=4000px resize) — asserted here so a
-future engine change fails loudly instead of silently misaligning.
+Runs on the MAIN venv (urllib + PIL — no detector engine, no
+.venv-htr; the paddle stack left the layout path with the
+detect-then-match pipeline it served, 2026-09-06).
 
-Usage: .venv-htr/bin/python -m tools.layout_detect <batch_id> [page ...]
+Usage: make pipeline ARGS="layout <batch_id> [page ...]" — or
+python -m tools.layout_detect <batch_id> [--work-dir DIR] [page ...]
 """
 
 from __future__ import annotations
@@ -33,11 +32,12 @@ from PIL import Image
 from tools.layout import (  # lucidlint: ignore private-import the single-pass build consumes the house per-word builder
     Layout,
     _words_out,
+    drop_inkless_boxes,
     write_layout_store,
 )
 from tools.loft_paths import WORK_DIR
 from tools.pipeline_store import PipelineStore
-from tools.segment_page import SegmentPageError, segment_page
+from tools.segment_page import SegmentPageError, relocate_segments, segment_page
 from tools.store import DiskStore  # noqa: F401
 from tools.text import vlm_line_words
 
@@ -205,6 +205,7 @@ def _layout_one(
     (batch_id, page_names, wanted, work_dir)."""
     batch_id, page_names, wanted, work_dir = batch
     layout = _build_page_layout(image, guess_dir, urlopen=urlopen, api_key=api_key)
+    boxes_before_gate_d = {ln.get("index"): ln.get("box") for ln in layout.lines}
     # Gate D (2026-08-20): a boxed line must contain the ink it claims —
     # page-03's transcription boxes sat ~200px above the real text, and
     # a well-proportioned box in a blank region is an estimate, not an
@@ -212,6 +213,7 @@ def _layout_one(
     inkless = layout.drop_inkless(image)
     if inkless:
         print(f"layout: {image.name} — {inkless} box(es) with no ink dropped (Gate D)", file=sys.stderr)
+        _second_pass(image, layout, boxes_before_gate_d, urlopen=urlopen, api_key=api_key)
     # Gate E as a correction (2026-08-22): a box that claims another
     # line's region with different text shadows the confirmed anchor —
     # page-03's boxless lines sat on the P.S. margin, refusing the page
@@ -232,6 +234,69 @@ def _layout_one(
         f"layout: {image.name} {len(layout.lines)} lines, "
         f"{len(layout.unmatched)} unmatched, {flagged} flagged words -> {out.name}"
     )
+
+
+def _second_pass(
+    image: Path,
+    layout: Layout,
+    boxes_before: dict[int, list[float] | None],
+    urlopen=None,
+    api_key=None,
+) -> None:
+    """The bounded second pass (2026-09-07, user: no use spending tokens
+    on things that are already correct): the lines Gate D left boxless
+    get ONE repair call naming only them, prompted by the recorded
+    failure facts. A relocated box must clear the SAME ink gate — the
+    gate is the arbiter, never the model — and a "not present" verdict
+    drops the segment loudly (a first-pass invention is not evidence).
+    Anything unresolved stays boxless for Gate F to refuse, exactly as
+    without the pass."""
+    with Image.open(image) as im:
+        width, height = im.size
+    failures = []
+    for line in layout.lines:
+        if line.get("box") is not None:
+            continue
+        rejected = boxes_before.get(line.get("index"))
+        if not isinstance(rejected, list) or len(rejected) != 4:
+            continue
+        failures.append(
+            {
+                "index": int(line["index"]),
+                "text": str(line.get("text", "")),
+                "px": rejected,
+                "box_2d": [
+                    rejected[0] * 1000.0 / width,
+                    rejected[1] * 1000.0 / height,
+                    rejected[2] * 1000.0 / width,
+                    rejected[3] * 1000.0 / height,
+                ],
+            }
+        )
+    if not failures:
+        return
+    answer = relocate_segments(image, failures, urlopen=urlopen, api_key=api_key)
+    by_index = {int(ln["index"]): ln for ln in layout.lines}
+    for index, px_box in answer["relocated"].items():
+        line = by_index[index]
+        probe = [{"box": list(px_box)}]
+        if drop_inkless_boxes(probe, image) == 0:
+            line["box"] = probe[0]["box"]
+            line["box_source"] = "repaired"
+            print(f"layout: {image.name} line {index} — the second pass relocated it", file=sys.stderr)
+        else:
+            print(
+                f"layout: {image.name} line {index} — the second pass's box holds no ink either; Gate F will refuse",
+                file=sys.stderr,
+            )
+    for index in answer["not_present"]:
+        line = by_index[index]
+        layout.lines.remove(line)
+        print(
+            f"layout: {image.name} line {index} ({str(line.get('text', ''))[:30]!r}) — "
+            "the second pass found no such text on the page; segment dropped",
+            file=sys.stderr,
+        )
 
 
 def _warn_missing_guess(image_name: str, txt_name: str, page_names: list[str] | None, wanted: set[str]) -> int:

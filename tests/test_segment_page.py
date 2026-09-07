@@ -136,3 +136,83 @@ def test_malformed_box_fails_loud(tmp_path: Path) -> None:
     segments = [{"label": "header", "text": "POST CARD.", "orientation": 0, "box_2d": [10, 10]}]
     with pytest.raises(SegmentPageError, match="not \\[x0, y0, x1, y1\\]"):
         segment_page(_image(tmp_path), urlopen=_urlopen_returning(_response(segments)), api_key="test-key")
+
+
+def _failures() -> list[dict]:
+    return [
+        {
+            "index": 16,
+            "text": "£4-0s.",
+            "px": [767.6, 94.7, 895.5, 149.9],
+            "box_2d": [660.0, 120.0, 770.0, 190.0],
+        }
+    ]
+
+
+def _repair_response(relocated: list[dict], not_present: list[int]) -> bytes:
+    body = {
+        "choices": [
+            {
+                "message": {"content": json.dumps({"relocated": relocated, "not_present": not_present})},
+                "finish_reason": "stop",
+            }
+        ]
+    }
+    return json.dumps(body).encode()
+
+
+def test_repair_prompt_is_deterministic_and_scoped_to_the_failures() -> None:
+    """The second pass's prompt is generated from the recorded failure
+    facts: the same failure yields the same bytes (deterministic), and
+    only the failed lines are named — tokens are not spent re-asking
+    about the segments that were already correct (2026-09-07, user)."""
+    from tools.segment_page import build_repair_prompt
+
+    prompt = build_repair_prompt(_failures(), 1163, 789)
+    assert prompt == build_repair_prompt(_failures(), 1163, 789)
+    assert "£4-0s." in prompt
+    assert "index 16" in prompt
+    assert "[768, 95, 896, 150]" in prompt  # the rejected box, in pixels
+    other = build_repair_prompt(
+        [{"index": 3, "text": "different line", "px": [0.0, 0.0, 10.0, 10.0], "box_2d": [0.0, 0.0, 1.0, 1.0]}],
+        1163,
+        789,
+    )
+    assert "£4-0s." not in other
+
+
+def test_relocate_segments_normalizes_and_maps_by_index(tmp_path: Path) -> None:
+    from tools.segment_page import relocate_segments
+
+    seen, urlopen = _captured_requests(_repair_response([{"index": 16, "box_2d": [500, 250, 600, 300]}], []))
+    result = relocate_segments(_image(tmp_path), _failures(), urlopen=urlopen, api_key="test-key")
+    # normalized 0-1000 → pixels on the 2000x1000 test image
+    assert result["relocated"] == {16: [1000.0, 250.0, 1200.0, 300.0]}
+    assert result["not_present"] == []
+    # the failure facts ride the user message, not the system prompt
+    user_text = seen[0]["messages"][1]["content"][1]["text"]
+    assert "£4-0s." in user_text
+
+
+def test_relocate_segments_fails_loud_on_an_unanswered_index(tmp_path: Path) -> None:
+    from tools.segment_page import SegmentPageError, relocate_segments
+
+    urlopen = _urlopen_returning(_repair_response([], []))
+    with pytest.raises(SegmentPageError, match="index 16"):
+        relocate_segments(_image(tmp_path), _failures(), urlopen=urlopen, api_key="test-key")
+
+
+def test_relocate_segments_fails_loud_on_a_double_answer(tmp_path: Path) -> None:
+    from tools.segment_page import SegmentPageError, relocate_segments
+
+    urlopen = _urlopen_returning(_repair_response([{"index": 16, "box_2d": [1, 2, 3, 4]}], [16]))
+    with pytest.raises(SegmentPageError, match="index 16"):
+        relocate_segments(_image(tmp_path), _failures(), urlopen=urlopen, api_key="test-key")
+
+
+def test_relocate_segments_fails_loud_on_a_malformed_box(tmp_path: Path) -> None:
+    from tools.segment_page import SegmentPageError, relocate_segments
+
+    urlopen = _urlopen_returning(_repair_response([{"index": 16, "box_2d": [1, 2]}], []))
+    with pytest.raises(SegmentPageError, match="not \\[x0, y0, x1, y1\\]"):
+        relocate_segments(_image(tmp_path), _failures(), urlopen=urlopen, api_key="test-key")

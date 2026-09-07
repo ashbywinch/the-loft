@@ -199,15 +199,14 @@ def test_two_pass_stitches_halves_and_dedupes_the_band(tmp_path: Path) -> None:
     # each half 2000x2750
     top = _response(
         [
-            {"text": "alpha", "orientation": 0, "box_2d": [100, 100, 400, 200]},
-            {"text": "beta", "orientation": 0, "box_2d": [100, 940, 400, 980]},
+            {"text": "alpha", "orientation": 0, "box_px": [200, 275, 800, 550]},
+            {"text": "beta", "orientation": 0, "box_px": [200, 2585, 800, 2695]},
         ]
     )
     bottom = _response(
         [
-            # the band's line read again, box shifted — same words, tiny overlap
-            {"text": "beta", "orientation": 0, "box_2d": [100, 160, 400, 240]},
-            {"text": "gamma", "orientation": 0, "box_2d": [100, 500, 400, 600]},
+            {"text": "beta", "orientation": 0, "box_px": [200, 440, 600, 660]},
+            {"text": "gamma", "orientation": 0, "box_px": [200, 1375, 800, 1650]},
         ]
     )
     seen, urlopen = _two_call_segment_urlopen([top, bottom])
@@ -256,12 +255,12 @@ def test_verify_prompt_is_deterministic_and_names_the_segments() -> None:
 def test_verify_applies_corrections_and_drops_not_present(tmp_path: Path) -> None:
     from tools.segment_page import verify_segments
 
-    seen, urlopen = _captured_requests(_verify_response([{"index": 1, "box_2d": [500, 250, 600, 300]}], [2]))
+    seen, urlopen = _captured_requests(_verify_response([{"index": 1, "box_px": [500, 250, 600, 300]}], [2]))
     segments, usage = verify_segments(_image(tmp_path), _segments(), urlopen=urlopen, api_key="test-key")
 
     assert [s["text"] for s in segments] == ["POST CARD.", "Cathcart St"]
-    # the correction lands in page pixels, marked as verified
-    assert segments[1]["box"] == [1000.0, 250.0, 1200.0, 300.0]
+    # the correction lands in page pixels (grid-read), marked as verified
+    assert segments[1]["box"] == [500.0, 250.0, 600.0, 300.0]
     assert segments[1]["box_source"] == "verified"
     # the untouched segment keeps its box and source
     assert segments[0]["box"] == [200.0, 100.0, 800.0, 200.0]
@@ -274,7 +273,7 @@ def test_verify_applies_corrections_and_drops_not_present(tmp_path: Path) -> Non
 def test_verify_rejects_an_out_of_range_index(tmp_path: Path) -> None:
     from tools.segment_page import SegmentPageError, verify_segments
 
-    urlopen = _urlopen_returning(_verify_response([{"index": 9, "box_2d": [1, 2, 3, 4]}], []))
+    urlopen = _urlopen_returning(_verify_response([{"index": 9, "box_px": [1, 2, 3, 4]}], []))
     with pytest.raises(SegmentPageError, match="index 9"):
         verify_segments(_image(tmp_path), _segments(), urlopen=urlopen, api_key="test-key")
 
@@ -282,7 +281,7 @@ def test_verify_rejects_an_out_of_range_index(tmp_path: Path) -> None:
 def test_verify_rejects_a_double_answer(tmp_path: Path) -> None:
     from tools.segment_page import SegmentPageError, verify_segments
 
-    urlopen = _urlopen_returning(_verify_response([{"index": 1, "box_2d": [1, 2, 3, 4]}], [1]))
+    urlopen = _urlopen_returning(_verify_response([{"index": 1, "box_px": [1, 2, 3, 4]}], [1]))
     with pytest.raises(SegmentPageError, match="index 1"):
         verify_segments(_image(tmp_path), _segments(), urlopen=urlopen, api_key="test-key")
 
@@ -290,7 +289,7 @@ def test_verify_rejects_a_double_answer(tmp_path: Path) -> None:
 def test_verify_rejects_a_malformed_box(tmp_path: Path) -> None:
     from tools.segment_page import SegmentPageError, verify_segments
 
-    urlopen = _urlopen_returning(_verify_response([{"index": 1, "box_2d": [1, 2]}], []))
+    urlopen = _urlopen_returning(_verify_response([{"index": 1, "box_px": [1, 2]}], []))
     with pytest.raises(SegmentPageError, match="not \\[x0, y0, x1, y1\\]"):
         verify_segments(_image(tmp_path), _segments(), urlopen=urlopen, api_key="test-key")
 

@@ -18,12 +18,15 @@ with boxes converted to ORIGINAL-IMAGE PIXELS."""
 from __future__ import annotations
 
 import json
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
 
+from tools.box import overlap
+from tools.text import normalize
 from tools.vlm import DEFAULT_BASE_URL, transcribe_image_vlm
 
 _SEGMENTS_FORMAT = (
@@ -267,3 +270,69 @@ def relocate_segments(
     if missing:
         raise SegmentPageError(f"the repair never answered index {missing[0]}")
     return {"relocated": relocated, "not_present": not_present}
+
+
+TWO_PASS_ASPECT = 1.2  # taller than this and the model's full-page box placement degrades down the page
+
+
+def page_needs_two_pass(image: Path) -> bool:
+    """Whether the page reads as TWO overlapping halves: portrait sheets
+    above the aspect line — the model's full-page box placement degrades
+    down a tall page (the crop-grid finding, 2026-08-22; the user,
+    2026-09-07: the two-pass read). Small cards read whole, so no tokens
+    are spent where the single pass already works (L10)."""
+    with Image.open(image) as im:
+        width, height = im.size
+    return height / width > TWO_PASS_ASPECT
+
+
+def segment_page_two_pass(
+    image: Path,
+    *,
+    split_top: float = 0.55,
+    split_bottom: float = 0.45,
+    model: str = "dynamic/image",
+    base_url: str = DEFAULT_BASE_URL,
+    api_key: str | None = None,
+    max_tokens: int = 64000,
+    urlopen: Callable[..., Any] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """The two-pass read: ONE call per overlapping half — the model's
+    geometry is trustworthy when the question is local (the crop-grid
+    finding, 2026-08-22) — each half's boxes stitched into the page
+    frame, the overlap band deduped deterministically: by region overlap,
+    or by equal text when the cut shifted a line's box. Same contract as
+    segment_page; the segments' order is the top half then the bottom."""
+    usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    halves: list[tuple[int, list[dict[str, Any]]]] = []
+    with Image.open(image) as im:
+        width, height = im.size
+        top_cut = int(height * split_top)
+        bottom_cut = int(height * split_bottom)
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, y0, y1 in (("top", 0, top_cut), ("bottom", bottom_cut, height)):
+                half_path = Path(tmp) / f"{name}.png"
+                im.crop((0, y0, width, y1)).save(half_path)
+                half_segments, usage = segment_page(
+                    half_path, model=model, base_url=base_url, api_key=api_key, max_tokens=max_tokens, urlopen=urlopen
+                )
+                for key in usage_total:
+                    usage_total[key] += int(usage.get(key, 0))
+                halves.append((y0, half_segments))
+
+    top_segments = halves[0][1]
+    bottom_offset = halves[1][0]
+    bottom_segments = [
+        {**s, "box": [s["box"][0], s["box"][1] + bottom_offset, s["box"][2], s["box"][3] + bottom_offset]}
+        for s in halves[1][1]
+    ]
+    deduped_bottom = []
+    for seg in bottom_segments:
+        duplicate = any(
+            overlap(seg["box"], top["box"]) >= 0.5
+            or (normalize(str(seg["text"])) == normalize(str(top["text"])) and overlap(seg["box"], top["box"]) > 0)
+            for top in top_segments
+        )
+        if not duplicate:
+            deduped_bottom.append(seg)
+    return top_segments + deduped_bottom, usage_total

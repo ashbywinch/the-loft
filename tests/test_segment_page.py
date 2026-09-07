@@ -138,6 +138,91 @@ def test_malformed_box_fails_loud(tmp_path: Path) -> None:
         segment_page(_image(tmp_path), urlopen=_urlopen_returning(_response(segments)), api_key="test-key")
 
 
+def _two_pass_page(tmp_path: Path) -> Path:
+    from PIL import Image
+
+    image = tmp_path / "tall.png"
+    Image.new("L", (2000, 5000), 255).save(image)
+    return image
+
+
+def _two_call_segment_urlopen(payloads: list[bytes]):
+    seen: list[dict] = []
+    state = {"n": 0}
+
+    def urlopen(req, timeout: float = 0):
+        seen.append(json.loads(req.data.decode("utf-8")))
+        payload = payloads[min(state["n"], len(payloads) - 1)]
+        state["n"] += 1
+
+        class _Resp:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self) -> bytes:
+                return payload
+
+        return _Resp()
+
+    return seen, urlopen
+
+
+def test_two_pass_threshold_routes_by_aspect(tmp_path: Path) -> None:
+    """The two-pass read is for portrait sheets — the model's full-page
+    box placement degrades down a tall page (the crop-grid finding);
+    small cards read whole, so no tokens are spent re-asking (L10)."""
+    from PIL import Image
+
+    from tools.segment_page import page_needs_two_pass
+
+    tall = tmp_path / "tall.png"
+    Image.new("L", (2544, 4642), 255).save(tall)
+    wide = tmp_path / "wide.png"
+    Image.new("L", (1163, 789), 255).save(wide)
+    square = tmp_path / "square.png"
+    Image.new("L", (1000, 1000), 255).save(square)
+    assert page_needs_two_pass(tall) is True
+    assert page_needs_two_pass(wide) is False
+    assert page_needs_two_pass(square) is False
+
+
+def test_two_pass_stitches_halves_and_dedupes_the_band(tmp_path: Path) -> None:
+    """Each half's boxes come back in the HALF's pixels and must land in
+    the page frame; a line the overlap band read twice is kept once —
+    by region overlap, or by equal text when the cut shifted the box."""
+    from tools.segment_page import segment_page_two_pass
+
+    # page 2000x5000: top half is y 0-2750, bottom half y 2250-5000,
+    # each half 2000x2750
+    top = _response(
+        [
+            {"text": "alpha", "orientation": 0, "box_2d": [100, 100, 400, 200]},
+            {"text": "beta", "orientation": 0, "box_2d": [100, 940, 400, 980]},
+        ]
+    )
+    bottom = _response(
+        [
+            # the band's line read again, box shifted — same words, tiny overlap
+            {"text": "beta", "orientation": 0, "box_2d": [100, 160, 400, 240]},
+            {"text": "gamma", "orientation": 0, "box_2d": [100, 500, 400, 600]},
+        ]
+    )
+    seen, urlopen = _two_call_segment_urlopen([top, bottom])
+    segments, _usage = segment_page_two_pass(_two_pass_page(tmp_path), urlopen=urlopen, api_key="test-key")
+
+    assert [s["text"] for s in segments] == ["alpha", "beta", "gamma"]
+    # alpha: the top half's pixels ARE page pixels
+    assert segments[0]["box"] == [200.0, 275.0, 800.0, 550.0]
+    # beta: kept from the TOP read, in page pixels
+    assert segments[1]["box"] == [200.0, 2585.0, 800.0, 2695.0]
+    # gamma: the bottom half's box shifted by the half's offset (2250)
+    assert segments[2]["box"] == [200.0, 1375.0 + 2250.0, 800.0, 1650.0 + 2250.0]
+    assert len(seen) == 2
+
+
 def _failures() -> list[dict]:
     return [
         {

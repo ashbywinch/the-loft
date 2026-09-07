@@ -37,7 +37,13 @@ from tools.layout import (  # lucidlint: ignore private-import the single-pass b
 )
 from tools.loft_paths import WORK_DIR
 from tools.pipeline_store import PipelineStore
-from tools.segment_page import SegmentPageError, relocate_segments, segment_page
+from tools.segment_page import (
+    SegmentPageError,
+    page_needs_two_pass,
+    relocate_segments,
+    segment_page,
+    segment_page_two_pass,
+)
 from tools.store import DiskStore  # noqa: F401
 from tools.text import vlm_line_words
 
@@ -149,7 +155,10 @@ def _build_page_layout(image: Path, guess_dir: Path, urlopen=None, api_key=None)
     nothing to join (2026-09-06, the user: the old detect-then-match path
     does not work — do not fall back to it). The self-report's red-word
     flags apply to the words by line index, as before."""
-    segments, _usage = segment_page(image, urlopen=urlopen, api_key=api_key)
+    if page_needs_two_pass(image):
+        segments, _usage = segment_page_two_pass(image, urlopen=urlopen, api_key=api_key)
+    else:
+        segments, _usage = segment_page(image, urlopen=urlopen, api_key=api_key)
     vlm_text = "\n".join(s["text"] for s in segments)
 
     selfreport_path = guess_dir / f"{image.stem}.selfreport.json"

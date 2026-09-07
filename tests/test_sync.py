@@ -355,6 +355,53 @@ def test_rotate_page_fixes_the_orientation(tmp_path: Path) -> None:
     assert new_layout["lines"][0]["words"][1]["conf"] == 0.0  # "one"
 
 
+def test_rotate_page_preserves_the_per_line_orientations(tmp_path: Path) -> None:
+    """L7 (the fidelity ruling, 2026-08-30) + VR18: each segment's
+    orientation is stored as data, and the reviewer's page rotation
+    remaps it WITH the boxes — a 90° CW turn takes upright text to 90
+    and a 270 margin note to 0 (now upright). The rebuild must never
+    drop the field: the drafts' covered-orientation set (VR15) and the
+    aspect gate both read it."""
+    batch = tmp_path / "adopt-0001"
+    (batch / "oriented").mkdir(parents=True)
+    (batch / "ocr-guess").mkdir(parents=True)
+    Image.new("RGB", (100, 100), "white").save(batch / "oriented" / "p1.jpg")
+    layout = {
+        "page": "p1.jpg",
+        "width": 100,
+        "height": 100,
+        "lines": [
+            {
+                "index": 0,
+                "text": "We are from beauford",
+                "box": [5, 40, 95, 55],
+                "conf": 1.0,
+                "orientation": 0,
+                "words": [],
+                "box_source": "segment",
+            },
+            {
+                "index": 1,
+                "text": "HARBOTTLE MORPETH",
+                "box": [70, 5, 85, 95],
+                "conf": 1.0,
+                "orientation": 270,
+                "words": [],
+                "box_source": "segment",
+            },
+        ],
+        "unmatched": [],
+    }
+    write_layout(layout, batch / "ocr-guess" / "p1.layout.json")
+
+    rotate_page("adopt-0001", "p1.jpg", 1, tmp_path)
+
+    new_layout = json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
+    assert [line["text"] for line in new_layout["lines"]] == ["We are from beauford", "HARBOTTLE MORPETH"]
+    # the orientation data is remapped with the rigid turn, never dropped
+    assert [line["orientation"] for line in new_layout["lines"]] == [90, 0]
+
+
 def test_rotate_page_is_idempotent_and_cumulative(tmp_path: Path) -> None:
     """The sync intents are the DESIRED cumulative rotation — a retried
     intent (the same quarters again) is a no-op, and two presses add up

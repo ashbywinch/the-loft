@@ -33,7 +33,7 @@ import json
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, NotRequired, TypedDict, cast
 
 from PIL import Image
 
@@ -45,13 +45,17 @@ from tools.store import DiskStore  # noqa: F401
 from tools.text import is_struck, jaccard, normalize, vlm_line_words, words
 
 
-# A PaddleOCR recognition line + its box (the detection stage's output).
-# box is [x0, y0, x1, y1] in the original oriented image's pixels.
+# A text line + its box (the detection stage's output shape — today the
+# single-pass segments, historically the PaddleOCR recognition lines).
+# box is [x0, y0, x1, y1] in the original oriented image's pixels;
+# orientation is the text's reading rotation in degrees (0/90/180/270) —
+# stored data per the fidelity ruling (L7), never dropped on a rebuild.
 class Detection(TypedDict):
     box: list[float]
     text: str
     score: float
     words: list[dict[str, Any]]
+    orientation: NotRequired[int]
 
 
 # The minimum word-set overlap (Jaccard) for a detector line to claim a VLM
@@ -488,6 +492,7 @@ def build_layout(
                 "words": words_out,
                 "det_words": match["det_words"],
                 "box_source": match["box_source"],
+                "orientation": match.get("orientation", 0),
             }
         )
     # The single-orientation reading order (2026-08-20, user's
@@ -1229,6 +1234,7 @@ def layout_detections(layout: dict[str, Any]) -> list[Detection]:
             text=line.get("rec_text") or line.get("text", ""),
             score=line.get("rec_score", 0.0),
             words=line.get("det_words") or [],
+            orientation=int(line.get("orientation", 0)),
         )
         for line in layout.get("lines", [])
         if line.get("box")
@@ -1243,7 +1249,11 @@ def rotate_detections(detections: list[Detection], quarters: int, w: int, h: int
     """The detection boxes rotated clockwise by 90° ``quarters`` (1, 2 or 3)
     in a w×h image — a rigid remap, exact for a rotation (2026-08-16: the
     reviewer's orientation fix re-anchors the boxes without re-OCR). For an
-    odd number of quarters the image dims swap."""
+    odd number of quarters the image dims swap. The text's orientation
+    turns with the page — the reading direction rotates the same quarters
+    CW — because the extent/aspect gates judge the box against it (a
+    dropped orientation reads a tall box as horizontal and refuses the
+    write)."""
     q = quarters % QUARTERS_PER_FULL_TURN
     if q == 0:
         return list(detections)
@@ -1256,7 +1266,15 @@ def rotate_detections(detections: list[Detection], quarters: int, w: int, h: int
             box = [w - x1, h - y1, w - x0, h - y0]
         else:  # 270° CW: (x, y) -> (y, w - x)
             box = [y0, w - x1, y1, w - x0]
-        rotated.append(Detection(box=box, text=det["text"], score=det["score"], words=det.get("words", [])))
+        rotated.append(
+            Detection(
+                box=box,
+                text=det["text"],
+                score=det["score"],
+                words=det.get("words", []),
+                orientation=(det.get("orientation", 0) + (360 // QUARTERS_PER_FULL_TURN) * q) % 360,
+            )
+        )
     return rotated
 
 

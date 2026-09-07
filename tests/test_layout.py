@@ -2473,3 +2473,59 @@ def test_layout_second_pass_repairs_a_degenerate_box(tmp_path: Path) -> None:
     edge = next(ln for ln in layout["lines"] if ln["text"] == "edge line")
     assert [round(v) for v in edge["box"]] == [1800, 800, 1900, 850]
     assert edge["box_source"] == "repaired"
+
+
+def test_layout_tall_pages_read_as_two_halves(tmp_path: Path) -> None:
+    """The two-pass read (2026-09-07, user): a portrait sheet is read as
+    two overlapping halves — the model's geometry is local per half, and
+    the stitched boxes land in page pixels. A small card keeps the
+    single call (L10: no tokens where the single pass works)."""
+    from PIL import ImageDraw
+
+    from tools.layout_detect import run_batch
+
+    work = tmp_path
+    (work / "adopt-0001" / "oriented").mkdir(parents=True)
+    (work / "adopt-0001" / "ocr-guess").mkdir(parents=True)
+    image = Image.new("L", (2000, 5000), 255)
+    draw = ImageDraw.Draw(image)
+    for box in [(200, 275, 800, 550), (200, 2585, 800, 2695), (200, 3625, 800, 3900)]:
+        draw.rectangle(box, fill=0)  # real ink under each expected line
+    image.save(work / "adopt-0001" / "oriented" / "p1.jpg")
+    (work / "adopt-0001" / "ocr-guess" / "p1.txt").write_text("alpha\nbeta\ngamma", encoding="utf-8")
+    top = _segments_payload(
+        [
+            {"text": "alpha", "orientation": 0, "box_2d": [100, 100, 400, 200]},
+            {"text": "beta", "orientation": 0, "box_2d": [100, 940, 400, 980]},
+        ]
+    )
+    bottom = _segments_payload(
+        [
+            {"text": "beta", "orientation": 0, "box_2d": [100, 160, 400, 240]},
+            {"text": "gamma", "orientation": 0, "box_2d": [100, 500, 400, 600]},
+        ]
+    )
+    seen, urlopen = _two_call_urlopen([top, bottom])
+
+    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
+
+    assert rc == 0
+    layout = json.loads((work / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
+    assert [ln["text"] for ln in layout["lines"]] == ["alpha", "beta", "gamma"]
+    by_text = {ln["text"]: ln for ln in layout["lines"]}
+    assert [round(v) for v in by_text["gamma"]["box"]] == [200, 3625, 800, 3900]
+    assert len(seen) == 2  # the tall page took both halves
+
+    # a small card keeps the single call
+    small_work = tmp_path / "small"
+    (small_work / "adopt-0002" / "oriented").mkdir(parents=True)
+    (small_work / "adopt-0002" / "ocr-guess").mkdir(parents=True)
+    small_image = Image.new("L", (1163, 789), 255)
+    ImageDraw.Draw(small_image).rectangle((200, 79, 800, 158), fill=0)
+    small_image.save(small_work / "adopt-0002" / "oriented" / "p1.jpg")
+    (small_work / "adopt-0002" / "ocr-guess" / "p1.txt").write_text("POST CARD.", encoding="utf-8")
+    single = _segments_payload([{"text": "POST CARD.", "orientation": 0, "box_2d": [100, 100, 400, 200]}])
+    seen2, urlopen2 = _two_call_urlopen([single])
+    rc = run_batch("adopt-0002", None, small_work, urlopen=urlopen2, api_key="test-key")
+    assert rc == 0
+    assert len(seen2) == 1

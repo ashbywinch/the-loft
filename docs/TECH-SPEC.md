@@ -646,7 +646,6 @@ flowchart TB
     H --> L["layout — boxes + per-word flags"]
     L --> R["review — boxes + draft text + flags"]
     R --> P["archive"]
-    L -. "not wired: run by hand today" .-> R
 ```
 
 | Phase | What it does | Output |
@@ -659,18 +658,16 @@ flowchart TB
 | transcribe | the vision model reads cursive pages | `ocr-raw/*.vlm.json` |
 | guess | corrected transcription per page (the vision model) | `ocr-guess/*.txt` |
 | **group** | **full-sequence grouping by physical evidence: duplex sides, paper size, page numbers, the model's flags (tools/grouping.py)** | **`boundaries.json` — the grouping scorer supersedes the model's text-only grouping** |
-| **layout** | **detect text lines + per-word boxes/flags (paddleocr + build_layout)** | **`ocr-guess/*.layout.json`** |
+| **layout** | **the §16.17 single pass — every segment's text, box, and orientation in one VLM call + build_layout** | **`ocr-guess/*.layout.json`** |
 | review | the reviewer verifies/corrects the draft | confirmed text |
 
-**The gap (PRD VR14):** the layout stage — the producer of the bounding
-boxes and per-word confidence flags the review surface needs (VR1/VR4) —
-exists (`tools/layout_detect.py`) but is **not wired into `process`**: it
-is run by hand
-(`.venv-htr/bin/python -m tools.layout_detect <batch>`). A batch that
-nobody manually layouted reaches the review with draft text and **no
-boxes and no flags** (batch `adopt-20260813-201024` was exactly this).
-The simplest thing meeting VR14: make the layout stage a `process` step
-after `guess` — the logic already exists, it only needs wiring.
+**The VR14 gap — RESOLVED.** The layout stage — the producer of the
+bounding boxes and per-word confidence flags the review surface needs
+(VR1/VR4) — is now `process` step 6 (`tools/layout_stage.py`, the main
+venv; the §16.17 single pass replaced the PaddleOCR detector). The old
+failure — a batch reaching review with draft text, no boxes and no flags
+(batch `adopt-20260813-201024`) — is the stage's own fail-loud refusal
+now, never something the review works around by hand.
 
 **The grouping scorer (VR6 — the grouping is part of the review; AC21 —
 two-sided item).** The guess stage's model groups TEXT pages only by
@@ -764,8 +761,8 @@ make pipeline ARGS="layout <batch> [page...]"  # layout specific pages only
 
 `guess` re-transcribes only the named pages (empty = all cursive) then
 regenerates boundaries from the full set (the grouping scorer needs the
-whole sequence). `layout` runs the PaddleOCR stage for the named pages
-only, inheriting its fail-loud missing-input check. The general
+whole sequence). `layout` runs the single-pass layout stage (§16.17) for
+the named pages only, inheriting its fail-loud missing-input check. The general
 `process <batch>` remains the whole-chain entry point.
 
 **The model-API contract (the client side of the Cloudflare gateway).**

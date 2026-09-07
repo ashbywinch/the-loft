@@ -962,7 +962,8 @@ def _regen_boundaries(
 
 def cmd_layout(batch_id: str, pages: list[str], work_dir: Path, registry_dir: Path) -> int:
     """Surgical recovery (2026-08-20): run the layout stage for specific
-    pages only. The layout stage (PaddleOCR in the .venv-htr venv) is the
+    pages only. The layout stage (the §16.17 single pass, on the main
+    venv) is the
     slowest stage — re-running it for the whole batch to fix one page is
     wasteful. Delegates to the layout stage's own page filter and its
     fail-loud missing-input check."""

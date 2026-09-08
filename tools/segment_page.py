@@ -29,6 +29,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 from tools.box import overlap
+from tools.strip_measure import Strip, draw_numbered_strips
 from tools.text import normalize
 from tools.vlm import DEFAULT_BASE_URL, transcribe_image_vlm
 
@@ -539,3 +540,188 @@ def segment_page_two_pass(  # lucidlint: ignore long-param-list one required arg
         if not duplicate:
             deduped_bottom.append(seg)
     return top_segments + deduped_bottom, usage_total
+
+
+# --- The grouping read (strip-grouping-plan slices 2/2b, 2026-09-08).
+# Coordinate generation is gone for ALL pages: the Godolphin card's
+# 90-degree message failed the coordinate path the same way the typed
+# letter failed it — there is no working path to protect. The strips
+# are MEASURED (tools.strip_measure) and drawn numbered on the page;
+# the model GROUPS the numbered pieces into segments and transcribes
+# each group verbatim — it never generates a coordinate (L3/L11).
+
+GROUP_BATCH_PIECES = 50  # the coverage contract's batch ceiling (the plan, 2026-09-08)
+
+_GROUP_SYSTEM = (
+    "You transcribe scanned family documents verbatim and group their "
+    "measured strips of writing into segments. Rules: the document's "
+    "own words, nothing added, nothing removed — fix nothing, "
+    "summarize nothing, invent nothing. Unreadable words: transcribe "
+    "your best literal guess. Formatting that matters — keep the "
+    "markers, they are content: a word the writer CROSSED OUT is "
+    "marked ~~word~~ (double tildes either side); a word the writer "
+    "UNDERLINED is marked ~word~ (single tildes either side). For "
+    "printed text and handwriting alike, at any orientation — read "
+    "each block in its own direction and report that direction. "
+    "The page carries MEASURED rectangles: thin green outlines with "
+    "margin numbers, each one a fragment of writing the line detector "
+    "measured. Group the numbered pieces into SEGMENTS. A segment is "
+    "the longest run of text on a single line that belongs together, "
+    "and the definition is exact — do NOT:"
+    " merge consecutive written lines of a paragraph into one segment"
+    " (each written line is its own segment);"
+    " let a segment cross a column boundary (each column's lines are "
+    "their own segments);"
+    " merge a margin annotation or side note with the body line it "
+    "sits beside (the note is its own segment);"
+    " merge text in a different hand into the same segment."
+    " A piece with no writing on it — blank paper, a smudge, the "
+    'margin number itself — belongs in "empty". '
+    'Return ONLY JSON: {"lines": [{"pieces": [0, 3], "text": "the '
+    'segment verbatim", "orientation": 0}], "empty": [7]} — the '
+    "batch's numbered pieces partitioned exactly: every owned piece "
+    "appears in exactly one line's pieces or in empty, never in both, "
+    'never omitted. "orientation" is the line\'s reading rotation in '
+    "degrees: 0 (upright), 90, 180 or 270 — read each line in its own "
+    "direction and report that direction."
+)
+
+
+def _grouping_user_text(start: int, stop: int, total: int) -> str:
+    """The batch's user message: which numbered pieces this call owns."""
+    return (
+        f"This batch owns pieces {start}..{stop - 1} ({total} rectangles "
+        "are numbered on the page). Group ONLY these pieces."
+    )
+
+
+# lucidlint: ignore record-shape the model-response wire dict is the file's seam type — the class lands in slice 3
+# lucidlint: ignore record-shape the groups are the established segment shape until the slice-3 assembly classes them
+def _validated_grouping(answer: dict[str, Any], owned: set[int]) -> tuple[list[dict[str, Any]], set[int], set[int]]:
+    """The batch's groups, its empty verdict, and the unaccounted
+    pieces. A contract violation refuses (fail-loud): an unknown or
+    duplicate piece index, a malformed entry, an orientation outside
+    0/90/180/270. An empty-text group IS the model's no-writing
+    verdict — its pieces join the empties."""
+
+    def piece_index(value: Any) -> int:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise SegmentPageError(f"the grouping answer has no usable piece index: {value!r}")
+        piece = int(value)
+        if piece not in owned:
+            raise SegmentPageError(f"piece {piece} is not one of this batch's pieces {sorted(owned)}")
+        return piece
+
+    raw_lines = answer.get("lines", [])
+    if not isinstance(raw_lines, list):
+        raise SegmentPageError(f"grouping 'lines' is not a list: {raw_lines!r}")
+    raw_empty = answer.get("empty", [])
+    if not isinstance(raw_empty, list):
+        raise SegmentPageError(f"grouping 'empty' is not a list: {raw_empty!r}")
+    empties = {piece_index(p) for p in raw_empty}
+    claimed: set[int] = set()
+    groups: list[dict[str, Any]] = []
+    for entry in raw_lines:
+        if not isinstance(entry, dict):
+            raise SegmentPageError(f"grouping entry is not an object: {entry!r}")
+        pieces_raw = entry.get("pieces")
+        if not isinstance(pieces_raw, list) or not pieces_raw:
+            raise SegmentPageError(f"a grouping entry has no pieces: {entry!r}")
+        pieces = [piece_index(p) for p in pieces_raw]
+        text = str(entry.get("text", "")).strip()
+        orientation = int(entry.get("orientation", 0) or 0)
+        if orientation not in _ORIENTATIONS:
+            raise SegmentPageError(f"grouping orientation {orientation} is not 0/90/180/270: {entry!r}")
+        for piece in pieces:
+            if piece in claimed or piece in empties:
+                raise SegmentPageError(f"piece {piece} appears in more than one place: {entry!r}")
+            claimed.add(piece)
+        # lucidlint: ignore record-shape the layout stage's established segment shape; the class lands in slice 3
+        groups.append({"pieces": pieces, "text": text, "orientation": orientation})
+    lines = []
+    for group in groups:
+        if group["text"]:
+            lines.append(group)
+        else:
+            empties |= set(group["pieces"])
+    return lines, empties, owned - claimed - empties
+
+
+# lucidlint: ignore record-shape the usage dict rides transcribe_image_vlm's established return shape
+# lucidlint: ignore record-shape the run total accumulates that same usage shape across calls
+def _merge_usage(total: dict[str, Any], usage: dict[str, Any]) -> None:
+    """Fold one call's usage into the run's total — token counts sum,
+    the reasoning trace concatenates (the two-pass pattern)."""
+    for key, value in usage.items():
+        if isinstance(value, str):
+            total[key] = total.get(key, "") + value
+        else:
+            total[key] = total.get(key, 0) + value
+
+
+# lucidlint: ignore record-shape the group list is the established segment seam — the class lands in slice 3
+def group_segments(  # lucidlint: ignore long-param-list one required argument (image) plus defaulted call options
+    image: Path,
+    strips: list[Strip],
+    work_dir: Path,
+    *,
+    model: str = "dynamic/image",
+    base_url: str = DEFAULT_BASE_URL,
+    api_key: str | None = None,
+    max_tokens: int = 64000,
+    urlopen: Callable[..., Any] | None = None,
+) -> tuple[list[dict[str, Any]], set[int], dict[str, Any]]:
+    """The grouping read: the measured strips drawn numbered on the
+    page, ONE call per batch of <= GROUP_BATCH_PIECES pieces grouping
+    them into segments with verbatim text and reading rotation. Every
+    piece must be accounted — a line's pieces or "empty"; a batch with
+    pieces missing after the ONE re-ask serves without them, the loss
+    named in the run log and returned as the dropped set (the ruling,
+    2026-09-08: the user judges from the served pages). Returns
+    (groups, dropped pieces, token usage); raises SegmentPageError on
+    any other contract violation — fail loudly, never skip."""
+    if not strips:
+        raise SegmentPageError("no strips measured — nothing to group")
+    annotated = work_dir / "strips.jpg"
+    draw_numbered_strips(image, strips, annotated)
+    groups: list[dict[str, Any]] = []
+    dropped: set[int] = set()
+    usage_total: dict[str, Any] = {}
+    for start in range(0, len(strips), GROUP_BATCH_PIECES):
+        stop = min(start + GROUP_BATCH_PIECES, len(strips))
+        owned = set(range(start, stop))
+        batch_user = _grouping_user_text(start, stop, len(strips))
+
+        # lucidlint: ignore record-shape the model-response wire seam's shape, parsed once per call
+        def read_grouping(user_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
+            text, usage = transcribe_image_vlm(
+                annotated,
+                model=model,
+                system=_GROUP_SYSTEM,
+                user_text=user_text,
+                base_url=base_url,
+                api_key=api_key,
+                max_tokens=max_tokens,
+                urlopen=urlopen,
+            )
+            _merge_usage(usage_total, usage)
+            return _parse_json_object(text, "grouping response"), usage
+
+        answer, _ = read_grouping(batch_user)
+        batch_groups, _, missing = _validated_grouping(answer, owned)
+        if missing:
+            reask = (
+                f"Your response did not account for pieces {sorted(missing)}. "
+                "Return the FULL contract again — every owned piece in "
+                "exactly one line's pieces or in empty, none omitted."
+            )
+            answer, _ = read_grouping(f"{batch_user} {reask}")
+            batch_groups, _, still_missing = _validated_grouping(answer, owned)
+            if still_missing:
+                dropped |= still_missing
+                print(
+                    f"grouping: pieces {sorted(still_missing)} unaccounted after "
+                    "the re-ask — serving without them (the loss is named)"
+                )
+        groups.extend(batch_groups)
+    return groups, dropped, usage_total

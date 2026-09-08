@@ -5,6 +5,7 @@ fail-fast. The urlopen seam is injected (DI, never monkeypatch); the
 image is a real tiny PNG so the normalization has true dimensions."""
 
 # lucidlint: ignore-file fakefs fixtures are real tiny PNGs driving PIL's real decoder — the file's stated contract
+# lucidlint: ignore-file record-shape the fixtures mirror the model's wire payloads and the stage's group dicts
 
 from __future__ import annotations
 
@@ -16,7 +17,17 @@ import pytest
 from PIL import Image, ImageDraw
 
 from tools.gates import validate_layout
-from tools.segment_page import SegmentPageError, group_segments, measure_group_boxes, segment_page
+from tools.layout_detect import gate_findings
+from tools.segment_page import (
+    GROUPED_VERIFY_ROUNDS,
+    SegmentPageError,
+    build_grouped_verify_prompt,
+    converge_grouped_layout,
+    group_segments,
+    measure_group_boxes,
+    segment_page,
+    verify_grouped_segments,
+)
 from tools.strip_measure import Extent, Strip
 
 _WIDTH, _HEIGHT = 2000, 1000
@@ -578,3 +589,166 @@ def test_the_grouped_layout_passes_the_gates(tmp_path: Path) -> None:
     layout = {"page": "page.png", "width": 1000, "height": 500, "lines": segments, "unmatched": []}
 
     assert validate_layout(layout) == []
+
+
+# --- Slice 4: the bounded findings loop — gates → findings → one
+# verification round, twice; still violated, the page refuses honestly.
+
+
+_LONG_TEXT = "word " * 40  # 200 chars — wildly out of sync with a small band
+_SHORT_TEXT = "a short line of writing"
+
+
+def _loop_page(tmp_path: Path) -> Path:
+    """Three ink bands the loop's synthetic violations live on."""
+    page = tmp_path / "page.png"
+    img = Image.new("L", (1000, 500), 255)
+    draw = ImageDraw.Draw(img)
+    for top in (50, 150, 250):
+        draw.rectangle((100, top, 300, top + 40), fill=0)
+    img.save(page)
+    return page
+
+
+def _loop_strips() -> list[Strip]:
+    return [
+        Strip(number=0, extent=Extent(x0=95.0, y0=45.0, x1=310.0, y1=95.0)),
+        Strip(number=1, extent=Extent(x0=95.0, y0=145.0, x1=310.0, y1=195.0)),
+        Strip(number=2, extent=Extent(x0=95.0, y0=245.0, x1=310.0, y1=295.0)),
+    ]
+
+
+def _loop_groups() -> list[dict[str, Any]]:
+    return [
+        {"pieces": [0], "text": _LONG_TEXT + " one", "orientation": 0},
+        {"pieces": [1], "text": _LONG_TEXT + " two", "orientation": 0},
+        {"pieces": [2], "text": _LONG_TEXT + " three", "orientation": 0},
+    ]
+
+
+def _grouped_verify_response(corrections: list[dict], not_present: list[int]) -> bytes:
+    body = {
+        "choices": [
+            {
+                "message": {"content": json.dumps({"corrections": corrections, "not_present": not_present})},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+    return json.dumps(body).encode()
+
+
+def test_build_grouped_verify_prompt_is_deterministic() -> None:
+    segments = [
+        {"label": "line", "text": "one line", "orientation": 0, "box": [1.0, 1.0, 2.0, 2.0], "pieces": [0]},
+        {"label": "line", "text": "two line", "orientation": 0, "box": [1.0, 3.0, 2.0, 4.0], "pieces": [1]},
+    ]
+    errors = {1: "the checker measured: length"}
+
+    first = build_grouped_verify_prompt(segments, errors)
+    second = build_grouped_verify_prompt(segments, errors)
+
+    assert first == second
+    assert "CHECK FAILED: the checker measured: length" in first
+    assert "index 1" in first and "pieces [1]" in first
+
+
+def test_verify_grouped_segments_corrects_and_drops(tmp_path: Path) -> None:
+    """The round returns corrections keyed by index and not-present
+    indexes; a correction carries pieces + words, never a box."""
+    seen, urlopen = _captured_requests(
+        _grouped_verify_response([{"index": 1, "pieces": [1], "text": "fixed", "orientation": 0}], [2])
+    )
+    page = _loop_page(tmp_path)
+    segments = measure_group_boxes(page, _loop_groups(), _loop_strips())
+
+    corrections, dropped, usage = verify_grouped_segments(
+        page, _loop_strips(), segments, tmp_path, findings={1: "CHECK FAILED: x"}, urlopen=urlopen, api_key="test-key"
+    )
+
+    assert corrections == {1: {"pieces": [1], "text": "fixed", "orientation": 0}}
+    assert dropped == {2}
+    assert usage["total_tokens"] == 15
+    assert "CHECK FAILED: x" in seen[0]["messages"][1]["content"][1]["text"]
+    assert seen[0]["messages"][1]["content"][0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+
+
+def test_verify_grouped_segments_refuses_unknown_pieces(tmp_path: Path) -> None:
+    urlopen = _urlopen_returning(
+        _grouped_verify_response([{"index": 0, "pieces": [99], "text": "x", "orientation": 0}], [])
+    )
+    page = _loop_page(tmp_path)
+    segments = measure_group_boxes(page, _loop_groups(), _loop_strips())
+
+    with pytest.raises(SegmentPageError, match="unknown piece 99"):
+        verify_grouped_segments(
+            page, _loop_strips(), segments, tmp_path, findings={0: "f"}, urlopen=urlopen, api_key="test-key"
+        )
+
+
+def test_converge_grouped_layout_converges_three_to_zero(tmp_path: Path) -> None:
+    """The spike's trajectory, pinned: three gate violations, the first
+    verification round fixes two, the second fixes the last — within
+    the bound the page serves with every gate clean."""
+    page = _loop_page(tmp_path)
+    groups = _loop_groups()
+    segments = measure_group_boxes(page, groups, _loop_strips())
+    payloads = [
+        _grouped_verify_response(
+            [
+                {"index": 0, "pieces": [0], "text": _SHORT_TEXT + " one", "orientation": 0},
+                {"index": 1, "pieces": [1], "text": _SHORT_TEXT + " two", "orientation": 0},
+            ],
+            [],
+        ),
+        _grouped_verify_response([{"index": 2, "pieces": [2], "text": _SHORT_TEXT + " three", "orientation": 0}], []),
+    ]
+    seen, urlopen = _urlopen_sequence(payloads)
+
+    final, usage = converge_grouped_layout(
+        page,
+        _loop_strips(),
+        groups,
+        segments,
+        tmp_path,
+        findings_fn=gate_findings,
+        urlopen=urlopen,
+        api_key="test-key",
+    )
+
+    assert len(seen) == GROUPED_VERIFY_ROUNDS  # the bound held: two rounds
+    assert usage["total_tokens"] == 30
+    # lucidlint: ignore record-shape the stored layout shape the gates and the review surface read
+    layout = {
+        "page": "page.png",
+        "width": 1000,
+        "height": 500,
+        "lines": [{"index": i, **s} for i, s in enumerate(final)],
+        "unmatched": [],
+    }
+    assert validate_layout(layout) == []
+
+
+def test_converge_grouped_layout_refuses_when_it_never_converges(tmp_path: Path) -> None:
+    """Still violated after the bound: the page refuses honestly, the
+    surviving violations named in the error."""
+    page = _loop_page(tmp_path)
+    groups = _loop_groups()
+    segments = measure_group_boxes(page, groups, _loop_strips())
+    payloads = [_grouped_verify_response([], [])] * GROUPED_VERIFY_ROUNDS  # the model never fixes anything
+    seen, urlopen = _urlopen_sequence(payloads)
+
+    with pytest.raises(SegmentPageError, match="still fails the gates"):
+        converge_grouped_layout(
+            page,
+            _loop_strips(),
+            groups,
+            segments,
+            tmp_path,
+            findings_fn=gate_findings,
+            urlopen=urlopen,
+            api_key="test-key",
+        )
+
+    assert len(seen) == GROUPED_VERIFY_ROUNDS  # bounded: no endless re-asking

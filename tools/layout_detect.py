@@ -227,7 +227,7 @@ def _apply_geometry_gates(image: Path, layout: Layout) -> tuple[int, int]:
     return inkless, degenerate
 
 
-def _gate_findings(layout: Layout, violations: list[str]) -> dict[int, str]:
+def gate_findings(layout: Layout, violations: list[str]) -> dict[int, str]:
     """The checker's per-segment findings for the verification pass —
     the model's error messages, keyed by segment index. A boxless line's
     rectangle was dropped by the geometry gates; the remaining
@@ -275,7 +275,7 @@ def _layout_one(
         # as the error messages — WHAT was measured wrong, per segment
         # (2026-09-07, user: get better at giving it good error
         # messages)
-        errors = _gate_findings(layout, violations)
+        errors = gate_findings(layout, violations)
         segments, verify_usage = verify_segments(image, segments, errors=errors, urlopen=urlopen, api_key=api_key)
         usages.append(verify_usage)
         layout = _layout_from_segments(image, segments, guess_dir)

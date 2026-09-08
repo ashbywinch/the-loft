@@ -46,6 +46,7 @@ letter.
 
 ## Work slices
 
+
 ### 1. Strip measurement moves into the pipeline
 The spike's clustering (kraken baselines → fragments → y/x-overlap
 merge → numbered strips) becomes a tested module
@@ -98,6 +99,13 @@ completion markers, fail-loud, and per-page recovery unchanged
 (§16.14.2). The stored layout shape is unchanged — the review surface
 needs nothing new (box_source values "segment"/"verified" already
 render).
+
+### 5b. The assembly's records become classes (slice 5 carries this)
+The group/segment dicts are the read stage's established wire (the
+gates, the store and the review surface read them); the latent-class
+cluster over the four grouping functions names the rework: the records
+become classes with from_dict/to_dict at the store seam, and the
+per-site suppressions in tools/segment_page.py come out with it.
 
 ### 6. Remote kraken (decision + spike)
 kraken segmentation is ~32 min/page locally — load-bearing now. Options

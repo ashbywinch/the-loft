@@ -29,6 +29,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 from tools.box import overlap
+from tools.ink import union
 from tools.strip_measure import Strip, draw_numbered_strips
 from tools.text import normalize
 from tools.vlm import DEFAULT_BASE_URL, transcribe_image_vlm
@@ -725,3 +726,30 @@ def group_segments(  # lucidlint: ignore long-param-list one required argument (
                 )
         groups.extend(batch_groups)
     return groups, dropped, usage_total
+
+
+# lucidlint: ignore record-shape the groups are the read's own output shape, fed back whole
+# lucidlint: ignore record-shape the segments are the layout stage's established line shape
+def measure_group_boxes(image: Path, groups: list[dict[str, Any]], strips: list[Strip]) -> list[dict[str, Any]]:
+    """Each group's box = the ink projection of its band (pad ±6px) —
+    NOT the union of its listed pieces (page-01's read under-listed a
+    line's pieces: 104 chars on one 50px piece; the band measurement is
+    immune). The band is the pieces' measured union; the ink inside it
+    fixes the box, clamped to the page. A band with no ink keeps the
+    measured band (the gates judge it)."""
+    by_number = {strip.number: strip for strip in strips}
+    segments = []
+    for group in groups:
+        pieces = [by_number[piece] for piece in group["pieces"]]
+        band = union([piece.as_box() for piece in pieces])
+        box = _tighten_to_ink(band, image, pad=6)
+        # lucidlint: ignore record-shape the established segment shape — the class lands with the slice-5 assembly
+        segments.append(
+            {
+                "label": "line",
+                "text": str(group["text"]),
+                "orientation": int(group["orientation"]),
+                "box": box,
+            }
+        )
+    return segments

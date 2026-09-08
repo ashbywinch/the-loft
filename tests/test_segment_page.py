@@ -13,8 +13,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from PIL import Image, ImageDraw
 
-from tools.segment_page import SegmentPageError, group_segments, segment_page
+from tools.gates import validate_layout
+from tools.segment_page import SegmentPageError, group_segments, measure_group_boxes, segment_page
 from tools.strip_measure import Extent, Strip
 
 _WIDTH, _HEIGHT = 2000, 1000
@@ -496,3 +498,83 @@ def test_group_segments_with_no_strips_refuses(tmp_path: Path) -> None:
     with pytest.raises(SegmentPageError, match="no strips"):
         group_segments(_image(tmp_path), [], tmp_path, urlopen=urlopen, api_key="test-key")
     assert seen == []
+
+
+# --- Slice 3: each group's box is the ink projection of its band —
+# never the union of the model's listed pieces.
+
+
+def test_measure_group_boxes_projects_the_ink(tmp_path: Path) -> None:
+    """The group's box is the INK inside its pieces' band: ink outside
+    the band never leaks in, and the model's under-listed pieces cannot
+    shrink the box (the band measurement is immune)."""
+    page = tmp_path / "page.png"
+    img = Image.new("L", (1000, 500), 255)
+    ImageDraw.Draw(img).rectangle((200, 100, 800, 140), fill=0)  # the line's ink
+    ImageDraw.Draw(img).rectangle((200, 300, 800, 340), fill=0)  # another line below the band
+    img.save(page)
+    strips = [Strip(number=0, extent=Extent(x0=100.0, y0=95.0, x1=900.0, y1=145.0))]
+    groups = [{"pieces": [0], "text": "the line verbatim", "orientation": 0}]
+
+    segments = measure_group_boxes(page, groups, strips)
+
+    assert segments[0]["box"] == [200.0, 100.0, 801.0, 141.0]  # PIL rectangles are endpoint-inclusive
+    assert segments[0]["orientation"] == 0
+    assert segments[0]["text"] == "the line verbatim"
+
+
+def test_measure_group_boxes_serves_a_rotated_group(tmp_path: Path) -> None:
+    """The same projection serves a quarter-turn group: the vertical
+    message's ink fixes a tall-narrow box (the Godolphin acceptance's
+    geometry)."""
+    page = tmp_path / "page.png"
+    img = Image.new("L", (500, 1000), 255)
+    ImageDraw.Draw(img).rectangle((100, 200, 140, 800), fill=0)
+    img.save(page)
+    strips = [Strip(number=0, extent=Extent(x0=90.0, y0=150.0, x1=150.0, y1=850.0, orientation=270))]
+    groups = [{"pieces": [0], "text": "side message", "orientation": 270}]
+
+    segments = measure_group_boxes(page, groups, strips)
+
+    assert segments[0]["box"] == [100.0, 200.0, 141.0, 801.0]  # PIL rectangles are endpoint-inclusive
+    assert segments[0]["orientation"] == 270
+
+
+def test_measure_group_boxes_keeps_the_band_when_blank(tmp_path: Path) -> None:
+    """A band with no ink comes back as the measured band — the gates
+    judge it downstream, never a silent guess."""
+    page = tmp_path / "page.png"
+    Image.new("L", (1000, 500), 255).save(page)
+    strips = [Strip(number=0, extent=Extent(x0=100.0, y0=95.0, x1=900.0, y1=145.0))]
+    groups = [{"pieces": [0], "text": "ghost line", "orientation": 0}]
+
+    segments = measure_group_boxes(page, groups, strips)
+
+    assert segments[0]["box"] == [100.0, 95.0, 900.0, 145.0]
+
+
+def test_the_grouped_layout_passes_the_gates(tmp_path: Path) -> None:
+    """The plan's acceptance, pinned: a grouped page's layout passes
+    validate_layout with 0 violations — every line's box measured from
+    its own band's ink (the spike's 0-violation result, on synthetic
+    ground — the real letter's text never enters the repo)."""
+    page = tmp_path / "page.png"
+    img = Image.new("L", (1000, 500), 255)
+    draw = ImageDraw.Draw(img)
+    draw.rectangle((100, 50, 700, 90), fill=0)  # line 1's ink
+    draw.rectangle((100, 150, 600, 190), fill=0)  # line 2's ink
+    img.save(page)
+    strips = [
+        Strip(number=0, extent=Extent(x0=90.0, y0=40.0, x1=800.0, y1=100.0)),
+        Strip(number=1, extent=Extent(x0=90.0, y0=140.0, x1=800.0, y1=200.0)),
+    ]
+    groups = [
+        {"pieces": [0], "text": "the first line of writing", "orientation": 0},
+        {"pieces": [1], "text": "the second line of writing", "orientation": 0},
+    ]
+
+    segments = measure_group_boxes(page, groups, strips)
+    # lucidlint: ignore record-shape the stored layout shape the gates and the review surface read
+    layout = {"page": "page.png", "width": 1000, "height": 500, "lines": segments, "unmatched": []}
+
+    assert validate_layout(layout) == []

@@ -4,14 +4,18 @@ orientation, and a pixel box — parsed, normalized, and validated
 fail-fast. The urlopen seam is injected (DI, never monkeypatch); the
 image is a real tiny PNG so the normalization has true dimensions."""
 
+# lucidlint: ignore-file fakefs fixtures are real tiny PNGs driving PIL's real decoder — the file's stated contract
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from tools.segment_page import SegmentPageError, segment_page
+from tools.segment_page import SegmentPageError, group_segments, segment_page
+from tools.strip_measure import Extent, Strip
 
 _WIDTH, _HEIGHT = 2000, 1000
 
@@ -300,4 +304,195 @@ def test_verify_with_no_segments_makes_no_call(tmp_path: Path) -> None:
     seen, urlopen = _captured_requests(_verify_response([], []))
     segments, _usage = verify_segments(_image(tmp_path), [], urlopen=urlopen, api_key="test-key")
     assert segments == []
+    assert seen == []
+
+
+# --- The grouping read (strip-grouping-plan slice 2): the measured
+# strips are drawn numbered on the page; the model GROUPS the numbered
+# pieces into segments and transcribes each group verbatim.
+
+
+def _strips(count: int) -> list[Strip]:
+    """count flat bands in reading order — the measured input."""
+    return [
+        Strip(number=i, extent=Extent(x0=100.0, y0=100.0 + 40 * i, x1=700.0, y1=104.0 + 40 * i)) for i in range(count)
+    ]
+
+
+# lucidlint: ignore record-shape the grouped contract payload's line entries — the established segment shape
+def _grouping_response(lines: list[dict[str, Any]], empty: list[int]) -> bytes:
+    # lucidlint: ignore record-shape the OpenAI chat wire shape — same literal as the file's existing _response helper
+    body = {
+        # lucidlint: ignore record-shape the chat wire shape's fixed message keys
+        # lucidlint: ignore record-shape the grouped contract's own wire payload
+        "choices": [{"message": {"content": json.dumps({"lines": lines, "empty": empty})}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+    return json.dumps(body).encode()
+
+
+class _Payload:
+    """One canned response body served on read — shared by the
+    sequence helper so the inline _Resp class stays defined once."""
+
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def __enter__(self) -> _Payload:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        return self.body
+
+
+def _urlopen_sequence(payloads: list[bytes]):
+    seen: list[dict] = []
+    calls = {"n": 0}
+
+    def urlopen(req, timeout: float = 0):
+        seen.append(json.loads(req.data.decode("utf-8")))
+        body = payloads[calls["n"]]
+        calls["n"] += 1
+        return _Payload(body)
+
+    return seen, urlopen
+
+
+def test_group_segments_partitions_pieces_into_lines(tmp_path: Path) -> None:
+    """The grouping contract: pieces partition into lines with verbatim
+    text and reading rotation; the read rides the ANNOTATED page and the
+    user message names the batch's pieces."""
+    seen, urlopen = _captured_requests(
+        _grouping_response(
+            [
+                {"pieces": [0, 1], "text": "line one verbatim", "orientation": 0},
+                {"pieces": [2], "text": "margin note", "orientation": 90},
+            ],
+            [3],
+        )
+    )
+    groups, dropped, usage = group_segments(_image(tmp_path), _strips(4), tmp_path, urlopen=urlopen, api_key="test-key")
+
+    assert groups == [
+        {"pieces": [0, 1], "text": "line one verbatim", "orientation": 0},
+        {"pieces": [2], "text": "margin note", "orientation": 90},
+    ]
+    assert dropped == set()
+    assert usage["total_tokens"] == 15  # one grouping call's usage, carried through
+    system = seen[0]["messages"][0]["content"]
+    assert "MEASURED rectangles" in system and '"empty"' in system
+    user = seen[0]["messages"][1]["content"]
+    assert user[0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
+    assert "pieces 0..3" in user[1]["text"]
+
+
+def test_group_segments_refuses_an_unknown_piece(tmp_path: Path) -> None:
+    urlopen = _urlopen_returning(_grouping_response([{"pieces": [9], "text": "x", "orientation": 0}], []))
+    with pytest.raises(SegmentPageError, match="piece 9"):
+        group_segments(_image(tmp_path), _strips(4), tmp_path, urlopen=urlopen, api_key="test-key")
+
+
+def test_group_segments_refuses_a_piece_claimed_twice(tmp_path: Path) -> None:
+    response = _grouping_response(
+        [
+            {"pieces": [0, 1], "text": "one", "orientation": 0},
+            {"pieces": [1, 2], "text": "two", "orientation": 0},
+        ],
+        [],
+    )
+    urlopen = _urlopen_returning(response)
+    with pytest.raises(SegmentPageError, match="more than one place"):
+        group_segments(_image(tmp_path), _strips(4), tmp_path, urlopen=urlopen, api_key="test-key")
+
+
+def test_group_segments_refuses_an_orientation_outside_the_set(tmp_path: Path) -> None:
+    urlopen = _urlopen_returning(_grouping_response([{"pieces": [0], "text": "x", "orientation": 45}], []))
+    with pytest.raises(SegmentPageError, match="orientation 45"):
+        group_segments(_image(tmp_path), _strips(4), tmp_path, urlopen=urlopen, api_key="test-key")
+
+
+def test_group_segments_reasks_for_unaccounted_pieces(tmp_path: Path) -> None:
+    """A batch with unaccounted pieces gets its ONE re-ask — the
+    follow-up names the missing pieces; the complete second answer
+    serves clean."""
+    payloads = [
+        _grouping_response([{"pieces": [0, 1], "text": "one", "orientation": 0}], []),
+        _grouping_response(
+            [
+                {"pieces": [0, 1], "text": "one", "orientation": 0},
+                {"pieces": [2], "text": "two", "orientation": 0},
+            ],
+            [3],
+        ),
+    ]
+    seen, urlopen = _urlopen_sequence(payloads)
+
+    groups, dropped, _usage = group_segments(
+        _image(tmp_path), _strips(4), tmp_path, urlopen=urlopen, api_key="test-key"
+    )
+
+    assert len(seen) == 2
+    assert "2, 3]" in seen[1]["messages"][1]["content"][1]["text"]
+    assert [g["text"] for g in groups] == ["one", "two"]
+    assert dropped == set()
+
+
+def test_group_segments_drops_loudly_after_the_reask_fails(tmp_path: Path) -> None:
+    """Still unaccounted after the ONE re-ask: the page serves without
+    them and the dropped pieces come back named (the ruling, 2026-09-08:
+    the user judges from the served pages)."""
+    payloads = [
+        _grouping_response([{"pieces": [0], "text": "one", "orientation": 0}], []),
+        _grouping_response([{"pieces": [0], "text": "one", "orientation": 0}], [1]),
+    ]
+    seen, urlopen = _urlopen_sequence(payloads)
+
+    groups, dropped, _usage = group_segments(
+        _image(tmp_path), _strips(4), tmp_path, urlopen=urlopen, api_key="test-key"
+    )
+
+    assert [g["text"] for g in groups] == ["one"]
+    assert dropped == {2, 3}
+
+
+def test_group_segments_batch_ceiling(tmp_path: Path) -> None:
+    """More than GROUP_BATCH_PIECES strips: one call per <=50-piece
+    batch, each user message naming its own range."""
+    payloads = [
+        _grouping_response([], list(range(50))),
+        _grouping_response([], [50, 51]),
+    ]
+    seen, urlopen = _urlopen_sequence(payloads)
+
+    groups, dropped, _usage = group_segments(
+        _image(tmp_path), _strips(52), tmp_path, urlopen=urlopen, api_key="test-key"
+    )
+
+    assert groups == []
+    assert dropped == set()
+    assert len(seen) == 2
+    assert "pieces 0..49" in seen[0]["messages"][1]["content"][1]["text"]
+    assert "pieces 50..51" in seen[1]["messages"][1]["content"][1]["text"]
+
+
+def test_group_segments_empty_text_group_means_no_writing(tmp_path: Path) -> None:
+    """An empty-text group IS the model's no-writing verdict: its
+    pieces join the empties instead of failing the coverage contract."""
+    urlopen = _urlopen_returning(_grouping_response([{"pieces": [0, 1], "text": "", "orientation": 0}], [2, 3]))
+
+    groups, dropped, _usage = group_segments(
+        _image(tmp_path), _strips(4), tmp_path, urlopen=urlopen, api_key="test-key"
+    )
+
+    assert groups == []
+    assert dropped == set()
+
+
+def test_group_segments_with_no_strips_refuses(tmp_path: Path) -> None:
+    seen, urlopen = _captured_requests(_grouping_response([], []))
+    with pytest.raises(SegmentPageError, match="no strips"):
+        group_segments(_image(tmp_path), [], tmp_path, urlopen=urlopen, api_key="test-key")
     assert seen == []

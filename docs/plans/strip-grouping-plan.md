@@ -124,11 +124,13 @@ model's behavior pinned without network.
   decomposition (smaller batches), schema-validated full-coverage
   responses, and verification rounds (Liao et al. 2024; TRIG 2025) —
   matching the built design. CONTRACT: batches of ≤50 pieces, every
-  piece accounted per batch, ONE re-ask for omissions. REMAINING
-  RULING: pieces still unaccounted after the re-ask — drop loudly and
-  serve (L10, the loss is named in the run log) or refuse the page
-  (L9, recommended: an unaccountable piece means the process is not
-  good enough).
+  piece accounted per batch, ONE re-ask for omissions. RULING (2026-09-08,
+  user): pieces still unaccounted after the re-ask are dropped loudly and
+  the page SERVES — the loss named in the run log (L10). Deliberately the
+  starting posture, not the settled one: "We don't know until we see it.
+  Serving them to start with is an easy way to help me see them so I can
+  make a judgement" — the served pages make the losses visible, and
+  refusal (L9) stays available if what the user sees argues for it.
 - RegionGate vs grouped boxes: still open — bands may overlap in y
   across columns; the typed-page Gate B allowance may extend here.
   Decide when the grouping fixture runs against the real gates.

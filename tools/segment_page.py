@@ -499,7 +499,7 @@ def segment_page_two_pass(  # lucidlint: ignore long-param-list one required arg
     deterministically: by region overlap, or by equal text when the cut
     shifted a line's box. Same contract as segment_page; the segments'
     order is the top half then the bottom."""
-    usage_total = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    usage_total: dict[str, Any] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
     halves: list[tuple[int, list[dict[str, Any]]]] = []
     with Image.open(image) as im:
         width, height = im.size
@@ -518,8 +518,9 @@ def segment_page_two_pass(  # lucidlint: ignore long-param-list one required arg
                     max_tokens=max_tokens,
                     urlopen=urlopen,
                 )
-                for key in usage_total:
-                    usage_total[key] += usage.get(key, 0)
+                for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                    usage_total[key] = usage_total.get(key, 0) + int(usage.get(key, 0))
+                usage_total["reasoning"] = usage_total.get("reasoning", "") + usage.get("reasoning", "")
                 halves.append((y0, half_segments))
 
     top_segments = halves[0][1]

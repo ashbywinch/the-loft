@@ -16,11 +16,13 @@ from typing import Any
 from PIL import Image
 
 from tools.strip_measure import (
+    ROTATED_PASS_DEGREES,
     Extent,
     Strip,
     baseline_entries,
     cluster_strips,
     draw_numbered_strips,
+    dual_orientation_entries,
     measure_strips,
 )
 
@@ -118,10 +120,11 @@ def _fake_segment(runs: list[str]) -> Callable[[Path], list[dict[str, Any]]]:
 
 
 def test_measure_strips_caches_the_expensive_run(tmp_path: Path) -> None:
-    """The kraken run happens ONCE per image content: the cache is keyed
-    by the image's sha, a re-run reads it, and no-cache callers just run."""
+    """The kraken runs happen ONCE per image content (both orientations):
+    the cache is keyed by the image's sha, a re-run reads it, and
+    no-cache callers just run."""
     image = tmp_path / "page.png"
-    image.write_bytes(b"pretend-image-bytes")
+    Image.new("L", (1000, 500), 255).save(image)
     cache = tmp_path / "baselines.json"
     runs: list[str] = []
     segment = _fake_segment(runs)
@@ -130,27 +133,30 @@ def test_measure_strips_caches_the_expensive_run(tmp_path: Path) -> None:
     second = measure_strips(image, cache, _segment=segment)
     no_cache = measure_strips(image, None, _segment=segment)
 
-    assert runs == ["page.png", "page.png"]  # miss runs, hit doesn't, no-cache runs
+    # miss runs both orientations, hit runs nothing, no-cache runs both
+    assert runs == ["page.png", "rotated-quarter.jpg", "page.png", "rotated-quarter.jpg"]
     assert first == second == no_cache
     saved = json.loads(cache.read_text())
     assert saved["input_sha"]  # the cache is keyed by content
+    assert saved["entries"]  # the cache stores the oriented measurements
 
 
 def test_measure_strips_remeasures_when_the_image_changes(tmp_path: Path) -> None:
     """A cache from different image bytes never serves — the sha is the
     validity check (the HTR stage's marker rule)."""
     image = tmp_path / "page.png"
-    image.write_bytes(b"v1")
+    Image.new("L", (1000, 500), 255).save(image)
     cache = tmp_path / "baselines.json"
     runs: list[str] = []
     segment = _fake_segment(runs)
 
     measure_strips(image, cache, _segment=segment)
-    image.write_bytes(b"v2")
+    image.write_bytes(b"v2")  # noqa: F841 — the bytes change under the same path
+    Image.new("L", (1000, 600), 255).save(image)
     measure_strips(image, cache, _segment=segment)
 
-    assert runs == ["page.png", "page.png"]
-    assert json.loads(cache.read_text())["lines"]  # the cache now serves v2
+    assert runs.count("page.png") == 2  # both contents measured once each
+    assert json.loads(cache.read_text())["entries"]  # the cache now serves v2
 
 
 def test_draw_numbered_strips_annotates_onto_a_new_image(tmp_path: Path) -> None:
@@ -165,3 +171,43 @@ def test_draw_numbered_strips_annotates_onto_a_new_image(tmp_path: Path) -> None
 
     assert Image.open(out).size == (1000, 800)
     assert page.read_bytes() == before
+
+
+def test_dual_orientation_measures_both_frames(tmp_path: Path) -> None:
+    """The rotated pass's baselines inverse-map into the page frame and
+    carry the rotated reading rotation: a wide-flat band in the CCW
+    frame lands tall-narrow at the page's edge (the vertical message)."""
+    page = tmp_path / "page.png"
+    Image.new("L", (1000, 500), 255).save(page)
+    calls: list[str] = []
+
+    # lucidlint: ignore record-shape mirrors the production seam's wire type — a fake must match the real contract
+    def fake_run(path: Path) -> list[dict[str, Any]]:
+        calls.append(path.name)
+        if path.name == "rotated-quarter.jpg":
+            return [{"baseline": [[100, 100], [400, 100], [400, 104]]}]  # wide-flat in the rotated frame
+        return [{"baseline": [[10, 20], [300, 22]]}]  # the native pass's line
+
+    entries = dual_orientation_entries(page, fake_run)
+
+    assert calls == ["page.png", "rotated-quarter.jpg"]
+    assert len(entries) == 2
+    rotated_back = next(e for e in entries if e.orientation == ROTATED_PASS_DEGREES)
+    # remap 270: (x, y) -> (ow-1-y, x) — (100,100)->(899,100), (400,104)->(895,400)
+    assert rotated_back.as_box() == [895.0, 100.0, 899.0, 400.0]
+
+
+def test_cluster_orientation_prefers_the_native_pass() -> None:
+    """A mixed cluster (native + rotated measurements of one physical
+    line) reads orientation 0; a rotated-only cluster carries the
+    rotated rotation — the group's model-reported orientation stays the
+    reading authority."""
+    strips = cluster_strips(
+        [
+            Extent(x0=100, y0=100, x1=700, y1=104, orientation=0),
+            Extent(x0=100, y0=100, x1=700, y1=103, orientation=ROTATED_PASS_DEGREES),
+            Extent(x0=300, y0=400, x1=302, y1=900, orientation=ROTATED_PASS_DEGREES),
+        ]
+    )
+    assert strips[0].orientation == 0
+    assert strips[1].orientation == ROTATED_PASS_DEGREES

@@ -128,7 +128,7 @@ def _draw_reported_boxes(image: Path, segments: list[dict[str, Any]], path: Path
 # each group verbatim — it never generates a coordinate (L3/L11).
 
 GROUP_BATCH_PIECES = 50  # the coverage contract's batch ceiling (the plan, 2026-09-08)
-
+GROUP_CROP_MARGIN_PX = 40  # the batch crop pads the band's top/bottom so edge strips read whole
 _GROUP_SYSTEM = (
     "You transcribe scanned family documents verbatim and group their "
     "measured strips of writing into segments. Rules: the document's "
@@ -242,7 +242,7 @@ def group_segments(  # lucidlint: ignore long-param-list one required argument (
     model: str = "primary",
     base_url: str = DEFAULT_BASE_URL,
     api_key: str | None = None,
-    max_tokens: int = 64000,
+    max_tokens: int = 16384,
     timeout: float = 1800.0,
     urlopen: Callable[..., Any] | None = None,
 ) -> tuple[list[dict[str, Any]], set[int], dict[str, Any]]:
@@ -266,10 +266,19 @@ def group_segments(  # lucidlint: ignore long-param-list one required argument (
         stop = min(start + GROUP_BATCH_PIECES, len(strips))
         owned = set(range(start, stop))
         batch_user = _grouping_user_text(start, stop, len(strips))
+        # the batch reads its OWN region: the page cropped to the batch's
+        # y-band (the strips are reading-ordered, so a batch's pieces are
+        # contiguous) — the model sees ~GROUP_BATCH_PIECES rectangles, not
+        # the whole page, and the reasoning stays bounded
+        with Image.open(annotated) as im:
+            band_top = max(0, int(strips[start].extent.y0) - GROUP_CROP_MARGIN_PX)
+            band_bottom = min(im.height, int(strips[stop - 1].extent.y1) + GROUP_CROP_MARGIN_PX)
+            batch_image = work_dir / f"strips-{start}-{stop}.jpg"
+            im.crop((0, band_top, im.width, band_bottom)).save(batch_image, quality=92)
 
-        def read_grouping(user_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        def read_grouping(image_path: Path, user_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
             text, usage = transcribe_image_vlm(
-                annotated,
+                image_path,
                 model=model,
                 system=_GROUP_SYSTEM,
                 user_text=user_text,
@@ -282,7 +291,7 @@ def group_segments(  # lucidlint: ignore long-param-list one required argument (
             _merge_usage(usage_total, usage)
             return _parse_json_object(text, "grouping response"), usage
 
-        answer, _ = read_grouping(batch_user)
+        answer, _ = read_grouping(batch_image, batch_user)
         batch_groups, _, missing = _validated_grouping(answer, owned)
         if missing:
             reask = (
@@ -290,7 +299,7 @@ def group_segments(  # lucidlint: ignore long-param-list one required argument (
                 "Return the FULL contract again — every owned piece in "
                 "exactly one line's pieces or in empty, none omitted."
             )
-            answer, _ = read_grouping(f"{batch_user} {reask}")
+            answer, _ = read_grouping(batch_image, f"{batch_user} {reask}")
             batch_groups, _, still_missing = _validated_grouping(answer, owned)
             if still_missing:
                 dropped |= still_missing

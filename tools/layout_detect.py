@@ -24,6 +24,7 @@ import json
 import os
 import re
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -40,12 +41,12 @@ from tools.loft_paths import WORK_DIR
 from tools.pipeline_store import PipelineStore
 from tools.segment_page import (
     SegmentPageError,
-    page_needs_two_pass,
-    segment_page,
-    segment_page_two_pass,
-    verify_segments,
+    converge_grouped_layout,
+    group_segments,
+    measure_group_boxes,
 )
 from tools.store import DiskStore  # noqa: F401
+from tools.strip_measure import measure_strips
 from tools.text import vlm_line_words
 
 # The proven engine config (spike, 2026-08-15) — the rec model rides along
@@ -62,6 +63,7 @@ def run_batch(
     work_dir: Path,
     urlopen=None,
     api_key=None,
+    _measure: Callable[[Path], list[dict[str, Any]]] | None = None,
 ) -> int:
     """Layout the batch's oriented pages; page_names narrows the set (None =
     every oriented page). Returns 0 on success. Every run's diagnostics —
@@ -93,7 +95,14 @@ def run_batch(
             )
             return 2
     outcomes = [
-        _process_page(image, guess_dir, (batch_id, page_names, wanted, work_dir), urlopen=urlopen, api_key=api_key)
+        _process_page(
+            image,
+            guess_dir,
+            (batch_id, page_names, wanted, work_dir),
+            urlopen=urlopen,
+            api_key=api_key,
+            _measure=_measure,
+        )
         for image in pages
     ]
     if 2 in outcomes:
@@ -124,6 +133,7 @@ def _process_page(
     batch: tuple[str, list[str] | None, set[str], Path],
     urlopen=None,
     api_key=None,
+    _measure: Callable[[Path], list[dict[str, Any]]] | None = None,
 ) -> int:
     """Lay ONE page out — 0 = laid out or quietly skipped, 1 = refused
     (the gates: boxless lines now fail the run, 2026-08-22), 2 = fatal
@@ -136,7 +146,7 @@ def _process_page(
         rc = _warn_missing_guess(image.name, vlm_path.name, page_names, wanted)
         return 2 if rc else 0
     try:
-        _layout_one(image, guess_dir, batch, urlopen=urlopen, api_key=api_key)
+        _layout_one(image, guess_dir, batch, urlopen=urlopen, api_key=api_key, _measure=_measure)
         return 0
     except (ValueError, SegmentPageError) as exc:
         # the refusal is recorded, not fatal (the per-page pattern) — and
@@ -146,17 +156,6 @@ def _process_page(
         # doesn't work").
         print(f"layout: {image.name} refused — {str(exc)[:160]}", file=sys.stderr)
         return 1
-
-
-def _page_segments(image: Path, urlopen=None, api_key=None) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    """The page's segments: ONE multimodal call for small cards, the
-    two-pass read for portrait sheets (the model's geometry is local per
-    half). No detector, no matching: the segments carry text and box
-    together (2026-09-06, the user: the old detect-then-match path does
-    not work — do not fall back to it). Returns (segments, usage)."""
-    if page_needs_two_pass(image):
-        return segment_page_two_pass(image, urlopen=urlopen, api_key=api_key)
-    return segment_page(image, grid=True, urlopen=urlopen, api_key=api_key)
 
 
 def _layout_from_segments(image: Path, segments: list[dict[str, Any]], guess_dir: Path) -> Layout:
@@ -208,25 +207,6 @@ def _layout_from_segments(image: Path, segments: list[dict[str, Any]], guess_dir
     return Layout(image.stem, width, height, lines, [])
 
 
-def _apply_geometry_gates(image: Path, layout: Layout) -> tuple[int, int]:
-    """Gate D (2026-08-20): a boxed line must contain the ink it claims —
-    a well-proportioned box in a blank region is an estimate, not an
-    anchor; the box is dropped. A zero-extent box skips the ink probe
-    (nothing to crop) and is retired here. Gate E (2026-08-22): a box
-    that claims another line's region with different text drops. Returns
-    (inkless, degenerate) — the visual verification pass's trigger."""
-    inkless = layout.drop_inkless(image)
-    if inkless:
-        print(f"layout: {image.name} — {inkless} box(es) with no ink dropped (Gate D)", file=sys.stderr)
-    degenerate = _drop_degenerate_boxes(layout.lines)
-    if degenerate:
-        print(f"layout: {image.name} — {degenerate} degenerate box(es) dropped", file=sys.stderr)
-    conflicts = layout.drop_conflicts()
-    if conflicts:
-        print(f"layout: {image.name} — {conflicts} conflicting box(es) dropped (Gate E)", file=sys.stderr)
-    return inkless, degenerate
-
-
 def gate_findings(layout: Layout, violations: list[str]) -> dict[int, str]:
     """The checker's per-segment findings for the verification pass —
     the model's error messages, keyed by segment index. A boxless line's
@@ -256,30 +236,40 @@ def _layout_one(
     batch: tuple[str, list[str] | None, set[str], Path],
     urlopen=None,
     api_key=None,
+    _measure: Callable[[Path], list[dict[str, Any]]] | None = None,
 ) -> None:
-    """Layout ONE page: read its guess/orientation/self-report, run the
-    single-pass layout build, and persist via the store. ``batch`` =
+    """Layout ONE page: the strips measured (kraken, cached), the
+    grouping read partitions them into segments, each segment's box
+    measured from its band's ink, the bounded findings loop closes the
+    gates, and the layout persists via the store. ``batch`` =
     (batch_id, page_names, wanted, work_dir)."""
     batch_id, page_names, wanted, work_dir = batch
+    read_dir = work_dir / batch_id / "layout-read"
+    read_dir.mkdir(parents=True, exist_ok=True)
     usages: list[dict[str, Any]] = []
-    segments, usage = _page_segments(image, urlopen=urlopen, api_key=api_key)
+    strips = measure_strips(image, cache=read_dir / f"{image.stem}.baselines.json", _segment=_measure)
+    groups, dropped, usage = group_segments(image, strips, read_dir, urlopen=urlopen, api_key=api_key)
     usages.append(usage)
+    if dropped:
+        # the ruling (2026-09-08, user): serve, the loss is named — the
+        # served pages are how the user judges the process
+        print(
+            f"layout: {image.name} — pieces {sorted(dropped)} unaccounted after the re-ask: serving without them",
+            file=sys.stderr,
+        )
+    segments = measure_group_boxes(image, groups, strips)
+    segments, loop_usage = converge_grouped_layout(
+        image,
+        strips,
+        groups,
+        segments,
+        read_dir,
+        findings_fn=gate_findings,
+        urlopen=urlopen,
+        api_key=api_key,
+    )
+    usages.append(loop_usage)
     layout = _layout_from_segments(image, segments, guess_dir)
-    inkless, degenerate = _apply_geometry_gates(image, layout)
-    violations = validate_layout(layout.to_dict())
-    if inkless or degenerate or violations:
-        # the visual verification pass (2026-09-07, user: draw the boxes
-        # on the image and give it back so the model can learn from its
-        # mistakes): the reported boxes drawn on the page in red and
-        # numbered, and the checker's own findings riding to the model
-        # as the error messages — WHAT was measured wrong, per segment
-        # (2026-09-07, user: get better at giving it good error
-        # messages)
-        errors = gate_findings(layout, violations)
-        segments, verify_usage = verify_segments(image, segments, errors=errors, urlopen=urlopen, api_key=api_key)
-        usages.append(verify_usage)
-        layout = _layout_from_segments(image, segments, guess_dir)
-        _apply_geometry_gates(image, layout)
     remaining = validate_layout(layout.to_dict())
     if remaining:
         # the model's own thinking, into the run log — tonight's spike
@@ -289,6 +279,8 @@ def _layout_one(
             reasoning = str(u.get("reasoning", ""))
             if reasoning:
                 print(f"layout: {image.name} — a read call's reasoning tail: …{reasoning[-1500:]}", file=sys.stderr)
+        raise SegmentPageError(f"{len(remaining)} gate violation(s) survive the findings loop: {remaining[:2]}")
+    _ = page_names, wanted  # the skip logic lives in _process_page; the read sees only reached pages
     out = guess_dir / f"{image.stem}.layout.json"
     # the store roots at the work_dir this run was GIVEN, not the global
     # WORK_DIR: the hermetic tests pass a tmp dir, and the hardcoded root
@@ -302,20 +294,6 @@ def _layout_one(
         f"layout: {image.name} {len(layout.lines)} lines, "
         f"{len(layout.unmatched)} unmatched, {flagged} flagged words -> {out.name}"
     )
-
-
-def _drop_degenerate_boxes(lines: list[dict[str, Any]]) -> int:
-    """Gate D's blind spot: a zero-extent box (the model sat a line on
-    the page's edge) has nothing to crop, so the ink probe skips it.
-    Retire the box here — the second pass is the line's way back in
-    (2026-09-07). Returns the count retired."""
-    dropped = 0
-    for line in lines:
-        box = line.get("box")
-        if isinstance(box, list) and len(box) == 4 and (box[2] <= box[0] or box[3] <= box[1]):
-            line["box"] = None
-            dropped += 1
-    return dropped
 
 
 def _warn_missing_guess(image_name: str, txt_name: str, page_names: list[str] | None, wanted: set[str]) -> int:

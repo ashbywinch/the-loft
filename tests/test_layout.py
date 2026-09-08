@@ -1294,7 +1294,14 @@ def test_layout_run_batch_returns_1_when_a_page_is_refused(tmp_path: Path) -> No
 
         return _Resp()
 
-    rc = run_batch("adopt-0001", None, work, urlopen=garbage_urlopen, api_key="test-key")
+    rc = run_batch(
+        "adopt-0001",
+        None,
+        work,
+        urlopen=garbage_urlopen,
+        api_key="test-key",
+        _measure=lambda path: [],  # kraken measured nothing on the blank page
+    )
     assert rc == 1
 
 
@@ -2339,10 +2346,12 @@ def _two_call_urlopen(payloads: list[bytes]):
     return seen, urlopen
 
 
-def _segments_payload(segments: list[dict]) -> bytes:
+def _grouped_payload(lines: list[dict], empty: list[int]) -> bytes:
     import json as _json
 
-    body = {"choices": [{"message": {"content": _json.dumps({"segments": segments})}, "finish_reason": "stop"}]}
+    body = {
+        "choices": [{"message": {"content": _json.dumps({"lines": lines, "empty": empty})}, "finish_reason": "stop"}]
+    }
     return _json.dumps(body).encode()
 
 
@@ -2360,11 +2369,10 @@ def _verify_payload(corrections: list[dict], not_present: list[int]) -> bytes:
     return _json.dumps(body).encode()
 
 
-def _verify_fixture(tmp_path):
-    """A 2000x1000 page with two inked regions; the first-pass response
-    reads one line on each — except the second line's box is placed on
-    blank card, so Gate D drops it and the visual verification pass must
-    answer."""
+def _strip_fixture(tmp_path):
+    """A 2000x1000 page with two inked bands; the fake kraken run
+    measures one baseline across each band on the native pass and
+    nothing on the rotated pass (the fixture holds no rotated writing)."""
     from PIL import ImageDraw
 
     work = tmp_path
@@ -2372,166 +2380,119 @@ def _verify_fixture(tmp_path):
     (work / "adopt-0001" / "ocr-guess").mkdir(parents=True)
     image = Image.new("L", (2000, 1000), 255)
     draw = ImageDraw.Draw(image)
-    draw.rectangle((200, 100, 600, 140), fill=0)  # under 'good line'
-    draw.rectangle((1800, 800, 1900, 850), fill=0)  # where the correction should land
+    draw.rectangle((200, 100, 600, 140), fill=0)  # 'good line'
+    draw.rectangle((1800, 800, 1900, 850), fill=0)  # 'second line'
     image.save(work / "adopt-0001" / "oriented" / "p1.jpg")
-    (work / "adopt-0001" / "ocr-guess" / "p1.txt").write_text("good line\nghost line", encoding="utf-8")
-    first = _segments_payload(
-        [
-            {"text": "good line", "orientation": 0, "box_px": [200, 100, 600, 140]},
-            {"text": "ghost line", "orientation": 0, "box_px": [1400, 700, 1600, 730]},  # blank card
+    (work / "adopt-0001" / "ocr-guess" / "p1.txt").write_text("good line\nsecond line", encoding="utf-8")
+
+    def fake_measure(path):
+        if Path(path).name == "rotated-quarter.jpg":
+            return []  # the fixture holds no rotated writing
+        return [
+            {"baseline": [[200, 100], [400, 120], [600, 140]]},
+            {"baseline": [[1800, 800], [1850, 825], [1900, 850]]},
         ]
-    )
-    return work, first
+
+    return work, fake_measure
 
 
-def test_layout_verification_corrects_a_misplaced_box(tmp_path: Path) -> None:
-    """The visual verification pass (2026-09-07, user: draw the boxes on
-    the image and give it back so the model can learn from its
-    mistakes): when the first read fails its gates, the reported boxes
-    are drawn on the page in red and numbered — ONE round in which the
-    model corrects what it sees. The gates re-judge: a corrected box
-    serves only when it carries ink."""
+def test_layout_findings_loop_corrects_an_out_of_sync_line(tmp_path: Path) -> None:
+    """The bounded findings loop (slice 4): a grouping whose second
+    line's words are wildly out of sync with its measured band fails
+    Gate B, the checker's finding rides to the model, and the
+    verification round's corrected words serve."""
     from tools.layout_detect import run_batch
 
-    work, first = _verify_fixture(tmp_path)
-    verify = _verify_payload([{"index": 1, "box_px": [1800, 800, 1900, 850]}], [])
-    seen, urlopen = _two_call_urlopen([first, verify])
+    work, fake_measure = _strip_fixture(tmp_path)
+    grouping = _grouped_payload(
+        [
+            {"pieces": [0], "text": "good line", "orientation": 0},
+            {"pieces": [1], "text": "word " * 30, "orientation": 0},
+        ],
+        [],
+    )
+    verify = _verify_payload([{"index": 1, "pieces": [1], "text": "second line", "orientation": 0}], [])
+    seen, urlopen = _two_call_urlopen([grouping, verify])
 
-    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
+    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key", _measure=fake_measure)
 
     assert rc == 0
     layout = json.loads((work / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
-    ghost = next(ln for ln in layout["lines"] if ln["text"] == "ghost line")
-    # JPEG bleed: the tightened box hugs the drawn ink within a couple of px
-    assert all(abs(a - b) <= 2 for a, b in zip(ghost["box"], [1800, 800, 1900, 850], strict=True))
-    # the verification call carries every reported segment for checking,
-    # with the checker's own findings as its error messages
-    assert "ghost line" in json.dumps(seen[1])
+    second = next(ln for ln in layout["lines"] if ln["text"] == "second line")
+    # JPEG bleed: the measured box hugs the drawn ink within a couple of px
+    assert all(abs(a - b) <= 2 for a, b in zip(second["box"], [1800, 800, 1901, 851], strict=True))
+    # the verification call carries the checker's own finding as the error message
     assert "CHECK FAILED" in json.dumps(seen[1])
 
 
-def test_layout_verification_drops_an_invented_segment(tmp_path: Path, capsys) -> None:
-    """When the verification declares the text not present — a first-pass
-    invention, the godolphin £4-0s. case — the segment is dropped
-    LOUDLY (the run log names it) and the rest of the page serves."""
+def test_layout_findings_loop_drops_an_invented_segment(tmp_path: Path, capsys) -> None:
+    """When the verification declares a segment's text not present — a
+    first-pass invention — the segment is dropped LOUDLY (the run log
+    names it) and the rest of the page serves."""
     from tools.layout_detect import run_batch
 
-    work, first = _verify_fixture(tmp_path)
+    work, fake_measure = _strip_fixture(tmp_path)
+    grouping = _grouped_payload(
+        [
+            {"pieces": [0], "text": "good line", "orientation": 0},
+            {"pieces": [1], "text": "word " * 30, "orientation": 0},
+        ],
+        [],
+    )
     verify = _verify_payload([], [1])
-    _, urlopen = _two_call_urlopen([first, verify])
+    _, urlopen = _two_call_urlopen([grouping, verify])
 
-    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
+    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key", _measure=fake_measure)
 
     assert rc == 0
     layout = json.loads((work / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
     assert [ln["text"] for ln in layout["lines"]] == ["good line"]
-    assert "ghost line" in capsys.readouterr().err  # the drop is loud, never silent
+    assert "word word" in capsys.readouterr().err  # the drop is loud, never silent
 
 
-def test_layout_verification_cannot_overrule_the_ink_gate(tmp_path: Path) -> None:
-    """A corrected box that STILL holds no ink changes nothing: the line
-    stays boxless and Gate F refuses the page exactly as before."""
+def test_layout_findings_loop_refuses_when_the_rounds_do_not_converge(tmp_path: Path) -> None:
+    """Still violated after GROUPED_VERIFY_ROUNDS: the page refuses
+    honestly (rc 1, nothing persisted) exactly as the plan's slice 4
+    requires."""
     from tools.layout_detect import run_batch
 
-    work, first = _verify_fixture(tmp_path)
-    verify = _verify_payload([{"index": 1, "box_px": [600, 700, 800, 730]}], [])  # also blank card
-    _, urlopen = _two_call_urlopen([first, verify])
+    work, fake_measure = _strip_fixture(tmp_path)
+    grouping = _grouped_payload(
+        [
+            {"pieces": [0], "text": "good line", "orientation": 0},
+            {"pieces": [1], "text": "word " * 30, "orientation": 0},
+        ],
+        [],
+    )
+    never_fixes = _verify_payload([], [])
+    _, urlopen = _two_call_urlopen([grouping, never_fixes, never_fixes])
 
-    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
+    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key", _measure=fake_measure)
 
     assert rc == 1
     assert not (work / "adopt-0001" / "ocr-guess" / "p1.layout.json").exists()
 
 
-def test_layout_verification_corrects_a_degenerate_box(tmp_path: Path) -> None:
-    """A degenerate first-pass box (zero extent — the model sat it on the
-    page's edge) triggers the verification pass like any failed gate:
-    corrected onto real ink, the line serves with box_source 'verified'."""
-    from PIL import ImageDraw
-
+def test_layout_grouping_serves_clean_without_a_verification_round(tmp_path: Path) -> None:
+    """A grouping that passes the gates first time serves with ONE read
+    call — no verification round, and the stored lines carry the
+    grouped provenance."""
     from tools.layout_detect import run_batch
 
-    work = tmp_path
-    (work / "adopt-0001" / "oriented").mkdir(parents=True)
-    (work / "adopt-0001" / "ocr-guess").mkdir(parents=True)
-    image = Image.new("L", (2000, 1000), 255)
-    draw = ImageDraw.Draw(image)
-    draw.rectangle((200, 100, 600, 140), fill=0)
-    draw.rectangle((1800, 800, 1900, 850), fill=0)
-    image.save(work / "adopt-0001" / "oriented" / "p1.jpg")
-    (work / "adopt-0001" / "ocr-guess" / "p1.txt").write_text("good line\nedge line", encoding="utf-8")
-    first = _segments_payload(
+    work, fake_measure = _strip_fixture(tmp_path)
+    grouping = _grouped_payload(
         [
-            {"text": "good line", "orientation": 0, "box_px": [200, 100, 600, 140]},
-            # zero height: y0 == y1 — the model sat the line on the page's edge
-            {"text": "edge line", "orientation": 0, "box_px": [200, 1000, 600, 1000]},
-        ]
+            {"pieces": [0], "text": "good line", "orientation": 0},
+            {"pieces": [1], "text": "second line", "orientation": 0},
+        ],
+        [],
     )
-    verify = _verify_payload([{"index": 1, "box_px": [1800, 800, 1900, 850]}], [])
-    _, urlopen = _two_call_urlopen([first, verify])
+    seen, urlopen = _two_call_urlopen([grouping])
 
-    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
+    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key", _measure=fake_measure)
 
     assert rc == 0
+    assert len(seen) == 1  # the gates passed first time: no verification call
     layout = json.loads((work / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
-    edge = next(ln for ln in layout["lines"] if ln["text"] == "edge line")
-    # JPEG bleed: the tightened box hugs the drawn ink within a couple of px
-    assert all(abs(a - b) <= 2 for a, b in zip(edge["box"], [1800, 800, 1900, 850], strict=True))
-    assert edge["box_source"] == "verified"
-
-
-def test_layout_tall_pages_read_as_two_halves(tmp_path: Path) -> None:
-    """The two-pass read (2026-09-07, user): a portrait sheet is read as
-    two overlapping halves — the model's geometry is local per half, and
-    the stitched boxes land in page pixels. A small card keeps the
-    single call (L10: no tokens where the single pass works)."""
-    from PIL import ImageDraw
-
-    from tools.layout_detect import run_batch
-
-    work = tmp_path
-    (work / "adopt-0001" / "oriented").mkdir(parents=True)
-    (work / "adopt-0001" / "ocr-guess").mkdir(parents=True)
-    image = Image.new("L", (2000, 5000), 255)
-    draw = ImageDraw.Draw(image)
-    for box in [(200, 275, 800, 550), (200, 2585, 800, 2695), (200, 3625, 800, 3900)]:
-        draw.rectangle(box, fill=0)  # real ink under each expected line
-    image.save(work / "adopt-0001" / "oriented" / "p1.jpg")
-    (work / "adopt-0001" / "ocr-guess" / "p1.txt").write_text("alpha\nbeta\ngamma", encoding="utf-8")
-    top = _segments_payload(
-        [
-            {"text": "alpha", "orientation": 0, "box_px": [200, 275, 800, 550]},
-            {"text": "beta", "orientation": 0, "box_px": [200, 2585, 800, 2695]},
-        ]
-    )
-    bottom = _segments_payload(
-        [
-            {"text": "beta", "orientation": 0, "box_px": [200, 440, 600, 660]},
-            {"text": "gamma", "orientation": 0, "box_px": [200, 1375, 800, 1650]},
-        ]
-    )
-    seen, urlopen = _two_call_urlopen([top, bottom])
-
-    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
-
-    assert rc == 0
-    layout = json.loads((work / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
-    assert [ln["text"] for ln in layout["lines"]] == ["alpha", "beta", "gamma"]
-    by_text = {ln["text"]: ln for ln in layout["lines"]}
-    assert all(abs(a - b) <= 2 for a, b in zip(by_text["gamma"]["box"], [200, 3625, 800, 3900], strict=True))
-    assert len(seen) == 2  # the tall page took both halves
-
-    # a small card keeps the single call
-    small_work = tmp_path / "small"
-    (small_work / "adopt-0002" / "oriented").mkdir(parents=True)
-    (small_work / "adopt-0002" / "ocr-guess").mkdir(parents=True)
-    small_image = Image.new("L", (1163, 789), 255)
-    ImageDraw.Draw(small_image).rectangle((200, 79, 800, 158), fill=0)
-    small_image.save(small_work / "adopt-0002" / "oriented" / "p1.jpg")
-    (small_work / "adopt-0002" / "ocr-guess" / "p1.txt").write_text("POST CARD.", encoding="utf-8")
-    single = _segments_payload([{"text": "POST CARD.", "orientation": 0, "box_px": [200, 79, 800, 158]}])
-    seen2, urlopen2 = _two_call_urlopen([single])
-    rc = run_batch("adopt-0002", None, small_work, urlopen=urlopen2, api_key="test-key")
-    assert rc == 0
-    assert len(seen2) == 1
+    assert [ln["text"] for ln in layout["lines"]] == ["good line", "second line"]
+    assert all(ln["box_source"] == "grouped-strips" for ln in layout["lines"])

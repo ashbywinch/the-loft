@@ -1300,9 +1300,8 @@ def test_layout_run_batch_returns_1_when_a_page_is_refused(tmp_path: Path) -> No
         work,
         urlopen=garbage_urlopen,
         api_key="test-key",
-        _measure=lambda path: [],  # kraken measured nothing on the blank page
     )
-    assert rc == 1
+    assert rc == 1  # the blank page measures no strips: the read refuses
 
 
 def test_reading_order_180_line_reads_after_the_upright_header() -> None:
@@ -2370,9 +2369,8 @@ def _verify_payload(corrections: list[dict], not_present: list[int]) -> bytes:
 
 
 def _strip_fixture(tmp_path):
-    """A 2000x1000 page with two inked bands; the fake kraken run
-    measures one baseline across each band on the native pass and
-    nothing on the rotated pass (the fixture holds no rotated writing)."""
+    """A 2000x1000 page with two inked bands — the drawn rectangles are
+    what the projection measures, so the run is hermetic end to end."""
     from PIL import ImageDraw
 
     work = tmp_path
@@ -2384,16 +2382,7 @@ def _strip_fixture(tmp_path):
     draw.rectangle((1800, 800, 1900, 850), fill=0)  # 'second line'
     image.save(work / "adopt-0001" / "oriented" / "p1.jpg")
     (work / "adopt-0001" / "ocr-guess" / "p1.txt").write_text("good line\nsecond line", encoding="utf-8")
-
-    def fake_measure(path):
-        if Path(path).name == "rotated-quarter.jpg":
-            return []  # the fixture holds no rotated writing
-        return [
-            {"baseline": [[200, 100], [400, 120], [600, 140]]},
-            {"baseline": [[1800, 800], [1850, 825], [1900, 850]]},
-        ]
-
-    return work, fake_measure
+    return work
 
 
 def test_layout_findings_loop_corrects_an_out_of_sync_line(tmp_path: Path) -> None:
@@ -2403,7 +2392,7 @@ def test_layout_findings_loop_corrects_an_out_of_sync_line(tmp_path: Path) -> No
     verification round's corrected words serve."""
     from tools.layout_detect import run_batch
 
-    work, fake_measure = _strip_fixture(tmp_path)
+    work = _strip_fixture(tmp_path)
     grouping = _grouped_payload(
         [
             {"pieces": [0], "text": "good line", "orientation": 0},
@@ -2414,7 +2403,7 @@ def test_layout_findings_loop_corrects_an_out_of_sync_line(tmp_path: Path) -> No
     verify = _verify_payload([{"index": 1, "pieces": [1], "text": "second line", "orientation": 0}], [])
     seen, urlopen = _two_call_urlopen([grouping, verify])
 
-    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key", _measure=fake_measure)
+    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
 
     assert rc == 0
     layout = json.loads((work / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
@@ -2431,7 +2420,7 @@ def test_layout_findings_loop_drops_an_invented_segment(tmp_path: Path, capsys) 
     names it) and the rest of the page serves."""
     from tools.layout_detect import run_batch
 
-    work, fake_measure = _strip_fixture(tmp_path)
+    work = _strip_fixture(tmp_path)
     grouping = _grouped_payload(
         [
             {"pieces": [0], "text": "good line", "orientation": 0},
@@ -2442,7 +2431,7 @@ def test_layout_findings_loop_drops_an_invented_segment(tmp_path: Path, capsys) 
     verify = _verify_payload([], [1])
     _, urlopen = _two_call_urlopen([grouping, verify])
 
-    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key", _measure=fake_measure)
+    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
 
     assert rc == 0
     layout = json.loads((work / "adopt-0001" / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
@@ -2456,7 +2445,7 @@ def test_layout_findings_loop_refuses_when_the_rounds_do_not_converge(tmp_path: 
     requires."""
     from tools.layout_detect import run_batch
 
-    work, fake_measure = _strip_fixture(tmp_path)
+    work = _strip_fixture(tmp_path)
     grouping = _grouped_payload(
         [
             {"pieces": [0], "text": "good line", "orientation": 0},
@@ -2467,7 +2456,7 @@ def test_layout_findings_loop_refuses_when_the_rounds_do_not_converge(tmp_path: 
     never_fixes = _verify_payload([], [])
     _, urlopen = _two_call_urlopen([grouping, never_fixes, never_fixes])
 
-    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key", _measure=fake_measure)
+    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
 
     assert rc == 1
     assert not (work / "adopt-0001" / "ocr-guess" / "p1.layout.json").exists()
@@ -2479,7 +2468,7 @@ def test_layout_grouping_serves_clean_without_a_verification_round(tmp_path: Pat
     grouped provenance."""
     from tools.layout_detect import run_batch
 
-    work, fake_measure = _strip_fixture(tmp_path)
+    work = _strip_fixture(tmp_path)
     grouping = _grouped_payload(
         [
             {"pieces": [0], "text": "good line", "orientation": 0},
@@ -2489,7 +2478,7 @@ def test_layout_grouping_serves_clean_without_a_verification_round(tmp_path: Pat
     )
     seen, urlopen = _two_call_urlopen([grouping])
 
-    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key", _measure=fake_measure)
+    rc = run_batch("adopt-0001", None, work, urlopen=urlopen, api_key="test-key")
 
     assert rc == 0
     assert len(seen) == 1  # the gates passed first time: no verification call

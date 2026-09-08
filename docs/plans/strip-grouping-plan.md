@@ -1,9 +1,15 @@
 # Strip-grouping production plan — the layout stage's measured-geometry path
 
-**Status:** SPIKE-VALIDATED (2026-09-07/08); productionising not yet
-started. Spike evidence: `geometry-experiments-log.md` §"The
-numbered-strips spike"; live artifacts in /tmp/spike-strips2/
-(unpersisted — the ledger records the findings).
+**Status:** SERVED (2026-09-09) — page-01 and page-02 of the Music
+College letter layout through `make pipeline ARGS="layout …"` with 0
+gate violations (20 and 14 lines, box_source "grouped-strips") in ~6
+minutes end to end. See the postmortem block at the bottom of this
+file — productionising changed two of the plan's mechanisms (the
+measurement primitive, and the gateway route), and both changes are
+recorded there with the evidence.
+
+Spike evidence: `geometry-experiments-log.md` §"The numbered-strips
+spike" and §"Ink-projection line bands" (2026-09-09).
 
 **The Godolphin correction + resolution (2026-09-08, user):** the
 card's substantial message is written at 90° on its left side. The
@@ -150,3 +156,44 @@ page-01 AND page-02 of the Music College letter serve through
 with 0 gate violations — every line's transcription read from its own
 measured extent — and render in the review surface. Then the real
 re-processing of the First test pile, one page at a time.
+
+## Postmortem of the productionising (2026-09-08/09) — what broke, what held
+
+**Held:** the law (measured strips, model groups and reads — never a
+generated coordinate); the coverage contract (every piece accounted per
+batch, one re-ask, unaccountable pieces drop loudly and serve — the
+user's ruling); the bounded findings loop (honest refusals, twice); the
+per-page recovery; the sha-keyed caches.
+
+**Broke and was fixed at the design level:**
+
+1. **The dual-orientation orli pass (slice 2b) hallucinated.** orli at
+   bf16 on a rotated, downscaled page — an out-of-distribution input —
+   emitted 768 phantom baselines on page-01's pure-white right edge.
+   The phantoms bridged real clusters (584 strips for ~25 lines) and
+   drowned the grouping model into 54k characters of reasoning. Fix:
+   the measurement primitive was REPLACED — ink projection (the row
+   profile's line cores at the house's 0.1% ink floor) measures one
+   strip per real line (23 on page-01, 16 on page-02, matching the
+   user's ~25-30 line count); the orli fragment path is deleted. The
+   rotated-writing case (the Godolphin card) is UNMEASURED by the new
+   primitive — reopened until the card's rotated lines measure cleanly.
+2. **The gateway route.** The DoD runs hit localhost:4000 (the local
+   LiteLLM proxy — no `dynamic/image` route → HTTP 400) instead of the
+   Cloudflare compat endpoint. `dynamic/image` is a Cloudflare route
+   and was never broken; the launches now route through the local
+   metadata proxy (:9123) with CLOUDFLARE_AIGATEWAY_TOKEN as the key.
+3. **Small, real:** a page's bottom-edge shading measured as a
+   full-width "line" (page-02's refusal) — edge-touching bands drop; a
+   grouping response that narrates past its JSON gets one deterministic
+   repair ask (page-01's refusal); the usage merge survived the
+   gateway's nested prompt_tokens_details.
+
+**Slice 6 (remote kraken) is MOOT for this material:** the measurement
+no longer uses kraken at all — the projection is instant. kraken/orli
+return only for cursive-page measurement, which is REOPENED (see 1).
+**Known limitation carried forward:** page-01's tight-schedule section
+measures as merged multi-line bands; the grouping model transcribes
+them as multi-line segments (L3 violated in the serve — the reviewer
+will see it). 287 flagged words on page-01 are the review's doubt marks
+to work through.

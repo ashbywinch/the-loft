@@ -974,3 +974,29 @@ refusal (`665917d`) — tonight's diagnosis came from reading it.
 Spike artifacts: /tmp/spike-strips/ and /tmp/spike-strips2/
 (unpersisted); the pipeline pieces are on the
 pr/orientation-validation branch through `665917d`.
+
+
+## Ink-projection line bands (2026-09-09) — the measurement that replaced orli
+
+The numbered-strips spike normalized orli's output without auditing it
+against reality: page-01 carries ~20-25 handwritten lines (user + vision
+pass), orli emitted 768 baselines for them, and the dual-orientation
+pass added 768 phantoms on the page's pure-white right edge (orli at
+bf16 hallucinates on out-of-distribution rotations). 584 strips — the
+grouping model drowned.
+
+The row ink profile fixes it. The page's binary (<128) rows, reduced to
+one ink-fraction per row, separate into line cores at an absolute floor
+of 0.1% dark pixels per row (the house's Gate D clip minimum); cores
+within 6px merge. Counts: page-01 23 cores (floor sweep 15→39 across
+0.05-0.40%; 0.10% matches the user's line count), page-02 16. Bands
+touching the page's top/bottom edge drop — scan and binding shading
+measures as a full-width "line" there (page-02's refusal).
+
+Both DoD pages served through the full pipeline with 0 gate violations
+(20 + 14 lines) in ~6 minutes. Limitation: lines whose ink rows touch
+(ascending/descending handwriting) merge into one band — page-01's
+tight-schedule section measures as merged multi-line bands; the grouping
+model transcribes them as multi-line segments. The Godolphin card's
+rotated writing is UNMEASURED by the profile (it needs the rotated
+frame, where orli hallucinates) — reopened.

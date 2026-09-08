@@ -289,7 +289,18 @@ def group_segments(  # lucidlint: ignore long-param-list one required argument (
             _merge_usage(usage_total, usage)
             return _parse_json_object(text, "grouping response"), usage
 
-        answer, _ = read_grouping(batch_image, batch_user)
+        repair = (
+            "Your response was not a JSON object. Return ONLY the JSON "
+            "object — the grouping contract, no prose before or after."
+        )
+        try:
+            answer, _ = read_grouping(batch_image, batch_user)
+        except SegmentPageError as exc:
+            if "no JSON" not in str(exc) and "not a JSON object" not in str(exc):
+                raise
+            # one deterministic repair ask: the model narrated past its
+            # JSON (page-01, 2026-09-09) — the contract is restated whole
+            answer, _ = read_grouping(batch_image, f"{batch_user} {repair}")
         batch_groups, _, missing = _validated_grouping(answer, owned)
         if missing:
             reask = (
@@ -297,7 +308,7 @@ def group_segments(  # lucidlint: ignore long-param-list one required argument (
                 "Return the FULL contract again — every owned piece in "
                 "exactly one line's pieces or in empty, none omitted."
             )
-            answer, _ = read_grouping(batch_image, f"{batch_user} {reask}")
+            answer, _ = read_grouping(batch_image, f"{batch_user} {reask} {repair}")
             batch_groups, _, still_missing = _validated_grouping(answer, owned)
             if still_missing:
                 dropped |= still_missing

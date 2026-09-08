@@ -5,25 +5,27 @@ started. Spike evidence: `geometry-experiments-log.md` §"The
 numbered-strips spike"; live artifacts in /tmp/spike-strips2/
 (unpersisted — the ledger records the findings).
 
-**The Godolphin correction (2026-09-08, user):** the card's substantial
-message is written at 90° on its left side. The grid read transcribed it
-correctly but NORMALIZED it to upright horizontal boxes — the rotation
-was never detected or handled (only the two left-edge notes got
-orientation 90). The coordinate path therefore fails BOTH page types:
-fabricated boxes on the typed letter, rotation-normalizing on the card.
-Ruling A's threshold assumption is broken; see Open question 1 —
-resolved to grouping for all pages.
-
-The validated replacement: **kraken measures, the VLM reads.**
-
-1. kraken 7 + orli — already the HTR stage's line detector
-   (`tools/htr.py`, ~200k pages of training) — measures line-baseline
-   fragments: 768 raw on page-01, clustered to 106 strips.
-2. The strips are drawn numbered on the page (thin green outlines,
+**The Godolphin correction + resolution (2026-09-08, user):** the
+card's substantial message is written at 90° on its left side. The
+grid read transcribed it correctly but NORMALIZED it to upright
+horizontal boxes — the rotation was never detected or handled. The
+coordinate path therefore fails BOTH page types. RESOLVED by dual-
+orientation detection: run the line detector at 0° AND on the 90°-
+rotated page, inverse-map the second pass's boxes, and merge — the
+rotated message's lines detect normally in the rotated frame
+(empirically: 17 detections in the message zone CCW vs 8 CW; the
+vision check confirms 12 boxes each enclosing one vertical message
+line, none missing). The user has approved the typed-letter Surya
+boxes (multiline boxes acceptable; grouping can split).
+1. The strips are drawn numbered on the page (thin green outlines,
    margin numbers — the writing untouched). ONE VLM call **groups** the
    numbered pieces into segments and transcribes each group verbatim.
-3. Each segment's box = the measured ink extent of its group's y-band
+2. Each segment's box = the measured ink extent of its group's y-band
    (row projection). The model never generates a coordinate.
+3. Detection runs at BOTH orientations (0° for upright text; the page
+   re-detected at 90° for vertical writing, boxes inverse-mapped) and
+   the two box sets merge — every line of writing is measured in
+   whichever frame it reads horizontally.
 
 The spike served the previously-refused seam region with **0 gate
 violations** — 30 verbatim lines in reading order on the Music College

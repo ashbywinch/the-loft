@@ -48,6 +48,7 @@ from tools.segment_page import (
 from tools.store import DiskStore  # noqa: F401
 from tools.strip_measure import measure_strips
 from tools.text import vlm_line_words
+from tools.vlm import VlmError
 
 # The proven engine config (spike, 2026-08-15) — the rec model rides along
 # (its noisy text IS the cross-reader confidence signal).
@@ -148,7 +149,7 @@ def _process_page(
     try:
         _layout_one(image, guess_dir, batch, urlopen=urlopen, api_key=api_key, _measure=_measure)
         return 0
-    except (ValueError, SegmentPageError) as exc:
+    except (ValueError, SegmentPageError, VlmError) as exc:
         # the refusal is recorded, not fatal (the per-page pattern) — and
         # the single pass's garbage-response failure refuses the page the
         # same way: no fallback to the old detect-then-match path

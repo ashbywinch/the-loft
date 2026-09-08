@@ -93,12 +93,18 @@ class Strip:
         return self.extent.as_box()
 
 
+CACHE_VERSION = 2  # bumped when the measurement logic changes — a cache from an older logic never serves
+
+
 @dataclass(frozen=True)
 class BaselineCache:
     """The baseline cache record: the page's dual-orientation
     measurements keyed by the image's content sha (the HTR stage's
-    marker rule — a cache from other bytes never serves)."""
+    marker rule — a cache from other bytes never serves) and by the
+    measurement logic's version (a cache from older logic never
+    serves either)."""
 
+    version: int
     input_sha: str
     entries: list[Extent]
 
@@ -107,14 +113,15 @@ class BaselineCache:
 
     @classmethod
     def read(cls, path: Path, sha: str) -> BaselineCache | None:
-        """The cached measurement when the file matches this sha, else
-        None (missing, stale, or foreign cache)."""
+        """The cached measurement when the file matches this sha AND the
+        current measurement version, else None (missing, stale, foreign,
+        or written by older logic)."""
         if not path.exists():
             return None
         saved = json.loads(path.read_text(encoding="utf-8"))
-        if saved.get("input_sha") != sha:
+        if saved.get("version") != CACHE_VERSION or saved.get("input_sha") != sha:
             return None
-        return cls(input_sha=sha, entries=[Extent(**entry) for entry in saved["entries"]])
+        return cls(version=CACHE_VERSION, input_sha=sha, entries=[Extent(**entry) for entry in saved["entries"]])
 
 
 # lucidlint: ignore record-shape the kraken wire record is htr.segment_page's shape; unpacked to Extents once here
@@ -140,7 +147,11 @@ def dual_orientation_entries(image: Path, run: Callable[[Path], list[dict[str, A
     """The page's baselines measured at BOTH orientations: the page
     as-is (reading rotation 0) plus the page a quarter-turn CCW —
     vertical writing reads horizontally there and its baselines
-    inverse-map home (the Godolphin resolution, 2026-09-08)."""
+    inverse-map home (the Godolphin resolution, 2026-09-08). A rotated
+    entry that holds no ink drops BEFORE clustering: orli hallucinates
+    baselines over blank card on out-of-distribution rotations
+    (page-01, 2026-09-08: 768 phantoms on pure white), and a phantom
+    that survives to the merge bridges real clusters into noise."""
     with Image.open(image) as im:
         width, height = im.size
         rotated = im.convert("RGB").transpose(Image.Transpose.ROTATE_90)
@@ -150,7 +161,9 @@ def dual_orientation_entries(image: Path, run: Callable[[Path], list[dict[str, A
         rotated.save(rotated_path, quality=95)
         for extent in baseline_entries(run(rotated_path), orientation=ROTATED_PASS_DEGREES):
             box = remap_box(extent.as_box(), ROTATED_PASS_DEGREES, (width, height), (height, width))
-            entries.append(Extent(x0=box[0], y0=box[1], x1=box[2], y1=box[3], orientation=ROTATED_PASS_DEGREES))
+            mapped = Extent(x0=box[0], y0=box[1], x1=box[2], y1=box[3], orientation=ROTATED_PASS_DEGREES)
+            if extent_has_ink(image, mapped):
+                entries.append(mapped)
     return entries
 
 
@@ -200,6 +213,23 @@ def cluster_strips(entries: list[Extent]) -> list[Strip]:
     return [Strip(i, t) for i, t in enumerate(extents)]
 
 
+def extent_has_ink(image: Path, extent: Extent, pad: int = 6) -> bool:
+    """Gate D's principle at the strip seam (2026-08-20): a measured
+    extent must contain the ink it claims. The probe pads ±6px (the
+    group box's own pad): a baseline estimate can sit a pixel or two
+    off the ink it measured."""
+    with Image.open(image) as im:
+        gray = im.convert("L")
+        x0, y0, x1, y1 = (int(v) for v in extent.as_box())
+        x0, y0 = max(0, x0 - pad), max(0, y0 - pad)
+        x1, y1 = min(gray.width, x1 + pad), min(gray.height, y1 + pad)
+    if x1 <= x0 or y1 <= y0:
+        return False
+    crop = gray.crop((x0, y0, x1, y1))
+    table = [255 if v < 128 else 0 for v in range(256)]
+    return crop.point(table).getbbox() is not None
+
+
 def measure_strips(
     image: Path,
     cache: Path | None = None,
@@ -211,15 +241,22 @@ def measure_strips(
     runs are the expensive step — cached by the image's content sha
     (the HTR stage's marker rule), so a re-run never re-measures."""
     run = _segment or kraken_segment_page
+
+    def clustered(entries: list[Extent]) -> list[Strip]:
+        # a final degenerate-point sweep; the ink probe ran at the entry
+        # level, before the merge
+        strips = cluster_strips(entries)
+        return [Strip(number=index, extent=strip.extent) for index, strip in enumerate(strips)]
+
     if cache is None:
-        return cluster_strips(dual_orientation_entries(image, run))
+        return clustered(dual_orientation_entries(image, run))
     sha = file_sha256(image)
     cached = BaselineCache.read(cache, sha)
     if cached is not None:
-        return cluster_strips(cached.entries)
+        return clustered(cached.entries)
     entries = dual_orientation_entries(image, run)
-    atomic_write(cache, BaselineCache(input_sha=sha, entries=entries).to_json())
-    return cluster_strips(entries)
+    atomic_write(cache, BaselineCache(version=CACHE_VERSION, input_sha=sha, entries=entries).to_json())
+    return clustered(entries)
 
 
 def draw_numbered_strips(image: Path, strips: list[Strip], out: Path) -> None:

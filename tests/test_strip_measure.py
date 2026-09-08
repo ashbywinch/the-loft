@@ -13,7 +13,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from tools.strip_measure import (
     ROTATED_PASS_DEGREES,
@@ -159,6 +159,35 @@ def test_measure_strips_remeasures_when_the_image_changes(tmp_path: Path) -> Non
     assert json.loads(cache.read_text())["entries"]  # the cache now serves v2
 
 
+def test_inkless_phantom_strips_drop(tmp_path: Path) -> None:
+    """The rotated pass can hallucinate baselines over blank card (the
+    page-01 phantom flood, 2026-09-08) — a strip whose band holds no ink
+    drops at measurement, on both passes' output."""
+    from PIL import Image, ImageDraw
+
+    page = tmp_path / "page.png"
+    img = Image.new("L", (1000, 800), 255)  # white, except one real line
+    ImageDraw.Draw(img).rectangle((100, 100, 700, 140), fill=0)
+    img.save(page)
+    real = [
+        {"baseline": [[100, 100], [400, 120], [700, 140]]},  # native, real ink
+    ]
+    phantoms = [
+        {"baseline": [[800, 500], [900, 700]]},  # rotated pass, blank card
+        {"baseline": [[850, 300], [950, 460]]},
+    ]
+
+    def fake_run(img_path: Path) -> list[dict[str, Any]]:
+        if Path(img_path).name == "rotated-quarter.jpg":
+            return phantoms
+        return real
+
+    strips = measure_strips(page, None, _segment=fake_run)
+
+    assert len(strips) == 1  # only the inked strip survives
+    assert strips[0].extent.as_box() == [100.0, 100.0, 700.0, 140.0]
+
+
 def test_draw_numbered_strips_annotates_onto_a_new_image(tmp_path: Path) -> None:
     """The grouping read's input: the strips drawn on a COPY — thin
     outlines + margin numbers on a new file, the page image untouched."""
@@ -178,7 +207,9 @@ def test_dual_orientation_measures_both_frames(tmp_path: Path) -> None:
     carry the rotated reading rotation: a wide-flat band in the CCW
     frame lands tall-narrow at the page's edge (the vertical message)."""
     page = tmp_path / "page.png"
-    Image.new("L", (1000, 500), 255).save(page)
+    img = Image.new("L", (1000, 500), 255)
+    ImageDraw.Draw(img).rectangle((895, 100, 899, 400), fill=0)  # ink where the entry maps home
+    img.save(page)
     calls: list[str] = []
 
     # lucidlint: ignore record-shape mirrors the production seam's wire type — a fake must match the real contract

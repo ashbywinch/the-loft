@@ -261,7 +261,9 @@ def _layout_one(
     single-pass layout build, and persist via the store. ``batch`` =
     (batch_id, page_names, wanted, work_dir)."""
     batch_id, page_names, wanted, work_dir = batch
-    segments, _usage = _page_segments(image, urlopen=urlopen, api_key=api_key)
+    usages: list[dict[str, Any]] = []
+    segments, usage = _page_segments(image, urlopen=urlopen, api_key=api_key)
+    usages.append(usage)
     layout = _layout_from_segments(image, segments, guess_dir)
     inkless, degenerate = _apply_geometry_gates(image, layout)
     violations = validate_layout(layout.to_dict())
@@ -274,9 +276,19 @@ def _layout_one(
         # (2026-09-07, user: get better at giving it good error
         # messages)
         errors = _gate_findings(layout, violations)
-        segments, _usage = verify_segments(image, segments, errors=errors, urlopen=urlopen, api_key=api_key)
+        segments, verify_usage = verify_segments(image, segments, errors=errors, urlopen=urlopen, api_key=api_key)
+        usages.append(verify_usage)
         layout = _layout_from_segments(image, segments, guess_dir)
         _apply_geometry_gates(image, layout)
+    remaining = validate_layout(layout.to_dict())
+    if remaining:
+        # the model's own thinking, into the run log — tonight's spike
+        # showed the reasoning explains a refusal the gates alone cannot
+        # (2026-09-08, user: let's look at the model's thinking)
+        for u in usages:
+            reasoning = str(u.get("reasoning", ""))
+            if reasoning:
+                print(f"layout: {image.name} — a read call's reasoning tail: …{reasoning[-1500:]}", file=sys.stderr)
     out = guess_dir / f"{image.stem}.layout.json"
     # the store roots at the work_dir this run was GIVEN, not the global
     # WORK_DIR: the hermetic tests pass a tmp dir, and the hardcoded root

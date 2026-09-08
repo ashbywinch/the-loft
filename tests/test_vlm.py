@@ -383,3 +383,23 @@ class TestThinkingDisabled:
         assert text == "transcribed line"
         assert "thinking" in calls[0]
         assert "thinking" not in calls[1]
+
+    def test_usage_carries_the_reasoning(self, tmp_path: Path) -> None:
+        """The model's thinking is diagnosability data — tonight's strips
+        spike (2026-09-08) read the reasoning to learn why boxes were
+        fabricated ('since I can't see the image'). The usage carries it
+        to the caller instead of dropping it at the parse."""
+        body = TestThinkingDisabled._ok_body()
+        body["choices"][0]["message"]["reasoning_content"] = "I cannot see the image, so I will estimate."
+
+        def fake_urlopen(request, timeout=None):
+            return _BytesResponse(json.dumps(body).encode())
+
+        _text, usage = vlm.transcribe_image_vlm(
+            self._png(tmp_path),
+            model="dynamic/image",
+            base_url="http://x/v1",
+            api_key="k",
+            urlopen=fake_urlopen,
+        )
+        assert usage["reasoning"] == "I cannot see the image, so I will estimate."

@@ -319,6 +319,7 @@ def transcribe_image_vlm(
         finish_reason = choice.get("finish_reason")
         reasoning = message.get("reasoning") or message.get("reasoning_content") or ""
         usage = dict(body.get("usage", {}))
+        usage["reasoning"] = reasoning
         # The model's thinking, always captured — a failed call is diagnosable
         # from its trace (2026-08-20: the orientation calls burned 64K tokens
         # of reasoning with zero content; without the reasoning the cause was

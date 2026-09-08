@@ -64,14 +64,18 @@ def _segments_format(grid: bool) -> str:
 
 
 _GRID_SPACING_PX = 50
+_GRID_MAJOR_EVERY = 250  # a labeled major line; the minors in between are plain
+_GRID_LABEL_SIZE = 40  # px — the labels must survive the vision encoder's downscale
 
 _GRID_PROMPT = (
     f" A coordinate grid is drawn on the page: thin lines every "
-    f"{_GRID_SPACING_PX} pixels, each labeled with its pixel value along "
-    "the top and left edges. Report every box in PIXELS read off that "
-    'grid as "box_px": [x0, y0, x1, y1] — use the printed labels, and '
-    "never guess a coordinate you cannot read from the grid. The box "
-    "will be snapped to the ink it encloses, so cover the segment's own "
+    f"{_GRID_SPACING_PX} pixels, and every {_GRID_MAJOR_EVERY} pixels a "
+    "thicker line labeled with its pixel value in large red digits along "
+    "the top and left edges. Report every box in PIXELS anchored on "
+    "those large red labels (to yourself, name the labeled lines the "
+    'segment sits between) as "box_px": [x0, y0, x1, y1] — never guess '
+    "a coordinate you cannot read from the grid. The box will be "
+    "snapped to the ink it encloses, so cover the segment's own "
     "writing completely and stay inside its column."
 )
 

@@ -943,11 +943,14 @@ def test_gate_b_calibrates_the_ceiling_by_glyph_size() -> None:
     # plausible big-ish handwriting (ceiling 85) — the old horizontal
     # 80 absolute ceiling refused it; sparsity is judged per glyph size
     assert text_extent_violation("abc", [0, 0, 243, 50], 0) is None
-    # FLIPPED (2026-08-26): 10 chars at 150 px/char along a 50px-wide
-    # vertical column means 150px between 50px-tall glyphs — absurd
-    # sparsity under the glyph-size rule (ceiling 85): now caught,
-    # where the old 160 vertical ceiling let it through
-    assert text_extent_violation("x" * 10, [0, 0, 50, 1500], 90) is not None
+    # FLIPPED (2026-09-07): a letterspaced typewriter line measures ~2.0
+    # advances per glyph height — the Music College letter's 24-char
+    # line on an 875x23 strip (36 px/char, old ceiling 39) was REAL ink
+    # measured by kraken, refused by the old 1.7 ceiling; the 2.6 dense-
+    # line allowance accepts it. The genuinely absurd stays caught: 10
+    # chars on a 600x20 strip is 60 px/char against a 52 ceiling.
+    assert text_extent_violation("week at the end of term.", [0, 0, 875, 23], 0) is None
+    assert text_extent_violation("x" * 10, [0, 0, 600, 20], 0) is not None
 
 
 def test_transcription_line_count_plausible() -> None:

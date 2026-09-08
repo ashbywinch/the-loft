@@ -96,7 +96,17 @@ def text_extent_violation(text: str, box: list[float], orientation: float | None
         # glyph_extent_violation for measured ink unions only.
         vertical = orientation is not None and orientation % 180 != 0
         perpendicular = (box[2] - box[0]) if vertical else (box[3] - box[1])
-        ceiling = max(30.0, perpendicular * 1.7)
+        # Two calibrated ceilings. Handwriting's 1.7 stays for SHORT
+        # texts (< 8 glyphs): a 2-glyph text matching a 1341px band is
+        # the false-match signature (the postcard's stamp, 2026-08-20).
+        # Dense lines (>= 8 glyphs) get 2.6: a letterspaced typewriter
+        # measures ~2.0 advances per glyph height (the Music College
+        # letter, 2026-09-07: 46 px/char on 23 px glyphs — real kraken-
+        # measured ink, real text, refused by the old ceiling). The
+        # nonsense catches survive either way: a 2 px axis, 50 characters
+        # in a sliver.
+        multiplier = 2.6 if glyphs >= 8 else 1.7
+        ceiling = max(30.0, perpendicular * multiplier)
         if px_per_char < 2 or px_per_char > ceiling:
             return (
                 f"{text[:20]!r}: text length {len(text.strip())} wildly out of "

@@ -5,18 +5,14 @@ started. Spike evidence: `geometry-experiments-log.md` §"The
 numbered-strips spike"; live artifacts in /tmp/spike-strips2/
 (unpersisted — the ledger records the findings).
 
-## What this is
-
-The layout stage (TECH-SPEC §16.17) currently asks the VLM for
-coordinates. The spike proved what TRIG (arXiv:2504.04974) measured:
-coordinate generation on text-rich pages is near-hopeless (GPT-4o under
-10% IoU) — and on the Music College letter (adopt-20260813-201004
-page-01/02) the model fabricated boxes in every mode tried: full-page,
-two halves, 100px and 50px drawn grids, drawn-box verification — ~15
-gateway calls, every one refused by the gates. The captured thinking
-shows why: the model reads the page perfectly, then disowns the image
-mid-reasoning ("since I can't see the image") and fabricates uniform
-boxes.
+**The Godolphin correction (2026-09-08, user):** the card's substantial
+message is written at 90° on its left side. The grid read transcribed it
+correctly but NORMALIZED it to upright horizontal boxes — the rotation
+was never detected or handled (only the two left-edge notes got
+orientation 90). The coordinate path therefore fails BOTH page types:
+fabricated boxes on the typed letter, rotation-normalizing on the card.
+Ruling A's threshold assumption is broken; see Open question 1 —
+resolved to grouping for all pages.
 
 The validated replacement: **kraken measures, the VLM reads.**
 
@@ -57,17 +53,26 @@ laptop CPU — see slice 6). Acceptance: on page-01, 768 baselines →
 ~106 strips, deterministic across runs; unit tests pin the merge rule
 and the sliver filter on a synthetic fixture.
 
-### 2. The grouping read replaces the coordinate read
-`segment_page(grid=True)` → `group_segments(...)`: the system prompt
-becomes the grouping prompt (segment definition L3 as negatives + the
-numbered-rectangles contract `{"lines": [{"pieces": [...], "text":
-...}]}`); every fragment index must appear in exactly one group or be
-marked empty (validation, fail-loud). Mode selection stays as today:
-small cards keep the single-pass grid read (the Godolphin serves cleanly
-on it — no tokens spent regressing a working path, L10); portrait
-sheets take strips + grouping. Acceptance: contract tests (deterministic
-prompt, piece validation, duplicate/unknown index refusal) + the
-integration fixture on a synthetic tall page.
+### 2. The grouping read replaces the coordinate read — for ALL pages
+(ruling revised 2026-09-08: the Godolphin card proves the coordinate
+path fails on rotated writing too; there is no working path to
+protect). `segment_page(grid=True)` → `group_segments(...)`: the system
+prompt becomes the grouping prompt (segment definition L3 as negatives
++ the numbered-rectangles contract `{"lines": [{"pieces": [...],
+"text": ...}]}`); every fragment index must appear in exactly one
+group or be marked empty (validation, fail-loud). Acceptance: contract
+tests (deterministic prompt, piece validation, duplicate/unknown index
+refusal) + integration on BOTH fixtures — the typed letter AND the
+Godolphin card with its rotated message correctly oriented.
+
+### 2b. Rotation normalization (new — the Godolphin finding)
+Per-strip clip reads are rotation-normalized: a tall strip (height >
+width) is rotated upright before its read, and the strip's measured
+extent stays the box; the segment's `orientation` records 90/270 (L7
+storage, VR18's upright display). The grouping contract gains the
+segment's reading rotation as a discrete per-group selection. The
+Godolphin card is the acceptance fixture: its 90° message must come
+back as oriented segments with boxes aligned to the vertical writing.
 
 ### 3. Measured boxes from groups
 Each group's box = the ink projection of its y-band (pad ±6px), NOT the
@@ -101,11 +106,6 @@ blocked in August — one support email), GPU-hosted kraken
 Spike Riksarkivet first; fall back to the container. Acceptance: page-01
 baselines from a remote run match the local run's strip clustering.
 
-### 7. Docs + spec
-TECH-SPEC §16.17 rewritten from what landed (the grouping read, the
-measured boxes, the findings loop); the ledger's spike entry linked;
-AGENTS.md routing row for the plan file added when the work starts.
-
 ## Test discipline (every slice)
 
 TDD per `docs/testing-standards.md`: fake-urlopen fakes (never
@@ -113,14 +113,23 @@ monkeypatch), injectable seams, no sleeps. `make test` stays the one
 gate. The saved spike responses are the integration fixtures — the real
 model's behavior pinned without network.
 
-## Open questions (user rulings needed)
+## Open questions — status after the 2026-09-08 walk-through
 
-- Mode selection (slice 2): grouping for ALL pages, or keep the
-  small-card grid path? (Recommended: the aspect threshold as today.)
-- Grouping-call budget: 1 call/page — is the fragment count bounded
-  (cap the strip count; over-cap → page refuses with the count named)?
-- RegionGate vs grouped boxes: bands may overlap in y across columns —
-  does the region rule need the typed-page allowance too?
+- Mode selection: RESOLVED — grouping for ALL pages (ruling revised;
+  the Godolphin card disproved the threshold's assumption). Cursive-
+  portrait validation is slice 2's acceptance.
+- Grouping-call budget: the field's answer to silent omission is
+  decomposition (smaller batches), schema-validated full-coverage
+  responses, and verification rounds (Liao et al. 2024; TRIG 2025) —
+  matching the built design. CONTRACT: batches of ≤50 pieces, every
+  piece accounted per batch, ONE re-ask for omissions. REMAINING
+  RULING: pieces still unaccounted after the re-ask — drop loudly and
+  serve (L10, the loss is named in the run log) or refuse the page
+  (L9, recommended: an unaccountable piece means the process is not
+  good enough).
+- RegionGate vs grouped boxes: still open — bands may overlap in y
+  across columns; the typed-page Gate B allowance may extend here.
+  Decide when the grouping fixture runs against the real gates.
 
 ## Definition of done
 

@@ -265,6 +265,40 @@ def test_group_segments_empty_text_group_means_no_writing(tmp_path: Path) -> Non
     assert dropped == set()
 
 
+def test_group_segments_repairs_a_prose_response(tmp_path: Path) -> None:
+    """A response that narrates past its JSON gets ONE deterministic
+    repair ask restating the contract; the repaired answer serves."""
+    prose = _grouping_response([], [])
+    prose_body = json.loads(prose)
+    prose_body["choices"][0]["message"]["content"] = (
+        "Alright, let's process each piece from 0 to 3. Piece 0: likely the greeting..."
+    )
+    payloads = [json.dumps(prose_body).encode(), _grouping_response([], [0, 1, 2, 3])]
+    seen, urlopen = _urlopen_sequence(payloads)
+
+    groups, dropped, usage = group_segments(_image(tmp_path), _strips(4), tmp_path, urlopen=urlopen, api_key="test-key")
+
+    assert len(seen) == 2
+    assert "no prose before or after" in seen[1]["messages"][1]["content"][1]["text"]
+    assert groups == [] and dropped == set()
+
+
+def test_group_segments_refuses_when_the_repair_also_fails(tmp_path: Path) -> None:
+    """Prose twice: the page refuses — the parse failure is never
+    silently swallowed."""
+    prose_body = {
+        "choices": [{"message": {"content": "still no json here"}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    }
+    payloads = [json.dumps(prose_body).encode(), json.dumps(prose_body).encode()]
+    seen, urlopen = _urlopen_sequence(payloads)
+
+    with pytest.raises(SegmentPageError, match="no JSON"):
+        group_segments(_image(tmp_path), _strips(4), tmp_path, urlopen=urlopen, api_key="test-key")
+
+    assert len(seen) == 2  # bounded: one repair ask
+
+
 def test_group_segments_with_no_strips_refuses(tmp_path: Path) -> None:
     seen, urlopen = _captured_requests(_grouping_response([], []))
     with pytest.raises(SegmentPageError, match="no strips"):

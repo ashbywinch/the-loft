@@ -147,7 +147,7 @@ def _process_page(
         rc = _warn_missing_guess(image.name, vlm_path.name, page_names, wanted)
         return 2 if rc else 0
     try:
-        _layout_one(image, guess_dir, batch, urlopen=urlopen, api_key=api_key, _measure=_measure)
+        _layout_one(image, guess_dir, batch, urlopen=urlopen, api_key=api_key)
         return 0
     except (ValueError, SegmentPageError, VlmError) as exc:
         # the refusal is recorded, not fatal (the per-page pattern) — and
@@ -248,7 +248,7 @@ def _layout_one(
     read_dir = work_dir / batch_id / "layout-read"
     read_dir.mkdir(parents=True, exist_ok=True)
     usages: list[dict[str, Any]] = []
-    strips = measure_strips(image, cache=read_dir / f"{image.stem}.baselines.json", _segment=_measure)
+    strips = measure_strips(image)
     groups, dropped, usage = group_segments(image, strips, read_dir, urlopen=urlopen, api_key=api_key)
     usages.append(usage)
     if dropped:

@@ -1,191 +1,125 @@
-"""The strip measurement stage's contract (tools/strip_measure.py):
-kraken's fragmented baselines cluster into numbered strips by y/x
-overlap — the numbered-strips spike's rules pinned on synthetic
-fixtures (the merge rule, the sliver filter, reading order, and the
-baseline cache that saves the ~32-min/page kraken run)."""
-
-# lucidlint: ignore-file fakefs atomic_write's os.replace + PIL's C encoder need real FS; pyfakefs isn't a dependency
+"""The strip measurement stage's contract (tools/strip_measure.py): the
+row ink profile's line cores — one strip per line of writing, extents
+from each band's own ink, reading order, deterministically. Synthetic
+pages with drawn ink are the fixtures (the measurement is pure image
+processing — no model, no network)."""
 
 from __future__ import annotations
 
-import json
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 from PIL import Image, ImageDraw
 
 from tools.strip_measure import (
-    ROTATED_PASS_DEGREES,
     Extent,
     Strip,
-    baseline_entries,
-    cluster_strips,
     draw_numbered_strips,
-    dual_orientation_entries,
     measure_strips,
 )
 
 
-def test_baseline_entries_take_the_points_extent() -> None:
-    lines: list[dict[str, Any]] = [
-        {"baseline": [[10, 100], [200, 95], [200, 105]]},
-        {"baseline": []},
-        {"other": 1},
-    ]
-    assert baseline_entries(lines) == [Extent(x0=10.0, y0=95.0, x1=200.0, y1=105.0)]
-
-
-def test_fragments_of_one_line_merge() -> None:
-    """Two fragments overlapping strongly in BOTH axes are one band of
-    writing: the strip spans the union of their ink."""
-    strips = cluster_strips([Extent(x0=100, y0=100, x1=400, y1=130), Extent(x0=150, y0=102, x1=700, y1=128)])
-    assert len(strips) == 1
-    assert strips[0].extent.as_box() == [100.0, 100.0, 700.0, 130.0]
-
-
-def test_separate_lines_stay_separate() -> None:
-    strips = cluster_strips([Extent(x0=100, y0=100, x1=700, y1=130), Extent(x0=100, y0=200, x1=700, y1=230)])
-    assert len(strips) == 2
-
-
-def test_chains_merge_transitively() -> None:
-    """a touches b, b touches c, a and c never touch — the chain is one
-    strip (the spike's 'chains merge transitively')."""
-    strips = cluster_strips(
-        [
-            Extent(x0=100, y0=100, x1=280, y1=130),
-            Extent(x0=180, y0=100, x1=360, y1=130),
-            Extent(x0=260, y0=100, x1=440, y1=130),
-        ]
-    )
-    assert len(strips) == 1
-    assert strips[0].extent.as_box() == [100.0, 100.0, 440.0, 130.0]
-
-
-def test_side_by_side_columns_do_not_merge() -> None:
-    """The merge needs overlap in BOTH axes: two columns of one y-band
-    stay separate until a fragment bridges them."""
-    strips = cluster_strips([Extent(x0=100, y0=100, x1=400, y1=130), Extent(x0=500, y0=100, x1=800, y1=130)])
-    assert len(strips) == 2
-
-
-def test_flat_and_vertical_baselines_survive() -> None:
-    """A flat typed baseline (zero height) and a vertical baseline
-    (2px wide — the rotated-message case) are writing, not slivers:
-    only a DEGENERATE point drops."""
-    strips = cluster_strips(
-        [
-            Extent(x0=100, y0=100, x1=700, y1=100),
-            Extent(x0=300, y0=400, x1=302, y1=900),
-        ]
-    )
-    assert [(s.number, s.extent.as_box()) for s in strips] == [
-        (0, [100.0, 100.0, 700.0, 100.0]),
-        (1, [300.0, 400.0, 302.0, 900.0]),
-    ]
-
-
-def test_degenerate_point_baselines_drop() -> None:
-    """A single-point baseline measures nothing — it can neither merge
-    (zero overlap over zero extent) nor survive the sliver filter."""
-    strips = cluster_strips([Extent(x0=50, y0=50, x1=50, y1=50), Extent(x0=100, y0=100, x1=700, y1=130)])
-    assert len(strips) == 1
-
-
-def test_reading_order_and_numbers() -> None:
-    """Strips number 0..n-1 top-to-bottom, left-to-right — whatever
-    order kraken emitted the baselines in."""
-    strips = cluster_strips(
-        [
-            Extent(x0=400, y0=200, x1=800, y1=230),
-            Extent(x0=100, y0=100, x1=300, y1=130),
-            Extent(x0=100, y0=200, x1=300, y1=230),
-        ]
-    )
-    assert [(s.number, s.extent.x0, s.extent.y0) for s in strips] == [
-        (0, 100.0, 100.0),
-        (1, 100.0, 200.0),
-        (2, 400.0, 200.0),
-    ]
-
-
-def _fake_segment(runs: list[str]) -> Callable[[Path], list[dict[str, Any]]]:
-    # lucidlint: ignore record-shape mirrors the production seam's wire type — a fake must match the real contract
-    def fake_segment(img: Path) -> list[dict[str, Any]]:
-        runs.append(img.name)
-        return [{"baseline": [[10, 100], [200, 100]]}]
-
-    return fake_segment
-
-
-def test_measure_strips_caches_the_expensive_run(tmp_path: Path) -> None:
-    """The kraken runs happen ONCE per image content (both orientations):
-    the cache is keyed by the image's sha, a re-run reads it, and
-    no-cache callers just run."""
-    image = tmp_path / "page.png"
-    Image.new("L", (1000, 500), 255).save(image)
-    cache = tmp_path / "baselines.json"
-    runs: list[str] = []
-    segment = _fake_segment(runs)
-
-    first = measure_strips(image, cache, _segment=segment)
-    second = measure_strips(image, cache, _segment=segment)
-    no_cache = measure_strips(image, None, _segment=segment)
-
-    # miss runs both orientations, hit runs nothing, no-cache runs both
-    assert runs == ["page.png", "rotated-quarter.jpg", "page.png", "rotated-quarter.jpg"]
-    assert first == second == no_cache
-    saved = json.loads(cache.read_text())
-    assert saved["input_sha"]  # the cache is keyed by content
-    assert saved["entries"]  # the cache stores the oriented measurements
-
-
-def test_measure_strips_remeasures_when_the_image_changes(tmp_path: Path) -> None:
-    """A cache from different image bytes never serves — the sha is the
-    validity check (the HTR stage's marker rule)."""
-    image = tmp_path / "page.png"
-    Image.new("L", (1000, 500), 255).save(image)
-    cache = tmp_path / "baselines.json"
-    runs: list[str] = []
-    segment = _fake_segment(runs)
-
-    measure_strips(image, cache, _segment=segment)
-    image.write_bytes(b"v2")  # noqa: F841 — the bytes change under the same path
-    Image.new("L", (1000, 600), 255).save(image)
-    measure_strips(image, cache, _segment=segment)
-
-    assert runs.count("page.png") == 2  # both contents measured once each
-    assert json.loads(cache.read_text())["entries"]  # the cache now serves v2
-
-
-def test_inkless_phantom_strips_drop(tmp_path: Path) -> None:
-    """The rotated pass can hallucinate baselines over blank card (the
-    page-01 phantom flood, 2026-09-08) — a strip whose band holds no ink
-    drops at measurement, on both passes' output."""
-    from PIL import Image, ImageDraw
-
+def _page(tmp_path: Path, lines: list[tuple[int, int, int, int]]) -> Path:
+    """A white 1000x800 page with the given ink rectangles drawn on it."""
     page = tmp_path / "page.png"
-    img = Image.new("L", (1000, 800), 255)  # white, except one real line
-    ImageDraw.Draw(img).rectangle((100, 100, 700, 140), fill=0)
+    img = Image.new("L", (1000, 800), 255)
+    draw = ImageDraw.Draw(img)
+    for box in lines:
+        draw.rectangle(box, fill=0)
     img.save(page)
-    real = [
-        {"baseline": [[100, 100], [400, 120], [700, 140]]},  # native, real ink
-    ]
-    phantoms = [
-        {"baseline": [[800, 500], [900, 700]]},  # rotated pass, blank card
-        {"baseline": [[850, 300], [950, 460]]},
-    ]
+    return page
 
-    def fake_run(img_path: Path) -> list[dict[str, Any]]:
-        if Path(img_path).name == "rotated-quarter.jpg":
-            return phantoms
-        return real
 
-    strips = measure_strips(page, None, _segment=fake_run)
+def test_one_strip_per_drawn_line(tmp_path: Path) -> None:
+    """Three separated lines of ink measure to three strips: each strip's
+    extent is its line's own ink, numbered in reading order."""
+    page = _page(tmp_path, [(100, 100, 700, 140), (100, 200, 650, 240), (150, 300, 700, 340)])
 
-    assert len(strips) == 1  # only the inked strip survives
-    assert strips[0].extent.as_box() == [100.0, 100.0, 700.0, 140.0]
+    strips = measure_strips(page)
+
+    assert len(strips) == 3
+    assert [s.number for s in strips] == [0, 1, 2]
+    # PIL rectangles are endpoint-inclusive; the band's y is the ink's rows
+    assert strips[0].as_box() == [100.0, 100.0, 701.0, 141.0]
+    assert strips[1].as_box() == [100.0, 200.0, 651.0, 241.0]
+    assert strips[2].as_box() == [150.0, 300.0, 701.0, 341.0]
+
+
+def test_descender_bridge_merges_two_lines(tmp_path: Path) -> None:
+    """Two lines whose ink rows touch through a bridging column measure
+    as ONE band — the projection cannot separate them, and inventing a
+    split would be a guess, not a measurement."""
+    page = tmp_path / "page.png"
+    img = Image.new("L", (1000, 800), 255)
+    draw = ImageDraw.Draw(img)
+    draw.rectangle((100, 100, 400, 140), fill=0)
+    draw.rectangle((100, 143, 400, 180), fill=0)  # 2px white gap — under CORE_MERGE_PX
+    draw.rectangle((420, 120, 424, 160), fill=0)  # the descender bridging both
+    img.save(page)
+
+    strips = measure_strips(page)
+
+    assert len(strips) == 1
+    assert strips[0].extent.as_box() == [100.0, 100.0, 425.0, 181.0]
+
+
+def test_separated_lines_never_merge(tmp_path: Path) -> None:
+    """A real inter-line gap (more than CORE_MERGE_PX of white) keeps
+    two lines as two strips, even when their x-ranges overlap."""
+    page = _page(tmp_path, [(100, 100, 700, 140), (100, 160, 700, 200)])
+
+    strips = measure_strips(page)
+
+    assert len(strips) == 2
+    assert strips[0].extent.y1 < strips[1].extent.y0
+
+
+def test_page_edge_shading_does_not_measure_as_a_line(tmp_path: Path) -> None:
+    """A dark band on the page's last rows is scan/binding edge shading,
+    not writing — it drops instead of measuring as a full-width line
+    (page-02, 2026-09-09: the edge band refused the page)."""
+    page = tmp_path / "page.png"
+    img = Image.new("L", (1000, 800), 255)
+    draw = ImageDraw.Draw(img)
+    draw.rectangle((100, 100, 700, 140), fill=0)  # the one real line
+    draw.rectangle((100, 798, 900, 799), fill=0)  # the bottom edge shading
+    img.save(page)
+
+    strips = measure_strips(page)
+
+    assert len(strips) == 1
+    assert strips[0].extent.y1 < 300
+
+
+def test_blank_page_measures_nothing(tmp_path: Path) -> None:
+    page = tmp_path / "page.png"
+    Image.new("L", (1000, 800), 255).save(page)
+
+    assert measure_strips(page) == []
+
+
+def test_faint_rows_are_not_line_cores(tmp_path: Path) -> None:
+    """A row of light-gray (above the ink threshold) is not writing —
+    the floor keeps the paper's own texture from becoming strips."""
+    page = tmp_path / "page.png"
+    img = Image.new("L", (1000, 800), 255)
+    draw = ImageDraw.Draw(img)
+    draw.rectangle((100, 100, 700, 140), fill=0)  # the one real line
+    draw.rectangle((100, 300, 700, 340), fill=200)  # light gray, not ink
+    img.save(page)
+
+    strips = measure_strips(page)
+
+    assert len(strips) == 1
+    assert strips[0].extent.y1 < 300
+
+
+def test_strip_properties_delegate_to_the_extent() -> None:
+    strip = Strip(number=3, extent=Extent(x0=10.0, y0=20.0, x1=110.0, y1=40.0))
+
+    assert strip.width == 100.0
+    assert strip.height == 20.0
+    assert strip.orientation == 0
+    assert strip.as_box() == [10.0, 20.0, 110.0, 40.0]
 
 
 def test_draw_numbered_strips_annotates_onto_a_new_image(tmp_path: Path) -> None:
@@ -196,49 +130,7 @@ def test_draw_numbered_strips_annotates_onto_a_new_image(tmp_path: Path) -> None
     before = page.read_bytes()
     out = tmp_path / "strips.png"
 
-    draw_numbered_strips(page, [Strip(number=0, extent=Extent(x0=100.0, y0=100.0, x1=700.0, y1=130.0))], out)
+    draw_numbered_strips(page, [Strip(number=0, extent=Extent(x0=100.0, y0=100.0, x1=700.0, y1=140.0))], out)
 
     assert Image.open(out).size == (1000, 800)
     assert page.read_bytes() == before
-
-
-def test_dual_orientation_measures_both_frames(tmp_path: Path) -> None:
-    """The rotated pass's baselines inverse-map into the page frame and
-    carry the rotated reading rotation: a wide-flat band in the CCW
-    frame lands tall-narrow at the page's edge (the vertical message)."""
-    page = tmp_path / "page.png"
-    img = Image.new("L", (1000, 500), 255)
-    ImageDraw.Draw(img).rectangle((895, 100, 899, 400), fill=0)  # ink where the entry maps home
-    img.save(page)
-    calls: list[str] = []
-
-    # lucidlint: ignore record-shape mirrors the production seam's wire type — a fake must match the real contract
-    def fake_run(path: Path) -> list[dict[str, Any]]:
-        calls.append(path.name)
-        if path.name == "rotated-quarter.jpg":
-            return [{"baseline": [[100, 100], [400, 100], [400, 104]]}]  # wide-flat in the rotated frame
-        return [{"baseline": [[10, 20], [300, 22]]}]  # the native pass's line
-
-    entries = dual_orientation_entries(page, fake_run)
-
-    assert calls == ["page.png", "rotated-quarter.jpg"]
-    assert len(entries) == 2
-    rotated_back = next(e for e in entries if e.orientation == ROTATED_PASS_DEGREES)
-    # remap 270: (x, y) -> (ow-1-y, x) — (100,100)->(899,100), (400,104)->(895,400)
-    assert rotated_back.as_box() == [895.0, 100.0, 899.0, 400.0]
-
-
-def test_cluster_orientation_prefers_the_native_pass() -> None:
-    """A mixed cluster (native + rotated measurements of one physical
-    line) reads orientation 0; a rotated-only cluster carries the
-    rotated rotation — the group's model-reported orientation stays the
-    reading authority."""
-    strips = cluster_strips(
-        [
-            Extent(x0=100, y0=100, x1=700, y1=104, orientation=0),
-            Extent(x0=100, y0=100, x1=700, y1=103, orientation=ROTATED_PASS_DEGREES),
-            Extent(x0=300, y0=400, x1=302, y1=900, orientation=ROTATED_PASS_DEGREES),
-        ]
-    )
-    assert strips[0].orientation == 0
-    assert strips[1].orientation == ROTATED_PASS_DEGREES

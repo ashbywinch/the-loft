@@ -94,7 +94,12 @@ def _grouping_response(lines: list[dict[str, Any]], empty: list[int]) -> bytes:
         # lucidlint: ignore record-shape the chat wire shape's fixed message keys
         # lucidlint: ignore record-shape the grouped contract's own wire payload
         "choices": [{"message": {"content": json.dumps({"lines": lines, "empty": empty})}, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        "usage": {
+            "prompt_tokens": 10,
+            "completion_tokens": 5,
+            "total_tokens": 15,
+            "prompt_tokens_details": {"cached_tokens": 4},
+        },
     }
     return json.dumps(body).encode()
 
@@ -150,6 +155,7 @@ def test_group_segments_partitions_pieces_into_lines(tmp_path: Path) -> None:
     ]
     assert dropped == set()
     assert usage["total_tokens"] == 15  # one grouping call's usage, carried through
+    assert "prompt_tokens_details" not in usage  # nested gateway details don't accumulate
     system = seen[0]["messages"][0]["content"]
     assert "MEASURED rectangles" in system and '"empty"' in system
     user = seen[0]["messages"][1]["content"]

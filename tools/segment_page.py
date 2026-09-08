@@ -223,11 +223,13 @@ def _validated_grouping(answer: dict[str, Any], owned: set[int]) -> tuple[list[d
 
 def _merge_usage(total: dict[str, Any], usage: dict[str, Any]) -> None:
     """Fold one call's usage into the run's total — token counts sum,
-    the reasoning trace concatenates (the two-pass pattern)."""
+    the reasoning trace concatenates (the two-pass pattern). Nested
+    detail objects (the gateway's prompt_tokens_details) don't
+    accumulate — the three top-level token counts are the cost."""
     for key, value in usage.items():
         if isinstance(value, str):
             total[key] = total.get(key, "") + value
-        else:
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
             total[key] = total.get(key, 0) + value
 
 

@@ -918,3 +918,59 @@ line at the view's top) + the no-range zoom test now close the gap.
 jsdom's layout limits forced a HTMLElement.prototype offsetTop stub
 (Element.prototype is shadowed by jsdom; the renderTx re-creates the
 line elements, so per-element stubs die with them).
+
+## The numbered-strips spike: kraken measures, the VLM reads (2026-09-07/08)
+
+The Music College letter (page-01/02, dense two-column typed) refused in
+every coordinate-generation mode tried across one session: full-page
+normalized, two overlapping halves, a 100px and a 50px labeled coordinate
+grid drawn on the page, and a drawn-boxes verification loop — ~15 gateway
+calls. The gates refused each attempt; the recorded thinking explains
+why: the model READ the page perfectly and then disowned the image
+mid-reasoning ("since I can't see the image") and fabricated uniform
+boxes ([200, y, 800, y+20], 30 times). With the boxes drawn back and
+checker findings attached, it fixed 2 of 3 flagged segments but could
+not place the last.
+
+The research agrees this is the wall, not a gap in our prompting: TRIG
+(ICLR 2025, arXiv:2504.04974) measured OCR-free box generation on
+text-rich pages under 10% IoU even for GPT-4o, and flipped the task into
+SELECTION — draw indexed boxes, the model picks (Set-of-Mark, 2023,
+arXiv:2310.11441). Liao et al. 2024 (arXiv:2404.06510): external
+verification feedback gains 4-15 points; self-correction alone does not.
+
+The spike that worked (all pieces already in the repo):
+1. kraken 7 + orli (tools/htr.py — the HTR stage's own line detector,
+   ~200k pages of training) measures the line baselines: 768 raw on
+   page-01, clustered to 106 strips (mechanical: y- and x-overlap).
+2. ONE VLM call transcribes per strip number — the segments are the
+   strips, so no coordinates are ever generated. 30 verbatim lines in
+   reading order.
+3. Wide strips: the model itself rules single-column vs two-column
+   (it overruled the spike's mechanical gutter-split hypothesis —
+   correctly). Gutter questions ride a drawn grid.
+4. The verification pass carries the checker's own findings as the
+   error messages (CHECK FAILED + the gate's measurement) — 3
+   violations fell to 1.
+
+Two open items before this serves page-01:
+- Gate B's ceiling now accepts letterspaced typing (2.6 advances per
+  glyph height for dense lines, 8+ glyphs; `e699338`), but the
+  RegionGate overlap class remains: kraken's two-column-section
+  baselines merge both columns into one strip, and one transcription
+  per merged strip loses a column's line. Fix sketched: gutter split
+  with the model's read + per-half re-reads.
+- The seam segment ("questions) The English Concert…") survived two
+  verification rounds: its true extent is fragmented across the column
+  seam and the clusterer does not merge cross-column fragments.
+
+Also recorded: kraken segmentation is ~32 min/page on this laptop
+(i5-8250U CPU) — the remote-hosting question (Riksarkivet's hosted HTR,
+Transkribus layout API, GPU-hosted kraken) is open and now load-bearing.
+And the model's thinking (~4.5k reasoning tokens per call, previously
+discarded) is captured in the usage and lands in the run log on a
+refusal (`665917d`) — tonight's diagnosis came from reading it.
+
+Spike artifacts: /tmp/spike-strips/ and /tmp/spike-strips2/
+(unpersisted); the pipeline pieces are on the
+pr/orientation-validation branch through `665917d`.

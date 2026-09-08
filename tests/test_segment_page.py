@@ -83,7 +83,7 @@ def _captured_requests(payload: bytes):
 def _strips(count: int) -> list[Strip]:
     """count flat bands in reading order — the measured input."""
     return [
-        Strip(number=i, extent=Extent(x0=100.0, y0=100.0 + 40 * i, x1=700.0, y1=104.0 + 40 * i)) for i in range(count)
+        Strip(number=i, extent=Extent(x0=100.0, y0=100.0 + 14 * i, x1=700.0, y1=104.0 + 14 * i)) for i in range(count)
     ]
 
 

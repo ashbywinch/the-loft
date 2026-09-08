@@ -19,6 +19,7 @@ read off that ruler."""
 
 from __future__ import annotations
 
+# lucidlint: ignore-file record-shape the stage's wire is the house group/segment dicts; the class lands in slice 5
 import json
 import sys
 import tempfile
@@ -30,6 +31,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from tools.box import overlap
 from tools.ink import union
+from tools.layout import Layout
 from tools.strip_measure import Strip, draw_numbered_strips
 from tools.text import normalize
 from tools.vlm import DEFAULT_BASE_URL, transcribe_image_vlm
@@ -596,8 +598,6 @@ def _grouping_user_text(start: int, stop: int, total: int) -> str:
     )
 
 
-# lucidlint: ignore record-shape the model-response wire dict is the file's seam type — the class lands in slice 3
-# lucidlint: ignore record-shape the groups are the established segment shape until the slice-3 assembly classes them
 def _validated_grouping(answer: dict[str, Any], owned: set[int]) -> tuple[list[dict[str, Any]], set[int], set[int]]:
     """The batch's groups, its empty verdict, and the unaccounted
     pieces. A contract violation refuses (fail-loud): an unknown or
@@ -637,7 +637,6 @@ def _validated_grouping(answer: dict[str, Any], owned: set[int]) -> tuple[list[d
             if piece in claimed or piece in empties:
                 raise SegmentPageError(f"piece {piece} appears in more than one place: {entry!r}")
             claimed.add(piece)
-        # lucidlint: ignore record-shape the layout stage's established segment shape; the class lands in slice 3
         groups.append({"pieces": pieces, "text": text, "orientation": orientation})
     lines = []
     for group in groups:
@@ -648,8 +647,6 @@ def _validated_grouping(answer: dict[str, Any], owned: set[int]) -> tuple[list[d
     return lines, empties, owned - claimed - empties
 
 
-# lucidlint: ignore record-shape the usage dict rides transcribe_image_vlm's established return shape
-# lucidlint: ignore record-shape the run total accumulates that same usage shape across calls
 def _merge_usage(total: dict[str, Any], usage: dict[str, Any]) -> None:
     """Fold one call's usage into the run's total — token counts sum,
     the reasoning trace concatenates (the two-pass pattern)."""
@@ -660,7 +657,7 @@ def _merge_usage(total: dict[str, Any], usage: dict[str, Any]) -> None:
             total[key] = total.get(key, 0) + value
 
 
-# lucidlint: ignore record-shape the group list is the established segment seam — the class lands in slice 3
+# lucidlint: ignore latent-class these four share the store's group/segment dict contract; the class lands in slice 5
 def group_segments(  # lucidlint: ignore long-param-list one required argument (image) plus defaulted call options
     image: Path,
     strips: list[Strip],
@@ -693,7 +690,6 @@ def group_segments(  # lucidlint: ignore long-param-list one required argument (
         owned = set(range(start, stop))
         batch_user = _grouping_user_text(start, stop, len(strips))
 
-        # lucidlint: ignore record-shape the model-response wire seam's shape, parsed once per call
         def read_grouping(user_text: str) -> tuple[dict[str, Any], dict[str, Any]]:
             text, usage = transcribe_image_vlm(
                 annotated,
@@ -728,8 +724,6 @@ def group_segments(  # lucidlint: ignore long-param-list one required argument (
     return groups, dropped, usage_total
 
 
-# lucidlint: ignore record-shape the groups are the read's own output shape, fed back whole
-# lucidlint: ignore record-shape the segments are the layout stage's established line shape
 def measure_group_boxes(image: Path, groups: list[dict[str, Any]], strips: list[Strip]) -> list[dict[str, Any]]:
     """Each group's box = the ink projection of its band (pad ±6px) —
     NOT the union of its listed pieces (page-01's read under-listed a
@@ -743,13 +737,210 @@ def measure_group_boxes(image: Path, groups: list[dict[str, Any]], strips: list[
         pieces = [by_number[piece] for piece in group["pieces"]]
         band = union([piece.as_box() for piece in pieces])
         box = _tighten_to_ink(band, image, pad=6)
-        # lucidlint: ignore record-shape the established segment shape — the class lands with the slice-5 assembly
         segments.append(
             {
                 "label": "line",
                 "text": str(group["text"]),
                 "orientation": int(group["orientation"]),
                 "box": box,
+                "pieces": list(group["pieces"]),
             }
         )
     return segments
+
+
+GROUPED_VERIFY_ROUNDS = 2  # the bounded loop: converge within two rounds or refuse (slice 4)
+
+_GROUPED_VERIFY_FORMAT = (
+    'Return ONLY JSON: {"corrections": [{"index": 2, "pieces": [12, 13], '
+    '"text": "the segment verbatim", "orientation": 0}], "not_present": []} '
+    "— corrections ONLY for segments whose entry carries a CHECK FAILED "
+    "finding; pieces are the numbered green rectangles the segment "
+    "actually covers; not_present lists indexes whose rectangle sits on "
+    "blank paper. Every other segment stays as reported."
+)
+
+_GROUPED_VERIFY_SYSTEM = (
+    "You are checking your own grouping of a scanned family document's "
+    "measured strips. The image has the reported segments' rectangles "
+    "drawn on it in red and numbered — the number is that segment's "
+    "index. A segment is the longest run of text on a single line that "
+    "belongs together: it never crosses a column boundary, never "
+    "includes a neighboring written line, never merges a margin note "
+    "with the body line beside it, never mixes hands. Segments whose "
+    "entry carries a CHECK FAILED finding were measured by an automated "
+    "checker: the finding names exactly what is wrong — read it, "
+    "re-group that segment's pieces and re-transcribe it accordingly. "
+    "The rectangles themselves are measured data: fix the grouping and "
+    "the words, never invent a box. " + _GROUPED_VERIFY_FORMAT
+)
+
+
+def build_grouped_verify_prompt(segments: list[dict[str, Any]], errors: dict[int, str]) -> str:
+    """The verification round's user prompt — deterministic from the
+    grouped segments and the checker's findings (build_verify_prompt's
+    contract, in the grouping contract's pieces-and-text terms)."""
+    listed = []
+    for i, segment in enumerate(segments):
+        entry = f"- index {i}: text {str(segment.get('text', ''))!r}, pieces {segment.get('pieces', [])}"
+        if i in errors:
+            entry += f"\n  CHECK FAILED: {errors[i]}"
+        listed.append(entry)
+    findings = (
+        f"\n{len(errors)} of them carry CHECK FAILED findings — those are gate measurements, proven wrong."
+        if errors
+        else ""
+    )
+    return "Your grouped segments:\n" + "\n".join(listed) + findings
+
+
+def verify_grouped_segments(  # lucidlint: ignore long-param-list one required argument plus defaulted call options
+    image: Path,
+    strips: list[Strip],
+    segments: list[dict[str, Any]],
+    work_dir: Path,
+    *,
+    findings: dict[int, str],
+    model: str = "dynamic/image",
+    base_url: str = DEFAULT_BASE_URL,
+    api_key: str | None = None,
+    max_tokens: int = 64000,
+    urlopen: Callable[..., Any] | None = None,
+) -> tuple[dict[int, dict[str, Any]], set[int], dict[str, Any]]:
+    """ONE bounded verification round (slice 4): the reported segments'
+    rectangles drawn on the page in red and numbered, the checker's
+    CHECK FAILED findings attached, and the flagged segments re-read in
+    the grouping contract — corrected pieces and words, never a
+    generated box. Returns ({index: corrected group}, not-present
+    indexes, token usage); a contract violation raises."""
+    annotated = work_dir / "verify.jpg"
+    _draw_reported_boxes(image, segments, annotated)
+    text, usage = transcribe_image_vlm(
+        annotated,
+        model=model,
+        system=_GROUPED_VERIFY_SYSTEM,
+        user_text=build_grouped_verify_prompt(segments, findings),
+        base_url=base_url,
+        api_key=api_key,
+        max_tokens=max_tokens,
+        urlopen=urlopen,
+    )
+    answer = _parse_json_object(text, "verification response")
+    by_number = {strip.number for strip in strips}
+    corrections: dict[int, dict[str, Any]] = {}
+    dropped: set[int] = set()
+    raw = answer.get("corrections", [])
+    if not isinstance(raw, list):
+        raise SegmentPageError(f"verification 'corrections' is not a list: {raw!r}")
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise SegmentPageError(f"verification correction is not an object: {entry!r}")
+        index = _segment_index(entry.get("index"))
+        if not 0 <= index < len(segments):
+            raise SegmentPageError(f"verification index {index} is out of range")
+        pieces_raw = entry.get("pieces")
+        if not isinstance(pieces_raw, list) or not pieces_raw:
+            raise SegmentPageError(f"a correction has no pieces: {entry!r}")
+        piece_numbers = []
+        for piece in pieces_raw:
+            if isinstance(piece, bool) or not isinstance(piece, (int, float)) or int(piece) not in by_number:
+                raise SegmentPageError(f"correction names unknown piece {piece!r}")
+            piece_numbers.append(int(piece))
+        corrected_text = str(entry.get("text", "")).strip()
+        if not corrected_text:
+            raise SegmentPageError(f"a correction has no text: {entry!r}")
+        orientation = int(entry.get("orientation", 0) or 0)
+        if orientation not in _ORIENTATIONS:
+            raise SegmentPageError(f"correction orientation {orientation} is not 0/90/180/270: {entry!r}")
+        if index in corrections or index in dropped:
+            raise SegmentPageError(f"segment {index} is corrected more than once: {entry!r}")
+        corrections[index] = {"pieces": piece_numbers, "text": corrected_text, "orientation": orientation}
+    raw_not_present = answer.get("not_present", [])
+    if not isinstance(raw_not_present, list):
+        raise SegmentPageError(f"verification 'not_present' is not a list: {raw_not_present!r}")
+    for value in raw_not_present:
+        index = _segment_index(value)
+        if not 0 <= index < len(segments):
+            raise SegmentPageError(f"verification index {index} is out of range")
+        if index in corrections:
+            raise SegmentPageError(f"segment {index} is both corrected and not present: {value!r}")
+        dropped.add(index)
+    return corrections, dropped, usage
+
+
+def _grouped_layout(image: Path, segments: list[dict[str, Any]]) -> Layout:
+    """The loop's working layout: the Layout the pipeline stores —
+    indexed lines the findings map keys on, box_source marking the
+    grouped provenance."""
+    with Image.open(image) as im:
+        width, height = im.size
+    lines = [
+        {
+            "index": index,
+            "text": segment["text"],
+            "box": segment["box"],
+            "conf": 1.0,
+            "words": [],
+            "orientation": segment["orientation"],
+            "box_source": "grouped-strips",
+        }
+        for index, segment in enumerate(segments)
+    ]
+    return Layout("", width, height, lines, [])
+
+
+# lucidlint: ignore latent-class the loop rebuilds from image, groups, segments per round — context object is slice 5's
+def converge_grouped_layout(  # lucidlint: ignore long-param-list the loop's inputs are the read stage's own products
+    image: Path,
+    strips: list[Strip],
+    groups: list[dict[str, Any]],
+    segments: list[dict[str, Any]],
+    work_dir: Path,
+    *,
+    findings_fn: Callable[[Layout, list[str]], dict[int, str]],
+    model: str = "dynamic/image",
+    base_url: str = DEFAULT_BASE_URL,
+    api_key: str | None = None,
+    max_tokens: int = 64000,
+    urlopen: Callable[..., Any] | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """The bounded findings loop (slice 4): the gates run on the grouped
+    layout, violations map to per-segment findings, and a verification
+    round re-reads with the checker's measurements attached. Still
+    violated after GROUPED_VERIFY_ROUNDS, the page refuses honestly —
+    SegmentPageError names the surviving violations. Returns (final
+    segments, token usage)."""
+    usage_total: dict[str, Any] = {}
+    layout = _grouped_layout(image, segments)
+    for _round in range(GROUPED_VERIFY_ROUNDS):
+        violations = layout.validate()
+        if not violations:
+            return segments, usage_total
+        findings = findings_fn(layout, violations)
+        corrections, dropped, usage = verify_grouped_segments(
+            image,
+            strips,
+            segments,
+            work_dir,
+            findings=findings,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            urlopen=urlopen,
+        )
+        _merge_usage(usage_total, usage)
+        for index in sorted(dropped, reverse=True):
+            del groups[index]
+            del segments[index]
+        for index, group in corrections.items():
+            groups[index] = group
+        segments = measure_group_boxes(image, groups, strips)
+        layout = _grouped_layout(image, segments)
+    violations = layout.validate()
+    if violations:
+        raise SegmentPageError(
+            f"the grouped layout still fails the gates after "
+            f"{GROUPED_VERIFY_ROUNDS} verification rounds: {violations[:3]}"
+        )
+    return segments, usage_total

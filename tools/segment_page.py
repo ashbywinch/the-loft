@@ -239,11 +239,10 @@ def group_segments(  # lucidlint: ignore long-param-list one required argument (
     strips: list[Strip],
     work_dir: Path,
     *,
-    model: str = "primary",
+    model: str = "dynamic/image",
     base_url: str = DEFAULT_BASE_URL,
     api_key: str | None = None,
-    max_tokens: int = 16384,
-    timeout: float = 1800.0,
+    max_tokens: int = 64000,
     urlopen: Callable[..., Any] | None = None,
 ) -> tuple[list[dict[str, Any]], set[int], dict[str, Any]]:
     """The grouping read: the measured strips drawn numbered on the
@@ -285,7 +284,6 @@ def group_segments(  # lucidlint: ignore long-param-list one required argument (
                 base_url=base_url,
                 api_key=api_key,
                 max_tokens=max_tokens,
-                timeout=timeout,
                 urlopen=urlopen,
             )
             _merge_usage(usage_total, usage)
@@ -390,11 +388,10 @@ def verify_grouped_segments(  # lucidlint: ignore long-param-list one required a
     work_dir: Path,
     *,
     findings: dict[int, str],
-    model: str = "primary",
+    model: str = "dynamic/image",
     base_url: str = DEFAULT_BASE_URL,
     api_key: str | None = None,
     max_tokens: int = 64000,
-    timeout: float = 1800.0,
     urlopen: Callable[..., Any] | None = None,
 ) -> tuple[dict[int, dict[str, Any]], set[int], dict[str, Any]]:
     """ONE bounded verification round (slice 4): the reported segments'
@@ -488,11 +485,10 @@ def converge_grouped_layout(  # lucidlint: ignore long-param-list the loop's inp
     work_dir: Path,
     *,
     findings_fn: Callable[[Layout, list[str]], dict[int, str]],
-    model: str = "primary",
+    model: str = "dynamic/image",
     base_url: str = DEFAULT_BASE_URL,
     api_key: str | None = None,
     max_tokens: int = 64000,
-    timeout: float = 1800.0,
     urlopen: Callable[..., Any] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """The bounded findings loop (slice 4): the gates run on the grouped
@@ -518,7 +514,6 @@ def converge_grouped_layout(  # lucidlint: ignore long-param-list the loop's inp
             base_url=base_url,
             api_key=api_key,
             max_tokens=max_tokens,
-            timeout=timeout,
             urlopen=urlopen,
         )
         _merge_usage(usage_total, usage)

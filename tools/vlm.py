@@ -271,7 +271,7 @@ def _drop_degenerate_boxes(boxes: dict[int, list[float]]) -> dict[int, list[floa
 def transcribe_image_vlm(
     image: Path,
     *,
-    model: str = "primary",
+    model: str = "dynamic/image",
     system: str = VLM_SYSTEM,
     user_text: str | None = None,
     base_url: str = DEFAULT_BASE_URL,

@@ -58,6 +58,7 @@ from tools.vlm import VlmError
 _BOUNDS_EPSILON = 4.0
 
 
+# lucidlint: ignore long-param-list the batch tuple is the stage's context group; the call options ride beside it
 def run_batch(
     batch_id: str,
     page_names: list[str] | None,
@@ -128,6 +129,7 @@ def _missing_guesses(guess_dir: Path, pages: list[Path], outcomes: list[int]) ->
     ]
 
 
+# lucidlint: ignore long-param-list the batch tuple is the stage's context group; the call options ride beside it
 def _process_page(
     image: Path,
     guess_dir: Path,
@@ -231,6 +233,7 @@ def gate_findings(layout: Layout, violations: list[str]) -> dict[int, str]:
     return findings
 
 
+# lucidlint: ignore long-param-list the batch tuple is the stage's context group; the call options ride beside it
 def _layout_one(
     image: Path,
     guess_dir: Path,

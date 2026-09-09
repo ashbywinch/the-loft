@@ -172,6 +172,34 @@ def _grouping_user_text(start: int, stop: int, total: int) -> str:
     )
 
 
+def _grouping_entry(
+    entry: Any,
+    owned: set[int],
+    piece_index: Callable[[Any], int],
+    claimed: set[int],
+    empties: set[int],
+) -> dict[str, Any]:
+    """One grouping entry, validated against the batch: pieces known and
+    unclaimed, text present or empty (the no-writing verdict), the
+    orientation inside the set. Mutates `claimed` — pieces it accepts are
+    claimed. Raises SegmentPageError on any contract violation."""
+    if not isinstance(entry, dict):
+        raise SegmentPageError(f"grouping entry is not an object: {entry!r}")
+    pieces_raw = entry.get("pieces")
+    if not isinstance(pieces_raw, list) or not pieces_raw:
+        raise SegmentPageError(f"a grouping entry has no pieces: {entry!r}")
+    pieces = [piece_index(p) for p in pieces_raw]
+    text = str(entry.get("text", "")).strip()
+    orientation = int(entry.get("orientation", 0) or 0)
+    if orientation not in _ORIENTATIONS:
+        raise SegmentPageError(f"grouping orientation {orientation} is not 0/90/180/270: {entry!r}")
+    for piece in pieces:
+        if piece in claimed or piece in empties:
+            raise SegmentPageError(f"piece {piece} appears in more than one place: {entry!r}")
+        claimed.add(piece)
+    return {"pieces": pieces, "text": text, "orientation": orientation}
+
+
 def _validated_grouping(answer: dict[str, Any], owned: set[int]) -> tuple[list[dict[str, Any]], set[int], set[int]]:
     """The batch's groups, its empty verdict, and the unaccounted
     pieces. A contract violation refuses (fail-loud): an unknown or
@@ -195,23 +223,7 @@ def _validated_grouping(answer: dict[str, Any], owned: set[int]) -> tuple[list[d
         raise SegmentPageError(f"grouping 'empty' is not a list: {raw_empty!r}")
     empties = {piece_index(p) for p in raw_empty}
     claimed: set[int] = set()
-    groups: list[dict[str, Any]] = []
-    for entry in raw_lines:
-        if not isinstance(entry, dict):
-            raise SegmentPageError(f"grouping entry is not an object: {entry!r}")
-        pieces_raw = entry.get("pieces")
-        if not isinstance(pieces_raw, list) or not pieces_raw:
-            raise SegmentPageError(f"a grouping entry has no pieces: {entry!r}")
-        pieces = [piece_index(p) for p in pieces_raw]
-        text = str(entry.get("text", "")).strip()
-        orientation = int(entry.get("orientation", 0) or 0)
-        if orientation not in _ORIENTATIONS:
-            raise SegmentPageError(f"grouping orientation {orientation} is not 0/90/180/270: {entry!r}")
-        for piece in pieces:
-            if piece in claimed or piece in empties:
-                raise SegmentPageError(f"piece {piece} appears in more than one place: {entry!r}")
-            claimed.add(piece)
-        groups.append({"pieces": pieces, "text": text, "orientation": orientation})
+    groups = [_grouping_entry(entry, owned, piece_index, claimed, empties) for entry in raw_lines]
     lines = []
     for group in groups:
         if group["text"]:
@@ -233,7 +245,6 @@ def _merge_usage(total: dict[str, Any], usage: dict[str, Any]) -> None:
             total[key] = total.get(key, 0) + value
 
 
-# lucidlint: ignore latent-class these four share the store's group/segment dict contract; the class lands in slice 5
 def group_segments(  # lucidlint: ignore long-param-list one required argument (image) plus defaulted call options
     image: Path,
     strips: list[Strip],
@@ -333,7 +344,6 @@ def measure_group_boxes(image: Path, groups: list[dict[str, Any]], strips: list[
         pieces = [by_number[piece] for piece in group["pieces"]]
         band = union([piece.as_box() for piece in pieces])
         box = _tighten_to_ink(band, image, pad=6)
-        # lucidlint: ignore record-shape the stage's wire is the established group/segment dicts
         segments.append(
             {
                 "label": "line",
@@ -392,6 +402,87 @@ def build_grouped_verify_prompt(segments: list[dict[str, Any]], errors: dict[int
     return "Your grouped segments:\n" + "\n".join(listed) + findings
 
 
+def _validated_verify_answer(
+    answer: dict[str, Any],
+    segments: list[dict[str, Any]],
+    strips: list[Strip],
+) -> tuple[dict[int, dict[str, Any]], set[int]]:
+    """The verification answer, validated against the reported segments
+    and the measured strips: corrections known and unclaimed, pieces
+    known, text present, the orientation inside the set; not-present
+    indexes disjoint from the corrections. Raises SegmentPageError on
+    any contract violation."""
+    corrections = _validated_corrections(answer.get("corrections", []), segments, strips)
+    dropped = _validated_not_present(answer.get("not_present", []), segments, corrections)
+    return corrections, dropped
+
+
+def _validated_piece_numbers(pieces_raw: list[Any], by_number: set[int]) -> list[int]:
+    """The correction's piece numbers, validated against the measured
+    strips: every piece must be a number the annotation actually drew.
+    Raises SegmentPageError on any contract violation."""
+    piece_numbers = []
+    for piece in pieces_raw:
+        if isinstance(piece, bool) or not isinstance(piece, (int, float)) or int(piece) not in by_number:
+            raise SegmentPageError(f"correction names unknown piece {piece!r}")
+        piece_numbers.append(int(piece))
+    return piece_numbers
+
+
+def _validated_corrections(
+    raw: Any,
+    segments: list[dict[str, Any]],
+    strips: list[Strip],
+) -> dict[int, dict[str, Any]]:
+    """The correction entries, validated: known segments, known pieces,
+    words present, the orientation inside the set, no segment corrected
+    twice. Raises SegmentPageError on any contract violation."""
+    by_number = {strip.number for strip in strips}
+    corrections: dict[int, dict[str, Any]] = {}
+    if not isinstance(raw, list):
+        raise SegmentPageError(f"verification 'corrections' is not a list: {raw!r}")
+    for entry in raw:
+        if not isinstance(entry, dict):
+            raise SegmentPageError(f"verification correction is not an object: {entry!r}")
+        index = _segment_index(entry.get("index"))
+        if not 0 <= index < len(segments):
+            raise SegmentPageError(f"verification index {index} is out of range")
+        pieces_raw = entry.get("pieces")
+        if not isinstance(pieces_raw, list) or not pieces_raw:
+            raise SegmentPageError(f"a correction has no pieces: {entry!r}")
+        piece_numbers = _validated_piece_numbers(pieces_raw, by_number)
+        corrected_text = str(entry.get("text", "")).strip()
+        if not corrected_text:
+            raise SegmentPageError(f"a correction has no text: {entry!r}")
+        orientation = int(entry.get("orientation", 0) or 0)
+        if orientation not in _ORIENTATIONS:
+            raise SegmentPageError(f"correction orientation {orientation} is not 0/90/180/270: {entry!r}")
+        if index in corrections:
+            raise SegmentPageError(f"segment {index} is corrected more than once: {entry!r}")
+        corrections[index] = {"pieces": piece_numbers, "text": corrected_text, "orientation": orientation}
+    return corrections
+
+
+def _validated_not_present(
+    raw: Any,
+    segments: list[dict[str, Any]],
+    corrections: dict[int, dict[str, Any]],
+) -> set[int]:
+    """The not-present indexes, validated: known segments, disjoint from
+    the corrections. Raises SegmentPageError on any contract violation."""
+    dropped: set[int] = set()
+    if not isinstance(raw, list):
+        raise SegmentPageError(f"verification 'not_present' is not a list: {raw!r}")
+    for value in raw:
+        index = _segment_index(value)
+        if not 0 <= index < len(segments):
+            raise SegmentPageError(f"verification index {index} is out of range")
+        if index in corrections:
+            raise SegmentPageError(f"segment {index} is both corrected and not present: {value!r}")
+        dropped.add(index)
+    return dropped
+
+
 def verify_grouped_segments(  # lucidlint: ignore long-param-list one required argument plus defaulted call options
     image: Path,
     strips: list[Strip],
@@ -424,45 +515,7 @@ def verify_grouped_segments(  # lucidlint: ignore long-param-list one required a
         urlopen=urlopen,
     )
     answer = _parse_json_object(text, "verification response")
-    by_number = {strip.number for strip in strips}
-    corrections: dict[int, dict[str, Any]] = {}
-    dropped: set[int] = set()
-    raw = answer.get("corrections", [])
-    if not isinstance(raw, list):
-        raise SegmentPageError(f"verification 'corrections' is not a list: {raw!r}")
-    for entry in raw:
-        if not isinstance(entry, dict):
-            raise SegmentPageError(f"verification correction is not an object: {entry!r}")
-        index = _segment_index(entry.get("index"))
-        if not 0 <= index < len(segments):
-            raise SegmentPageError(f"verification index {index} is out of range")
-        pieces_raw = entry.get("pieces")
-        if not isinstance(pieces_raw, list) or not pieces_raw:
-            raise SegmentPageError(f"a correction has no pieces: {entry!r}")
-        piece_numbers = []
-        for piece in pieces_raw:
-            if isinstance(piece, bool) or not isinstance(piece, (int, float)) or int(piece) not in by_number:
-                raise SegmentPageError(f"correction names unknown piece {piece!r}")
-            piece_numbers.append(int(piece))
-        corrected_text = str(entry.get("text", "")).strip()
-        if not corrected_text:
-            raise SegmentPageError(f"a correction has no text: {entry!r}")
-        orientation = int(entry.get("orientation", 0) or 0)
-        if orientation not in _ORIENTATIONS:
-            raise SegmentPageError(f"correction orientation {orientation} is not 0/90/180/270: {entry!r}")
-        if index in corrections or index in dropped:
-            raise SegmentPageError(f"segment {index} is corrected more than once: {entry!r}")
-        corrections[index] = {"pieces": piece_numbers, "text": corrected_text, "orientation": orientation}
-    raw_not_present = answer.get("not_present", [])
-    if not isinstance(raw_not_present, list):
-        raise SegmentPageError(f"verification 'not_present' is not a list: {raw_not_present!r}")
-    for value in raw_not_present:
-        index = _segment_index(value)
-        if not 0 <= index < len(segments):
-            raise SegmentPageError(f"verification index {index} is out of range")
-        if index in corrections:
-            raise SegmentPageError(f"segment {index} is both corrected and not present: {value!r}")
-        dropped.add(index)
+    corrections, dropped = _validated_verify_answer(answer, segments, strips)
     return corrections, dropped, usage
 
 
@@ -487,7 +540,6 @@ def _grouped_layout(image: Path, segments: list[dict[str, Any]]) -> Layout:
     return Layout("", width, height, lines, [])
 
 
-# lucidlint: ignore latent-class the loop rebuilds from image, groups, segments per round — context object is slice 5's
 def converge_grouped_layout(  # lucidlint: ignore long-param-list the loop's inputs are the read stage's own products
     image: Path,
     strips: list[Strip],

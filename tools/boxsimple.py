@@ -309,19 +309,10 @@ def detect(page_path: Path, trace_dir: Path) -> list[list[list[float]]]:
         for s0, s1 in spans:
             if s1 - s0 > MIN_BOX_PX:
                 final.append([[s0, y0], [s1, y0], [s1, y1], [s0, y1]])
-    # ink the rows did not claim still gets a box of its own: a component the rows
-    # cannot own (a vertical flourish, a margin mark) is something the reviewer
-    # must be able to see and trace, never something to drop silently.
-    for shape in shapes:
-        if shape.line == -1:
-            final.append(
-                [
-                    [shape.x0 * SCALE, shape.y0 * SCALE],
-                    [shape.x1 * SCALE, shape.y0 * SCALE],
-                    [shape.x1 * SCALE, shape.y1 * SCALE],
-                    [shape.x0 * SCALE, shape.y1 * SCALE],
-                ]
-            )
+    # Ink that joins no row is unboxed words, not a box: membership decides what
+    # a line is. Unclaimed ink is the A6 leftover class - the reviewer traces it
+    # and it becomes a mark, instead of the detector inventing a box that cannot
+    # be a line (a square around vertically stacked ink can never be one).
     final += [box for _, box in trace_boxes]
 
     trace_dir.mkdir(parents=True, exist_ok=True)

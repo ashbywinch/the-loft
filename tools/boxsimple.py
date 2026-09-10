@@ -44,6 +44,12 @@ BATCH = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004")
 PAGE = BATCH / "oriented/page-01.jpg"
 TRACE = Path("/tmp/trace")
 
+SIZE_FLOOR = 0.9  # x the page's writing height: smaller is another hand
+SMALL_MIN_H = 7  # working px: below this it is a dot or a tick, not a letter
+SMALL_ASPECT = 1.2  # x height: smaller and it is spot-like, not word-like
+RUN_GAP = 30  # working px: how close two small words must be to be one run
+RUN_VERT = 20  # working px: how close vertically (same band)
+RUN_MIN = 3  # how many word-like smalls make a run of writing
 SIZE_LOW = 0.7  # x the row's median word height: smaller is another hand
 SIZE_HIGH = 1.7  # x the row's median word height: larger is not this row's word
 ROW_HALF = 0.5  # x line spacing: a member this far from its row's fit is not its row's
@@ -65,6 +71,11 @@ def same_row(a: Line, b: Line, scale: PageScale) -> bool:
     here = float(np.median([s.baseline for s in a.shapes]))
     there = float(np.median([s.baseline for s in b.shapes]))
     return abs(here - there) < ROW_MERGE_FRACTION * scale.pitch
+
+
+def _gap(a, b) -> float:
+    """The whitespace between two components: centres minus their half-widths."""
+    return max(0.0, abs((a.x0 + a.x1) / 2 - (b.x0 + b.x1) / 2) - ((a.x1 - a.x0) + (b.x1 - b.x0)) / 2)
 
 
 def member_of(shape, lines: list[Line], scale: PageScale) -> int:
@@ -177,6 +188,30 @@ def detect(page_path: Path, trace_dir: Path) -> list[list[list[float]]]:
             moved = True
         if not moved:
             break
+    # a run of small writing is its own thing: >= RUN_MIN word-like components,
+    # 15-0.9x the writing's height, wider than tall, chained horizontally. Punctuation
+    # is spot-like (w < 1.2 h) or isolated; an aside written in a small hand is word-
+    # like, chained, and several long. Such a run leaves its borrowed row and is
+    # boxed on its own - the reviewer sees it and traces one line instead of it
+    # silently riding a full-height row.
+    smalls = [
+        s
+        for s in shapes
+        if s.line >= 0
+        and SMALL_MIN_H <= (s.y1 - s.y0) < SIZE_FLOOR * scale.unit
+        and (s.x1 - s.x0) >= SMALL_ASPECT * (s.y1 - s.y0)
+    ]
+    runs: list[list] = []
+    for s in smalls:
+        joined = [r for r in runs if any(_gap(t, s) < RUN_GAP and abs(t.y0 - s.y0) < RUN_VERT for t in r)]
+        if joined:
+            joined[0].append(s)
+        else:
+            runs.append([s])
+    for run in runs:
+        if len(run) >= RUN_MIN:
+            for s in run:
+                s.line = -1
     for index, line in enumerate(lines):
         line.shapes = [s for s in shapes if s.line == index]
     lines = [line for line in lines if line.shapes]  # a row every word abandoned is not a row

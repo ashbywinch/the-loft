@@ -174,7 +174,7 @@ class Line:
                 return
         self.a, self.b = 0.0, float(np.median(ys))
 
-    def matches(self, other: Line, pitch: float) -> bool:
+    def matches(self, other: Line, pitch: float, divisor: float = MERGE_DIVISOR) -> bool:
         """Is this the same line of writing as `other`?
 
         Compared WHERE THEY OVERLAP: a slope and an intercept are not comparable
@@ -194,7 +194,7 @@ class Line:
             if high > low
             else [(min(xs_here) + max(xs_here) + min(xs_there) + max(xs_there)) / 4]
         )
-        return max(abs(self.y_at(x) - other.y_at(x)) for x in samples) < pitch / MERGE_DIVISOR
+        return max(abs(self.y_at(x) - other.y_at(x)) for x in samples) < pitch / divisor
 
     def frame(self, shapes: list[Shape]) -> tuple[float, float, float, float, float, float]:
         """The local frame used to measure boxes: origin, and the unit vectors."""

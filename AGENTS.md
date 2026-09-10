@@ -40,6 +40,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The layout stage's strip path — its plan, postmortem and reopened seams (ink-projection line bands; the grouping read) | `docs/plans/strip-grouping-plan.md` |
 | Acting on lucidlint findings (fix-engine workflow, baseline, per-file checks) | `skill://lucidlint-workflow`; the repo's findings log at `docs/plans/lucidlint-review-log.md` |
 | Layout redesign requirements (the adjudication draft — layout-requirements-draft) | `docs/plans/layout-requirements-draft.md` |
+| The segment/box review & edit UX (user stories, the box-issue taxonomy, the corner rulings) | `docs/plans/segment-review-stories.md` |
 |Interview/observation instruments|`docs/DISCOVERY.md`, private session records|
 | The story-capture flow spec ("Add your memory") | `docs/prd/MEMORIES.md` |
 | The artifact-import flow spec + its rules (A–S) | `docs/prd/IMPORT-PRD.md` — the ingest-side planning spec: `docs/prd/INGEST-PRD.md` |

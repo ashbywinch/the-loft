@@ -150,3 +150,50 @@ other text. The Caradog card is a known-unsupported edge case, not an
 eval fixture. The postcard eval uses the Caradog fixtures only because
 they were the first scanned; it should move to a clean
 multi-orientation card (the Godolphin) when the pipeline is ready.
+
+## Ruling 2026-09-09: the underlying segment rule is logical consecutiveness
+
+The user sharpened L3: single-line-max was a proxy, not the rule. The
+rule: **a segment is a logically consecutive run of writing.** A box
+covering several lines of one paragraph is fine when the engine
+produces it that way; what a segment must never do is mix writing
+whose positions are meaningful and different — a paragraph and the
+"yours sincerely" after it, a body line and a marginal annotation
+caught up in its box. The box's purpose: identify the extent of the
+text the reviewer is being asked to validate (the position in the
+original); the segment also carries the text's logical position (so
+the letter can be presented as the writer intended). A marginal
+annotation needs its own box for both reasons. Consecutiveness cannot
+be fully enforced — the machine's understanding of the image is
+limited — so the UX is built around correcting it.
+
+Landed in TRANSCRIPTION-REVIEW-PRD 2026-09-09 as VR19–VR22:
+L2→VR15/VR18; L3→VR19 (as amended here); L4→VR19; L5→VR21; L6→VR19;
+L7→VR18+VR19; L8→VR4; L12→VR22. L1, L9, L10, L11 stay TECH-SPEC-side
+(the context source, gate granularity, cost, per-segment reading).
+The review/edit user stories:
+`docs/plans/segment-review-stories.md`.
+
+## Ruling 2026-09-09 (II): the gate detects everything; the reviewer fixes a few
+
+The gate's framing changes: not a binary serve/refuse but
+comprehensive problem detection — every detectable problem with the
+boxes or the transcriptions — whose findings (i) drive the pipeline's
+improvement and (ii) are visible to the reviewer. Bad boxes will
+inevitably get through; those are the reviewer's to fix (VR20). The
+serving floor stands: a page reaches review only with its structure
+nearly completely correct — the reviewer fixes a couple of things,
+never re-structures a page; a page of wackadoo lines bearing no
+resemblance to the text is a pipeline failure, not a review surface.
+Landed as VR23. L9's mechanism questions (gate granularity) stay
+TECH-SPEC-side.
+
+Same ruling, the review-flow requirement: the reviewer must always
+know what part of the document they are transcribing and whether it is
+a marginal note; where the pipeline doesn't know, it says so, and the
+structure is settled before the words are checked (landed as VR24).
+The presentation trilemma (reading order confusing to read; logical
+order confusing to check and dislocating) is resolved by the
+structure-first flow — worked through in
+`docs/plans/segment-review-stories.md` (the flow section, and Q5's
+answer).

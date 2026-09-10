@@ -29,6 +29,7 @@ missed. Run it, then the jig:
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 from dataclasses import dataclass, field
@@ -444,9 +445,15 @@ def covered_by(stroke: list[tuple[float, float]], shapes: list[Shape]) -> list[S
     ]
 
 
-def main() -> None:
-    page = Image.open(PAGE)
-    strokes_raw = json.loads((TRACE / "strokes.json").read_text())["strokes"]
+def detect(page_path: Path, trace_dir: Path) -> list[Box]:
+    """Box every line on the page; write boxes.json and words.json into trace_dir.
+
+    The page and the trace directory are arguments, so the detector can run on
+    any page (and be tested on a synthetic one) rather than only on the batch it
+    was developed against.
+    """
+    page = Image.open(page_path)
+    strokes_raw = json.loads((trace_dir / "strokes.json").read_text())["strokes"]
 
     mask = ink_mask(page)
     n_art = artifacts(mask)
@@ -583,10 +590,10 @@ def main() -> None:
                     final.append(line.box(line.shapes, s0, s1, min(across), max(across)))
     final += [box for _, box in trace_boxes]
 
-    TRACE.mkdir(exist_ok=True)
-    with open(TRACE / "boxes.json", "w") as handle:
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    with open(trace_dir / "boxes.json", "w") as handle:
         json.dump({"page": {"width": page.width, "height": page.height}, "boxes": final}, handle, indent=1)
-    with open(TRACE / "words.json", "w") as handle:
+    with open(trace_dir / "words.json", "w") as handle:
         json.dump(
             {
                 "words": [
@@ -597,7 +604,19 @@ def main() -> None:
             handle,
         )
     print(f"boxes: {len(final)} ({len(trace_boxes)} from strokes, {len(final) - len(trace_boxes)} from the detector)")
+    return final
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Box every line of writing on a scanned page.")
+    parser.add_argument("--page", type=Path, default=PAGE, help="the page image")
+    parser.add_argument(
+        "--trace-dir", type=Path, default=TRACE, help="where strokes.json lives and boxes.json is written"
+    )
+    args = parser.parse_args(argv)
+    detect(args.page, args.trace_dir)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -248,6 +248,31 @@ class Line:
         return out
 
 
+@dataclass
+class Mark:
+    """A line the reviewer traced: the strokes drawn along it, and the box they define.
+
+    A mark IS a line — the reviewer's statement about where a line of writing is.
+    Its box is the extent of what was drawn, extended to the shapes the strokes
+    pass over, but by no more than TOL beyond the strokes at either end, so a
+    trace cannot silently claim half the page.
+    """
+
+    strokes: list[list[tuple[float, float]]]
+    line_index: int
+    covered: list[Shape]
+
+    def box(self) -> Box:
+        points = [(p[0] / SCALE, p[1] / SCALE) for stroke in self.strokes for p in stroke]
+        sx0, sx1 = min(p[0] for p in points), max(p[0] for p in points)
+        sy0, sy1 = min(p[1] for p in points), max(p[1] for p in points)
+        x0 = min(sx0, max(min((w.x0 for w in self.covered), default=sx0), sx0 - TOL))
+        x1 = max(sx1, min(max((w.x1 for w in self.covered), default=sx1), sx1 + TOL))
+        y0 = min(sy0, min((w.y0 for w in self.covered), default=sy0))
+        y1 = max(sy1, max((w.y1 for w in self.covered), default=sy1))
+        return [[x0 * SCALE, y0 * SCALE], [x1 * SCALE, y0 * SCALE], [x1 * SCALE, y1 * SCALE], [x0 * SCALE, y1 * SCALE]]
+
+
 def ink_mask(page: Image.Image) -> np.ndarray:
     """1 where a pixel is darker than the paper around it."""
     g = np.asarray(page.convert("L").resize((page.width // SCALE, page.height // SCALE))).astype(int)
@@ -538,32 +563,21 @@ def detect(page_path: Path, trace_dir: Path) -> list[Box]:
     for index in range(len(strokes)):
         groups.setdefault(find(index), []).append(index)
 
-    trace_boxes: list[tuple[int, Box]] = []
+    marks: list[Mark] = []
     for _, members in sorted(
         groups.items(), key=lambda kv: min((assign[i] for i in kv[1] if assign[i] is not None), default=0)
     ):
         line_index = next((assign[i] for i in members if assign[i] is not None), None)
         if line_index is None:
             continue
-        words = [w for i in members for w in covered[i] if w.line == line_index]
-        points = [(p[0] / SCALE, p[1] / SCALE) for i in members for p in strokes[i]]
-        sx0, sx1 = min(p[0] for p in points), max(p[0] for p in points)
-        sy0, sy1 = min(p[1] for p in points), max(p[1] for p in points)
-        x0 = min(sx0, max(min((w.x0 for w in words), default=sx0), sx0 - TOL))
-        x1 = max(sx1, min(max((w.x1 for w in words), default=sx1), sx1 + TOL))
-        y0 = min(sy0, min((w.y0 for w in words), default=sy0))
-        y1 = max(sy1, max((w.y1 for w in words), default=sy1))
-        trace_boxes.append(
-            (
-                line_index,
-                [
-                    [x0 * SCALE, y0 * SCALE],
-                    [x1 * SCALE, y0 * SCALE],
-                    [x1 * SCALE, y1 * SCALE],
-                    [x0 * SCALE, y1 * SCALE],
-                ],
+        marks.append(
+            Mark(
+                strokes=[strokes[i] for i in members],
+                line_index=line_index,
+                covered=[w for i in members for w in covered[i] if w.line == line_index],
             )
         )
+    trace_boxes: list[tuple[int, Box]] = [(mark.line_index, mark.box()) for mark in marks]
 
     # compose: the detector boxes the page; a trace replaces the span it defines
     final: list[Box] = []

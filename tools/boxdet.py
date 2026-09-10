@@ -52,15 +52,15 @@ STREAK_TALL = 40  # 1/2 px: a run this tall and ≤3 wide is a scan line
 STREAK_WIDE = 60  # 1/2 px: a run this wide and ≤4 tall is a rule
 SHAPE_MIN_AREA = 60  # 1/2 px²: smaller components are specks
 SLOPE_LIMIT = 0.13  # ≈7.5°: writing on a page never slopes more than this
-SEED_GAP = 8  # 1/2 px: baselines this close start one line
-REFIT_TOL = 18  # 1/2 px: how far a shape may sit from a line and still join it
+SEED_FRACTION = 0.38  # × writing height: baselines this close start one line
+REFIT_FRACTION = 0.86  # × writing height: how far a shape may sit from a line
 SPREAD_FACTOR = 1.2  # × pitch: a line whose members spread further is two lines
 MERGE_DIVISOR = 4  # pitch ÷ this: how close two fits are the same line
 CLUSTER_DIVISOR = 2  # pitch ÷ this: how far a member may sit from its cluster
 CAP = 0.8  # × pitch: a box never exceeds this above/below its baseline
-JOIN_GAP = 60  # 1/2 px = 120px: the x gap that ends a line-run
-TOL = 45  # 1/2 px = 90px: how far a box may exceed the stroke's x span
-WORD_TOUCH = 8  # 1/2 px = 16px: how close a stroke must pass to cover a word
+JOIN_FRACTION = 1.78  # × line spacing: the x gap that ends a line-run
+STROKE_FRACTION = 2.14  # × writing height: how far a mark's box may exceed its strokes
+TOUCH_FRACTION = 0.38  # × writing height: how close a stroke must pass to cover a word
 MIN_BOX_PX = 20  # full-res px: a leftover sliver thinner than this is noise
 ROW_MERGE = 2  # 1/2 px: rows this close belong to the same piece of a cut shape
 
@@ -207,7 +207,7 @@ class Line:
         us = [((px / SCALE - x_ref) * ux + (py / SCALE - y_ref) * uy) for px, py in poly]
         return min(us), max(us)
 
-    def boxes(self, pitch: float) -> list[Box]:
+    def boxes(self, scale: PageScale) -> list[Box]:
         """The line's ink as one or more boxes, split at column-sized x gaps.
 
         Measured alternative (2026-09-10): splitting relative to the line's own
@@ -217,6 +217,7 @@ class Line:
         but the pair regressed the jig (two lines ended in two boxes) and needs
         the composition re-derived, so the plain version stands.
         """
+        pitch = scale.pitch
         shapes = sorted(self.shapes, key=lambda s: s.cx)
         if not shapes:
             return []
@@ -225,7 +226,7 @@ class Line:
         edge = self.project(shapes, shapes[0])[0].max()
         for shape in shapes[1:]:
             along, _ = self.project(shapes, shape)
-            if along.min() - edge > JOIN_GAP:
+            if along.min() - edge > scale.join_gap:
                 runs.append(current)
                 current = [shape]
             else:
@@ -262,15 +263,54 @@ class Mark:
     line_index: int
     covered: list[Shape]
 
-    def box(self) -> Box:
+    def box(self, stroke_tol: float) -> Box:
         points = [(p[0] / SCALE, p[1] / SCALE) for stroke in self.strokes for p in stroke]
         sx0, sx1 = min(p[0] for p in points), max(p[0] for p in points)
         sy0, sy1 = min(p[1] for p in points), max(p[1] for p in points)
-        x0 = min(sx0, max(min((w.x0 for w in self.covered), default=sx0), sx0 - TOL))
-        x1 = max(sx1, min(max((w.x1 for w in self.covered), default=sx1), sx1 + TOL))
+        x0 = min(sx0, max(min((w.x0 for w in self.covered), default=sx0), sx0 - stroke_tol))
+        x1 = max(sx1, min(max((w.x1 for w in self.covered), default=sx1), sx1 + stroke_tol))
         y0 = min(sy0, min((w.y0 for w in self.covered), default=sy0))
         y1 = max(sy1, max((w.y1 for w in self.covered), default=sy1))
         return [[x0 * SCALE, y0 * SCALE], [x1 * SCALE, y0 * SCALE], [x1 * SCALE, y1 * SCALE], [x0 * SCALE, y1 * SCALE]]
+
+
+@dataclass
+class PageScale:
+    """The page's own ruler: what one length means here.
+
+    Every distance the detector compares is a multiple of the writing's height
+    (the median height of its ink shapes) or of the line spacing that height
+    implies. A page at another resolution, in another hand, or in print needs no
+    edits - the multiples are typography, the height is measured.
+    """
+
+    unit: float  # the writing's height, in working pixels
+    pitch: float  # the line spacing, in working pixels
+
+    @classmethod
+    def of(cls, heights: list[float], ratio: float) -> PageScale:
+        unit = writing_scale(heights)
+        return cls(unit=unit, pitch=unit * ratio)
+
+    @property
+    def seed_gap(self) -> float:
+        return SEED_FRACTION * self.unit
+
+    @property
+    def refit_tol(self) -> float:
+        return REFIT_FRACTION * self.unit
+
+    @property
+    def join_gap(self) -> float:
+        return JOIN_FRACTION * self.pitch
+
+    @property
+    def stroke_tol(self) -> float:
+        return STROKE_FRACTION * self.unit
+
+    @property
+    def touch(self) -> float:
+        return TOUCH_FRACTION * self.unit
 
 
 def ink_mask(page: Image.Image) -> np.ndarray:
@@ -358,16 +398,17 @@ def artifacts(mask: np.ndarray) -> int:
     return removed
 
 
-def fit_lines(shapes: list[Shape], pitch: float) -> list[Line]:
+def fit_lines(shapes: list[Shape], scale: PageScale) -> list[Line]:
     """Seed, refit, merge identical fits, reassign, and split lines covering two.
 
     Seeding compares each baseline to the last shape of the line before it (the
     sorted order makes that the nearest), so a line grows by adjacency and never
     by a growing centre — which is what walks a line down the page.
     """
+    pitch = scale.pitch
     lines: list[Line] = []
     for shape in sorted(shapes, key=lambda s: s.baseline):
-        if lines and shape.baseline - lines[-1].shapes[-1].baseline <= SEED_GAP:
+        if lines and shape.baseline - lines[-1].shapes[-1].baseline <= scale.seed_gap:
             lines[-1].shapes.append(shape)
         else:
             lines.append(Line(shapes=[shape]))
@@ -391,7 +432,7 @@ def fit_lines(shapes: list[Shape], pitch: float) -> list[Line]:
         orphans: list[Shape] = []
         for shape in shapes:
             nearest = min(range(len(lines)), key=lambda i: lines[i].distance(shape.cx, shape.baseline))
-            home = target[nearest] if lines[nearest].distance(shape.cx, shape.baseline) <= REFIT_TOL else orphans
+            home = target[nearest] if lines[nearest].distance(shape.cx, shape.baseline) <= scale.refit_tol else orphans
             home.append(shape)
         lines = [Line(shapes=members) for members in target if members]
         for line in lines:
@@ -457,14 +498,13 @@ def split_shapes(shapes: list[Shape], lines: list[Line]) -> list[Shape]:
     return out
 
 
-def covered_by(stroke: list[tuple[float, float]], shapes: list[Shape]) -> list[Shape]:
+def covered_by(stroke: list[tuple[float, float]], shapes: list[Shape], touch: float) -> list[Shape]:
     """The shapes a traced line passes over — how a stroke names its line."""
     return [
         shape
         for shape in shapes
         if any(
-            shape.x0 - WORD_TOUCH <= px / SCALE <= shape.x1 + WORD_TOUCH
-            and shape.y0 - WORD_TOUCH <= py / SCALE <= shape.y1 + WORD_TOUCH
+            shape.x0 - touch <= px / SCALE <= shape.x1 + touch and shape.y0 - touch <= py / SCALE <= shape.y1 + touch
             for px, py in stroke
         )
     ]
@@ -486,11 +526,10 @@ def detect(page_path: Path, trace_dir: Path) -> list[Box]:
     # The page's line spacing, measured rather than assumed: the writing's own
     # height times the ratio between line spacing and writing height, the ratio
     # taken from the reviewer's traces when they have drawn enough of them.
-    unit = writing_scale([s.height for s in shapes])
     traced_lines = sorted(float(np.median([p[1] for p in s])) * page.height / SCALE for s in strokes_raw)
-    ratio = line_ratio(traced_pitch(traced_lines), unit)
-    pitch = unit * ratio
-    lines = fit_lines(shapes, pitch)
+    ratio = line_ratio(traced_pitch(traced_lines), writing_scale([s.height for s in shapes]))
+    scale = PageScale.of([s.height for s in shapes], ratio)
+    lines = fit_lines(shapes, scale)
     shapes = split_shapes(shapes, lines)
     # the split can free a rule/underline or a streak welded to a word, so the test
     # is applied again to the shapes themselves
@@ -498,7 +537,7 @@ def detect(page_path: Path, trace_dir: Path) -> list[Box]:
     shapes = [s for s in shapes if not s.is_streak]
     n_art += before - len(shapes)
     print(
-        f"pitch {pitch:.1f} (unit {unit:.1f} × ratio {ratio:.2f})  ink: {int(mask.sum())} px"
+        f"pitch {scale.pitch:.1f} (unit {scale.unit:.1f} × ratio {ratio:.2f})  ink: {int(mask.sum())} px"
         f" · artifacts removed: {n_art} · shapes {len(shapes)} · lines {len(lines)}"
     )
     for shape in shapes:
@@ -507,7 +546,7 @@ def detect(page_path: Path, trace_dir: Path) -> list[Box]:
         line.shapes = [s for s in shapes if s.line == index]
     # the split and the artifact filter both change the shapes, so the model is
     # refitted on what survives before anything is assigned to it
-    lines = fit_lines(shapes, pitch)
+    lines = fit_lines(shapes, scale)
     for shape in shapes:
         shape.line = line_of_shape(shape, lines)
     for index, line in enumerate(lines):
@@ -523,7 +562,7 @@ def detect(page_path: Path, trace_dir: Path) -> list[Box]:
     strokes = [
         [(min(max(x, 0.0), 1.0) * page.width, min(max(y, 0.0), 1.0) * page.height) for x, y in s] for s in strokes_raw
     ]
-    covered = [covered_by(stroke, shapes) for stroke in strokes]
+    covered = [covered_by(stroke, shapes, scale.touch) for stroke in strokes]
     # A stroke is a line. Assignment is by the words it covers (the count), which
     # measured better here than the fitted-baseline distance: the latter fixed a
     # stroke drawn between two lines but cost three more A1 failures.
@@ -577,13 +616,13 @@ def detect(page_path: Path, trace_dir: Path) -> list[Box]:
                 covered=[w for i in members for w in covered[i] if w.line == line_index],
             )
         )
-    trace_boxes: list[tuple[int, Box]] = [(mark.line_index, mark.box()) for mark in marks]
+    trace_boxes: list[tuple[int, Box]] = [(mark.line_index, mark.box(scale.stroke_tol)) for mark in marks]
 
     # compose: the detector boxes the page; a trace replaces the span it defines
     final: list[Box] = []
     for line_index, line in enumerate(lines):
         traced = sorted(line.u_span(line.shapes, box) for owner, box in trace_boxes if owner == line_index)
-        for poly in line.boxes(pitch):
+        for poly in line.boxes(scale):
             x_ref, y_ref, ux, uy, nx, ny = line.frame(line.shapes)
             along = [(px / SCALE - x_ref) * ux + (py / SCALE - y_ref) * uy for px, py in poly]
             across = [(px / SCALE - x_ref) * nx + (py / SCALE - y_ref) * ny for px, py in poly]

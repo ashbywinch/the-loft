@@ -37,7 +37,6 @@ from tools.boxdet import (
     components,
     covered_by,
     ink_mask,
-    line_of_shape,
 )
 from tools.boxscale import line_ratio, traced_pitch, writing_scale
 
@@ -45,15 +44,25 @@ BATCH = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004")
 PAGE = BATCH / "oriented/page-01.jpg"
 TRACE = Path("/tmp/trace")
 
-MAX_HEIGHT_FRACTION = 2.2  # × writing height: past this, a component is not one word
 GROUP_FRACTION = SEED_FRACTION  # a baseline gap beyond 0.38 x the writing height starts a new row
 
 
-def viable(shape, scale: PageScale) -> bool:
-    """May this component be a word on a horizontal line? Not a streak, not taller
-    than a word can be — a vertical margin note or a flourish is not the
-    detector's to box."""
-    return not shape.is_streak and shape.y1 - shape.y0 <= MAX_HEIGHT_FRACTION * scale.unit
+def member_of(shape, lines: list[Line], scale: PageScale) -> int:
+    """Which row does this component belong to? The one with which its ink
+    overlaps most: a component's rows counted inside each fitted row's band
+    (baseline ± half the spacing). Overlap, not height, not centre-distance —
+    a tall interjection inside one band joins it; a vertical flourish that
+    spends its ink across many bands joins none; a marginal-note letter
+    straddling two bands equally joins neither."""
+    rows = shape.rows()
+    best, best_share = -1, 0.0
+    for index, line in enumerate(lines):
+        band = (line.y_at(shape.cx) - scale.pitch / 2, line.y_at(shape.cx) + scale.pitch / 2)
+        inside = sum(1 for y in rows if band[0] <= y <= band[1])
+        share = inside / len(rows)
+        if share > best_share:
+            best, best_share = index, share
+    return best if best_share > 0.5 else -1
 
 
 def lines_of(words: list, scale: PageScale) -> list[Line]:
@@ -115,9 +124,9 @@ def detect(page_path: Path, trace_dir: Path) -> list[list[list[float]]]:
     )
     scale = PageScale.of([s.height for s in shapes], ratio)
 
-    lines = lines_of([s for s in shapes if viable(s, scale)], scale)
+    lines = lines_of(shapes, scale)
     for shape in shapes:
-        shape.line = line_of_shape(shape, lines) if viable(shape, scale) else -1
+        shape.line = member_of(shape, lines, scale)
     for index, line in enumerate(lines):
         line.shapes = [s for s in shapes if s.line == index]
     lines = [line for line in lines if line.shapes]  # a row every word abandoned is not a row

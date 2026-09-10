@@ -27,11 +27,19 @@ from pathlib import Path
 
 DEFAULT_TRACE = Path("/tmp/trace")  # where boxes.json, words.json and strokes.json live
 TRACE = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_TRACE
+A7_HOLDS = 0.5  # A7: a box holds a word when half its area is inside
 COVERAGE = 0.90  # A1: the line must be this much inside its box
 TOL_X = 90.0  # A2: px the box may differ from the line's x extent (full-res)
 PITCH = 58.0  # line pitch, for A3's "same line" test and A5
 SURFACE_MARGIN = 40.0  # A4: px a box may exceed the ink area
 MAX_SLOPE_DEG = 6.0  # A5: the letter's lines run ~0-2.4 degrees
+
+
+def word_share(word: dict, quad: list[list[float]]) -> float:
+    ix = max(0.0, min(word["x1"], max(p[0] for p in quad)) - max(word["x0"], min(p[0] for p in quad)))
+    iy = max(0.0, min(word["y1"], max(p[1] for p in quad)) - max(word["y0"], min(p[1] for p in quad)))
+    area = (word["x1"] - word["x0"]) * (word["y1"] - word["y0"])
+    return ix * iy / area if area else 0.0
 
 
 def in_quad(px: float, py: float, quad: list[list[float]]) -> bool:
@@ -105,10 +113,14 @@ def main() -> int:
 
     # A7 — a box holds the words of ONE line of writing. This is the detector's own
     #      quality bar: it is exactly what the reviewer would otherwise have to fix.
+    #      "Holds" means half the word's AREA is inside: the boxes of neighbouring
+    #      rows legitimately overlap at their edges (union boxes; the reviewer's
+    #      ruling - overlap from ascenders/descenders is fine), so a centre inside
+    #      the box is not a claim on the word.
     a7 = 0
     print("A7  no box holding words of two different lines")
     for j, b in enumerate(boxes):
-        holds = {w["line"] for w in ink if in_quad((w["x0"] + w["x1"]) / 2, (w["y0"] + w["y1"]) / 2, b)}
+        holds = {w["line"] for w in ink if word_share(w, b) >= A7_HOLDS}
         if len(holds) > 1:
             a7 += 1
             print(f"    FAIL box {j}: holds words of lines {sorted(holds)}")

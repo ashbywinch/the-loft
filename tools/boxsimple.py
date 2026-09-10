@@ -21,6 +21,7 @@ boxdet's machinery dies — or it loses, and this file dies instead.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import numpy as np
@@ -188,6 +189,39 @@ def detect(page_path: Path, trace_dir: Path) -> list[list[list[float]]]:
             moved = True
         if not moved:
             break
+    # fragments of one sloped line: the walk cut where a baseline gap crossed the
+    # seed gap, and a long line walks downhill - so one physical line can be two
+    # model rows whose medians sit more than the midline apart. Two rows are one
+    # line when, over the x-range where BOTH have words, their fits agree within
+    # half the spacing measured PERPENDICULAR to the fits. Evaluated only where
+    # the rows coexist: the P.S.'s genuinely adjacent rows are a full spacing
+    # apart everywhere and never merge.
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(lines)):
+            for j in range(i + 1, len(lines)):
+                a, b = lines[i], lines[j]
+                if len(a.shapes) < 2 or len(b.shapes) < 2:
+                    continue
+                low = max(min(s.cx for s in a.shapes), min(s.cx for s in b.shapes))
+                high = min(max(s.cx for s in a.shapes), max(s.cx for s in b.shapes))
+                if high <= low:
+                    continue  # the two rows do not coexist in x
+                if any(
+                    abs(a.y_at(x) - b.y_at(x)) / math.sqrt(1 + a.a * a.a) >= ROW_HALF * scale.pitch
+                    for x in (low, (low + high) / 2, high)
+                ):
+                    continue  # a full spacing (or more) apart where they overlap
+                for s in a.shapes:
+                    s.line = j
+                lines.pop(i)
+                merged = True
+                break
+            if merged:
+                break
+    for line in lines:
+        line.refit()
     # a run of small writing is its own thing: >= RUN_MIN word-like components,
     # 15-0.9x the writing's height, wider than tall, chained horizontally. Punctuation
     # is spot-like (w < 1.2 h) or isolated; an aside written in a small hand is word-

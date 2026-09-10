@@ -17,6 +17,22 @@ The pipeline, and the invariant each stage holds:
     strokes     a stroke IS a line: it names the line it was drawn along
     compose     the trace replaces the detector's box over the span it covers
 
+Coordinates (one system, stated once):
+
+    * geometry — Line.a/b, distances, pitches — is in WORKING pixels: the raster
+      is half the page (`WORK_SCALE`), so the page is 2 x every working length;
+    * `Shape.x0/y0/x1/y1/baseline/cx` are working pixels, exactly as the raster
+      measured them;
+    * every box that leaves this module is in PAGE pixels: `Line.box`,
+      `Mark.box` and the two JSON writers are the only places the × WORK_SCALE
+      conversion happens, and they are the boundary;
+    * thresholds are neither: they are fractions of the page's own ruler
+      (`PageScale`), evaluated in working pixels like everything else.
+
+That boundary is why the mixed-units bug - ink measured in one system, strokes
+in another, both scaled once more - can no longer hide: there is one place to
+look, and the box builders are it.
+
 The measured baseline (kept identical by this refactor, which only moved the
 geometry onto `Shape` and `Line`): 38 lines and 63 boxes on page-01 with its 44
 traced lines, A1 two yellow lines mis-boxed, A3 one box spanning two, A6 pass;

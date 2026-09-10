@@ -44,7 +44,10 @@ BATCH = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004")
 PAGE = BATCH / "oriented/page-01.jpg"
 TRACE = Path("/tmp/trace")
 
-ROW_MERGE_FRACTION = 0.6  # x line spacing: medians closer than this are one row
+SIZE_LOW = 0.7  # x the row's median word height: smaller is another hand
+SIZE_HIGH = 1.7  # x the row's median word height: larger is not this row's word
+ROW_HALF = 0.5  # x line spacing: a member this far from its row's fit is not its row's
+ROW_MERGE_FRACTION = 0.5  # x line spacing = the midline: medians closer than this are one row
 GROUP_FRACTION = SEED_FRACTION  # a baseline gap beyond 0.38 x the writing height starts a new row
 
 
@@ -143,6 +146,37 @@ def detect(page_path: Path, trace_dir: Path) -> list[list[list[float]]]:
     lines = lines_of(shapes, scale)
     for shape in shapes:
         shape.line = member_of(shape, lines, scale)
+    # the anti-glue pass: a row's members must all sit within HALF the spacing of
+    # its fit. A tilted fit reaches down, admits the next row's words, and their
+    # presence then confirms the theft. The yellow lines proved it on the middle
+    # rows (strokes 22/23/24 in one box). Reassign each offender to the row whose
+    # band actually contains it - or to nowhere - until it settles.
+    for _ in range(6):
+        for line in lines:
+            line.refit()
+        moved = False
+        for shape in shapes:
+            if shape.line < 0 or shape.line >= len(lines):
+                continue
+            fit = lines[shape.line]
+            if abs(shape.baseline - fit.y_at(shape.cx)) <= ROW_HALF * scale.pitch:
+                continue  # geometrically this row's
+            row_median = float(np.median([s.y1 - s.y0 for s in fit.shapes]))
+            if len(fit.shapes) >= 4 and SIZE_LOW * row_median <= (shape.y1 - shape.y0) <= SIZE_HIGH * row_median:
+                continue  # ...and the same hand: its height matches the row's
+            best, best_share = -1, 0.0
+            ink_rows = shape.rows()
+            for index, other in enumerate(lines):
+                if index == shape.line:
+                    continue
+                band = (other.y_at(shape.cx) - scale.pitch / 2, other.y_at(shape.cx) + scale.pitch / 2)
+                share = sum(1 for y in ink_rows if band[0] <= y <= band[1]) / len(ink_rows)
+                if share > best_share:
+                    best, best_share = index, share
+            shape.line = best if best >= 0 and best_share > 0.5 else -1
+            moved = True
+        if not moved:
+            break
     for index, line in enumerate(lines):
         line.shapes = [s for s in shapes if s.line == index]
     lines = [line for line in lines if line.shapes]  # a row every word abandoned is not a row

@@ -44,7 +44,24 @@ BATCH = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004")
 PAGE = BATCH / "oriented/page-01.jpg"
 TRACE = Path("/tmp/trace")
 
+ROW_MERGE_FRACTION = 0.6  # x line spacing: medians closer than this are one row
 GROUP_FRACTION = SEED_FRACTION  # a baseline gap beyond 0.38 x the writing height starts a new row
+
+
+def same_row(a: Line, b: Line, scale: PageScale) -> bool:
+    """Are these two rows really one row of writing?
+
+    Compared by the MEDIAN baseline of each row's members, not by the fitted
+    lines: a 3-word fragment's fit can be tilted enough that the sampled
+    difference between two same-row clusters reaches 17.6px against a 16.8px
+    bound and they never merge (measured on this page's middle rows). The
+    medians of those same clusters are 16.5px apart, while the nearest genuinely
+    different rows are 27.5px apart - so the bound sits at 0.6 x the spacing,
+    clear of both.
+    """
+    here = float(np.median([s.baseline for s in a.shapes]))
+    there = float(np.median([s.baseline for s in b.shapes]))
+    return abs(here - there) < ROW_MERGE_FRACTION * scale.pitch
 
 
 def member_of(shape, lines: list[Line], scale: PageScale) -> int:
@@ -88,8 +105,7 @@ def lines_of(words: list, scale: PageScale) -> list[Line]:
             merged = False
             for i in range(len(out)):
                 for j in range(i + 1, len(out)):
-                    # the midline: fits within half the spacing are one row wobbling
-                    if out[i].matches(out[j], scale.pitch, 2):
+                    if same_row(out[i], out[j], scale):
                         out[i].shapes += out[j].shapes
                         out[i].refit()
                         out.pop(j)
@@ -193,28 +209,50 @@ def detect(page_path: Path, trace_dir: Path) -> list[list[list[float]]]:
         )
     trace_boxes: list[tuple[int, list[list[float]]]] = [(mark.line_index, mark.box(scale.stroke_tol)) for mark in marks]
 
+    # the thesis, in the box: one box per row = the union of that row's word
+    # bounds, page pixels. Nothing else: no frame, no percentile, no cap. A trace
+    # replaces the box over the span it covers, so the reviewer's line and the
+    # detector's box never both claim the same ink.
     final: list[list[list[float]]] = []
     for line_index, line in enumerate(lines):
-        traced = sorted(line.u_span(line.shapes, box) for owner, box in trace_boxes if owner == line_index)
-        for poly in line.boxes(scale):
-            x_ref, y_ref, ux, uy, nx, ny = line.frame(line.shapes)
-            along = [(px / SCALE - x_ref) * ux + (py / SCALE - y_ref) * uy for px, py in poly]
-            across = [(px / SCALE - x_ref) * nx + (py / SCALE - y_ref) * ny for px, py in poly]
-            spans = [(min(along), max(along))]
-            for t0, t1 in traced:
-                remaining: list[tuple[float, float]] = []
-                for s0, s1 in spans:
-                    if t1 <= s0 or t0 >= s1:
-                        remaining.append((s0, s1))
-                        continue
-                    if s0 < t0:
-                        remaining.append((s0, t0))
-                    if t1 < s1:
-                        remaining.append((t1, s1))
-                spans = remaining
+        if not line.shapes:
+            continue
+        x0 = min(s.x0 for s in line.shapes) * SCALE
+        y0 = min(s.y0 for s in line.shapes) * SCALE
+        x1 = max(s.x1 for s in line.shapes) * SCALE
+        y1 = max(s.y1 for s in line.shapes) * SCALE
+        spans = [(x0, x1)]
+        for owner, box in trace_boxes:
+            if owner != line_index:
+                continue
+            t0 = min(p[0] for p in box)
+            t1 = max(p[0] for p in box)
+            remaining: list[tuple[float, float]] = []
             for s0, s1 in spans:
-                if (s1 - s0) * SCALE > MIN_BOX_PX:
-                    final.append(line.box(line.shapes, s0, s1, min(across), max(across)))
+                if t1 <= s0 or t0 >= s1:
+                    remaining.append((s0, s1))
+                    continue
+                if s0 < t0:
+                    remaining.append((s0, t0))
+                if t1 < s1:
+                    remaining.append((t1, s1))
+            spans = remaining
+        for s0, s1 in spans:
+            if s1 - s0 > MIN_BOX_PX:
+                final.append([[s0, y0], [s1, y0], [s1, y1], [s0, y1]])
+    # ink the rows did not claim still gets a box of its own: a component the rows
+    # cannot own (a vertical flourish, a margin mark) is something the reviewer
+    # must be able to see and trace, never something to drop silently.
+    for shape in shapes:
+        if shape.line == -1:
+            final.append(
+                [
+                    [shape.x0 * SCALE, shape.y0 * SCALE],
+                    [shape.x1 * SCALE, shape.y0 * SCALE],
+                    [shape.x1 * SCALE, shape.y1 * SCALE],
+                    [shape.x0 * SCALE, shape.y1 * SCALE],
+                ]
+            )
     final += [box for _, box in trace_boxes]
 
     trace_dir.mkdir(parents=True, exist_ok=True)

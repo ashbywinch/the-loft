@@ -100,8 +100,17 @@ class TestSmall:
     def test_a_dot_is_not_small_writing(self) -> None:
         assert not is_small(Box(0, 0, 18, 10), WRITING_HEIGHT)
 
-    def test_a_spot_filling_tall_but_narrow_is_not_word_like(self) -> None:
-        assert not is_small(Box(0, 0, 20, 30), WRITING_HEIGHT)
+    def test_a_narrow_small_word_is_still_small_writing(self) -> None:
+        """A small word like 'to' is 20x26 - narrower than tall; the aspect
+        guard wrongly broke run chains on exactly these words (line 5's small
+        text never formed its own line). Size is the test, not aspect."""
+        assert is_small(Box(0, 0, 20, 26), WRITING_HEIGHT)
+
+    def test_a_comma_is_not_small_writing(self) -> None:
+        """Small in both directions: a comma (10x20) is a mark of the same
+        hand, not another hand's writing."""
+        assert not is_small(Box(0, 0, 10, 20), WRITING_HEIGHT)
+        assert not is_small(Box(0, 0, 8, 10), WRITING_HEIGHT)
 
     def test_a_full_height_word_is_not_small(self) -> None:
         assert not is_small(Box(0, 0, 46, 44), WRITING_HEIGHT)
@@ -195,17 +204,18 @@ class TestRowsOf:
                 area = (word.x1 - word.x0) * (word.y1 - word.y0)
                 return ix * iy / area if area else 0.0
 
-            # the accepted interleave: a run of small writing sits between the
-            # body rows and has its own line, so a neighbour's box covering its
-            # words is the design, not a stack (its own yellow line resolves it)
-            # the accepted interleave: small writing (asides, the P.S. block) sits
-            # between the body rows and has its own lines; a neighbour's box
-            # covering its words is the design, not a stack
+            # the accepted interleave, both ways: small writing (asides, the
+            # P.S. block) sits between the body rows and has its own lines;
+            # small words may sit inside any box, and a small-run row's box may
+            # reach a neighbour's word - the dense block interleaves, and that
+            # is the design, not a stack (its own yellow line resolves it)
+            run_row = all(is_small(boxes[i], WRITING_HEIGHT) for i in rows[row_index])
             foreign = [
                 index
                 for index in in_some_row
                 if index not in mine
                 and boxes[index].height >= WRITING_FLOOR * WRITING_HEIGHT
+                and not run_row
                 and share(boxes[index], row_box) >= 0.5
             ]
             assert not foreign, (

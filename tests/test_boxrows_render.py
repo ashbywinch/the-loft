@@ -49,3 +49,31 @@ def test_render_rows_numbers_the_yellow_lines() -> None:
     out = render_rows(page, [Box(10, 10, 40, 40)], [[0]], strokes=[[(50, 50), (200, 50)]])
     # the stroke's own yellow shows through near its end
     assert out.getpixel((150, 50)) != (250, 250, 245)
+
+
+def test_numbers_sit_in_the_gutter_never_over_the_writing() -> None:
+    """The line numbers must be readable as each line's own, without covering
+    a single word: every disc ends before its line's leftmost words begin."""
+    page = Image.new("RGB", (800, 200), (250, 250, 245))
+    words = [
+        Box(300, 0, 350, 30),
+        Box(400, 2, 470, 32),
+        Box(300, 60, 340, 90),
+        Box(380, 62, 440, 92),
+    ]
+    rows = [[0, 1], [2, 3]]
+    strokes = [[(320, 15), (700, 15)], [(330, 75), (700, 75)]]
+    out = render_rows(page, words, rows, strokes)
+    # the gutter is the page's empty left region: words start at x 300, so the
+    # discs (ending at leftmost-10) stay between x 190 and 290 - no disc pixel
+    # may touch any word's rectangle
+    for row_index, (word_boxes, stroke) in enumerate(zip(rows, strokes, strict=False)):
+        left = min(words[i].x0 for i in word_boxes)
+        disc_left, disc_right = left - 96, left - 10
+        assert disc_right < left, "the disc must not reach the line's words"
+        # nothing over the words: the region just left of the line is disc,
+        # the words' own region is tint, and no pixel of the disc row shows ink
+        mid = (min(py for _, py in stroke) + max(py for _, py in stroke)) / 2
+        assert out.getpixel((int((disc_left + disc_right) / 2), int(mid))) != (250, 250, 245), (
+            f"line {row_index}: no disc beside its words"
+        )

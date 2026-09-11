@@ -9,6 +9,7 @@ reality check. No image, no strokes in the grouping's input.
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from pathlib import Path
 
 import pytest
@@ -22,7 +23,7 @@ from tools.boxrows import (
     is_rule,
     is_small,
     is_vertical,
-    median,
+    line_verdicts,
     merge_interleaved,
     row_boxes,
     rows_of,
@@ -86,13 +87,25 @@ class TestVertical:
         assert not is_vertical(Box(0, 0, 60, SPACING), SPACING, WRITING_HEIGHT)
 
     def test_a_tall_narrow_component_is_vertical_ink(self) -> None:
-        """34x52, aspect 0.65: the member that stretched row 24's box into
-        the next row's words - a vertical mark, not a word on a horizontal
-        line."""
-        assert is_vertical(Box(0, 0, 34, 52), SPACING, WRITING_HEIGHT)
+        """A margin mark, 22x56 (aspect 0.39): a vertical mark, not a word
+        on a horizontal line. (The measured width bound is 0.6 x height, so
+        a real letter 38x52 - aspect 0.73 - is retained; the 34x52 row-24
+        member is not in the class.)"""
+        assert is_vertical(Box(0, 0, 22, 56), SPACING, WRITING_HEIGHT)
+        assert is_vertical(Box(0, 0, 34, 52), SPACING, WRITING_HEIGHT) is False
 
     def test_a_wide_enough_component_is_not_tall_narrow(self) -> None:
         assert not is_vertical(Box(0, 0, 60, 52), SPACING, WRITING_HEIGHT)
+
+    def test_a_big_real_word_is_not_vertical(self) -> None:
+        """Line 11's second word: 146x72, four pixels taller than the spacing
+        rule allowed - a real, boxed word that went missing from its line."""
+        assert not is_vertical(Box(0, 0, 146, 72), SPACING, WRITING_HEIGHT)
+
+    def test_a_wider_vowel_is_not_vertical(self) -> None:
+        """Line 11's first word: 38x52, aspect 0.73 - a real letter-word that
+        the tall-narrow cut (0.77) threw off the line."""
+        assert not is_vertical(Box(0, 0, 38, 52), SPACING, WRITING_HEIGHT)
 
 
 class TestSmall:
@@ -166,9 +179,14 @@ class TestSmallRuns:
         boxes = [Box(0, 0, 50, 30), Box(60, 2, 110, 32), Box(120, 4, 170, 34)]
         assert small_runs(boxes, WRITING_HEIGHT, set()) == [[0, 1, 2]]
 
-    def test_two_chained_small_boxes_are_not_a_run(self) -> None:
+    def test_two_chained_small_boxes_are_a_run(self) -> None:
+        """Line 18's interjection had only two words - an interjection is
+        still an interjection, and needs no third word to be its own line."""
         boxes = [Box(0, 0, 50, 30), Box(60, 2, 110, 32)]
-        assert small_runs(boxes, WRITING_HEIGHT, set()) == []
+        assert small_runs(boxes, WRITING_HEIGHT, set()) == [[0, 1]]
+
+    def test_a_single_small_box_is_not_a_run(self) -> None:
+        assert small_runs([Box(0, 0, 50, 30)], WRITING_HEIGHT, set()) == []
 
     def test_a_far_away_small_box_does_not_join_the_run(self) -> None:
         boxes = [Box(0, 0, 50, 30), Box(60, 2, 110, 32), Box(120, 4, 170, 34), Box(4000, 0, 4050, 30)]
@@ -205,20 +223,21 @@ class TestRowsOf:
                 area = (word.x1 - word.x0) * (word.y1 - word.y0)
                 return ix * iy / area if area else 0.0
 
-            # the accepted interleave, both ways: small writing (asides, the
-            # P.S. block) sits between the body rows and has its own lines;
-            # small words may sit inside any box, and a small-run row's box may
-            # reach a neighbour's word - the dense block interleaves, and that
-            # is the design, not a stack (its own yellow line resolves it)
-            run_row = all(is_small(boxes[i], WRITING_HEIGHT) for i in rows[row_index])
-            foreign = [
-                index
-                for index in in_some_row
-                if index not in mine
-                and boxes[index].height >= WRITING_FLOOR * WRITING_HEIGHT
-                and not run_row
-                and share(boxes[index], row_box) >= 0.5
-            ]
+            # the accepted interleave: a word half-held by a neighbour's box is
+            # a violation only when its OWN row's box does not also cover it -
+            # when it does, the two boxes legitimately overlap (the tight zone,
+            # the P.S. density), and the word is in both, which is the design
+            def held_in(other: Collection[int], box: Box, mine: Collection[int], own_box: Box) -> list[int]:
+                return [
+                    index
+                    for index in other
+                    if index not in mine
+                    and boxes[index].height >= WRITING_FLOOR * WRITING_HEIGHT
+                    and share(boxes[index], box) >= 0.5
+                    and share(boxes[index], own_box) < 0.5
+                ]
+
+            foreign = held_in(in_some_row, row_box, mine, row_box)
             assert not foreign, (
                 f"row {row_index}'s box also covers words of {len(foreign)} other row(s): {sorted(foreign)[:6]}"
             )
@@ -240,6 +259,22 @@ class TestRowsOf:
         rows = rows_of(boxes, SPACING, WRITING_HEIGHT)
         assert [2] not in rows
 
+    def test_small_words_sandwiched_between_a_rows_words_join_that_row(self) -> None:
+        """Line 1 on the letter: two normal words (42px) with three lower
+        (30-38px) words between them, all in one 20px band. The run rule made
+        the middle an 'aside'; the reviewer reads one line. A run is an aside
+        only when it sits BETWEEN lines - inline with a row's words it IS the
+        row."""
+        boxes = [
+            Box(600, 0, 630, 42),  # word 9
+            Box(632, 8, 680, 38),  # the middles: lower, but on the same band
+            Box(710, 6, 812, 44),
+            Box(854, 12, 892, 38),
+            Box(900, 0, 1028, 42),  # word 11
+        ]
+        rows = rows_of(boxes, SPACING, WRITING_HEIGHT)
+        assert len(rows) == 1, f"one line of words became rows: {len(rows)}"
+
     def test_a_small_run_is_its_own_row(self) -> None:
         boxes = [
             Box(0, 0, 46, 44),
@@ -260,33 +295,23 @@ class TestReality:
     """The reality check: the reviewer drew one yellow line per real line of
     writing. A row grouping is right when each line's words land in one row."""
 
-    def test_every_yellow_lines_own_words_land_in_one_row(self, letter: dict, boxes) -> None:
-        """The reality check, measured: count NO word a trace merely sweeps -
-        only the line's OWN words, the ones inside the traced band and not
-        part of a small-run aside (which has its own line). With that
-        definition every yellow line lands in exactly one row.
+    def test_every_yellow_line_agrees_with_the_grouping(self, letter: dict, boxes) -> None:
+        """The honest reality check: every yellow line's covered words - all of
+        them, nothing excluded - sit in exactly one row, in that row's box.
 
-        The splits we chased were all the trace grazing its neighbours: a word
-        60px off the line's band belongs to the next row, and the P.S.'s small
-        runs interleave. Neither is a mis-assignment; this test pins the
-        actual contract.
+        The previous method excluded words more than half a spacing from the
+        line's median; a genuinely split line's second cluster fell outside
+        that cut and the answer came out 'zero disagreements' while the
+        reviewer saw most lines wrong. No word may be discarded when judging.
         """
         rows = rows_of(boxes, SPACING, WRITING_HEIGHT)
-        row_of = {index: r for r, row in enumerate(rows) for index in row}
-        run_words = {i for run in small_runs(boxes, WRITING_HEIGHT, set()) for i in run}
-        split = []
-        for line_index, stroke in enumerate(strokes_of(letter)):
-            covered = [
-                index
-                for index, box in enumerate(boxes)
-                if index in row_of
-                and any(box.x0 - 20 <= px <= box.x1 + 20 and box.y0 - 20 <= py <= box.y1 + 20 for px, py in stroke)
-            ]
-            if not covered:
-                continue
-            band = median([boxes[i].cy for i in covered])
-            own = [i for i in covered if abs(boxes[i].cy - band) <= SPACING / 2 and i not in run_words]
-            landed = sorted({row_of[i] for i in own})
-            if len(landed) > 1:
-                split.append((line_index, landed))
-        assert split == [], f"yellow lines split across rows: {split[:6]}"
+        verdicts = line_verdicts(boxes, rows, strokes_of(letter), SPACING, WRITING_HEIGHT)
+        bad = [
+            (index, verdict)
+            for index, verdict in enumerate(verdicts)
+            if verdict["verdict"] != "right" or verdict["outside"]
+        ]
+        assert bad == [], (
+            f"{len(bad)} yellow lines disagree: "
+            f"{[(i, v['verdict'], v['rows'], len(v['outside'])) for i, v in bad[:10]]}"
+        )

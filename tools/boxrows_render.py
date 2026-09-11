@@ -17,7 +17,7 @@ from dataclasses import dataclass
 
 from PIL import Image, ImageDraw
 
-from tools.boxrows import Box, row_boxes
+from tools.boxrows import Page, Rectangle, Row
 
 
 @dataclass(frozen=True)
@@ -38,13 +38,13 @@ class RenderStyle:
 DEFAULT_STYLE = RenderStyle()
 
 
-def join_band(left: Box, right: Box) -> Box:
+def join_band(left: Rectangle, right: Rectangle) -> Rectangle:
     """The band joining two adjacent words of one row: as tall as the shorter
     word, centred on the two words' vertical overlap (or their centres when
     they do not overlap)."""
     width = right.x0 - left.x1
     if width <= 0:
-        return Box(left.x1, min(left.y1, right.y1), left.x1, min(left.y1, right.y1))
+        return Rectangle(left.x1, min(left.y1, right.y1), left.x1, min(left.y1, right.y1))
     top = max(left.y0, right.y0)
     bottom = min(left.y1, right.y1)
     if bottom <= top:  # no vertical overlap: centre on the gap midpoint
@@ -52,11 +52,11 @@ def join_band(left: Box, right: Box) -> Box:
         top, bottom = centre, centre
     height = min(left.height, right.height)
     mid = (top + bottom) / 2
-    return Box(left.x1, mid - height / 2, right.x0, mid + height / 2)
+    return Rectangle(left.x1, mid - height / 2, right.x0, mid + height / 2)
 
 
 def tint_row(
-    draw: ImageDraw.ImageDraw, boxes: Sequence[Box], row: Sequence[int], colour: tuple[int, int, int, int]
+    draw: ImageDraw.ImageDraw, boxes: Sequence[Rectangle], row: Sequence[int], colour: tuple[int, int, int, int]
 ) -> None:  # noqa: E501
     """One row as tinted rectangles: each word's bounds, joined by the minimal
     bands. No outline: the ink stays the loudest thing on the page."""
@@ -71,8 +71,8 @@ def tint_row(
 
 def render_rows(
     page: Image.Image,
-    boxes: Sequence[Box],
-    rows: Sequence[Sequence[int]],
+    page_model: Page,
+    rows: Sequence[Row],
     strokes: Sequence[Sequence[tuple[float, float]]] | None = None,
     style: RenderStyle = DEFAULT_STYLE,
 ) -> Image.Image:
@@ -89,7 +89,8 @@ def render_rows(
     draw = ImageDraw.Draw(overlay)
     for row_index, row in enumerate(rows):
         colour = style.colour(row_index)
-        tint_row(draw, boxes, row, colour)
+        rects = [page_model.words[i].rect for i in row.words]
+        tint_row(draw, rects, list(range(len(rects))), colour)
     canvas = Image.alpha_composite(page_rgba, overlay)
     if strokes is not None:
         draw = ImageDraw.Draw(canvas)
@@ -114,16 +115,15 @@ def render_rows(
 
 def render_rows_with_line_boxes(
     page: Image.Image,
-    boxes: Sequence[Box],
-    rows: Sequence[Sequence[int]],
-    spacing: float,
+    page_model: Page,
+    rows: Sequence[Row],
     strokes: Sequence[Sequence[tuple[float, float]]] | None = None,
     style: RenderStyle = DEFAULT_STYLE,
 ) -> Image.Image:
     """Like render_rows, but each row's box is also outlined - the review
     surface's comparison view, where the outline is the point."""
-    canvas = render_rows(page, boxes, rows, strokes, style)
+    canvas = render_rows(page, page_model, rows, strokes, style)
     draw = ImageDraw.Draw(canvas)
-    for row_index, box in enumerate(row_boxes(rows, boxes, spacing)):
+    for row_index, box in enumerate(page_model.row_boxes(rows)):
         draw.rectangle([box.x0, box.y0, box.x1, box.y1], outline=style.colour(row_index), width=3)
     return canvas

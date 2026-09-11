@@ -226,14 +226,7 @@ class Page:
         words = self.rects
         grouped: list[Row] = []
         page_words = self.words
-        eligible = [
-            i for i in range(len(words)) if not page_words[i].is_rule() and page_words[i].height <= 1.3 * self.spacing
-        ]
-        own_rows = [
-            Row(words=[i])
-            for i in range(len(words))
-            if not page_words[i].is_rule() and page_words[i].height > 1.3 * self.spacing
-        ]
+        eligible = [i for i in range(len(words)) if not page_words[i].is_rule()]
         for index in sorted(eligible, key=lambda i: words[i].cy):
             joins = False
             if grouped and words[index].cy - _median([words[i].cy for i in grouped[-1].words]) <= self.spacing / 2:
@@ -244,7 +237,7 @@ class Page:
                 grouped.append(Row(words=[index]))
         grouped = self._merge_same_line(grouped)
         grouped = self._split_by_smallness(grouped)
-        return [row for row in grouped if row.words] + own_rows
+        return [row for row in grouped if row.words]
 
     def _merge_same_line(self, rows: list[Row]) -> list[Row]:
         """Two rows are one line when each row's fitted line passes through
@@ -396,8 +389,11 @@ class Page:
                 top = max(top, (centres[max(above, key=lambda r: centres[r])] + centres[index]) / 2)
             if below:
                 bottom = min(bottom, (centres[index] + centres[min(below, key=lambda r: centres[r])]) / 2)
-            top = min(top, min(self.rects[i].cy for i in row.words))
-            bottom = max(bottom, max(self.rects[i].cy for i in row.words))
+            # a box HOLDS its own words: keep at least half of every member's
+            # area inside (centre alone measured 34% for a 110-tall mark in a
+            # clamped row, which read as a word half outside its box)
+            top = min(top, min(self.rects[i].cy - self.rects[i].height / 4 for i in row.words))
+            bottom = max(bottom, max(self.rects[i].cy + self.rects[i].height / 4 for i in row.words))
             bottom = max(bottom, top)
             out.append(
                 Rectangle(

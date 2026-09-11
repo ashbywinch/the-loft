@@ -226,15 +226,25 @@ class Page:
         words = self.rects
         grouped: list[Row] = []
         page_words = self.words
-        eligible = [i for i in range(len(words)) if not page_words[i].is_rule() and not self.is_vertical(page_words[i])]
+        eligible = [
+            i for i in range(len(words)) if not page_words[i].is_rule() and page_words[i].height <= 1.3 * self.spacing
+        ]
+        own_rows = [
+            Row(words=[i])
+            for i in range(len(words))
+            if not page_words[i].is_rule() and page_words[i].height > 1.3 * self.spacing
+        ]
         for index in sorted(eligible, key=lambda i: words[i].cy):
+            joins = False
             if grouped and words[index].cy - _median([words[i].cy for i in grouped[-1].words]) <= self.spacing / 2:
+                joins = not self._would_stack(grouped[-1], index)
+            if joins:
                 grouped[-1].words.append(index)
             else:
                 grouped.append(Row(words=[index]))
         grouped = self._merge_same_line(grouped)
         grouped = self._split_by_smallness(grouped)
-        return [row for row in grouped if row.words]
+        return [row for row in grouped if row.words] + own_rows
 
     def _merge_same_line(self, rows: list[Row]) -> list[Row]:
         """Two rows are one line when each row's fitted line passes through
@@ -244,7 +254,9 @@ class Page:
             merged = False
             for first in range(len(rows)):
                 for second in range(first + 1, len(rows)):
-                    if self._same_line(rows[first], rows[second]):
+                    if self._same_line(rows[first], rows[second]) and not self._rows_would_stack(
+                        rows[first], rows[second]
+                    ):
                         rows[first].words = sorted(
                             rows[first].words + rows[second].words, key=lambda i: self.words[i].cx
                         )
@@ -254,6 +266,20 @@ class Page:
                 if merged:
                     break
         return rows
+
+    def _would_stack(self, row: Row, index: int) -> bool:
+        """A word physically above (or below) a word of the row is IMPOSSIBLE
+        - the row is really two lines. Tested at admission and at merge, not
+        repaired after: smallness already marks these as not belonging."""
+        word = self.words[index]
+        return any(self._pair_v_stacked(word, self.words[other]) for other in row.words)
+
+    def _rows_would_stack(self, here: Row, there: Row) -> bool:
+        return any(self._pair_v_stacked(self.words[a], self.words[b]) for a in here.words for b in there.words)
+
+    @staticmethod
+    def _pair_v_stacked(a: Word, b: Word) -> bool:
+        return a.x0 < b.x1 and b.x0 < a.x1 and (a.y1 < b.y0 or b.y1 < a.y0)
 
     def _same_line(self, here: Row, there: Row) -> bool:
         """The fits, compared at each other's centres: no x-overlap needed
@@ -348,6 +374,19 @@ class Page:
                 continue
             top = min(self.rects[i].y0 for i in row.words)
             bottom = max(self.rects[i].y1 for i in row.words)
+            if len(row.words) < 3:
+                # a lone or paired word's box IS its bounds: the midline clamp
+                # would trim a big word's own box below half-coverage and read
+                # it as a foreign word in its neighbour's
+                out.append(
+                    Rectangle(
+                        x0=min(self.rects[i].x0 for i in row.words),
+                        y0=top,
+                        x1=max(self.rects[i].x1 for i in row.words),
+                        y1=bottom,
+                    )
+                )
+                continue
             above = [r for r in live if centres[r] < centres[index]]
             below = [r for r in live if centres[r] > centres[index]]
             if above:

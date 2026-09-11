@@ -29,7 +29,9 @@ from typing import NamedTuple
 
 # the page's own ruler, in the same units as the boxes (page pixels)
 RULE_ASPECT = 8.0  # x height: this wide for its height is a rule, not a word
-WRITING_FLOOR = 0.9  # x writing height: below this a box is a smaller hand
+WRITING_FLOOR = 0.95  # x writing height: below this a box is an aside, a smaller hand
+# (the page's heights run continuously, so the floor sits at the page's own
+# word size - the asides and insertions the reviewer handles by tracing)
 SMALL_ASPECT = 1.2  # x height: smaller and the box is spot-like, not word-like
 SMALL_MIN_HEIGHT = 14.0  # page px: below this it is a dot or a tick
 RUN_LENGTH = 3  # how many small boxes in a row make a run of writing
@@ -72,14 +74,18 @@ def is_rule(box: Box) -> bool:
     return box.width >= RULE_ASPECT * box.height
 
 
-def is_vertical(box: Box, spacing: float) -> bool:
-    """Taller than the line spacing itself: not a word on one horizontal line.
+def is_vertical(box: Box, spacing: float, writing_height: float) -> bool:
+    """Not a word on one horizontal line: either taller than the line spacing
+    itself, or tall-and-narrow - a vertical mark.
 
     A word on a horizontal line spans at most its own row; a component taller
-    than the distance between lines crosses into the neighbouring row, so it is
-    vertical ink - a flourish, a welded pair, a margin mark - and joins no row.
+    than the distance between lines crosses into the neighbouring row. And a
+    component taller than the page's writing height but narrower than 7/10 of
+    its own height - aspect under ~0.77 - is a vertical stroke (a margin
+    letter, a tall mark), the member measured to stretch row 24's box into
+    the next row's words (34x52). Both are vertical ink: they join no row.
     """
-    return box.height > spacing
+    return box.height > spacing or (box.height > 1.2 * writing_height and box.width < 0.77 * box.height)
 
 
 def is_small(box: Box, writing_height: float) -> bool:
@@ -88,16 +94,34 @@ def is_small(box: Box, writing_height: float) -> bool:
     return SMALL_MIN_HEIGHT <= box.height < WRITING_FLOOR * writing_height and box.width >= SMALL_ASPECT * box.height
 
 
-def group_rows(boxes: Sequence[Box], spacing: float, slope: float = 0.0) -> list[list[int]]:
-    """Rows of word indices: each box's level is its centre with the page's
-    slope removed, and a gap wider than half the spacing starts a new row."""
-    level = [box.cy - slope * box.cx for box in boxes]
+def median(values: Sequence[float]) -> float:
+    """The middle value (mean of the two middles when even)."""
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def group_rows(boxes: Sequence[Box], spacing: float) -> list[list[int]]:
+    """Rows of word indices: a word joins the current row when its centre sits
+    within half the spacing of that row's MEDIAN centre.
+
+    The anchor is the median, never the last word added: comparing to the last
+    word lets the row drift - each step is small, the drift accumulates, and the
+    row swallows the line below (measured: one row spanning 258px where a row is
+    68px). A median keeps every member within half a spacing of the row's own
+    middle, so a row can never span two lines.
+    """
     rows: list[list[int]] = []
-    for index in sorted(range(len(boxes)), key=lambda i: level[i]):
-        if not rows or level[index] - level[rows[-1][-1]] > spacing / 2:
-            rows.append([index])
-        else:
+    levels: list[float] = []
+    for index in sorted(range(len(boxes)), key=lambda i: boxes[i].cy):
+        if rows and boxes[index].cy - median([boxes[i].cy for i in rows[-1]]) <= spacing / 2:
             rows[-1].append(index)
+            levels.append(boxes[index].cy)
+        else:
+            rows.append([index])
+            levels.append(boxes[index].cy)
     return [sorted(row, key=lambda i: boxes[i].x0) for row in rows]
 
 
@@ -112,23 +136,19 @@ def fit_row(row: Sequence[int], boxes: Sequence[Box]) -> tuple[float, float]:
 
 
 def same_line(here: Sequence[int], there: Sequence[int], boxes: Sequence[Box], spacing: float) -> bool:
-    """Two rows are one line when each row's fitted line passes through the
-    other's words: the fits, compared at the OTHER row's centre.
+    """Two rows are one line when their median centres sit within half the
+    spacing of each other.
 
-    The fits, not the row means: a long line cut in two gives two rows whose
-    means differ by the cut, while their fits describe the same line. Their
-    x-ranges need not overlap - a gap cut divides the line's x-span - so the
-    comparison is at each row's own centre, and the bound is 0.45x the spacing
-    rather than half, keeping genuinely adjacent rows (a full spacing apart)
-    clear of the bound with room to spare.
+    The fits were tried and measured: a fragment's fit over a few words is
+    noisy, and evaluated at the other row's centre the drift exceeds any
+    workable bound (11 split pairs at the midline, before this change). The
+    median of the members' centres is stable for a few words, and two genuine
+    rows sit a full spacing apart - clear of half - while fragments of one
+    line sit well inside it.
     """
-    here_fit, there_fit = fit_row(here, boxes), fit_row(there, boxes)
-    centre_there = sum(boxes[j].cx for j in there) / len(there)
-    centre_here = sum(boxes[i].cx for i in here) / len(here)
-    bound = 0.45 * spacing
-    at_here = abs(here_fit[0] * centre_here + here_fit[1] - (there_fit[0] * centre_here + there_fit[1]))
-    at_there = abs(here_fit[0] * centre_there + here_fit[1] - (there_fit[0] * centre_there + there_fit[1]))
-    return at_here < bound and at_there < bound
+    here_centre = median([boxes[i].cy for i in here])
+    there_centre = median([boxes[i].cy for i in there])
+    return abs(here_centre - there_centre) <= spacing / 2
 
 
 def merge_interleaved(rows: list[list[int]], boxes: Sequence[Box], spacing: float) -> list[list[int]]:
@@ -167,23 +187,48 @@ def small_runs(boxes: Sequence[Box], writing_height: float, rule_boxes: set[int]
     return [[i for i in sorted(run, key=lambda i: boxes[i].x0)] for run in runs if len(run) >= RUN_LENGTH]
 
 
-def row_boxes(rows: Sequence[Sequence[int]], boxes: Sequence[Box]) -> list[Box]:
-    """Each row's box: the union of its words' bounds."""
-    return [
-        Box(
-            x0=min(boxes[i].x0 for i in row),
-            y0=min(boxes[i].y0 for i in row),
-            x1=max(boxes[i].x1 for i in row),
-            y1=max(boxes[i].y1 for i in row),
+def row_boxes(rows: Sequence[Sequence[int]], boxes: Sequence[Box], spacing: float) -> list[Box]:
+    """Each row's box: the union of its words' bounds, clamped at the MIDLINES
+    to the rows above and below.
+
+    A row's own ink measure is one thing, but the box the reviewer sees must
+    not reach into the next line: a union following a tall member down to y3218
+    covered more than half of the next row's first small word. The clamp is
+    the midpoint between this row's baseline and its neighbour's, sampled at
+    this row's own centre - the line's fit, not its farthest word.
+    """
+    fits = [fit_row(row, boxes) for row in rows]
+    out: list[Box] = []
+    for index, row in enumerate(rows):
+        if not row:
+            continue
+        cx = median([boxes[i].cx for i in row])
+        slope, intercept = fits[index]
+        baseline = slope * cx + intercept
+        top = min(boxes[i].y0 for i in row)
+        bottom = max(boxes[i].y1 for i in row)
+        if index > 0:
+            prev_fit = fits[index - 1]
+            prev_baseline = prev_fit[0] * cx + prev_fit[1]
+            top = max(top, (prev_baseline + baseline) / 2)
+        if index + 1 < len(rows):
+            next_fit = fits[index + 1]
+            next_baseline = next_fit[0] * cx + next_fit[1]
+            bottom = min(bottom, (baseline + next_baseline) / 2)
+        out.append(
+            Box(
+                x0=min(boxes[i].x0 for i in row),
+                y0=top,
+                x1=max(boxes[i].x1 for i in row),
+                y1=bottom,
+            )
         )
-        for row in rows
-        if row
-    ]
+    return out
 
 
 def rows_of(boxes: Sequence[Box], spacing: float, writing_height: float) -> list[list[int]]:
     """The whole grouping: rules out, small runs out, the rest by centre."""
-    non_words = {i for i, box in enumerate(boxes) if is_rule(box) or is_vertical(box, spacing)}
+    non_words = {i for i, box in enumerate(boxes) if is_rule(box) or is_vertical(box, spacing, writing_height)}
     rule_boxes = non_words
     words = [i for i in range(len(boxes)) if i not in rule_boxes]
     word_boxes = [boxes[i] for i in words]

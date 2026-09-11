@@ -135,6 +135,24 @@ class Shape:
         )
 
 
+def baseline_row(ys: np.ndarray, xs: np.ndarray) -> int:
+    """The row a word's letters stand on: the modal BOTTOM ink row per column.
+
+    The old estimator - the modal ink row - lands on the letter bodies' top
+    (measured 26px high on a word written all in x-height letters, which is
+    what made the row baselines 26px out). The bottom contour is the physical
+    definition: each column's lowest ink pixel is the baseline, except where a
+    descender reaches below. Descender columns are a minority, so the most
+    common bottom row is the baseline and they do not move it.
+    """
+    bottoms: dict[int, int] = {}
+    for y, x in zip(ys.astype(int), xs.astype(int), strict=False):
+        if y > bottoms.get(int(x), -1):
+            bottoms[int(x)] = int(y)
+    values, counts = np.unique(np.array(list(bottoms.values())), return_counts=True)
+    return int(values[int(np.argmax(counts))])
+
+
 @dataclass
 class Line:
     """One line of writing: the shapes on it, and the baseline fitted through them."""
@@ -385,14 +403,13 @@ def components(mask: np.ndarray, min_area: int = SHAPE_MIN_AREA) -> list[Shape]:
         if area < min_area:
             continue
         ys, xs = np.nonzero(labels == component)
-        histogram = np.bincount(ys - ys.min())
         out.append(
             Shape(
                 x0=float(xs.min()),
                 y0=float(ys.min()),
                 x1=float(xs.max()),
                 y1=float(ys.max()),
-                baseline=float(int(np.argmax(histogram)) + int(ys.min())),
+                baseline=float(baseline_row(ys, xs)),
                 area=float(area),
                 cx=(int(xs.min()) + int(xs.max())) / 2,
                 pix=(ys.astype(np.float32), xs.astype(np.float32)),

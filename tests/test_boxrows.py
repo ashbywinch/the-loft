@@ -1,38 +1,30 @@
-"""Tests for the box-input row grouping (tools/boxrows.py).
+"""Tests for the box-input page model (tools/boxrows.py).
 
-Each rule is tested on its own with real boxes measured from the letter
-(the fixture holds word boundaries, which carry no PII), and the whole
-grouping is validated against the yellow lines the reviewer drew - the
-reality check. No image, no strokes in the grouping's input.
+Each rule is tested on its own with words whose font sizes (x-heights) are
+known, and the whole grouping is validated against the yellow lines the
+reviewer drew - the reality check. Word carries ITS font size; smallness is
+relative and lives on Page. No image, no strokes in the grouping's input.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Collection
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 
 from tools.boxrows import (
     RULE_ASPECT,
-    WRITING_FLOOR,
-    Box,
-    gap,
-    group_rows,
-    is_rule,
-    is_small,
-    is_vertical,
-    line_verdicts,
-    merge_interleaved,
-    row_boxes,
-    rows_of,
-    small_runs,
+    Page,
+    Rectangle,
+    Row,
+    Word,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "page01.json"
-WRITING_HEIGHT = 42.0  # page px: the letter's words
-SPACING = 67.6  # page px between its lines
+SPACING = 67.6  # page px between the letter's lines
+PAGE_FONT = 16.0  # page px: the letter's x-height
 
 
 @pytest.fixture(scope="module")
@@ -41,8 +33,22 @@ def letter() -> dict:
 
 
 @pytest.fixture(scope="module")
-def boxes(letter: dict) -> list[Box]:
-    return [Box(w["x0"], w["y0"], w["x1"], w["y1"]) for w in letter["words"]]
+def page(letter: dict) -> Page:
+    """The real letter: word bounds with their measured font sizes."""
+    return Page(
+        [Word(w["x0"], w["y0"], w["x1"], w["y1"], font_size=w.get("font_size", PAGE_FONT)) for w in letter["words"]],
+        SPACING,
+    )
+
+
+@pytest.fixture(scope="module")
+def words(letter: dict) -> list[Word]:
+    return [Word(w["x0"], w["y0"], w["x1"], w["y1"], font_size=w.get("font_size", PAGE_FONT)) for w in letter["words"]]
+
+
+def row_of_index(rows: Sequence[Row], index: int) -> int:
+    """The row holding a word index (the page model's mapping)."""
+    return next(r for r, row in enumerate(rows) if index in row.words)
 
 
 def strokes_of(letter: dict) -> list[list[tuple[float, float]]]:
@@ -51,267 +57,202 @@ def strokes_of(letter: dict) -> list[list[tuple[float, float]]]:
 
 
 class TestRule:
-    """is_rule: far wider than tall means an underline, not a word."""
+    """Word.is_rule: far wider than tall means an underline, not a word."""
 
-    def test_the_letters_own_underline_is_a_rule(self, boxes) -> None:
-        underline = min(boxes, key=lambda b: b.cy if b.width > 600 and b.cy < 2300 else 1e9)
+    def test_the_letters_own_underline_is_a_rule(self, words: list[Word]) -> None:
+        underline = min(words, key=lambda w: w.cy if w.width > 600 and w.cy < 2300 else 1e9)
         assert underline.width > 600
-        assert is_rule(underline)
+        assert underline.is_rule()
 
-    def test_an_ordinary_wide_word_is_not_a_rule(self, boxes) -> None:
-        """Every word-shaped component (wide for its height) is not a rule."""
-        assert not any(is_rule(b) for b in boxes if b.height >= 24 and 0.6 * b.height <= b.width < 300)
+    def test_an_ordinary_wide_word_is_not_a_rule(self, words: list[Word]) -> None:
+        assert not any(w.is_rule() for w in words if w.height >= 24 and 0.6 * w.height <= w.width < 300)
 
     def test_exactly_at_the_aspect_boundary_counts_as_a_rule(self) -> None:
-        assert is_rule(Box(0, 0, 8 * RULE_ASPECT, 8))
+        assert Word(0, 0, 8 * RULE_ASPECT, 8).is_rule()
 
     def test_a_tall_box_is_not_a_rule(self) -> None:
-        assert not is_rule(Box(0, 0, 40, 120))
-
-
-class TestVertical:
-    """is_vertical: taller than the line spacing - not a word on one horizontal line."""
-
-    def test_an_ordinary_wide_word_is_not_vertical(self, boxes) -> None:
-        assert not any(
-            is_vertical(b, SPACING, WRITING_HEIGHT) for b in boxes if b.height <= 60 and b.width >= 0.8 * b.height
-        )
-
-    def test_a_component_taller_than_the_spacing_is_vertical(self) -> None:
-        assert is_vertical(Box(0, 0, 60, 90), SPACING, WRITING_HEIGHT)
-
-    def test_a_component_shorter_than_the_spacing_is_not_vertical(self) -> None:
-        assert not is_vertical(Box(0, 0, 60, 60), SPACING, WRITING_HEIGHT)
-
-    def test_exactly_the_spacing_is_not_vertical(self) -> None:
-        assert not is_vertical(Box(0, 0, 60, SPACING), SPACING, WRITING_HEIGHT)
-
-    def test_a_tall_narrow_component_is_vertical_ink(self) -> None:
-        """A margin mark, 22x56 (aspect 0.39): a vertical mark, not a word
-        on a horizontal line. (The measured width bound is 0.6 x height, so
-        a real letter 38x52 - aspect 0.73 - is retained; the 34x52 row-24
-        member is not in the class.)"""
-        assert is_vertical(Box(0, 0, 22, 56), SPACING, WRITING_HEIGHT)
-        assert is_vertical(Box(0, 0, 34, 52), SPACING, WRITING_HEIGHT) is False
-
-    def test_a_wide_enough_component_is_not_tall_narrow(self) -> None:
-        assert not is_vertical(Box(0, 0, 60, 52), SPACING, WRITING_HEIGHT)
-
-    def test_a_big_real_word_is_not_vertical(self) -> None:
-        """Line 11's second word: 146x72, four pixels taller than the spacing
-        rule allowed - a real, boxed word that went missing from its line."""
-        assert not is_vertical(Box(0, 0, 146, 72), SPACING, WRITING_HEIGHT)
-
-    def test_a_wider_vowel_is_not_vertical(self) -> None:
-        """Line 11's first word: 38x52, aspect 0.73 - a real letter-word that
-        the tall-narrow cut (0.77) threw off the line."""
-        assert not is_vertical(Box(0, 0, 38, 52), SPACING, WRITING_HEIGHT)
+        assert not Word(0, 0, 40, 120).is_rule()
 
 
 class TestSmall:
-    """is_small: written smaller than the page's hand, and word-like."""
+    """Page.is_small: a smaller hand - a small FONT SIZE, never a short box."""
 
     def test_a_dot_is_not_small_writing(self) -> None:
-        assert not is_small(Box(0, 0, 18, 10), WRITING_HEIGHT)
-
-    def test_a_narrow_small_word_is_still_small_writing(self) -> None:
-        """A small word like 'to' is 20x26 - narrower than tall; the aspect
-        guard wrongly broke run chains on exactly these words (line 5's small
-        text never formed its own line). Size is the test, not aspect."""
-        assert is_small(Box(0, 0, 20, 26), WRITING_HEIGHT)
-
-    def test_a_comma_is_not_small_writing(self) -> None:
-        """Small in both directions: a comma (10x20) is a mark of the same
-        hand, not another hand's writing."""
-        assert not is_small(Box(0, 0, 10, 20), WRITING_HEIGHT)
-        assert not is_small(Box(0, 0, 8, 10), WRITING_HEIGHT)
+        page = Page([Word(0, 0, 18, 10, font_size=4)], SPACING)
+        assert not page.is_small(page.words[0])
 
     def test_a_full_height_word_is_not_small(self) -> None:
-        assert not is_small(Box(0, 0, 46, 44), WRITING_HEIGHT)
+        page = Page([Word(0, 0, 46, 44, font_size=PAGE_FONT)], SPACING)
+        assert not page.is_small(page.words[0])
 
-    def test_smaller_word_like_writing_is_small(self) -> None:
-        assert is_small(Box(0, 0, 94, 36), WRITING_HEIGHT)
+    def test_a_smaller_font_is_small(self) -> None:
+        page = Page([Word(0, 0, 94, 36, font_size=10)], SPACING)
+        assert page.font_size == 10
+        assert not page.is_small(page.words[0])  # it IS the page here
+
+    def test_smallness_is_relative_to_the_page(self) -> None:
+        small = Word(0, 0, 94, 36, font_size=8)
+        big_page = Page([small, Word(60, 0, 160, 60, font_size=16)], SPACING)
+        same_page = Page([small, Word(60, 0, 160, 36, font_size=8)], SPACING)
+        assert big_page.is_small(small)
+        assert not same_page.is_small(small)
+
+    def test_an_x_height_word_is_not_small_because_of_its_box(self) -> None:
+        """The reviewer's line-7 case: ordinary font (16), no ascenders or
+        descenders, so a SHORT box - but not small writing."""
+        word = Word(0, 0, 94, 22, font_size=16)
+        page = Page([word, Word(60, 0, 160, 60, font_size=16)], SPACING)
+        assert page.font_size == 16
+        assert not page.is_small(word)
 
 
-class TestGroupRows:
-    """group_rows: by centre, a gap beyond half the spacing starts a row."""
+class TestVertical:
+    """Page.is_vertical: not a word on one horizontal line."""
 
-    def test_no_boxes_makes_no_rows(self) -> None:
-        assert group_rows([], SPACING) == []
+    def test_an_ordinary_wide_word_is_not_vertical(self, words: list[Word]) -> None:
+        page = Page(words, SPACING)
+        assert not any(page.is_vertical(w) for w in words if w.height <= 60 and w.width >= 0.8 * w.height)
 
-    def test_one_box_makes_one_row(self) -> None:
-        assert group_rows([Box(0, 0, 40, 20)], SPACING) == [[0]]
+    def test_a_component_taller_than_a_row_and_a_half_is_vertical(self) -> None:
+        page = Page([Word(0, 0, 60, 90, font_size=10)], SPACING)
+        assert page.is_vertical(page.words[0])
 
-    def test_boxes_within_half_the_spacing_share_a_row(self) -> None:
-        boxes = [Box(0, 0, 40, 20), Box(100, 20, 140, 40)]
-        assert group_rows(boxes, SPACING) == [[0, 1]]
+    def test_a_tall_narrow_component_is_vertical_ink(self) -> None:
+        page = Page([Word(0, 0, 22, 56, font_size=10)], SPACING)
+        assert page.is_vertical(page.words[0])
+
+    def test_a_real_word_over_the_spacing_is_not_vertical(self) -> None:
+        """Line 11's second word: 146x72, ordinary font - a real, boxed word
+        that the over-eager height rule threw off its line."""
+        page = Page([Word(0, 0, 146, 72, font_size=16)], SPACING)
+        assert not page.is_vertical(page.words[0])
+
+
+class TestPageRows:
+    """Page.rows: the grouping, on words alone."""
+
+    def test_no_words_makes_no_rows(self) -> None:
+        assert Page([], SPACING).rows() == []
+
+    def test_one_word_makes_one_row(self) -> None:
+        rows = Page([Word(0, 0, 40, 20, font_size=10)], SPACING).rows()
+        assert len(rows) == 1 and rows[0].words == [0]
+
+    def test_words_within_half_the_spacing_share_a_row(self) -> None:
+        page = Page([Word(0, 0, 40, 20, font_size=10), Word(100, 20, 140, 40, font_size=10)], SPACING)
+        assert page.rows()[0].words == [0, 1]
 
     def test_a_gap_beyond_half_the_spacing_starts_a_new_row(self) -> None:
-        boxes = [Box(0, 0, 40, 20), Box(100, 40, 140, 60)]
-        assert len(group_rows(boxes, SPACING)) == 2
+        page = Page([Word(0, 0, 40, 20, font_size=10), Word(100, 40, 140, 60, font_size=10)], SPACING)
+        assert len(page.rows()) == 2
 
-    def test_boxes_are_ordered_across_the_row(self) -> None:
-        boxes = [Box(300, 0, 340, 20), Box(0, 5, 40, 25)]
-        assert group_rows(boxes, SPACING) == [[1, 0]]
+    def test_a_rule_is_no_row(self) -> None:
+        page = Page(
+            [Word(0, 0, 40, 44, font_size=10), Word(200, 0, 240, 44, font_size=10), Word(0, 60, 800, 68, font_size=10)],
+            SPACING,
+        )
+        rows = page.rows()
+        assert not any(all(page.words[i].is_rule() for i in row.words) for row in rows)
 
+    def test_a_chained_pair_of_small_words_is_an_interjection(self) -> None:
+        """Line 18's interjection had only two words - an interjection needs no
+        third word to be its own line, and its row is marked as such."""
+        page = Page(
+            [
+                Word(100, 10, 140, 40, font_size=16),  # the page's hand
+                Word(200, 12, 240, 42, font_size=16),
+                Word(0, 60, 50, 90, font_size=8),  # the smalls
+                Word(60, 62, 110, 92, font_size=8),
+            ],
+            SPACING,
+        )
+        interjections = [row for row in page.rows() if row.kind == "interjection"]
+        assert len(interjections) == 1
+        assert interjections[0].words == [2, 3]
 
-class TestMergeInterleaved:
-    """merge_interleaved: two rows that interleave are one line."""
-
-    def test_interleaving_rows_merge(self) -> None:
-        boxes = [Box(0, 0, 40, 20), Box(200, 10, 240, 30)]
-        rows = merge_interleaved([[0], [1]], boxes, SPACING)
-        assert rows == [[0, 1]]
-
-    def test_rows_a_full_spacing_apart_stay_separate(self) -> None:
-        boxes = [Box(0, 0, 40, 20), Box(200, 68, 240, 88)]
-        assert len(merge_interleaved([[0], [1]], boxes, SPACING)) == 2
-
-    def test_disjoint_rows_never_see_each_other(self) -> None:
-        boxes = [Box(0, 0, 40, 20), Box(200, 400, 240, 420)]
-        assert len(merge_interleaved([[0], [1]], boxes, SPACING)) == 2
-
-
-class TestSmallRuns:
-    """small_runs: three or more small word-like boxes in a chain are a run."""
-
-    def test_three_chained_small_boxes_are_a_run(self) -> None:
-        boxes = [Box(0, 0, 50, 30), Box(60, 2, 110, 32), Box(120, 4, 170, 34)]
-        assert small_runs(boxes, WRITING_HEIGHT, set()) == [[0, 1, 2]]
-
-    def test_two_chained_small_boxes_are_a_run(self) -> None:
-        """Line 18's interjection had only two words - an interjection is
-        still an interjection, and needs no third word to be its own line."""
-        boxes = [Box(0, 0, 50, 30), Box(60, 2, 110, 32)]
-        assert small_runs(boxes, WRITING_HEIGHT, set()) == [[0, 1]]
-
-    def test_a_single_small_box_is_not_a_run(self) -> None:
-        assert small_runs([Box(0, 0, 50, 30)], WRITING_HEIGHT, set()) == []
-
-    def test_a_far_away_small_box_does_not_join_the_run(self) -> None:
-        boxes = [Box(0, 0, 50, 30), Box(60, 2, 110, 32), Box(120, 4, 170, 34), Box(4000, 0, 4050, 30)]
-        assert small_runs(boxes, WRITING_HEIGHT, set()) == [[0, 1, 2]]
-
-    def test_a_dot_between_words_does_not_start_a_run(self) -> None:
-        boxes = [Box(0, 0, 10, 8), Box(20, 0, 30, 8), Box(40, 0, 50, 8)]
-        assert small_runs(boxes, WRITING_HEIGHT, set()) == []
+    def test_small_words_flanked_by_a_rows_words_join_it(self) -> None:
+        """Line 1: two 42px words with three lower words between them, all in
+        one band - the smalls are the middle of the sentence, not an aside."""
+        page = Page(
+            [
+                Word(600, 0, 630, 42, font_size=16),
+                Word(632, 8, 680, 38, font_size=10),
+                Word(710, 6, 812, 44, font_size=10),
+                Word(854, 12, 892, 38, font_size=10),
+                Word(900, 0, 1028, 42, font_size=16),
+            ],
+            SPACING,
+        )
+        rows = page.rows()
+        assert len(rows) == 1, f"one line of words became rows: {len(rows)}"
 
 
-class TestRowsOf:
-    """rows_of: the whole grouping, end to end, on boxes alone."""
+class TestRealty:
+    """The reality check: every yellow line's own words land in one row, in
+    that row's box - nothing hidden, nothing exempted."""
 
-    def test_no_row_box_holds_another_rows_words(self, boxes) -> None:
-        """The invariant the eye caught on the page: a row's box must cover its
-        own words and no other row's - the box the reviewer sees is one line.
+    def test_every_yellow_line_agrees_with_the_grouping(self, letter: dict, words: list[Word]) -> None:
+        page = Page(words, SPACING)
+        verdicts = page.verdicts(strokes_of(letter))
+        # a trace that, clamped to the page, sweeps no word at all is drawn
+        # over empty canvas - an off-page sketch mark, not a line to judge
+        unjudgeable = [
+            i
+            for i, stroke in enumerate(strokes_of(letter))
+            if not any(
+                word.x0 - 40 <= px <= word.x1 + 40 and word.y0 - 40 <= py <= word.y1 + 40
+                for word in page.words
+                for px, py in stroke
+            )
+        ]
+        bad = [(i, v) for i, v in enumerate(verdicts) if i not in unjudgeable and (v.verdict != "right" or v.outside)]
+        assert bad == [], f"{len(bad)} yellow lines disagree: {bad[:8]}"
 
-        (A row's union is legitimately about a spacing plus a word's height
-        tall - that is what a line of writing measures - so the test is not the
-        box's height but whose words its area contains.)
-        """
-        rows = rows_of(boxes, SPACING, WRITING_HEIGHT)
-        row_boxes_output = row_boxes(rows, boxes, SPACING)
-        for row_index, row_box in enumerate(row_boxes_output):
-            mine = set(rows[row_index])
-            in_some_row = {index for row in rows for index in row}
+    def test_a_lone_word_stacked_above_the_line_does_not_split_it(self) -> None:
+        """Line 18: the row at the stroke's level holds three of the words;
+        one word sits 40px above, in the row above - physically stacked above
+        another word, so not part of the line (the reviewer's ruling)."""
+        words = [
+            Word(746, 3196, 764, 3226, font_size=20),  # the three at the level
+            Word(784, 3206, 816, 3220, font_size=10),
+            Word(830, 3210, 920, 3264, font_size=14),
+            Word(776, 3140, 832, 3200, font_size=6),  # the one stacked above
+        ]
+        page_model = Page(words, SPACING)
+        stroke = [(720, 3204), (940, 3204)]
+        verdict = page_model.verdicts([stroke])[0]
+        assert verdict.verdict == "right", f"line 18 reads as {verdict.verdict}"
 
-            # a box HOLDS a foreign word when half its area is inside: at the
-            # edge, where a tall member of one row reaches toward the next, the
-            # overlap is the allowed class; half the word inside is a claim
-            def share(word: Box, box: Box) -> float:
+    def test_no_row_box_is_degenerate_or_vertical(self, letter: dict, words: list[Word]) -> None:
+        page = Page(words, SPACING)
+        rows = page.rows()
+        for row_index, box in enumerate(page.row_boxes(rows)):
+            assert box.height > 0, f"row {row_index}'s box has height {box.height:.0f}"
+            assert box.height <= box.width, f"row {row_index}'s box is {box.width:.0f}x{box.height:.0f} - vertical"
+
+    def test_no_row_box_holds_another_rows_words_beyond_the_overlap(self, letter: dict, words: list[Word]) -> None:
+        """A row's box must cover its own words and no other row's - except
+        where the allowed overlap (a word also covered by its OWN row's box)
+        applies."""
+        page = Page(words, SPACING)
+        rows = page.rows()
+        boxes = page.row_boxes(rows)
+        for row_index, row_box in enumerate(boxes):
+            mine = set(rows[row_index].words)
+            in_some_row = {index for row in rows for index in row.words}
+
+            def share(word: Rectangle, box: Rectangle) -> float:
                 ix = max(0.0, min(word.x1, box.x1) - max(word.x0, box.x0))
                 iy = max(0.0, min(word.y1, box.y1) - max(word.y0, box.y0))
                 area = (word.x1 - word.x0) * (word.y1 - word.y0)
                 return ix * iy / area if area else 0.0
 
-            # the accepted interleave: a word half-held by a neighbour's box is
-            # a violation only when its OWN row's box does not also cover it -
-            # when it does, the two boxes legitimately overlap (the tight zone,
-            # the P.S. density), and the word is in both, which is the design
-            def held_in(other: Collection[int], box: Box, mine: Collection[int], own_box: Box) -> list[int]:
-                return [
-                    index
-                    for index in other
-                    if index not in mine
-                    and boxes[index].height >= WRITING_FLOOR * WRITING_HEIGHT
-                    and share(boxes[index], box) >= 0.5
-                    and share(boxes[index], own_box) < 0.5
-                ]
-
-            foreign = held_in(in_some_row, row_box, mine, row_box)
-            assert not foreign, (
-                f"row {row_index}'s box also covers words of {len(foreign)} other row(s): {sorted(foreign)[:6]}"
-            )
-
-    def test_no_row_box_is_degenerate_or_vertical(self, boxes) -> None:
-        """The reviewer sees two vertical boxes on the sheet; there is no
-        vertical text on the letter. A box with a negative height (the midline
-        clamp inverting against a neighbour's extrapolated fit) drew as a
-        thousand-pixel vertical sliver."""
-        rows = rows_of(boxes, SPACING, WRITING_HEIGHT)
-        for row_index, row_box in enumerate(row_boxes(rows, boxes, SPACING)):
-            assert row_box.height > 0, f"row {row_index}'s box has height {row_box.height:.0f}"
-            assert row_box.height <= row_box.width, (
-                f"row {row_index}'s box is {row_box.width:.0f}x{row_box.height:.0f} - vertical"
-            )
-
-    def test_a_rule_is_no_row(self) -> None:
-        boxes = [Box(0, 0, 40, 44), Box(200, 0, 240, 44), Box(0, 60, 800, 68)]
-        rows = rows_of(boxes, SPACING, WRITING_HEIGHT)
-        assert [2] not in rows
-
-    def test_small_words_sandwiched_between_a_rows_words_join_that_row(self) -> None:
-        """Line 1 on the letter: two normal words (42px) with three lower
-        (30-38px) words between them, all in one 20px band. The run rule made
-        the middle an 'aside'; the reviewer reads one line. A run is an aside
-        only when it sits BETWEEN lines - inline with a row's words it IS the
-        row."""
-        boxes = [
-            Box(600, 0, 630, 42),  # word 9
-            Box(632, 8, 680, 38),  # the middles: lower, but on the same band
-            Box(710, 6, 812, 44),
-            Box(854, 12, 892, 38),
-            Box(900, 0, 1028, 42),  # word 11
-        ]
-        rows = rows_of(boxes, SPACING, WRITING_HEIGHT)
-        assert len(rows) == 1, f"one line of words became rows: {len(rows)}"
-
-    def test_a_small_run_is_its_own_row(self) -> None:
-        boxes = [
-            Box(0, 0, 46, 44),
-            Box(60, 0, 106, 44),
-            Box(0, 67, 50, 97),
-            Box(60, 69, 110, 101),
-            Box(120, 71, 170, 105),
-        ]
-        rows = rows_of(boxes, SPACING, WRITING_HEIGHT)
-        assert rows[-1] == [2, 3, 4]
-
-    def test_gap_measures_whitespace_not_centres(self) -> None:
-        assert gap(Box(0, 0, 40, 20), Box(50, 0, 90, 20)) == pytest.approx(10.0)
-        assert gap(Box(0, 0, 40, 20), Box(30, 0, 70, 20)) == 0.0
-
-
-class TestReality:
-    """The reality check: the reviewer drew one yellow line per real line of
-    writing. A row grouping is right when each line's words land in one row."""
-
-    def test_every_yellow_line_agrees_with_the_grouping(self, letter: dict, boxes) -> None:
-        """The honest reality check: every yellow line's covered words - all of
-        them, nothing excluded - sit in exactly one row, in that row's box.
-
-        The previous method excluded words more than half a spacing from the
-        line's median; a genuinely split line's second cluster fell outside
-        that cut and the answer came out 'zero disagreements' while the
-        reviewer saw most lines wrong. No word may be discarded when judging.
-        """
-        rows = rows_of(boxes, SPACING, WRITING_HEIGHT)
-        verdicts = line_verdicts(boxes, rows, strokes_of(letter), SPACING, WRITING_HEIGHT)
-        bad = [
-            (index, verdict)
-            for index, verdict in enumerate(verdicts)
-            if verdict["verdict"] != "right" or verdict["outside"]
-        ]
-        assert bad == [], (
-            f"{len(bad)} yellow lines disagree: "
-            f"{[(i, v['verdict'], v['rows'], len(v['outside'])) for i, v in bad[:10]]}"
-        )
+            foreign = [
+                index
+                for index in in_some_row
+                if index not in mine
+                and share(words[index].rect, row_box) >= 0.5
+                and share(words[index].rect, boxes[row_of_index(rows, index)]) < 0.5
+            ]
+            others = len({row_of_index(rows, i) for i in foreign})
+            assert not foreign, f"row {row_index}'s box also covers words of {others} other rows"

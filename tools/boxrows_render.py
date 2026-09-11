@@ -78,19 +78,34 @@ def render_rows(
 ) -> Image.Image:
     """The page with every row's box drawn as a faint tinted union of its
     words, and - when strokes are given - the yellow lines drawn numbered.
-    Returns a copy; the input page is untouched."""
-    canvas = page.convert("RGBA").copy()
-    draw = ImageDraw.Draw(canvas)
+    Returns a copy; the input page is untouched.
+
+    The tint is a translucent overlay COMMITTED ONLY BY COMPOSITION: a plain
+    convert("RGB") after drawing discards alpha, and the colour would land on
+    the page at full opacity - covering the very ink it is meant to tint.
+    """
+    page_rgba = page.convert("RGBA")
+    overlay = Image.new("RGBA", page_rgba.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
     for row_index, row in enumerate(rows):
         colour = style.colour(row_index)
         tint_row(draw, boxes, row, colour)
+    canvas = Image.alpha_composite(page_rgba, overlay)
     if strokes is not None:
+        draw = ImageDraw.Draw(canvas)
+        try:
+            font = ImageDraw.ImageFont.load_default(size=52)
+        except TypeError:  # Pillow older than the size-capable default font
+            font = ImageDraw.ImageFont.load_default()
         for number, stroke in enumerate(strokes):
             points = [(x, y) for x, y in stroke]
-            draw.line(points, fill=(250, 210, 30, 255), width=6)
+            draw.line(points, fill=(250, 210, 30), width=7)
             if points:
+                start = min(points, key=lambda point: point[0])
                 label = f"{number:02d}"
-                draw.text((points[0][0] + 10, points[0][1] - 34), label, fill=(0, 0, 0))
+                left, top = start[0] + 14, start[1] - 58
+                draw.ellipse([left - 8, top - 8, left + 64, top + 66], fill=(255, 255, 255))
+                draw.text((left, top), label, fill=(0, 0, 0), font=font)
     return canvas.convert("RGB")
 
 

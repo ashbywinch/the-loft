@@ -317,8 +317,13 @@ def detect(page_path: Path, trace_dir: Path) -> list[list[list[float]]]:
     # replaces the box over the span it covers, so the reviewer's line and the
     # detector's box never both claim the same ink.
     final: list[list[list[float]]] = []
+    # a row the reviewer has traced emits the MARK's box, not its union box: one
+    # box per traced row, no subtraction, no slivers. The detector itself never
+    # sees the yellow lines - the union boxes are its whole output when nothing
+    # has been drawn yet, and this replacement only happens at compose time.
+    traced_rows = {owner for owner, _ in trace_boxes}
     for line_index, line in enumerate(lines):
-        if not line.shapes:
+        if not line.shapes or line_index in traced_rows:
             continue
         x0 = min(s.x0 for s in line.shapes) * SCALE
         y0 = min(s.y0 for s in line.shapes) * SCALE

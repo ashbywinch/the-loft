@@ -72,6 +72,16 @@ def is_rule(box: Box) -> bool:
     return box.width >= RULE_ASPECT * box.height
 
 
+def is_vertical(box: Box, spacing: float) -> bool:
+    """Taller than the line spacing itself: not a word on one horizontal line.
+
+    A word on a horizontal line spans at most its own row; a component taller
+    than the distance between lines crosses into the neighbouring row, so it is
+    vertical ink - a flourish, a welded pair, a margin mark - and joins no row.
+    """
+    return box.height > spacing
+
+
 def is_small(box: Box, writing_height: float) -> bool:
     """Written in a smaller hand than the page's, and word-like rather than a
     spot: not a dot (too small in both directions) and wider than it is tall."""
@@ -173,7 +183,8 @@ def row_boxes(rows: Sequence[Sequence[int]], boxes: Sequence[Box]) -> list[Box]:
 
 def rows_of(boxes: Sequence[Box], spacing: float, writing_height: float) -> list[list[int]]:
     """The whole grouping: rules out, small runs out, the rest by centre."""
-    rule_boxes = {i for i, box in enumerate(boxes) if is_rule(box)}
+    non_words = {i for i, box in enumerate(boxes) if is_rule(box) or is_vertical(box, spacing)}
+    rule_boxes = non_words
     words = [i for i in range(len(boxes)) if i not in rule_boxes]
     word_boxes = [boxes[i] for i in words]
     rows = merge_interleaved(group_rows(word_boxes, spacing), word_boxes, spacing)

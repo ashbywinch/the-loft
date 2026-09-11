@@ -91,3 +91,29 @@ def test_a_line_with_no_ink_gets_no_box(tmp_path: Path) -> None:
     Image.new("L", (PAGE_W, PAGE_H), 255).save(blank)
     (tmp_path / "strokes.json").write_text(json.dumps({"strokes": []}), encoding="utf-8")
     assert detect(blank, tmp_path) == []
+
+
+def test_the_baseline_is_the_row_the_letters_stand_on() -> None:
+    """The baseline is where the letters stand, whatever ascenders and
+    descenders do - measured on the component's own ink.
+
+    The old estimator (the modal ink row) landed 26px high on a word whose
+    letters are all x-height: the densest rows are the letter bodies, so the
+    mode sits at their top. The bottom-contour mode is exact here: descender
+    columns are a minority, so the most common bottom row IS the baseline.
+    """
+    from tools.boxdet import baseline_row
+
+    baseline = 70
+    ys: list[int] = []
+    xs: list[int] = []
+    for column in range(60):  # six 10-wide letters
+        letter = column // 10
+        top = baseline - 46 if letter in (1, 4) else baseline - 26  # two ascenders
+        bottom = baseline + 26 if letter == 2 else baseline  # one descender
+        for y in range(top, bottom + 1):
+            ys.append(y)
+            xs.append(column)
+    import numpy as np
+
+    assert baseline_row(np.array(ys), np.array(xs)) == baseline

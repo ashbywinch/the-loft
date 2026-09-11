@@ -279,7 +279,10 @@ class Page:
 
     @staticmethod
     def _pair_v_stacked(a: Word, b: Word) -> bool:
-        return a.x0 < b.x1 and b.x0 < a.x1 and (a.y1 < b.y0 or b.y1 < a.y0)
+        if not (a.x0 < b.x1 and b.x0 < a.x1):
+            return False
+        overlap = min(a.y1, b.y1) - max(a.y0, b.y0)
+        return overlap < 0.5 * min(a.height, b.height)
 
     def _same_line(self, here: Row, there: Row) -> bool:
         """The fits, compared at each other's centres: no x-overlap needed

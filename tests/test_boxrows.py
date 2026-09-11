@@ -262,6 +262,18 @@ class TestRealty:
                     break
         assert stacked == [], f"rows with stacked words: {stacked[:6]}"
 
+    def test_no_row_holds_two_words_mostly_above_one_another(self) -> None:
+        """A 4px sliver of overlap is still a stack: word 118 (y3140-3200)
+        sits essentially above word 124 (y3196-3226) - their boxes overlap by
+        a thirteenth of the shorter. One word mostly above another cannot
+        share its row."""
+        words = [
+            Word(0, 0, 100, 40, font_size=10),  # centres 20 and 50: half-
+            Word(50, 36, 150, 64, font_size=10),  # spacing apart, so the walk
+        ]  # puts them together...
+        rows = Page(words, SPACING).rows()
+        assert len(rows) == 2, "a 10% vertical overlap held two words in one row"
+
     def test_every_mark_except_a_flat_underline_is_inside_a_box(self, words: list[Word]) -> None:
         """A word is a mark made of one or more letters - NOTHING else is
         exempt: no flourish exemption, no height bound. Only a long flat

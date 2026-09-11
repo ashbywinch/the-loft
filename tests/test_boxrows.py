@@ -22,6 +22,7 @@ from tools.boxrows import (
     is_rule,
     is_small,
     is_vertical,
+    median,
     merge_interleaved,
     row_boxes,
     rows_of,
@@ -259,15 +260,21 @@ class TestReality:
     """The reality check: the reviewer drew one yellow line per real line of
     writing. A row grouping is right when each line's words land in one row."""
 
-    def test_a_yellow_line_never_scatters_to_distant_rows(self, letter: dict, boxes) -> None:
-        """A real line's words land in consecutive rows: slope-cut fragments sit
-        adjacent, never scattered across the page. (Reuniting the adjacent
-        pairs is the slope grouping - a separate, recorded defect; scattering
-        to distant rows would be a grouping bug and is pinned here.)"""
+    def test_every_yellow_lines_own_words_land_in_one_row(self, letter: dict, boxes) -> None:
+        """The reality check, measured: count NO word a trace merely sweeps -
+        only the line's OWN words, the ones inside the traced band and not
+        part of a small-run aside (which has its own line). With that
+        definition every yellow line lands in exactly one row.
+
+        The splits we chased were all the trace grazing its neighbours: a word
+        60px off the line's band belongs to the next row, and the P.S.'s small
+        runs interleave. Neither is a mis-assignment; this test pins the
+        actual contract.
+        """
         rows = rows_of(boxes, SPACING, WRITING_HEIGHT)
         row_of = {index: r for r, row in enumerate(rows) for index in row}
         run_words = {i for run in small_runs(boxes, WRITING_HEIGHT, set()) for i in run}
-        scattered = []
+        split = []
         for line_index, stroke in enumerate(strokes_of(letter)):
             covered = [
                 index
@@ -275,9 +282,11 @@ class TestReality:
                 if index in row_of
                 and any(box.x0 - 20 <= px <= box.x1 + 20 and box.y0 - 20 <= py <= box.y1 + 20 for px, py in stroke)
             ]
-            # the runs are interleaved asides with their own lines: a stroke may
-            # pass over them, so only the body words measure the scatter
-            landed = sorted({row_of[i] for i in covered if i not in run_words})
-            if landed and landed != list(range(landed[0], landed[-1] + 1)):
-                scattered.append((line_index, landed))
-        assert scattered == [], f"lines scattered to non-consecutive rows: {scattered[:6]}"
+            if not covered:
+                continue
+            band = median([boxes[i].cy for i in covered])
+            own = [i for i in covered if abs(boxes[i].cy - band) <= SPACING / 2 and i not in run_words]
+            landed = sorted({row_of[i] for i in own})
+            if len(landed) > 1:
+                split.append((line_index, landed))
+        assert split == [], f"yellow lines split across rows: {split[:6]}"

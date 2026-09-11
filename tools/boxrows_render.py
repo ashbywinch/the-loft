@@ -101,11 +101,14 @@ def render_rows(
             points = [(x, y) for x, y in stroke]
             draw.line(points, fill=(250, 210, 30), width=7)
             if points:
-                # the number sits in the LEFT MARGIN at the line's level - never
-                # over the writing, which is what made lines 10-12 unreadable
-                top = min(py for _, py in points) + 4
-                draw.ellipse([12, top - 6, 92, top + 60], fill=(255, 255, 255))
-                draw.text((20, top), f"{number:02d}", fill=(0, 0, 0), font=font)
+                # the number sits in the gutter IMMEDIATELY LEFT of the line's
+                # own words, centred on the line's band: far enough to never
+                # touch the ink, close enough that the eye assigns it instantly
+                left = min(px for px, _ in points)
+                band = min(py for _, py in points), max(py for _, py in points)
+                mid = (band[0] + band[1]) / 2
+                draw.ellipse([left - 96, mid - 36, left - 10, mid + 36], fill=(255, 255, 255))
+                draw.text((left - 88, mid - 27), f"{number:02d}", fill=(0, 0, 0), font=font)
     return canvas.convert("RGB")
 
 

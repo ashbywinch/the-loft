@@ -222,6 +222,18 @@ class TestRowsOf:
                 f"row {row_index}'s box also covers words of {len(foreign)} other row(s): {sorted(foreign)[:6]}"
             )
 
+    def test_no_row_box_is_degenerate_or_vertical(self, boxes) -> None:
+        """The reviewer sees two vertical boxes on the sheet; there is no
+        vertical text on the letter. A box with a negative height (the midline
+        clamp inverting against a neighbour's extrapolated fit) drew as a
+        thousand-pixel vertical sliver."""
+        rows = rows_of(boxes, SPACING, WRITING_HEIGHT)
+        for row_index, row_box in enumerate(row_boxes(rows, boxes, SPACING)):
+            assert row_box.height > 0, f"row {row_index}'s box has height {row_box.height:.0f}"
+            assert row_box.height <= row_box.width, (
+                f"row {row_index}'s box is {row_box.width:.0f}x{row_box.height:.0f} - vertical"
+            )
+
     def test_a_rule_is_no_row(self) -> None:
         boxes = [Box(0, 0, 40, 44), Box(200, 0, 240, 44), Box(0, 60, 800, 68)]
         rows = rows_of(boxes, SPACING, WRITING_HEIGHT)

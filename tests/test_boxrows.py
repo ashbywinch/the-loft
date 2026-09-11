@@ -118,7 +118,7 @@ class TestVertical:
         assert page.is_vertical(page.words[0])
 
     def test_a_tall_narrow_component_is_vertical_ink(self) -> None:
-        page = Page([Word(0, 0, 22, 56, font_size=10)], SPACING)
+        page = Page([Word(0, 0, 16, 54, font_size=10)], SPACING)  # aspect 0.30
         assert page.is_vertical(page.words[0])
 
     def test_a_real_word_over_the_spacing_is_not_vertical(self) -> None:
@@ -207,6 +207,26 @@ class TestRealty:
         ]
         bad = [(i, v) for i, v in enumerate(verdicts) if i not in unjudgeable and (v.verdict != "right" or v.outside)]
         assert bad == [], f"{len(bad)} yellow lines disagree: {bad[:8]}"
+
+    def test_every_word_like_component_is_boxed(self, words: list[Word]) -> None:
+        """The reviewer's eye: words with no boxes. A component with a real
+        measured font size and letter proportions - not a rule, not a sliver -
+        is a word, and a word must sit in a row. Single letters are taller
+        than wide (aspect 0.36-0.6), so the tall-narrow cut must not eat
+        them."""
+        page = Page(words, SPACING)
+        boxed = {i for row in page.rows() for i in row.words}
+        unboxed = [
+            i
+            for i, word in enumerate(words)
+            if i not in boxed
+            and not word.is_rule()
+            and 20 <= word.height < 1.25 * SPACING
+            and word.width >= 10
+            and word.width >= 0.35 * word.height
+            and word.font_size >= 8
+        ]
+        assert unboxed == [], f"{len(unboxed)} word-like components have no box: {unboxed[:8]}"
 
     def test_a_lone_word_stacked_above_the_line_does_not_split_it(self) -> None:
         """Line 18: the row at the stroke's level holds three of the words;

@@ -205,24 +205,25 @@ def row_boxes(rows: Sequence[Sequence[int]], boxes: Sequence[Box], spacing: floa
     the midpoint between this row's baseline and its neighbour's, sampled at
     this row's own centre - the line's fit, not its farthest word.
     """
-    fits = [fit_row(row, boxes) for row in rows]
+    centres = [median([boxes[i].cy for i in row]) if row else 0.0 for row in rows]
+    live = [index for index, row in enumerate(rows) if row]
     out: list[Box] = []
     for index, row in enumerate(rows):
         if not row:
             continue
-        cx = median([boxes[i].cx for i in row])
-        slope, intercept = fits[index]
-        baseline = slope * cx + intercept
         top = min(boxes[i].y0 for i in row)
         bottom = max(boxes[i].y1 for i in row)
-        if index > 0:
-            prev_fit = fits[index - 1]
-            prev_baseline = prev_fit[0] * cx + prev_fit[1]
-            top = max(top, (prev_baseline + baseline) / 2)
-        if index + 1 < len(rows):
-            next_fit = fits[index + 1]
-            next_baseline = next_fit[0] * cx + next_fit[1]
-            bottom = min(bottom, (baseline + next_baseline) / 2)
+        # the neighbours are SPATIAL - the nearest row above and below - never
+        # the next index: the small-run rows are appended at the end of the
+        # list, so an index neighbour can sit a page away (that inversion drew
+        # a thousand-pixel vertical sliver)
+        above = [r for r in live if centres[r] < centres[index]]
+        below = [r for r in live if centres[r] > centres[index]]
+        if above:
+            top = max(top, (centres[max(above, key=lambda r: centres[r])] + centres[index]) / 2)
+        if below:
+            bottom = min(bottom, (centres[index] + centres[min(below, key=lambda r: centres[r])]) / 2)
+        bottom = max(bottom, top)  # a bare midline reading never inverts the box
         out.append(
             Box(
                 x0=min(boxes[i].x0 for i in row),

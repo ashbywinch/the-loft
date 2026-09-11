@@ -32,7 +32,7 @@ RULE_ASPECT = 8.0  # x height: this wide for its height is a rule, not a word
 WRITING_FLOOR = 0.95  # x writing height: below this a box is an aside, a smaller hand
 # (the page's heights run continuously, so the floor sits at the page's own
 # word size - the asides and insertions the reviewer handles by tracing)
-SMALL_ASPECT = 1.2  # x height: smaller and the box is spot-like, not word-like
+SMALL_MIN_WIDTH = 18.0  # page px: below this it is a spot or a comma
 SMALL_MIN_HEIGHT = 14.0  # page px: below this it is a dot or a tick
 RUN_LENGTH = 3  # how many small boxes in a row make a run of writing
 RUN_GAP = 60.0  # page px of whitespace between small boxes of one run
@@ -89,9 +89,17 @@ def is_vertical(box: Box, spacing: float, writing_height: float) -> bool:
 
 
 def is_small(box: Box, writing_height: float) -> bool:
-    """Written in a smaller hand than the page's, and word-like rather than a
-    spot: not a dot (too small in both directions) and wider than it is tall."""
-    return SMALL_MIN_HEIGHT <= box.height < WRITING_FLOOR * writing_height and box.width >= SMALL_ASPECT * box.height
+    """Written in a smaller hand than the page's: tall enough to carry a
+    letter, wide enough not to be a dot or comma, and below the page's own
+    word size.
+
+    The aspect test was dropped and measured: a small word like 'to' is
+    20x26, narrower than tall, and requiring width >= 1.2 x height broke the
+    run chains on exactly those words - line 5's small text never formed its
+    own line. Dots and commas are small in BOTH directions, so size guards
+    separate them without touching a narrow real word.
+    """
+    return SMALL_MIN_HEIGHT <= box.height < WRITING_FLOOR * writing_height and box.width >= SMALL_MIN_WIDTH
 
 
 def median(values: Sequence[float]) -> float:

@@ -20,6 +20,7 @@ from tools.boxrows import (
     group_rows,
     is_rule,
     is_small,
+    is_vertical,
     merge_interleaved,
     rows_of,
     small_runs,
@@ -63,6 +64,22 @@ class TestRule:
 
     def test_a_tall_box_is_not_a_rule(self) -> None:
         assert not is_rule(Box(0, 0, 40, 120))
+
+
+class TestVertical:
+    """is_vertical: taller than the line spacing - not a word on one horizontal line."""
+
+    def test_an_ordinary_word_is_not_vertical(self, boxes) -> None:
+        assert not any(is_vertical(b, SPACING) for b in boxes if b.height <= 60)
+
+    def test_a_component_taller_than_the_spacing_is_vertical(self) -> None:
+        assert is_vertical(Box(0, 0, 60, 90), SPACING)
+
+    def test_a_component_shorter_than_the_spacing_is_not_vertical(self) -> None:
+        assert not is_vertical(Box(0, 0, 60, 60), SPACING)
+
+    def test_exactly_the_spacing_is_not_vertical(self) -> None:
+        assert not is_vertical(Box(0, 0, 60, SPACING), SPACING)
 
 
 class TestSmall:
@@ -142,6 +159,21 @@ class TestSmallRuns:
 
 class TestRowsOf:
     """rows_of: the whole grouping, end to end, on boxes alone."""
+
+    @pytest.mark.xfail(
+        reason="residual: interleaved tight rows - a real mini-row of normal-height "
+        "words between body rows is grouped into one of them, stretching its box "
+        "(was 492px, now the giants are excluded; ~258px remains)"
+    )
+    def test_no_row_box_spans_more_than_one_row(self, boxes) -> None:
+        """The invariant the eye caught on the page: a row's box must never
+        hold words stacked one above another - its union is at most about one
+        row tall."""
+        rows = rows_of(boxes, SPACING, WRITING_HEIGHT)
+        for row_index, row in enumerate(rows):
+            members = [boxes[i] for i in row]
+            height = max(b.y1 for b in members) - min(b.y0 for b in members)
+            assert height <= 1.3 * SPACING, f"row {row_index} is {height:.0f}px tall, a row is {SPACING:.0f}px"
 
     def test_a_rule_is_no_row(self) -> None:
         boxes = [Box(0, 0, 40, 44), Box(200, 0, 240, 44), Box(0, 60, 800, 68)]

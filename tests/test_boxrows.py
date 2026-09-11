@@ -262,6 +262,20 @@ class TestRealty:
                     break
         assert stacked == [], f"rows with stacked words: {stacked[:6]}"
 
+    def test_no_box_spans_more_than_one_rows_band(self, words: list[Word]) -> None:
+        """The grey mass: a box drawn over several rows of writing. A box
+        holds ONE row's writing - at most about one and a half spacings of
+        ink (a row's union plus its tallest word). Anything taller is a box
+        over multiple rows and is wrong, whatever produced it."""
+        page_model = Page(words, SPACING)
+        rows = page_model.rows()
+        tall = [
+            (row_index, box.height)
+            for row_index, box in enumerate(page_model.row_boxes(rows))
+            if box.height > 2.2 * SPACING
+        ]
+        assert tall == [], f"boxes spanning several rows: {[(i, round(h)) for i, h in tall[:6]]}"
+
     def test_no_row_holds_two_words_mostly_above_one_another(self) -> None:
         """A 4px sliver of overlap is still a stack: word 118 (y3140-3200)
         sits essentially above word 124 (y3196-3226) - their boxes overlap by

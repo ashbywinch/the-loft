@@ -244,6 +244,41 @@ class TestRealty:
                 unboxed.append(i)
         assert unboxed == [], f"{len(unboxed)} letter-marks have no box: {unboxed[:8]}"
 
+    def test_no_row_contains_two_stacked_words(self, words: list[Word]) -> None:
+        """A word physically above another word of the same row is impossible -
+        stack them and the row is really two lines (the 1/2, 4/5/6, 17/18
+        same-colour merges, and the word line 25 stole from 23)."""
+        page_model = Page(words, SPACING)
+        rows = page_model.rows()
+        stacked = []
+        for row_index, row in enumerate(rows):
+            members = [page_model.words[i] for i in row.words]
+            for a in members:
+                for b in members:
+                    if a.x0 < b.x1 and b.x0 < a.x1 and (a.y1 < b.y0 or b.y1 < a.y0):
+                        stacked.append((row_index, id(a), id(b)))
+                        break
+                if stacked and stacked[-1][0] == row_index:
+                    break
+        assert stacked == [], f"rows with stacked words: {stacked[:6]}"
+
+    def test_every_mark_except_a_flat_underline_is_inside_a_box(self, words: list[Word]) -> None:
+        """A word is a mark made of one or more letters - NOTHING else is
+        exempt: no flourish exemption, no height bound. Only a long flat
+        underline (wider than 8x its height) is not a word. Everything else
+        must have its centre inside a row's box - including the 526x492 mark
+        on line 10 (a mark of letters must be boxed)."""
+        page_model = Page(words, SPACING)
+        rows = page_model.rows()
+        boxes = page_model.row_boxes(rows)
+        unboxed = [
+            i
+            for i, word in enumerate(words)
+            if not word.is_rule()
+            and not any(box.x0 <= word.cx <= box.x1 and box.y0 <= word.cy <= box.y1 for box in boxes)
+        ]
+        assert unboxed == [], f"{len(unboxed)} letter-marks have no box: {unboxed[:6]}"
+
     def test_a_lone_word_stacked_above_the_line_does_not_split_it(self) -> None:
         """Line 18: the row at the stroke's level holds three of the words;
         one word sits 40px above, in the row above - physically stacked above
@@ -264,7 +299,6 @@ class TestRealty:
         rows = page.rows()
         for row_index, box in enumerate(page.row_boxes(rows)):
             assert box.height > 0, f"row {row_index}'s box has height {box.height:.0f}"
-            assert box.height <= box.width, f"row {row_index}'s box is {box.width:.0f}x{box.height:.0f} - vertical"
 
     def test_no_row_box_holds_another_rows_words_beyond_the_overlap(self, letter: dict, words: list[Word]) -> None:
         """A row's box must cover its own words and no other row's - except

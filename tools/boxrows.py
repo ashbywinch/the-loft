@@ -48,7 +48,9 @@ SMALL_MIN_HEIGHT = 14.0  # page px: below this it is a dot or a tick
 RUN_LENGTH = 2  # how many small words in a chain make a run of writing
 RUN_GAP = 60.0  # page px of whitespace between the small words of one run
 RUN_BAND = 40.0  # page px: how close vertically two small words must sit
-VERTICAL_SPAN = 1.25  # x spacing: taller than this crosses a row and a half
+VERTICAL_SPAN = 2.5  # x spacing: taller than this is a flourish, not a word
+# (the 1.25 floor ate real words: 196x88 - four pixels over - and 150x92.
+# A mark made of letters can be two and a half rows tall.)
 VERTICAL_ASPECT = 0.35  # x height: narrower than this for its height is
 # vertical ink. The measured floor was 0.6, which ate single LETTERS - a
 # letter is taller than wide by nature (aspect 0.36-0.6 on this page), and the
@@ -405,23 +407,20 @@ class Page:
             cut = max(by_row.values(), default=0) / 2
             own = [i for i in own if by_row[row_of_index[i]] >= cut]
             rows_holding = sorted({row_of_index[i] for i in own})
-            if not own:
-                # a trace drawn in the GAP between two rows claims no single
-                # row: it is right when every WORD-LIKE word it sweeps is
-                # boxed somewhere - the failure is only a word-like word
-                # with no box at all
-                def _word_like(index: int) -> bool:
-                    word = self.words[index]
-                    return (
-                        not word.is_rule()
-                        and 20 <= word.height < 1.25 * self.spacing
-                        and word.width >= 10
-                        and word.width >= 0.35 * word.height
-                        and word.font_size >= 8
-                    )
 
-                word_like = [i for i in covered if _word_like(i)]
-                verdict = "unboxed" if any(i not in row_of_index for i in word_like) else "right"
+            # a trace drawn in the GAP between two rows claims no single row -
+            # no strict majority of the words it sweeps (line 6's tie, line
+            # 42's pair): it is right when every WORD-LIKE word it sweeps is
+            # boxed somewhere; the failure is only a word-like word with no
+            # box at all
+            def _word_like(index: int) -> bool:
+                word = self.words[index]
+                return not word.is_rule() and word.height < 2.5 * self.spacing
+
+            majority = max(by_row.values(), default=0) * 2 > len(covered)
+            if not own or (not majority and len(rows_holding) > 1):
+                word_like_unboxed = any(i not in row_of_index for i in covered if _word_like(i))
+                verdict = "unboxed" if word_like_unboxed else "right"
             elif len(rows_holding) == 1:
                 verdict = "right"
             else:

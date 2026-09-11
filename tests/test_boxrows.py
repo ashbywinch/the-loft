@@ -114,7 +114,7 @@ class TestVertical:
         assert not any(page.is_vertical(w) for w in words if w.height <= 60 and w.width >= 0.8 * w.height)
 
     def test_a_component_taller_than_a_row_and_a_half_is_vertical(self) -> None:
-        page = Page([Word(0, 0, 60, 90, font_size=10)], SPACING)
+        page = Page([Word(0, 0, 60, 190, font_size=10)], SPACING)
         assert page.is_vertical(page.words[0])
 
     def test_a_tall_narrow_component_is_vertical_ink(self) -> None:
@@ -227,6 +227,22 @@ class TestRealty:
             and word.font_size >= 8
         ]
         assert unboxed == [], f"{len(unboxed)} word-like components have no box: {unboxed[:8]}"
+
+    def test_every_letter_mark_sits_inside_a_row_box(self, letter: dict, words: list[Word]) -> None:
+        """The reviewer's standard, plainly: WORD means a mark made of one or
+        more letters - not small, not thin, not aspect-constrained. Only two
+        things are not words: a long flat underline (a rule) and a gigantic
+        flourish. Every other component's centre must be inside a row's box."""
+        page_model = Page(words, SPACING)
+        rows = page_model.rows()
+        boxes = page_model.row_boxes(rows)
+        unboxed = []
+        for i, word in enumerate(words):
+            if word.is_rule() or word.height > 2.5 * SPACING:
+                continue  # a rule or a flourish: not a word
+            if not any(box.x0 <= word.cx <= box.x1 and box.y0 <= word.cy <= box.y1 for box in boxes):
+                unboxed.append(i)
+        assert unboxed == [], f"{len(unboxed)} letter-marks have no box: {unboxed[:8]}"
 
     def test_a_lone_word_stacked_above_the_line_does_not_split_it(self) -> None:
         """Line 18: the row at the stroke's level holds three of the words;

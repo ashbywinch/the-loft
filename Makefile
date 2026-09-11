@@ -125,7 +125,7 @@ evals: setup
 # release bundle (SHA256SUMS-verified) into lucidlint-dist/ (gitignored), so
 # CI == developer on the same compiled binary.
 #
-# The pin is authoritative (2026-08-29): install-lucidlint verifies the
+# The pin is authoritative (2026-09-11: 0.5.0; was 0.1.0 to 2026-08-29): install-lucidlint verifies the
 # installed bundle's version marker against LUCIDLINT_VERSION and re-downloads
 # only on a mismatch or a missing marker. A bare file-existence guard let a
 # stale bundle from an earlier release sit in the gitignored dist (never
@@ -134,7 +134,7 @@ evals: setup
 # saw. The marker is written only by the verified download; a bundle whose
 # marker matches the pin IS the pinned version.
 .PHONY: install-lucidlint lucidlint
-LUCIDLINT_VERSION ?= 0.1.0
+LUCIDLINT_VERSION ?= 0.5.0
 LUCIDLINT_ARCH ?= x86_64-unknown-linux-musl
 LUCIDLINT_DIST := lucidlint-dist
 LUCIDLINT_BUNDLE := $(LUCIDLINT_DIST)/lucidlint.py

@@ -90,11 +90,18 @@ class Shape:
     x1: float
     y1: float
     baseline: float
+    waistline: float
     area: float
     cx: float
     pix: tuple[np.ndarray, np.ndarray]
     line: int = -1
     id: str = ""
+
+    @property
+    def x_height(self) -> float:
+        """The word's font size: baseline to waistline, blind to ascenders
+        and descenders (box height is not)."""
+        return self.baseline - self.waistline
 
     @property
     def height(self) -> float:
@@ -126,7 +133,8 @@ class Shape:
             y0=float(ny.min()),
             x1=float(nx.max()),
             y1=float(ny.max()),
-            baseline=float(max(histogram, key=lambda y: histogram[y])),
+            baseline=float(baseline_row(ny, nx)),
+            waistline=float(waistline_row(ny, nx)),
             area=float(len(ink)),
             cx=(float(nx.min()) + float(nx.max())) / 2,
             pix=(ny, nx),
@@ -151,6 +159,28 @@ def baseline_row(ys: np.ndarray, xs: np.ndarray) -> int:
             bottoms[int(x)] = int(y)
     values, counts = np.unique(np.array(list(bottoms.values())), return_counts=True)
     return int(values[int(np.argmax(counts))])
+
+
+def waistline_row(ys: np.ndarray, xs: np.ndarray) -> int:
+    """The top of a word's letter bodies: the x-height line.
+
+    Where the ink profile - pixels per row - rises from the ascender and
+    descender tails to its body level: scanning up from the peak row, the
+    first row whose count falls below a quarter of the peak. With
+    `baseline_row` this gives the word's x-height (baseline - waistline), the
+    size measure that ascenders and descenders cannot distort - box height can
+    and does (a word with no ascenders reads 'small' though it is not).
+    """
+    counts = np.bincount(ys.astype(int))
+    if counts.size == 0:
+        return 0
+    peak = int(np.argmax(counts))
+    waistline = peak
+    # walk up while the rows still carry the bodies' ink: the ascender tails
+    # hold well under half the peak (measured: a third), the bodies hold it all
+    while waistline > 0 and counts[waistline - 1] >= counts[peak] * 0.5:
+        waistline -= 1
+    return waistline
 
 
 @dataclass
@@ -410,6 +440,7 @@ def components(mask: np.ndarray, min_area: int = SHAPE_MIN_AREA) -> list[Shape]:
                 x1=float(xs.max()),
                 y1=float(ys.max()),
                 baseline=float(baseline_row(ys, xs)),
+                waistline=float(waistline_row(ys, xs)),
                 area=float(area),
                 cx=(int(xs.min()) + int(xs.max())) / 2,
                 pix=(ys.astype(np.float32), xs.astype(np.float32)),

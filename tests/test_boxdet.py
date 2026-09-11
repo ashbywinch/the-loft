@@ -117,3 +117,28 @@ def test_the_baseline_is_the_row_the_letters_stand_on() -> None:
     import numpy as np
 
     assert baseline_row(np.array(ys), np.array(xs)) == baseline
+
+
+def test_the_waistline_is_the_top_of_the_letters_bodies() -> None:
+    """A word's font size is baseline minus waistline - the x-height - and is
+    blind to ascenders and descenders, which is what box height gets wrong.
+
+    Constructed ink: 26px letter bodies, two ascenders reaching to 46px, one
+    descender to 26px below. The waistline must be the top of the bodies
+    (baseline - 26), not the ascender tops.
+    """
+    import numpy as np
+
+    from tools.boxdet import waistline_row
+
+    baseline = 70
+    ys: list[int] = []
+    xs: list[int] = []
+    for column in range(60):  # six 10-wide letters
+        letter = column // 10
+        top = baseline - 46 if letter in (1, 4) else baseline - 26
+        bottom = baseline + 26 if letter == 2 else baseline
+        for y in range(top, bottom + 1):
+            ys.append(y)
+            xs.append(column)
+    assert waistline_row(np.array(ys), np.array(xs)) == baseline - 26

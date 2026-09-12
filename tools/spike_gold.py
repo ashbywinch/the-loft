@@ -150,7 +150,7 @@ def build_gold(data_dir: Path) -> list[dict]:
     # (INTERJECTION_IDS constant)
     segments: list[dict] = []
     for group in sorted(groups.values(), key=lambda g: min(words[i]["y0"] + words[i]["y1"] for i in g)):
-        word_indices = [i for i in group if render_id[i] not in INTERJECTION_IDS]
+        word_indices = [i for i in group if render_id[i] not in INTERJECTION_WORDS]
         if not word_indices:
             continue
         # the band HUGS THE WORDS: the colour must cover them fully in y
@@ -173,55 +173,35 @@ def build_gold(data_dir: Path) -> list[dict]:
             }
         )
 
-    _interjection(segments, words, render_id)
+    _interjection(
+        [(next(i for i, w in enumerate(words) if render_id[i] == r), r) for line in INTERJECTION_LINES for r in line],
+        words,
+        segments,
+    )
     segments.sort(key=lambda s: s["y0"])
-    for number, segment in enumerate(segments, start=1):
+    for number, segment in enumerate((s for s in segments if not s["id"]), start=1):
         segment["id"] = f"seg-{number}"
     return segments
 
 
-def _interjection(segments: list[dict], words: list[dict], render_id: dict[int, int]) -> None:
-    """The bottom interjection, adjudicated (2026-09-12): the words no
-    yellow line included below the last main lines (413, 416, 415, 425,
-    428) plus the last main line's last two (455, 430) — THREE lines of
-    small writing, each its own segment (INTERJECTION_LINES). The unclaimed
-    set is checked so a change that starts claiming interjection words fails
-    loudly."""
-    claimed = {r for s in segments for r in s["word_ids"]}
-    r_to_p = {r: p for p, r in render_id.items()}
-    unclaimed_bottom = {
-        r
-        for r in range(1, len(words) + 1)
-        if r not in claimed and (words[r_to_p[r]]["y0"] + words[r_to_p[r]]["y1"]) / 2 >= 4414
-    }
-    expected_unclaimed = {415, 413, 416, 425, 428} | INTERJECTION_IDS
-    if unclaimed_bottom != expected_unclaimed:
-        raise ValueError(
-            "the bottom interjection's unclaimed words changed: "
-            f"{sorted(unclaimed_bottom)} vs {sorted(expected_unclaimed)} — adjudicate before regenerating"
+def _interjection(pairs: list[tuple[int, int]], words: list[dict], segments: list[dict]) -> None:
+    """The bottom interjection's lines as given in INTERJECTION_LINES — each
+    emitted with its int-N id directly (no seg-N renumbering after)."""
+    for line_number, line in enumerate(INTERJECTION_LINES, start=1):
+        pages = [p for p, r in pairs if r in line]
+        segments.append(
+            {
+                "id": f"int-{line_number}",
+                "type": "interjection",
+                "word_ids": sorted(line),
+                "injection_point": None,
+                "proposed": False,
+                "x0": min(words[i]["x0"] for i in pages),
+                "y0": min(words[i]["y0"] for i in pages),
+                "x1": max(words[i]["x1"] for i in pages),
+                "y1": max(words[i]["y1"] for i in pages),
+            }
         )
-    for line in INTERJECTION_LINES:
-        _interjection_line(list(line), words, render_id, segments)
-
-
-def _interjection_line(indices: list[int], words: list[dict], render_id: dict[int, int], segments: list[dict]) -> None:
-    """One interjection line: its words, band hugging them, own segment."""
-    if not indices:
-        return
-    pages = [next(i for i, w in enumerate(words) if render_id[i] == r) for r in indices]
-    segments.append(
-        {
-            "id": "",
-            "type": "interjection",
-            "word_ids": sorted(indices),
-            "injection_point": None,
-            "proposed": False,
-            "x0": min(words[i]["x0"] for i in pages),
-            "y0": min(words[i]["y0"] for i in pages),
-            "x1": max(words[i]["x1"] for i in pages),
-            "y1": max(words[i]["y1"] for i in pages),
-        }
-    )
 
 
 def render_gold_map(page: Image.Image, data_dir: Path, segments: list[dict], path: Path) -> None:

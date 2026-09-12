@@ -621,10 +621,16 @@ def test_each_band_covers_its_words() -> None:
 
 
 def test_the_bottom_interjection_is_three_lines() -> None:
-    """The bottom interjection, adjudicated (user 2026-09-12): the words no
-    yellow line colours (413, 416, 415, 425, 428) plus seg-39's last two
-    (455, 430) — three lines of small writing, each its own segment."""
+    """The bottom interjection, adjudicated (user 2026-09-12): int-1 =
+    (415, 413, 416, 425), int-2 = (428, 430), int-3 = (455). Each line is
+    its own segment — 455 is an interjection segment NEVER attributed to
+    any main line, and no hallucinated line-41 main segment exists."""
     segments = build_gold(FIXTURE)
+    actual = {r: seg["id"] for seg in segments for r in seg["word_ids"]}
+    assert actual.get(455) != "seg-40" and actual.get(455) is not None, (
+        f"word 455 attributed to {actual.get(455)} — it is the interjection's third line"
+    )
+    assert "seg-41" not in {seg["id"] for seg in segments}, "fictitious line-41 segment hallucinated"
     interjections = [s for s in segments if s["type"] == "interjection"]
     got = sorted(r for s in interjections for r in s["word_ids"])
     expected = [413, 416, 415, 425, 428, 455, 430]

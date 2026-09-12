@@ -36,9 +36,10 @@ RULE_ASPECT = 8.0  # x height: a mark this wide for its height is a rule (tools/
 TOUCH_FRACTION = 0.38  # x the writing scale: how close a trace claims a box
 MARGIN_X0 = 1350.0  # page px: a trace starting here is in the letter's right zone
 SHORT_SPAN = 400.0  # page px: a trace shorter than this is a note, not a body line
-INTERJECTION_IDS = {455, 430}  # the last main line's last two (user 2026-09-12)
-INTERJECTION_LINES = ((415, 413, 416, 425), (428, 430), (455,))  # the three bottom lines (user 2026-09-12)
-INTERJECTION_WORDS = {word for line in INTERJECTION_LINES for word in line}  # the seven, for the pins
+LINE_41 = (415, 413, 416, 425)  # the bottom's small lines (user 2026-09-12)
+LINE_42 = (428, 430)
+LINE_43 = (455,)
+LINE_41_43 = (LINE_41, LINE_42, LINE_43)
 
 _MAP_PAD = 60.0  # page px: the map's margin around the letter's surface
 
@@ -148,10 +149,10 @@ def build_gold(data_dir: Path) -> list[dict]:
         if merged:
             groups[first] = sorted(merged)
             groups.pop(second, None)
-    # (INTERJECTION_IDS constant)
+    line_41_43_words = {word for line in LINE_41_43 for word in line}
     segments: list[dict] = []
     for group in sorted(groups.values(), key=lambda g: min(words[i]["y0"] + words[i]["y1"] for i in g)):
-        word_indices = [i for i in group if render_id[i] not in INTERJECTION_WORDS]
+        word_indices = [i for i in group if render_id[i] not in line_41_43_words]
         if not word_indices:
             continue
         # the band HUGS THE WORDS: the colour must cover them fully in y
@@ -174,8 +175,8 @@ def build_gold(data_dir: Path) -> list[dict]:
             }
         )
 
-    _interjection(
-        [(next(i for i, w in enumerate(words) if render_id[i] == r), r) for line in INTERJECTION_LINES for r in line],
+    _bottom_lines(
+        [(next(i for i, w in enumerate(words) if render_id[i] == r), r) for line in LINE_41_43 for r in line],
         words,
         segments,
     )
@@ -185,14 +186,14 @@ def build_gold(data_dir: Path) -> list[dict]:
     return segments
 
 
-def _interjection(pairs: list[tuple[int, int]], words: list[dict], segments: list[dict]) -> None:
-    """The bottom interjection's lines as given in INTERJECTION_LINES — each
-    emitted with its int-N id directly (no seg-N renumbering after)."""
-    for line_number, line in enumerate(INTERJECTION_LINES, start=1):
+def _bottom_lines(pairs: list[tuple[int, int]], words: list[dict], segments: list[dict]) -> None:
+    """The bottom's lines 41/42/43 as given — each emitted with its
+    user-facing id directly (no seg-N renumbering after)."""
+    for line_number, line in ((41, LINE_41), (42, LINE_42), (43, LINE_43)):
         pages = [p for p, r in pairs if r in line]
         segments.append(
             {
-                "id": f"int-{line_number}",
+                "id": f"line-{line_number}",
                 "type": "interjection",
                 "word_ids": sorted(line),
                 "injection_point": None,

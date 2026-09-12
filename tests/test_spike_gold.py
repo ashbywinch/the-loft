@@ -558,7 +558,7 @@ EXPECTED_MAPPING = {
         421,
         423,
     ],
-    "seg-last-main": [
+    "seg-40": [
         427,
         429,
         431,
@@ -586,28 +586,23 @@ EXPECTED_MAPPING = {
         453,
         454,
     ],
-    "int-1": [415, 413, 416, 425],
-    "int-2": [428, 430],
-    "int-3": [455],
+    "line-41": [415, 413, 416, 425],
+    "line-42": [428, 430],
+    "line-43": [455],
 }
 
 
 def test_gold_matches_the_adjudicated_mapping() -> None:
     """Every word sits in exactly the segment the user confirmed — a
-    regression anywhere moves a word and this falls over. The bottom words
-    still fail today (the split the user called worse) — that is the pinned
-    defect, not a pass."""
+    regression anywhere moves a word and this falls over. EXPECTED_MAPPING
+    is the whole letter including the bottom's line-41/42/43."""
     segments = build_gold(FIXTURE)
     expected_ids = {i for seg in EXPECTED_MAPPING.values() for i in seg}
     actual = {r: seg["id"] for seg in segments for r in seg["word_ids"]}
     for seg, ids in EXPECTED_MAPPING.items():
         for word in ids:
             assert actual.get(word) == seg, f"word {word}: got {actual.get(word)}, expected {seg}"
-    from tools.spike_gold import INTERJECTION_WORDS
-
-    assert set(actual) == expected_ids | INTERJECTION_WORDS, (
-        f"claimed set differs: {sorted(set(actual) ^ (expected_ids | INTERJECTION_WORDS))[:10]}"
-    )
+    assert set(actual) == expected_ids, f"claimed set differs: {sorted(set(actual) ^ expected_ids)[:10]}"
 
 
 def test_each_band_covers_its_words() -> None:
@@ -625,25 +620,20 @@ def test_each_band_covers_its_words() -> None:
 
 
 def test_the_bottom_interjection_is_three_lines() -> None:
-    """The bottom interjection, adjudicated (user 2026-09-12): the words no
-    yellow line colours (413, 415, 416, 425, 428) plus the last main line's
-    last two (455, 430) — three lines, each its own: int-1 =
-    (415, 413, 416, 425); int-2 = (428, 430); int-3 = (455).
-
-    The last main line (strokes 43+40) is ONE segment ending at 454 —
-    455 is int-3's single word, never attributed to a main line."""
+    """The bottom's small writing, adjudicated (user 2026-09-12): line-41 =
+    (415, 413, 416, 425), line-42 = (428, 430), line-43 = (455). Seg-40 is
+    the last main line ending at 454 — 455 belongs to line-43, never to a
+    main line."""
     segments = build_gold(FIXTURE)
     actual = {r: seg["id"] for seg in segments for r in seg["word_ids"]}
-    assert actual.get(455) == "int-3", f"word 455 in {actual.get(455)} — the interjection's third line"
-    assert actual.get(430) == "int-2", f"word 430 in {actual.get(430)} — the interjection's second line"
-    mains = [s for s in segments if s["type"] != "interjection" and any(r in (427, 447) for r in s["word_ids"])]
-    assert len(mains) == 1 and mains[0]["type"] == "body", "the last main line must be a single body segment"
-    assert mains[0]["word_ids"][-1] == 454, f"the last main line ends at 454, ends {mains[0]['word_ids'][-3:]}"
-    interjections = [s for s in segments if s["type"] == "interjection"]
-    got = sorted(r for s in interjections for r in s["word_ids"])
+    assert actual.get(455) == "line-43", f"word 455 in {actual.get(455)} — line-43's word"
+    assert actual.get(430) == "line-42", f"word 430 in {actual.get(430)} — line-42's word"
+    mains = [s for s in segments if s["id"] == "seg-40"]
+    assert len(mains) == 1 and mains[0]["type"] == "body", "seg-40 must be the single last-main segment"
+    assert mains[0]["word_ids"][-1] == 454, f"seg-40 ends at 454, ends {mains[0]['word_ids'][-3:]}"
+    got = sorted(r for s in segments if s["id"] in ("line-41", "line-42", "line-43") for r in s["word_ids"])
     expected = [413, 416, 415, 425, 428, 455, 430]
-    assert sorted(got) == sorted(expected), f"interjection words: {got} vs {expected}"
-    assert len(interjections) == 3, f"interjection must be three lines, got {len(interjections)}"
+    assert sorted(got) == sorted(expected), f"bottom lines' words: {got} vs {expected}"
 def test_the_map_paints_words_not_rectangles() -> None:
     """The map contract (user 2026-09-12): each segment's band is EXACTLY
     the union of its own expected words' boxes (EXPECTED_MAPPING, the
@@ -657,12 +647,12 @@ def test_the_map_paints_words_not_rectangles() -> None:
     All three corners — the words no trace covers — stay unclaimed: the
     render must offer the VLM no invented word."""
     words = json.loads((FIXTURE / "words.json").read_text(encoding="utf-8"))["words"]
-    from tools.spike_gold import INTERJECTION_WORDS, _render_ids
+    from tools.spike_gold import _render_ids
 
     rid = _render_ids(words)
     page_of = {render: page for page, render in rid.items()}
     covered = {r for ids in EXPECTED_MAPPING.values() for r in ids}
-    unclaimed = sorted(set(range(1, len(words) + 1)) - covered - INTERJECTION_WORDS)
+    unclaimed = sorted(set(range(1, len(words) + 1)) - covered)
     print(f"\nunclaimed render ids ({len(unclaimed)}): {unclaimed[:40]}")
     for segment in build_gold(FIXTURE):
         if segment["id"] not in EXPECTED_MAPPING:

@@ -182,7 +182,7 @@ def build_gold(data_dir: Path) -> list[dict]:
     )
     segments.sort(key=lambda s: s["y0"])
     for number, segment in enumerate((s for s in segments if not s["id"]), start=1):
-        segment["id"] = f"seg-{number}"
+        segment["id"] = str(number)
     return segments
 
 
@@ -193,7 +193,7 @@ def _bottom_lines(pairs: list[tuple[int, int]], words: list[dict], segments: lis
         pages = [p for p, r in pairs if r in line]
         segments.append(
             {
-                "id": f"line-{line_number}",
+                "id": str(line_number),
                 "type": "interjection",
                 "word_ids": sorted(line),
                 "injection_point": None,

@@ -111,7 +111,7 @@ def test_a_segment_mixes_no_strokes() -> None:
 # defects are deliberately NOT pinned here: the band crush and the
 # interjection (their own failing tests).
 EXPECTED_MAPPING = {
-    "seg-1": [
+    "1": [
         3,
         4,
         5,
@@ -126,14 +126,14 @@ EXPECTED_MAPPING = {
         14,
         15,
     ],
-    "seg-2": [
+    "2": [
         17,
         18,
         19,
         20,
         21,
     ],
-    "seg-3": [
+    "3": [
         22,
         23,
         24,
@@ -141,7 +141,7 @@ EXPECTED_MAPPING = {
         26,
         27,
     ],
-    "seg-4": [
+    "4": [
         34,
         35,
         36,
@@ -160,7 +160,7 @@ EXPECTED_MAPPING = {
         49,
         50,
     ],
-    "seg-5": [
+    "5": [
         52,
         53,
         54,
@@ -176,15 +176,15 @@ EXPECTED_MAPPING = {
         66,
         67,
     ],
-    "seg-6": [
+    "6": [
         59,
         60,
     ],
-    "seg-7": [
+    "7": [
         69,
         70,
     ],
-    "seg-8": [
+    "8": [
         75,
         76,
         77,
@@ -202,7 +202,7 @@ EXPECTED_MAPPING = {
         89,
         90,
     ],
-    "seg-9": [
+    "9": [
         92,
         94,
         95,
@@ -215,13 +215,13 @@ EXPECTED_MAPPING = {
         103,
         104,
     ],
-    "seg-10": [
+    "10": [
         105,
     ],
-    "seg-11": [
+    "11": [
         107,
     ],
-    "seg-12": [
+    "12": [
         110,
         111,
         112,
@@ -232,11 +232,11 @@ EXPECTED_MAPPING = {
         118,
         119,
     ],
-    "seg-13": [
+    "13": [
         120,
         121,
     ],
-    "seg-14": [
+    "14": [
         126,
         128,
         129,
@@ -251,14 +251,14 @@ EXPECTED_MAPPING = {
         138,
         139,
     ],
-    "seg-15": [
+    "15": [
         140,
         141,
         142,
         143,
         144,
     ],
-    "seg-16": [
+    "16": [
         146,
         147,
         148,
@@ -273,7 +273,7 @@ EXPECTED_MAPPING = {
         157,
         158,
     ],
-    "seg-17": [
+    "17": [
         159,
         160,
         161,
@@ -288,11 +288,11 @@ EXPECTED_MAPPING = {
         170,
         171,
     ],
-    "seg-18": [
+    "18": [
         172,
         173,
     ],
-    "seg-19": [
+    "19": [
         174,
         175,
         176,
@@ -311,7 +311,7 @@ EXPECTED_MAPPING = {
         189,
         190,
     ],
-    "seg-20": [
+    "20": [
         197,
         198,
         199,
@@ -324,7 +324,7 @@ EXPECTED_MAPPING = {
         206,
         207,
     ],
-    "seg-21": [
+    "21": [
         209,
         210,
         211,
@@ -343,7 +343,7 @@ EXPECTED_MAPPING = {
         224,
         225,
     ],
-    "seg-22": [
+    "22": [
         227,
         228,
         229,
@@ -366,21 +366,21 @@ EXPECTED_MAPPING = {
         246,
         247,
     ],
-    "seg-23": [
+    "23": [
         248,
         249,
         250,
         251,
         252,
     ],
-    "seg-24": [
+    "24": [
         254,
         255,
         256,
         257,
         258,
     ],
-    "seg-25": [
+    "25": [
         259,
         260,
         261,
@@ -396,7 +396,7 @@ EXPECTED_MAPPING = {
         271,
         272,
     ],
-    "seg-26": [
+    "26": [
         273,
         274,
         275,
@@ -417,7 +417,7 @@ EXPECTED_MAPPING = {
         291,
         292,
     ],
-    "seg-27": [
+    "27": [
         293,
         294,
         295,
@@ -425,7 +425,7 @@ EXPECTED_MAPPING = {
         297,
         298,
     ],
-    "seg-28": [
+    "28": [
         299,
         300,
         301,
@@ -436,7 +436,7 @@ EXPECTED_MAPPING = {
         307,
         308,
     ],
-    "seg-29": [
+    "29": [
         309,
         310,
         311,
@@ -453,7 +453,7 @@ EXPECTED_MAPPING = {
         323,
         324,
     ],
-    "seg-30": [
+    "30": [
         326,
         327,
         328,
@@ -466,7 +466,7 @@ EXPECTED_MAPPING = {
         335,
         336,
     ],
-    "seg-31": [
+    "31": [
         337,
         338,
         339,
@@ -478,7 +478,7 @@ EXPECTED_MAPPING = {
         345,
         346,
     ],
-    "seg-32": [
+    "32": [
         347,
         348,
         349,
@@ -489,7 +489,7 @@ EXPECTED_MAPPING = {
         354,
         355,
     ],
-    "seg-33": [
+    "33": [
         356,
         357,
         358,
@@ -499,7 +499,7 @@ EXPECTED_MAPPING = {
         362,
         363,
     ],
-    "seg-34": [
+    "34": [
         366,
         367,
         368,
@@ -515,7 +515,7 @@ EXPECTED_MAPPING = {
         378,
         379,
     ],
-    "seg-35": [
+    "35": [
         381,
         382,
         383,
@@ -526,7 +526,7 @@ EXPECTED_MAPPING = {
         388,
         389,
     ],
-    "seg-36": [
+    "36": [
         391,
         392,
         393,
@@ -543,7 +543,7 @@ EXPECTED_MAPPING = {
         404,
         405,
     ],
-    "seg-37": [
+    "37": [
         406,
         407,
         408,
@@ -558,7 +558,7 @@ EXPECTED_MAPPING = {
         421,
         423,
     ],
-    "seg-40": [
+    "40": [
         427,
         429,
         431,
@@ -586,9 +586,9 @@ EXPECTED_MAPPING = {
         453,
         454,
     ],
-    "line-41": [415, 413, 416, 425],
-    "line-42": [428, 430],
-    "line-43": [455],
+    "41": [415, 413, 416, 425],
+    "42": [428, 430],
+    "43": [455],
 }
 
 
@@ -620,18 +620,18 @@ def test_each_band_covers_its_words() -> None:
 
 
 def test_the_bottom_interjection_is_three_lines() -> None:
-    """The bottom's small writing, adjudicated (user 2026-09-12): line-41 =
-    (415, 413, 416, 425), line-42 = (428, 430), line-43 = (455). Seg-40 is
-    the last main line ending at 454 — 455 belongs to line-43, never to a
+    """The bottom's small writing, adjudicated (user 2026-09-12): 41 =
+    (415, 413, 416, 425), 42 = (428, 430), 43 = (455). 40 is
+    the last main line ending at 454 — 455 belongs to 43, never to a
     main line."""
     segments = build_gold(FIXTURE)
     actual = {r: seg["id"] for seg in segments for r in seg["word_ids"]}
-    assert actual.get(455) == "line-43", f"word 455 in {actual.get(455)} — line-43's word"
-    assert actual.get(430) == "line-42", f"word 430 in {actual.get(430)} — line-42's word"
-    mains = [s for s in segments if s["id"] == "seg-40"]
-    assert len(mains) == 1 and mains[0]["type"] == "body", "seg-40 must be the single last-main segment"
-    assert mains[0]["word_ids"][-1] == 454, f"seg-40 ends at 454, ends {mains[0]['word_ids'][-3:]}"
-    got = sorted(r for s in segments if s["id"] in ("line-41", "line-42", "line-43") for r in s["word_ids"])
+    assert actual.get(455) == "43", f"word 455 in {actual.get(455)} — 43's word"
+    assert actual.get(430) == "42", f"word 430 in {actual.get(430)} — 42's word"
+    mains = [s for s in segments if s["id"] == "40"]
+    assert len(mains) == 1 and mains[0]["type"] == "body", "40 must be the single last-main segment"
+    assert mains[0]["word_ids"][-1] == 454, f"40 ends at 454, ends {mains[0]['word_ids'][-3:]}"
+    got = sorted(r for s in segments if s["id"] in ("41", "42", "43") for r in s["word_ids"])
     expected = [413, 416, 415, 425, 428, 455, 430]
     assert sorted(got) == sorted(expected), f"bottom lines' words: {got} vs {expected}"
 def test_the_map_paints_words_not_rectangles() -> None:

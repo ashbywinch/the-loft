@@ -26,34 +26,15 @@ FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-w
 
 
 def _main() -> int:
-    words = json.loads((FIXTURE / "words.json").read_text(encoding="utf-8"))["words"]
-    page = json.loads((FIXTURE / "boxes.json").read_text(encoding="utf-8"))["page"]
-    strokes = json.loads((FIXTURE / "strokes.json").read_text(encoding="utf-8"))["strokes"]
-    rid = _render_ids(words)
-    r_to_p = {r: p for p, r in rid.items()}
+    """Print the adjudicated mapping block. The mapping FILE is the source;
+    this only formats it as the old literal looked, for eyeballing diffs."""
+    from tools.spike_gold import load_expected_mapping
 
-    # the mapping = the extractor as adjudicated: every word the user
-    # confirmed, with the extractor's own labels, EXCEPT the interjection
-    # words (their own test). A change to the extractor that the user has
-    # NOT confirmed shows up the moment the pinned test fails against this
-    # literal — regenerate only after an adjudication.
-    current = build_gold(FIXTURE)
-    mapping: dict[int, str] = {}
-    for s in current:
-        if s["type"] == "interjection":
-            continue
-        for r in s["word_ids"]:
-            mapping[r] = s["id"]
-
-    by_segment: dict[str, list[int]] = {}
-    for r, seg in mapping.items():
-        by_segment.setdefault(seg, []).append(r)
-
-    print("EXPECTED_MAPPING = {")
-    for seg in sorted(by_segment, key=lambda s: int(s.split("-")[1])):
+    expected = load_expected_mapping()
+    for seg in sorted(expected, key=int):
         print(f"    {seg!r}: [")
         line = "        "
-        for r in sorted(by_segment[seg]):
+        for r in expected[seg]:
             chunk = f"{r}, "
             if len(line) + len(chunk) > 112:
                 print(line.rstrip())

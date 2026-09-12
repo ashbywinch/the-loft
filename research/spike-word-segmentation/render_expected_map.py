@@ -20,25 +20,17 @@ from tools.render import render_rows
 from tools.row import Row
 from tools.word_numbering import numbered_order
 from tools.word import Word
+from tools.spike_gold import load_expected_mapping
 
 FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-wordseg"
 OUT = Path(__file__).resolve().parent / "gold" / "expected-map.png"
 
+
 words = json.loads((FIXTURE / "words.json").read_text(encoding="utf-8"))["words"]
 surface = json.loads((FIXTURE / "surface.json").read_text(encoding="utf-8"))
 page = Image.open("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
-body = open(Path(__file__).resolve().parents[2] / "tests" / "test_spike_gold.py").read()
-start = body.index("EXPECTED_MAPPING = {")
-end = body.index("def test_gold_matches_the_adjudicated_mapping")
-ns: dict = {}
-exec("mapping_block = " + body[start:end].replace("EXPECTED_MAPPING = {", "{", 1), {}, ns)
-expected = ns["mapping_block"]
-def _order_key(name: str) -> tuple[int, int]:
-    match = re.search(r"(\d+)", name)
-    return (0 if name.startswith("seg-") else 1, int(match.group(1)) if match else 999)
-
-
-order = sorted(expected, key=_order_key)
+expected = load_expected_mapping()
+order = sorted(expected, key=lambda s: int(s))
 boxes = [(w["x0"], w["y0"], w["x1"], w["y1"]) for w in words]
 render_id = {page: render for render, page in enumerate(numbered_order(boxes), start=1)}
 page_of = {render: page for page, render in render_id.items()}

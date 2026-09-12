@@ -52,6 +52,64 @@ def render(args: argparse.Namespace) -> int:
     print(f"unplaced chips: {len(missing)}" + (f" (render ids {missing[:20]})" if missing else ""))
     return 0
 
+def map_words(args: argparse.Namespace) -> int:
+    """A line's words, addressed by LINE label — never by render id. Prints
+    each member with its box, so leftmost/rightmost are readable without
+    knowing any id."""
+    import json
+
+    from tools.spike_gold import _render_ids, load_expected_mapping
+
+    words = json.loads((args.data / "words.json").read_text(encoding="utf-8"))["words"]
+    expected = load_expected_mapping()
+    if args.line not in expected:
+        print(f"no line {args.line}: roster is {sorted(expected, key=lambda s: (len(s), s))}")
+        return 1
+    page_of = {render: page for page, render in _render_ids(words).items()}
+    for word in sorted(expected[args.line]):
+        box = words[page_of[word]]
+        print(f"  word {word}: x {box['x0']:.0f}-{box['x1']:.0f} y {box['y0']:.0f}-{box['y1']:.0f}")
+    return 0
+
+
+def map_move(args: argparse.Namespace) -> int:
+    """Move words between lines by label: --words 413,416 --to 37. The only
+    writer of the mapping file — no hand-editing the literal, no ids beyond
+    the move list itself."""
+    import json
+
+    from tools.spike_gold import load_expected_mapping
+
+    mapping_path = (
+        Path(__file__).resolve().parents[1]
+        / "research"
+        / "spike-word-segmentation"
+        / "gold"
+        / "expected-mapping.json"
+    )
+    expected = load_expected_mapping(mapping_path)
+    moving = [int(v) for v in args.words.split(",")]
+    if args.to not in expected:
+        print(f"no line {args.to}")
+        return 1
+    owners = {w: label for label, ids in expected.items() for w in ids}
+    for word in moving:
+        expected[owners[word]].remove(word)
+    for word in moving:  # append in the move-list order, never re-sorted
+        if word not in expected[args.to]:
+            expected[args.to].append(word)
+    mapping_path.write_text(
+        json.dumps(
+            {"lines": [{"label": label, "words": ids} for label, ids in expected.items()]},
+            indent=1,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    print(f"moved {moving} -> line {args.to}")
+    return 0
+
+
 
 def attempt(args: argparse.Namespace) -> int:
     """One whole-section VLM attempt (milestone 3): render the numbered
@@ -155,14 +213,15 @@ def main(argv: list[str] | None = None) -> int:
     gold_p.add_argument("--out", type=Path, default=DEFAULT_OUT, help="where the artifacts land")
     gold_p.set_defaults(func=gold)
 
-    attempt_p = sub.add_parser("attempt", help="one whole-section VLM attempt (schema v1, cached)")
-    attempt_p.add_argument("--page", type=Path, default=DEFAULT_PAGE, help="the scan (archive path)")
-    attempt_p.add_argument("--data", type=Path, default=DEFAULT_DATA, help="the traced data dir")
-    attempt_p.add_argument("--out", type=Path, default=DEFAULT_OUT, help="where the artifacts land")
-    attempt_p.add_argument("--name", default="page01-wholepage", help="the attempt's name")
-    attempt_p.add_argument("--scale", type=float, default=1.0, help="section scale")
-    attempt_p.add_argument("--section", default=None, help="x0,y0,x1,y1 in page px — default: the surface")
-    attempt_p.set_defaults(func=attempt)
+    words_p = sub.add_parser("map-words", help="list a line's words by line label")
+    words_p.add_argument("--data", type=Path, default=DEFAULT_DATA, help="the traced data dir")
+    words_p.add_argument("--line", required=True, help="the line label (e.g. 41)")
+    words_p.set_defaults(func=map_words)
+
+    move_p = sub.add_parser("map-move", help="move words between lines by label")
+    move_p.add_argument("--words", required=True, help="comma-separated word ids, e.g. 413,416")
+    move_p.add_argument("--to", required=True, help="the destination line label")
+    move_p.set_defaults(func=map_move)
 
     args = parser.parse_args(argv)
     return args.func(args)

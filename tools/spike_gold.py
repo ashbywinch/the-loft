@@ -27,7 +27,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from tools.render import RenderStyle
+from tools.rectangle import Rectangle
+from tools.render import RenderStyle, tint_row
 from tools.word_numbering import numbered_order
 
 RULE_ASPECT = 8.0  # x height: a mark this wide for its height is a rule (tools/word.py)
@@ -202,13 +203,27 @@ def _interjection(pairs: list[tuple[int, int]], words: list[dict], segments: lis
                 "y1": max(words[i]["y1"] for i in pages),
             }
         )
+def _segment_row_boxes(segment: dict, data_dir: Path) -> list[tuple[float, float, float, float]]:
+    """A segment's own words' boxes — the ONLY thing the house renderer
+    tints. No stroke-span rectangle: the band IS the words' union."""
+    words = json.loads((data_dir / "words.json").read_text(encoding="utf-8"))["words"]
+    render_id = _render_ids(words)
+    page_of = {render: page for page, render in render_id.items()}
+    return [
+        (
+            words[page_of[r]]["x0"],
+            words[page_of[r]]["y0"],
+            words[page_of[r]]["x1"],
+            words[page_of[r]]["y1"],
+        )
+        for r in segment["word_ids"]
+    ]
 
 
 def render_gold_map(page: Image.Image, data_dir: Path, segments: list[dict], path: Path) -> None:
-    """The adjudication map: each segment as ONE translucent band in the
-    house palette (semi-transparent background, no borders — the page's ink
-    stays the loudest thing), one white number per segment. The bands are
-    disjoint: one row, one colour."""
+    """The adjudication map: each segment as the minimal tinted union of its
+    own words, via the house renderer — no rectangles, the page's ink stays
+    the loudest thing; one white number per segment."""
     surface = json.loads((data_dir / "surface.json").read_text(encoding="utf-8"))
     pad = _MAP_PAD
     style = RenderStyle()
@@ -216,11 +231,10 @@ def render_gold_map(page: Image.Image, data_dir: Path, segments: list[dict], pat
     canvas = page.convert("RGBA")
     overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
+
     for index, segment in enumerate(segments):
-        draw.rectangle(
-            [segment["x0"], segment["y0"], segment["x1"], segment["y1"]],
-            fill=style.colour(index),
-        )
+        rects = [Rectangle(*box) for box in _segment_row_boxes(segment, data_dir)]
+        tint_row(draw, rects, list(range(len(rects))), style.colour(index))
     rendered = Image.alpha_composite(canvas, overlay).convert("RGB")
     crop = rendered.crop(
         (int(surface["x0"] - pad), int(surface["y0"] - pad), int(surface["x1"] + pad), int(surface["y1"] + pad))

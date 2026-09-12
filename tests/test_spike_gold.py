@@ -1,13 +1,17 @@
 """The gold extractor's contracts (tools/spike_gold.py), pinned on the
 committed page-01 fixture (tests/fixtures/page01-wordseg/).
 
-The rules the user demanded be validated:
+The map contract, ruled by the user (2026-09-12): each segment renders as the
+minimal tinted union of its own words, via the house renderer
+(tools/render.py::render_rows + tint_row) — joined word boxes only, no
+stroke-span rectangles. That minimality is the whole point: a slightly
+diagonal segment's bbox rectangle would eat words from the lines above and
+below in its corners. EXPECTED_MAPPING below is the word->segment truth the
+map check reads.
 
-- a word belongs to exactly ONE segment — no double colours on the map;
-- one segment is one row — no merged rows painting over other segments;
-- the id space is the render ids (1..N, reading order);
-- the gold is deterministic — the adjudicator's terms never shift between runs.
-"""
+The other rules: a word belongs to exactly ONE segment; the id space is the
+render ids (1..N); the gold is deterministic — terms never shift between
+runs."""
 
 from __future__ import annotations
 
@@ -640,3 +644,35 @@ def test_the_bottom_interjection_is_three_lines() -> None:
     expected = [413, 416, 415, 425, 428, 455, 430]
     assert sorted(got) == sorted(expected), f"interjection words: {got} vs {expected}"
     assert len(interjections) == 3, f"interjection must be three lines, got {len(interjections)}"
+def test_the_map_paints_words_not_rectangles() -> None:
+    """The map contract (user 2026-09-12): each segment's band is EXACTLY
+    the union of its own expected words' boxes (EXPECTED_MAPPING, the
+    confirmed assignment) — no wider in x, no taller in y. The stroke-span
+    rectangle is forbidden: a slightly diagonal segment's bbox eats lines
+    above/below in its corners (seg-38 absorbed neighbours; 6/7 lost
+    right-side words under clipped corners; the bottom's line-43 tint). The
+    renderer then paints that union via the house tint_row (joined word
+    boxes), so a correct band cannot mis-paint.
+
+    All three corners — the words no trace covers — stay unclaimed: the
+    render must offer the VLM no invented word."""
+    words = json.loads((FIXTURE / "words.json").read_text(encoding="utf-8"))["words"]
+    from tools.spike_gold import INTERJECTION_WORDS, _render_ids
+
+    rid = _render_ids(words)
+    page_of = {render: page for page, render in rid.items()}
+    covered = {r for ids in EXPECTED_MAPPING.values() for r in ids}
+    unclaimed = sorted(set(range(1, len(words) + 1)) - covered - INTERJECTION_WORDS)
+    print(f"\nunclaimed render ids ({len(unclaimed)}): {unclaimed[:40]}")
+    for segment in build_gold(FIXTURE):
+        if segment["id"] not in EXPECTED_MAPPING:
+            continue  # interjection lines have their own test
+        ids = EXPECTED_MAPPING[segment["id"]]
+        want = (
+            min(words[page_of[r]]["x0"] for r in ids),
+            min(words[page_of[r]]["y0"] for r in ids),
+            max(words[page_of[r]]["x1"] for r in ids),
+            max(words[page_of[r]]["y1"] for r in ids),
+        )
+        got = (segment["x0"], segment["y0"], segment["x1"], segment["y1"])
+        assert got == want, f"{segment['id']} band {got} != its words' union {want}"

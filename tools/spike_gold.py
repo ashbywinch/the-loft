@@ -60,16 +60,17 @@ def _render_ids(words: list[dict]) -> dict[int, int]:
 
 def _rule_indices(words: list[dict], spacing: float) -> set[int]:
     """The page's RULE marks — long flat ink the detector boxed that is NOT
-    an underline. An underline has writing directly above it (the letters it
-    underscores); a rule has none. A rule is not part of a line, an underline
-    is — so only the rules leave the line's segment."""
+    an underline. An underline sits directly under the writing it
+    underscores: writing above covers at least HALF its span. A rule has no
+    such writing (a crossed-out mass, a flourish) — rules are not part of a
+    line; underlines are."""
     rules: set[int] = set()
     for i, mark in enumerate(words):
         width = mark["x1"] - mark["x0"]
         height = mark["y1"] - mark["y0"]
         if height <= 0 or width < RULE_ASPECT * height:
             continue
-        writing_above = False
+        covered_by = 0.0
         for j, other in enumerate(words):
             if j == i:
                 continue
@@ -80,9 +81,8 @@ def _rule_indices(words: list[dict], spacing: float) -> set[int]:
             if other["x1"] > mark["x0"] and other["x0"] < mark["x1"]:
                 gap = mark["y0"] - other["y1"]
                 if -spacing <= gap <= spacing:
-                    writing_above = True
-                    break
-        if not writing_above:
+                    covered_by += min(other["x1"], mark["x1"]) - max(other["x0"], mark["x0"])
+        if covered_by < 0.5 * width:
             rules.add(i)
     return rules
 
@@ -132,9 +132,11 @@ def build_gold(data_dir: Path) -> list[dict]:
         if not word_indices:
             continue
         claimed.update(word_indices)
-        y0, y1 = bands[position]
         x0 = min(spans[position][0], min(words[i]["x0"] for i in word_indices))
         x1 = max(spans[position][1], max(words[i]["x1"] for i in word_indices))
+        # the band HUGS THE WORDS: the colour must cover them fully in y
+        y0 = min(words[i]["y0"] for i in word_indices)
+        y1 = max(words[i]["y1"] for i in word_indices)
         proposed = "marginalia" if x0 >= MARGIN_X0 or (x1 - x0) <= SHORT_SPAN else "body"
         segments.append(
             {
@@ -150,25 +152,55 @@ def build_gold(data_dir: Path) -> list[dict]:
             }
         )
 
+    # the interjection: the SMALL words no yellow line included — the squeezed
+    # writing between the main lines, clustered into its own lines by baseline
+    # (the user: the bottom's interjection is three lines). Stray fragments
+    # and rules stay unclaimed; the interjection is the small writing.
+    small = {i for i, w in enumerate(words) if 0 < ((w.get("baseline") or 0) - (w.get("waistline") or 0)) < 0.75 * unit}
+    unclaimed_indices = sorted((set(range(len(words))) - claimed - rules) & small)
+    if unclaimed_indices:
+        by_baseline = sorted(unclaimed_indices, key=lambda i: words[i]["baseline"])
+        line: list[int] = []
+        previous: float | None = None
+        for i in by_baseline:
+            baseline = words[i]["baseline"]
+            if previous is not None and baseline - previous > 0.6 * spacing:
+                _interjection_line(line, words, render_id, segments)
+                line = []
+            line.append(i)
+            previous = baseline
+        _interjection_line(line, words, render_id, segments)
+
     segments.sort(key=lambda s: s["y0"])
     for number, segment in enumerate(segments, start=1):
         segment["id"] = f"seg-{number}"
-
-    # clip the bands apart at their midpoints: no two rows share a pixel row
-    for k in range(1, len(segments)):
-        upper, lower = segments[k - 1], segments[k]
-        if upper["y1"] > lower["y0"]:
-            boundary = (upper["y1"] + lower["y0"]) / 2
-            upper["y1"] = boundary
-            lower["y0"] = boundary
     return segments
+
+
+def _interjection_line(indices: list[int], words: list[dict], render_id: dict[int, int], segments: list[dict]) -> None:
+    """One interjection line: its words, band hugging them, own segment."""
+    if not indices:
+        return
+    segments.append(
+        {
+            "id": "",
+            "type": "interjection",
+            "word_ids": sorted(render_id[i] for i in indices),
+            "injection_point": None,
+            "proposed": False,  # the interjection needs no adjudication: it is the unclaimed words
+            "x0": min(words[i]["x0"] for i in indices),
+            "y0": min(words[i]["y0"] for i in indices),
+            "x1": max(words[i]["x1"] for i in indices),
+            "y1": max(words[i]["y1"] for i in indices),
+        }
+    )
 
 
 def render_gold_map(page: Image.Image, data_dir: Path, segments: list[dict], path: Path) -> None:
     """The adjudication map: each segment as ONE translucent band in the
     house palette (semi-transparent background, no borders — the page's ink
-    stays the loudest thing), one white number per segment. The bands are
-    disjoint: one row, one colour."""
+    stays the loudest thing), one white number per segment; the bands hug
+    the words they cover."""
     surface = json.loads((data_dir / "surface.json").read_text(encoding="utf-8"))
     pad = _MAP_PAD
     style = RenderStyle()

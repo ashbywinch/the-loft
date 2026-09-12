@@ -63,6 +63,24 @@ def _render_ids(words: list[dict]) -> dict[int, int]:
     return {page_index: render for render, page_index in enumerate(numbered_order(boxes), start=1)}
 
 
+def load_expected_mapping(mapping_path: Path | str | None = None) -> dict[str, list[int]]:
+    """The adjudicated word->line mapping, the single source: label ->
+    word ids (render ids, the numbered renderer's reading order). Lives in
+    research/spike-word-segmentation/gold/expected-mapping.json — the test,
+    the renders and the move verb all read this file, nothing else."""
+    path = (
+        Path(mapping_path)
+        if mapping_path is not None
+        else Path(__file__).resolve().parents[1]
+        / "research"
+        / "spike-word-segmentation"
+        / "gold"
+        / "expected-mapping.json"
+    )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return {entry["label"]: list(entry["words"]) for entry in data["lines"]}
+
+
 def _rule_indices(words: list[dict], spacing: float) -> set[int]:
     """The page's RULE marks — long flat ink the detector boxed that is NOT
     an underline. An underline has writing directly above it (the letters it

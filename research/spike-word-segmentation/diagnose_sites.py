@@ -10,7 +10,6 @@ Usage: .venv/bin/python research/spike-word-segmentation/diagnose_sites.py
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -37,12 +36,11 @@ SITES = {
 
 
 def _load_expected() -> dict[str, list[int]]:
-    body = (Path(__file__).resolve().parents[2] / "tests" / "test_spike_gold.py").read_text()
-    start = body.index("EXPECTED_MAPPING = {")
-    end = body.index("def test_gold_matches_the_adjudicated_mapping")
-    ns: dict = {}
-    exec("mapping_block = " + body[start:end].replace("EXPECTED_MAPPING = {", "{", 1), {}, ns)
-    return ns["mapping_block"]
+    """The mapping file — the single source, shared with the test."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from tools.spike_gold import load_expected_mapping
+
+    return load_expected_mapping()
 
 
 def _public_render_ids(words: list[dict]) -> dict[int, int]:
@@ -52,18 +50,15 @@ def _public_render_ids(words: list[dict]) -> dict[int, int]:
     return {page: render for render, page in enumerate(numbered_order(boxes), start=1)}
 
 
-def _order_key(name: str) -> tuple[int, int]:
-    """Map labels run seg-1..seg-N in reading order, then the int- lines."""
-    match = re.search(r"(\d+)", name)
-    number = int(match.group(1)) if match else 999
-    return (0 if name.startswith("seg-") else 1, number)
+def _order_key(name: str) -> tuple[int]:
+    """Map labels are bare user-facing line numbers — sort numerically."""
+    return (int(name),)
 
 
 def _main() -> int:
     words = json.loads((FIXTURE / "words.json").read_text())["words"]
     expected = _load_expected()
     order = sorted(expected, key=_order_key)
-    label_of = {name: i + 1 for i, name in enumerate(order)}
     render_id = _public_render_ids(words)
     page_of = {render: page for page, render in render_id.items()}
     style = RenderStyle()
@@ -77,7 +72,6 @@ def _main() -> int:
         w, h = int(crop.width * scale), int(crop.height * scale)
         crop = crop.resize((w, h), Image.Resampling.LANCZOS)
         draw = ImageDraw.Draw(crop, "RGBA")
-        owner = {r: name for name, ids in expected.items() for r in ids}
         # tints first (minimal unions, like the expected map)
         for name in order:
             boxes = [
@@ -97,28 +91,31 @@ def _main() -> int:
                 for b in boxes
             ]
             tint_row(draw, rects, list(range(len(rects))), style.colour(order.index(name)))
-        # boxes + render ids
+        # member boxes ONLY, each carrying its LINE label — neighbours stay
+        # untinted and unboxed, so membership is never a reading of context.
+        # (User 2026-09-12: boxes are correct as-is; render ids are never
+        # cross-checked on a picture — the mapping test owns membership.)
         font = ImageFont.load_default(size=22)
-        for r in sorted(owner):
-            w = words[page_of[r]]
-            if w["x1"] < x0 or w["x0"] > x1 or w["y1"] < y0 or w["y0"] > y1:
-                continue
-            bx0, by0, bx1, by1 = (
-                (w["x0"] - x0) * scale,
-                (w["y0"] - y0) * scale,
-                (w["x1"] - x0) * scale,
-                (w["y1"] - y0) * scale,
-            )
-            draw.rectangle([bx0, by0, bx1, by1], outline=colour_of[owner[r]] + (255,), width=3)
-            draw.text(
-                (bx0 + 3, by0 + 2),
-                str(r),
-                fill=(15, 15, 15),
-                stroke_width=2,
-                stroke_fill=(255, 255, 255),
-                font=font,
-            )
-        # segment labels
+        for name in order:
+            for r in sorted(expected[name]):
+                w = words[page_of[r]]
+                if w["x1"] < x0 or w["x0"] > x1 or w["y1"] < y0 or w["y0"] > y1:
+                    continue
+                bx0, by0, bx1, by1 = (
+                    (w["x0"] - x0) * scale,
+                    (w["y0"] - y0) * scale,
+                    (w["x1"] - x0) * scale,
+                    (w["y1"] - y0) * scale,
+                )
+                draw.rectangle([bx0, by0, bx1, by1], outline=colour_of[name] + (255,), width=3)
+                draw.text(
+                    (bx0 + 3, by0 + 2),
+                    name,
+                    fill=(15, 15, 15),
+                    stroke_width=2,
+                    stroke_fill=(255, 255, 255),
+                    font=font,
+                )
         labelfont = ImageFont.load_default(size=30)
         for name in order:
             xs = [words[page_of[r]]["x0"] for r in expected[name] if x0 < words[page_of[r]]["x1"]]

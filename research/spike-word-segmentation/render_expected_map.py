@@ -18,7 +18,7 @@ from PIL import Image, ImageDraw, ImageFont
 from tools.page import Page
 from tools.render import render_rows
 from tools.row import Row
-from tools.spike_gold import _render_ids
+from tools.word_numbering import numbered_order
 from tools.word import Word
 
 FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-wordseg"
@@ -33,8 +33,14 @@ end = body.index("def test_gold_matches_the_adjudicated_mapping")
 ns: dict = {}
 exec("mapping_block = " + body[start:end].replace("EXPECTED_MAPPING = {", "{", 1), {}, ns)
 expected = ns["mapping_block"]
-order = sorted(expected, key=lambda s: (0 if s.startswith("seg-") else 1, int(re.search(r"(\d+)", s).group(1)) if re.search(r"(\d+)", s) else 999))
-render_id = _render_ids(words)
+def _order_key(name: str) -> tuple[int, int]:
+    match = re.search(r"(\d+)", name)
+    return (0 if name.startswith("seg-") else 1, int(match.group(1)) if match else 999)
+
+
+order = sorted(expected, key=_order_key)
+boxes = [(w["x0"], w["y0"], w["x1"], w["y1"]) for w in words]
+render_id = {page: render for render, page in enumerate(numbered_order(boxes), start=1)}
 page_of = {render: page for page, render in render_id.items()}
 page_model = Page(
     [
@@ -56,7 +62,7 @@ for index, name in enumerate(order, start=1):
     ys = [(words[page_of[r]]["y0"] + words[page_of[r]]["y1"]) / 2 for r in expected[name]]
     cx = min(xs) - surface["x0"] + pad
     cy = sum(ys) / len(ys) - surface["y0"] + pad
-    label = str(index)
+    label = name
     tb = draw.textbbox((0, 0), label, font=font)
     draw.rounded_rectangle(
         (cx - 30 - (tb[2] - tb[0]), cy - 14, cx - 22, cy + 14),

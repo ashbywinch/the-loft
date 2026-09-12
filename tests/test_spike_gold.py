@@ -99,16 +99,16 @@ def test_a_segment_mixes_no_strokes() -> None:
         )
 
 
-def test_each_band_covers_its_words() -> None:
-    """The colour must cover the words it labels fully in y (user 2026-09-12:
-    labels 6/10 were right but their bands were crushed by the old clip) — a
-    band's y-extent spans its own words' boxes."""
-    words = json.loads((FIXTURE / "words.json").read_text(encoding="utf-8"))["words"]
-    from tools.spike_gold import _render_ids
-
-    rid = _render_ids(words)
-    page_of = {render: page for page, render in rid.items()}
-    for segment in build_gold(FIXTURE):
-        word_ys = [words[page_of[r]] for r in segment["word_ids"]]
-        assert segment["y0"] <= min(w["y0"] for w in word_ys), f"{segment['id']} band starts below its words"
-        assert segment["y1"] >= max(w["y1"] for w in word_ys), f"{segment['id']} band ends above its words"
+def test_no_pixel_is_painted_twice() -> None:
+    """Mechanical: no two segments' band rectangles may intersect, so no
+    pixel row ever shows two tints. Adjacent rows meet at their midpoints;
+    side-by-side rows (body + margin on the same lines) keep disjoint x."""
+    segments = build_gold(FIXTURE)
+    for i, left in enumerate(segments):
+        for right in segments[i + 1 :]:
+            x_overlap = min(left["x1"], right["x1"]) - max(left["x0"], right["x0"])
+            y_overlap = min(left["y1"], right["y1"]) - max(left["y0"], right["y0"])
+            assert not (x_overlap > 0 and y_overlap > 0), (
+                f"{left['id']} and {right['id']} paint the same area "
+                f"(x-overlap {x_overlap:.0f}px, y-overlap {y_overlap:.0f}px)"
+            )

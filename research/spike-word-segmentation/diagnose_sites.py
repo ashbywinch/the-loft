@@ -133,7 +133,7 @@ def _main() -> int:
             cy = sum(ys) / len(ys)
             cy = max(y0 + 30, min(y1 - 30, cy))
             cy = (cy - y0) * scale
-            label = str(label_of[name])
+            label = name
             tb = draw.textbbox((0, 0), label, font=labelfont)
             draw.rounded_rectangle(
                 (cx - 44 - (tb[2] - tb[0]), cy - 18, cx - 30, cy + 18),

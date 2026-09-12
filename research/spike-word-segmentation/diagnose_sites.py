@@ -110,7 +110,7 @@ def _main() -> int:
                 draw.rectangle([bx0, by0, bx1, by1], outline=colour_of[name] + (255,), width=3)
                 draw.text(
                     (bx0 + 3, by0 + 2),
-                    name,
+                    f"{name}:{r}",
                     fill=(15, 15, 15),
                     stroke_width=2,
                     stroke_fill=(255, 255, 255),

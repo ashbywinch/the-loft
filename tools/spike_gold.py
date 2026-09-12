@@ -35,6 +35,9 @@ RULE_ASPECT = 8.0  # x height: a mark this wide for its height is a rule (tools/
 TOUCH_FRACTION = 0.38  # x the writing scale: how close a trace claims a box
 MARGIN_X0 = 1350.0  # page px: a trace starting here is in the letter's right zone
 SHORT_SPAN = 400.0  # page px: a trace shorter than this is a note, not a body line
+INTERJECTION_IDS = {455, 430}  # the last main line's last two (user 2026-09-12)
+INTERJECTION_LINES = ((415, 413, 416, 425), (428, 430), (455,))  # the three bottom lines (user 2026-09-12)
+INTERJECTION_WORDS = {word for line in INTERJECTION_LINES for word in line}  # the seven, for the pins
 
 _MAP_PAD = 60.0  # page px: the map's margin around the letter's surface
 
@@ -105,13 +108,15 @@ def build_gold(data_dir: Path) -> list[dict]:
     bands: list[tuple[float, float]] = []
     spans: list[tuple[float, float]] = []
     covered: list[list[int]] = []
-    for stroke in strokes:
+    usable: list[int] = []  # the stroke index of each position
+    for stroke_index, stroke in enumerate(strokes):
         xs = [p[0] for p in stroke]
         ys = [p[1] for p in stroke]
         if max(ys) - min(ys) > 2 * spacing:
             continue  # a drag that leaves the page spans no single row: it claims nothing
         band = (min(ys) - touch, max(ys) + touch)
         x_lo, x_hi = min(xs), max(xs)
+        usable.append(stroke_index)
         bands.append(band)
         spans.append((x_lo, x_hi))
         covered.append(
@@ -123,18 +128,36 @@ def build_gold(data_dir: Path) -> list[dict]:
                 and band[0] <= (w["y0"] + w["y1"]) / 2 <= band[1]
             ]
         )
-    # ONE segment per yellow line — each stroke maps onto exactly one segment
-    # (user ruling 2026-09-12); a box goes to the first line in reading order
+    # ONE segment per yellow line (user ruling 2026-09-12); a box goes to
+    # the first line in reading order. The BOTTOM's strokes are the
+    # reviewer's passes of one line each (adjudicated 2026-09-12: strokes
+    # 38+39 and 40+43 — "line 40" is fictitious; the pinned mapping is the
+    # contract).
     claimed: set[int] = set()
-    segments: list[dict] = []
+    groups: dict[int, list[int]] = {}
     for position in sorted(range(len(bands)), key=lambda p: bands[p][0]):
+        stroke_index = usable[position]
         word_indices = sorted({i for i in covered[position] if i not in claimed})
         if not word_indices:
             continue
         claimed.update(word_indices)
-        y0, y1 = bands[position]
-        x0 = min(spans[position][0], min(words[i]["x0"] for i in word_indices))
-        x1 = max(spans[position][1], max(words[i]["x1"] for i in word_indices))
+        groups[stroke_index] = word_indices
+    for first, second in ((38, 39), (40, 43)):
+        merged = groups.get(first, []) + [i for i in groups.get(second, []) if i not in groups.get(first, [])]
+        if merged:
+            groups[first] = sorted(merged)
+            groups.pop(second, None)
+    # (INTERJECTION_IDS constant)
+    segments: list[dict] = []
+    for group in sorted(groups.values(), key=lambda g: min(words[i]["y0"] + words[i]["y1"] for i in g)):
+        word_indices = [i for i in group if render_id[i] not in INTERJECTION_IDS]
+        if not word_indices:
+            continue
+        # the band HUGS THE WORDS: the colour must cover them fully in y
+        x0 = min(words[i]["x0"] for i in word_indices)
+        x1 = max(words[i]["x1"] for i in word_indices)
+        y0 = min(words[i]["y0"] for i in word_indices)
+        y1 = max(words[i]["y1"] for i in word_indices)
         proposed = "marginalia" if x0 >= MARGIN_X0 or (x1 - x0) <= SHORT_SPAN else "body"
         segments.append(
             {
@@ -150,18 +173,55 @@ def build_gold(data_dir: Path) -> list[dict]:
             }
         )
 
+    _interjection(segments, words, render_id)
     segments.sort(key=lambda s: s["y0"])
     for number, segment in enumerate(segments, start=1):
         segment["id"] = f"seg-{number}"
-
-    # clip the bands apart at their midpoints: no two rows share a pixel row
-    for k in range(1, len(segments)):
-        upper, lower = segments[k - 1], segments[k]
-        if upper["y1"] > lower["y0"]:
-            boundary = (upper["y1"] + lower["y0"]) / 2
-            upper["y1"] = boundary
-            lower["y0"] = boundary
     return segments
+
+
+def _interjection(segments: list[dict], words: list[dict], render_id: dict[int, int]) -> None:
+    """The bottom interjection, adjudicated (2026-09-12): the words no
+    yellow line included below the last main lines (413, 416, 415, 425,
+    428) plus the last main line's last two (455, 430) — THREE lines of
+    small writing, each its own segment (INTERJECTION_LINES). The unclaimed
+    set is checked so a change that starts claiming interjection words fails
+    loudly."""
+    claimed = {r for s in segments for r in s["word_ids"]}
+    r_to_p = {r: p for p, r in render_id.items()}
+    unclaimed_bottom = {
+        r
+        for r in range(1, len(words) + 1)
+        if r not in claimed and (words[r_to_p[r]]["y0"] + words[r_to_p[r]]["y1"]) / 2 >= 4414
+    }
+    expected_unclaimed = {415, 413, 416, 425, 428} | INTERJECTION_IDS
+    if unclaimed_bottom != expected_unclaimed:
+        raise ValueError(
+            "the bottom interjection's unclaimed words changed: "
+            f"{sorted(unclaimed_bottom)} vs {sorted(expected_unclaimed)} — adjudicate before regenerating"
+        )
+    for line in INTERJECTION_LINES:
+        _interjection_line(list(line), words, render_id, segments)
+
+
+def _interjection_line(indices: list[int], words: list[dict], render_id: dict[int, int], segments: list[dict]) -> None:
+    """One interjection line: its words, band hugging them, own segment."""
+    if not indices:
+        return
+    pages = [next(i for i, w in enumerate(words) if render_id[i] == r) for r in indices]
+    segments.append(
+        {
+            "id": "",
+            "type": "interjection",
+            "word_ids": sorted(indices),
+            "injection_point": None,
+            "proposed": False,
+            "x0": min(words[i]["x0"] for i in pages),
+            "y0": min(words[i]["y0"] for i in pages),
+            "x1": max(words[i]["x1"] for i in pages),
+            "y1": max(words[i]["y1"] for i in pages),
+        }
+    )
 
 
 def render_gold_map(page: Image.Image, data_dir: Path, segments: list[dict], path: Path) -> None:

@@ -18,8 +18,6 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from tools.spike_gold import _render_ids, build_gold  # noqa: E402
@@ -34,36 +32,18 @@ def _main() -> int:
     rid = _render_ids(words)
     r_to_p = {r: p for p, r in rid.items()}
 
-    unit = float(np.median([w["y1"] - w["y0"] for w in words]))
-    touch = 0.38 * unit
-
-    def covers(stroke_index: int) -> set[int]:
-        stroke = strokes[stroke_index]
-        xs = [p[0] * page["width"] for p in stroke]
-        ys = [p[1] * page["height"] for p in stroke]
-        return {
-            rid[i]
-            for i, w in enumerate(words)
-            if min(xs) <= (w["x0"] + w["x1"]) / 2 <= max(xs)
-            and min(ys) - touch <= (w["y0"] + w["y1"]) / 2 <= max(ys) + touch
-        }
-
-    def band_centre(ids: list[int]) -> float:
-        return min((words[r_to_p[r]]["y0"] + words[r_to_p[r]]["y1"]) / 2 for r in ids)
-
+    # the mapping = the extractor as adjudicated: every word the user
+    # confirmed, with the extractor's own labels, EXCEPT the interjection
+    # words (their own test). A change to the extractor that the user has
+    # NOT confirmed shows up the moment the pinned test fails against this
+    # literal — regenerate only after an adjudication.
     current = build_gold(FIXTURE)
-    keep = [s for s in current if s["y1"] < 4414]  # the confirmed top/middle as-is
-    b1 = sorted(covers(37))
-    b2 = sorted(covers(38) | (covers(39) - covers(38)))
-    b3 = sorted(covers(43) | (covers(40) - covers(43)))
-    merged = keep + [{"word_ids": b1}, {"word_ids": b2}, {"word_ids": b3}]
-    merged.sort(key=lambda s: band_centre(s["word_ids"]))
-    labels = {frozenset(s["word_ids"]): f"seg-{i + 1}" for i, s in enumerate(merged)}
     mapping: dict[int, str] = {}
-    for s in merged:
-        label = labels[frozenset(s["word_ids"])]
+    for s in current:
+        if s["type"] == "interjection":
+            continue
         for r in s["word_ids"]:
-            mapping[r] = label
+            mapping[r] = s["id"]
 
     by_segment: dict[str, list[int]] = {}
     for r, seg in mapping.items():

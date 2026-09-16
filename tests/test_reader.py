@@ -386,6 +386,69 @@ def test_an_underline_does_not_join_words(page01_writing) -> None:
     assert len(window) == 5, f"{len(window)} marks in the five-word window, want 5"
 
 
+@pytest.fixture(scope="module")
+def page01_words() -> list[tuple[float, float, float, float]]:
+    """The pipeline's words: the page measured and cut, as (x0, y0, x1, y1)
+    in page pixels — the boxes the renders draw."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from PIL import Image
+
+    from tools.mark import SCALE
+    from tools.reader import Writing, artifacts, ink_mask
+
+    scan = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
+    fixture = Path(__file__).parent / "fixtures" / "page01-wordseg"
+    strokes = json.loads((fixture / "strokes.json").read_text())["strokes"]
+    page = Image.open(scan)
+    mask = ink_mask(page)
+    artifacts(mask)
+    traced = sorted(float(np.median([p[1] for p in s])) * page.height / SCALE for s in strokes)
+    writing = Writing.of(mask, traced)
+    return [
+        (word.x0 * SCALE, word.y0 * SCALE, word.x1 * SCALE, word.y1 * SCALE)
+        for word in writing.cut(writing.scale.unit).marks
+    ]
+
+
+def _words_within(words, window: tuple[float, float, float, float]) -> list:
+    """The words whose box lies inside the window (page px)."""
+    x0, y0, x1, y1 = window
+    return [w for w in words if w[0] >= x0 and w[2] <= x1 and w[1] >= y0 and w[3] <= y1]
+
+
+def test_the_box_above_342_is_two_words(page01_words) -> None:
+    """User 2026-09-16, on the render: 'your box 2 in the image shows two words
+    stacked' — box 334 (x1416-1520, y4492-4544) is one word box today."""
+    inside = _words_within(page01_words, (1405.0, 4480.0, 1530.0, 4555.0))
+    assert len(inside) == 2, f"{len(inside)} word box(es) at x1416-1520 y4492-4544, want the two stacked words"
+
+
+def test_the_box_47_is_two_words(page01_words) -> None:
+    """User 2026-09-16: box 47 (x1950-2002, y2542-2596) 'is also two words
+    stacked' — one word box today."""
+    inside = _words_within(page01_words, (1940.0, 2535.0, 2010.0, 2605.0))
+    assert len(inside) == 2, f"{len(inside)} word box(es) at x1950-2002 y2542-2596, want the two words"
+
+
+def test_no_word_box_contains_another(page01_words) -> None:
+    """User 2026-09-16: box 37 (x1484-2010, y2276-2768) 'is obviously not a
+    word since it contains many other word boxes' — a box holding another whole
+    box is a weld, not a word."""
+    nested = [
+        (outer, inner)
+        for outer in page01_words
+        for inner in page01_words
+        if outer != inner
+        and outer[0] <= inner[0]
+        and outer[1] <= inner[1]
+        and outer[2] >= inner[2]
+        and outer[3] >= inner[3]
+    ]
+    assert not nested, f"{len(nested)} word box(es) contain another, e.g. {nested[0]}"
+
+
 def test_the_bug_keeps_its_main_piece_whole(page01_shapes) -> None:
     """id=4847's lower body (y2680–2768 today): the waist rule merges the
     mid-body flip at y2710 (ink widening 71→89→115 straight through it), so

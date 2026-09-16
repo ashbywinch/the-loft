@@ -32,6 +32,15 @@ SCALE = 2  # work at half resolution (2px geometry precision)
 STREAK_TALL = 40  # 1/2 px: a run this tall and ≤3 wide is a scan line
 STREAK_WIDE = 60  # 1/2 px: a run this wide and ≤4 tall is a rule
 SHAPE_MIN_AREA = 60  # 1/2 px²: smaller components are specks
+RULE_ASPECT = 8.0  # width ÷ height: a horizontal line, not writing (tools/word.py)
+RULE_TOUCH = 0.15  # of its width: a line is nearly disconnected from the writing
+LINE_GAP = 0.75  # × the writing's height: a line further below it is not underscoring it
+LINE_ALIGN = 0.2  # of the writing's width: an underline matches it, a rule does not
+LINE_HEIGHT = 0.65  # × the x-height: a line is a pen stroke, not a band
+WORD_MIN_HEIGHT = 0.38  # × the x-height: shorter ink is a word's fragment
+WORD_FULL_LINE = 0.6  # × the x-height: this tall and the piece is a line of writing
+WORD_MIN_WIDTH = 0.8  # × the x-height: narrower ink cannot hold a word
+WORD_EMPTY_MAX = 0.25  # of its columns, under a full line: disconnected ascender
 
 
 @dataclass
@@ -94,6 +103,75 @@ class Mark:
             line=line,
             id=f"{self.id}_{suffix}",
         )
+
+    def _bridge_columns(self, other: Mark) -> int:
+        """Columns where two pieces' ink meets across their shared edge: how
+        much of the boundary is welded. A line is detached (near zero); a
+        word's chopped half shares most of its width with what it was cut from."""
+        ys, xs = np.asarray(self.pix[0]).astype(int), np.asarray(self.pix[1]).astype(int)
+        oys, oxs = np.asarray(other.pix[0]).astype(int), np.asarray(other.pix[1]).astype(int)
+        if self.y0 < other.y0:  # this piece sits above: its feet against other's crown
+            mine = {x for y, x in zip(ys, xs, strict=False) if y >= ys.max() - 1}
+            theirs = {x for y, x in zip(oys, oxs, strict=False) if y <= oys.min() + 1}
+        else:
+            mine = {x for y, x in zip(ys, xs, strict=False) if y <= ys.min() + 1}
+            theirs = {x for y, x in zip(oys, oxs, strict=False) if y >= oys.max() - 1}
+        return len(mine & theirs)
+
+    def is_word_shaped(self, unit: float) -> bool:
+        """A piece that could be a word: tall enough to hold letter bodies, wide
+        enough to hold more than a stroke, and joined up.
+
+        User 2026-09-16, on the case sheets: 2911's upper piece is 'a full word
+        that's all joined up'; 1970's is 'very discontinuous pieces of
+        ascender'. So a fragment is short, narrow, or full of empty columns —
+        and a cut that would leave one is a chop, not a word boundary."""
+        ys, xs = np.asarray(self.pix[0]).astype(int), np.asarray(self.pix[1]).astype(int)
+        if len(ys) == 0:
+            return False
+        height = float(ys.max() - ys.min() + 1)
+        width = float(xs.max() - xs.min() + 1)
+        if height < WORD_MIN_HEIGHT * unit or width < WORD_MIN_WIDTH * unit:
+            return False
+        if width >= RULE_ASPECT * height:
+            return False  # a band this wide for its height is a line, not a word
+        if height < WORD_FULL_LINE * unit:
+            # too short to be a whole line of writing: it must be joined up, not
+            # the detached tips of a word's ascenders
+            return 1.0 - len(set(xs.tolist())) / width <= WORD_EMPTY_MAX
+        return True
+
+    def classify_line(self, others: list[Mark], page: list[Mark], unit: float) -> str | None:
+        """The line this piece is, if it is one: "underline" or "rule", else None.
+
+        A line is a pen stroke: thin (LINE_HEIGHT × the writing's x-height at
+        most) and long (RULE_ASPECT wider than tall), and detached from the
+        writing it accompanies — a word's chopped half shares its boundary with
+        the rest of the word (user 2026-09-16: 'an underline is entirely or
+        nearly entirely disconnected from the word'). `others` is the ink it is
+        welded to.
+
+        Which kind, by the width of the writing above it on the page (user
+        2026-09-16: '14187 is nearly exactly the width of the text above it; the
+        other one is not. A rule is a line that is not aligned with the words
+        above it, whether wider or narrower or offset.')."""
+        width, height = self.x1 - self.x0, self.y1 - self.y0
+        if height <= 0 or height > LINE_HEIGHT * unit or width < RULE_ASPECT * height:
+            return None
+        if sum(self._bridge_columns(other) for other in others) > RULE_TOUCH * width:
+            return None  # welded to the rest of the word: a fragment, not a line
+        above = [
+            other
+            for other in page
+            if other is not self
+            and other.y1 <= self.y0
+            and min(other.x1, self.x1) - max(other.x0, self.x0) > 0
+            and self.y0 - other.y1 <= LINE_GAP * max(other.height, 1.0)
+        ]
+        if not above:
+            return "rule"  # no writing close above it
+        writing = max(other.x1 for other in above) - min(other.x0 for other in above)
+        return "underline" if abs(width - writing) <= LINE_ALIGN * max(writing, 1.0) else "rule"
 
 
 def longest_runs(ys: np.ndarray, xs: np.ndarray) -> dict[int, int]:

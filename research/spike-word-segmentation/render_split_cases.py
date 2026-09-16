@@ -51,7 +51,7 @@ CASES = {
     "case13_pupil": ("2723", (1690, 2470, 1860, 2620, 3.0), "Case 13 — 2723: one digit, one piece (user 2026-09-16)"),
     "case14_23150": ("23150", (1460, 4390, 1680, 4600, 3.0), "Case 14 — 23150: two pieces (user 2026-09-16)"),
     "case15_bug_slivers": ("4847", (1440, 2530, 2060, 2730, 2.0), "Case 15 — 4847's upper slivers: must merge"),
-    "case16_rule": ("2875", (1900, 2500, 2060, 2640, 3.0), "Case 16 — 2875: the rule welded to its word (cut stands)"),
+    "case16_rule": ("2875", (1900, 2500, 2060, 2640, 3.0), "Case 16 — 2875: two pieces (no rule claimed)"),
 }
 
 
@@ -104,7 +104,7 @@ def _main() -> int:
     for name, (sid, crop, title) in CASES.items():
         shape = by_id[sid]
         per_row = shape.rows()
-        pieces = split_shapes([shape], lines)
+        pieces = split_shapes([shape], lines, scale.unit)
         pieces_arg, cuts_arg, drops_arg, drop_label, summary = _case_geometry(shape, per_row, pieces)
         # split_sheet takes one profile string per cut; join the rows here.
         cuts_flat = [(cy, " ".join(prof)) for cy, prof in cuts_arg]

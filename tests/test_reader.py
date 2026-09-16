@@ -311,7 +311,7 @@ def page01_shapes() -> tuple:
     traced = sorted(float(np.median([p[1] for p in s])) * page.height / 2 for s in strokes)
     ratio = line_ratio(traced_pitch(traced), writing_scale([s.height for s in shapes]))
     scale = PageScale.of([s.height for s in shapes], ratio)
-    return {s.id: s for s in shapes}, fit_lines(shapes, scale)
+    return {s.id: s for s in shapes}, fit_lines(shapes, scale), scale
 
 
 # Live splitter status, measured 2026-09-14 against the min-overlap waist
@@ -339,11 +339,49 @@ def test_one_word_is_never_split(page01_shapes, raw_id: str) -> None:
     mid-body, but the ink never narrows to a waist there, so no cut is real."""
     from tools.reader import split_shapes
 
-    by_id, lines = page01_shapes
-    got = split_shapes([by_id[raw_id]], lines)
+    by_id, lines, scale = page01_shapes
+    got = split_shapes([by_id[raw_id]], lines, scale.unit)
     assert len(got) == _ONE_WORD_CASES[raw_id], (
         f"id={raw_id}: {len(got)} pieces ({[(int(p.y0 * 2), int(p.y1 * 2)) for p in got]}), want one whole word"
     )
+
+
+@pytest.fixture(scope="module")
+def page01_writing() -> tuple:
+    """The writing as the pipeline finds it: ink_mask + artifacts + the
+    find_writing fixpoint (which strips the rules and underlines)."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from PIL import Image
+
+    from tools.reader import artifacts, find_writing, ink_mask
+
+    scan = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
+    fixture = Path(__file__).parent / "fixtures" / "page01-wordseg"
+    strokes = json.loads((fixture / "strokes.json").read_text())["strokes"]
+    page = Image.open(scan)
+    mask = ink_mask(page)
+    artifacts(mask)
+    traced = sorted(float(np.median([p[1] for p in s])) * page.height / 2 for s in strokes)
+    writing = find_writing(mask, traced)
+    return {s.id: s for s in writing.marks}, writing.lines, writing.scale, writing.stripped
+
+
+def test_an_underline_does_not_join_words(page01_writing) -> None:
+    """User 2026-09-16: 'the words are only joined by the underline. We
+    shouldn't consider an underline as joining anything.' The ink that arrived
+    as one mark holding five words under one underline therefore comes back as
+    five separate marks — the underline's ink is out of the raster."""
+    from tools.mark import SCALE
+
+    marks, _lines, _scale, _stripped = page01_writing
+    window = [
+        s
+        for s in marks.values()
+        if s.x0 * SCALE >= 1164 and s.x1 * SCALE <= 1802 and s.y0 * SCALE >= 3640 and s.y1 * SCALE <= 3718
+    ]
+    assert len(window) == 5, f"{len(window)} marks in the five-word window, want 5"
 
 
 def test_the_bug_keeps_its_main_piece_whole(page01_shapes) -> None:
@@ -353,42 +391,42 @@ def test_the_bug_keeps_its_main_piece_whole(page01_shapes) -> None:
     from tools.mark import SCALE
     from tools.reader import split_shapes
 
-    by_id, lines = page01_shapes
-    got = split_shapes([by_id["4847"]], lines)
+    by_id, lines, scale = page01_shapes
+    got = split_shapes([by_id["4847"]], lines, scale.unit)
     main = [p for p in got if p.y1 * SCALE >= 2760]
     assert len(main) == 1, f"lower body split in {len(main)}: {[int(p.y0 * SCALE) for p in main]}"
     assert main[0].y0 * SCALE <= 2700, f"main piece starts at {main[0].y0 * SCALE:.0f}, cut ate its crown"
 
 
-def test_the_split_pair_stays_two_pieces(page01_shapes) -> None:
-    """User 2026-09-13: renders 75 + 81 are two parts of ONE word, drawn as
-    two adjacent boxes. The splitter must keep them apart: raw id=5514 stays
-    exactly its two pieces (y2772–2790 + y2792–2824), never merged, never
-    cut further."""
-    from tools.mark import SCALE
+def test_the_split_pair_is_one_word(page01_shapes) -> None:
+    """User 2026-09-16, ruled on the zoomed cut rows: raw 5514 is a SINGLE
+    word and must not be divided. This supersedes the 2026-09-13 pin ('renders
+    75 + 81 are two parts of ONE word... the splitter must keep them apart'),
+    which was taken from the render boxes rather than from the ink."""
     from tools.reader import split_shapes
 
-    by_id, lines = page01_shapes
-    got = split_shapes([by_id["5514"]], lines)
-    assert len(got) == 2, f"id=5514: {len(got)} pieces, want the two halves apart"
-    assert got[0].y1 * SCALE < got[1].y0 * SCALE, "the two halves overlap"
+    by_id, lines, scale = page01_shapes
+    got = split_shapes([by_id["5514"]], lines, scale.unit)
+    assert len(got) == 1, f"id=5514: {len(got)} pieces, want one whole word"
 
 
 def test_the_pupil_block_reads_four_words(page01_shapes) -> None:
     """User 2026-09-16: the block reads 'Pupil of / Myra Hess' — four words.
     Rulings from the case sheets: raw 2723 is ONE digit (the mid-body cut
-    y2556 is a chop, must refuse); raw 2875 welds the rule to its word (the
-    rule cedes: 2 pieces); raw 2911 welds an upper word to the word below in
-    one column, and that upper/lower separation is CORRECT (2 pieces) —
-    the old 'stays whole' pin here was the misread."""
+    y2556 is a chop, must refuse). Raw 2875's upper piece is a word fragment
+    that must NOT be split off (user 2026-09-16: 'that upper piece is indeed a
+    word fragment that shouldn't be split. That's unrelated to the fact that
+    the picture contains two words'), so 2875 stays one piece. Raw 2911 welds
+    the word on the line above to the word below and that separation is
+    correct (2 pieces). No rule/underline is claimed in 2875."""
     from tools.reader import split_shapes
 
-    by_id, lines = page01_shapes
-    pupil = split_shapes([by_id["2723"]], lines)
-    of = split_shapes([by_id["2875"]], lines)
-    myra_hess = split_shapes([by_id["2911"]], lines)
+    by_id, lines, scale = page01_shapes
+    pupil = split_shapes([by_id["2723"]], lines, scale.unit)
+    of = split_shapes([by_id["2875"]], lines, scale.unit)
+    myra_hess = split_shapes([by_id["2911"]], lines, scale.unit)
     assert len(pupil) == 1, f"2723 (one digit) split in {len(pupil)}"
-    assert len(of) == 2, f"rule welded to of: {len(of)} piece(s)"
+    assert len(of) == 1, f"2875 gave {len(of)} piece(s), want 1 (the fragment stays with its word)"
     assert len(myra_hess) == 2, f"2911 (upper word + lower word) gave {len(myra_hess)} piece(s), want 2"
 
 
@@ -399,8 +437,8 @@ def test_stacked_pair_stays_two_words(page01_shapes) -> None:
     from tools.mark import SCALE
     from tools.reader import split_shapes
 
-    by_id, lines = page01_shapes
-    got = split_shapes([by_id["23194"]], lines)
+    by_id, lines, scale = page01_shapes
+    got = split_shapes([by_id["23194"]], lines, scale.unit)
     assert len(got) == 2, f"id=23194: {len(got)} pieces, want the two words apart"
     assert got[0].y1 * SCALE < got[1].y0 * SCALE, "the stacked pieces overlap"
 
@@ -412,18 +450,18 @@ def test_the_gapped_marks_keep_their_own_pieces(page01_shapes) -> None:
     against a sheet that outlined 22082 while the question named 23150."""
     from tools.reader import split_shapes
 
-    by_id, lines = page01_shapes
-    assert len(split_shapes([by_id["22082"]], lines)) == 1, "render 324 (22082) split"
-    assert len(split_shapes([by_id["23150"]], lines)) == 2, "render 332 (23150) did not split in two"
+    by_id, lines, scale = page01_shapes
+    assert len(split_shapes([by_id["22082"]], lines, scale.unit)) == 1, "render 324 (22082) split"
+    assert len(split_shapes([by_id["23150"]], lines, scale.unit)) == 2, "render 332 (23150) did not split in two"
 
 
 # Marks the user ruled hold more than one word (2026-09-16): welded ink the
 # detector reports as one word. 18092 = "life" over "facilities"; 7105 =
-# "some composition"; 14187 = "the Henry Wood Birthday Concerts".
+# "some composition". 14187's five words are covered by the underline test
+# below — they were welded by the underline, not by each other.
 _WELDED_CASES = {
     "18092": 2,
     "7105": 2,
-    "14187": 5,
 }
 
 
@@ -434,6 +472,28 @@ def test_a_welded_mark_yields_its_words(page01_shapes, raw_id: str) -> None:
     User rulings 2026-09-16."""
     from tools.reader import split_shapes
 
-    by_id, lines = page01_shapes
-    got = split_shapes([by_id[raw_id]], lines)
+    by_id, lines, scale = page01_shapes
+    got = split_shapes([by_id[raw_id]], lines, scale.unit)
     assert len(got) == _WELDED_CASES[raw_id], f"id={raw_id}: {len(got)} piece(s), want {_WELDED_CASES[raw_id]}"
+
+
+def test_a_detached_line_is_a_rule_or_an_underline_and_a_fragment_is_neither(page01_shapes) -> None:
+    """A line the writer drew cedes from the words; a word's fragment does not.
+
+    User 2026-09-16, on the boxed pieces: 7105's lower piece is a rule (it is
+    not directly aligned with the words above), 9676's is an underline (it is),
+    and 683's bottom fragment, 2875's upper piece and 6475's first piece are not
+    lines at all — they stay with their words."""
+    from tools.reader import split_shapes
+
+    by_id, lines, scale = page01_shapes
+    pieces = split_shapes(list(by_id.values()), lines, scale.unit)
+
+    def kinds(mark_id: str) -> list[str | None]:
+        family = [piece for piece in pieces if piece.id.split("_")[0] == mark_id]
+        return [piece.classify_line([o for o in family if o is not piece], pieces, scale.unit) for piece in family]
+
+    assert kinds("7105") == [None, "rule"], f"7105: {kinds('7105')}, want its lower piece a rule"
+    assert kinds("9676") == [None, "underline"], f"9676: {kinds('9676')}, want its lower piece an underline"
+    for mark_id in ("683", "2875", "6475"):
+        assert not any(kinds(mark_id)), f"{mark_id}: {kinds(mark_id)} — none of that ink is a line"

@@ -110,11 +110,12 @@ def test_the_baseline_is_the_row_the_letters_stand_on() -> None:
     """
     import numpy as np
 
-    from tools.mark import baseline_row
+    from tools.mark import Ink
 
     baseline = 70
     ys, xs, _span = _letter_ink(baseline)
-    assert baseline_row(np.array(ys, dtype=np.float32), np.array(xs, dtype=np.float32)) == baseline
+    ink = Ink(np.array(ys, dtype=np.float32), np.array(xs, dtype=np.float32))
+    assert ink.baseline_row() == baseline
 
 
 def test_the_waistline_is_the_top_of_the_letters_bodies() -> None:
@@ -127,11 +128,12 @@ def test_the_waistline_is_the_top_of_the_letters_bodies() -> None:
     """
     import numpy as np
 
-    from tools.mark import waistline_row
+    from tools.mark import Ink
 
     baseline = 70
     ys, xs, _span = _letter_ink(baseline)
-    assert waistline_row(np.array(ys, dtype=np.float32), np.array(xs, dtype=np.float32)) == baseline - 26
+    ink = Ink(np.array(ys, dtype=np.float32), np.array(xs, dtype=np.float32))
+    assert ink.waistline_row() == baseline - 26
 
 
 GAP = 4  # the whitespace between letters: a letter's rows never run full width
@@ -299,7 +301,7 @@ def page01_shapes() -> tuple:
 
     from tools.mark import find_marks
     from tools.pagescale import PageScale, line_ratio, traced_pitch, writing_scale
-    from tools.reader import artifacts, fit_lines, ink_mask
+    from tools.reader import LineFitter, artifacts, ink_mask
 
     scan = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
     fixture = Path(__file__).parent / "fixtures" / "page01-wordseg"
@@ -311,7 +313,7 @@ def page01_shapes() -> tuple:
     traced = sorted(float(np.median([p[1] for p in s])) * page.height / 2 for s in strokes)
     ratio = line_ratio(traced_pitch(traced), writing_scale([s.height for s in shapes]))
     scale = PageScale.of([s.height for s in shapes], ratio)
-    return {s.id: s for s in shapes}, fit_lines(shapes, scale), scale
+    return {s.id: s for s in shapes}, LineFitter(scale).fit(shapes), scale
 
 
 # Live splitter status, measured 2026-09-14 against the min-overlap waist
@@ -355,7 +357,7 @@ def page01_writing() -> tuple:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
     from PIL import Image
 
-    from tools.reader import artifacts, find_writing, ink_mask
+    from tools.reader import Writing, artifacts, ink_mask
 
     scan = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
     fixture = Path(__file__).parent / "fixtures" / "page01-wordseg"
@@ -364,7 +366,7 @@ def page01_writing() -> tuple:
     mask = ink_mask(page)
     artifacts(mask)
     traced = sorted(float(np.median([p[1] for p in s])) * page.height / 2 for s in strokes)
-    writing = find_writing(mask, traced)
+    writing = Writing.of(mask, traced)
     return {s.id: s for s in writing.marks}, writing.lines, writing.scale, writing.stripped
 
 

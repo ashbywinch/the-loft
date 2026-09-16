@@ -15,7 +15,7 @@ from collections.abc import Sequence
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from tools.mark import WordGeometry, baseline_row, waistline_row
+from tools.mark import Ink, WordGeometry
 
 # the drawing style, consistent across every experiment page
 BOX_FILL = (0, 200, 255, 25)  # word boxes: faint cyan fill with a thin edge
@@ -57,8 +57,8 @@ def measure_words(ink: np.ndarray, boxes: Sequence[Sequence[float]], margin: int
         nx = (xs + max(ix0, 0)).astype(np.float32)
         out.append(
             WordGeometry(
-                baseline=float(baseline_row(ny, nx)),
-                waistline=float(waistline_row(ny, nx)),
+                baseline=float(Ink(ny, nx).baseline_row()),
+                waistline=float(Ink(ny, nx).waistline_row()),
             )
         )
     return out

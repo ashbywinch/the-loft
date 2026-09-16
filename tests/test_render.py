@@ -141,7 +141,7 @@ def test_the_underline_welded_word_draws_its_own_crown() -> None:
     import numpy as np
     from PIL import Image, ImageDraw
 
-    from tools.mark import baseline_row, waistline_row
+    from tools.mark import Ink
 
     image = Image.new("L", (300, 200), 255)
     ImageDraw.Draw(image).rectangle((40, 60, 140, 100), fill=0)  # the letters
@@ -150,8 +150,9 @@ def test_the_underline_welded_word_draws_its_own_crown() -> None:
     ys, xs = np.nonzero(a < 170)
     ys = ys.astype(np.float32)
     xs = xs.astype(np.float32)
-    assert waistline_row(ys, xs) == 60, f"crown {waistline_row(ys, xs)} (the letters' top)"
-    assert baseline_row(ys, xs) == 100, f"baseline {baseline_row(ys, xs)} (the letters' feet)"
+    ink = Ink(ys, xs)
+    assert ink.waistline_row() == 60, f"crown {ink.waistline_row()} (the letters' top)"
+    assert ink.baseline_row() == 100, f"baseline {ink.baseline_row()} (the letters' feet)"
 
 
 def test_a_refused_word_draws_no_lines() -> None:

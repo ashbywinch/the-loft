@@ -1,8 +1,8 @@
 # Box detection — how a page's writing is found and boxed
 
-Status: working (2026-09-10). The detector is `tools/boxdet.py`, the page's
-scale is `tools/boxscale.py`, and the acceptance check is `tools/boxjig.py`.
-Tests: `tests/test_boxdet.py` (synthetic pages) and `tests/test_boxscale.py`
+Status: working (2026-09-10). The reader is `tools/reader.py`, the page's
+scale is `tools/pagescale.py`, and the acceptance check is `tools/boxjig.py`.
+Tests: `tests/test_reader.py` (synthetic pages) and `tests/test_pagescale.py`
 (the scale). The design work and the user rulings behind it are in
 `docs/plans/segment-review-stories.md`.
 
@@ -25,11 +25,11 @@ detector boxes the page, the reviewer corrects it.
 | boxes | one box per line-run: that line's ink, split where a gap is a column break, bounded by the distance to the neighbouring baselines |
 | strokes | a stroke **is** a line: it names the line it was drawn along; a trace replaces the detector's box over the span it defines |
 
-Layer by layer check: the page's scale comes from `tools/boxscale.py` — the
+Layer by layer check: the page's scale comes from `tools/pagescale.py` — the
 writing's own height (the median height of its ink shapes) times the ratio
 between line spacing and writing height, the ratio measured from the reviewer's
 traces when enough exist. **No threshold is a page constant**: every distance is
-a multiple of that ruler (`PageScale` in `tools/boxdet.py`).
+a multiple of that ruler (`PageScale` in `tools/pagescale.py`).
 
 ## The measurements
 
@@ -46,7 +46,7 @@ On the first real letter (page-01, 44 traced lines), the current version:
 The jig prints these and exits non-zero on a violation:
 
 ```
-.venv/bin/python tools/boxdet.py
+.venv/bin/python tools/reader.py
 .venv/bin/python tools/boxjig.py /tmp/trace
 ```
 
@@ -63,7 +63,7 @@ The jig prints these and exits non-zero on a violation:
   page does give you.
 - **Mixed units.** Ink measured in working pixels and strokes in page pixels,
   both scaled once more, put boxes off the page — invisibly, until the jig
-  printed corner coordinates beyond the page. `boxdet.py` states its coordinate
+  printed corner coordinates beyond the page. `reader.py` states its coordinate
   boundary in the module docstring; the box builders are the only crossing.
 - **Ink welding two lines.** A descender touching the next line's ascender makes
   one shape spanning both; the fitted lines say where the boundary is, so the

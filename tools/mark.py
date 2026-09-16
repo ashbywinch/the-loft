@@ -1,0 +1,336 @@
+"""One connected piece of ink on the page: a MARK.
+
+The reviewer's word: a word is a mark made of one or more letters. A mark is
+the finest grain the detector sees - its bounds, its measured baseline and
+waistline (the x-height between them), and its ink. Marks are found at the
+working resolution SCALE ; everything else
+measures from them.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+
+@dataclass(frozen=True)
+class WordGeometry:
+    """A word's two measured lines: the baseline it stands on and the
+    waistline above it. Named fields - the order-swap class of bug (is a
+    bare tuple waist-first or base-first?) cannot exist."""
+
+    baseline: float
+    waistline: float
+
+    @property
+    def x_height(self) -> float:
+        return self.baseline - self.waistline
+
+
+SCALE = 2  # work at half resolution (2px geometry precision)
+STREAK_TALL = 40  # 1/2 px: a run this tall and ≤3 wide is a scan line
+STREAK_WIDE = 60  # 1/2 px: a run this wide and ≤4 tall is a rule
+SHAPE_MIN_AREA = 60  # 1/2 px²: smaller components are specks
+
+
+@dataclass
+class Mark:
+    """A connected run of ink — a word, or a letter in print."""
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+    baseline: float
+    waistline: float
+    area: float
+    cx: float
+    pix: tuple[np.ndarray, np.ndarray]
+    line: int = -1
+    id: str = ""
+
+    @property
+    def x_height(self) -> float:
+        """The word's font size: baseline to waistline, blind to ascenders
+        and descenders (box height is not)."""
+        return self.baseline - self.waistline
+
+    @property
+    def height(self) -> float:
+        return self.y1 - self.y0
+
+    @property
+    def is_streak(self) -> bool:
+        """A long thin run of ink is a scan line or a rule, never writing."""
+        width, height = self.x1 - self.x0, self.y1 - self.y0
+        return (width > STREAK_WIDE and height <= 4) or (height > STREAK_TALL and width <= 3)
+
+    def rows(self) -> dict[int, list[int]]:
+        """The shape's ink by row — how a straddling shape is cut between lines."""
+        ys, xs = self.pix
+        per_row: dict[int, list[int]] = {}
+        for y, x in zip(ys.astype(int), xs.astype(int), strict=False):
+            per_row.setdefault(int(y), []).append(int(x))
+        return per_row
+
+    def piece(self, ink: list[tuple[int, int]], line: int, suffix: int) -> Mark:
+        """The part of this shape on the given rows, as its own shape on one line."""
+        ny = np.array([point[0] for point in ink], dtype=np.float32)
+        nx = np.array([point[1] for point in ink], dtype=np.float32)
+        histogram: dict[int, int] = {}
+        for y in ny.astype(int):
+            histogram[int(y)] = histogram.get(int(y), 0) + 1
+        return Mark(
+            x0=float(nx.min()),
+            y0=float(ny.min()),
+            x1=float(nx.max()),
+            y1=float(ny.max()),
+            baseline=float(baseline_row(ny, nx)),
+            waistline=float(waistline_row(ny, nx)),
+            area=float(len(ink)),
+            cx=(float(nx.min()) + float(nx.max())) / 2,
+            pix=(ny, nx),
+            line=line,
+            id=f"{self.id}_{suffix}",
+        )
+
+
+def longest_runs(ys: np.ndarray, xs: np.ndarray) -> dict[int, int]:
+    """Per-row longest continuous ink run, in columns."""
+    rows: dict[int, set[int]] = {}
+    for y, x in zip(ys.astype(int), xs.astype(int), strict=False):
+        rows.setdefault(int(y), set()).add(int(x))
+    runs: dict[int, int] = {}
+    for y, cols in rows.items():
+        ordered = sorted(cols)
+        run = 1
+        longest = 1
+        for a, b in zip(ordered, ordered[1:], strict=False):
+            run = run + 1 if b == a + 1 else 1
+            longest = max(longest, run)
+        runs[y] = longest
+    return runs
+
+
+def _thick_zone(ys: np.ndarray, xs: np.ndarray, span: float) -> set[int]:
+    """The rows of a thick broad band: consecutive rows whose ink runs a
+    fifth or more of the word's width (a crossbar, a big loop's rim, a
+    welded underline), plus their 2px fringe. Such rows are never the
+    writing's feet."""
+    runs = longest_runs(ys, xs)
+    broad = {y for y, run in runs.items() if run >= BROAD_FRACTION * span}
+    thick: set[int] = set()
+    for y in broad:
+        if any(near in broad for near in (y - 1, y + 1)):
+            thick.add(y)
+    return set(range(min(thick) - 2, max(thick) + 3)) if thick else set()
+
+
+def baseline_row(ys: np.ndarray, xs: np.ndarray) -> int:
+    """The row a word's letters stand on: the modal BOTTOM ink row per column.
+
+    The bottom contour is the physical definition: each column's lowest ink
+    pixel contributes, and the most common bottom row is the baseline. Two
+    per-word hazards upset the plain mode - a crossbar (the f's: rows 25-29
+    run a fifth or more of the word's width) and a big loop's rim (the g's:
+    its bottom arc) - so rows that are part of a THICK BROAD BAND are not
+    bottom candidates: their columns' lowest ink is the band, not the
+    writing's feet. Their ±2px fringe goes too, and the survivors' modal is
+    measured in ±4px bands, so a body whose letters end at slightly different
+    depths still wins over a descender tail. All of it per word, from the
+    word's own ink: the lines are not known yet - this is what builds them.
+    """
+    if len(ys) == 0:
+        return 0
+    span = float(xs.max() - xs.min() + 1)
+    intensities = np.bincount(ys.astype(int))
+    peak_row = int(np.argmax(intensities))
+    top, bottom = int(ys.min()), int(ys.max())
+    row_runs = longest_runs(ys, xs)
+    broad = {y for y, run in row_runs.items() if run >= max(0.15 * span, UNDERLINE_RUN)}
+    bands: list[list[int]] = []
+    for y in sorted(broad):
+        if bands and y - bands[-1][-1] <= 1:
+            bands[-1].append(y)
+        else:
+            bands.append([y])
+    band_at_foot = bool(
+        bands
+        and (bottom - max(bands[-1])) <= 0.25 * (bottom - top)
+        and (max(bands[-1]) - min(bands[-1])) <= 0.35 * (bottom - top)
+    )
+    if band_at_foot:
+        # the LAST broad band touches the word's foot: an UNDERLINE owns the
+        # bottom. The letters end at the last row above the band's deep
+        # valley with real body density. The Opera box: the letters end at
+        # row 43, the valley dips to 2-5, the underline's core runs 50-56.
+        # The valley must be DEEP - a dense bottom is a bottom-heavy word's
+        # own body, not an underline.
+        band = bands[-1]
+        band_top = min(band)
+        valley = (
+            min(range(max(top, band_top - 6), band_top), key=lambda y: intensities[y])
+            if band_top > max(top, band_top - 6)
+            else top
+        )
+        if intensities[valley] <= 0.2 * intensities[peak_row]:
+            body_floor = max(3 * intensities[valley], 1)
+            seam = next(
+                (y for y in range(valley - 1, top - 1, -1) if intensities[y] >= body_floor),
+                valley,
+            )
+            return seam
+    forbidden = _thick_zone(ys, xs, span)
+    bottoms: dict[int, int] = {}
+    for y, x in zip(ys.astype(int), xs.astype(int), strict=False):
+        if int(y) > bottoms.get(int(x), -1):
+            bottoms[int(x)] = int(y)
+    kept = [b for b in bottoms.values() if b not in forbidden]
+    if not kept:
+        kept = list(bottoms.values())  # an all-band word (a solid glyph): measure as-is
+    # the ±2 band modal (measured: ±4 drifts the centre; ±2 puts the f's
+    # bodies at 39 against 41 and the g's at 23 against 21); ties go to the
+    # lower row (a bar sits ABOVE the baseline).
+    best, best_bottom = 0, 0
+    for candidate in sorted(set(kept)):
+        count = sum(1 for b in kept if abs(b - candidate) <= 2)
+        if count > best or (count == best and candidate > best_bottom):
+            best, best_bottom = count, candidate
+    return best_bottom
+
+
+BROAD_FRACTION = 0.25  # x the word's width: a row holding this much ink is the writing
+UNDERLINE_RUN = 8.0  # px: an underline's rows are this wide at minimum
+
+
+def _broad_waistline(ys: np.ndarray, xs: np.ndarray, width: float) -> int | None:
+    """The first row from the top whose ink run spans BROAD_FRACTION of the
+    word: the crown of the letters' bodies. Ascender tails and descenders are
+    narrow strokes; a big loop's crown ('group' - the reviewer's g-word) is
+    broad, so it lands the line where the old profile walk stopped short."""
+    rows: dict[int, list[int]] = {}
+    for y, x in zip(ys.astype(int), xs.astype(int), strict=False):
+        rows.setdefault(int(y), []).append(int(x))
+    threshold = BROAD_FRACTION * width
+    for y in sorted(rows):
+        ordered = sorted(set(rows[y]))
+        run = 1
+        longest = 1
+        for a, b in zip(ordered, ordered[1:], strict=False):
+            run = run + 1 if b == a + 1 else 1
+            longest = max(longest, run)
+        if longest >= threshold:
+            return int(y)
+    return None
+
+
+def waistline_row(ys: np.ndarray, xs: np.ndarray) -> int:
+    """The top of a word's letter bodies: the x-height line.
+
+    The broad-band walk first: the crown of the writing - the first row from
+    the top whose ink run spans a fifth of the word. Where cursive ascenders
+    are thin strokes this is the bodies' top exactly ('group's crown, the f's
+    bodies); where no row is broad (printed letters, isolated glyphs) the
+    profile walk stands: from the peak row, the first row whose count falls
+    below half the peak. With `baseline_row` this gives the word's x-height,
+    the size measure that ascenders and descenders cannot distort.
+    """
+    if len(ys) == 0:
+        return 0
+    span = float(xs.max() - xs.min() + 1)
+    forbidden = set()
+    row_runs = longest_runs(ys, xs)
+    broad = {y for y, run in row_runs.items() if run >= max(0.15 * span, UNDERLINE_RUN)}
+    bands2: list[list[int]] = []
+    for y in sorted(broad):
+        if bands2 and y - bands2[-1][-1] <= 1:
+            bands2[-1].append(y)
+        else:
+            bands2.append([y])
+    top, bottom = int(ys.min()), int(ys.max())
+    if bands2 and (bottom - max(bands2[-1])) <= 0.25 * (bottom - top):
+        # only the foot band (a welded underline) leaves the crown profile;
+        # a mid-word bar (the f's crossbar) is the word's own geometry
+        forbidden = {y for y in range(min(bands2[-1]) - 2, bottom + 1)}
+    keep = np.array([int(y) not in forbidden for y in ys.astype(int)])
+    kept_ys = ys[keep]
+    if len(kept_ys) == 0:
+        kept_ys = ys  # an all-band word: measure as-is
+    broad = _broad_waistline(kept_ys, xs[keep], span)
+    if broad is not None:
+        return broad
+    counts = np.bincount(np.round(kept_ys).astype(int))
+    if counts.size == 0:
+        return 0
+    peak = int(np.argmax(counts))
+    waistline = peak
+    while waistline > 0 and counts[waistline - 1] > counts[peak] * 0.5:
+        waistline -= 1
+    return waistline
+
+
+def find_marks(mask: np.ndarray, min_area: int = SHAPE_MIN_AREA) -> list[Mark]:
+    """Connected components (8-connected) via a union-find over row runs."""
+    height, width = mask.shape
+    parent: list[int] = []
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    def union(a: int, b: int) -> None:
+        root_a, root_b = find(a), find(b)
+        if root_a != root_b:
+            parent[root_b] = root_a
+
+    rows: list[list[tuple[int, int, int]]] = []
+    previous: list[tuple[int, int, int]] = []
+    for y in range(height):
+        row = mask[y]
+        current: list[tuple[int, int, int]] = []
+        if row.any():
+            edges = np.diff(np.concatenate(([0], row.view(np.int8), [0])))
+            for start, end in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1), strict=False):
+                parent.append(len(parent))
+                current.append((int(start), int(end) - 1, len(parent) - 1))
+            i = j = 0
+            while i < len(current) and j < len(previous):
+                s, e, _ = current[i]
+                ps, pe, _ = previous[j]
+                if e < ps:
+                    i += 1
+                elif pe < s:
+                    j += 1
+                else:
+                    union(current[i][2], previous[j][2])
+                    i, j = (i + 1, j) if e < pe else (i, j + 1)
+        rows.append(current)
+        previous = current
+    labels = np.zeros((height, width), dtype=np.int32)
+    for y, current in enumerate(rows):
+        for start, end, rid in current:
+            labels[y, start : end + 1] = find(rid) + 1
+    out: list[Mark] = []
+    ids, counts = np.unique(labels[labels > 0], return_counts=True)
+    for component, area in zip(ids, counts, strict=False):
+        if area < min_area:
+            continue
+        ys, xs = np.nonzero(labels == component)
+        out.append(
+            Mark(
+                x0=float(xs.min()),
+                y0=float(ys.min()),
+                x1=float(xs.max()),
+                y1=float(ys.max()),
+                baseline=float(baseline_row(ys, xs)),
+                waistline=float(waistline_row(ys, xs)),
+                area=float(area),
+                cx=(int(xs.min()) + int(xs.max())) / 2,
+                pix=(ys.astype(np.float32), xs.astype(np.float32)),
+                id=str(int(component)),
+            )
+        )
+    return out

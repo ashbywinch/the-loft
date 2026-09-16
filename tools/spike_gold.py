@@ -222,6 +222,8 @@ def _bottom_lines(pairs: list[tuple[int, int]], words: list[dict], segments: lis
                 "y1": max(words[i]["y1"] for i in pages),
             }
         )
+
+
 def _segment_row_boxes(segment: dict, data_dir: Path) -> list[tuple[float, float, float, float]]:
     """A segment's own words' boxes — the ONLY thing the house renderer
     tints. No stroke-span rectangle: the band IS the words' union."""

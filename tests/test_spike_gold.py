@@ -99,8 +99,6 @@ def test_a_segment_mixes_no_strokes() -> None:
         )
 
 
-
-
 def test_gold_matches_the_adjudicated_mapping() -> None:
     """Every word sits in exactly the line the user confirmed — a regression
     anywhere moves a word and this falls over. The mapping file is the
@@ -150,6 +148,8 @@ def test_the_bottom_interjection_is_three_lines() -> None:
     got = sorted(r for s in segments if s["id"] in ("41", "42", "43") for r in s["word_ids"])
     expected = [413, 416, 415, 425, 428, 455, 430]
     assert sorted(got) == sorted(expected), f"bottom lines' words: {got} vs {expected}"
+
+
 def test_the_map_paints_words_not_rectangles() -> None:
     """The map contract (user 2026-09-12): each segment's band is EXACTLY
     the union of its own expected words' boxes — no wider in x, no taller

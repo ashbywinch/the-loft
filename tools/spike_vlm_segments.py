@@ -16,12 +16,13 @@ from pathlib import Path
 
 from PIL import Image
 
-from tools.word_numbering import render_numbered, unplaced
+from tools.word_numbering import unplaced
 
 BATCH = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004")
 DEFAULT_PAGE = BATCH / "oriented/page-01.jpg"
 DEFAULT_DATA = Path("tests/fixtures/page01-wordseg")
 DEFAULT_OUT = Path("research/spike-word-segmentation")
+Box = tuple[float, float, float, float]
 
 
 def _section_from(args: argparse.Namespace, data_dir: Path) -> tuple[float, float, float, float]:
@@ -35,22 +36,40 @@ def _section_from(args: argparse.Namespace, data_dir: Path) -> tuple[float, floa
     return (surface["x0"] - pad, surface["y0"] - pad, surface["x1"] + pad, surface["y1"] + pad)
 
 
-def render(args: argparse.Namespace) -> int:
-    """One numbered section: the crop, per-word hues, collision-free chips."""
-    data_dir = args.data
+def stage_and_draw(page: Image.Image, data_dir: Path, render: str, section: Box, scale: float) -> tuple:
+    """The render pipeline's shared body: words.json -> words.numbered.json
+    (the staged render ids, boxes, hues) -> the drawn image + chips. Every
+    verb stages through this function, so the file and the pixels are one
+    calculation, never two sorts that can drift."""
+    from tools.word_numbering import draw_numbering, number_words, place_numbering
+
     words = json.loads((data_dir / "words.json").read_text(encoding="utf-8"))["words"]
     boxes = [(w["x0"], w["y0"], w["x1"], w["y1"]) for w in words]
+    numbered = number_words(boxes)
+    (data_dir / "words.numbered.json").write_text(
+        json.dumps({"render": render, "section": section, "scale": scale, "words": numbered}, indent=1),
+        encoding="utf-8",
+    )
+    scaled, chips = place_numbering(numbered, section, scale)
+    return draw_numbering(page, section, numbered, scaled, chips, scale), chips, len(words)
+
+
+def render(args: argparse.Namespace) -> int:
+    """The numbered section: stage the numbering, draw it, save the image."""
+    data_dir = args.data
     page = Image.open(args.page)
     section = _section_from(args, data_dir)
-    image, chips = render_numbered(page, section, boxes, args.scale)
+    image, chips, count = stage_and_draw(page, data_dir, args.name, section, args.scale)
     missing = unplaced(chips)
     out_dir = args.out / "evidence"
     out_dir.mkdir(parents=True, exist_ok=True)
     path = out_dir / f"{args.name}.png"
     image.save(path)
-    print(f"rendered {len(words)} words, section {section}, scale {args.scale} -> {path}")
+    print(f"rendered {count} words, section {section}, scale {args.scale} -> {path}")
+    print(f"numbering staged -> {data_dir / 'words.numbered.json'}")
     print(f"unplaced chips: {len(missing)}" + (f" (render ids {missing[:20]})" if missing else ""))
     return 0
+
 
 def map_words(args: argparse.Namespace) -> int:
     """A line's words, addressed by LINE label — never by render id. Prints
@@ -81,11 +100,7 @@ def map_move(args: argparse.Namespace) -> int:
     from tools.spike_gold import load_expected_mapping
 
     mapping_path = (
-        Path(__file__).resolve().parents[1]
-        / "research"
-        / "spike-word-segmentation"
-        / "gold"
-        / "expected-mapping.json"
+        Path(__file__).resolve().parents[1] / "research" / "spike-word-segmentation" / "gold" / "expected-mapping.json"
     )
     expected = load_expected_mapping(mapping_path)
     moving = [int(v) for v in args.words.split(",")]
@@ -110,6 +125,23 @@ def map_move(args: argparse.Namespace) -> int:
     return 0
 
 
+def locate(args: argparse.Namespace) -> int:
+    """A render id back to its word: box + line, read from the staged
+    words.numbered.json — the same file the image was drawn from, so a number
+    on the page resolves by lookup, never by re-deriving the sort."""
+    staged = json.loads((args.data / "words.numbered.json").read_text(encoding="utf-8"))
+    words = json.loads((args.data / "words.json").read_text(encoding="utf-8"))["words"]
+    by_render = {entry["render_id"]: entry for entry in staged["words"]}
+    for raw in args.words.split(","):
+        render_id = int(raw)
+        entry = by_render[render_id]
+        box = words[entry["page_index"]]
+        print(
+            f"  word {render_id}: page {entry['page_index']} x {box['x0']:.0f}-{box['x1']:.0f}"
+            f" y {box['y0']:.0f}-{box['y1']:.0f} line {box['line']}"
+        )
+    return 0
+
 
 def attempt(args: argparse.Namespace) -> int:
     """One whole-section VLM attempt (milestone 3): render the numbered
@@ -128,18 +160,14 @@ def attempt(args: argparse.Namespace) -> int:
         validate_segments,
     )
     from tools.vlm import transcribe_image_vlm
-    from tools.word_numbering import render_numbered
 
-    words = json.loads((args.data / "words.json").read_text(encoding="utf-8"))["words"]
-    boxes = [(w["x0"], w["y0"], w["x1"], w["y1"]) for w in words]
     page = Image.open(args.page)
     section = _section_from(args, args.data)
-    image, chips = render_numbered(page, section, boxes, args.scale)
+    image, _chips, universe = stage_and_draw(page, args.data, args.name, section, args.scale)
     panel = args.out / "responses" / f"{args.name}.png"
     panel.parent.mkdir(parents=True, exist_ok=True)
     image.save(panel)
 
-    universe = len(words)
     spec = {"model": "dynamic/image", "system": SYSTEM_PROMPT, "user": user_prompt(universe)}
     cached = cache.load_cached_read(panel, spec)
     if cached is not None:
@@ -222,6 +250,11 @@ def main(argv: list[str] | None = None) -> int:
     move_p.add_argument("--words", required=True, help="comma-separated word ids, e.g. 413,416")
     move_p.add_argument("--to", required=True, help="the destination line label")
     move_p.set_defaults(func=map_move)
+
+    locate_p = sub.add_parser("locate", help="render ids back to their words' boxes")
+    locate_p.add_argument("--data", type=Path, default=DEFAULT_DATA, help="the traced data dir")
+    locate_p.add_argument("--words", required=True, help="comma-separated render ids, e.g. 47,72")
+    locate_p.set_defaults(func=locate)
 
     args = parser.parse_args(argv)
     return args.func(args)

@@ -209,36 +209,51 @@ def place_chips(boxes: list[Box], order: list[int]) -> list[Chip]:
     return chips
 
 
-def render_numbered(
-    page: Image.Image,
-    section: Box,
-    boxes: list[Box],
-    scale: float,
-) -> tuple[Image.Image, list[Chip]]:
-    """The numbered image: the section cropped, every word's box outlined in
-    its hue, every number on a transparent chip at the placed position.
+def number_words(boxes: list[Box]) -> list[dict]:
+    """Stage 1 — calculate: every word's render id, hue, and box, in reading
+    order. Pure data, no pixels: the pipeline stage the render draws and the
+    tests / locate logic read. One entry per word: render_id, page_index,
+    box (page px), colour."""
+    return [
+        {
+            "render_id": render_id,
+            "page_index": word_index,
+            "box": boxes[word_index],
+            "colour": PALETTE[word_index % len(PALETTE)],
+        }
+        for render_id, word_index in enumerate(numbered_order(boxes), start=1)
+    ]
 
-    Returns (image, chips) — the chips' rects are in section pixels, so the
-    caller can audit the placement (the collision tests use them).
-    """
+
+def place_numbering(words: list[dict], section: Box, scale: float) -> tuple[list[Box], list[Chip]]:
+    """Stage 2 — calculate: scale the numbered words into section pixels and
+    place every chip collision-free. Returns (scaled boxes, chips) — still no
+    pixels; `draw_numbering` is the only stage that paints."""
+    x0, y0, _x1, _y1 = section
+    scaled = [
+        ((b[0] - x0) * scale, (b[1] - y0) * scale, (b[2] - x0) * scale, (b[3] - y0) * scale)
+        for b in [w["box"] for w in words]
+    ]
+    order = numbered_order(scaled)
+    return scaled, place_chips(scaled, order)
+
+
+def draw_numbering(
+    page: Image.Image, section: Box, words: list[dict], scaled: list[Box], chips: list[Chip], scale: float
+) -> Image.Image:
+    """Stage 3 — render: crop, outline every word's box in its hue, draw every
+    placed chip. The ONLY stage that touches pixels; everything it paints was
+    calculated in stages 1–2 and is inspectable in the staged files."""
     x0, y0, x1, y1 = section
     width, height = round((x1 - x0) * scale), round((y1 - y0) * scale)
     image = (
         page.convert("RGB").crop((int(x0), int(y0), int(x1), int(y1))).resize((width, height), Image.Resampling.LANCZOS)
     )
-
-    scaled = [(b[0] - x0, b[1] - y0, b[2] - x0, b[3] - y0) for b in boxes]
-    scaled = [(a * scale, b * scale, c * scale, d * scale) for a, b, c, d in scaled]
-    order = numbered_order(scaled)
-    chips = place_chips(scaled, order)
-
     draw = ImageDraw.Draw(image)
     box_width = max(2, round(scale))
-    for word_index in order:
-        hue = PALETTE[word_index % len(PALETTE)]
-        x0w, y0w, x1w, y1w = scaled[word_index]
-        draw.rectangle((x0w, y0w, x1w, y1w), outline=hue, width=box_width)
-
+    for entry in words:
+        x0w, y0w, x1w, y1w = scaled[entry["page_index"]]
+        draw.rectangle((x0w, y0w, x1w, y1w), outline=entry["colour"], width=box_width)
     for chip in chips:
         if chip.verdict == UNPLACED:
             continue  # the caller reports the unplaced words; never draw a lie
@@ -257,7 +272,19 @@ def render_numbered(
             stroke_fill=(245, 245, 245),
             font=font,
         )
-    return image, chips
+    return image
+
+
+def render_numbered(
+    page: Image.Image,
+    section: Box,
+    boxes: list[Box],
+    scale: float,
+) -> tuple[Image.Image, list[Chip]]:
+    """The numbered image: stages 1–3 composed — number, place, draw."""
+    words = number_words(boxes)
+    scaled, chips = place_numbering(words, section, scale)
+    return draw_numbering(page, section, words, scaled, chips, scale), chips
 
 
 def unplaced(chips: list[Chip]) -> list[int]:

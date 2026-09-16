@@ -1000,3 +1000,57 @@ tight-schedule section measures as merged multi-line bands; the grouping
 model transcribes them as multi-line segments. The Godolphin card's
 rotated writing is UNMEASURED by the profile (it needs the rotated
 frame, where orli hallucinates) — reopened.
+
+
+## The row-splitter waist sweep (2026-09-13/14) — row-projection cannot cut 2911
+
+`tools/reader.py` `split_shapes` assigns each ink row to its nearest fitted
+line and cuts where the assignment changes, unless `_is_waist` says the cut
+runs mid-body. User rulings (2026-09-13): eight one-word pins (19583, 4503,
+9690, 6475, 5555, 3780, 1970, 683) stay whole; 5514 stays 2 halves; the
+Pupil block reads four words; 23194 / 22082 / 23150 are stacked/gapped pairs.
+
+Baseline (WAIST_RUN=10, WAIST_OVERLAP=0.5), measured 2026-09-14: whole only
+19583, 3780, 22082. Oversplits: 4503→2, 9690→2, 6475→2, 5555→3, 1970→2,
+683→3, 2723→2, 2911→2, 23194→3, 23150→2, 4847→4. Correct: 2875→2, 5514→2.
+
+Flip geometry (working px, page px = ×2):
+
+| id | flip (page y) | runs top,bot | ov/minlen | centroid shift (working px) |
+|---|---|---|---|---|
+| 2911 (Myra Hess) | 2552→2554 | 12, 22 | 11/12 | 1.1 |
+| 4503 (one word) | 2704→2706 | 23, 17 | 0/17 | 2.2 |
+| 1970 (one word) | 2466→2468 | 7, 9 | 7/7 | 3.6 |
+| 9690 (one word) | 3254→3256 | 6, 4 | 4/4 | 0.0 |
+| 6475 (one word) | 2914→2916 | 17, 11 | 11/11 | 0.2 |
+| 683 (one word) | 2300→2302 / 2350→2352 | 7,9 / 4,5 | 7/7 / 4/4 | 3.1 / 0.2 |
+| 2723 (Pupil) | 2554→2556 | 4, 4 | 4/4 | — |
+| 2875 (rule/of) | 2552→2554 | 9, 9 | 8/9 | 1.0 |
+| 5514 (75+81 halves) | 2790→2792 | 4, 4 | 4/4 | 3.6 |
+| 23194 (stacked) | 4490→4492 / 4534→4536 | 3,7 / 10,10 | 0/3 / 10/10 | 6.0 / 0.6 |
+| 23150 (gapped) | 4492→4494 / 4534→4536 | 4,11 / 11,4 | 3/4 / 4/4 | — |
+
+Tunings tried, all reverted (each broke one-word pins before fixing 2911):
+
+| tuning | result |
+|---|---|
+| WAIST_OVERLAP 0.6 / 0.8 | failed, reverted (2026-09-13 session) |
+| union-overlap (`ov*2 < lensum - ov`) | failed, reverted |
+| symmetric-difference rule | failed, reverted |
+| band-start-shift rule | failed, reverted |
+| narrow-row gate (WAIST_ROWS=12, tips always cut) | 10 fails incl. all six one-word pins, reverted |
+| centroid-shift-only, bar 4 / 3 / 2px | 4 / 8 / 9 fails (1970, 4503, 5555, 6475, 683 rotate through), reverted |
+| aligned-AND-shared (shift≤2 + share≥0.8) | 9 fails (2911 splits, six one-word pins split), reverted |
+| WAIST_OVERLAP 0.9 | same 10 fails as baseline, reverted |
+
+Finding: no row threshold separates 2911 (ov 11/12, shift 1.1) from the
+one-word pins — 4503 (ov 0/17, shift 2.2) cuts first under overlap rules
+yet merges last under shift rules. 2911's seam is vertical (Myra|Hess side
+by side); the row-splitter is the wrong instrument. Next design: vertical
+inter-word-gap split (column projection through the x-height core, width
+bar from the gap histogram — unmeasured as of 2026-09-14).
+
+Status RESOLVED 2026-09-14 (user's eye rulings are ground truth):
+row-splitter kept at baseline; `tests/test_reader.py` pins the live status
+honestly (gate 14 failed / 712 passed: 10 reader pins + 4 pre-existing
+spike-gold). OPEN: the vertical-gap design.

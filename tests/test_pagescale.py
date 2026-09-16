@@ -1,4 +1,4 @@
-"""Tests for the page's writing scale (tools/boxscale.py).
+"""Tests for the page's writing scale (tools/pagescale.py).
 
 Deterministic: synthetic pages whose scale is known by construction, plus the
 real letter's properties where the fixture exists in the checkout. No network,
@@ -11,7 +11,7 @@ import random
 
 import pytest
 
-from tools.boxscale import (
+from tools.pagescale import (
     LINE_RATIO_BOUNDS,
     LINE_RATIO_DEFAULT,
     line_ratio,

@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from PIL import Image, ImageDraw, ImageFont
 
+from tools.page_visuals import labeled_box, scaled_crop
 from tools.rectangle import Rectangle
 from tools.render import RenderStyle, tint_row
 from tools.word_numbering import numbered_order
@@ -70,9 +71,7 @@ def _main() -> int:
     OUTDIR.mkdir(parents=True, exist_ok=True)
     for site, (x0, y0, x1, y1) in ((k, v[:4]) for k, v in SITES.items()):
         scale = SITES[site][4]
-        crop = page.crop((int(x0), int(y0), int(x1), int(y1)))
-        w, h = int(crop.width * scale), int(crop.height * scale)
-        crop = crop.resize((w, h), Image.Resampling.LANCZOS)
+        crop = scaled_crop(page, x0, y0, x1, y1, SITES[site][4])
         draw = ImageDraw.Draw(crop, "RGBA")
         # tints first (minimal unions, like the expected map)
         for name in order:
@@ -97,7 +96,6 @@ def _main() -> int:
         # untinted and unboxed, so membership is never a reading of context.
         # (User 2026-09-12: boxes are correct as-is; render ids are never
         # cross-checked on a picture — the mapping test owns membership.)
-        font = ImageFont.load_default(size=22)
         for name in order:
             for r in sorted(expected[name]):
                 w = words[page_of[r]]
@@ -109,15 +107,7 @@ def _main() -> int:
                     (w["x1"] - x0) * scale,
                     (w["y1"] - y0) * scale,
                 )
-                draw.rectangle([bx0, by0, bx1, by1], outline=colour_of[name] + (255,), width=3)
-                draw.text(
-                    (bx0 + 3, by0 + 2),
-                    f"{name}:{r}",
-                    fill=(15, 15, 15),
-                    stroke_width=2,
-                    stroke_fill=(255, 255, 255),
-                    font=font,
-                )
+                labeled_box(draw, (bx0, by0, bx1, by1), colour_of[name] + (255,), f"{name}:{r}", size=22)
         labelfont = ImageFont.load_default(size=30)
         for name in order:
             xs = [words[page_of[r]]["x0"] for r in expected[name] if x0 < words[page_of[r]]["x1"]]

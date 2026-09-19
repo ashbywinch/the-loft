@@ -19,6 +19,8 @@ from PIL import Image
 from tools.page_visuals import captioned_sheet, halo_text, review_image, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
+if not SCAN.exists():
+    raise SystemExit(f"render_* needs the adopt batch mounted - the scan is not at {SCAN}")
 OUT = Path(__file__).resolve().parent / "evidence" / "myra-bridge.jpg"
 
 # The two words and the guilty stroke between them, at reading scale.

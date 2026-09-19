@@ -24,6 +24,8 @@ from tools.reader import artifacts, ink_mask
 from tools.word_numbering import draw_numbering, number_words, place_numbering
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
+if not SCAN.exists():
+    raise SystemExit(f"render_* needs the adopt batch mounted - the scan is not at {SCAN}")
 OUT = Path(__file__).resolve().parent / "evidence" / "marks-wholepage-review.jpg"
 STAGED = Path(__file__).resolve().parent / "evidence" / "marks-wholepage-numbering.json"
 

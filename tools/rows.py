@@ -36,6 +36,7 @@ from tools.page_visuals import captioned_sheet, halo_text, review_image, scaled_
 TOUCH_FRACTION = 0.38  # x the writing height: how far a line's stroke claims a word
 SPACING_RATIO = 1.6  # x the writing height: where one row ends and the next begins
 RULE_ASPECT = 8.0  # x a box's height: this wide for its height is a rule, not writing
+BUTT_GAP_MIN = 4.0  # px floor for a butting adjacency — physical, never unit-dependent razor
 
 
 @dataclass(frozen=True)
@@ -211,7 +212,11 @@ def _apportion_target(
 
     def butts(candidate: int) -> bool:
         gap = above_below(candidate)
-        return gap is not None and gap <= unit / 8
+        # a floor: on a small-font page unit/8 can be only a couple of
+        # pixels, too tight for a split piece's real gap — butting is a
+        # physical adjacency, never smaller than a few px (PR review,
+        # 2026-09-19).
+        return gap is not None and gap <= max(unit / 8, BUTT_GAP_MIN)
 
     # A: a word directly above or below (its box butting this one),
     # whichever is nearer.

@@ -21,6 +21,8 @@ from tools.page_visuals import captioned_sheet, review_image
 from tools.word_numbering import render_numbered, unplaced
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
+if not SCAN.exists():
+    raise SystemExit(f"render_* needs the adopt batch mounted - the scan is not at {SCAN}")
 DATA = Path("/tmp/newpipe")
 OUT = Path(__file__).resolve().parent / "evidence"
 

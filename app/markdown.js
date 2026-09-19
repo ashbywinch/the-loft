@@ -23,11 +23,23 @@ function renderTable(lines) {
   const rows = lines.map(splitRow);
   const table = el("table", { class: "transcription-table" });
   const head = el("thead");
-  head.append(el("tr", {}, rows[0].map((cell) => el("th", {}, cell))));
+  head.append(
+    el(
+      "tr",
+      {},
+      rows[0].map((cell) => el("th", {}, cell)),
+    ),
+  );
   table.append(head);
   const body = el("tbody");
   for (const row of rows.slice(2)) {
-    body.append(el("tr", {}, row.map((cell) => el("td", {}, cell))));
+    body.append(
+      el(
+        "tr",
+        {},
+        row.map((cell) => el("td", {}, cell)),
+      ),
+    );
   }
   table.append(body);
   return table;
@@ -95,11 +107,7 @@ export function renderMarkdown(text) {
     // text — include the current line, then stop at the next pipe line
     // (2026-08-09 review: a line like "| the boat's name |" was silently
     // dropped — the table branch skipped it, the paragraph loop refused it)
-    while (
-      i < lines.length &&
-      lines[i].trim() !== "" &&
-      (i === paraStart || !PIPE.test(lines[i]))
-    ) {
+    while (i < lines.length && lines[i].trim() !== "" && (i === paraStart || !PIPE.test(lines[i]))) {
       para.push(lines[i]);
       i++;
     }

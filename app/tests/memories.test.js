@@ -70,63 +70,63 @@ async function openSheetVia(state, anchor = ANCHOR) {
 }
 
 describe("storyCard", () => {
-it("a required (non-skippable) question offers no Skip button", async () => {
-  // the events-date question is required (2026-08-05: the flow must make
-  // the narrator provide a date) — Skip must not be offered; the narrator's
-  // right to demur stays ("I'd rather not say"). Fake timers and a clean
-  // localStorage come from beforeEach — this test is independent by setup,
-  // not by position.
-  const fetchMock = vi.fn((url) => {
-    if (url === "/api/health") return Promise.resolve(okJson({ ok: true }));
-    if (url === "/api/assess")
-      return Promise.resolve(
-        okJson({
-          ok: true,
-          title: "T",
-          extractions: [],
-          facts: [],
-          questions: [
-            {
-              text: "When did this happen?",
-              why: "",
-              skippable: false,
-              suggestions: [],
-              type: "date",
-              date_kind: "event",
-            },
-          ],
-        }),
-      );
-    if (url === "/api/save")
-      return Promise.resolve(
-        okJson({
-          ok: true,
-          id: "story-draft",
-          story: { id: "story-draft", status: "draft" },
-          people: [],
-          places: [],
-        }),
-      ); // the close-save must succeed — a failed save re-queues its debounce
-    return Promise.resolve(okJson({ ok: false }, 404));
+  it("a required (non-skippable) question offers no Skip button", async () => {
+    // the events-date question is required (2026-08-05: the flow must make
+    // the narrator provide a date) — Skip must not be offered; the narrator's
+    // right to demur stays ("I'd rather not say"). Fake timers and a clean
+    // localStorage come from beforeEach — this test is independent by setup,
+    // not by position.
+    const fetchMock = vi.fn((url) => {
+      if (url === "/api/health") return Promise.resolve(okJson({ ok: true }));
+      if (url === "/api/assess")
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            title: "T",
+            extractions: [],
+            facts: [],
+            questions: [
+              {
+                text: "When did this happen?",
+                why: "",
+                skippable: false,
+                suggestions: [],
+                type: "date",
+                date_kind: "event",
+              },
+            ],
+          }),
+        );
+      if (url === "/api/save")
+        return Promise.resolve(
+          okJson({
+            ok: true,
+            id: "story-draft",
+            story: { id: "story-draft", status: "draft" },
+            people: [],
+            places: [],
+          }),
+        ); // the close-save must succeed — a failed save re-queues its debounce
+      return Promise.resolve(okJson({ ok: false }, 404));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const sheet = await openSheetVia({ ...STATE });
+    setInput("Alex");
+    sendBtn().click();
+    await tick();
+    setInput("We went to Marlock.");
+    sendBtn().click();
+    await tick();
+    action("That's everything").click();
+    await tick();
+    await tick();
+    expect(sheet.textContent).toContain("When did this happen?");
+    const chips = [...sheet.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent);
+    expect(chips).not.toContain("Skip");
+    expect(chips).toContain("I'd rather not say");
+    [...sheet.querySelectorAll(".btn")].find((b) => b.getAttribute("aria-label") === "Close").click();
+    await tick();
   });
-  vi.stubGlobal("fetch", fetchMock);
-  const sheet = await openSheetVia({ ...STATE });
-  setInput("Alex");
-  sendBtn().click();
-  await tick();
-  setInput("We went to Marlock.");
-  sendBtn().click();
-  await tick();
-  action("That's everything").click();
-  await tick();
-  await tick();
-  expect(sheet.textContent).toContain("When did this happen?");
-  const chips = [...sheet.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent);
-  expect(chips).not.toContain("Skip");
-  expect(chips).toContain("I'd rather not say");
-  [...sheet.querySelectorAll(".btn")].find((b) => b.getAttribute("aria-label") === "Close").click();
-  await tick();
-});
 
   it("links to the story page and attributes narrator, events and told dates", () => {
     const card = storyCard(STATE, story());
@@ -1516,13 +1516,41 @@ describe("the capture chat", () => {
 
 describe("memoriesSection render-once (2026-08-06)", () => {
   it("never re-shows a story the page already rendered", () => {
-    const story = { id: "s1", title: "Told elsewhere", type: "story", date: "1963-06", date_precision: "month", recorded: "2026-08-03", story: "x", told_by: "p-alex", places: [], people: [], themes: [], assets: [] };
+    const story = {
+      id: "s1",
+      title: "Told elsewhere",
+      type: "story",
+      date: "1963-06",
+      date_precision: "month",
+      recorded: "2026-08-03",
+      story: "x",
+      told_by: "p-alex",
+      places: [],
+      people: [],
+      themes: [],
+      assets: [],
+    };
     const state = { people: [{ id: "p-alex", name: "Alex" }] };
     const main = document.createElement("main");
-    main.append(memoriesSection(state, { title: "Memories", stories: [story], buttonLabel: "Add", anchor: { kind: "place", id: "pl-x", name: "X" }, exclude: ["s1"] }));
+    main.append(
+      memoriesSection(state, {
+        title: "Memories",
+        stories: [story],
+        buttonLabel: "Add",
+        anchor: { kind: "place", id: "pl-x", name: "X" },
+        exclude: ["s1"],
+      }),
+    );
     expect(main.textContent).not.toContain("Told elsewhere");
     expect(main.textContent).toContain("No stories yet");
-    main.replaceChildren(memoriesSection(state, { title: "Memories", stories: [story], buttonLabel: "Add", anchor: { kind: "place", id: "pl-x", name: "X" } }));
+    main.replaceChildren(
+      memoriesSection(state, {
+        title: "Memories",
+        stories: [story],
+        buttonLabel: "Add",
+        anchor: { kind: "place", id: "pl-x", name: "X" },
+      }),
+    );
     expect(main.textContent).toContain("Told elsewhere");
   });
 });

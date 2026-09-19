@@ -126,9 +126,7 @@ describe("corrected text — the confirmation payload", () => {
 
   it("the document text joins pages with newlines (the CLI gate's shape)", () => {
     expect(correctedDocumentText(DOC, {})).toBe("line one\nline two\nline three");
-    expect(correctedDocumentText(DOC, { "p1.jpg": { 0: "LINE ONE" } })).toBe(
-      "LINE ONE\nline two\nline three",
-    );
+    expect(correctedDocumentText(DOC, { "p1.jpg": { 0: "LINE ONE" } })).toBe("LINE ONE\nline two\nline three");
   });
 });
 
@@ -141,12 +139,9 @@ describe("flag navigation — bounded and resumable (VR9)", () => {
   });
 
   it("edits remove the line's position", () => {
-    expect(flaggedPositions([DOC], 0, { "p1.jpg": { 1: "done" } })).toEqual([
-      { page: "p1.jpg", line: 0 },
-    ]);
+    expect(flaggedPositions([DOC], 0, { "p1.jpg": { 1: "done" } })).toEqual([{ page: "p1.jpg", line: 0 }]);
   });
 });
-
 
 describe("the outbox — nothing confirmed is lost to a failed push", () => {
   beforeEach(() => localStorage.clear());
@@ -229,8 +224,20 @@ describe("the batch list renders the real batches", () => {
         status: 200,
         json: async () => ({
           batches: [
-            { batch_id: "b-open", label: "First pile", status: "review", pages: { a: 1, b: 2 }, boundaries: [{ pages: ["a"], status: null }] },
-            { batch_id: "b-done", label: "Old pile", status: "confirmed", pages: {}, boundaries: [{ pages: ["a"], status: "confirmed" }] },
+            {
+              batch_id: "b-open",
+              label: "First pile",
+              status: "review",
+              pages: { a: 1, b: 2 },
+              boundaries: [{ pages: ["a"], status: null }],
+            },
+            {
+              batch_id: "b-done",
+              label: "Old pile",
+              status: "confirmed",
+              pages: {},
+              boundaries: [{ pages: ["a"], status: "confirmed" }],
+            },
           ],
         }),
       }),
@@ -245,10 +252,7 @@ describe("the batch list renders the real batches", () => {
   });
 
   it("offers the sign-in gate on a 401", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: false, status: 401 }),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 401 }));
     const main = document.createElement("main");
     render(main, { name: "review" });
     await vi.waitFor(() => expect(main.querySelector(".gate")).toBeTruthy());
@@ -279,7 +283,7 @@ describe("the review hub shows both transcriptions and import sessions", () => {
     await vi.waitFor(() => expect(main.textContent).toContain("The document import"));
     expect(main.textContent).toContain("1 person");
     // the card is a button that navigates to the import session
-    expect(main.querySelector('.rv-card-title')?.textContent).toContain("The document import");
+    expect(main.querySelector(".rv-card-title")?.textContent).toContain("The document import");
     vi.unstubAllGlobals();
   });
 });
@@ -287,10 +291,7 @@ describe("the review hub shows both transcriptions and import sessions", () => {
 describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)", () => {
   it("bandAnchor: the first line box anchors the band", () => {
     const layout = {
-      lines: [
-        { box: [100, 500, 900, 600] },
-        { box: [50, 700, 800, 780] },
-      ],
+      lines: [{ box: [100, 500, 900, 600] }, { box: [50, 700, 800, 780] }],
     };
     expect(bandAnchor(layout)).toBe(500);
   });
@@ -383,12 +384,13 @@ describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)",
     expect(view.y).toBe(2246);
   });
 
-
   it("zoomView: the image point under the cursor stays put when zooming", () => {
-    const paneW = 812, paneH = 131;
+    const paneW = 812,
+      paneH = 131;
     const before = { x: 0, y: 100, width: 2544, height: 410 };
     const k = 2;
-    const cx = paneW / 2, cy = paneH / 2;
+    const cx = paneW / 2,
+      cy = paneH / 2;
     const after = zoomView(before, k, paneW, paneH, cx, cy, 2544);
     // the pane-center image point before and after
     const s = paneW / before.width;
@@ -401,7 +403,8 @@ describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)",
   });
 
   it("zoomView clamps to [1/8, 8]× the image width", () => {
-    const paneW = 812, paneH = 131;
+    const paneW = 812,
+      paneH = 131;
     const wide = zoomView({ x: 0, y: 0, width: 2544, height: 410 }, 100, paneW, paneH, 0, 0, 2544);
     expect(wide.width).toBe(2544 / 8);
     const deep = zoomView({ x: 0, y: 0, width: 2544, height: 410 }, 0.0001, paneW, paneH, 0, 0, 2544);
@@ -428,7 +431,6 @@ describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)",
     expect(rect.y).toBeLessThanOrEqual(2247); // the letter's top, not below it
   });
 });
-
 
 describe("the reviewer's orientation — { desired, acked } per page, set only by ↻ (VR10)", () => {
   beforeEach(() => localStorage.clear());
@@ -841,10 +843,7 @@ const LONG_DOC = (batchId, n) => ({
 describe("the check control — a labelled checkbox (the pattern library: 'labelled checkbox, obvious state')", () => {
   beforeEach(() => {
     localStorage.clear();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b1", 3) }),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b1", 3) }));
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -876,10 +875,7 @@ describe("the check control — a labelled checkbox (the pattern library: 'label
 describe("the approve tick — one click marks the line fine", () => {
   beforeEach(() => {
     localStorage.clear();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b1", 3) }),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b1", 3) }));
   });
   afterEach(() => vi.unstubAllGlobals());
 
@@ -960,10 +956,7 @@ describe("the dual-pane link — scrolling the image pans the transcript", () =>
         return idx === undefined ? 0 : Number(idx) * 40;
       },
     });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b3", 30) }),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b3", 30) }));
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -1073,9 +1066,15 @@ describe("the dual-pane link on LAYOUT-LESS pages (the refused set, phone report
     });
     img.dispatchEvent(new Event("load"));
     // drag the image down 200px: the view pans, the transcript follows
-    imgbox.dispatchEvent(new PointerEvent("pointerdown", { pointerId: 1, clientX: 100, clientY: 300, pointerType: "touch" }));
-    window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 1, clientX: 100, clientY: 100, pointerType: "touch" }));
-    window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 1, clientX: 100, clientY: 100, pointerType: "touch" }));
+    imgbox.dispatchEvent(
+      new PointerEvent("pointerdown", { pointerId: 1, clientX: 100, clientY: 300, pointerType: "touch" }),
+    );
+    window.dispatchEvent(
+      new PointerEvent("pointermove", { pointerId: 1, clientX: 100, clientY: 100, pointerType: "touch" }),
+    );
+    window.dispatchEvent(
+      new PointerEvent("pointerup", { pointerId: 1, clientX: 100, clientY: 100, pointerType: "touch" }),
+    );
     await vi.waitFor(() => expect(txb.scrollTop).toBeGreaterThan(0));
   });
 });
@@ -1161,10 +1160,7 @@ describe("the fit guarantees a pan range (the wheel is never swallowed)", () => 
         return idx === undefined ? 0 : Number(idx) * 40;
       },
     });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b7", 30) }),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b7", 30) }));
   });
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -1200,11 +1196,7 @@ describe("wheelZoomOrPan — the degenerate view (the whole writing visible) zoo
   it("classifies the view against the writing's extent", async () => {
     const { wheelZoomOrPan } = await import("../../views/review.js");
     const layout = {
-      lines: [
-        { box: [100, 2280, 500, 2323] },
-        { box: [100, 2365, 500, 2400] },
-        { box: [100, 2448, 500, 2495] },
-      ],
+      lines: [{ box: [100, 2280, 500, 2323] }, { box: [100, 2365, 500, 2400] }, { box: [100, 2448, 500, 2495] }],
     };
     // the view shows the whole writing (the degenerate fit) -> zoom
     expect(wheelZoomOrPan({ width: 500, height: 240 }, layout)).toBe("zoom");
@@ -1218,10 +1210,7 @@ describe("wheelZoomOrPan — the degenerate view (the whole writing visible) zoo
 describe("editing a line applies the correction", () => {
   beforeEach(() => {
     localStorage.clear();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b8", 3) }),
-    );
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => LONG_DOC("b8", 3) }));
   });
   afterEach(() => vi.unstubAllGlobals());
 

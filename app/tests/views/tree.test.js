@@ -105,11 +105,9 @@ describe("person-centred family tree (PRECEDENT.md §5)", () => {
     // From Miles's generation the way back to Alex is through Owen — the
     // card must say so, and only that card.
     const main = renderAt("p-miles", { person: "p-alex" });
-      const marked = [...main.querySelectorAll(".tree-card")].filter((c) =>
-        c.textContent.includes("leads back to you"),
-      );
-      expect(marked).toHaveLength(1);
-      expect(marked[0].textContent).toContain("Owen Hale");
+    const marked = [...main.querySelectorAll(".tree-card")].filter((c) => c.textContent.includes("leads back to you"));
+    expect(marked).toHaveLength(1);
+    expect(marked[0].textContent).toContain("Owen Hale");
   });
 
   it("the narrator's own view shows no back marker", () => {
@@ -133,7 +131,12 @@ describe("tree card life lines (2026-08-06)", () => {
   it("shows dates on cards so same-name people differ", () => {
     const state = {
       people: [
-        { id: "p-richard", name: "Walter Pryce", dob: { date: "1783", precision: "exact" }, dod: { date: "1862", precision: "approx" } },
+        {
+          id: "p-richard",
+          name: "Walter Pryce",
+          dob: { date: "1783", precision: "exact" },
+          dod: { date: "1862", precision: "approx" },
+        },
         { id: "p-harper-sr", name: "Harper Pryce", dob: { date: "1790", precision: "approx" } },
         { id: "p-harper", name: "Harper Pryce", dob: { date: "1830-05-03", precision: "exact" } },
       ],

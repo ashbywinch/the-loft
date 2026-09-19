@@ -39,13 +39,23 @@ describe("the boot gate (2026-08-06)", () => {
     // a plain file server with no /api route at all (404/410) is a
     // genuinely no-API deployment — open
     for (const status of [404, 410]) {
-      vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: false, status, headers: new Headers() })));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() => Promise.resolve({ ok: false, status, headers: new Headers() })),
+      );
       expect(await fetchIdentity()).toBe(NO_API);
     }
     // a static host that serves index.html for every route (200 non-JSON)
     // is ambiguous — open only when the deployment opts in explicitly
-    const html = Promise.resolve({ ok: true, headers: new Headers({ "content-type": "text/html" }), json: async () => ({}) });
-    vi.stubGlobal("fetch", vi.fn(() => html));
+    const html = Promise.resolve({
+      ok: true,
+      headers: new Headers({ "content-type": "text/html" }),
+      json: async () => ({}),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => html),
+    );
     expect(await fetchIdentity()).toBeNull(); // fail closed without the flag
     window.LOFT_NO_API = true;
     expect(await fetchIdentity()).toBe(NO_API); // opted in — open
@@ -54,18 +64,26 @@ describe("the boot gate (2026-08-06)", () => {
 
   it("fails closed when the auth server is unreachable, ambiguous, or says no — the archive never opens without a session", async () => {
     // network failure: the server is down — gate, never expose the archive
-    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new TypeError("no server"))));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new TypeError("no server"))),
+    );
     expect(await fetchIdentity()).toBeNull();
     // a real server answering 401/403/500 is "not signed in" — gate
     for (const status of [401, 403, 500]) {
-      vi.stubGlobal("fetch", vi.fn(() => Promise.resolve({ ok: false, status, headers: new Headers() })));
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(() => Promise.resolve({ ok: false, status, headers: new Headers() })),
+      );
       expect(await fetchIdentity()).toBeNull();
     }
     // a 200 that is not JSON (proxy, SSO interstitial, captive portal) is
     // ambiguous — gate, unless the deployment explicitly opted in
     vi.stubGlobal(
       "fetch",
-      vi.fn(() => Promise.resolve({ ok: true, headers: new Headers({ "content-type": "text/html" }), json: async () => ({}) })),
+      vi.fn(() =>
+        Promise.resolve({ ok: true, headers: new Headers({ "content-type": "text/html" }), json: async () => ({}) }),
+      ),
     );
     expect(await fetchIdentity()).toBeNull();
   });

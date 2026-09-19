@@ -64,7 +64,13 @@ describe("places fallback map", () => {
       { id: "a", name: "A", x: 10, y: 20 },
       { id: "pl-kirkby", name: "Stonewick", x: null, y: null },
     ];
-    const svg = buildFallbackMap(withNulls, new Map([["a", 2], ["pl-kirkby", 1]]));
+    const svg = buildFallbackMap(
+      withNulls,
+      new Map([
+        ["a", 2],
+        ["pl-kirkby", 1],
+      ]),
+    );
     expect(svg.querySelectorAll("circle.map-pin").length).toBe(1);
     expect(svg.textContent).not.toContain("Stonewick");
     expect(svg.innerHTML).not.toContain("translate(null");
@@ -78,7 +84,13 @@ describe("places fallback map", () => {
       { id: "pl-inn", name: "The Lark Inn", x: 50, y: 50, precision: "town" },
       { id: "pl-house", name: "4 Carlisle Terrace", x: 60, y: 40, precision: "exact" },
     ];
-    const svg = buildFallbackMap(places, new Map([["pl-inn", 1], ["pl-house", 1]]));
+    const svg = buildFallbackMap(
+      places,
+      new Map([
+        ["pl-inn", 1],
+        ["pl-house", 1],
+      ]),
+    );
     const inn = svg.querySelector(".map-ring");
     expect(inn).toBeTruthy();
     const radii = [...svg.querySelectorAll("circle")].map((c) => Number(c.getAttribute("r")));
@@ -342,7 +354,8 @@ describe("place page stories block", () => {
     expect(memories.textContent).toContain("A memory of Aldgate");
   });
 
-  it("the People row lists only people attested AT the place (2026-08-05)", () => {    // The 2001 email mentions 8 places and 91 people — being mentioned in an
+  it("the People row lists only people attested AT the place (2026-08-05)", () => {
+    // The 2001 email mentions 8 places and 91 people — being mentioned in an
     // item that mentions a place is not being there. Only per-place lists
     // attest presence.
     const state = {
@@ -420,9 +433,13 @@ describe("place involvement dates (2026-08-06)", () => {
     placePage(main, { arg: "pl-bishop", query: new URLSearchParams() }, state);
     // the record's involvement with Ravensford is 1901 (the coalfield
     // entry) — it bands with the 1900s, not the 1860s
-    const nineties = [...main.querySelectorAll("details.year")].find((b) => b.querySelector(".year-number")?.textContent === "1900s");
+    const nineties = [...main.querySelectorAll("details.year")].find(
+      (b) => b.querySelector(".year-number")?.textContent === "1900s",
+    );
     expect(nineties.textContent).toContain("The record");
-    const seventies = [...main.querySelectorAll("details.year")].find((b) => b.querySelector(".year-number")?.textContent === "1970s");
+    const seventies = [...main.querySelectorAll("details.year")].find(
+      (b) => b.querySelector(".year-number")?.textContent === "1970s",
+    );
     expect(seventies.textContent).toContain("A 1970s letter");
   });
 });

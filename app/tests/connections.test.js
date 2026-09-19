@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { aggregate, clarificationsFor, decadeBands, itemDateFor, itemInvolves, personAtPlace, referencedBy, sortedCounts, windowFromQuery } from "../connections.js";
+import {
+  aggregate,
+  clarificationsFor,
+  decadeBands,
+  itemDateFor,
+  itemInvolves,
+  personAtPlace,
+  referencedBy,
+  sortedCounts,
+  windowFromQuery,
+} from "../connections.js";
 
 const ITEMS = [
   { id: "a", date: "1963-05-14", people: [{ id: "p-mum" }], places: [{ id: "pl-aldgate" }], themes: [{ id: "t-x" }] },
@@ -122,7 +132,12 @@ describe("aggregate — everything-to-everything counts", () => {
   });
 
   it("with a person: a story the person merely told never gives them its places", () => {
-    const story = { id: "s", told_by: "p-alex", people: [{ id: "p-dad" }], places: [{ id: "pl-yard", people: ["p-dad"] }] };
+    const story = {
+      id: "s",
+      told_by: "p-alex",
+      people: [{ id: "p-dad" }],
+      places: [{ id: "pl-yard", people: ["p-dad"] }],
+    };
     expect(aggregate([story], "p-alex").places.size).toBe(0);
     expect(aggregate([story], "p-dad").places.get("pl-yard")).toBe(1);
   });
@@ -185,17 +200,27 @@ describe("clarificationsFor — the fragments that attest a target (2026-08-06)"
 });
 
 describe("itemDateFor — placement by involvement (2026-08-06)", () => {
-  const record = { id: "r", date: "1868-03-20", people: [{ id: "p-isabella" }, { id: "p-nora", date: { date: "1947-05-11", precision: "exact" } }] };
+  const record = {
+    id: "r",
+    date: "1868-03-20",
+    people: [{ id: "p-isabella" }, { id: "p-nora", date: { date: "1947-05-11", precision: "exact" } }],
+  };
 
   it("derives the involvement from the invariant: not before the item, not before the person", () => {
-    expect(itemDateFor(record, { id: "p-isabella", dob: { date: "1844-06-01", precision: "exact" } })).toBe("1868-03-20");
+    expect(itemDateFor(record, { id: "p-isabella", dob: { date: "1844-06-01", precision: "exact" } })).toBe(
+      "1868-03-20",
+    );
     expect(itemDateFor(record, { id: "p-nora", dob: { date: "1947-05-11", precision: "exact" } })).toBe("1947-05-11");
     // the item's own date for someone with no dob
     expect(itemDateFor(record, { id: "p-stranger" })).toBe("1868-03-20");
   });
 
   it("an attested ref date overrides the derivation (a death-only entry)", () => {
-    const rec = { id: "r", date: "1868-03-20", people: [{ id: "p-x", date: { date: "1950-02-01", precision: "exact" } }] };
+    const rec = {
+      id: "r",
+      date: "1868-03-20",
+      people: [{ id: "p-x", date: { date: "1950-02-01", precision: "exact" } }],
+    };
     expect(itemDateFor(rec, { id: "p-x", dob: { date: "1880-01-01", precision: "exact" } })).toBe("1950-02-01");
   });
 });

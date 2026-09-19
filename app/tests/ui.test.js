@@ -46,7 +46,14 @@ describe("ui primitives", () => {
     // A letter's description is what tells it apart from the rest of the
     // same correspondence on the timeline — it must render, not just exist
     // in the data.
-    const withDesc = itemCard({ id: "l", title: "X", date: "1963-05-14", date_precision: "exact", type: "letter", description: "About the supersonic design, 1949." });
+    const withDesc = itemCard({
+      id: "l",
+      title: "X",
+      date: "1963-05-14",
+      date_precision: "exact",
+      type: "letter",
+      description: "About the supersonic design, 1949.",
+    });
     expect(withDesc.querySelector(".card-desc").textContent).toBe("About the supersonic design, 1949.");
     const without = itemCard({ id: "l", title: "X", date: "1963-05-14", date_precision: "exact", type: "letter" });
     expect(without.querySelector(".card-desc")).toBeNull();

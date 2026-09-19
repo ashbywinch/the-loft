@@ -62,30 +62,33 @@ const ROUTES = [
   ["import", importReview, ctx({ arg: "import-documents" })],
 ];
 
-describe.skipIf(!hasData)("every view renders on the real projection (2026-08-08: a blank page is a view crashing on the actual data)", () => {
-  it.each(ROUTES)("renders %s", (_name, render, ctx) => {
-    const main = document.createElement("main");
-    render(main, ctx, realState());
-    expect(main.childElementCount).toBeGreaterThan(0); // never a blank render
-  });
-
-  it.each([cast, places, stories, importReview])("renders %s detail pages for real ids", () => {
-    const state = realState();
-    const personId = state.people[0]?.id;
-    const placeId = state.places[0]?.id;
-    const themeId = state.themes[0]?.id;
-    const itemId = state.items[0]?.id;
-    const cases = [
-      [personPage, ctx({ arg: personId })],
-      [placePage, ctx({ arg: placeId })],
-      [themePage, ctx({ arg: themeId })],
-      [reader, ctx({ arg: itemId })],
-    ];
-    for (const [fn, ctx] of cases) {
-      if (!ctx.arg) continue;
+describe.skipIf(!hasData)(
+  "every view renders on the real projection (2026-08-08: a blank page is a view crashing on the actual data)",
+  () => {
+    it.each(ROUTES)("renders %s", (_name, render, ctx) => {
       const main = document.createElement("main");
-      fn(main, ctx, state);
-      expect(main.childElementCount).toBeGreaterThan(0);
-    }
-  });
-});
+      render(main, ctx, realState());
+      expect(main.childElementCount).toBeGreaterThan(0); // never a blank render
+    });
+
+    it.each([cast, places, stories, importReview])("renders %s detail pages for real ids", () => {
+      const state = realState();
+      const personId = state.people[0]?.id;
+      const placeId = state.places[0]?.id;
+      const themeId = state.themes[0]?.id;
+      const itemId = state.items[0]?.id;
+      const cases = [
+        [personPage, ctx({ arg: personId })],
+        [placePage, ctx({ arg: placeId })],
+        [themePage, ctx({ arg: themeId })],
+        [reader, ctx({ arg: itemId })],
+      ];
+      for (const [fn, ctx] of cases) {
+        if (!ctx.arg) continue;
+        const main = document.createElement("main");
+        fn(main, ctx, state);
+        expect(main.childElementCount).toBeGreaterThan(0);
+      }
+    });
+  },
+);

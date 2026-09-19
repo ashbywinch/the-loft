@@ -185,15 +185,19 @@ function openSheet(state, anchor, resume = null) {
         // they'd discarded (reviewer, 2026-08-03)
         if (session.savePromise) await session.savePromise.catch(() => {});
         if (session.draftId) {
-          fetch("/api/delete", {
+          // the delete is awaited too — a fire-and-forget chain leaks past
+          // the test's mocks into the next test (the ECONNREFUSED flake,
+          // 2026-09-19): a chain this view starts must be settled before it
+          // closes, like the save promise above.
+          session.deletePromise = fetch("/api/delete", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ id: session.draftId, reason: "abandoned by the narrator" }),
-            keepalive: true,
           }).catch(() => {});
           state.byId.delete(session.draftId);
           state.items = state.items.filter((it) => it.id !== session.draftId);
         }
+        if (session.deletePromise) await session.deletePromise;
         close();
         window.dispatchEvent(new Event("hashchange")); // the drafts block re-renders
       },

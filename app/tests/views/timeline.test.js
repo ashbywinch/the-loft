@@ -88,12 +88,29 @@ describe("timeline periods (2026-08-05)", () => {
 describe("life events on the timeline (2026-08-05)", () => {
   it("derives birth and death events from a person's dated facts", () => {
     const people = [
-      { id: "p-harper", name: "Harper Pryce", dob: { date: "1830-05-03", precision: "exact" }, dod: { date: "1911-06-22", precision: "exact" } },
+      {
+        id: "p-harper",
+        name: "Harper Pryce",
+        dob: { date: "1830-05-03", precision: "exact" },
+        dod: { date: "1911-06-22", precision: "exact" },
+      },
     ];
     const events = lifeEvents(people, []);
     expect(events).toEqual([
-      { date: "1830-05-03", precision: "exact", kind: "birth", people: [{ id: "p-harper", name: "Harper Pryce" }], derived: true },
-      { date: "1911-06-22", precision: "exact", kind: "death", people: [{ id: "p-harper", name: "Harper Pryce" }], derived: true },
+      {
+        date: "1830-05-03",
+        precision: "exact",
+        kind: "birth",
+        people: [{ id: "p-harper", name: "Harper Pryce" }],
+        derived: true,
+      },
+      {
+        date: "1911-06-22",
+        precision: "exact",
+        kind: "death",
+        people: [{ id: "p-harper", name: "Harper Pryce" }],
+        derived: true,
+      },
     ]);
   });
 
@@ -103,10 +120,26 @@ describe("life events on the timeline (2026-08-05)", () => {
       { id: "p-b", name: "B" },
     ];
     const events = lifeEvents(people, [
-      { a: "p-a", b: "p-b", kind: "spouse", label_a: "spouse", label_b: "spouse", date: { date: "1888-06-20", precision: "exact" } },
+      {
+        a: "p-a",
+        b: "p-b",
+        kind: "spouse",
+        label_a: "spouse",
+        label_b: "spouse",
+        date: { date: "1888-06-20", precision: "exact" },
+      },
     ]);
     expect(events).toEqual([
-      { date: "1888-06-20", precision: "exact", kind: "marriage", people: [{ id: "p-a", name: "A" }, { id: "p-b", name: "B" }], derived: true },
+      {
+        date: "1888-06-20",
+        precision: "exact",
+        kind: "marriage",
+        people: [
+          { id: "p-a", name: "A" },
+          { id: "p-b", name: "B" },
+        ],
+        derived: true,
+      },
     ]);
   });
 
@@ -120,7 +153,14 @@ describe("life events on the timeline (2026-08-05)", () => {
       people,
       places: [],
       relationships: [
-        { a: "p-a", b: "p-b", kind: "spouse", label_a: "spouse", label_b: "spouse", date: { date: "1888-06-20", precision: "exact" } },
+        {
+          a: "p-a",
+          b: "p-b",
+          kind: "spouse",
+          label_a: "spouse",
+          label_b: "spouse",
+          date: { date: "1888-06-20", precision: "exact" },
+        },
       ],
       themes: [],
     };
@@ -156,8 +196,8 @@ describe("life events on the timeline (2026-08-05)", () => {
     // misread as the event's date (2026-08-06: "died" inside "1972–1981"
     // read as "died after 1972")
     expect(card.textContent).toContain("3 May 1830");
-    const period = [...main.querySelectorAll("details.period")].find((d) =>
-      d.querySelector(".period-range")?.textContent === "1830–1963",
+    const period = [...main.querySelectorAll("details.period")].find(
+      (d) => d.querySelector(".period-range")?.textContent === "1830–1963",
     );
     expect(period).toBeTruthy();
     expect(period.textContent).toContain("2 entries");
@@ -227,7 +267,13 @@ describe("life events on the timeline (2026-08-05)", () => {
   it("renders periods most recent first", () => {
     const items = [{ id: "new", title: "New", date: "2001-02-07", date_precision: "exact", type: "document" }];
     for (let i = 0; i < 24; i++) {
-      items.push({ id: `old-${i}`, title: `Old ${i}`, date: `${1860 + i}-03-20`, date_precision: "exact", type: "document" });
+      items.push({
+        id: `old-${i}`,
+        title: `Old ${i}`,
+        date: `${1860 + i}-03-20`,
+        date_precision: "exact",
+        type: "document",
+      });
     }
     const state = { items, people: [], places: [], themes: [] };
     const main = document.createElement("main");
@@ -310,24 +356,52 @@ describe("life events on the timeline (2026-08-05)", () => {
   it("a non-point death (after/before/between) never renders as a year point (2026-08-06)", () => {
     // "died after 1917" is not a 1917 happening — the fact stays on the
     // person page, but the timeline must not place it at the bound year.
-    const events = lifeEvents(
-      [{ id: "p-r", name: "Walter", dod: { date: "1917", precision: "after" } }],
-      [],
-    );
+    const events = lifeEvents([{ id: "p-r", name: "Walter", dod: { date: "1917", precision: "after" } }], []);
     expect(events).toEqual([]);
   });
 
   it("a period with a dominant theme shows the hook in its summary", () => {
     const state = {
       items: [
-        { id: "a", title: "A", date: "1949-01-27", date_precision: "exact", type: "letter", themes: [{ id: "t-boats" }] },
-        { id: "b", title: "B", date: "1949-02-04", date_precision: "exact", type: "letter", themes: [{ id: "t-boats" }] },
-        { id: "c", title: "C", date: "1963-05-14", date_precision: "exact", type: "letter", themes: [{ id: "t-boats" }] },
-        { id: "d", title: "D", date: "1963-06-01", date_precision: "exact", type: "letter", themes: [{ id: "t-music" }] },
+        {
+          id: "a",
+          title: "A",
+          date: "1949-01-27",
+          date_precision: "exact",
+          type: "letter",
+          themes: [{ id: "t-boats" }],
+        },
+        {
+          id: "b",
+          title: "B",
+          date: "1949-02-04",
+          date_precision: "exact",
+          type: "letter",
+          themes: [{ id: "t-boats" }],
+        },
+        {
+          id: "c",
+          title: "C",
+          date: "1963-05-14",
+          date_precision: "exact",
+          type: "letter",
+          themes: [{ id: "t-boats" }],
+        },
+        {
+          id: "d",
+          title: "D",
+          date: "1963-06-01",
+          date_precision: "exact",
+          type: "letter",
+          themes: [{ id: "t-music" }],
+        },
       ],
       people: [],
       places: [],
-      themes: [{ id: "t-boats", title: "The boats" }, { id: "t-music", title: "The music years" }],
+      themes: [
+        { id: "t-boats", title: "The boats" },
+        { id: "t-music", title: "The music years" },
+      ],
     };
     const main = document.createElement("main");
     render(main, { arg: null, query: new URLSearchParams() }, state);

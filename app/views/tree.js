@@ -42,7 +42,9 @@ export function familyIds(state) {
   const proposed = proposedIds(state);
   return new Set(
     state.people
-      .filter((p) => !proposed.has(p.id) && rels.some((r) => (r.a === p.id || r.b === p.id) && FAMILY_KINDS.has(r.kind)))
+      .filter(
+        (p) => !proposed.has(p.id) && rels.some((r) => (r.a === p.id || r.b === p.id) && FAMILY_KINDS.has(r.kind)),
+      )
       .map((p) => p.id),
   );
 }
@@ -262,17 +264,11 @@ function pathBar(state, route) {
 export function render(main, ctx, state) {
   main.append(header("Family tree", state));
   main.append(
-    el(
-      "p",
-      { class: "lede" },
-      "Tap any card to centre the tree — Open their page reads the centred person's record.",
-    ),
+    el("p", { class: "lede" }, "Tap any card to centre the tree — Open their page reads the centred person's record."),
   );
   const requested = ctx.query.get("person");
   const focus =
-    requested && state.people.some((p) => p.id === requested)
-      ? requested
-      : defaultFocus(state, narratorId(state));
+    requested && state.people.some((p) => p.id === requested) ? requested : defaultFocus(state, narratorId(state));
   const narrator = narratorId(state);
   const route = pathTo(familyGraph(state), focus, narrator);
   if (route && route.length > 1) main.append(pathBar(state, route));

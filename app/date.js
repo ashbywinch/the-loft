@@ -54,7 +54,8 @@ export function ageInYears(birth, death) {
 }
 
 /** Human label honouring precision: "14 May 1963" / "May 1963" / "1963" / "circa 1963". */
-export function dateLabel(item) {  const year = yearOf(item);
+export function dateLabel(item) {
+  const year = yearOf(item);
   switch (item.date_precision) {
     case "exact":
       return `${dayOf(item)} ${MONTHS[monthIndex(item)]} ${year}`;

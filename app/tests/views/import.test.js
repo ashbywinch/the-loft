@@ -89,13 +89,19 @@ function stubFetch({
       return Promise.resolve({
         ok: true,
         json: async () => {
-          if (body.decision === "delete") return { ok: true, person: { id: body.person_id, gone: true }, message: "Done — X is not recorded after all." };
+          if (body.decision === "delete")
+            return {
+              ok: true,
+              person: { id: body.person_id, gone: true },
+              message: "Done — X is not recorded after all.",
+            };
           return {
             ok: true,
             person: {
               id: body.person_id,
               name: "X",
-              status: body.decision === "estimated" ? "estimated" : body.decision === "pending" ? "proposed" : undefined,
+              status:
+                body.decision === "estimated" ? "estimated" : body.decision === "pending" ? "proposed" : undefined,
             },
             message:
               body.decision === "estimated"
@@ -115,7 +121,9 @@ describe("the import review is the chat — one conversation resolves the pendin
     const main = document.createElement("main");
     render(main, { arg: "import-documents", query: new URLSearchParams() }, STATE);
     expect(bubbles(main)[0]).toContain("there are 2 people from the documents");
-    expect(bubbles(main)[1]).toContain("Next: Pearl Whitlock. The notes describe Pearl Whitlock as cousin — researcher.");
+    expect(bubbles(main)[1]).toContain(
+      "Next: Pearl Whitlock. The notes describe Pearl Whitlock as cousin — researcher.",
+    );
     expect(bubbles(main)[1]).toContain("Does that fit what you remember?"); // the options answer this question
     expect(main.querySelectorAll(".cast-card")).toHaveLength(0); // no people list
     expect([...main.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent)).toEqual([
@@ -177,7 +185,11 @@ describe("the import review is the chat — one conversation resolves the pendin
   });
 
   it('"Definitely" asks how you know, then the link is confirmed on your word', async () => {
-    stubFetch({ confidence: "definitely", question: "Did you see the record yourself?", findings: ["in the record book, Pearl Whitlock is named as the cousin"] });
+    stubFetch({
+      confidence: "definitely",
+      question: "Did you see the record yourself?",
+      findings: ["in the record book, Pearl Whitlock is named as the cousin"],
+    });
     const main = document.createElement("main");
     const state = JSON.parse(JSON.stringify(STATE));
     render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
@@ -246,7 +258,10 @@ describe("the import review is the chat — one conversation resolves the pendin
     const state = JSON.parse(JSON.stringify(STATE));
     render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
     // ignore the chips entirely — just type
-    setInput(main, "Not sure about the brother link. But I remember Mum saying one of Nora's siblings died in the war.");
+    setInput(
+      main,
+      "Not sure about the brother link. But I remember Mum saying one of Nora's siblings died in the war.",
+    );
     send(main);
     await tick();
     expect(bubbles(main).some((b) => b.includes("The documents show"))).toBe(true);
@@ -263,7 +278,8 @@ describe("the import review is the chat — one conversation resolves the pendin
     stubFetch({
       relevant: "false",
       note: "the house on Victoria Avenue",
-      message: "That's about the house on Victoria Avenue — let's come back to Pearl Whitlock: does that fit what you remember?",
+      message:
+        "That's about the house on Victoria Avenue — let's come back to Pearl Whitlock: does that fit what you remember?",
     });
     const main = document.createElement("main");
     const state = JSON.parse(JSON.stringify(STATE));
@@ -299,11 +315,27 @@ describe("the import review is the chat — one conversation resolves the pendin
       vi.fn((url, init) => {
         const body = JSON.parse(init?.body ?? "{}");
         if (url === "/api/review/text") {
-          return Promise.resolve({ ok: true, json: async () => ({ ok: true, relevant: "true", contradiction: { found: "false", detail: "" }, confidence: "definitely", note: "the reviewer corrected it", question: "", findings: [], message: "" }) });
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              ok: true,
+              relevant: "true",
+              contradiction: { found: "false", detail: "" },
+              confidence: "definitely",
+              note: "the reviewer corrected it",
+              question: "",
+              findings: [],
+              message: "",
+            }),
+          });
         }
         return Promise.resolve({
           ok: true,
-          json: async () => ({ ok: true, person: { id: body.person_id, name: "X" }, message: "Done — Pearl Whitlock joins the tree as a fact." }),
+          json: async () => ({
+            ok: true,
+            person: { id: body.person_id, name: "X" },
+            message: "Done — Pearl Whitlock joins the tree as a fact.",
+          }),
         });
       }),
     );
@@ -380,8 +412,11 @@ describe("the import review is the chat — one conversation resolves the pendin
     expect(decided.basis.text).toContain("Not sure. I think Mum said Nora was some kind of cousin");
   });
 
-  it('a typed "I don\'t know" concludes — the leave/guess chips, never a re-ask or fact/delete (2026-08-09, the transcript\'s loop; 2026-08-10 vocabulary)', async () => {
-    stubFetch({ confidence: "dont_know", question: "I'll leave her as she stands unless you'd like to record what you remember as a guess." });
+  it("a typed \"I don't know\" concludes — the leave/guess chips, never a re-ask or fact/delete (2026-08-09, the transcript's loop; 2026-08-10 vocabulary)", async () => {
+    stubFetch({
+      confidence: "dont_know",
+      question: "I'll leave her as she stands unless you'd like to record what you remember as a guess.",
+    });
     const main = document.createElement("main");
     const state = JSON.parse(JSON.stringify(STATE));
     render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
@@ -413,7 +448,9 @@ describe("the import review is the chat — one conversation resolves the pendin
       await tick();
     }
     expect(bubbles(main).at(-1)).toContain("That's everyone — 2 recorded as facts");
-    expect([...main.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent)).toContain("See the family tree →");
+    expect([...main.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent)).toContain(
+      "See the family tree →",
+    );
     expect(state.imports[0].status).toBe("reviewed"); // nothing pending — the home card disappears
   });
 
@@ -425,7 +462,12 @@ describe("the import review is the chat — one conversation resolves the pendin
         started: "2026-08-09T10:00:00+00:00",
         transcript: [],
         decisions: [
-          { person_id: "p-judith", decision: "estimated", basis: { text: "Grandma said so", by: "Alex", when: "2026-08-09" }, when: "2026-08-09" },
+          {
+            person_id: "p-judith",
+            decision: "estimated",
+            basis: { text: "Grandma said so", by: "Alex", when: "2026-08-09" },
+            when: "2026-08-09",
+          },
         ],
       },
     ];
@@ -433,7 +475,9 @@ describe("the import review is the chat — one conversation resolves the pendin
     const main = document.createElement("main");
     render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
     expect(main.textContent).toContain("The review so far");
-    expect(main.textContent).toContain("Pearl Whitlock — recorded as a guess, from Alex's recollection (2026-08-09): 'Grandma said so'.");
+    expect(main.textContent).toContain(
+      "Pearl Whitlock — recorded as a guess, from Alex's recollection (2026-08-09): 'Grandma said so'.",
+    );
   });
 
   it("a resumed session continues from the record's resume point", () => {
@@ -459,155 +503,185 @@ describe("the import review is the chat — one conversation resolves the pendin
   });
 });
 
+it("a kept link is never re-asked this walk — it stays proposed as the resume point (2026-08-10 review)", async () => {
+  stubFetch({ confidence: "dont_know" });
+  const main = document.createElement("main");
+  const state = JSON.parse(JSON.stringify(STATE));
+  render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+  chip(main, "I don't know").click();
+  setInput(main, "Nothing, really.");
+  send(main);
+  await tick();
+  chip(main, "Leave for later").click();
+  await tick();
+  // the NEXT link is asked — never the same kept one (the walk used to
+  // re-ask the identical link forever because it stays proposed)
+  expect(bubbles(main).at(-1)).toContain("Quentin Whitlock");
+  expect(state.people[0].status).toBe("proposed"); // untouched — the resume point for a later visit
+});
 
-  it("a kept link is never re-asked this walk — it stays proposed as the resume point (2026-08-10 review)", async () => {
-    stubFetch({ confidence: "dont_know" });
-    const main = document.createElement("main");
-    const state = JSON.parse(JSON.stringify(STATE));
-    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
-    chip(main, "I don't know").click();
-    setInput(main, "Nothing, really.");
-    send(main);
-    await tick();
-    chip(main, "Leave for later").click();
-    await tick();
-    // the NEXT link is asked — never the same kept one (the walk used to
-    // re-ask the identical link forever because it stays proposed)
-    expect(bubbles(main).at(-1)).toContain("Quentin Whitlock");
-    expect(state.people[0].status).toBe("proposed"); // untouched — the resume point for a later visit
-  });
-
-  it("a re-render does not duplicate the transcript — the start response's lines are not re-recorded (2026-08-10 review)", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url, init) => {
-        const body = JSON.parse(init?.body ?? "{}");
-        if (url === "/api/review/start") {
-          return Promise.resolve({
-            ok: true,
-            json: async () => ({
-              ok: true,
-              messages: [
-                "Thanks for coming back — there are 2 people from the documents I'd like your eyes on.",
-                "Next: Pearl Whitlock. The notes describe Pearl Whitlock as cousin — researcher. Does that fit what you remember?",
-              ],
-            }),
-          });
-        }
-        return Promise.resolve({ ok: true, json: async () => ({ ok: true, person: { id: body.person_id, name: "X" } }) });
-      }),
-    );
-    const main = document.createElement("main");
-    const state = JSON.parse(JSON.stringify(STATE));
-    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
-    await tick();
-    await tick();
-    // the opening and the resumed claim are already in the attempt — no
-    // message-endpoint call lands for them
-    expect(fetch.mock.calls.filter(([url]) => url === "/api/review/message")).toHaveLength(0);
-  });
-
-  it("a mid-walk re-render never re-asks a link this attempt already decided (2026-08-11 review)", async () => {
-    stubFetch();
-    const main = document.createElement("main");
-    const state = JSON.parse(JSON.stringify(STATE));
-    state.imports[0].attempts = [
-      {
-        started: "2026-08-11T10:00:00+00:00",
-        messages: [],
-        decisions: [{ person_id: "p-judith", decision: "pending", when: "2026-08-11" }],
-      },
-    ];
-    state.imports[0].current = "p-judith"; // the resume point IS the link this walk decided
-    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
-    await tick();
-    // the next undecided link is asked — never the one the attempt already
-    // left for later (the loop the re-ask used to be)
-    expect(bubbles(main).at(-1)).toContain("Quentin Whitlock");
-    expect(bubbles(main).some((b) => b.includes("Next: Pearl Whitlock"))).toBe(false);
-  });
-
-  it("a re-render after every link was decided ends with the summary — never a re-ask (2026-08-11 review)", async () => {
-    stubFetch();
-    const main = document.createElement("main");
-    const state = JSON.parse(JSON.stringify(STATE));
-    state.imports[0].attempts = [
-      {
-        started: "2026-08-11T10:00:00+00:00",
-        messages: [],
-        decisions: [
-          { person_id: "p-judith", decision: "pending", when: "2026-08-11" },
-          { person_id: "p-robert", decision: "pending", when: "2026-08-11" },
-        ],
-      },
-    ];
-    state.imports[0].current = "p-robert";
-    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
-    await tick();
-    expect(bubbles(main).at(-1)).toContain("That's everyone");
-    expect(bubbles(main).at(-1)).toContain("2 left for later");
-    expect([...main.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent)).toContain("See the family tree →");
-  });
-
-  it("a repeated contradiction keeps the first words as the basis — corrections accumulate beside them (2026-08-11 review)", async () => {
-    const answers = [
-      // first check: the contradiction is surfaced
-      { ok: true, relevant: "true", contradiction: { found: "true", detail: "the war record attests Walter Whitlock died in 1916" }, confidence: "definitely", note: "", findings: [], question: "", message: "That doesn't match the records — the war record attests Walter Whitlock died in 1916. Which is right?" },
-      // second check: still contradicting — the first words must survive
-      { ok: true, relevant: "true", contradiction: { found: "true", detail: "the war record attests Walter Whitlock died in 1916" }, confidence: "definitely", note: "", findings: [], question: "", message: "That doesn't match the records — the war record attests Walter Whitlock died in 1916. Which is right?" },
-      // third check: resolved
-      { ok: true, relevant: "true", contradiction: { found: "false", detail: "" }, confidence: "definitely", note: "", findings: [], question: "", message: "" },
-    ];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url, init) => {
-        const body = JSON.parse(init?.body ?? "{}");
-        if (url === "/api/review/text") {
-          const answer = answers.shift() ?? answers.at(-1);
-          return Promise.resolve({ ok: true, json: async () => answer });
-        }
+it("a re-render does not duplicate the transcript — the start response's lines are not re-recorded (2026-08-10 review)", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url, init) => {
+      const body = JSON.parse(init?.body ?? "{}");
+      if (url === "/api/review/start") {
         return Promise.resolve({
           ok: true,
-          json: async () => ({ ok: true, person: { id: body.person_id, name: "X" }, message: "Done — Pearl Whitlock joins the tree as a fact." }),
+          json: async () => ({
+            ok: true,
+            messages: [
+              "Thanks for coming back — there are 2 people from the documents I'd like your eyes on.",
+              "Next: Pearl Whitlock. The notes describe Pearl Whitlock as cousin — researcher. Does that fit what you remember?",
+            ],
+          }),
         });
-      }),
-    );
-    const main = document.createElement("main");
-    const state = JSON.parse(JSON.stringify(STATE));
-    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
-    chip(main, "Definitely").click();
-    setInput(main, "It was Nora who died in the war, I remember that clearly.");
-    send(main);
-    await tick();
-    setInput(main, "No wait — Nora's brother Walter, I think.");
-    send(main);
-    await tick();
-    setInput(main, "Ah, you're right — it was Walter.");
-    send(main);
-    await tick();
-    chip(main, "Record as fact").click();
-    await tick();
-    const decided = JSON.parse(decideCall()[1].body);
-    // the family's FIRST words stay the basis; every correction rides
-    // beside them — never the other way round (PRD R8, 2026-08-11 review)
-    expect(decided.basis.text).toBe("It was Nora who died in the war, I remember that clearly.");
-    expect(decided.basis.note).toContain("No wait — Nora's brother Walter, I think.");
-    expect(decided.basis.note).toContain("Ah, you're right — it was Walter.");
-  });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true, person: { id: body.person_id, name: "X" } }) });
+    }),
+  );
+  const main = document.createElement("main");
+  const state = JSON.parse(JSON.stringify(STATE));
+  render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+  await tick();
+  await tick();
+  // the opening and the resumed claim are already in the attempt — no
+  // message-endpoint call lands for them
+  expect(fetch.mock.calls.filter(([url]) => url === "/api/review/message")).toHaveLength(0);
+});
 
-  it("a failed transcript record is logged, never silently swallowed (2026-08-11 review)", async () => {
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url) => {
-        if (url === "/api/review/message") return Promise.reject(new Error("network down"));
-        return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
-      }),
-    );
-    const main = document.createElement("main");
-    render(main, { arg: "import-documents", query: new URLSearchParams() }, STATE);
-    await tick();
-    await tick();
-    expect(errorSpy.mock.calls.some((c) => String(c[0]).includes("failed to record a transcript line"))).toBe(true);
-    errorSpy.mockRestore();
-  });
+it("a mid-walk re-render never re-asks a link this attempt already decided (2026-08-11 review)", async () => {
+  stubFetch();
+  const main = document.createElement("main");
+  const state = JSON.parse(JSON.stringify(STATE));
+  state.imports[0].attempts = [
+    {
+      started: "2026-08-11T10:00:00+00:00",
+      messages: [],
+      decisions: [{ person_id: "p-judith", decision: "pending", when: "2026-08-11" }],
+    },
+  ];
+  state.imports[0].current = "p-judith"; // the resume point IS the link this walk decided
+  render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+  await tick();
+  // the next undecided link is asked — never the one the attempt already
+  // left for later (the loop the re-ask used to be)
+  expect(bubbles(main).at(-1)).toContain("Quentin Whitlock");
+  expect(bubbles(main).some((b) => b.includes("Next: Pearl Whitlock"))).toBe(false);
+});
+
+it("a re-render after every link was decided ends with the summary — never a re-ask (2026-08-11 review)", async () => {
+  stubFetch();
+  const main = document.createElement("main");
+  const state = JSON.parse(JSON.stringify(STATE));
+  state.imports[0].attempts = [
+    {
+      started: "2026-08-11T10:00:00+00:00",
+      messages: [],
+      decisions: [
+        { person_id: "p-judith", decision: "pending", when: "2026-08-11" },
+        { person_id: "p-robert", decision: "pending", when: "2026-08-11" },
+      ],
+    },
+  ];
+  state.imports[0].current = "p-robert";
+  render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+  await tick();
+  expect(bubbles(main).at(-1)).toContain("That's everyone");
+  expect(bubbles(main).at(-1)).toContain("2 left for later");
+  expect([...main.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent)).toContain("See the family tree →");
+});
+
+it("a repeated contradiction keeps the first words as the basis — corrections accumulate beside them (2026-08-11 review)", async () => {
+  const answers = [
+    // first check: the contradiction is surfaced
+    {
+      ok: true,
+      relevant: "true",
+      contradiction: { found: "true", detail: "the war record attests Walter Whitlock died in 1916" },
+      confidence: "definitely",
+      note: "",
+      findings: [],
+      question: "",
+      message: "That doesn't match the records — the war record attests Walter Whitlock died in 1916. Which is right?",
+    },
+    // second check: still contradicting — the first words must survive
+    {
+      ok: true,
+      relevant: "true",
+      contradiction: { found: "true", detail: "the war record attests Walter Whitlock died in 1916" },
+      confidence: "definitely",
+      note: "",
+      findings: [],
+      question: "",
+      message: "That doesn't match the records — the war record attests Walter Whitlock died in 1916. Which is right?",
+    },
+    // third check: resolved
+    {
+      ok: true,
+      relevant: "true",
+      contradiction: { found: "false", detail: "" },
+      confidence: "definitely",
+      note: "",
+      findings: [],
+      question: "",
+      message: "",
+    },
+  ];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url, init) => {
+      const body = JSON.parse(init?.body ?? "{}");
+      if (url === "/api/review/text") {
+        const answer = answers.shift() ?? answers.at(-1);
+        return Promise.resolve({ ok: true, json: async () => answer });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          person: { id: body.person_id, name: "X" },
+          message: "Done — Pearl Whitlock joins the tree as a fact.",
+        }),
+      });
+    }),
+  );
+  const main = document.createElement("main");
+  const state = JSON.parse(JSON.stringify(STATE));
+  render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+  chip(main, "Definitely").click();
+  setInput(main, "It was Nora who died in the war, I remember that clearly.");
+  send(main);
+  await tick();
+  setInput(main, "No wait — Nora's brother Walter, I think.");
+  send(main);
+  await tick();
+  setInput(main, "Ah, you're right — it was Walter.");
+  send(main);
+  await tick();
+  chip(main, "Record as fact").click();
+  await tick();
+  const decided = JSON.parse(decideCall()[1].body);
+  // the family's FIRST words stay the basis; every correction rides
+  // beside them — never the other way round (PRD R8, 2026-08-11 review)
+  expect(decided.basis.text).toBe("It was Nora who died in the war, I remember that clearly.");
+  expect(decided.basis.note).toContain("No wait — Nora's brother Walter, I think.");
+  expect(decided.basis.note).toContain("Ah, you're right — it was Walter.");
+});
+
+it("a failed transcript record is logged, never silently swallowed (2026-08-11 review)", async () => {
+  const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url) => {
+      if (url === "/api/review/message") return Promise.reject(new Error("network down"));
+      return Promise.resolve({ ok: true, json: async () => ({ ok: true }) });
+    }),
+  );
+  const main = document.createElement("main");
+  render(main, { arg: "import-documents", query: new URLSearchParams() }, STATE);
+  await tick();
+  await tick();
+  expect(errorSpy.mock.calls.some((c) => String(c[0]).includes("failed to record a transcript line"))).toBe(true);
+  errorSpy.mockRestore();
+});

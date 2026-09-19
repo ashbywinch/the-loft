@@ -2,7 +2,15 @@
 
 import { el, header, chip, decadeList, itemCard } from "../ui.js";
 import { captureButton } from "../memories.js";
-import { aggregate, clarificationsFor, evidenceFor, itemDateFor, reflectionsFor, sortedCounts, itemInvolves } from "../connections.js";
+import {
+  aggregate,
+  clarificationsFor,
+  evidenceFor,
+  itemDateFor,
+  reflectionsFor,
+  sortedCounts,
+  itemInvolves,
+} from "../connections.js";
 import { ageInYears, dateLabel } from "../date.js";
 import { catalogued, published } from "../data.js";
 import { buildTree, defaultFocus, familyIds, narratorId } from "./tree.js";
@@ -11,9 +19,7 @@ import { canGoBackInApp } from "../router.js";
 export function render(main, _ctx, state) {
   main.append(header("Family Tree", state));
   main.append(el("p", { class: "lede" }, "The family tree — tap anyone to move it; the centre card opens their page."));
-  main.append(
-    buildTree(state, defaultFocus(state, narratorId(state)), { narratorId: narratorId(state) }),
-  );
+  main.append(buildTree(state, defaultFocus(state, narratorId(state)), { narratorId: narratorId(state) }));
 
   // people the tree can't place (no family edges yet) stay browsable;
   // proposed people are a pending import, not "also in the archive" — they
@@ -54,7 +60,11 @@ export function personPage(main, ctx, state) {
     // a proposed person's facts are a proposal, not attested record — the
     // page is the review surface, so they render, visibly marked (2026-08-06)
     main.append(
-      el("p", { class: "card-meta" }, "Proposed — awaiting confirmation. Dates and links here are deductions, not attested record."),
+      el(
+        "p",
+        { class: "card-meta" },
+        "Proposed — awaiting confirmation. Dates and links here are deductions, not attested record.",
+      ),
     );
   }
   if (person.status === "estimated" && person.basis) {
@@ -70,7 +80,9 @@ export function personPage(main, ctx, state) {
     return years ? ` (aged ${years.exact ?? `${years.from}–${years.to}`})` : "";
   };
   const life = [
-    person.dob ? `b. ${dateLabel({ date: person.dob.date, date_precision: person.dob.precision, date2: person.dob.date2 })}` : null,
+    person.dob
+      ? `b. ${dateLabel({ date: person.dob.date, date_precision: person.dob.precision, date2: person.dob.date2 })}`
+      : null,
     person.dod
       ? `d. ${dateLabel({ date: person.dod.date, date_precision: person.dod.precision, date2: person.dod.date2 })}${age(person.dod)}`
       : null,
@@ -254,7 +266,11 @@ export function personPage(main, ctx, state) {
     main.append(
       el("section", { class: "block" }, [
         el("h3", { class: "block-title" }, "Evidence"),
-        el("div", { class: "card-grid" }, evidence.map((e) => itemCard(e))),
+        el(
+          "div",
+          { class: "card-grid" },
+          evidence.map((e) => itemCard(e)),
+        ),
       ]),
     );
   }

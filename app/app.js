@@ -77,7 +77,13 @@ export async function boot() {
   };
   mark("start");
   const identity = await fetchIdentity();
-  mark(identity === null ? "no session — the gate" : identity === NO_API ? "open (no auth server)" : `session for ${identity.email}`);
+  mark(
+    identity === null
+      ? "no session — the gate"
+      : identity === NO_API
+        ? "open (no auth server)"
+        : `session for ${identity.email}`,
+  );
   if (identity === null) {
     // the server says "not signed in" — the archive is private; the app
     // shell stays public so this gate can load (2026-08-06, user)

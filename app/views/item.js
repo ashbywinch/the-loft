@@ -20,12 +20,13 @@ export function render(main, ctx, state) {
   // the title and the unverified words never render for a visitor
   // (reviewer, 2026-08-03)
   const mine = item.status === "draft" && isMine(item, state);
-  main.append(header(mine || item.status !== "draft" ? item.title : "Unfinished story", state, canGoBackInApp() ? true : "Home"));
+  main.append(
+    header(mine || item.status !== "draft" ? item.title : "Unfinished story", state, canGoBackInApp() ? true : "Home"),
+  );
   // the description is the "what is this" line — under the title, above the
   // scan and the transcription (2026-08-05); a draft's words never render
   // for anyone but its narrator, same gate as the title (review, 2026-08-07)
-  if (item.description && (mine || item.status !== "draft"))
-    main.append(el("p", { class: "lede" }, item.description));
+  if (item.description && (mine || item.status !== "draft")) main.append(el("p", { class: "lede" }, item.description));
 
   if (item.status === "draft") {
     main.append(
@@ -360,7 +361,11 @@ export function render(main, ctx, state) {
     main.append(
       el("section", { class: "block" }, [
         el("h3", { class: "block-title" }, "Evidence"),
-        el("div", { class: "card-grid" }, evidence.map((e) => itemCard(e))),
+        el(
+          "div",
+          { class: "card-grid" },
+          evidence.map((e) => itemCard(e)),
+        ),
       ]),
     );
   }

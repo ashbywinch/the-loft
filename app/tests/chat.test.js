@@ -132,7 +132,7 @@ describe("autocomplete (a working dropdown, not a datalist)", () => {
 
   it("filters suggestions as you type", () => {
     const ac = autocomplete({ suggestions: cast });
-    ac.input.value = "alex";  // matches Alex Hale and Alex
+    ac.input.value = "alex"; // matches Alex Hale and Alex
     ac.input.dispatchEvent(new Event("input"));
     const items = [...ac.node.querySelectorAll(".ac-item")].map((b) => b.textContent);
     expect(items).toEqual(["Alex Hale", "Alex"]);
@@ -159,7 +159,7 @@ describe("autocomplete (a working dropdown, not a datalist)", () => {
     const ac = autocomplete({ suggestions: cast });
     // the input bar is pinned at the bottom — the list must not fall off-screen
     vi.spyOn(ac.input, "getBoundingClientRect").mockReturnValue({ top: 800, bottom: 845 });
-    ac.input.value = "alex";  // matches Alex Hale and Alex
+    ac.input.value = "alex"; // matches Alex Hale and Alex
     ac.input.dispatchEvent(new Event("input"));
     expect(ac.node.classList.contains("ac-up")).toBe(true); // styles.css anchors the list upward
   });
@@ -182,7 +182,7 @@ describe("autocomplete (a working dropdown, not a datalist)", () => {
     const chat = chatBox();
     const ac = autocomplete({ suggestions: cast });
     chat.swapInput(ac);
-    ac.input.value = "alex";  // matches Alex Hale and Alex // no input event — updateSend has never seen this value
+    ac.input.value = "alex"; // matches Alex Hale and Alex // no input event — updateSend has never seen this value
     ac.input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     ac.input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(chat.node.querySelector(".chat-bar .btn-primary").disabled).toBe(false);
@@ -191,7 +191,7 @@ describe("autocomplete (a working dropdown, not a datalist)", () => {
   it("opens downward when there is room below", () => {
     const ac = autocomplete({ suggestions: cast });
     vi.spyOn(ac.input, "getBoundingClientRect").mockReturnValue({ top: 100, bottom: 145 });
-    ac.input.value = "alex";  // matches Alex Hale and Alex
+    ac.input.value = "alex"; // matches Alex Hale and Alex
     ac.input.dispatchEvent(new Event("input"));
     expect(ac.node.classList.contains("ac-up")).toBe(false);
   });

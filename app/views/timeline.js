@@ -53,11 +53,21 @@ export function lifeEvents(people, relationships) {
     // fact stays on the person page
     if (person.dob && POINT.has(person.dob.precision)) {
       const detail = personDetail(person, relationships ?? [], people);
-      push({ date: person.dob.date, precision: person.dob.precision, kind: "birth", people: [detail ? { ...brief(person), detail } : brief(person)] });
+      push({
+        date: person.dob.date,
+        precision: person.dob.precision,
+        kind: "birth",
+        people: [detail ? { ...brief(person), detail } : brief(person)],
+      });
     }
     if (person.dod && POINT.has(person.dod.precision)) {
       const detail = personDetail(person, relationships ?? [], people);
-      push({ date: person.dod.date, precision: person.dod.precision, kind: "death", people: [detail ? { ...brief(person), detail } : brief(person)] });
+      push({
+        date: person.dod.date,
+        precision: person.dod.precision,
+        kind: "death",
+        people: [detail ? { ...brief(person), detail } : brief(person)],
+      });
     }
   }
   for (const rel of relationships ?? []) {
@@ -65,10 +75,15 @@ export function lifeEvents(people, relationships) {
     const a = people.find((p) => p.id === rel.a);
     const b = people.find((p) => p.id === rel.b);
     if (!a || !b) continue;
-    const marriage = { date: rel.date.date, precision: rel.date.precision, kind: "marriage", people: [brief(a), brief(b)] };
+    const marriage = {
+      date: rel.date.date,
+      precision: rel.date.precision,
+      kind: "marriage",
+      people: [brief(a), brief(b)],
+    };
     // the ages at marriage — calculated from the spouses' dobs, never stored
     const ages = [a, b].map((p) => ageInYears(p.dob, { date: rel.date.date, precision: rel.date.precision }));
-    if (ages.every(Boolean)) marriage.ages = ages.map((x) => (x.exact ?? `${x.from}–${x.to}`));
+    if (ages.every(Boolean)) marriage.ages = ages.map((x) => x.exact ?? `${x.from}–${x.to}`);
     push(marriage);
   }
   return events;
@@ -131,10 +146,11 @@ export function periodHook(period) {
   }
   let best = null;
   let bestCount = 0;
-  for (const [id, n] of counts) if (n > bestCount) {
-    best = id;
-    bestCount = n;
-  }
+  for (const [id, n] of counts)
+    if (n > bestCount) {
+      best = id;
+      bestCount = n;
+    }
   if (!best || bestCount < 2 || items === 0 || bestCount * 5 < items) return null;
   return best;
 }

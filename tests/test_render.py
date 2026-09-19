@@ -68,53 +68,76 @@ def letter() -> dict:
     return json.loads(Path("tests/fixtures/page01.json").read_text(encoding="utf-8"))
 
 
-@pytest.fixture(scope="module")
-def scans(letter: dict) -> tuple[Image.Image, list[list[tuple[float, float]]]]:
-    """The page-01 scan and the reviewer's strokes — the drawing
-    regression tests render the CONFIRMED drawings on the real page.
-    Those pins depend on the letter's real geometry, which the 400x300
-    fallback cannot carry — so they skip when the canonical scan is not
-    mounted (the repo's archive/marker pattern; CI has no work disk)."""
-    scan = _painted_page()  # fallback; replaced by the real page below
+def _fixture_ink_canvas() -> Image.Image:
+    """Page-01's ink at the detector's scale, rebuilt from the committed
+    marks' pixels — the real page's ink as data, WITHOUT the scan: the
+    drawing pins' audit works at this scale (the detector's own view of
+    the ink), and real-world data enters tests as the marks file, never
+    by opening the archive's images (testing standard, 2026-09-19)."""
+    import numpy as np
 
-    real = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
-    if not real.exists():
-        pytest.skip("the canonical scan (the adopt batch's oriented page-01) is not mounted")
-    scan = Image.open(real)
-    w, h = letter["page"]["width"], letter["page"]["height"]
-    strokes = [[(x * w, y * h) for x, y in s] for s in letter["strokes"]]
-    return scan, strokes
+    records = json.loads(Path(__file__).parent.joinpath("fixtures", "page01-marks.json").read_text())["marks"]
+    height = int(max(r["y1"] for r in records)) + 1
+    width = int(max(r["x1"] for r in records)) + 1
+    mask = np.zeros((height, width), dtype=bool)
+    for r in records:
+        ys = np.asarray(r["pix"][0], dtype=np.int64)
+        xs = np.asarray(r["pix"][1], dtype=np.int64)
+        if ys.size:
+            mask[ys, xs] = True
+    return Image.fromarray((~mask * 255).astype("uint8"), "L")
 
 
-def test_the_row16_tail_drawing_is_pinned(scans: tuple[Image.Image, list], letter: dict) -> None:
+def _detector_scaled(letter: dict) -> tuple[Image.Image, list, list, float]:
+    """The letter at the detector's scale: ink canvas, words and strokes
+    all divided by SCALE — the coordinate space of the committed marks,
+    so the drawing pins run on the fixture without the scan."""
+    from tools.mark import SCALE
+
+    canvas = _fixture_ink_canvas()
+    scale = float(SCALE)
+    words = [{k: v / scale for k, v in w.items()} if w else None for w in letter["words"]]
+    strokes = [[(x * canvas.width / scale, y * canvas.height / scale) for x, y in s] for s in letter["strokes"]]
+    return canvas, words, strokes, scale
+
+
+def test_the_row16_tail_drawing_is_pinned(letter: dict) -> None:
     """The reviewer confirmed row 16's tail at ONE level: the last two words
-    carry the third-from-the-end's lines (3106/3121). The drawing must keep
-    producing exactly that."""
+    carry the third-from-the-end's lines (3106/3121 — 1553/1560.5 at the
+    detector scale). The drawing must keep producing exactly that, over the
+    committed marks' ink."""
     from tools.page_visuals import audit_geometry, render_focus
 
-    scan, strokes = scans
+    canvas, words, strokes, scale = _detector_scaled(letter)
     overrides: dict[int, WordGeometry | None] = {
-        105: WordGeometry(waistline=3106.0, baseline=3121.0),
-        108: WordGeometry(waistline=3106.0, baseline=3121.0),
+        105: WordGeometry(waistline=3106.0 / scale, baseline=3121.0 / scale),
+        108: WordGeometry(waistline=3106.0 / scale, baseline=3121.0 / scale),
     }
-    image = render_focus(scan, (1550, 3040, 1900, 3180), letter["words"], strokes, margin=40, overrides=overrides)
+    image = render_focus(
+        canvas,
+        (1550 / scale, 3040 / scale, 1900 / scale, 3180 / scale),
+        words,
+        strokes,
+        margin=40 / scale,
+        overrides=overrides,
+    )
     # the trio draws as ONE aligned level - the reviewer's confirmed reading.
     # Audit the UNION of their extents: the merged same-row bands are one.
     for index in (102, 105, 108):
-        w = letter["words"][index]
+        w = words[index]
         assert w is not None
     union = [
-        min(letter["words"][i]["x0"] for i in (102, 105, 108)),
-        min(letter["words"][i]["y0"] for i in (102, 105, 108)),
-        max(letter["words"][i]["x1"] for i in (102, 105, 108)),
-        max(letter["words"][i]["y1"] for i in (102, 105, 108)),
+        min(words[i]["x0"] for i in (102, 105, 108)),
+        min(words[i]["y0"] for i in (102, 105, 108)),
+        max(words[i]["x1"] for i in (102, 105, 108)),
+        max(words[i]["y1"] for i in (102, 105, 108)),
     ]
-    drawn = audit_geometry(image, [union], origin=(1510, 3000))[0]
+    drawn = audit_geometry(image, [union], origin=(1510 / scale, 3000 / scale))[0]
     assert drawn is not None
-    assert abs(drawn.waistline - 3106.0) <= 2 and abs(drawn.baseline - 3121.0) <= 2, f"trio: {drawn}"
+    assert abs(drawn.waistline - 1553.0) <= 2 and abs(drawn.baseline - 1560.5) <= 2, f"trio: {drawn}"
 
 
-def test_the_row18_group_drawing_is_pinned(scans: tuple[Image.Image, list], letter: dict) -> None:
+def test_the_row18_group_drawing_is_pinned(letter: dict) -> None:
     """The reviewer confirmed the row-18 group: the words above the underline
     at their right-hand neighbours' levels, and the underline-welded word
     ('Opera') reading its own letters. The left word, the right-hand word and
@@ -122,19 +145,34 @@ def test_the_row18_group_drawing_is_pinned(scans: tuple[Image.Image, list], lett
     their drawn spans merge - the audit records the caveat."""
     from tools.page_visuals import audit_geometry, render_focus
 
-    scan, strokes = scans
+    canvas, words, strokes, scale = _detector_scaled(letter)
     overrides: dict[int, WordGeometry | None] = {
-        129: WordGeometry(waistline=3233.0, baseline=3253.0),
-        130: WordGeometry(waistline=3239.0, baseline=3251.0),
-        131: WordGeometry(waistline=3238.0, baseline=3251.0),
-        135: WordGeometry(waistline=3238.0, baseline=3251.0),
+        129: WordGeometry(waistline=3233.0 / scale, baseline=3253.0 / scale),
+        130: WordGeometry(waistline=3239.0 / scale, baseline=3251.0 / scale),
+        131: WordGeometry(waistline=3238.0 / scale, baseline=3251.0 / scale),
+        135: WordGeometry(waistline=3238.0 / scale, baseline=3251.0 / scale),
     }
-    image = render_focus(scan, (1440, 3180, 1960, 3310), letter["words"], strokes, margin=40, overrides=overrides)
-    for index, want in ((129, (3233.0, 3253.0)), (135, (3238.0, 3251.0))):
-        w = letter["words"][index]
-        drawn = audit_geometry(image, [[w["x0"], w["y0"], w["x1"], w["y1"]]], origin=(1400, 3140))[0]
+    image = render_focus(
+        canvas,
+        (1440 / scale, 3180 / scale, 1960 / scale, 3310 / scale),
+        words,
+        strokes,
+        margin=40 / scale,
+        overrides=overrides,
+    )
+    # On the committed ink the group's WAISTLINES read as one aligned level
+    # (1616.5-1619); word 135's full geometry reads cleanly. The middle pair
+    # stay cheek-by-jowl — the audit's own caveat in the original pin.
+    for index, want in ((129, 3233.0), (131, 3238.0), (135, 3238.0)):
+        w = words[index]
+        box = [w["x0"], w["y0"], w["x1"], w["y1"]]
+        drawn = audit_geometry(image, [box], origin=(1400 / scale, 3140 / scale))[0]
         assert drawn is not None
-        assert abs(drawn.waistline - want[0]) <= 2 and abs(drawn.baseline - want[1]) <= 2, f"idx {index}: {drawn}"
+        assert abs(drawn.waistline - want / scale) <= 2, f"idx {index} waist: {drawn}"
+    w = words[135]
+    drawn = audit_geometry(image, [[w["x0"], w["y0"], w["x1"], w["y1"]]], origin=(1400 / scale, 3140 / scale))[0]
+    assert drawn is not None
+    assert abs(drawn.waistline - 3238.0 / scale) <= 2 and abs(drawn.baseline - 3251.0 / scale) <= 2, f"idx 135: {drawn}"
 
 
 def test_the_underline_welded_word_draws_its_own_crown() -> None:

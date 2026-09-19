@@ -109,7 +109,10 @@ export function reader(main, ctx, state) {
     ? theme.items.map((entry) => ({ entry, item: state.byId.get(entry.id) })).filter((r) => r.item)
     : [];
   if (!theme || rows.length < 2) {
-    main.append(header("Stories", state, canGoBackInApp() ? true : "Stories"), el("p", { class: "empty" }, "Not enough items to read yet."));
+    main.append(
+      header("Stories", state, canGoBackInApp() ? true : "Stories"),
+      el("p", { class: "empty" }, "Not enough items to read yet."),
+    );
     return;
   }
 

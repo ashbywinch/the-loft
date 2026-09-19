@@ -65,12 +65,7 @@ export function render(main, ctx, state) {
     { class: "block-title" },
     `${pending.length} ${pending.length === 1 ? "link" : "links"} awaiting a decision`,
   );
-  main.append(
-    el("section", { class: "block import-pending" }, [
-      countEl,
-      reviewSession(state, session, countEl),
-    ]),
-  );
+  main.append(el("section", { class: "block import-pending" }, [countEl, reviewSession(state, session, countEl)]));
 }
 
 /** One line of the review record: "Quentin Whitlock — recorded as a fact
@@ -164,7 +159,9 @@ function reviewSession(state, session, countEl) {
         ? `Next: ${p.name}. The notes describe ${p.name} as ${personable(p.relation)}. Does that fit what you remember?`
         : `Next: ${p.name} — the documents mention them, but the notes don't say how. Does the name ring a bell?`;
     chat.addAssistant(
-      source ? el("div", {}, [claimText + " ", el("a", { class: "link", href: `#/item/${source.id}` }, "Open it →")]) : claimText,
+      source
+        ? el("div", {}, [claimText + " ", el("a", { class: "link", href: `#/item/${source.id}` }, "Open it →")])
+        : claimText,
     );
     // the claim is part of the conversation the family saw — record it
     // once per attempt (2026-08-10 review: a re-render must not duplicate
@@ -388,7 +385,9 @@ function reviewSession(state, session, countEl) {
       const summary = `That's everyone — ${tally.attested ? `${tally.attested} recorded as facts, ` : ""}${tally.estimated ? `${tally.estimated} recorded as guesses, ` : ""}${tally.pending ? `${tally.pending} left for later, ` : ""}${tally.deleted ? `${tally.deleted} deleted` : "and nothing deleted"} — the rest were already in the tree, so nothing changed for them.`;
       chat.addAssistant(summary);
       recordIfNew("assistant", summary); // the ending is part of what the family saw (2026-08-11 review)
-      chat.setQuickReplies([{ label: "See the family tree →", primary: true, onClick: () => location.assign("#/tree") }]);
+      chat.setQuickReplies([
+        { label: "See the family tree →", primary: true, onClick: () => location.assign("#/tree") },
+      ]);
       return;
     }
     askDisposition(pending[0]);
@@ -489,7 +488,9 @@ async function decide(state, sessionId, person, decision, basis = null) {
     // the last pending link completes the session — the server agrees, but
     // the client's merged state must too, or the card lingers until a reload
     if (proposedPeople(state).length === 0) {
-      state.imports = (state.imports ?? []).map((s) => (s.id === sessionId && s.status === "pending" ? { ...s, status: "reviewed" } : s));
+      state.imports = (state.imports ?? []).map((s) =>
+        s.id === sessionId && s.status === "pending" ? { ...s, status: "reviewed" } : s,
+      );
     }
     // the confirmation's rendered words — shown verbatim, recorded verbatim;
     // the server's accurate remaining count rides along (user 2026-08-16:

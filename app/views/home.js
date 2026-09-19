@@ -47,7 +47,6 @@ function todayMoment(items) {
   ]);
 }
 
-
 export function render(main, _ctx, state) {
   main.append(header("The Loft", state)); // the top bar: title + the identity (2026-08-06)
   // drafts are for the person who claimed them; sensitive items (PRD §6/§10)
@@ -89,7 +88,7 @@ export function render(main, _ctx, state) {
       const pending = (data.batches || []).filter((b) => b.status !== "confirmed");
       if (!pending.length && !pendingImports(state).length) return;
       const docCount = pending.reduce(
-        (n, b) => n + ((b.boundaries || []).filter((x) => x.status !== "confirmed").length),
+        (n, b) => n + (b.boundaries || []).filter((x) => x.status !== "confirmed").length,
         0,
       );
       const importSessions = pendingImports(state);
@@ -108,17 +107,13 @@ export function render(main, _ctx, state) {
         note = `${people} identit${people === 1 ? "y" : "ies"} to confirm (import session)`;
       }
       reviewSection = el("section", { class: "block review-promo" }, [
-        el(
-          "a",
-          { class: "review-card", href: "#/review" },
-          [
-            el("div", { class: "review-card-icon" }, "✓"),
-            el("div", { class: "review-card-main" }, [
-              el("div", { class: "review-card-title" }, "Review"),
-              el("div", { class: "review-card-note" }, note),
-            ]),
-          ],
-        ),
+        el("a", { class: "review-card", href: "#/review" }, [
+          el("div", { class: "review-card-icon" }, "✓"),
+          el("div", { class: "review-card-main" }, [
+            el("div", { class: "review-card-title" }, "Review"),
+            el("div", { class: "review-card-note" }, note),
+          ]),
+        ]),
       ]);
       // insert between the hero/moment/draft area and the doors
       const heroSection = main.querySelector(".hero");
@@ -193,7 +188,6 @@ export function render(main, _ctx, state) {
  *  among the archival views. Once logins exist, this follows the login. A
  *  fresh window (no remembered narrator) is asked who they are first — the
  *  drafts are claimed by name, so incognito can still find them. */
-
 
 /** The unfinished import session (user, 2026-08-07): the front page shows
  *  the session the import left behind — never the pending people list

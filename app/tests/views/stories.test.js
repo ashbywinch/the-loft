@@ -47,7 +47,11 @@ describe("theme render-once (2026-08-06)", () => {
   it("a story curated into the theme's arrangement never repeats in Memories", () => {
     const arrangedTheme = { ...theme, items: [{ id: "story-1", note: "the boat years" }] };
     const main = document.createElement("main");
-    themePage(main, { arg: "t-the-boats", query: new URLSearchParams() }, { ...state, themes: [arrangedTheme], byId: new Map([[storyItem.id, storyItem]]) });
+    themePage(
+      main,
+      { arg: "t-the-boats", query: new URLSearchParams() },
+      { ...state, themes: [arrangedTheme], byId: new Map([[storyItem.id, storyItem]]) },
+    );
     const cards = [...main.querySelectorAll(".card-title")].map((c) => c.textContent.trim());
     const block = [...main.querySelectorAll(".block")].find(
       (b) => b.querySelector(".block-title")?.textContent === "Memories about The boats",

@@ -79,14 +79,26 @@ describe("dateLabel bound precisions (2026-08-06)", () => {
 
 describe("ageInYears — calculated, never stored (2026-08-06)", () => {
   it("computes the exact age from exact dates, handling a 29-Feb birth", () => {
-    expect(ageInYears({ date: "1896-02-29", precision: "exact" }, { date: "1982-05-16", precision: "exact" })).toEqual({ exact: 86 });
-    expect(ageInYears({ date: "1896-02-29", precision: "exact" }, { date: "1900-02-28", precision: "exact" })).toEqual({ exact: 3 });
-    expect(ageInYears({ date: "1896-02-29", precision: "exact" }, { date: "1900-03-01", precision: "exact" })).toEqual({ exact: 4 });
+    expect(ageInYears({ date: "1896-02-29", precision: "exact" }, { date: "1982-05-16", precision: "exact" })).toEqual({
+      exact: 86,
+    });
+    expect(ageInYears({ date: "1896-02-29", precision: "exact" }, { date: "1900-02-28", precision: "exact" })).toEqual({
+      exact: 3,
+    });
+    expect(ageInYears({ date: "1896-02-29", precision: "exact" }, { date: "1900-03-01", precision: "exact" })).toEqual({
+      exact: 4,
+    });
   });
 
   it("gives the honest range when either date is not exact", () => {
-    expect(ageInYears({ date: "1892", precision: "year" }, { date: "1980", precision: "year" })).toEqual({ from: 87, to: 88 });
-    expect(ageInYears({ date: "1896-02-29", precision: "exact" }, { date: "1980-05", precision: "month" })).toEqual({ from: 83, to: 84 });
+    expect(ageInYears({ date: "1892", precision: "year" }, { date: "1980", precision: "year" })).toEqual({
+      from: 87,
+      to: 88,
+    });
+    expect(ageInYears({ date: "1896-02-29", precision: "exact" }, { date: "1980-05", precision: "month" })).toEqual({
+      from: 83,
+      to: 84,
+    });
   });
 
   it("returns null when a date is missing or not point-placed", () => {

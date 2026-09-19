@@ -4,8 +4,17 @@
 
 import { el, header, chip, decadeList, itemCard } from "../ui.js";
 import { memoriesSection } from "../memories.js";
-import { navigate , canGoBackInApp } from "../router.js";
-import { aggregate, artifacts as artifactsOf, evidenceFor, personAtPlace, refDateFor, reflectionsFor, sortedCounts, windowFromQuery } from "../connections.js";
+import { navigate, canGoBackInApp } from "../router.js";
+import {
+  aggregate,
+  artifacts as artifactsOf,
+  evidenceFor,
+  personAtPlace,
+  refDateFor,
+  reflectionsFor,
+  sortedCounts,
+  windowFromQuery,
+} from "../connections.js";
 import { yearOf } from "../date.js";
 import { catalogued, published } from "../data.js";
 
@@ -488,9 +497,7 @@ export function placePage(main, ctx, state) {
   const allItems = published(state.items).filter((item) => item.places?.some((p) => p.id === place.id));
   let items = inWindow ? allItems.filter((item) => yearOf(item) >= from && yearOf(item) <= to) : allItems;
   if (personFilter)
-    items = items.filter((item) =>
-      item.places.some((p) => p.id === place.id && p.people?.includes(personFilter)),
-    );
+    items = items.filter((item) => item.places.some((p) => p.id === place.id && p.people?.includes(personFilter)));
   const personName = personFilter ? (state.people.find((p) => p.id === personFilter)?.name ?? personFilter) : null;
   main.append(header(place.name, state, canGoBackInApp() ? true : "Places"));
   main.append(el("p", { class: "story lede" }, place.note));
@@ -595,7 +602,11 @@ export function placePage(main, ctx, state) {
     main.append(
       el("section", { class: "block" }, [
         el("h3", { class: "block-title" }, "Evidence"),
-        el("div", { class: "card-grid" }, evidence.map((e) => itemCard(e))),
+        el(
+          "div",
+          { class: "card-grid" },
+          evidence.map((e) => itemCard(e)),
+        ),
       ]),
     );
   }

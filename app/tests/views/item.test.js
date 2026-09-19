@@ -53,7 +53,11 @@ describe("draft privacy (review, 2026-08-03: the banner's claim must be true)", 
 
   it("the narrator who claimed it sees the account and the Continue action", () => {
     const main = document.createElement("main");
-    render(main, { arg: "story-d1", query: new URLSearchParams() }, { ...peopleState([draftItem()]), me: { person: "p-alex" } });
+    render(
+      main,
+      { arg: "story-d1", query: new URLSearchParams() },
+      { ...peopleState([draftItem()]), me: { person: "p-alex" } },
+    );
     expect(main.textContent).toContain("The secret half-told account");
     expect(main.textContent).toContain("The private what-is-this line."); // the narrator sees the description too
     expect([...main.querySelectorAll("button")].some((b) => b.textContent.includes("Continue this story"))).toBe(true);
@@ -368,7 +372,11 @@ describe("draft exposure (user, 2026-08-03: a draft is for the person who claime
 
   it("shows the draft banner with Continue for the person who claimed it", () => {
     const main = document.createElement("main");
-    render(main, { arg: "story-d1", query: new URLSearchParams() }, { ...withPeople([draft()]), me: { person: "p-alex" } });
+    render(
+      main,
+      { arg: "story-d1", query: new URLSearchParams() },
+      { ...withPeople([draft()]), me: { person: "p-alex" } },
+    );
     expect(main.textContent).toContain("Unfinished");
     const continueBtn = [...main.querySelectorAll("button")].find((b) => b.textContent.includes("Continue this story"));
     expect(continueBtn).toBeTruthy();
@@ -376,7 +384,11 @@ describe("draft exposure (user, 2026-08-03: a draft is for the person who claime
 
   it("shows the banner without Continue for anyone else", () => {
     const main = document.createElement("main");
-    render(main, { arg: "story-d1", query: new URLSearchParams() }, { ...withPeople([draft()]), me: { person: "p-other" } });
+    render(
+      main,
+      { arg: "story-d1", query: new URLSearchParams() },
+      { ...withPeople([draft()]), me: { person: "p-other" } },
+    );
     expect(main.textContent).toContain("Unfinished");
     const continueBtn = [...main.querySelectorAll("button")].find((b) => b.textContent.includes("Continue this story"));
     expect(continueBtn).toBeUndefined();

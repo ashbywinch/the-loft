@@ -1593,8 +1593,15 @@ summary:focus-visible {
   background: var(--bg);
   font-family: var(--serif);
 }
-.rv-title { font-size: 1.3rem; padding: var(--gap-lg); }
-.rv-note { padding: var(--gap-lg); color: var(--muted); font-size: 0.95rem; }
+.rv-title {
+  font-size: 1.3rem;
+  padding: var(--gap-lg);
+}
+.rv-note {
+  padding: var(--gap-lg);
+  color: var(--muted);
+  font-size: 0.95rem;
+}
 .rv-topbar {
   display: flex;
   align-items: center;
@@ -1620,9 +1627,20 @@ summary:focus-visible {
   white-space: nowrap;
   flex-shrink: 1;
 }
-.rv-topbar-titles { flex: 1; min-width: 0; }
-.rv-tt { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rv-ts { font-size: 0.82rem; color: var(--muted); }
+.rv-topbar-titles {
+  flex: 1;
+  min-width: 0;
+}
+.rv-tt {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rv-ts {
+  font-size: 0.82rem;
+  color: var(--muted);
+}
 .rv-chip {
   display: inline-block;
   padding: 3px 12px;
@@ -1633,9 +1651,20 @@ summary:focus-visible {
   white-space: nowrap;
   font-family: var(--serif);
 }
-.rv-chip--ok { background: #e3efe3; color: #3a6a3a; }
-.rv-chip--rej { background: #fce8e8; color: #a33; }
-.rv-list { display: flex; flex-direction: column; gap: var(--gap); padding: var(--gap) var(--gap-lg); }
+.rv-chip--ok {
+  background: #e3efe3;
+  color: #3a6a3a;
+}
+.rv-chip--rej {
+  background: #fce8e8;
+  color: #a33;
+}
+.rv-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  padding: var(--gap) var(--gap-lg);
+}
 .rv-card {
   display: flex;
   align-items: center;
@@ -1651,14 +1680,53 @@ summary:focus-visible {
   text-align: left;
   color: var(--ink);
 }
-.rv-card-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.rv-card-title { font-weight: 600; }
-.rv-card-sub { font-size: 0.85rem; color: var(--muted); }
-.rv-rotate { display: none; flex-direction: column; align-items: center; justify-content: center; flex: 1; text-align: center; padding: var(--gap-lg); }
-.rv-rotate-icon { font-size: 4rem; color: var(--accent); animation: rv-hint 2s ease-in-out infinite; }
-@keyframes rv-hint { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(90deg); } }
-.rv-rotate p { font-size: 0.92rem; color: var(--muted); max-width: 280px; }
-.rv-split { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.rv-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.rv-card-title {
+  font-weight: 600;
+}
+.rv-card-sub {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.rv-rotate {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  text-align: center;
+  padding: var(--gap-lg);
+}
+.rv-rotate-icon {
+  font-size: 4rem;
+  color: var(--accent);
+  animation: rv-hint 2s ease-in-out infinite;
+}
+@keyframes rv-hint {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(90deg);
+  }
+}
+.rv-rotate p {
+  font-size: 0.92rem;
+  color: var(--muted);
+  max-width: 280px;
+}
+.rv-split {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
 .rv-imgpane {
   flex: 0 0 48%;
   display: flex;
@@ -1677,14 +1745,27 @@ summary:focus-visible {
   cursor: grab;
   background: var(--paper);
 }
-.rv-imgbox:active { cursor: grabbing; }
+.rv-imgbox:active {
+  cursor: grabbing;
+}
 /* The navigation chips live in the TOP bar (2026-08-16: one bar for the
    whole chrome — back, title, and both sequences; the separate strip row
    and the redundant count chip are gone). Content-sized, not stretched:
    horizontal real estate is used minimally. */
-.rv-topbar .rv-navgroup { flex-shrink: 0; }
-.rv-navgroup { display: flex; align-items: center; gap: 4px; }
-.rv-navsep { width: 1px; height: 18px; background: var(--line); flex-shrink: 0; }
+.rv-topbar .rv-navgroup {
+  flex-shrink: 0;
+}
+.rv-navgroup {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.rv-navsep {
+  width: 1px;
+  height: 18px;
+  background: var(--line);
+  flex-shrink: 0;
+}
 .rv-navchip {
   min-width: 26px;
   height: 26px;
@@ -1701,12 +1782,27 @@ summary:focus-visible {
   cursor: pointer;
   position: relative;
 }
-.rv-navchip--doc { border-radius: 7px; }
-.rv-navchip--cur { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 700; }
-.rv-navchip--done { border-color: #5a8a5a; color: #3a6a3a; background: #e3efe3; }
+.rv-navchip--doc {
+  border-radius: 7px;
+}
+.rv-navchip--cur {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+}
+.rv-navchip--done {
+  border-color: #5a8a5a;
+  color: #3a6a3a;
+  background: #e3efe3;
+}
 /* a page being reworked on the backend — its chip pulses amber and is not
    part of the review flow until the re-read lands (2026-08-16) */
-.rv-navchip--fixing { border-color: #b8860b; color: #6b5310; background: #fdf3e3; }
+.rv-navchip--fixing {
+  border-color: #b8860b;
+  color: #6b5310;
+  background: #fdf3e3;
+}
 .rv-navchip--fixing::after {
   content: "";
   position: absolute;
@@ -1719,7 +1815,15 @@ summary:focus-visible {
   border: 1.5px solid var(--card);
   animation: rv-pulse 1.2s ease-in-out infinite;
 }
-@keyframes rv-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+@keyframes rv-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
 /* the flag dot: a page with lines still to check — visible before the
    "Next flagged" button moves there (walk finding 4, 2026-08-16) */
 .rv-navchip--flag::after {
@@ -1740,12 +1844,18 @@ summary:focus-visible {
   transform-origin: 0 0;
   will-change: transform;
 }
-.rv-page { display: block; width: 100%; height: 100%; }
+.rv-page {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
 /* the dual-pane link's direct pans ease out briefly — a jump would
    dislocate the reader's position (ux-standards P18, 2026-08-16); the
    class is applied only during the link's programmatic pans, never while
    the finger drags */
-.rv-layer--smooth { transition: transform 180ms ease-out; }
+.rv-layer--smooth {
+  transition: transform 180ms ease-out;
+}
 .rv-legend {
   padding: 6px 10px;
   font-size: 0.8rem;
@@ -1753,7 +1863,13 @@ summary:focus-visible {
   background: var(--card);
   border-top: 1px solid var(--line);
 }
-.rv-txpane { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.rv-txpane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
 .rv-txb {
   flex: 1;
   overflow-y: auto;
@@ -1774,9 +1890,19 @@ summary:focus-visible {
   border-left: 3px solid transparent;
   cursor: pointer;
 }
-.rv-line:hover { background: var(--paper); }
-.rv-line--sel { background: var(--accent-soft); border-left-color: var(--accent); }
-.rv-lt { flex: 1; min-width: 0; font-size: 0.88rem; line-height: 1.3; }
+.rv-line:hover {
+  background: var(--paper);
+}
+.rv-line--sel {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+.rv-lt {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.88rem;
+  line-height: 1.3;
+}
 /* "Verified" — mark a flagged line as checked without editing it
    (user, 2026-08-16: a line can be fine even with red squiggles). The
    pattern library's labelled checkbox (docs/UI.md: "labelled checkbox,
@@ -1815,7 +1941,9 @@ summary:focus-visible {
   font-size: inherit;
   cursor: pointer;
 }
-.rv-wc:hover { background: rgba(204, 68, 68, 0.26); }
+.rv-wc:hover {
+  background: rgba(204, 68, 68, 0.26);
+}
 .rv-wfw {
   display: flex;
   align-items: center;
@@ -1841,7 +1969,9 @@ summary:focus-visible {
   background: var(--paper);
   outline: none;
 }
-.rv-wfi:focus { box-shadow: 0 0 0 2px var(--accent); }
+.rv-wfi:focus {
+  box-shadow: 0 0 0 2px var(--accent);
+}
 /* the edit row's format buttons — the strike and underline conventions
    live in the row, not a floating menu: the platform's edit menu already
    covers cut/copy/paste/select-all and cannot be extended, and a second
@@ -1860,13 +1990,22 @@ summary:focus-visible {
   border-radius: var(--r-sm);
   cursor: pointer;
 }
-.rv-fmtbtn--row:active { background: var(--paper); }
-.rv-underlined { text-decoration: underline; text-underline-offset: 2px; }
+.rv-fmtbtn--row:active {
+  background: var(--paper);
+}
+.rv-underlined {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 /* the archive's inline format rendering (app/markdown.js): the review's
    format conventions — ~~struck~~ and ~underlined~ — display in the item
    pages, not as literal tildes (2026-08-16) */
-.fmt-struck { text-decoration: line-through; }
-.fmt-underline { text-decoration: underline; }
+.fmt-struck {
+  text-decoration: line-through;
+}
+.fmt-underline {
+  text-decoration: underline;
+}
 .rv-txa {
   display: flex;
   align-items: center;
@@ -1877,7 +2016,10 @@ summary:focus-visible {
   background: var(--card);
   flex-shrink: 0;
 }
-.rv-txa-right { display: flex; gap: var(--gap); }
+.rv-txa-right {
+  display: flex;
+  gap: var(--gap);
+}
 .rv-fn {
   display: inline-flex;
   align-items: center;
@@ -1893,7 +2035,10 @@ summary:focus-visible {
   font-weight: 600;
   cursor: pointer;
 }
-.rv-fn:disabled { opacity: 0.4; cursor: default; }
+.rv-fn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 .rv-fc {
   display: inline-flex;
   align-items: center;
@@ -1922,7 +2067,10 @@ summary:focus-visible {
   cursor: pointer;
   box-shadow: var(--shadow);
 }
-.rv-btn--primary { background: var(--accent); color: var(--on-accent); }
+.rv-btn--primary {
+  background: var(--accent);
+  color: var(--on-accent);
+}
 .rv-lb {
   position: absolute;
   border: 1.5px solid var(--line);
@@ -1935,30 +2083,66 @@ summary:focus-visible {
      can also tap a box to jump to its line (VR17, 2026-08-17). */
   pointer-events: auto;
 }
-.rv-lb--sel { border-color: var(--accent); background: rgba(180, 85, 45, 0.16); border-width: 2px; }
+.rv-lb--sel {
+  border-color: var(--accent);
+  background: rgba(180, 85, 45, 0.16);
+  border-width: 2px;
+}
 /* a positional box (box_source: "positional" — the fallback's reading-order
    assignment): real geometry, approximate line alignment — dashed so the
    reviewer reads the provenance at a glance (2026-08-16) */
-.rv-lb--pos { border-style: dashed; background: rgba(180, 85, 45, 0.03); }
+.rv-lb--pos {
+  border-style: dashed;
+  background: rgba(180, 85, 45, 0.03);
+}
 
 /* Phone portrait: the rotate prompt instead of the surface — and the
    topbar simplifies to back + title (the chip/subtitle make a silly
    three-column header, user 2026-08-16) */
 @media (max-width: 500px) and (orientation: portrait) {
-  .rv-rotate { display: flex; }
-  .rv-split, .rv-txa, .rv-navgroup, .rv-ts { display: none; }
-  .rv-back { font-size: 1rem; }
+  .rv-rotate {
+    display: flex;
+  }
+  .rv-split,
+  .rv-txa,
+  .rv-navgroup,
+  .rv-ts {
+    display: none;
+  }
+  .rv-back {
+    font-size: 1rem;
+  }
 }
 /* Phone landscape: horizontal split — letter full width on top */
 @media (max-height: 500px) and (orientation: landscape) {
-  .rv-split { flex-direction: column; }
-  .rv-imgpane { flex: 0 0 48%; border-right: none; border-bottom: 1px solid var(--line); }
-  .rv-txpane { border-left: none; }
-  .rv-topbar { min-height: 36px; padding: 4px var(--gap-lg); }
-  .rv-ts { display: none; }
-  .rv-legend { display: none; }
-  .rv-txa { flex-wrap: wrap; justify-content: center; }
-  .rv-wfi { min-width: 100px; }
+  .rv-split {
+    flex-direction: column;
+  }
+  .rv-imgpane {
+    flex: 0 0 48%;
+    border-right: none;
+    border-bottom: 1px solid var(--line);
+  }
+  .rv-txpane {
+    border-left: none;
+  }
+  .rv-topbar {
+    min-height: 36px;
+    padding: 4px var(--gap-lg);
+  }
+  .rv-ts {
+    display: none;
+  }
+  .rv-legend {
+    display: none;
+  }
+  .rv-txa {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .rv-wfi {
+    min-width: 100px;
+  }
 }
 
 /* -- review surface: the 2026-08-15 walk's fixes -- */
@@ -1983,10 +2167,20 @@ summary:focus-visible {
   box-shadow: var(--shadow);
   cursor: pointer;
 }
-.rv-zoom-btn:active { transform: scale(0.95); }
-.rv-struck { text-decoration: line-through; opacity: 0.75; }
-.rv-card--done { cursor: default; }
-.rv-note--ok { color: #3a6a3a; font-weight: 600; }
+.rv-zoom-btn:active {
+  transform: scale(0.95);
+}
+.rv-struck {
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+.rv-card--done {
+  cursor: default;
+}
+.rv-note--ok {
+  color: #3a6a3a;
+  font-weight: 600;
+}
 /* the orientation fix's grey-out: the page's text is being re-read on the
    corrected image — the reviewer must know the old text is unreliable and
    that navigating on is fine (2026-08-16) */
@@ -1999,14 +2193,26 @@ summary:focus-visible {
   border-radius: 0 var(--r-md) var(--r-md) 0;
   margin: 0 var(--gap-lg) var(--gap-sm);
 }
-.rv-btn:disabled { opacity: 0.4; cursor: default; transform: none; }
+.rv-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
+}
 @media (max-height: 500px) and (orientation: landscape) {
-  .rv-zoom { bottom: var(--gap); }
-  .rv-zoom-btn { min-width: 36px; height: 36px; font-size: 0.8rem; }
+  .rv-zoom {
+    bottom: var(--gap);
+  }
+  .rv-zoom-btn {
+    min-width: 36px;
+    height: 36px;
+    font-size: 0.8rem;
+  }
 }
 
 /* -- the review door on the home page (user, 2026-08-15) -- */
-.door--review { border-left: 4px solid var(--accent); }
+.door--review {
+  border-left: 4px solid var(--accent);
+}
 
 /* -- the unified review hub (user, 2026-08-15: "yes single review hub") -- */
 .rv-section-title {
@@ -2019,7 +2225,9 @@ summary:focus-visible {
 }
 
 /* -- the review promo card above the doors (user, 2026-08-16) -- */
-.review-promo { padding: var(--gap-lg); }
+.review-promo {
+  padding: var(--gap-lg);
+}
 .review-card {
   display: flex;
   align-items: center;
@@ -2038,12 +2246,19 @@ summary:focus-visible {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255,255,255,.2);
+  background: rgba(255, 255, 255, 0.2);
   border-radius: 50%;
   flex-shrink: 0;
 }
-.review-card-title { font-size: 1.2rem; font-weight: 600; }
-.review-card-note { font-size: 0.9rem; opacity: .85; margin-top: 4px; }
+.review-card-title {
+  font-size: 1.2rem;
+  font-weight: 600;
+}
+.review-card-note {
+  font-size: 0.9rem;
+  opacity: 0.85;
+  margin-top: 4px;
+}
 
 /* -- the top-bar back arrow (walk finding 6, 2026-08-16) -- */
 .topbar-back {

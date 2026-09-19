@@ -121,10 +121,24 @@ describe("person page connections", () => {
     const st = {
       ...STATE,
       relationships: [
-        { a: "p-mum", b: "p-dad", kind: "spouse", label_a: "husband", label_b: "wife", date: { date: "1966-06-20", precision: "exact" } },
+        {
+          a: "p-mum",
+          b: "p-dad",
+          kind: "spouse",
+          label_a: "husband",
+          label_b: "wife",
+          date: { date: "1966-06-20", precision: "exact" },
+        },
       ],
       people: [
-        { id: "p-mum", name: "Nora Hale", aliases: [], relation: "", bio: "", dob: { date: "1947-05-11", precision: "exact" } },
+        {
+          id: "p-mum",
+          name: "Nora Hale",
+          aliases: [],
+          relation: "",
+          bio: "",
+          dob: { date: "1947-05-11", precision: "exact" },
+        },
         { id: "p-dad", name: "Owen Hale", aliases: [], relation: "", bio: "" },
       ],
     };
@@ -137,7 +151,8 @@ describe("person page connections", () => {
     expect(people).toEqual(["Owen Hale — husband (m. 20 Jun 1966, aged 19)"]);
   });
 
-  it("labels attested relationships; co-mention alone never links (2026-08-06)", () => {    const st = {
+  it("labels attested relationships; co-mention alone never links (2026-08-06)", () => {
+    const st = {
       ...STATE,
       relationships: [{ a: "p-mum", b: "p-dad", kind: "spouse", label_a: "husband", label_b: "wife" }],
       people: [
@@ -295,12 +310,12 @@ describe("person page involvement dates (2026-08-06)", () => {
     personPage(main, { arg: "p-mum", query: new URLSearchParams() }, st);
     // the record's involvement is 1945 — it lands in the 1940s band, never
     // the 1860s (the decade list renders most recent first)
-    const band = [...main.querySelectorAll("details.year")].find((b) =>
-      b.querySelector(".year-number")?.textContent === "1940s",
+    const band = [...main.querySelectorAll("details.year")].find(
+      (b) => b.querySelector(".year-number")?.textContent === "1940s",
     );
     expect(band.textContent).toContain("Kendall–Pryce family record");
-    const sixties = [...main.querySelectorAll("details.year")].find((b) =>
-      b.querySelector(".year-number")?.textContent === "1960s",
+    const sixties = [...main.querySelectorAll("details.year")].find(
+      (b) => b.querySelector(".year-number")?.textContent === "1960s",
     );
     expect(sixties.textContent).toContain("A 1963 letter");
     expect(sixties.textContent).not.toContain("Kendall–Pryce family record");
@@ -369,12 +384,18 @@ describe("the family tree's family membership (2026-08-06, user)", () => {
       ...FAMILY_STATE,
       people: [
         ...FAMILY_STATE.people,
-        { id: "p-stewartson", name: "Poppy Lindsay", relation: "niece, general servant — 'not sure where she fits in' (Pearl, 2001); connection unresolved" },
+        {
+          id: "p-stewartson",
+          name: "Poppy Lindsay",
+          relation: "niece, general servant — 'not sure where she fits in' (Pearl, 2001); connection unresolved",
+        },
       ],
     };
     const main = document.createElement("main");
     render(main, {}, state);
-    const relation = [...main.querySelectorAll(".cast-relation")].find((r) => r.textContent.includes("not sure where she fits"));
+    const relation = [...main.querySelectorAll(".cast-relation")].find((r) =>
+      r.textContent.includes("not sure where she fits"),
+    );
     expect(relation.classList.contains("clamp-2")).toBe(true);
   });
 });

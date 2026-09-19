@@ -55,7 +55,7 @@
         paintBootFailure(event.message);
       });
       window.addEventListener("unhandledrejection", (event) => {
-        const reason = event.reason && (event.reason.message || event.reason) || event.reason;
+        const reason = (event.reason && (event.reason.message || event.reason)) || event.reason;
         window.__loftBoot.push("rejection: " + reason);
         paintBootFailure(String(reason));
       });

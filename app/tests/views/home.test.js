@@ -197,7 +197,14 @@ describe("home drafts block (user, 2026-08-03: a draft is for the person who cla
       {},
       withPeople(
         [
-          { id: "letter-1", title: "A letter", date: "1963-05-14", date_precision: "exact", type: "letter", assets: [] },
+          {
+            id: "letter-1",
+            title: "A letter",
+            date: "1963-05-14",
+            date_precision: "exact",
+            type: "letter",
+            assets: [],
+          },
           draft("story-d1", "p-alex"),
         ],
         { person: "p-alex" },
@@ -390,8 +397,6 @@ describe("home orientation (2026-08-06, Eli walk)", () => {
   });
 });
 
-
-
 describe("the home sign-in affordance (2026-08-06)", () => {
   it("shows a Sign in button in the top bar when signed out — even with no drafts", () => {
     const main = document.createElement("main");
@@ -403,7 +408,16 @@ describe("the home sign-in affordance (2026-08-06)", () => {
 
   it("signed in shows the avatar; the account sheet carries the name and Sign out", () => {
     const main = document.createElement("main");
-    render(main, {}, { ...STATE, themes: [], people: [{ id: "p-alex", name: "Alex Hale" }], me: { name: "Alex Hale", person: "p-alex", email: "alex.hale@example.com" } });
+    render(
+      main,
+      {},
+      {
+        ...STATE,
+        themes: [],
+        people: [{ id: "p-alex", name: "Alex Hale" }],
+        me: { name: "Alex Hale", person: "p-alex", email: "alex.hale@example.com" },
+      },
+    );
     const identity = main.querySelector(".topbar .topbar-identity");
     const avatar = identity.querySelector("img.topbar-avatar");
     expect(avatar).toBeTruthy();
@@ -442,23 +456,31 @@ describe("the unfinished import session (2026-08-07, user: the front page shows 
       ),
     );
     expect(main.textContent).not.toContain("The document import");
-    
-    
+
     expect(main.textContent).not.toContain("Pearl Whitlock"); // the raw list never renders on the front page
   });
 
   it("visitors never see the import session", () => {
     const main = document.createElement("main");
-    render(main, {}, pendingState([{ id: "import-documents", title: "The document import", status: "pending" }], [], null));
+    render(
+      main,
+      {},
+      pendingState([{ id: "import-documents", title: "The document import", status: "pending" }], [], null),
+    );
     expect(main.textContent).not.toContain("The document import");
   });
 
   it("no session card when the import is finished or nothing is pending", () => {
     const main = document.createElement("main");
-    render(main, {}, pendingState([{ id: "import-documents", title: "The document import", status: "reviewed" }], [], { person: "p-alex" }));
+    render(
+      main,
+      {},
+      pendingState([{ id: "import-documents", title: "The document import", status: "reviewed" }], [], {
+        person: "p-alex",
+      }),
+    );
     expect(main.textContent).not.toContain("The document import");
     render(main, {}, pendingState([], [], { person: "p-alex" }));
     expect(main.textContent).not.toContain("The document import");
   });
 });
-

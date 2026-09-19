@@ -53,7 +53,11 @@ export function reflectionsFor(items, targetId) {
  *  the timeline (2026-08-06). */
 export function evidenceFor(items, targetId) {
   return items.filter(
-    (it) => it.evidence && (it.people?.some((p) => p.id === targetId) || it.places?.some((p) => p.id === targetId) || it.items?.some((x) => x.id === targetId)),
+    (it) =>
+      it.evidence &&
+      (it.people?.some((p) => p.id === targetId) ||
+        it.places?.some((p) => p.id === targetId) ||
+        it.items?.some((x) => x.id === targetId)),
   );
 }
 

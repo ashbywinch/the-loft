@@ -142,7 +142,9 @@ export function saveResumePosition(batchId, docIndex, pageId, selLine, view, scr
     const key = `rv-res-${batchId}-${pageId}`;
     const data = JSON.stringify({ docIndex, selLine, view, scrollTop, readRotation, ts: Date.now() });
     localStorage.setItem(key, data);
-  } catch { /* quota exceeded */ }
+  } catch {
+    /* quota exceeded */
+  }
 }
 
 export function loadResumePosition(batchId, pageId) {
@@ -151,13 +153,17 @@ export function loadResumePosition(batchId, pageId) {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     return JSON.parse(raw);
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 export function clearResumePosition(batchId, pageId) {
   try {
     localStorage.removeItem(`rv-res-${batchId}-${pageId}`);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Save the current session page's resume position before navigation. */
@@ -205,7 +211,9 @@ export function saveRejection(batchId, docIndex) {
   try {
     const key = `rv-rej-${batchId}-${docIndex}`;
     localStorage.setItem(key, "1");
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 export function loadRejections(batchId) {
@@ -217,13 +225,17 @@ export function loadRejections(batchId) {
       if (k && k.startsWith(prefix)) set.add(k.slice(prefix.length));
     }
     return set;
-  } catch { return new Set(); }
+  } catch {
+    return new Set();
+  }
 }
 
 export function clearRejection(batchId, docIndex) {
   try {
     localStorage.removeItem(`rv-rej-${batchId}-${docIndex}`);
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 // -- pure helpers (exported for tests) ----------------------------------------
@@ -305,10 +317,7 @@ export function outboxAdd(payload) {
 
 export function outboxDrop(payload) {
   const key = JSON.stringify(payload);
-  localStorage.setItem(
-    OUTBOX_KEY,
-    JSON.stringify(outboxPending().filter((p) => JSON.stringify(p) !== key)),
-  );
+  localStorage.setItem(OUTBOX_KEY, JSON.stringify(outboxPending().filter((p) => JSON.stringify(p) !== key)));
 }
 
 async function postConfirmation(payload) {
@@ -412,9 +421,7 @@ async function renderBatchList(main, state) {
     (b) => b.status !== "confirmed" && (b.boundaries ?? []).some((x) => x.status !== "confirmed"),
   );
   const hasWork =
-    open.length > 0 ||
-    (state &&
-      (pendingImports(state).length > 0 || draftItems(state.items).length > 0));
+    open.length > 0 || (state && (pendingImports(state).length > 0 || draftItems(state.items).length > 0));
   if (!hasWork) {
     renderError(main, "No review work waiting — everything is confirmed.");
     return;
@@ -422,37 +429,27 @@ async function renderBatchList(main, state) {
   main.append(
     el("div", { class: "rv-topbar" }, [
       el("button", { class: "rv-back", onclick: () => navigate("home") }, "← Home"),
-      el("div", { class: "rv-topbar-titles" }, [
-        el("div", { class: "rv-tt" }, "Review"),
-      ]),
+      el("div", { class: "rv-topbar-titles" }, [el("div", { class: "rv-tt" }, "Review")]),
     ]),
   );
 
   if (open.length) {
-    main.append(el("h2", { class: "rv-section-title" }, "Transcriptions — check the machine's reading of scanned pages"));
+    main.append(
+      el("h2", { class: "rv-section-title" }, "Transcriptions — check the machine's reading of scanned pages"),
+    );
     const list = el("div", { class: "rv-list" });
     for (const batch of open) {
       const boundaries = batch.boundaries || [];
       const confirmed = boundaries.filter((b) => b.status === "confirmed").length;
       const pages = Object.keys(batch.pages || {}).length;
-      const progress = boundaries.length
-        ? `${confirmed} of ${boundaries.length} confirmed`
-        : `${pages} pages`;
-      const card = el(
-        "button",
-        { class: "rv-card", onclick: () => navigate(`review/${batch.batch_id}`) },
-        [
-          el("div", { class: "rv-card-main" }, [
-            el("div", { class: "rv-card-title" }, batch.label || batch.batch_id),
-            el("div", { class: "rv-card-sub" }, progress),
-          ]),
-          el(
-            "span",
-            { class: "rv-chip" },
-            confirmed && confirmed === boundaries.length ? "Reviewed" : "Awaiting review",
-          ),
-        ],
-      );
+      const progress = boundaries.length ? `${confirmed} of ${boundaries.length} confirmed` : `${pages} pages`;
+      const card = el("button", { class: "rv-card", onclick: () => navigate(`review/${batch.batch_id}`) }, [
+        el("div", { class: "rv-card-main" }, [
+          el("div", { class: "rv-card-title" }, batch.label || batch.batch_id),
+          el("div", { class: "rv-card-sub" }, progress),
+        ]),
+        el("span", { class: "rv-chip" }, confirmed && confirmed === boundaries.length ? "Reviewed" : "Awaiting review"),
+      ]);
       list.append(card);
     }
     main.append(list);
@@ -470,17 +467,13 @@ async function renderBatchList(main, state) {
       main.append(el("h2", { class: "rv-section-title" }, "Import sessions — confirm who belongs in the family tree"));
       const list = el("div", { class: "rv-list" });
       pending.forEach((session) => {
-        const card = el(
-          "button",
-          { class: "rv-card", onclick: () => navigate(`import/${session.id}`) },
-          [
-            el("div", { class: "rv-card-main" }, [
-              el("div", { class: "rv-card-title" }, session.title || "Import session"),
-              el("div", { class: "rv-card-sub" }, note),
-            ]),
-            el("span", { class: "rv-chip" }, "Awaiting review"),
-          ],
-        );
+        const card = el("button", { class: "rv-card", onclick: () => navigate(`import/${session.id}`) }, [
+          el("div", { class: "rv-card-main" }, [
+            el("div", { class: "rv-card-title" }, session.title || "Import session"),
+            el("div", { class: "rv-card-sub" }, note),
+          ]),
+          el("span", { class: "rv-chip" }, "Awaiting review"),
+        ]);
         list.append(card);
       });
       main.append(list);
@@ -498,17 +491,13 @@ async function renderBatchList(main, state) {
       const list = el("div", { class: "rv-list" });
       shown.forEach((d) => {
         const title = d.title || d.text?.slice(0, 60) || "Untitled";
-        const card = el(
-          "button",
-          { class: "rv-card", onclick: () => navigate(`/item/${d.id}`) },
-          [
-            el("div", { class: "rv-card-main" }, [
-              el("div", { class: "rv-card-title" }, title),
-              el("div", { class: "rv-card-sub" }, "Click to continue this story"),
-            ]),
-            el("span", { class: "rv-chip" }, "Draft"),
-          ],
-        );
+        const card = el("button", { class: "rv-card", onclick: () => navigate(`/item/${d.id}`) }, [
+          el("div", { class: "rv-card-main" }, [
+            el("div", { class: "rv-card-title" }, title),
+            el("div", { class: "rv-card-sub" }, "Click to continue this story"),
+          ]),
+          el("span", { class: "rv-chip" }, "Draft"),
+        ]);
         list.append(card);
       });
       main.append(list);
@@ -568,13 +557,19 @@ async function renderBatch(main, batchId, state, initial = null) {
   // confirmation payload (the CLI gate's 1-based boundaries order).
   // apply persisted rejections before filtering
   const rejectedSet = loadRejections(batchId);
-  documents.forEach((d, i) => { if (rejectedSet.has(String(i))) d.status = "rejected"; });
+  documents.forEach((d, i) => {
+    if (rejectedSet.has(String(i))) d.status = "rejected";
+  });
   const awaiting = documents
     .map((doc, i) => ({ doc, i }))
     .filter(({ doc }) => doc.status !== "confirmed" && doc.status !== "rejected");
   if (!awaiting.length) {
     root.append(
-      el("div", { class: "rv-note" }, `All ${documents.length} document${documents.length === 1 ? "" : "s"} in this batch ${documents.length === 1 ? "is" : "are"} confirmed.`),
+      el(
+        "div",
+        { class: "rv-note" },
+        `All ${documents.length} document${documents.length === 1 ? "" : "s"} in this batch ${documents.length === 1 ? "is" : "are"} confirmed.`,
+      ),
     );
     return;
   }
@@ -587,13 +582,18 @@ async function renderBatch(main, batchId, state, initial = null) {
     const hint =
       doc.greeting ||
       (doc.pages[0] && doc.texts?.[doc.pages[0]]
-        ? doc.texts[doc.pages[0]].split("\n").find((l) => l.trim())?.trim().slice(0, 48)
+        ? doc.texts[doc.pages[0]]
+            .split("\n")
+            .find((l) => l.trim())
+            ?.trim()
+            .slice(0, 48)
         : null);
     const card = el(
       "button",
       {
         class: "rv-card",
-        onclick: () => openReview(root, { batchId, label: data.label, documents, processing: data.processing || {} }, i),
+        onclick: () =>
+          openReview(root, { batchId, label: data.label, documents, processing: data.processing || {} }, i),
       },
       [
         el("div", { class: "rv-card-main" }, [
@@ -659,7 +659,11 @@ function openReview(main, batch, docIndex) {
 function docTitle(doc) {
   if (doc.greeting) return doc.greeting;
   if (doc.pages[0]) {
-    const first = doc.texts?.[doc.pages[0]]?.split("\n").find((l) => l.trim())?.trim().slice(0, 48);
+    const first = doc.texts?.[doc.pages[0]]
+      ?.split("\n")
+      .find((l) => l.trim())
+      ?.trim()
+      .slice(0, 48);
     if (first) return first;
   }
   return doc.pages[0] || "Document";
@@ -705,8 +709,10 @@ function renderSurface(main, session) {
     // that only a ↻ press changes; a page never pressed shows the backend
     // orientation as-is (desired == base → delta 0). It is never derived
     // from a delivery queue, so nothing stale can reorient the view.
-    const st =
-      orientationState(batch.batchId, page) || { desired: baseQuarters(session.baseRotation), acked: baseQuarters(session.baseRotation) };
+    const st = orientationState(batch.batchId, page) || {
+      desired: baseQuarters(session.baseRotation),
+      acked: baseQuarters(session.baseRotation),
+    };
     session.desired = st.desired;
     session.acked = st.acked;
     session.rotation = deltaOfDesired(st.desired, session.baseRotation);
@@ -722,10 +728,20 @@ function renderSurface(main, session) {
   // page dots; the document boundary and the cross-page jump are visible
   // before any press, so nothing needs explaining).
   const topbar = el("div", { class: "rv-topbar" }, [
-    el("button", { class: "rv-back", onclick: async () => { saveCurrentResumePosition(session); acceptEdit(session); await queueRotation(session); navigate(`review/${batch.batchId}`); } }, `← ${batch.label || "Documents"}`),
-    el("div", { class: "rv-topbar-titles" }, [
-      el("div", { class: "rv-tt" }, docTitle(doc)),
-    ]),
+    el(
+      "button",
+      {
+        class: "rv-back",
+        onclick: async () => {
+          saveCurrentResumePosition(session);
+          acceptEdit(session);
+          await queueRotation(session);
+          navigate(`review/${batch.batchId}`);
+        },
+      },
+      `← ${batch.label || "Documents"}`,
+    ),
+    el("div", { class: "rv-topbar-titles" }, [el("div", { class: "rv-tt" }, docTitle(doc))]),
   ]);
   // the page chips' flag dots come from the AVAILABLE positions — a
   // rework page shows the fixing state instead (its flags will change)
@@ -804,16 +820,20 @@ function renderSurface(main, session) {
   // data, not just the view)
   const zoomControls = el("div", { class: "rv-zoom" }, [
     el("button", { class: "rv-zoom-btn", onclick: () => rotatePage(session), title: "Turn the page" }, "↻"),
-    el("button", {
-      class: "rv-zoom-btn",
-      onclick: () => {
-        session.readRotation = 0;
-        session.view = null;
-        renderView(session);
-        if (session.contentTop !== undefined) initialView(session, session.contentTop ?? 0);
+    el(
+      "button",
+      {
+        class: "rv-zoom-btn",
+        onclick: () => {
+          session.readRotation = 0;
+          session.view = null;
+          renderView(session);
+          if (session.contentTop !== undefined) initialView(session, session.contentTop ?? 0);
+        },
+        title: "Return to the line you were reading",
       },
-      title: "Return to the line you were reading",
-    }, "⌖"),
+      "⌖",
+    ),
   ]);
   imgPane.append(zoomControls);
   imgPane.append(
@@ -892,17 +912,29 @@ function renderSurface(main, session) {
   const isLastPage = session.pageIndex === doc.pages.length - 1;
   const skipBtn = el(
     "button",
-    { class: "rv-btn rv-btn--ghost", onclick: () => skipNext(session), title: "Move on without confirming — come back later" },
+    {
+      class: "rv-btn rv-btn--ghost",
+      onclick: () => skipNext(session),
+      title: "Move on without confirming — come back later",
+    },
     "Skip →",
   );
   const rejectBtn = el(
     "button",
-    { class: "rv-btn rv-btn--ghost", onclick: () => rejectDoc(session), title: "Move this document to the bin — it can be recovered" },
+    {
+      class: "rv-btn rv-btn--ghost",
+      onclick: () => rejectDoc(session),
+      title: "Move this document to the bin — it can be recovered",
+    },
     "Bin →",
   );
   const confirmBtn = el(
     "button",
-    { class: "rv-btn rv-btn--primary", onclick: () => confirmNext(session), disabled: session.pageProcessing === "transcribing" },
+    {
+      class: "rv-btn rv-btn--primary",
+      onclick: () => confirmNext(session),
+      disabled: session.pageProcessing === "transcribing",
+    },
     isLastPage ? "✓ Confirm & Next →" : "Next page →",
   );
   const actionBar = el("div", { class: "rv-txa" }, [
@@ -922,52 +954,51 @@ function renderSurface(main, session) {
   currentSession = session;
   updateFixingState(session);
 
-
-/** Re-fetch the drafts and re-render when the server's state moved on —
- *  the page's re-read landed (the old transcription is gone, the stale
- *  edits orphan) OR any layout revision changed (a rebuild while the
- *  page was open — 2026-08-22: five copies of a layout, and the page
- *  rendered yesterday's boxes until something forced a re-fetch). The
- *  view/selection survive (they live on the session); the edits
- *  reconcile against the new layout at the re-render (the exact-text
- *  rule). Returns true when the surface re-rendered. */
-async function refreshBatchState(session) {
-  const { batch, docIndex } = session;
-  const page = batch.documents?.[docIndex]?.pages?.[session.pageIndex];
-  if (!page) return false;
-  try {
-    const data = await (
-      await fetch(`/api/sync/batch/${encodeURIComponent(batch.batchId)}/drafts`, {
-        headers: { Accept: "application/json" },
-      })
-    ).json();
-    if (!Array.isArray(data.documents)) return false;
-    const stale = staleLayoutPages(session.layoutRevisions, data.documents);
-    const reReadLanded = session.processingWas && !(data.processing || {})[page];
-    if (!stale.length && !reReadLanded) return false;
-    const currentChanged = collectLayoutRevisions(data.documents)[page] !== session.layoutRevisions?.[page];
-    session.processingWas = !!(data.processing || {})[page];
-    session.batch.documents = data.documents;
-    session.batch.processing = data.processing || {};
-    session.layoutRevisions = collectLayoutRevisions(data.documents);
-    if (reReadLanded) {
-      delete session.edits[page];
-      saveEdits(batch.batchId, docIndex, session.edits);
-      session.from = null;
+  /** Re-fetch the drafts and re-render when the server's state moved on —
+   *  the page's re-read landed (the old transcription is gone, the stale
+   *  edits orphan) OR any layout revision changed (a rebuild while the
+   *  page was open — 2026-08-22: five copies of a layout, and the page
+   *  rendered yesterday's boxes until something forced a re-fetch). The
+   *  view/selection survive (they live on the session); the edits
+   *  reconcile against the new layout at the re-render (the exact-text
+   *  rule). Returns true when the surface re-rendered. */
+  async function refreshBatchState(session) {
+    const { batch, docIndex } = session;
+    const page = batch.documents?.[docIndex]?.pages?.[session.pageIndex];
+    if (!page) return false;
+    try {
+      const data = await (
+        await fetch(`/api/sync/batch/${encodeURIComponent(batch.batchId)}/drafts`, {
+          headers: { Accept: "application/json" },
+        })
+      ).json();
+      if (!Array.isArray(data.documents)) return false;
+      const stale = staleLayoutPages(session.layoutRevisions, data.documents);
+      const reReadLanded = session.processingWas && !(data.processing || {})[page];
+      if (!stale.length && !reReadLanded) return false;
+      const currentChanged = collectLayoutRevisions(data.documents)[page] !== session.layoutRevisions?.[page];
+      session.processingWas = !!(data.processing || {})[page];
+      session.batch.documents = data.documents;
+      session.batch.processing = data.processing || {};
+      session.layoutRevisions = collectLayoutRevisions(data.documents);
+      if (reReadLanded) {
+        delete session.edits[page];
+        saveEdits(batch.batchId, docIndex, session.edits);
+        session.from = null;
+      }
+      // re-render only when THIS page's layout moved on (a rebuild of
+      // another document must not yank the reviewer's position — the
+      // batch's fresh data is there for the next navigation)
+      if (currentChanged || reReadLanded) {
+        renderSurface(session.root, session);
+        return true;
+      }
+      return false;
+    } catch {
+      // backend unreachable — retry next tick / next focus
+      return false;
     }
-    // re-render only when THIS page's layout moved on (a rebuild of
-    // another document must not yank the reviewer's position — the
-    // batch's fresh data is there for the next navigation)
-    if (currentChanged || reReadLanded) {
-      renderSurface(session.root, session);
-      return true;
-    }
-    return false;
-  } catch {
-    // backend unreachable — retry next tick / next focus
-    return false;
   }
-}
 
   // the poll: while the backend re-reads this page's text, refresh when the
   // re-read lands (the old transcription is replaced, the stale edits
@@ -1054,7 +1085,6 @@ export function bandMargin(layout) {
   const top = boxes.reduce((a, b) => (a.box[1] <= b.box[1] ? a : b));
   return (top.box[3] - top.box[1]) / 2;
 }
-
 
 /** Zoom the view by ``k`` around the pane point (cx, cy) — the image point
  *  under the cursor stays put. The visible width is clamped to
@@ -1152,7 +1182,7 @@ function openViewer(session, imgBox) {
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page] || null;
 
-session.resizer?.disconnect();
+  session.resizer?.disconnect();
   session.imgBox = imgBox;
   session.layer = null;
   session.img = null;
@@ -1735,7 +1765,7 @@ export function deltaOfDesired(desiredQuarters, baseDeg) {
  *  runs sideways turns the view so that line reads horizontally — a pure
  *  view change, never an owed correction, so the ↻ state is untouched). */
 export function viewRotation(session) {
-  return (((session.rotation ?? 0) + (session.readRotation ?? 0)) % 360 + 360) % 360;
+  return ((((session.rotation ?? 0) + (session.readRotation ?? 0)) % 360) + 360) % 360;
 }
 
 // -- the reviewer's desired orientation (display truth) + the delivery
@@ -1820,10 +1850,11 @@ async function queueRotation(session) {
   const st = orientationState(batchId, page);
   if (!st || st.desired === st.acked) return; // nothing owed
   try {
-    const res = await fetch(
-      `/api/sync/batch/${encodeURIComponent(batchId)}/page/${encodeURIComponent(page)}/rotate`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quarters: st.desired }) },
-    );
+    const res = await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/page/${encodeURIComponent(page)}/rotate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ quarters: st.desired }),
+    });
     if (!res.ok) throw new Error(`rotate rejected (${res.status})`);
     // acknowledged — the backend has applied the rotation to its image
     session.acked = st.desired;
@@ -1833,7 +1864,9 @@ async function queueRotation(session) {
     // corrected layout surface; best-effort
     try {
       const data = await (
-        await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/drafts`, { headers: { Accept: "application/json" } })
+        await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/drafts`, {
+          headers: { Accept: "application/json" },
+        })
       ).json();
       if (Array.isArray(data.documents)) {
         session.batch.documents = data.documents;
@@ -1871,7 +1904,11 @@ export async function deliverOwed() {
     try {
       const res = await fetch(
         `/api/sync/batch/${encodeURIComponent(batchId)}/page/${encodeURIComponent(page)}/rotate`,
-        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ quarters: s.desired }) },
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ quarters: s.desired }),
+        },
       );
       if (!res.ok) throw new Error(`rotate rejected (${res.status})`);
       // acknowledge ONLY the delivery — the display keeps reading `desired`
@@ -1888,10 +1925,9 @@ export async function deliverOwed() {
 async function rereadPage(session) {
   const { batchId, page } = currentPage(session);
   try {
-    const res = await fetch(
-      `/api/sync/batch/${encodeURIComponent(batchId)}/page/${encodeURIComponent(page)}/reread`,
-      { method: "POST" },
-    );
+    const res = await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/page/${encodeURIComponent(page)}/reread`, {
+      method: "POST",
+    });
     if (!res.ok) return;
     const data = await (
       await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/drafts`, { headers: { Accept: "application/json" } })
@@ -2166,7 +2202,10 @@ function renderTx(session) {
   session.txBody.replaceChildren();
   const lines = layout
     ? layout.lines
-    : (doc.texts?.[page] || "").split("\n").filter(Boolean).map((text, i) => ({ index: i, text, box: null, words: [] }));
+    : (doc.texts?.[page] || "")
+        .split("\n")
+        .filter(Boolean)
+        .map((text, i) => ({ index: i, text, box: null, words: [] }));
 
   lines.forEach((line) => {
     const corrected = reconciled[line.index];
@@ -2203,31 +2242,56 @@ function renderTx(session) {
       // different"). The row adds what the platform cannot: the strike and
       // underline conventions. They apply to the current selection; with no
       // selection they drop the markers at the cursor.
-      const strikeBtn = el("button", {
-        class: "rv-fmtbtn rv-fmtbtn--row",
-        title: "Strike through the selection (~~word~~)",
-        onclick: (e) => { e.stopPropagation(); wrapSelection(input, "~~"); },
-      }, "S̶");
-      const underBtn = el("button", {
-        class: "rv-fmtbtn rv-fmtbtn--row",
-        title: "Underline the selection (~word~)",
-        onclick: (e) => { e.stopPropagation(); wrapSelection(input, "~"); },
-      }, "U");
-      input.after(strikeBtn, underBtn);
-      const doneBtn = el("button", {
-        class: "rv-fmtbtn rv-fmtbtn--row",
-        title: "Save correction (Enter)",
-        onclick: (e) => { e.stopPropagation(); applyEdit(session, line.index, input.value); },
-      }, "✓");
-      const cancelBtn = el("button", {
-        class: "rv-fmtbtn rv-fmtbtn--row",
-        title: "Discard correction (Escape)",
-        onclick: (e) => {
-          e.stopPropagation();
-          session.editing = null;
-          renderTx(session);
+      const strikeBtn = el(
+        "button",
+        {
+          class: "rv-fmtbtn rv-fmtbtn--row",
+          title: "Strike through the selection (~~word~~)",
+          onclick: (e) => {
+            e.stopPropagation();
+            wrapSelection(input, "~~");
+          },
         },
-      }, "✕");
+        "S̶",
+      );
+      const underBtn = el(
+        "button",
+        {
+          class: "rv-fmtbtn rv-fmtbtn--row",
+          title: "Underline the selection (~word~)",
+          onclick: (e) => {
+            e.stopPropagation();
+            wrapSelection(input, "~");
+          },
+        },
+        "U",
+      );
+      input.after(strikeBtn, underBtn);
+      const doneBtn = el(
+        "button",
+        {
+          class: "rv-fmtbtn rv-fmtbtn--row",
+          title: "Save correction (Enter)",
+          onclick: (e) => {
+            e.stopPropagation();
+            applyEdit(session, line.index, input.value);
+          },
+        },
+        "✓",
+      );
+      const cancelBtn = el(
+        "button",
+        {
+          class: "rv-fmtbtn rv-fmtbtn--row",
+          title: "Discard correction (Escape)",
+          onclick: (e) => {
+            e.stopPropagation();
+            session.editing = null;
+            renderTx(session);
+          },
+        },
+        "✕",
+      );
       input.after(doneBtn, cancelBtn);
       input.focus();
     } else {
@@ -2238,13 +2302,15 @@ function renderTx(session) {
       // 2026-08-16: the fix was stored but never displayed — "did it save
       // or not?").
       if (corrected !== undefined) {
-        textEl.append(...formatParts(shown).map((p) =>
-          p.kind === "struck"
-            ? el("span", { class: "rv-struck" }, p.text)
-            : p.kind === "underlined"
-              ? el("span", { class: "rv-underlined" }, p.text)
-              : p.text,
-        ));
+        textEl.append(
+          ...formatParts(shown).map((p) =>
+            p.kind === "struck"
+              ? el("span", { class: "rv-struck" }, p.text)
+              : p.kind === "underlined"
+                ? el("span", { class: "rv-underlined" }, p.text)
+                : p.text,
+          ),
+        );
       } else if (line.words.length) {
         line.words.forEach((word, wi) => {
           const node = wordNode(word.word, {
@@ -2257,13 +2323,15 @@ function renderTx(session) {
           textEl.append(node, wi < line.words.length - 1 ? " " : "");
         });
       } else {
-        textEl.append(...formatParts(shown).map((p) =>
-          p.kind === "struck"
-            ? el("span", { class: "rv-struck" }, p.text)
-            : p.kind === "underlined"
-              ? el("span", { class: "rv-underlined" }, p.text)
-              : p.text,
-        ));
+        textEl.append(
+          ...formatParts(shown).map((p) =>
+            p.kind === "struck"
+              ? el("span", { class: "rv-struck" }, p.text)
+              : p.kind === "underlined"
+                ? el("span", { class: "rv-underlined" }, p.text)
+                : p.text,
+          ),
+        );
       }
       lineEl.append(textEl);
       // "Mark this line as verified" — a checked line needs no text
@@ -2279,28 +2347,29 @@ function renderTx(session) {
       // (the edit is removed).
       const isChecked = corrected !== undefined || pageEdits[line.index] !== undefined;
       lineEl.append(
-        el("label", {
-          class: "rv-ok" + (isChecked ? " rv-ok--checked" : ""),
-          title: isChecked ? "Mark this line as not verified" : "Mark this line as verified",
-          onclick: (e) => {
-            e.stopPropagation();
-            if (isChecked) {
-              // uncheck — remove the edit for this line
-              const { batch, docIndex, pageIndex } = session;
-              const page = doc.pages[pageIndex];
-              const edits = { ...session.edits[page] };
-              delete edits[line.index];
-              session.edits[page] = edits;
-              saveEdits(batch.batchId, docIndex, session.edits);
-              renderTx(session);
-            } else {
-              applyMarkedFine(session, line.index);
-            }
+        el(
+          "label",
+          {
+            class: "rv-ok" + (isChecked ? " rv-ok--checked" : ""),
+            title: isChecked ? "Mark this line as not verified" : "Mark this line as verified",
+            onclick: (e) => {
+              e.stopPropagation();
+              if (isChecked) {
+                // uncheck — remove the edit for this line
+                const { batch, docIndex, pageIndex } = session;
+                const page = doc.pages[pageIndex];
+                const edits = { ...session.edits[page] };
+                delete edits[line.index];
+                session.edits[page] = edits;
+                saveEdits(batch.batchId, docIndex, session.edits);
+                renderTx(session);
+              } else {
+                applyMarkedFine(session, line.index);
+              }
+            },
           },
-        }, [
-          el("input", { type: "checkbox", checked: isChecked }),
-          el("span", {}, "Verified"),
-        ]),
+          [el("input", { type: "checkbox", checked: isChecked }), el("span", {}, "Verified")],
+        ),
       );
       // every line is clickable — one click enters edit (user, 2026-08-16);
       // clicking the already-editing line's own input must not re-render

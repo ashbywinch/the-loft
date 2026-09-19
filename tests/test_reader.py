@@ -14,6 +14,7 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
+from tools.mark import Mark
 from tools.reader import read_page
 
 PAGE_W, PAGE_H = 900, 1400
@@ -25,6 +26,7 @@ WORD_W, WORD_H = 46, 20
 WORD_GAP = 34
 MARGIN_X = 60
 WORD_W = 46
+PAGE_HEIGHT = 4642  # page-01's height (tests/fixtures/page01.json) — the strokes' pitch scale
 
 
 def synthetic_page(path: Path) -> tuple[list[tuple[int, int, int, int]], list[int]]:
@@ -228,30 +230,55 @@ def _underline_row(ink: list[list[int]]) -> int:
     return best
 
 
+def _fixture_mask(marks: list[Mark]) -> np.ndarray:
+    """The ink mask the marks came from, rebuilt from their pixels."""
+    height = int(max(m.pix[0].max() for m in marks if m.pix[0].size)) + 1
+    width = int(max(m.pix[1].max() for m in marks if m.pix[1].size)) + 1
+    mask = np.zeros((height, width), dtype=bool)
+    for m in marks:
+        mask[m.pix[0], m.pix[1]] = True
+    return mask
+
+
+def _fixture_marks() -> list[Mark]:
+    """Page-01's real marks, committed as data — the detector's output on
+    the canonical scan, WITHOUT the scan: real-world data enters tests as
+    the marks file, never by opening the archive's images (testing
+    standard, 2026-09-19)."""
+    records = json.loads(Path(__file__).parent.joinpath("fixtures", "page01-marks.json").read_text())["marks"]
+    return [
+        Mark(
+            x0=r["x0"],
+            y0=r["y0"],
+            x1=r["x1"],
+            y1=r["y1"],
+            baseline=r["baseline"],
+            waistline=r["waistline"],
+            area=r["area"],
+            cx=r["cx"],
+            pix=(np.asarray(r["pix"][0], dtype=np.int64), np.asarray(r["pix"][1], dtype=np.int64)),
+            line=r["line"],
+            id=r["id"],
+        )
+        for r in records
+    ]
+
+
+def _fixture_strokes() -> list[list[tuple[float, float]]]:
+    """The reviewer's traced strokes, committed (tests/fixtures/page01-wordseg)."""
+    path = Path(__file__).parent / "fixtures" / "page01-wordseg" / "strokes.json"
+    return json.loads(path.read_text())["strokes"]
+
+
 @pytest.fixture(scope="module")
 def page01_marks() -> dict:
-    """The mark finder alone: ink_mask + artifacts + find_marks. No line
-    fitting, no box splitting. User 2026-09-14: the four-word block
-    (upper pair over Myra Hess) must arrive as left and right marks apart,
-    each spanning both lines (the vertical weld is the splitter's job).
-    The canonical scan lives on the adopt batch's removable media — these
-    tests skip when it is not mounted (the repo's archive/marker pattern:
-    `make verify` runs them where the media exists; CI skips them)."""
-    import sys
+    """The mark finder's output on page-01, from the committed marks file.
+    No line fitting, no box splitting. User 2026-09-14: the four-word
+    block (upper pair over Myra Hess) must arrive as left and right marks
+    apart, each spanning both lines (the vertical weld is the splitter's
+    job)."""
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from PIL import Image
-
-    from tools.mark import find_marks
-    from tools.reader import artifacts, ink_mask
-
-    scan = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
-    if not scan.exists():
-        pytest.skip("the canonical scan (the adopt batch's oriented page-01) is not mounted")
-    page = Image.open(scan)
-    mask = ink_mask(page)
-    artifacts(mask)
-    return {s.id: s for s in find_marks(mask)}
+    return {m.id: m for m in _fixture_marks()}
 
 
 def test_marks_separate_the_blocks_left_and_right_pair(page01_marks) -> None:
@@ -293,29 +320,17 @@ def _covering(page01_marks, x: float, y: float) -> set[str]:
 
 @pytest.fixture(scope="module")
 def page01_shapes() -> tuple:
-    """The real page-01 detector state: connected marks + fitted lines.
-
-    The splitter's inputs, run once per session — the user-verified one-word
-    cases below pin its outputs against these, so a change in find_marks or
-    fit_lines that moves a case fails loudly here, not silently in a sheet.
-    """
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from PIL import Image
-
-    from tools.mark import find_marks
+    """Page-01's detector state, from the committed marks and strokes —
+    no scan, no image. The splitter's inputs, run once per session: the
+    user-verified one-word cases below pin its outputs, so a change in
+    find_marks or fit_lines that moves a case fails loudly here, not
+    silently in a sheet."""
     from tools.pagescale import PageScale, line_ratio, traced_pitch, writing_scale
-    from tools.reader import LineFitter, artifacts, ink_mask
+    from tools.reader import LineFitter
 
-    scan = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
-    fixture = Path(__file__).parent / "fixtures" / "page01-wordseg"
-    page = Image.open(scan)
-    strokes = json.loads((fixture / "strokes.json").read_text())["strokes"]
-    mask = ink_mask(page)
-    artifacts(mask)
-    shapes = find_marks(mask)
-    traced = sorted(float(np.median([p[1] for p in s])) * page.height / 2 for s in strokes)
+    shapes = [m for m in _fixture_marks()]
+    strokes = _fixture_strokes()
+    traced = sorted(float(np.median([p[1] for p in s])) * PAGE_HEIGHT / 2 for s in strokes)
     ratio = line_ratio(traced_pitch(traced), writing_scale([s.height for s in shapes]))
     scale = PageScale.of([s.height for s in shapes], ratio)
     return {s.id: s for s in shapes}, LineFitter(scale).fit(shapes), scale
@@ -355,22 +370,14 @@ def test_one_word_is_never_split(page01_shapes, raw_id: str) -> None:
 
 @pytest.fixture(scope="module")
 def page01_writing() -> tuple:
-    """The writing as the pipeline finds it: ink_mask + artifacts + the
-    find_writing fixpoint (which strips the rules and underlines)."""
-    import sys
+    """The writing as the pipeline finds it — the find_writing fixpoint
+    (which strips the rules and underlines) over the mask rebuilt from
+    the committed marks' pixels; no scan, no image."""
+    from tools.reader import Writing
 
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from PIL import Image
-
-    from tools.reader import Writing, artifacts, ink_mask
-
-    scan = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
-    fixture = Path(__file__).parent / "fixtures" / "page01-wordseg"
-    strokes = json.loads((fixture / "strokes.json").read_text())["strokes"]
-    page = Image.open(scan)
-    mask = ink_mask(page)
-    artifacts(mask)
-    traced = sorted(float(np.median([p[1] for p in s])) * page.height / 2 for s in strokes)
+    marks = _fixture_marks()
+    mask = _fixture_mask(marks)
+    traced = sorted(float(np.median([p[1] for p in s])) * PAGE_HEIGHT / 2 for s in _fixture_strokes())
     writing = Writing.of(mask, traced)
     return {s.id: s for s in writing.marks}, writing.lines, writing.scale, writing.stripped
 
@@ -394,22 +401,14 @@ def test_an_underline_does_not_join_words(page01_writing) -> None:
 @pytest.fixture(scope="module")
 def page01_words() -> list[tuple[float, float, float, float]]:
     """The pipeline's words: the page measured and cut, as (x0, y0, x1, y1)
-    in page pixels — the boxes the renders draw."""
-    import sys
-
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-    from PIL import Image
-
+    in page pixels — the boxes the renders draw. From the committed marks
+    (the mask rebuilt from their pixels); no scan, no image."""
     from tools.mark import SCALE
-    from tools.reader import Writing, artifacts, ink_mask
+    from tools.reader import Writing
 
-    scan = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
-    fixture = Path(__file__).parent / "fixtures" / "page01-wordseg"
-    strokes = json.loads((fixture / "strokes.json").read_text())["strokes"]
-    page = Image.open(scan)
-    mask = ink_mask(page)
-    artifacts(mask)
-    traced = sorted(float(np.median([p[1] for p in s])) * page.height / SCALE for s in strokes)
+    marks = _fixture_marks()
+    mask = _fixture_mask(marks)
+    traced = sorted(float(np.median([p[1] for p in s])) * PAGE_HEIGHT / SCALE for s in _fixture_strokes())
     writing = Writing.of(mask, traced)
     return [
         (word.x0 * SCALE, word.y0 * SCALE, word.x1 * SCALE, word.y1 * SCALE)

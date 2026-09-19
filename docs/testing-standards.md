@@ -12,8 +12,19 @@
 - **Eval** — a check that runs deliberately *non-deterministic* code — a real model. An eval costs money and takes time, so the discipline is economy: **never more than one eval covering the same thing** (duplicate coverage is waste); and when the code under test can be run **once** and its output evaluated for several conditions in one go, do that — never recreate the output for each condition.
 - **Tests and evals share the same harness** (pytest, 2026-08-10) for consistency. Both run exactly **once** — a check that would need re-running to go green is flaky, and flakiness is a bug in the check, never a reason to re-run ("we run it once. If it fails we fix it" — user, 2026-08-10). Both **fail fast** — a check that cannot run because needed infra is missing (the API key, tesseract) fails loudly and is **never skipped**: a skipped check would green a suite that never ran (2026-08-05).
 - **Unit test** — a single class or function, with fakes for any dependencies.
-- **Integration test** — a group of related classes together (a class and its dependencies), with fakes for everything outside the set under test.
-- **E2E test** — a process end to end: user input to user output through the series of steps.
+- **Real-world data enters tests as committed fixtures of the pipeline's
+  detector output (2026-09-19, user).** Never open the archive's scans or
+  images in a test, and never hardcode an archive path in a test: a real
+  page's correctness is tested from the detector's **committed output —
+  the marks file, image-free** (page-01: `tests/fixtures/page01-marks.json`
+  — the marks' boxes, measurements and ink pixels, serialised once from
+  the canonical scan). Downstream stages (words, rows, the drawing pins)
+  run FROM that fixture, at the detector's own scale where the geometry
+  lives. A test that needs the scan to run is a test whose data is not
+  committed — commit the data or re-express the property; a test is
+  never skipped because the scan is absent, and never gains an archive
+  path. The archive-quality checks (below) remain the one exception whose
+  dataset is intrinsically the live archive.
 
 Given the definitions, the repo's inventory:
 

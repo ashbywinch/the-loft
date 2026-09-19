@@ -383,8 +383,18 @@ good.
   ("email"), or out-of-domain jargon ("elicitation" — the UI's word is
   memory). When the UI has a word for a concept, the code uses the same
   word (2026-08-06: import_email.py → Archive.capture_document, after the
-  model was agreed with the user).
-- **Web servers are FastAPI + uvicorn** (2026-08-06, houses parity): the
+
+- **A class names the object, never its serialisation — no `File` suffix.**
+  Any object can be written to a file; "File" is the transport, not the
+  concept. The type carries the thing (`Rows`, `RawWords`,
+  `UserRowAdjustments`), the loader/saver names the seam
+  (`load_rows()`, `save_document()`). ✗ `RowsFile`, `RawWordsFile`,
+  `UserRowAdjustmentsFile` — the shape's name described the storage. ✓
+  `tools/schemas.py`'s `Rows`, `RawWords`, `UserRowAdjustments` — the
+  name says what the data IS; the `.json` file suffix is just one
+  serialisation of it. (2026-09-19, user: "Any object can be a file if
+  you serialise it.")
+**Web servers are FastAPI + uvicorn** (2026-08-06, houses parity): the
   framework owns request parsing — query decoding, cookies, JSON bodies,
   redirects — which the former hand-rolled http.server handler
   reimplemented wrong one at a time (the auth bug class: a percent-encoded

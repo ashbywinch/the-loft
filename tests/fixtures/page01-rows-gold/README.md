@@ -5,7 +5,7 @@ rows of writing as the **user** drew them, not as the detector found them.
 
 What each file is:
 
-- `user-lines.json` — the user's drawn row indications: 44 lines, each a
+- `user-row-adjustments.json` — the user's drawn row indications: 44 lines, each a
   sequence of normalised points on the page. One line per row of writing
   (a couple of lines are the same row drawn twice — a reviewer's double
   pass). These lines say where the rows ARE.

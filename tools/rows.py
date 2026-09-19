@@ -97,18 +97,18 @@ class Rows:
     @staticmethod
     def build(
         words: list[Box],
-        user_lines: list[list[tuple[float, float]]],
+        row_adjustments: list[list[tuple[float, float]]],
         page_size: tuple[int, int],
         baselines: list[float] | None = None,
     ) -> list[Row]:
         """The page's rows from `words` (the detected word boxes),
-        `user_lines` (the user's drawn row indications, as normalised
-        points), and `page_size` (the page's pixel dimensions). When the
+        `row_adjustments` (the user's drawn row adjustments — the yellow
+        lines — as normalised points), and `page_size` (the page's pixel dimensions). When the
         words carry measured baselines, pass them for the apportionment's
         rule B ("roughly the same baseline" means the same drawn line,
         not the neighbour's)."""
         width, height = page_size
-        lines = [[(x * width, y * height) for x, y in line] for line in user_lines]
+        lines = [[(x * width, y * height) for x, y in line] for line in row_adjustments]
         unit = _writing_height(words)
         spacing = SPACING_RATIO * unit
         spans = _line_spans(lines)
@@ -304,7 +304,7 @@ def render_map(
     window: Box,
     scale: float = 1.0,
     word_numbers: dict[tuple[float, float, float, float], int] | None = None,
-    user_lines: list[list[tuple[float, float]]] | None = None,
+    row_adjustments: list[list[tuple[float, float]]] | None = None,
     page_size: tuple[int, int] | None = None,
 ) -> Image.Image:
     """The rows as tinted bands over the page's ink (the house `tint_row`:
@@ -347,9 +347,9 @@ def render_map(
                 width=3,
             )
             halo_text(label_layer, (left + 2, top + 2), str(number), size=40)
-    if user_lines and page_size:
+    if row_adjustments and page_size:
         line_colour = (235, 185, 0)
-        for line in user_lines:
+        for line in row_adjustments:
             points = [
                 (int((px * page_size[0] - window.x0) * scale), int((py * page_size[1] - window.y0) * scale))
                 for px, py in line

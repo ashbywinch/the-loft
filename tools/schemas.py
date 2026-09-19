@@ -10,15 +10,15 @@ nothing in the row stage should reach past it.
 
 Stages, in order:
 
-- `RawWordsFile` — the detector's words.json: the measured writing
+- `Words` — the detector's words.json: the measured writing
   shapes (line/baseline/waistline per record). Stage: detection.
-- `PageBoxesFile` — the detector's boxes.json: the composed boxes plus
+- `PageBoxes` — the detector's boxes.json: the composed boxes plus
   the page size. Stage: detection.
-- `StrokesFile` — the reviewer's traced strokes. Stage: detection input.
-- `RowsFile` — the adjudicated rows: each row's words' boxes inline
+- `Strokes` — the reviewer's traced strokes. Stage: detection input.
+- `Rows` — the adjudicated rows: each row's words' boxes inline
   (self-contained; no index into any words file) plus the row's band.
   Stage: rows.
-- `UserLinesFile` — the reviewer's drawn row indications, normalised.
+- `UserRowAdjustments` — the reviewer's drawn row adjustments, normalised.
   Stage: rows input.
 """
 
@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 
 class PageSize(TypedDict):
@@ -34,40 +34,28 @@ class PageSize(TypedDict):
     height: int
 
 
-class RawWord(TypedDict):
-    """A detector record: the writing shape's box in page pixels, with
-    the measurements the detector made of it (its text line, baseline and
-    waistline)."""
+class Word(TypedDict):
+    """A word: the box in page pixels, with the measurements the
+    detector made of it (its text line, baseline and waistline) when it
+    has them. One type — the words artifact always carries the measures;
+    a row's inline word_boxes carry the box alone."""
 
     x0: float
     y0: float
     x1: float
     y1: float
-    line: int
-    baseline: float
-    waistline: float
+    line: NotRequired[int]
+    baseline: NotRequired[float]
+    waistline: NotRequired[float]
 
 
-class RawWordsFile(TypedDict):
+class Words(TypedDict):
     """Detector stage: the words.json written by `tools.reader`."""
 
-    words: list[RawWord]
+    words: list[Word]
 
 
-class Word(TypedDict):
-    """A plain word box: the 4-key geometry a row can carry."""
-
-    x0: float
-    y0: float
-    x1: float
-    y1: float
-
-
-class SectionBox(Word):
-    """One composed box in the detector's boxes.json."""
-
-
-class PageBoxesFile(TypedDict):
+class Boxes(TypedDict):
     """Detector stage: the boxes.json written by `tools.reader` — each
     box a polygon of [x, y] points, page px."""
 
@@ -75,15 +63,15 @@ class PageBoxesFile(TypedDict):
     boxes: list[list[list[float]]]
 
 
-class UserLinesFile(TypedDict):
+class UserRowAdjustments(TypedDict):
     """Rows-input stage: the reviewer's drawn row indications, one line
     of normalised (0..1) x/y points per polyline."""
 
     lines: list[list[tuple[float, float]]]
 
 
-class StrokesFile(TypedDict):
-    """Detection-input stage: the reviewer's traces, one line of
+class Traces(TypedDict):
+    """Detection-input stage: the reviewer's drawn traces, one line of
     normalised points per polyline."""
 
     strokes: list[list[tuple[float, float]]]
@@ -101,7 +89,7 @@ class Row(TypedDict):
     band: Word
 
 
-class RowsFile(TypedDict):
+class Rows(TypedDict):
     """Rows stage: the adjudicated rows.json, the row contract."""
 
     rows: list[Row]
@@ -129,10 +117,10 @@ def _expect_fields(record: Any, path: Path, what: str, required: set[str], allow
         )
 
 
-def load_raw_words(path: Path) -> RawWordsFile:
+def load_words(path: Path) -> Words:
     """The detector's words.json, validated as the raw stage."""
     data = json.loads(path.read_text(encoding="utf-8"))
-    _validate(path=path, data=data, key="words", expect="RawWordsFile")
+    _validate(path=path, data=data, key="words", expect="Words")
     for i, record in enumerate(data["words"]):
         if not isinstance(record, dict):
             raise ValueError(f"{path}: words[{i}] is not a record")
@@ -142,10 +130,10 @@ def load_raw_words(path: Path) -> RawWordsFile:
     return data  # type: ignore[return-value]  # validated field-by-field above; the checker cannot narrow json.loads
 
 
-def load_rows(path: Path) -> RowsFile:
+def load_rows(path: Path) -> Rows:
     """The adjudicated rows.json, validated as the rows stage."""
     data = json.loads(path.read_text(encoding="utf-8"))
-    _validate(path=path, data=data, key="rows", expect="RowsFile")
+    _validate(path=path, data=data, key="rows", expect="Rows")
     for i, record in enumerate(data["rows"]):
         if not isinstance(record, dict):
             raise ValueError(f"{path}: rows[{i}] is not a record")
@@ -158,10 +146,10 @@ def load_rows(path: Path) -> RowsFile:
     return data  # type: ignore[return-value]  # validated field-by-field above; the checker cannot narrow json.loads
 
 
-def load_user_lines(path: Path) -> UserLinesFile:
+def load_user_row_adjustments(path: Path) -> UserRowAdjustments:
     """The reviewer's drawn lines, validated."""
     data = json.loads(path.read_text(encoding="utf-8"))
-    _validate(path=path, data=data, key="lines", expect="UserLinesFile")
+    _validate(path=path, data=data, key="lines", expect="UserRowAdjustments")
     for i, line in enumerate(data["lines"]):
         if not isinstance(line, list) or not all(
             isinstance(p, list) and len(p) == 2 and all(isinstance(c, (int, float)) for c in p) for p in line
@@ -170,12 +158,12 @@ def load_user_lines(path: Path) -> UserLinesFile:
     return data  # type: ignore[return-value]  # validated polyline-by-polyline above; the checker cannot narrow json.loads
 
 
-def load_page_boxes(path: Path) -> PageBoxesFile:
+def load_boxes(path: Path) -> Boxes:
     """The detector's boxes.json, validated (page size + box polygons)."""
     data = json.loads(path.read_text(encoding="utf-8"))
-    _validate(path=path, data=data, key="boxes", expect="PageBoxesFile")
+    _validate(path=path, data=data, key="boxes", expect="PageBoxes")
     if not isinstance(data.get("page"), dict) or not {"width", "height"} <= set(data["page"]):
-        raise ValueError(f"{path}: no page size — not a PageBoxesFile")
+        raise ValueError(f"{path}: no page size — not a PageBoxes")
     for i, box in enumerate(data["boxes"]):
         if (
             not isinstance(box, list)
@@ -186,8 +174,8 @@ def load_page_boxes(path: Path) -> PageBoxesFile:
     return data  # type: ignore[return-value]  # validated page-and-polygons above; the checker cannot narrow json.loads
 
 
-def load_strokes(path: Path) -> StrokesFile:
+def load_traces(path: Path) -> Traces:
     """The reviewer's traces, validated."""
     data = json.loads(path.read_text(encoding="utf-8"))
-    _validate(path=path, data=data, key="strokes", expect="StrokesFile")
+    _validate(path=path, data=data, key="strokes", expect="Strokes")
     return data  # type: ignore[return-value]  # the top-level shape is checked above; the checker cannot narrow json.loads

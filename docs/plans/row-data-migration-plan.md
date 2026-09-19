@@ -58,7 +58,7 @@ The user's line indications are named so nobody can mistake their
 origin: `user_lines` — the lines the USER drew on the page to say where
 the rows are (the wider-world term for this is the user's line
 markings; the code says it plainly, and the fixture file carrying them
-is `user-lines.json`).
+is `user-row-adjustments.json`).
 
 ### The data home (decision 3) — `tests/fixtures/page01-rows-gold/`
 
@@ -66,7 +66,7 @@ Self-describing, one page's row truth in one place:
 
 - `README.md` — what this is, who drew what, what must reproduce it.
 - `words.json` — page-01's word boxes (455, existing fixture data).
-- `user-lines.json` — the user's drawn row indications (existing
+- `user-row-adjustments.json` — the user's drawn row indications (existing
   `strokes.json`, renamed to say what they are).
 - `rows.json` — the adjudicated rows with typed ids: every word the
   user placed, in its row, with the row's band. This is the contract

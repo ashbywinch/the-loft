@@ -118,18 +118,6 @@ coverage: setup lint typecheck
 evals: setup
 	@$(PYTHON) -m pytest -m eval -q
 
-SPIKE_MAPS := research/spike-word-segmentation/gold/expected-map.png $(wildcard research/spike-word-segmentation/diagnose/site_*.png)
-
-# spike-maps — regenerate the expected map + diagnose zooms from the mapping
-# file, then PROVE the outputs are fresh: every file's hash + mtime printed,
-# and the target fails if any output predates the mapping. A render that
-# silently no-ops (the crop.save deletion, 2026-09-12) can never ship again.
-.PHONY: spike-maps
-spike-maps: setup
-	@$(PYTHON) research/spike-word-segmentation/render_expected_map.py
-	@$(PYTHON) research/spike-word-segmentation/diagnose_sites.py
-	@$(PYTHON) -c "from pathlib import Path; import hashlib, sys; root = Path('research/spike-word-segmentation'); mapping = root / 'gold/expected-mapping.json'; outs = sorted(root.glob('gold/expected-map.png')) + sorted((root / 'diagnose').glob('site_*.png')); mtime = mapping.stat().st_mtime; stale = [str(p) for p in outs if p.stat().st_mtime < mtime]; print('\n'.join(f'{hashlib.md5(p.read_bytes()).hexdigest()[:12]}  {p.stat().st_mtime:.0f}  {p}' for p in [mapping, *outs])); sys.exit(f'STALE: {stale} older than the mapping' if stale else 0)"
-
 # lucidlint (github.com/ashbywinch/lucidlint) — the deterministic code-health
 # gate, wired from its own repo per the project decision (2026-08-16, user):
 # the in-repo code-health tools were deleted in its favour. The gate

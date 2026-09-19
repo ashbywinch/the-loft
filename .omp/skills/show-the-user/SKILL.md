@@ -48,12 +48,27 @@ can leave a 127.0.0.1-only bind). The docroot is
 
 ## Before presenting (mandatory)
 
-1. Regenerate through the tool above — never present a file the current
-   run did not write.
-2. Self-read the fresh file (`read <path>?q=...` with a question that
+1. Verb: SHOW, then confirm. Every claim about the page is an image; a
+   table or row of numbers is never the answer by itself. Numbers appear
+   only as labels ON the image.
+2. A comparison between two states (the user's rows vs the library's, a
+   before/after, two candidate placements) is ONE image with BOTH states
+   side by side, the same window and scale — never two URLs the user must
+   mentally diff, and never a description of the difference.
+3. Draw the evidence the claim depends on: the user's lines, the word
+   boxes, the numbers — whatever the question is about. If the claim is
+   "the lines don't reach these words", the lines MUST be visible on the
+   image.
+4. Regenerate through the tool above — never present a file the current
+   data didn't produce.
+5. Self-read the fresh file (`read <path>?q=...` with a question that
    quotes the caption/labels back) and confirm overlays are present:
-   ad-hoc crops twice shipped without overlays.
-3. Check the file is actually viewable: width ≤ 1000px and the whole page
+   ad-hoc crops twice shipped without overlays, and a double-downscaled
+   pair shipped at 900x56px (2026-09-18) — unreadable. Also pixel-check
+   at the delivered size: `review_image` shrinks everything; a ribbon
+   window can end up a sliver. Check the FINAL file, not the pre-resize
+   canvas.
+6. Check the file is actually viewable: width ≤ 1000px and the whole page
    under ~1MB (2026-09-13: a 1580px contact sheet read as blank on the
    phone; a 3MB PNG page was too heavy to be a review). The review format
    is one file, not a page of files: review copies go through
@@ -63,7 +78,7 @@ can leave a 127.0.0.1-only bind). The docroot is
    asserting the budget (`assert total < 1_200_000`). One URL, one image,
    no HTML frame — an HTML multi-image page renders blank on Android
    Chrome (2026-09-13), while the same bytes as one JPG render fine.
-4. Present the LAN URL (`http://192.168.1.251:8833/<rel>`), one per
+7. Present the LAN URL (`http://192.168.1.251:8833/<rel>`), one per
    artifact, with one line each saying what it shows.
 
 ## Standing rules

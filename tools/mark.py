@@ -94,6 +94,10 @@ class Mark:
         return self.baseline - self.waistline
 
     @property
+    def width(self) -> float:
+        return self.x1 - self.x0
+
+    @property
     def height(self) -> float:
         return self.y1 - self.y0
 
@@ -213,6 +217,68 @@ class Mark:
             return "rule"  # no writing close above it
         writing = max(other.x1 for other in above) - min(other.x0 for other in above)
         return "underline" if abs(width - writing) <= LINE_ALIGN * max(writing, 1.0) else "rule"
+
+    def line_band(self) -> Mark | None:
+        """The fused underline band this piece holds at its bottom, cut off
+        as its own mark — CARVE ONLY, no line judgement: the existing
+        `classify_line` is the one place the line rule is applied, and it
+        can only see pieces the split made. A word's underline residue is
+        welded into the word's own piece, so it never reaches the
+        classifier; this carve separates it (a bottom row-run whose spans
+        run RULE_LONG far, with a gap of non-band rows above it), shrinks
+        the piece to its remaining ink, and returns the band for
+        `line_pieces` to feed the existing classifier (2026-09-19, user:
+        use the underline detection we already have)."""
+        rows = self.rows()
+        ordered = sorted(rows)
+        if not ordered:
+            return None
+        band_rows: list[int] = []
+        for y in reversed(ordered):
+            cols = sorted(rows[y])
+            # a carve CANDIDATE may be shorter than a whole line: a stripped
+            # underline reaches this piece as a fragment (the full row spans
+            # RULE_LONG); and it is a PEN STROKE, dense across its span (the
+            # letters' rows are sparse fragments). The existing classifier is
+            # the judge; the carve is only the door.
+            span = cols[-1] - cols[0]
+            if span < RULE_LONG / 2 or len(cols) < BROAD_FRACTION * (span + 1):
+                break
+            if band_rows and max(band_rows) - y > 1:
+                break  # a gap of empty rows: the band is a separate stroke
+            band_rows.append(y)
+        if not band_rows:
+            return None
+        band = self.piece([(y, x) for y in band_rows for x in rows[y]], self.line, int(min(band_rows)))
+        if band.height <= 0:
+            if len(band_rows) != 1 or band.pix[0].size == 0:
+                return None
+            band = Mark(
+                x0=band.x0,
+                y0=band.y0,
+                x1=band.x1,
+                y1=band.y0 + 1,  # a 1px stroke: the classifier needs height
+                baseline=band.baseline,
+                waistline=band.waistline,
+                area=band.area,
+                cx=band.cx,
+                pix=band.pix,
+                line=band.line,
+                id=band.id,
+            )
+        bound = set(band_rows)
+        remaining = [(y, x) for y in rows for x in rows[y] if y not in bound]
+        if remaining:
+            self.pix = (
+                np.asarray([p[0] for p in remaining], dtype=np.float32),
+                np.asarray([p[1] for p in remaining], dtype=np.float32),
+            )
+            self.x0 = float(min(p[1] for p in remaining))
+            self.x1 = float(max(p[1] for p in remaining))
+            self.y0 = float(min(p[0] for p in remaining))
+            self.y1 = float(max(p[0] for p in remaining))
+            self.area = float(len(remaining))
+        return band
 
 
 BROAD_FRACTION = 0.25  # x the word's width: a row holding this much ink is the writing

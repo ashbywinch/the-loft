@@ -395,7 +395,11 @@ def test_an_underline_does_not_join_words(page01_writing) -> None:
         for s in marks.values()
         if s.x0 * SCALE >= 1164 and s.x1 * SCALE <= 1802 and s.y0 * SCALE >= 3640 and s.y1 * SCALE <= 3718
     ]
-    assert len(window) == 5, f"{len(window)} marks in the five-word window, want 5"
+    # six marks now (2026-09-19): the underline's residue is stripped before
+    # the weld, so the five words return separately AND the island that was
+    # inside the weld's envelope (mark 13897, "Henny"'s W) is exposed as its
+    # own component instead of hidden — a joining decision for the gap rule.
+    assert len(window) == 6, f"{len(window)} marks in the five-word window, want 6 incl. the exposed island"
 
 
 @pytest.fixture(scope="module")

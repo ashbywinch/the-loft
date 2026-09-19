@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from tools.rows import Box, Rows
-from tools.schemas import Row, load_page_boxes, load_raw_words, load_rows, load_user_lines
+from tools.schemas import Row, load_boxes, load_rows, load_user_row_adjustments, load_words
 
 FIXTURE = Path(__file__).parent / "fixtures" / "page01-rows-gold"
 PAGE_SIZE = (1000, 1000)
@@ -106,9 +106,9 @@ def test_the_adjudicated_rows_are_reproduced() -> None:
     row's band; (3) a word the lines cannot place still lives inside an
     adjudicated row's band (the rulings are in rows.json, not inferred).
     A difference here is a snag to adjudicate, never a silent fix."""
-    words = load_raw_words(FIXTURE / "words.json")["words"]
-    lines = load_user_lines(FIXTURE / "user-lines.json")["lines"]
-    page = load_page_boxes(Path("tests/fixtures/page01-wordseg/boxes.json"))["page"]
+    words = load_words(FIXTURE / "words.json")["words"]
+    lines = load_user_row_adjustments(FIXTURE / "user-row-adjustments.json")["lines"]
+    page = load_boxes(Path("tests/fixtures/page01-wordseg/boxes.json"))["page"]
     boxes = [Box(w["x0"], w["y0"], w["x1"], w["y1"]) for w in words]
     adjudicated = load_rows(FIXTURE / "rows.json")["rows"]
     built = Rows.build(boxes, lines, (page["width"], page["height"]), [w["baseline"] for w in words])

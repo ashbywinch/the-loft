@@ -25,7 +25,7 @@ OUT = Path(__file__).resolve().parent / "evidence"
 PAGE = json.loads((FIXTURE_WORDSEG / "boxes.json").read_text(encoding="utf-8"))["page"]
 
 WORDS = json.loads((FIXTURE / "words.json").read_text(encoding="utf-8"))["words"]
-LINES = json.loads((FIXTURE / "user-lines.json").read_text(encoding="utf-8"))["lines"]
+LINES = json.loads((FIXTURE / "user-row-adjustments.json").read_text(encoding="utf-8"))["lines"]
 ROWS = json.loads((FIXTURE / "rows.json").read_text(encoding="utf-8"))["rows"]
 RENDER_ID = {
     page: render

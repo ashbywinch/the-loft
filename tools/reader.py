@@ -238,7 +238,15 @@ def line_pieces(pieces: list[Mark], unit: float) -> list[Mark]:
     by_parent: dict[str, list[Mark]] = {}
     for piece in pieces:
         by_parent.setdefault(piece.id.split("_")[0], []).append(piece)
-    return [
+    carved: list[Mark] = []
+    for piece in list(pieces):
+        band = piece.line_band()
+        if band is not None:
+            band.id = f"{piece.id}_line"
+            family = [o for o in by_parent[piece.id.split("_")[0]] if o is not piece]
+            if band.classify_line(family, pieces, unit) is not None:
+                carved.append(band)  # the existing line rule says it is a line: strip it
+    return carved + [
         piece
         for piece in pieces
         if piece.classify_line([o for o in by_parent[piece.id.split("_")[0]] if o is not piece], pieces, unit)

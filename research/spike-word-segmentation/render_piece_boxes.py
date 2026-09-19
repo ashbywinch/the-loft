@@ -23,6 +23,8 @@ from tools.pagescale import PageScale, line_ratio, traced_pitch, writing_scale
 from tools.reader import LineFitter, artifacts, ink_mask, split_shapes
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
+if not SCAN.exists():
+    raise SystemExit(f"render_* needs the adopt batch mounted - the scan is not at {SCAN}")
 FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-wordseg"
 OUT = Path(__file__).resolve().parent / "evidence" / "piece-boxes.jpg"
 

@@ -233,7 +233,10 @@ def page01_marks() -> dict:
     """The mark finder alone: ink_mask + artifacts + find_marks. No line
     fitting, no box splitting. User 2026-09-14: the four-word block
     (upper pair over Myra Hess) must arrive as left and right marks apart,
-    each spanning both lines (the vertical weld is the splitter's job)."""
+    each spanning both lines (the vertical weld is the splitter's job).
+    The canonical scan lives on the adopt batch's removable media — these
+    tests skip when it is not mounted (the repo's archive/marker pattern:
+    `make verify` runs them where the media exists; CI skips them)."""
     import sys
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -243,6 +246,8 @@ def page01_marks() -> dict:
     from tools.reader import artifacts, ink_mask
 
     scan = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
+    if not scan.exists():
+        pytest.skip("the canonical scan (the adopt batch's oriented page-01) is not mounted")
     page = Image.open(scan)
     mask = ink_mask(page)
     artifacts(mask)

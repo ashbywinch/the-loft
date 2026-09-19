@@ -70,13 +70,17 @@ def letter() -> dict:
 
 @pytest.fixture(scope="module")
 def scans(letter: dict) -> tuple[Image.Image, list[list[tuple[float, float]]]]:
-    """The page-01 scan and the reviewer's strokes - the drawing regression
-    tests render the CONFIRMED drawings on the real page."""
+    """The page-01 scan and the reviewer's strokes — the drawing
+    regression tests render the CONFIRMED drawings on the real page.
+    Those pins depend on the letter's real geometry, which the 400x300
+    fallback cannot carry — so they skip when the canonical scan is not
+    mounted (the repo's archive/marker pattern; CI has no work disk)."""
     scan = _painted_page()  # fallback; replaced by the real page below
 
     real = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
-    if real.exists():
-        scan = Image.open(real)
+    if not real.exists():
+        pytest.skip("the canonical scan (the adopt batch's oriented page-01) is not mounted")
+    scan = Image.open(real)
     w, h = letter["page"]["width"], letter["page"]["height"]
     strokes = [[(x * w, y * h) for x, y in s] for s in letter["strokes"]]
     return scan, strokes

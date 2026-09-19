@@ -420,8 +420,10 @@ def _words_within(words, window: tuple[float, float, float, float]) -> list:
 
 def test_the_box_above_342_is_two_words(page01_words) -> None:
     """User 2026-09-16, on the render: 'your box 2 in the image shows two words
-    stacked' — box 334 (x1416-1520, y4492-4544) is one word box today."""
-    inside = _words_within(page01_words, (1405.0, 4480.0, 1530.0, 4555.0))
+    stacked' — box 334 (x1416-1520, y4492-4544) holds word 1 (y4492-4536) and
+    the top of word 2 (y4538-4544, its rest in 342's component below, up to
+    y4570). The window reaches y4600 so the merged second word counts."""
+    inside = _words_within(page01_words, (1405.0, 4480.0, 1530.0, 4600.0))
     assert len(inside) == 2, f"{len(inside)} word box(es) at x1416-1520 y4492-4544, want the two stacked words"
 
 
@@ -449,18 +451,21 @@ def test_no_word_box_contains_another(page01_words) -> None:
     assert not nested, f"{len(nested)} word box(es) contain another, e.g. {nested[0]}"
 
 
-def test_the_bug_keeps_its_main_piece_whole(page01_shapes) -> None:
-    """id=4847's lower body (y2680–2768 today): the waist rule merges the
-    mid-body flip at y2710 (ink widening 71→89→115 straight through it), so
-    the body stays one piece. The y2680 cut stands: 1–2px rows above it."""
+def test_the_crossed_out_rows_split_at_the_gap(page01_shapes) -> None:
+    """id=4847's two crossed-out rows are two pieces (user 2026-09-17: 'each
+    crossed-out line its own box'). The gap rule cuts at the near-empty rows
+    y2730-2734 between the bands — the boundary lands in the gap, neither row
+    loses its ink (supersedes the 2026-09-16 pin, which held the lower body's
+    crown on: the crown IS the first crossed-out row)."""
     from tools.mark import SCALE
     from tools.reader import split_shapes
 
     by_id, lines, scale = page01_shapes
     got = split_shapes([by_id["4847"]], lines, scale.unit)
-    main = [p for p in got if p.y1 * SCALE >= 2760]
-    assert len(main) == 1, f"lower body split in {len(main)}: {[int(p.y0 * SCALE) for p in main]}"
-    assert main[0].y0 * SCALE <= 2700, f"main piece starts at {main[0].y0 * SCALE:.0f}, cut ate its crown"
+    assert len(got) == 2, f"4847 gave {len(got)} piece(s), want the two crossed-out rows"
+    upper, lower = sorted(got, key=lambda p: p.y0)
+    assert 2720 <= upper.y1 * SCALE <= 2748, f"split at {upper.y1 * SCALE:.0f}, outside the gap y2730-2734"
+    assert lower.y1 * SCALE >= 2760, "the lower row lost its bottom"
 
 
 def test_the_split_pair_is_one_word(page01_shapes) -> None:
@@ -481,17 +486,19 @@ def test_the_pupil_block_reads_four_words(page01_shapes) -> None:
     y2556 is a chop, must refuse). Raw 2875's upper piece is a word fragment
     that must NOT be split off (user 2026-09-16: 'that upper piece is indeed a
     word fragment that shouldn't be split. That's unrelated to the fact that
-    the picture contains two words'), so 2875 stays one piece. Raw 2911 welds
+    the picture contains two words'), so the mid-word chop stays merged; the
+    picture's TWO words are 'of' and 'hess', and user 2026-09-17 ruled box 47
+    (same mark) splits there — the gap rule cuts at y2558. Raw 2911 welds
     the word on the line above to the word below and that separation is
     correct (2 pieces). No rule/underline is claimed in 2875."""
     from tools.reader import split_shapes
 
     by_id, lines, scale = page01_shapes
     pupil = split_shapes([by_id["2723"]], lines, scale.unit)
-    of = split_shapes([by_id["2875"]], lines, scale.unit)
+    of_hess = split_shapes([by_id["2875"]], lines, scale.unit)
     myra_hess = split_shapes([by_id["2911"]], lines, scale.unit)
     assert len(pupil) == 1, f"2723 (one digit) split in {len(pupil)}"
-    assert len(of) == 1, f"2875 gave {len(of)} piece(s), want 1 (the fragment stays with its word)"
+    assert len(of_hess) == 2, f"2875 gave {len(of_hess)} piece(s), want 'of' | 'hess' (user 2026-09-17)"
     assert len(myra_hess) == 2, f"2911 (upper word + lower word) gave {len(myra_hess)} piece(s), want 2"
 
 

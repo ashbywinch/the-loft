@@ -1054,3 +1054,77 @@ Status RESOLVED 2026-09-14 (user's eye rulings are ground truth):
 row-splitter kept at baseline; `tests/test_reader.py` pins the live status
 honestly (gate 14 failed / 712 passed: 10 reader pins + 4 pre-existing
 spike-gold). OPEN: the vertical-gap design.
+
+## The word-segmentation session (2026-09-17/18) — gaps, bands, continuations, underlines
+
+Page: `page-01.jpg` of the adopt batch — a dense cursive ledger. `tools/reader.py`
++ `tools/mark.py` cut each ink mark into words; the baseline was 360 word boxes / 39
+lines. The user flagged three boxes on the numbered render:
+
+- **334** (x1416–1520, y4492–4544): "two words stacked — two words with a gap and a bridge".
+- **47** (x1950–2002, y2542–2596): "of" over "hess".
+- **37** (x1484–2010, y2276–2768): a 526×492 "weld" that must not be one word (each crossed-out line its own box).
+
+The full-page audit also found a welded underline at (1164,3640,1516,3696) containing
+three words (nested-pair test: 33 offenders at baseline).
+
+### Attempts and why each was reverted (the box diff vs the 360-word baseline JSON was the arbiter)
+
+1. **Naive "move every refused fit boundary to the thinnest row"** — 46 boxes changed
+   outside the targets; reverted.
+2. **Fallback moved-cut** (moved boundary accepted only when the pieces pass the bars)
+   — a no-op, "of" still failed the width bar; reverted.
+3. **Lower `WORD_MIN_WIDTH` 0.8→0.4 × x-height** (so "of" passes) — 25 real-pipeline
+   words split, including the user-ruled one-word 5555 and a single letter "A"; the
+   5555 pin failed. The reduction does NOT fix 47 (its gap boundary is never proposed
+   by the fit). Reverted; the bar stays 0.8. (Full visible cost: `evidence/all-25-split-v2.jpg`.)
+4. **Region welds / directly-below merges** — 35+27 and 26+18 box changes page-wide; reverted.
+5. **Continuation = topmost adjacent same-line mark below** — +105/−125 (chains of
+   words absorbed); reverted. Narrowed to gap-0 + same fitted line + continuation not
+   word-shaped alone → exactly one page-wide hit (342): the 334 fix.
+6. **Stroke-bridge skip** (a piece whose every row runs ≥60% of its width isn't a
+   fragment) — +62/−56 (word tails mis-read as lines). The `RULE_LONG ≥ 70px` floor
+   fixed it: only real underlines clear it.
+7. **Flat-but-wobbly = words** (the band test reads the bounding box, not straightness)
+   — split single crossed-out lines at x722/x964; reverted. The row-split's real
+   blocker is the fitted-line assignment, not the shape test.
+
+### What is true (measured)
+
+- **37's "square"**: a continuous 2px vertical rule at page x2008 — the only column on
+  the page with a 239-row continuous run — plus the two crossed-out rows (runs 202–278px).
+  The rule is form ink and is stripped first (`Writing._strip_vertical_rules`); the two
+  crossed-out rows then become their own boxes (gap cut at y2732).
+- **The gap rule** (`Writing._gap_row`): a row whose longest run is ≤¼ of both flanks,
+  with substantial flanks, and whose two sides sit on DIFFERENT fitted lines, is a cut —
+  47 at 0.22, the crossed-out rows at 0.03. A tie at exactly 0.25 (the single "A"
+  letter's internal gap) is refused (strict comparison).
+- **A gap cut's pieces** must be tall enough and joined-up; the width and flatness bars
+  are waived because the gap, not shape, is the separation evidence ("of" is a real word
+  thinner than the width bar; a crossed-out row is flatter than the aspect bar; but a gap
+  cannot make an 8px sliver or two ascenders into a word — `is_word_shaped(waive_band,
+  waive_width)`).
+- **334's continuation** (`Writing._continuation`): word 2's top (y4538–4544, 4px of ink)
+  continues in the mark whose ink starts exactly at the shape's bottom edge, sits on the
+  boundary's own line, and is NOT a word alone (342: x1424–1440, w9). Result: word 1
+  (1416,4492,1520,4536) + word 2 (1424,4538,1496,4570); 342 absorbed.
+- **The y3640 underline** (`Writing._band_cut` + the `classify_line` stroke rule):
+  an underline welded under its words has rows running ≥60% of the mark's width (the fit
+  never flips there); the band is cut into its own segment, the bridge test no longer
+  vetoes a stroke-built piece ≥70px long, and the strip removes it. Nested pairs 33 → 1;
+  the last ((1164,3640,1386,3688) ⊃ (1314,3646,1348,3680), two words still fused) is open.
+
+### End state
+
+- Reader suite 31 passed / 1 failed (baseline 29/3 with 47 red); the 4 pre-existing
+  spike-gold failures unchanged (their saved snapshots need regeneration — separate work).
+- The cut logic lives as `Writing` methods — (marks, lines, unit) travelled together
+  because they ARE the writing's fields. `word_measures` → `WordShape` (one measurement
+  for both word tests). Filed as lucidlint issue ashbywinch/lucidlint#22.
+- `boxdet.py` / `boxsimple.py` / `boxscale.py` deleted (the dead predecessor pipeline;
+  "boxdet's machinery dies" per boxsimple's own thesis; nothing imported them).
+- User ruling 2026-09-18: **9690** (998,3220,1076,3282) is two words — but the pipeline
+  keeps it one (one fitted line; its inter-word gap scores 0.5, too shallow). OPEN
+  targeted fix, deliberately not a new page-wide rule.
+- Numbered zoom renders: `research/spike-word-segmentation/evidence/` via
+  `render_case_zooms.py`; decisions: `docs/plans/design-decisions.md` (2026-09-17/18 rows).

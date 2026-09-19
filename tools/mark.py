@@ -41,6 +41,34 @@ WORD_MIN_HEIGHT = 0.38  # × the x-height: shorter ink is a word's fragment
 WORD_FULL_LINE = 0.6  # × the x-height: this tall and the piece is a line of writing
 WORD_MIN_WIDTH = 0.8  # × the x-height: narrower ink cannot hold a word
 WORD_EMPTY_MAX = 0.25  # of its columns, under a full line: disconnected ascender
+BAND_RUN = 0.6  # of a mark's width: rows running this far are a line's ink
+RULE_LONG = 70  # 1/2 px: a line spans more than a word; a word's tail does not
+
+
+@dataclass(frozen=True)
+class WordShape:
+    """A piece's shape as the word tests read it: height, width and
+    joined-up-ness — the three numbers the word test and the gap rule judge
+    with (lucidlint 2026-09-18: the 3-tuple's positions carried meaning the
+    call sites could not see)."""
+
+    height: float
+    width: float
+    empty: float
+
+
+def word_measures(piece: Mark) -> WordShape:
+    """The piece's shape numbers — both the word test and the gap rule read
+    them (lucidlint 2026-09-18: the duplicated measurement in the gap rule
+    was a 91% copy of is_word_shaped). The piece must hold ink; the guard is
+    the caller's."""
+    ys, xs = np.asarray(piece.pix[0]).astype(int), np.asarray(piece.pix[1]).astype(int)
+    width = float(xs.max() - xs.min() + 1)
+    return WordShape(
+        height=float(ys.max() - ys.min() + 1),
+        width=width,
+        empty=1.0 - len(set(xs.tolist())) / width,
+    )
 
 
 @dataclass
@@ -118,27 +146,36 @@ class Mark:
             theirs = {x for y, x in zip(oys, oxs, strict=False) if y >= oys.max() - 1}
         return len(mine & theirs)
 
-    def is_word_shaped(self, unit: float) -> bool:
+    def is_word_shaped(self, unit: float, *, waive_band: bool = False, waive_width: bool = False) -> bool:
         """A piece that could be a word: tall enough to hold letter bodies, wide
         enough to hold more than a stroke, and joined up.
 
         User 2026-09-16, on the case sheets: 2911's upper piece is 'a full word
         that's all joined up'; 1970's is 'very discontinuous pieces of
         ascender'. So a fragment is short, narrow, or full of empty columns —
-        and a cut that would leave one is a chop, not a word boundary."""
-        ys, xs = np.asarray(self.pix[0]).astype(int), np.asarray(self.pix[1]).astype(int)
-        if len(ys) == 0:
+        and a cut that would leave one is a chop, not a word boundary.
+
+        `waive_band` and `waive_width` relax the two checks that exist to
+        spot fragments at cuts the line-fit proposes: a fit-sliced piece tends
+        to be thin (width) or flat (aspect), so those checks refuse it. A cut
+        made at a measured ink gap needs no such guess — the near-empty row
+        already proves the two sides are separate things — so the thin and
+        flat checks have no job: 'of' is a real word despite being thinner
+        than the width check allows, and a crossed-out row is a real unit
+        despite being flatter than the aspect check allows. The height and
+        joined-up checks are about the piece itself, not the boundary: a gap
+        can separate two things but cannot make an 8-pixel sliver or two stray
+        ascenders into a word, so they stay enforced (user 2026-09-18: the gap
+        rule must never accept 'just two ascenders')."""
+        shape = word_measures(self)
+        if shape.height < WORD_MIN_HEIGHT * unit or (shape.width < WORD_MIN_WIDTH * unit and not waive_width):
             return False
-        height = float(ys.max() - ys.min() + 1)
-        width = float(xs.max() - xs.min() + 1)
-        if height < WORD_MIN_HEIGHT * unit or width < WORD_MIN_WIDTH * unit:
-            return False
-        if width >= RULE_ASPECT * height:
+        if not waive_band and shape.width >= RULE_ASPECT * shape.height:
             return False  # a band this wide for its height is a line, not a word
-        if height < WORD_FULL_LINE * unit:
+        if shape.height < WORD_FULL_LINE * unit:
             # too short to be a whole line of writing: it must be joined up, not
             # the detached tips of a word's ascenders
-            return 1.0 - len(set(xs.tolist())) / width <= WORD_EMPTY_MAX
+            return shape.empty <= WORD_EMPTY_MAX
         return True
 
     def classify_line(self, others: list[Mark], page: list[Mark], unit: float) -> str | None:
@@ -158,8 +195,12 @@ class Mark:
         width, height = self.x1 - self.x0, self.y1 - self.y0
         if height <= 0 or height > LINE_HEIGHT * unit or width < RULE_ASPECT * height:
             return None
-        if sum(self._bridge_columns(other) for other in others) > RULE_TOUCH * width:
+        ys, xs = np.asarray(self.pix[0]).astype(int), np.asarray(self.pix[1]).astype(int)
+        runs = list(Ink(ys, xs).longest_runs().values())
+        stroke = len(runs) >= 2 and all(run >= BAND_RUN * width for run in runs) and width >= RULE_LONG
+        if not stroke and sum(self._bridge_columns(other) for other in others) > RULE_TOUCH * width:
             return None  # welded to the rest of the word: a fragment, not a line
+
         above = [
             other
             for other in page

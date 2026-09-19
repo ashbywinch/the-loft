@@ -22,8 +22,8 @@ import numpy as np
 from PIL import Image, ImageFilter
 
 from tools.line import Line
-from tools.mark import SCALE, SHAPE_MIN_AREA, Ink, Mark, find_marks
-from tools.pagescale import PageScale, line_ratio, traced_pitch, writing_scale
+from tools.mark import BAND_RUN, SCALE, SHAPE_MIN_AREA, Ink, Mark, find_marks
+from tools.pagescale import LINE_RATIO_DEFAULT, PageScale, line_ratio, traced_pitch, writing_scale
 from tools.trace import Box, Trace
 
 BATCH = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004")
@@ -37,6 +37,8 @@ LINE_ROUNDS = 3  # strip-and-regroup rounds: a line can hide behind another
 ROW_MERGE = 2  # 1/2 px: rows this close belong to the same piece of a cut shape
 WAIST_RUN = 10  # columns: a cut row running this far is a band of ink, not a stroke tip
 WAIST_OVERLAP = 0.5  # of the shorter longest-run: this much overlap is one band
+
+VERTICAL_RULE_MIN_HEIGHT = 100  # 1/2 px: a vertical rule runs the height of several lines
 
 
 def ink_mask(page: Image.Image) -> np.ndarray:
@@ -163,10 +165,6 @@ class LineFitter:
         return lines
 
 
-def line_of_shape(shape: Mark, lines: list[Line]) -> int:
-    return min(range(len(lines)), key=lambda i: lines[i].distance(shape.cx, shape.baseline))
-
-
 def _longest_interval(cols: list[int]) -> tuple[int, int]:
     """The longest continuous column run on one row: the band's own span."""
     ordered = sorted(cols)
@@ -209,71 +207,24 @@ def _piece_between(shape: Mark, segment: list[int]) -> Mark:
     return shape.piece(_rows_ink(shape, segment[1], segment[2]), segment[0], segment[1])
 
 
-def _boundary_is_a_cut(shape: Mark, above: list[int], below: list[int], unit: float) -> bool:
-    """Whether the boundary between two segments is a real cut.
-
-    It is one only when the ink either side is word-shaped — two words meeting
-    — or when one side is a rule/underline, which is a line and cedes. A cut
-    that would leave a word's fragment (short, narrow, or discontinuous ink)
-    is refused: the two sides stay one piece."""
-    upper = _piece_between(shape, above)
-    lower = _piece_between(shape, below)
-    if upper.classify_line([lower], [upper, lower], unit) or lower.classify_line([upper], [upper, lower], unit):
-        return True
-    return upper.is_word_shaped(unit) and lower.is_word_shaped(unit)
+GAP_FRACTION = 0.25  # of the flanking ink: a row this much thinner is a gap
+GAP_WINDOW = 4  # rows either side whose median run is the flank
+GAP_MIN_FLANK = 3  # 1/2 px: a gap between scraps of ink cuts nothing
 
 
 def split_shapes(shapes: list[Mark], lines: list[Line], unit: float) -> list[Mark]:
-    """Every shape belongs to one line; a shape spanning two lines is split.
+    """The words these marks make at this scale, exposed for the tests.
 
-    Candidate boundaries come from the row fit: each ink ROW is assigned to its
-    nearest fitted line, and the assignment changes are the candidate cuts. A
-    candidate stands only where the ink either side is word-shaped (or is a
-    rule/underline); everywhere else the rows stay one piece, so the fit's
-    wobble across a single word cuts nothing.
-    """
-    out: list[Mark] = []
-    for shape in shapes:
-        segments = _candidate_segments(lines, shape)
-        groups: list[list[int]] = []
-        for segment in segments:
-            if groups and not _boundary_is_a_cut(shape, groups[-1], segment, unit):
-                groups[-1][2] = segment[2]
-            else:
-                groups.append(list(segment))
-        if len(groups) == 1:
-            shape.line = groups[0][0]
-            out.append(shape)
-            continue
-        for line_index, y0, y1 in groups:
-            ink = _rows_ink(shape, y0, y1)
-            if len(ink) < SHAPE_MIN_AREA // 2:
-                continue
-            piece = shape.piece(ink, line_index, y0)
-            if piece.is_streak:
-                continue
-            out.append(piece)
-    return out
-
-
-def _candidate_segments(lines: list[Line], shape: Mark) -> list[list[int]]:
-    """The cuts a shape's row fit proposes: its ink rows grouped by which
-    fitted line each row's centre is nearest, split where the assignment
-    changes and the ink narrows to a waist."""
-    per_row = shape.rows()
-    ys, xs = shape.pix
-    runs = Ink(ys, xs).longest_runs()
-    segments: list[list[int]] = []
-    for y in sorted(per_row):
-        xc = sum(per_row[y]) / len(per_row[y])
-        nearest = min(range(len(lines)), key=lambda i: lines[i].distance(xc, y))
-        if segments and segments[-1][0] == nearest and y - segments[-1][2] <= ROW_MERGE:
-            segments[-1][2] = y
-        elif segments and segments[-1][0] != nearest and not _is_waist(per_row, runs, segments[-1][2], y):
-            segments[-1] = [segments[-1][0], segments[-1][1], y]
-        else:
-            segments.append([nearest, y, y])
-    return segments
+    The pipeline itself cuts via the Writing's own methods; a bare
+    shapes/lines/unit tuple is a Writing waiting to be measured (lucidlint
+    2026-09-18: the three threaded through the cut functions are the
+    writing's own fields)."""
+    return Writing(
+        marks=shapes,
+        lines=lines,
+        scale=PageScale(unit=unit, pitch=LINE_RATIO_DEFAULT * unit),
+        stripped=0,
+    )._words_of()
 
 
 def line_pieces(pieces: list[Mark], unit: float) -> list[Mark]:
@@ -338,6 +289,7 @@ class Writing:
 
         The scale comes from the marks, which is why the measuring is inside the
         loop; LINE_ROUNDS bounds it."""
+        cls._strip_vertical_rules(mask)
         marks = find_marks(mask)
         scale = _page_scale(marks, traced)
         stripped = 0
@@ -356,7 +308,7 @@ class Writing:
         """The words: the marks cut where both sides of a boundary are
         word-shaped. A streak the cut freed is not writing either, so it leaves
         the marks and joins `stripped`."""
-        cut = split_shapes(self.marks, self.lines, unit)
+        cut = self._words_of()
         words = [mark for mark in cut if not mark.is_streak]
         freed = Writing(
             marks=words,
@@ -365,6 +317,235 @@ class Writing:
             stripped=self.stripped + len(cut) - len(words),
         )
         return freed._settled()
+
+    # The words: every boundary a mark may hold, and the tests that judge it.
+    # These live on the Writing, not on the mark — whether a strip of ink is
+    # one word, two words or a line is answered by the page's own rows, ruler
+    # and other marks, never by the strip alone (lucidlint 2026-09-18: the
+    # (marks, lines, unit) clump threaded through the cut functions is the
+    # writing's own state). The gap cut uses the word test with its two
+    # waived bars named at the call site.
+
+    def _words_of(self) -> list[Mark]:
+        """The marks, cut where the writing's geometry says each holds more
+        than one word. A continuation's mark is absorbed, not boxed apart."""
+        out: list[Mark] = []
+        absorbed: set[str] = set()
+        for shape in self.marks:
+            if shape.id in absorbed:
+                continue
+            groups, continuations = self._word_groups(shape)
+            absorbed.update(continuation.id.split("_")[0] for continuation in continuations.values())
+            out.extend(self._word_pieces(shape, groups, continuations))
+        return out
+
+    def _word_pieces(self, shape: Mark, groups: list[list[int]], continuations: dict[int, Mark]) -> list[Mark]:
+        """The pieces the groups become, each continuation's ink joined to its
+        group and the line pieces left for the strip."""
+        pieces: list[Mark] = []
+        for index, (line_index, y0, y1) in enumerate(groups):
+            ink = _rows_ink(shape, y0, y1)
+            continuation = continuations.get(index)
+            if continuation is not None:
+                ys, xs = continuation.pix
+                ink += [(y, x) for y, x in zip(ys.astype(int), xs.astype(int), strict=False)]
+            if len(ink) < SHAPE_MIN_AREA // 2:
+                continue
+            piece = shape.piece(ink, line_index, y0)
+            if piece.is_streak:
+                continue
+            pieces.append(piece)
+        return pieces
+
+    def _word_groups(self, shape: Mark) -> tuple[list[list[int]], dict[int, Mark]]:
+        """The shape's row groups after every boundary verdict — the fit's
+        cuts, the lines' ceding, the continuation split at the shape's bottom.
+        A single fused group is split at its deep gap when the pieces are
+        words' worths of ink."""
+        segments = self._candidate_segments(shape)
+        groups: list[list[int]] = []
+        continuations: dict[int, Mark] = {}
+        for segment in segments:
+            if groups:
+                cut, continuation = self._is_a_cut(shape, groups[-1], segment)
+                if not cut:
+                    groups[-1][2] = segment[2]
+                else:
+                    if continuation is not None:
+                        continuations[len(groups)] = continuation
+                    groups.append(list(segment))
+            else:
+                groups.append(list(segment))
+        if len(groups) == 1:
+            split_y = self._gap_row(shape)
+            if split_y is not None and self._gap_pieces_are_words(shape, groups[0], split_y):
+                line, y0, y1 = groups[0]
+                groups = [[line, y0, split_y], [line, split_y + 1, y1]]
+        return groups, continuations
+
+    def _gap_pieces_are_words(self, shape: Mark, group: list[int], split_y: int) -> bool:
+        """The two pieces a gap split makes must be tall enough to hold
+        letters and joined up — the gap proves the pieces are separate, but
+        it does not make a sliver or a pair of ascenders into a word (user
+        2026-09-18: the y3456 gap cut produced 'just two ascenders'). The
+        thin and flat checks are waived: they exist to spot fragments at
+        fit-proposed cuts, and a gap needs no such guess — it admits narrow
+        words like 'of' and flat crossed-out rows."""
+        line, y0, y1 = group
+        upper = shape.piece(_rows_ink(shape, y0, split_y), line, y0)
+        lower = shape.piece(_rows_ink(shape, split_y + 1, y1), line, split_y + 1)
+        return upper.is_word_shaped(self.scale.unit, waive_band=True, waive_width=True) and lower.is_word_shaped(
+            self.scale.unit, waive_band=True, waive_width=True
+        )
+
+    def _gap_row(self, shape: Mark) -> int | None:
+        """The row whose ink is a deep local minimum, if any: the boundary
+        between stacked words or crossed-out rows (user 2026-09-17: 'cut
+        where the gap is'). The row's longest run must be at most a quarter
+        of the flanking ink, the flanks substantial, and the two sides on
+        DIFFERENT fitted lines — a gap inside one line is a word's letter
+        space (user 2026-09-18: the gap rule split 6475 and 2875, words with
+        internal gaps; their pieces' majority lines matched)."""
+        rows, runs = self._row_runs(shape)
+        score, split_y = self._deepest_gap(rows, runs)
+        if score >= GAP_FRACTION:
+            return None  # strict: a tie at the boundary is a letter's internal gap
+        per_row = shape.rows()
+        upper = [y for y in rows if y <= split_y]
+        lower = [y for y in rows if y > split_y]
+        if not upper or not lower:
+            return None
+        if self._majority_line(per_row, upper) == self._majority_line(per_row, lower):
+            return None
+        return split_y
+
+    def _row_runs(self, shape: Mark) -> tuple[list[int], dict[int, int]]:
+        """The shape's rows and each row's longest run."""
+        runs = Ink(np.asarray(shape.pix[0]).astype(int), np.asarray(shape.pix[1]).astype(int)).longest_runs()
+        return sorted(runs), runs
+
+    def _deepest_gap(self, rows: list[int], runs: dict[int, int]) -> tuple[float, int]:
+        """The deepest local ink minimum among the rows, away from the mark's
+        edges, with both flanks substantial."""
+        best: tuple[float, int] = (1.0, rows[0])
+        for i, y in enumerate(rows):
+            if i < GAP_WINDOW or i >= len(rows) - GAP_WINDOW:
+                continue
+            above = float(np.median([runs[rows[j]] for j in range(i - GAP_WINDOW, i)]))
+            below = float(np.median([runs[rows[j]] for j in range(i + 1, i + 1 + GAP_WINDOW)]))
+            flank = max(above, below)
+            if flank < GAP_MIN_FLANK:
+                continue
+            score = runs[y] / flank
+            if score < best[0]:
+                best = (score, y)
+        return best
+
+    def _majority_line(self, per_row: dict[int, list[int]], ys: list[int]) -> int:
+        """The fitted line most of these rows sit nearest — which side of a
+        gap this ink belongs to."""
+        counts: dict[int, int] = {}
+        for y in ys:
+            xc = sum(per_row[y]) / len(per_row[y])
+            line = min(range(len(self.lines)), key=lambda i: self.lines[i].distance(xc, y))
+            counts[line] = counts.get(line, 0) + 1
+        return max(counts, key=counts.__getitem__)
+
+    def _is_a_cut(self, shape: Mark, above: list[int], below: list[int]) -> tuple[bool, Mark | None]:
+        """Whether the boundary between two of the shape's segments is a real
+        cut: both sides word-shaped, or one side a rule/underline that cedes.
+        Fragments refuse the cut — except at the shape's bottom edge, where
+        the word's ink continues in the mark beneath it (a word split across
+        two components by a crossing line). Such a continuation legitimizes
+        the cut and is returned so its mark can be absorbed into the piece
+        (user 2026-09-18: box 334, 'two words with a gap and a bridge')."""
+        upper = _piece_between(shape, above)
+        lower = _piece_between(shape, below)
+        if upper.classify_line([lower], [upper, lower], self.scale.unit) or lower.classify_line(
+            [upper], [upper, lower], self.scale.unit
+        ):
+            return True, None
+        if upper.is_word_shaped(self.scale.unit) and lower.is_word_shaped(self.scale.unit):
+            return True, None
+        if below[2] == shape.y1:
+            continuation = self._continuation(shape, below)
+            if continuation is not None:
+                ys, xs = continuation.pix
+                ink = _rows_ink(shape, below[1], below[2]) + [
+                    (y, x) for y, x in zip(ys.astype(int), xs.astype(int), strict=False)
+                ]
+                if shape.piece(ink, below[0], below[1]).is_word_shaped(self.scale.unit):
+                    return True, continuation
+        return False, None
+
+    def _continuation(self, shape: Mark, below: list[int]) -> Mark | None:
+        """The mark directly beneath the shape whose ink is the same word's
+        rest: its ink starts exactly at the shape's bottom edge, it sits on
+        the boundary's own fitted line, and it is NOT a word on its own (a
+        full word below is a different word — measured 2026-09-18: 342, w9,
+        is the only such mark on the page; the seven others are whole words
+        and must not be absorbed). The word leans, so no column overlap."""
+        candidates = [
+            other
+            for other in self.marks
+            if other is not shape
+            and other.y0 == shape.y1
+            and other.y1 > shape.y1
+            and self._line_of(other) == below[0]
+            and not other.is_word_shaped(self.scale.unit)
+        ]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda mark: mark.y0)
+
+    def _line_of(self, shape: Mark) -> int:
+        """The fitted line this mark sits nearest — its row in the writing."""
+        return min(range(len(self.lines)), key=lambda i: self.lines[i].distance(shape.cx, shape.baseline))
+
+    def _candidate_segments(self, shape: Mark) -> list[list[int]]:
+        """The cuts the shape's row fit proposes: its ink rows grouped by
+        which fitted line each row's centre is nearest, split where the
+        assignment changes and the ink narrows to a waist — plus the band
+        split: rows whose runs span most of the mark's width are a stroke's
+        ink, and a stroke inside a mark is a line to strip (an underline
+        welded under its words; user 2026-09-18: 'a regression in your code
+        to identify underlines'). A single stray long row is a letter's
+        stroke, not a line."""
+        per_row = shape.rows()
+        ys, xs = shape.pix
+        runs = Ink(ys, xs).longest_runs()
+        segments: list[list[int]] = []
+        for y in sorted(per_row):
+            xc = sum(per_row[y]) / len(per_row[y])
+            nearest = min(range(len(self.lines)), key=lambda i: self.lines[i].distance(xc, y))
+            if segments and segments[-1][0] == nearest and y - segments[-1][2] <= ROW_MERGE:
+                segments[-1][2] = y
+            elif segments and segments[-1][0] != nearest and not _is_waist(per_row, runs, segments[-1][2], y):
+                segments[-1] = [segments[-1][0], segments[-1][1], y]
+            else:
+                segments.append([nearest, y, y])
+        return self._band_cut(segments, shape, runs)
+
+    def _band_cut(self, segments: list[list[int]], shape: Mark, runs: dict[int, int]) -> list[list[int]]:
+        """The underline's band of rows, cut into its own segment so the
+        strip can classify and remove it."""
+        ys, xs = shape.pix
+        width = float(xs.max() - xs.min() + 1)
+        band = [y for y in shape.rows() if runs[y] >= BAND_RUN * width]
+        if len(band) < 2:
+            return segments
+        lo, hi = band[0], band[-1]
+        out: list[list[int]] = []
+        for line_index, y0, y1 in segments:
+            if y1 < lo or y0 > hi:
+                out.append([line_index, y0, y1])
+                continue
+            if y0 < lo:
+                out.append([line_index, y0, lo - 1])
+            out.append([line_index, lo, hi])
+            if y1 > hi:
+                out.append([line_index, hi + 1, y1])
+        return out
 
     def _settled(self) -> Writing:
         """The lines fitted to these words and attached to them: the cut and the
@@ -380,9 +561,39 @@ class Writing:
     def _attach(self, lines: list[Line]) -> None:
         """Every mark knows its line, and every line its marks."""
         for mark in self.marks:
-            mark.line = line_of_shape(mark, lines)
+            mark.line = self._line_of(mark)
         for index, line in enumerate(lines):
             line.shapes = [mark for mark in self.marks if mark.line == index]
+
+    @staticmethod
+    def _strip_vertical_rules(mask: np.ndarray) -> None:
+        """Take the vertical rules' ink out of the raster; a rule is not writing.
+
+        A vertical rule is the one column of ink that runs continuously for the
+        height of several lines. On this page exactly one column does — the 2px
+        form rule at x2008 whose long run welds the crossed-out rows into the
+        fake "square" (user 2026-09-17: 'the weird vertical rule that we don't
+        [want]'). Letters' strokes never run that far continuously, so the
+        floor is safe. The rule's run, not the whole column, is removed: the
+        column's other ink is writing that merely crosses the rule."""
+        for x in range(mask.shape[1]):
+            ys = np.flatnonzero(mask[:, x])
+            if len(ys) == 0:
+                continue
+            run = 1
+            run_start = ys[0]
+            longest = run_start
+            longest_run = 1
+            for above, below in zip(ys, ys[1:], strict=False):
+                if below == above + 1:
+                    run += 1
+                    if run > longest_run:
+                        longest_run = run
+                        longest = below - run + 1
+                else:
+                    run = 1
+            if longest_run >= VERTICAL_RULE_MIN_HEIGHT:
+                mask[longest : longest + longest_run, x] = False
 
     @staticmethod
     def _strip(mask: np.ndarray, lines: list[Mark]) -> None:

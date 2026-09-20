@@ -164,3 +164,44 @@ sequenceDiagram
 
 Each step lands with the repo's test conventions; nothing changes
 behaviour before its typed boundary exists.
+## Developer requirements
+
+The code must meet these (the user-facing half lives in
+`docs/prd/pipeline-stages-spec.md`; the PRD's scope rule keeps
+technology out of that folder).
+
+### DR1. The pipeline is findable and understandable from the code alone
+
+A developer opening the repo without context must be able to name the
+stages, their objects, and their artefacts:
+
+- One stage vocabulary in code (`tools/stages.py`) naming the eight
+  stages, each with its object, its artefact, and whether it needs human
+  input.
+- The object model is authoritative: Mark, Word, Row, Trace, Document,
+  Person/Relationship/Place/Theme/Org. The transport types (reader,
+  pipeline, server) are actors over these objects, not stage nouns.
+- The row-building algorithm is a method on its object:
+  `Rows.from_words(words, row_adjustments, page_size)` — not a
+  separately named algorithm; the drawn-lines invariants are the row
+  object's validation action (`Rows.validate(traces)`), and the file
+  currently named "boxjig" is renamed away (a "jig" is not domain
+  vocabulary).
+
+### DR2. The archive is legible full stop
+
+Nothing in the archive folder may confuse a reader about how it fits
+into the pipeline. The files are arranged **by page first, then by
+pipeline phase**; the FINAL agreed artefacts are the most prominent
+thing to find, with the intermediate products (proposed rows, draft
+Documents) present but less prominent. The artefacts that are not per
+page — the identity tables (people, relationships, places, themes,
+orgs) and the captured stories/memories — need a consciously chosen
+arrangement of their own (the design task above), so a reader can see
+where each kind lives and how the pages' agreed Documents feed it.
+
+### DR3. The website export is understandable
+
+The export for the website (the app's `data/` files) must be traceable
+from the pipeline: which agreed artefacts and identity tables feed which
+exported file, and how the export is regenerated.

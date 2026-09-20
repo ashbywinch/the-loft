@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,9 +27,9 @@ from tools.mark import BAND_RUN, SCALE, SHAPE_MIN_AREA, Ink, Mark, find_marks
 from tools.pagescale import LINE_RATIO_DEFAULT, PageScale, line_ratio, traced_pitch, writing_scale
 from tools.trace import Box, Trace
 
-BATCH = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004")
+BATCH = Path(os.environ.get("LOFT_BATCH", "/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004"))
 PAGE = BATCH / "oriented/page-01.jpg"
-TRACE = Path("/tmp/trace")
+TRACE = Path(os.environ.get("LOFT_TRACE_DIR", "/tmp/trace"))
 INK_DELTA = 25  # grey levels below the local paper level = ink
 SPREAD_FACTOR = 1.2  # × pitch: a line whose members spread further is two lines
 CLUSTER_DIVISOR = 2  # pitch ÷ this: how far a member may sit from its cluster

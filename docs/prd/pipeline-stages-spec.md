@@ -1,12 +1,11 @@
-# Pipeline stages — specification
+# Pipeline stages — user requirements
 
-The eight product stages, from the user's side, with the developer
-requirements the code must meet. The companion plan (the refactor steps)
-lives in `docs/plans/pipeline-stages-plan.md`.
+The eight product stages as the user experiences them. The developer
+requirements the code must meet (the object model, the archive
+legibility, the website export) live in
+`docs/plans/pipeline-stages-plan.md`, alongside the refactor plan.
 
-## User requirements
-
-### UR1. The eight stages
+## UR1. The eight stages
 
 1. **Marks** — the detected ink strokes (automatic).
 2. **Words** — the word boxes made from marks (automatic).
@@ -34,7 +33,7 @@ lives in `docs/plans/pipeline-stages-plan.md`.
 8. **Identified entities** — Person, Relationship, Place, Theme, Org,
    with their mentions linked into the agreed Documents.
 
-### UR2. One portal — "work that needs doing"
+## UR2. One portal — "work that needs doing"
 
 One page in the UI lists every pending human item, with counts and
 routing:
@@ -50,7 +49,7 @@ routing:
 Each item opens the right surface. Nothing human-looping lives outside
 the portal.
 
-### UR3. New scans are picked up automatically
+## UR3. New scans are picked up automatically
 
 When scans are added, the backend notices them itself and runs the
 machine stages — orient, marks, words, draft rows — so the pages arrive
@@ -58,39 +57,3 @@ at the row-check stage with no manual steps. The draft rows must exist
 WITHOUT any drawn lines (the words' own line structure), because whether
 lines are needed is the user's determination; the row check then decides
 whether adjustments are necessary.
-
-## Developer requirements
-
-### DR1. The pipeline is findable and understandable from the code alone
-
-A developer opening the repo without context must be able to name the
-stages, their objects, and their artefacts:
-
-- One stage vocabulary in code (`tools/stages.py`) naming the eight
-  stages, each with its object, its artefact, and whether it needs human
-  input.
-- The object model is authoritative: Mark, Word, Row, Trace, Document,
-  Person/Relationship/Place/Theme/Org. The transport types (reader,
-  pipeline, server) are actors over these objects, not stage nouns.
-- The row-building algorithm is a method on its object:
-  `Rows.from_words(words, user_lines, page_size)` — not a separately
-  named algorithm; the drawn-lines invariants are the row object's
-  validation action (`Rows.validate(traces)`), and the file currently
-  named "boxjig" is renamed away (a "jig" is not domain vocabulary).
-### DR2. The archive is legible full stop
-
-Nothing in the archive folder may confuse a reader about how it fits
-into the pipeline. The files are arranged **by page first, then by
-pipeline phase**; the FINAL agreed artefacts are the most prominent
-thing to find, with the intermediate products (proposed rows, draft
-Documents) present but less prominent. The artefacts that are not per
-page — the identity tables (people, relationships, places, themes,
-orgs) and the captured stories/memories — need a consciously chosen
-arrangement of their own, decided as part of the plan (see the plan's
-design task), so a reader can see where each kind lives and how the
-pages' agreed Documents feed it.
-### DR3. The website export is understandable
-
-The export for the website (the app's `data/` files) must be traceable
-from the pipeline: which agreed artefacts and identity tables feed which
-exported file, and how the export is regenerated.

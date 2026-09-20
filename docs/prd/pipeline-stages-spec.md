@@ -1,41 +1,40 @@
 # Pipeline stages — user requirements
 
-The eight product stages as the user experiences them. The developer
-requirements the code must meet (the object model, the archive
-legibility, the website export) live in
-`docs/plans/pipeline-stages-plan.md`, alongside the refactor plan.
+User requirements for the stages that an image needs to go through. 
 
-## UR1. The eight stages
+## UR1. The eight stages to process an image of writing
 
-1. **Marks** — the detected ink strokes (automatic).
-2. **Words** — the word boxes made from marks (automatic).
-3. **Rows** — the proposed rows (automatic, from the words and the
-   drawn lines).
-4. **Rows fixed when wrong** — the requirement is that the user can fix
-   rows the pipeline identified wrongly; drawing yellow lines is the
-   MECHANISM, not a requirement in itself. Whether any lines are
+0. **Orient** - Establish which way up the page is
+1. **Marks** — The system detects ink strokes
+2. **Words** — The system creates word boxes from the marks
+3. **Rows** — The system creates proposed rows from the words
+4. **User adjusted rows** — The user is able to fix
+   rows the pipeline identified wrongly, as simply and quickly as possible.
+   Our hypothesis is that having the user
+   draw lines across any (real) rows that were not identified correctly is
+   the best way to implement this. Whether any lines are
    necessary is the user's determination — if the rows are already
    correct, no lines are needed. The user must not need to add lines to
    rows that are already correct: an **incomplete set of lines merges
    with the draft rows**, live as the user lifts their finger from
-   drawing a line, so a wrong line can be deleted and redrawn
-   immediately.
-5. **Rows agreed** — the rows as built from the drawn lines (no separate
-   agreement step; the same object as 3).
-6. **Proposed transcripts** — the draft Document: each row with the
-   proposed text. During transcription, **the VLM decides what is an
-   interjection and where it injects** (which line it inserts into); the
-   decision is shown to the user for agreement, never hidden.
-7. **Agreed transcripts** — the Document after the user's review: the
-   review gate lets the user correct it, so the agreed Document is most
-   likely NOT the draft — it carries the user's edits. The draft may be
-   PARTLY user-corrected before the review is finished.
-8. **Identified entities** — Person, Relationship, Place, Theme, Org,
-   with their mentions linked into the agreed Documents.
+   drawing a line, so the user can see if they've drawn the line incorrectly and can delete
+   and redraw it immediately.
+   User adjusted rows are of the exact same type as the proposed rows.
+5. **Proposed transcripts** — the draft Document: each row with the
+   proposed text, as well as metadata about whether each row is a normal row,
+   marginalia, or an interjection (text intended to be inserted at a specific point in
+   another row).
+6. **Agreed transcripts** — the Document after the user's review and any corrections.
+7. **Proposed entities** — Person, Relationship, Place, Theme, Org, mentioned in the document.
+    These entities may be already existing in the system or new entities that haven't been
+   previously documented.
+8. **Agreed entities** - Person, Relationship, Place, Theme, Org, with all their
+    properties agreed by the user. A user may also identify Stories during this
+   process. A Story in turn needs to go through the same process of agreeing entities.
 
 ## UR2. One portal — "work that needs doing"
 
-One page in the UI lists every pending human item, with counts and
+One page in the UI lists every pending human work item, with counts and
 routing:
 
 - **Check the rows** — the pages whose rows have not been through the
@@ -43,8 +42,9 @@ routing:
   yellow lines are needed (none are, if the rows are already right).
 - **Review the transcripts** — the draft Documents awaiting the gate,
   e.g. "2 documents need review".
-- **Identify people/places** — the proposed entities awaiting
-  confirmation, e.g. "4 people, 1 place proposed".
+- **Identify people/places** — Documents awaiting 
+  confirmation of the entities therein, e.g. "2 documents need review"
+  (this may include Stories that the logged in user has told).
 
 Each item opens the right surface. Nothing human-looping lives outside
 the portal.

@@ -508,3 +508,19 @@ def test_persona_guard_allows_reviewer_introduced_vocabulary() -> None:
     assert persona_errors(result, reviewer_text="I'm fairly sure the import has it right") == []
     # the same question is a violation when the reviewer never said it
     assert persona_errors(result)
+
+
+def test_persona_guard_error_carries_the_full_text() -> None:
+    # a failed evaluation must show the WHOLE model output, never a
+    # truncated slice — the 80-char cut hid the offending words on
+    # 2026-09-23 and made the diagnosis a gateway-log archaeology hunt
+    from tools.eval_review import persona_errors
+
+    question = (
+        "She mentioned several people, but I wanted to be sure about Walter's name "
+        "before I asked anything further about the other brother whose records still "
+        "need closer inspection, because the exact wording is awaiting confirmation. "
+    )
+    assert len(question) > 80, "the fixture must exceed the old truncation bound"
+    errors = persona_errors({"relevant": "true", "question": question})
+    assert errors == [f"question echoes the system ('awaiting'): {question}"]

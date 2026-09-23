@@ -165,14 +165,22 @@ def _facts() -> ReviewContext:
         relationships=tuple(RELATIONSHIPS),
     )
 
+    # The assistant's words never echo the system's — the hired genealogist's
+    # voice (PRD: "the assistant reads as a hired genealogist, not a computer",
+    # 2026-08-09; user: "make sure the requirement is in all relevant evals").
+    # The family never meets the process vocabulary: no third-person "the user",
+    # no "the import", no statuses or internal states, no "awaiting" — UNLESS
+    # the reviewer used the word themselves: echoing the family's own
+    # vocabulary is how they understand you (2026-08-15, user).
+    #
+    # "link" is deliberately NOT here: it is an ordinary word normal people
+    # use about family connections ("his link to Pearl", "the brother link",
+    # "the link between them" — 2026-09-04 and 2026-09-23 eval runs both
+    # tripped the guard on natural prose). The requirement is to spare the
+    # family jargon they do not understand; "link" is not that jargon
+    # (user, 2026-09-23).
 
-# The assistant's words never echo the system's — the hired genealogist's
-# voice (PRD: "the assistant reads as a hired genealogist, not a computer",
-# 2026-08-09; user: "make sure the requirement is in all relevant evals").
-# The family never meets the process vocabulary: no third-person "the user",
-# no "the import", no statuses or internal states, no "link" or "awaiting" —
-# UNLESS the reviewer used the word themselves: echoing the family's own
-# vocabulary is how they understand you (2026-08-15, user).
+
 PERSONA_JARGON = (
     "the user's recollection",
     "the import",
@@ -180,11 +188,6 @@ PERSONA_JARGON = (
     "import proposes",
     "the archive has a record for",
     "awaiting",
-    # bare "link" fired on natural genealogical prose ("his link to
-    # Pearl" — 2026-09-04 eval run); R1's own vocabulary is "the link",
-    # so the guard matches the article — the possessive passes, the
-    # process phrasing ("the link between the two records") still trips
-    "the link",
     "status",
     "estimated",
     "proposed",
@@ -220,7 +223,7 @@ def persona_errors(result: dict[str, Any], reviewer_text: str = "") -> list[str]
         text = f.get("text", "") if isinstance(f, dict) else str(f)
         fields.append((f"findings[{i}]", text))
     return [
-        f"{field} echoes the system ('{word}'): {text[:80]}"
+        f"{field} echoes the system ('{word}'): {text}"
         for field, text in fields
         for word in PERSONA_JARGON
         if word in text and word not in reviewer_text
@@ -245,7 +248,7 @@ def _feedback_errors(result: dict[str, Any]) -> list[str]:
     for i, step in enumerate(steps[:-1]):
         raw = str(step.get("model", ""))
         if raw and "tool" not in step and raw not in final:
-            errors.append(f"trace step {i}'s answer was not fed back into the prompt: {raw[:80]}")
+            errors.append(f"trace step {i}'s answer was not fed back into the prompt: {raw}")
     return errors
 
 

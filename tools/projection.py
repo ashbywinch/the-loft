@@ -1,5 +1,5 @@
 """The derivation engine — everything computed from the archive's primary
-data, in one place (docs/TECH-SPEC.md §3): resolved items (highest sidecar,
+data, in one place (docs/TECHSPEC.md §3): resolved items (highest sidecar,
 primary content embedded from its file), identity tables, the index and
 transcripts. Publish (batch), import (scan ingest) and the capture server
 (site stories) all derive through this module — never a second copy of the
@@ -425,7 +425,7 @@ def publish(archive: Archive, out: Path) -> None:
 class Projection:
     """The derived app-facing surface (app/data) — the noun behind
     ``Archive.publish()``. The projection is a cache: never hand-edited; a
-    change is a change to the archive, then re-publish (TECH-SPEC §3-5).
+    change is a change to the archive, then re-publish (TECHSPEC §3-5).
     """
 
     def __init__(self, archive: Archive, out: Path) -> None:

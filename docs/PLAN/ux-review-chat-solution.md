@@ -1,9 +1,13 @@
 # Review-chat redesign — suggested solution
 
-> The parallel to `docs/plans/ux-fixes-plan.md`'s review-chat findings (R1–R14).
+> The parallel to `docs/PLAN/ux-fixes-plan.md`'s review-chat findings (R1–R14).
 > This is a **proposal**, not a landed spec: the flow's redesign that resolves
 > every finding from the 2026-08-08→09 walk. Landed decisions go in the PRD /
 > UI.md / CHAT-UX.md layers once the user agrees.
+> Status (2026-09-22): superseded as the agreed mechanism by the
+> claim-model direction (`docs/PLAN/INGEST-PLAN.md`, 2026-08-10, agreed
+> but unbuilt) — its dispositions map onto the claim phases. Kept as the
+> resolution design for R1–R14.
 
 ## The problem in one line
 

@@ -236,7 +236,7 @@ rec's ink for precision. Next candidates:
 
 ## 2026-08-22 — the model trial (5 models x 2 tasks, OpenRouter)
 
-The full report: `docs/plans/model-trial-report.md` — the table + the
+The full report: `docs/PLAN/model-trial-report.md` — the table + the
 visual breakdown. The summary:
 
 - All 5 models (glm-4.6v, glm-4.5v, qwen2.5-vl-72b, gpt-4.1-mini,
@@ -1127,4 +1127,4 @@ three words (nested-pair test: 33 offenders at baseline).
   keeps it one (one fitted line; its inter-word gap scores 0.5, too shallow). OPEN
   targeted fix, deliberately not a new page-wide rule.
 - Numbered zoom renders: `research/spike-word-segmentation/evidence/` via
-  `render_case_zooms.py`; decisions: `docs/plans/design-decisions.md` (2026-09-17/18 rows).
+  `render_case_zooms.py`; decisions: `docs/PLAN/design-decisions.md` (2026-09-17/18 rows).

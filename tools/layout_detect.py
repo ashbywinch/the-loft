@@ -1,4 +1,4 @@
-"""The layout pass's segment stage (TECH-SPEC §16.16/§16.17).
+"""The layout pass's segment stage (TECHSPEC §16.16/§16.17).
 
 The §16.17 single pass: ONE multimodal call per page returns every text
 segment with verbatim text, orientation, and a pixel box

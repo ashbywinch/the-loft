@@ -1,7 +1,7 @@
 # Family History Album — Tech Spec & Architecture
 
-- **Status:** v0.3 — **for review** · §16 Import flow added (plans/PLAN.md Phase 1 draft, 2026-08-02)
-- **Date:** 2026-08-02 · Companion to `prd/PRD.md` v0.5
+- **Status:** v0.3 — **for review** · §16 Import flow added (PLAN/PLAN.md Phase 1 draft, 2026-08-02)
+- **Date:** 2026-08-02 · Companion to `PRD/PRD.md` v0.5
 - **After approval:** prototype with fake content (`tools/fake-data`), per §13.
 
 ---
@@ -54,7 +54,7 @@ archive/
 - **Sidecar-first (P3.4) — what it means:** each item folder holds its content (scans, the story text, the transcription draft) *plus* a small JSON file sitting alongside them (a *sidecar* — the term comes from photography's XMP files) with that item's metadata. There is no single database blob: `index.json` and `transcripts.json` are derived summaries, regenerable from the sidecars. One corrupt file loses one item, never the archive — and merging a cousin's archive later is just merging sidecar folders.
 - **Primary vs derived (requirement, 2026-08-04).** *Primary data* — scans, photos, story text, testimonies, anything a user provides or states directly through the UI — lives in the archive as content files plus sidecars, in a form a reader in 2060 can open. *Derived data* — descriptions, identified people/places/themes/pronouns, the links between documents and people/places, relationships, the index and transcripts — is computed by one shared engine (`tools/projection.py`) from the primary data **only**, and is never hand-edited: not in the projection, and never the only copy. The engine runs in the batch publish path, in scan import, and in the site-capture save path — one implementation, three entry points, no duplication.
 - **Append-only (requirement, 2026-08-03, enforced in the archive 2026-08-04):** no file in the archive is ever edited or deleted — a change is a new file that supersedes the old one, and the old file stays forever. **One documented exception (2026-08-05):** the proposed-queue reject path (`reject_proposed_person`/`reject_proposed_place`) deletes the *proposed* record file via the store's single `delete` — a proposed record is a transient review work item that has never been published, not an artifact; everything that has ever shipped stays append-only. A sidecar's first version is `item.json`; a supersession is a new self-contained file `item-2.json`, `item-3.json`, … (the full metadata again, plus `supersedes: "<previous file>"`). Primary content files version with their sidecar (v1 → `story.txt`, v2 → `story-2.txt`). Publish/rebuild tooling resolves the highest version; deletion is a supersession with `status: "deleted"`. The identity tables (`people.json`, `places.json`, `themes.json`) follow the same rule when written. The derived files (`index.json`, `transcripts.json`, `app/data/*`, thumbs) are regenerable caches — they are rebuilt, never treated as canonical, and hand-editing them is a bug (a test fails the committed projection against publish). All writes go through one append-only store (`tools/store.py`); tests inject a fake filesystem that fails on any write to an existing file. The regression that motivated this: the relationships table lived only in the derived projection, got hand-edited, and was lost in a merge — the archive now holds the identity tables, and the projection is regenerated from them.
-- **Database vs project content (2026-08-02).** The database is the archive: items, sidecars, people, places, themes, relationships, testimonies — everything the app renders. Project content — code, docs (PRD, TECH-SPEC, PLAN, PRECEDENT), the private interview records, tests — records decisions and process; a fact becomes database content only as an attributed item (sidecar, testimony, person record), never by living in a doc. Interview transcripts enter the database as dated, attributed, verbatim story items (`told_by` the narrator, `source` the session, one item per session) — the project keeps its own working records under whatever names, but the archive never holds a doc called INTERVIEW.md. The same rule applies to code: real content never lives in a tool — `tools/demo_data.py` is the fictional demo generator (docs/coding-standards.md), and a test guards that the real family's names never appear in it.
+- **Database vs project content (2026-08-02).** The database is the archive: items, sidecars, people, places, themes, relationships, testimonies — everything the app renders. Project content — code, docs (PRD, TECHSPEC, PLAN, PRECEDENT), the private interview records, tests — records decisions and process; a fact becomes database content only as an attributed item (sidecar, testimony, person record), never by living in a doc. Interview transcripts enter the database as dated, attributed, verbatim story items (`told_by` the narrator, `source` the session, one item per session) — the project keeps its own working records under whatever names, but the archive never holds a doc called INTERVIEW.md. The same rule applies to code: real content never lives in a tool — `tools/demo_data.py` is the fictional demo generator (docs/coding-standards.md), and a test guards that the real family's names never appear in it.
 - **The object model lives in one module (2026-08-05):** `tools/records.py` defines Person, Place, Org, Relationship, Item and every closed vocabulary (relationship kinds, date precisions, item types/statuses); `archive.save_item` validates sidecars against the Item record at the write seam — a developer reads the model in one place, and the archive and the model can never drift.
 - **The indexing posture (2026-08-03):** no server database — the folder is the store, and every derived layer (index, transcripts, hashes, search, future embeddings) regenerates from the sidecars. The derived layers upgrade as needed (pre-built search index, queue as a derived view); SQLite-as-*cache* (never the store — regenerable, so it preserves the invariant, but costs tooling) is the revisitable knob past ~100k items or if SQL queries are genuinely needed. **`edits.jsonl`** — an append-only, plain-text audit log (timestamp, item, field, old → new, who) for every write; the one truth file that is a log, not a cache, and the answer to the no-history gap (corrections currently overwrite silently).
 - **IDs are stable forever:** `letter-1963-05-14-01`, `photo-1972-06-01`. Never renamed, never reused.
@@ -112,7 +112,7 @@ archive/
   `reflection: true` (perspective; no events' date — dated by its told day;
   must name people/places refs), never both. The `published()` seam (data.js)
   excludes both from every discovery surface; they render only in their
-  blocks on the pages they attest/mention (see prd/MEMORIES.md).
+  blocks on the pages they attest/mention (see PRD/MEMORIES.md).
 - **Evidence flag (2026-08-06):** a found record — a web capture, a
   directory page — is `evidence: true` (non-story types only; must name
   people/places/items refs). It is not a family happening: the `published()`
@@ -279,7 +279,7 @@ Capture: `<input type="file" capture>` or MediaDevices; auto-sequence naming (`l
 | 5 | **Tools language — RESOLVED:** Python (user, 2026-08-02) | — |
 | 6 | **Hosting target** — free static host for the app; archive home = Google Drive free tier | Cloudflare Pages (or Netlify / GitHub Pages) + Drive; nothing paid, nothing self-hosted |
 | 7 | **Working title — RESOLVED:** "The Loft" (user approved, 2026-08-02) | — |
-| 8 | **No PIN on the projection — open by design** (the archive account is the gate) | **SUPERSEDED (2026-08-03, §7/F6):** no public surface at all until accounts land — the projection is family-only; nothing deploys before the F6 gate (plans/PLAN.md) |
+| 8 | **No PIN on the projection — open by design** (the archive account is the gate) | **SUPERSEDED (2026-08-03, §7/F6):** no public surface at all until accounts land — the projection is family-only; nothing deploys before the F6 gate (PLAN/PLAN.md) |
 | 9 | **Family relationships** — typed edges in `people.json`; person pages show relationship labels; `#/tree` renders generations | **RESOLVED (user, 2026-08-02)** — built in the prototype. **Alignment (2026-08-05):** no genealogy *tooling* (the PRD anti-pattern) is not the same as no object-model standard — **GEDCOM X** is adopted as the object-model reference (person/relationship/agent/event/place/source vocabulary; **residence events replace the place-household field** — the standard's model is better); **date precision extended** with `before`/`after`/`between` so the mapping is lossless; `tools/export-gedcom` targets **GEDCOM 7.0** with a documented one-to-one mapping (excludes proposed links and proposed residence; stories shoehorn as NOTES on the people they reference); **`tools/import-gedcom`** is the inverse (ids recovered via REFN, places by name) and the round-trip is exact — verified by tests and on the real archive; both sides parse-verified with `gedcom7` (strict ABNF grammar) |
 | 10 | **Live system store** — multi-user curation and corpus-scale generation need a real store; the folder stays the durable materialized contract | **RESOLVED (user, 2026-08-03)** — Supabase (Postgres + pgvector); small family-user set; generation on the reviewer's laptop; tenant isolation is a far-future seam (§14), not built |
 
@@ -316,7 +316,7 @@ OCR transcription drafts, photo labeling, theme/entity discovery, TTS — the `p
 
 ## 16. Import flow (capture → archive → app)
 
-**Status:** draft — plans/PLAN.md Phase 1 deliverable, reviewed via the import interview (2026-08-05). The flow is specified in `docs/prd/IMPORT-PRD.md` (rules A–N, questions Q1–Q7, the staged review, the landed model additions); this section stays the normative home and the private worked-example review remains the real-import baseline. Decisions resolved with the reviewer 2026-08-02; family-instance facts live in the private interview records, referenced here.
+**Status:** draft — PLAN/PLAN.md Phase 1 deliverable, reviewed via the import interview (2026-08-05). The flow is specified in `docs/PRD/IMPORT-PRD.md` (rules A–N, questions Q1–Q7, the staged review, the landed model additions); this section stays the normative home and the private worked-example review remains the real-import baseline. Decisions resolved with the reviewer 2026-08-02; family-instance facts live in the private interview records, referenced here.
 
 ### 16.1 The loop
 
@@ -333,7 +333,7 @@ boxes → the user's scan area (their folders — adopted by hash, §16.13)
 
 ### 16.2 Scanner conventions (resolved, user 2026-08-02)
 
-- **Operator:** the reviewer alone, at home, own pace. Supersedes plans/PLAN.md's brother-scanner-day assumption.
+- **Operator:** the reviewer alone, at home, own pace. Supersedes PLAN/PLAN.md's brother-scanner-day assumption.
 - **Gear:** an **Epson FastFoto FF-680W** (2026-08-13) — sheet-fed ADF for letters *and* photos, duplex, 600 dpi optical, WiFi (eSCL) + USB; no flatbed, so 35 mm slides remain uncovered; Android phone scan app for odd sizes.
 
 | Requirement | Why |
@@ -383,7 +383,7 @@ boxes → the user's scan area (their folders — adopted by hash, §16.13)
 ### 16.6 Publish and the phone path
 
 - **Sync:** `tools/upload-drive` mirrors the local archive to the dedicated family account (exists — user, 2026-08-02). Split from import (which §5 bundled) so a dropped connection never loses catalog work.
-- **Publish:** `loft publish` regenerates `app/data` from the local archive (identity tables + sidecars + primary content files — metadata, thumbnails, stories, transcriptions); the static host serves it. Drafts appear in the projection (the owner's drafts surface reads them, 2026-08-03) and are filtered from the archival views by `catalogued()`; tombstoned items never publish. **Hard gate (2026-08-03, review):** the publish path refuses (non-zero exit) to target a public host until F6 accounts exist — the release gate in plans/PLAN.md — so the projection's transcriptions can never leak to a public deployment by accident; the only override is an explicit flag for a family-only host. The gate guards the deploy path; the current `loft publish` targets the local projection only.
+- **Publish:** `loft publish` regenerates `app/data` from the local archive (identity tables + sidecars + primary content files — metadata, thumbnails, stories, transcriptions); the static host serves it. Drafts appear in the projection (the owner's drafts surface reads them, 2026-08-03) and are filtered from the archival views by `catalogued()`; tombstoned items never publish. **Hard gate (2026-08-03, review):** the publish path refuses (non-zero exit) to target a public host until F6 accounts exist — the release gate in PLAN/PLAN.md — so the projection's transcriptions can never leak to a public deployment by accident; the only override is an explicit flag for a family-only host. The gate guards the deploy path; the current `loft publish` targets the local projection only.
 - **Phone (Slice 2):** Google Identity Services PKCE against the archive account; `files.create/update` for sidecars, `media` upload for captures; the phone writes byte-compatible sidecars (same schema, same fields). Full-res read only when authenticated (§5).
 - **PWA** caches the projection (Slice 6); the whole browsable archive is cacheable.
 
@@ -451,7 +451,20 @@ The two-letter exercise (2026-08-02) taught that linking is a *process*, not a b
 
 **Disputed evidence.** When a new dated, attributed comment conflicts with a generated assertion (Harper's own account, 2026, vs the 1977 letter's "nervous breakdown or similar"), the assertion leaves the generated text (bios, captions); both accounts remain in the archive, each attributed to its source. The app arranges evidence; it never adjudicates (PRD §10).
 
-**Open question — testimony provenance (2026-08-03).** The interview curation surfaced it: the narrator's judgemental asides are authentic but risk family arguments, and hearsay is not evidence. Should the worksheet/queue mark each testimony's epistemic status — *evidenced* (artifact-backed), *first-hand*, *commentary*, *guess*, *second- or third-hand* — and should interviews probe for that distinction at capture time? (Canonical requirements: PRD §19 — interview-module requirements.)
+**Testimony provenance — RESOLVED (2026-09-22, user ruling): ask, don't classify.** The five-way epistemic taxonomy (evidenced / first-hand / commentary / guess / second- or third-hand) was considered and dropped. When a statement's source matters, the elicitation asks the narrator directly ("Did she say that to you personally?" / "What did you see that made you think that?") and records the answer verbatim, attributed, as the statement's provenance (e.g. `Pete: "Mum used to tell us this all the time"`). Provenance is the narrator's own words — never an inferred status (requirement: PRD §19 req 2).
+
+**The elicitation layer (the story flow, `docs/PRD/MEMORIES.md`).** Story
+capture shares this worksheet machinery: assessment and elicitation run one
+deterministic prompt per stage (temperature 0, JSON out — the books_to_anki
+retry/splice discipline). Output contract: `{extractions: [{kind, name,
+match: existing-id|null, bucket, reason}], questions: [{text, why,
+skippable}]}` plus entity-field proposals (dob, aliases, relationships,
+place precision) entering the review. The assessor's production output is
+re-checked by a second cheap pass; genuine violations (mentions linked,
+impossible matches, redundant questions, missing polite date questions)
+are fed back for a bounded redo — never sampling twice and picking. A date
+from an age + a known date of birth is computed in deterministic code and
+injected as "derived" — the model is never asked to do arithmetic.
 
 ### 16.10 Dedupe & integrity hashes (2026-08-03)
 
@@ -475,6 +488,13 @@ The two-letter exercise (2026-08-02) taught that linking is a *process*, not a b
 
 **The session journal** makes the worksheet crash-safe and resumable: per-batch `state.json` in a work dir records which pages are seen, which boundaries/dates/defaults are decided, and each letter's status; written atomically after every confirmed letter. Re-running resumes exactly where the session stopped — new scans append, never re-prompt. Processing order is arrival order.
 
+**The story-capture server rides the same localhost shape** (MEMORIES):
+the contributions endpoint receives the narrator's account, runs assess +
+elicit through the AI client (env key, never in the browser), and returns
+the review screen's data. The deployed static site renders the affordance
+and shows the same "server not reachable" card when the laptop's server is
+off.
+
 ### 16.12 The live system: multi-user store & corpus generation (direction, 2026-08-03)
 
 The single-curator assumption is dead — **multiple family members curate** (2026-08-03). Flat-file last-write-wins does not hold for concurrent editors, and a flat JSON index is the wrong shape for corpus-scale work (stories, bios, themes generated from the whole archive; embeddings; aggregations). Three layers, preserving the durable contract:
@@ -485,9 +505,13 @@ The single-curator assumption is dead — **multiple family members curate** (20
 
 **What changes vs §5:** the reading side stays static; the curation/analysis side gains a managed backend. Hosting stays out of the house; "nothing paid" is revisited (free tiers; the family's own account). SQLite remains right for one job: the laptop's local generation batch (read-only analytics over a pulled copy) — as a live multi-user store it is out, single-writer.
 
+**The story-capture endpoint migrates with the store:** when the hosted
+store lands, the same contribution endpoint lives there and the local
+story-capture server is deleted — no shims, clean cutover.
+
 ### 16.13 The capture pipeline — the two-zone workspace (2026-08-13)
 
-Requirements: `docs/prd/MULTI-DOC-IMPORT-PRD.md` (R1–R9). Supersedes the
+Requirements: `docs/PRD/MULTI-DOC-IMPORT-PRD.md` (R1–R9). Supersedes the
 older §16.1/§16.3 conventions of an "inbox" of our job folders: the user's
 scan area is **theirs** (R1) — we adopt its folders by content, never by
 path convention.
@@ -593,6 +617,15 @@ strong-word density (rotations.json) decides print vs cursive (real data:
 cursive pages 7–58 strong words, the printed reference 1185). Photos and
 drawings are flagged as image items and never transcribed. Orientation and
 OCR run only on text pages.
+
+**Orientation (Rule J, mechanism).** The `orient` stage reads each text
+page in all four rotations and keeps the read whose tesseract strong-word
+density is highest (per-word confidence ≥ 60, psm 6): the LSTM was trained
+on upright text, so a rotated read fragments words and scores low.
+Deterministic and self-verifying by construction — every explicit
+orientation detector was dropped (2026-08-10): the vision models gave
+contradictory LEFT/RIGHT answers on an upright page, and tesseract's own
+OSD misreported an upright page as 180°.
 
 **The HTR stage uses the field's tooling, not hand-rolled line detection
 (2026-08-13, user: "is there not prior art?").** Cursive pages are read by

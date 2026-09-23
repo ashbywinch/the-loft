@@ -1,5 +1,5 @@
 """Content routing for batches: photo/drawing vs text, and within text,
-cursive vs print (TECH-SPEC §16.14; MULTI-DOC-IMPORT-PRD.md R11–R12).
+cursive vs print (TECHSPEC §16.14; MULTI-DOC-IMPORT-PRD.md R11–R12).
 
 A local zero-shot image classifier (open_clip, MobileCLIP — CPU) decides
 text vs photo vs drawing: image-content discrimination is CLIP's strength.

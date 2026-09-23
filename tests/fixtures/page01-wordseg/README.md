@@ -2,7 +2,7 @@
 
 The spike's canonical inputs for page-01 of `adopt-20260813-201004` (the
 Music College letter, 2544×4642) — see
-`docs/plans/vlm-word-segmentation-spike.md`.
+`docs/PLAN/vlm-word-segmentation-spike.md`.
 
 | File | What | Produced by |
 |---|---|---|

@@ -1,4 +1,4 @@
-"""The HTR stage — cursive pages, read by the field's tooling (TECH-SPEC
+"""The HTR stage — cursive pages, read by the field's tooling (TECHSPEC
 §16.14; MULTI-DOC-IMPORT-PRD.md R10–R12).
 
 Line detection is the prior art, not hand-rolled: kraken 7 + the orli

@@ -30,35 +30,41 @@ Instructions for AI agents working in this repo. Humans can read this too.
 
 | Task | Route to |
 |---|---|
-| Adopt / ingest planning (the batch adoption flow's docs) | `docs/plans/INGEST-PLAN.md` |
-| Product requirements, scope, personas | `docs/prd/PRD.md` |
-| Architecture, stack, data model, decisions | `docs/TECH-SPEC.md` |
-| Pipeline stages, completion markers, and per-page recovery (`make pipeline ARGS="guess\|layout <batch> [page...]"`) | `docs/TECH-SPEC.md` §16.14.2 |
-| Layout / geometry experiments ledger (the ink work's measured findings) | `docs/plans/geometry-experiments-log.md` |
-| The plans/ work logs (trial reports, walkthrough records, snags) | `docs/plans/` — `docs/plans/ocr-verification-research.md`, `docs/plans/model-trial-report.md`, `docs/plans/lucidlint-snag.md`, `docs/plans/ux-review-chat-solution.md`, `docs/plans/INGEST-PLAN.md` |
-| Finishing the §16.17 single-pass landing (close the superseded PRs, the confirm-flow audit) | `docs/plans/single-pass-landing-plan.md` |
-| The layout stage's strip path — its plan, postmortem and reopened seams (ink-projection line bands; the grouping read) | `docs/plans/strip-grouping-plan.md` |
-| Acting on lucidlint findings (fix-engine workflow, baseline, per-file checks) | `skill://lucidlint-workflow`; the repo's findings log at `docs/plans/lucidlint-review-log.md` |
-| Layout redesign requirements (the adjudication draft — layout-requirements-draft) | `docs/plans/layout-requirements-draft.md` |
+| Adopt / ingest planning (the batch adoption flow's docs) | `docs/PLAN/INGEST-PLAN.md` |
+| Product requirements, scope, personas | `docs/PRD/PRD.md` |
+| Architecture, stack, data model, decisions | `docs/TECHSPEC.md` |
+| Pipeline stages, completion markers, and per-page recovery (`make pipeline ARGS="guess\|layout <batch> [page...]"`) | `docs/TECHSPEC.md` §16.14.2 |
+| Layout / geometry experiments ledger (the ink work's measured findings) | `docs/PLAN/geometry-experiments-log.md` |
+| Serving the app — foreground `make serve`; the supervised hub spec that survives daemon restarts | `README.md` (Quick Start → "Supervised dev server") |
+| The PLAN/ work logs (trial reports, walkthrough records, snags) | `docs/PLAN/` — `docs/PLAN/ocr-verification-research.md`, `docs/PLAN/model-trial-report.md`, `docs/PLAN/lucidlint-snag.md`, `docs/PLAN/ux-review-chat-solution.md`, `docs/PLAN/INGEST-PLAN.md` |
+| Finishing the §16.17 single-pass landing (close the superseded PRs, the confirm-flow audit) | `docs/PLAN/single-pass-landing-plan.md` |
+| The layout stage's strip path — its plan, postmortem and reopened seams (ink-projection line bands; the grouping read) | `docs/PLAN/strip-grouping-plan.md` |
+| Acting on lucidlint findings (fix-engine workflow, baseline, per-file checks) | `skill://lucidlint-workflow`; the repo's findings log at `docs/PLAN/lucidlint-review-log.md` |
+| Layout redesign requirements (the adjudication draft — layout-requirements-draft) | `docs/PLAN/layout-requirements-draft.md` |
 | The reader — how a page's writing is found and boxed, and its acceptance check | `docs/box-detection.md`; `tools/reader.py`, `tools/boxjig.py` |
 | The per-word detection internals (ink → connected marks, baseline/waistline measurement, the streak-rule drop) | `tools/mark.py` (`find_marks`, `baseline_row`, `waistline_row`); the page ruler `tools/pagescale.py`; pinned by `tests/test_reader.py` |
 | Showing the user a visual artifact (renders, maps, zooms, case sheets) | `.omp/skills/show-the-user/SKILL.md` — existing tooling only, LAN URL, self-check before presenting |
-| The segment/box review & edit UX (user stories, the box-issue taxonomy, the corner rulings) | `docs/plans/segment-review-stories.md` |
+| The segment/box review & edit UX (user stories, the box-issue taxonomy, the corner rulings) | `docs/PLAN/segment-review-stories.md` |
 |Interview/observation instruments|`docs/DISCOVERY.md`, private session records|
-| The story-capture flow spec ("Add your memory") | `docs/prd/MEMORIES.md` |
-| The artifact-import flow spec + its rules (A–S) | `docs/prd/IMPORT-PRD.md` — the ingest-side planning spec: `docs/prd/INGEST-PRD.md` |
-| The transcription-review surface spec | `docs/prd/TRANSCRIPTION-REVIEW-PRD.md` |
+| The story-capture flow spec ("Add your memory") | `docs/PRD/MEMORIES.md` |
+| The artifact-import flow spec + its rules (A–S) | `docs/PRD/IMPORT-PRD.md` — the ingest-side planning spec: `docs/PRD/INGEST-PRD.md` |
+| The transcription-review surface spec | `docs/PRD/TRANSCRIPTION-REVIEW-PRD.md` |
 | The projection / sqlite plans + the research corpus | `docs/sqlite-projection-plan.md`; `research/archive-longevity-research.md`, `research/ocr-correction-ux-tools-guide.md` |
-| The multi-document capture seam (batches, hashes, sidecars, labels) | `docs/prd/MULTI-DOC-IMPORT-PRD.md` |
+| The multi-document capture seam (batches, hashes, sidecars, labels) | `docs/PRD/MULTI-DOC-IMPORT-PRD.md` |
 | UI / visual conventions (the pattern library) | `docs/UI.md` |
 | Chat / capture-dialog conventions | `docs/CHAT-UX.md` |
-|UX loop working log (statuses, open items)|`docs/plans/ux-fixes-plan.md`|
-|Design decisions with rationale (the register)|`docs/plans/design-decisions.md`|
+|UX loop working log (statuses, open items)|`docs/PLAN/ux-fixes-plan.md`|
+|Design decisions with rationale (the register)|`docs/PLAN/design-decisions.md`|
 | Precedent research | `docs/PRECEDENT.md` |
-| Project plan, slices, urgency | `docs/plans/PLAN.md` |
+| Project plan, slices, urgency | `docs/PLAN/PLAN.md` |
+| The work remaining on the current subset (pipeline, ingest review, layout seams) | `docs/PLAN/WORK-PLAN.md` — the detailed designs are linked per item |
+| The plans folder's map (plan vs record) | `docs/PLAN/README.md` |
 | Code conventions | `docs/coding-standards.md` |
 | Test conventions | `docs/testing-standards.md` |
 | Documentation conventions | `docs/writing-documentation.md` |
+| Documentation structure — the required doc set, folder rules, discoverability | `docs/documentation-structure.md` |
+| UX standards (the reviewer rules and UX-process norms) | `docs/ux-standards.md` |
+| UX spec — the PRD's UX answers + the journeys to usability-test | `docs/UX.md` |
 | Real content (people, relationships, items, story text) | `archive/` — append-only, supersede never edit; regenerate `app/data` with `./loft publish` |
 | Demo content for fake instances | `tools/demo_data.py` — fictional only, never real names |
 
@@ -70,7 +76,7 @@ default. Real content never lives in code (`docs/coding-standards.md`).
 
 - Python tools: `tools/` — ruff (lint/format), pyrefly (types), pytest.
 - Web app: `app/` — vanilla ES modules. NO framework, NO build step, NO runtime
-  npm deps (decision recorded in `docs/TECH-SPEC.md` §15). eslint + prettier + vitest
+  npm deps (decision recorded in `docs/TECHSPEC.md` §15). eslint + prettier + vitest
   are dev-only tooling.
 - Everything goes through `make`; npm/pytest/ruff are invoked only inside
   make targets.

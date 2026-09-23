@@ -1,8 +1,8 @@
 # Multi-Document Import — Feature PRD (the capture pipeline)
 
 - **Status:** draft — user requirements, 2026-08-13 (the scanning session)
-- **Mechanics home:** `docs/TECH-SPEC.md` §16 (implementation details live there, not here)
-- **Related:** the artifact-identification flow `docs/prd/IMPORT-PRD.md`; the document-ingest review `docs/prd/INGEST-PRD.md`; the story flow `docs/prd/MEMORIES.md`
+- **Mechanics home:** `docs/TECHSPEC.md` §16 (implementation details live there, not here)
+- **Related:** the artifact-identification flow `docs/PRD/IMPORT-PRD.md`; the document-ingest review `docs/PRD/INGEST-PRD.md`; the story flow `docs/PRD/MEMORIES.md`
 
 ## 1. Purpose
 

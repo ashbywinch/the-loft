@@ -1,4 +1,4 @@
-"""The single-pass segment-and-transcribe stage (TECH-SPEC §16.17): ONE
+"""The single-pass segment-and-transcribe stage (TECHSPEC §16.17): ONE
 multimodal VLM call per page returns every text segment with its verbatim
 text, its orientation, and its bounding box — text detection, box
 detection and transcription in one pass, replacing the detect-then-match

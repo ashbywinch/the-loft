@@ -2,7 +2,7 @@
 
 > **Status note (2026-08-06):** this is the fake-user loop's **working log** —
 > the findings and their statuses, not a normative spec. The repo's normative
-> layers are: **PRD** (requirements, incl. presentation), **TECH-SPEC**
+> layers are: **PRD** (requirements, incl. presentation), **TECHSPEC**
 > (mechanics), **CONTRIBUTIONS** + **IMPORT-PRD** (the two flow specs), and
 > **UI.md** / **CHAT-UX.md** (visual/interaction conventions). There is no
 > separate "UX requirements" category: presentation requirements live in the
@@ -155,6 +155,12 @@ a second pass on the chat's usability itself, ignoring the supersession.
 | R13 | minor | DESIGN | **Generic failure line** — "That didn't save — try again?" masks the real errors (the superseded-dismiss path 400s "not proposed") | OPEN |
 | R14 | minor | DESIGN | **Completion claim oversells** — "the tree now shows the confirmed family" when it already did | OPEN |
 
+**Status of R1–R14 (2026-09-22):** still open — the resolutions are
+designed in `docs/PLAN/ux-review-chat-solution.md`, and the mechanism was
+superseded by the claim-model agreement (`docs/PLAN/INGEST-PLAN.md`,
+2026-08-10, agreed direction, not yet implemented); the findings' fates
+are tracked there.
+
 **The thinking-indicator spec** (researched: Frontend Patterns, metacto, the
 AI-chat UX guides): the indicator goes **in the assistant's message slot** —
 where the reply will appear — not in the input bar. Three animated dots
@@ -209,7 +215,7 @@ self-check loop against VR1–VR9 with screenshots at 375×812 / 812×375 /
 1024×768.
 
 **Next**: wire the surface to the real pipeline — layout payload from
-`draft_payloads` (TECH-SPEC §16.16), PaddleOCR boxes + cross-reader
+`draft_payloads` (TECHSPEC §16.16), PaddleOCR boxes + cross-reader
 confidence, OpenSeadragon pane, confirmations seam §16.15 — and review it
 against the two live batches.
 
@@ -756,7 +762,7 @@ vitest):
 6. **Transcription density** — the per-line header row (the "vertical
    height on nothing") is gone: one dense row per line = number gutter +
    text + actions. Phone: 5 lines visible (was 2), 28px/line (was 48).
-7. **The design-decisions register** — `docs/plans/design-decisions.md`:
+7. **The design-decisions register** — `docs/PLAN/design-decisions.md`:
    every decision with its rationale, referencing the detailed records.
 
 ## One-click edit, accept-on-away (user, 2026-08-16)
@@ -1085,9 +1091,9 @@ turns cream when checked.
 at a readable zoom level (all boxes' min/max y, not just the first
 line).
 
-**Implemented:** (pending — the model API hit its monthly limit, which
-blocked the page-02 rebuild; the front-end changes are API-independent
-and ready to build.)
+**Implemented:** the focus model landed with the review surface v2 — the
+dual-pane, per-line-box walk (PR #31, 2026-09-07), served by the
+grouped-strips layout (2026-09-09, `strip-grouping-plan.md`).
 
 **Decision:** VR17 and acceptance criteria 24-28 recorded in the PRD.
 The focus model is the reference for the usability test.

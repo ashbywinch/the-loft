@@ -1,6 +1,14 @@
 # Plan: user-lines → rows library, replacing the spike-gold system
 
-Status: IN PROGRESS (2026-09-18). Owner: this session.
+Status: LANDED (2026-09-19) — the library, the fixtures, and the removals
+are on `main`; the snag settle ran as the spike-mapping commits (the six
+adjudicated corrections); `make test` is green with no known-red (the 4
+pre-existing spike-gold failures are gone), and
+`test_the_adjudicated_rows_are_reproduced` pins `rows.json`. One
+verification bullet below stays open: "no `spike`/`gold` naming in the
+product path" still trips on the VLM-segmentation spike's modules in
+`tools/` (`spike_vlm_contract.py`, `word_numbering.py` — see
+`vlm-word-segmentation-spike.md`).
 
 ## Why
 
@@ -29,7 +37,8 @@ User decisions (2026-09-18):
 3. **The row data's home** — word data, user-line data, and the adjudicated
    rows live where a fresh agent with no context sees "this is page-01's row
    truth".
-4. **After 1–3**, the user answers snag questions; this plan must SHOW the
+4. **After 1–3**, the user answers the snag questions (the snag show below); the rows data is then final.
+
 ## Design
 
 ### The library (decisions 1, 2, 4, 7) — `tools/rows.py`, class `Rows`

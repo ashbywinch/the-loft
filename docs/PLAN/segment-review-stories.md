@@ -1,9 +1,13 @@
 # Segment & box review — user stories (draft for agreement)
 
-Status: DRAFT (2026-09-09). Inputs: the 2026-09-09 rulings (the box's
-purpose; logical consecutiveness; the gate; the structure-first flow —
-recorded in `layout-requirements-draft.md`), VR19–VR24
-(TRANSCRIPTION-REVIEW-PRD), and the box-issue evidence in
+Status: ADJUDICATED (2026-09-09) — all Q-rulings are in (Q1–Q3, Q5;
+Q4's anchor design and Q6's placement-first are deferred to the data
+model / TECHSPEC). The structure tools this works out are unbuilt:
+they are the build order of `pipeline-stages-plan.md` (step 4's drawing
+surface; stage 6's interjection decision). Inputs: the 2026-09-09
+rulings (the box's purpose; logical consecutiveness; the gate; the
+structure-first flow — recorded in `layout-requirements-draft.md`),
+VR19–VR24 (TRANSCRIPTION-REVIEW-PRD), and the box-issue evidence in
 `geometry-experiments-log.md` + `model-trial-report.md`. The
 requirements live in the PRD; this doc
 works the experience: what the reviewer actually does, and the corner
@@ -116,7 +120,7 @@ redesigns what already works.
   either nearly clean (a couple of flagged fixes) or is refused
   outright — never the old silent raw-text fallback, which looked
   reviewable with no boxes and made VR1 impossible. The fallback must
-  die (gap flagged to the TECH-SPEC rewrite).
+  die (gap flagged to the TECHSPEC rewrite).
 - **S19 — My work outlives the pipeline.** Returning after a re-run: my
   text, boxes, points, ticks are as I left them (VR22).
 - **S20 — Rotated insertion, upright reading.** A rotated margin note
@@ -262,7 +266,7 @@ clip-read fires on creation or waits for a tap.
 **Q4 — Point anchoring.** The point must store an anchor (the text it
 sits within), not a raw offset, so word fixes can't shift it and target
 splits relocate it deterministically (S15). The requirement is
-VR21/AC36; the anchor choice is TECH-SPEC. Noted so the data model
+VR21/AC36; the anchor choice is TECHSPEC. Noted so the data model
 isn't painted into a corner.
 
 **Q5 — How an insertion renders at rest — ANSWERED by the
@@ -293,7 +297,7 @@ test, block-level, frame rescaling required, never trusted raw
 pre-rotated passes for rotated content and per-box clip reads for text
 (L11's candidate mechanism).
 
-But per L9/L10, detection quality is the TECH-SPEC's design
+But per L9/L10, detection quality is the TECHSPEC's design
 conversation, bounded by cost. The requirement-side answer to imperfect
 detection is honest proposals (L5/L8) plus the reviewer tools (VR20) —
 the tools are needed regardless, because the pipeline will never be

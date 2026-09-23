@@ -89,12 +89,12 @@ of every doc the reader might need.
 In practice, AGENTS.md is a bootloader — it points the reader (or an agent)
 in the right direction based on what they're trying to do. Specialised design
 docs (e.g. `docs/archive-concurrency-plan.md`) are linked from the docs that
-ARE in AGENTS.md's tree (e.g. TECH-SPEC, PRD), not directly from AGENTS.md
+ARE in AGENTS.md's tree (e.g. TECHSPEC, PRD), not directly from AGENTS.md
 itself. Every doc being reachable from AGENTS.md in 0 hops is not the right
 invariant — an indirect hop through a doc the reader already chose is fine.
 
 Suggested fix: allow an N-hop (e.g. 2-hop) threshold for reachability, or
-let AGENTS.md entries that point to "hub" docs (TECH-SPEC, coding-standards)
+let AGENTS.md entries that point to "hub" docs (TECHSPEC, coding-standards)
 implicitly grant reachability to everything those docs link to.
 
 ## `noqa` rule doesn't understand cross-tool suppressions

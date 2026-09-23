@@ -1,5 +1,5 @@
 """The registry seam — every component reads and updates batch records here,
-never directly (TECH-SPEC §16.13). Owns the record path and the shared
+never directly (TECHSPEC §16.13). Owns the record path and the shared
 error type, so no component imports another's internals.
 """
 

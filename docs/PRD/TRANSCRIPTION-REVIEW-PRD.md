@@ -2,8 +2,8 @@
 
 - **Status:** draft for agreement (2026-08-15)
 - **Epic:** 6.11.3 Transcription Validation (Notion)
-- **Inputs:** `research/OCR Correction UX & Tools Guide.pdf` (2026-08-15); the capture pipeline's requirements `MULTI-DOC-IMPORT-PRD.md` R7/R10/R12/R13/R14; the sync contract (TECH-SPEC §16.15)
-- **Requirements only.** How the screen is built — the viewer, the alignment, the confidence signals, the layout — is the TECH-SPEC's job, and the new tech (bounding-box alignment, per-word confidence) is **spiked before the spec** (2026-08-15) to see what the pipeline can produce. This PRD says what the reviewer experiences, not what the UI is made of.
+- **Inputs:** `research/OCR Correction UX & Tools Guide.pdf` (2026-08-15); the capture pipeline's requirements `MULTI-DOC-IMPORT-PRD.md` R7/R10/R12/R13/R14; the sync contract (TECHSPEC §16.15)
+- **Requirements only.** How the screen is built — the viewer, the alignment, the confidence signals, the layout — is the TECHSPEC's job, and the new tech (bounding-box alignment, per-word confidence) is **spiked before the spec** (2026-08-15) to see what the pipeline can produce. This PRD says what the reviewer experiences, not what the UI is made of.
 
 ## 1. Purpose
 
@@ -51,7 +51,7 @@ goes where it's needed.)
 corrected-then-confirmed, or rejected — nothing else. The confirmed text
 is the document's words; a rejection is recorded and nothing is silently
 dropped. Only confirmed text reaches the archive (R7; the confirmations
-contract, TECH-SPEC §16.15).
+contract, TECHSPEC §16.15).
 
 **VR6 — The grouping is part of the review.** The reviewer sees which
 pages make up each document and confirms the grouping with the text
@@ -343,10 +343,10 @@ VR17, AC30).
 
 - Producing the alignment (bounding-box) data or the per-word confidence
   signal — pipeline-side capabilities, to be **spiked** for feasibility
-  before the TECH-SPEC; their absence must not block the review
+  before the TECHSPEC; their absence must not block the review
   experience (VR1/VR4 stand as requirements).
 - The visual mechanics (viewer layout, highlight interactions, cue
-  styling) — the TECH-SPEC + UX wireframe's job, in service of VR1–VR4.
+  styling) — the TECHSPEC + UX wireframe's job, in service of VR1–VR4.
 - The import identification review (to/from, people, places, dates) —
   `IMPORT-PRD.md`.
 - The ingest review conversation — `INGEST-PRD.md`.

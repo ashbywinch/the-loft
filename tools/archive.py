@@ -9,7 +9,7 @@ server, the tools, and the import flow use this — never raw paths.
 
 The sidecar versions are self-contained: a superseding file carries the full
 metadata again plus ``supersedes`` naming the file it replaces, so a reader
-in 2060 can follow the chain (docs/TECH-SPEC.md §3).
+in 2060 can follow the chain (docs/TECHSPEC.md §3).
 """
 
 from __future__ import annotations

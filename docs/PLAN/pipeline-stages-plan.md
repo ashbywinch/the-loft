@@ -1,8 +1,17 @@
 # Pipeline stages — the refactor plan
 
-The companion to `docs/prd/pipeline-stages-spec.md` (the requirements).
+The companion to `docs/PRD/pipeline-stages-spec.md` (the requirements).
 This is the plan only: the object model agreed first, then the typed
 scaffold, the missing surfaces, and the sequencing.
+
+**Status (2026-09-22):** the rows foundation landed 2026-09-19/20 — the
+row library (`tools/rows.py`), the per-stage typed schema loaders
+(`tools/schemas.py`), the fixture (`tests/fixtures/page01-rows-gold/`).
+Of the sequencing: step 1's rows-adjacent schemas exist, but the `Stage`
+enum (`tools/stages.py`), the Document and identity artefacts' schemas,
+and step 2's `Rows.from_words` rename have not landed; steps 3–6 (the
+UR3 scan pickup, the stage-4 drawing UI, the portal, the stage-8
+identification flow) are unbuilt.
 
 ## The object model (agreed 2026-09-19)
 
@@ -167,7 +176,7 @@ behaviour before its typed boundary exists.
 ## Developer requirements
 
 The code must meet these (the user-facing half lives in
-`docs/prd/pipeline-stages-spec.md`; the PRD's scope rule keeps
+`docs/PRD/pipeline-stages-spec.md`; the PRD's scope rule keeps
 technology out of that folder).
 
 ### DR1. The pipeline is findable and understandable from the code alone

@@ -1,5 +1,14 @@
 # OCR verification — what the field knows and what we're missing
 
+> **Status (2026-09-22):** research record — the directions it studied
+> were ruled out or superseded. PaddleOCR (the rec) is not used anywhere
+> (no rec reader, fallback, or check); review edits store the
+> transcription and never feed a model; Transkribus is not a reference;
+> the layout geometry path was replaced by the grouped-strips measurement
+> (2026-09-09, `strip-grouping-plan.md`). Of its priorities: 1 wired,
+> 3 landed, 4 still open (rec-independent), 2 and 5 ruled out. Read as
+> history.
+
 Research synthesis (2026-08-26), prompted by the user: "this is turning
 out to be really difficult — research what other people have found out
 about verifying OCR text and what we're missing about good solutions."
@@ -117,3 +126,22 @@ calibration set and the eval harness.
    instead of tuning by incident.
 4. The fragment-box ink-extent gate (GT-free line-IoU recall).
 5. Route review edits into the labeled set so the calibration grows.
+
+## Status of the priorities (2026-09-22)
+
+1. **Self-report — wired.** The flag-source switch (2026-08-15) makes
+   the VLM's own doubt the flags (`tools/selfreport.py`); the cross-reader
+   agreement is now only the fallback (`tools/layout.py`), and the
+   self-report applies without a detection re-run
+   (`tools/layout_apply_selfreport.py`).
+2. **Rec-agreement label check — ruled out (2026-09-22).** No PaddleOCR
+   anywhere: the rec is not a reader, a fallback, or a check.
+3. **Eval contract — landed.** The VR15 Godolphin contract
+   (`tests/test_eval_postcard.py`) is pinned and passes in the suite; the
+   broader 5–10-page labeled set and gate-constant calibration did not
+   happen (the geometry path this synthesis studied was replaced by the
+   grouped-strips measurement, which removed the rec from the layout
+   stage — `strip-grouping-plan.md`, 2026-09-09).
+4. **Fragment-box ink-extent gate — unbuilt.**
+5. **Review edits into the labeled set — ruled out (2026-09-22).** Edits
+   store the correct transcription; they will never feed a model.

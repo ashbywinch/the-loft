@@ -22,9 +22,9 @@ doc's parent directory (`parent.join(&target)`), but backticked paths
 starting with a parent-dir prefix resolve against the **repo root** (`repo.join(&path)`).
 Three findings were false positives from this:
 
-- docs/plans/PLAN.md links to the existing docs/prd/PRD.md
-- docs/prd/MEMORIES.md links to the existing docs/plans/PLAN.md
-- docs/prd/PRD.md links to the existing docs/TECH-SPEC.md
+- docs/PLAN/PLAN.md links to the existing docs/PRD/PRD.md
+- docs/PRD/MEMORIES.md links to the existing docs/PLAN/PLAN.md
+- docs/PRD/PRD.md links to the existing docs/TECHSPEC.md
 
 Fix for the tool (not applied — the build-tools repo is mid-work on
 `rust-scan-core`): resolve parent-relative backtick paths against the doc's
@@ -238,7 +238,7 @@ files are excluded from the branch's commits too. Flagged for the user.
 
 ### 3.6 docs findings — 1 fixed, 4 left with reasons
 
-- `docs/plans/design-decisions.md` backticked docs/ux-standards.md — a
+- `docs/PLAN/design-decisions.md` backticked docs/ux-standards.md — a
   doc that lives in omp-config, not here. Fixed the reference to name the
   owning repo (matches the file's own convention at line 24).
 - The 3 parent-relative findings are tool bug 1.1.

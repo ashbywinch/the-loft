@@ -1,7 +1,10 @@
 # Single-Pass Landing Plan — What Remains
 
-**Status:** the redesign is landed on `main`; the remaining work is closing four
-superseded PRs and one audit. Written 2026-09-07 as a session handoff.
+**Status:** COMPLETE (2026-09-22) — all three remaining items are done:
+the four superseded PRs are closed, the confirm-flow audit found no
+old-path references left, and the end-to-end real-data run served
+through the review surface. Written 2026-09-07 as a session handoff;
+kept for the record and the operational traps below.
 
 ## What this is
 
@@ -16,12 +19,12 @@ content. They must be **closed, not merged**.
 
 | To understand | Read |
 |---|---|
-| The single-pass design and its contract | `docs/TECH-SPEC.md` §16.17 |
-| Product law (the app arranges evidence, never interprets it) | `docs/prd/PRD.md` §10 |
-| The layout redesign requirements this implements | `docs/plans/layout-requirements-draft.md` |
-| The transcription-review surface the review PRs serve | `docs/prd/TRANSCRIPTION-REVIEW-PRD.md` |
-| The measured geometry findings behind the orientation gates | `docs/plans/geometry-experiments-log.md` |
-| The pipeline stage map and per-page recovery | `docs/TECH-SPEC.md` §16.14.2 |
+| The single-pass design and its contract | `docs/TECHSPEC.md` §16.17 |
+| Product law (the app arranges evidence, never interprets it) | `docs/PRD/PRD.md` §10 |
+| The layout redesign requirements this implements | `docs/PLAN/layout-requirements-draft.md` |
+| The transcription-review surface the review PRs serve | `docs/PRD/TRANSCRIPTION-REVIEW-PRD.md` |
+| The measured geometry findings behind the orientation gates | `docs/PLAN/geometry-experiments-log.md` |
+| The pipeline stage map and per-page recovery | `docs/TECHSPEC.md` §16.14.2 |
 
 ## What is on `main` now (verified)
 
@@ -46,9 +49,9 @@ content. They must be **closed, not merged**.
 - `tools/layout_stage.py` runs the layout stage on the main venv (`.venv-htr`
   is no longer needed for layout).
 
-## What remains
+## What remained — all closed (2026-09-22)
 
-### 1. Close the four superseded PRs (rebase-merge is blocked by design; do NOT merge)
+### 1. Close the four superseded PRs — DONE (all four CLOSED)
 
 Each diff vs `main` was checked on 2026-09-07 with
 `git diff loft/main..loft/<branch> --numstat`: every delta is an *older*
@@ -62,22 +65,24 @@ surface, the gate rewrite, or the old-path deletion.
 | #37 | `pr/ink-3` | Same, plus `eval_crop_grid.py`/`box.py` deltas that would remove `main`'s lucidlint-ignore annotations and refinements. |
 | #38 | `pr/ink-pipeline` | Its one unique contribution (the conversion) is on `main`; the remaining 9-file diff would revert the review surface and scoring tests. |
 
-Close each with a one-line comment: content landed via #31/#33/#35; the diff
-would revert newer `main` content. Spot-check before closing if in doubt —
-the verification command is in the table above.
+Done: closed with the one-line comment (content landed via #31/#33/#35;
+the diff would revert newer `main` content). Verified 2026-09-22: all
+four are CLOSED on GitHub.
 
-### 2. Audit the confirm flow for old-path references
+### 2. Audit the confirm flow for old-path references — DONE
 
-`docs/TECH-SPEC.md` §16.14.2 describes the confirm flow and the sync seam.
-They were written against the detector-era layout shape. Grep `tools/pipeline.py`
-and the sync path for `detect`/`ENGINE`/`region` assumptions and align them
-with the single-pass Layout (per-line `words_out`, self-report flags applied
-per line index). This is the one known behavioral gap.
+Grep of `tools/pipeline.py`, `tools/sync.py` and `tools/server.py`
+(2026-09-22): no `ENGINE`/`region` references remain; the surviving
+`detect` mentions are prose (boundary detection, a historical
+`layout_detect` comment). The single-pass Layout (per-line `words_out`,
+self-report flags applied per line index) is the only path.
 
-### 3. Verify main end-to-end once on real data
+### 3. Verify main end-to-end once on real data — DONE
 
-`make pipeline ARGS="layout <batch> <page>"` on a Godolphin page through the
-gateway; confirm the page renders in the review surface with per-line boxes.
+The strip-grouping DoD served page-01/page-02 of the Music College
+letter through `make pipeline ARGS="layout …"` with 0 gate violations and
+rendered in the review surface (2026-09-09); the Godolphin VR15 contract
+is pinned in `tests/test_eval_postcard.py` (in the passing suite).
 
 ## Operational traps this session paid for (hours each)
 

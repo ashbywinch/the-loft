@@ -3,16 +3,16 @@
 **Purpose.** This document is the product's **requirements and user needs
 only** — what the family needs and why, in the user's terms. It is not an
 implementation document: it does not say how the app is built. The
-mechanics (the data model, the API, the build) live in `docs/TECH-SPEC.md`;
-the slice sequencing lives in `docs/plans/PLAN.md`; the presentation conventions
+mechanics (the data model, the API, the build) live in `docs/TECHSPEC.md`;
+the slice sequencing lives in `docs/PLAN/PLAN.md`; the presentation conventions
 in `docs/UI.md`. A requirement earns its place here only when it states a
 user need or a behavior the family experiences. Anything that names a
-technology, a field, or an internal mechanism belongs in TECH-SPEC, not
+technology, a field, or an internal mechanism belongs in TECHSPEC, not
 here (2026-08-09).
 
 Working title: **The Loft** (approved by the user, 2026-08-02; revisitable before launch).
 
-- **Sequencing:** `docs/plans/PLAN.md` — thin slices, feature inventory, urgency knobs.
+- **Sequencing:** `docs/PLAN/PLAN.md` — thin slices, feature inventory, urgency knobs.
 
 - **Status:** Draft v0.10
 - **Length note:** this canonical requirements document runs past the
@@ -26,7 +26,7 @@ Working title: **The Loft** (approved by the user, 2026-08-02; revisitable befor
   - **v0.4 (session 1 complete):** felt experience — explorable, draws you in, never editorial; anti-censorship default; OCR drafts (Should); map as a first-class door; interleaving vision; full interview record kept private
   - **v0.5:** generational longevity (§18) — the artifacts outlast the app; capture facts resolved (photo volume, back-writing, recordings)
   - **v0.6:** story harvest & testimonies (§19, G7) — record / self-record / type; narrators are actors in the story, not editors; testimonies first-class with embeddings; the preservation rule
-  - **v0.7:** names/aliases as first-class identity; everything-to-everything graph at scale; open questions resolved (vanilla nuance, TV/show mode, ML appetite); prototype shipped — sequencing in `docs/plans/PLAN.md`
+  - **v0.7:** names/aliases as first-class identity; everything-to-everything graph at scale; open questions resolved (vanilla nuance, TV/show mode, ML appetite); prototype shipped — sequencing in `docs/PLAN/PLAN.md`
   - **v0.8:** Show mode; proposed-status UI; acceptance flows F7–F8
   - **v0.9 (requirements review):** no single-narrator bottleneck (elders contribute via prompts); family-agnostic requirements with abstract user stories; kids and people with dementia alike have fun exploratory experiences; testimony of the involved is a JTBD; §18.3 split (privacy/control + recoverable-without-credentials); accounts required (TBD); ML face/pet/boat labeling and OCR are Should; no public sharing of anything; no camera capture (scanners only); letters link sender+recipient; display priority facts→reader→others; the app never reads Drive at runtime; model-proposed alt text
   - **v0.10:** sanitised — the PRD states requirements only; family-instance facts (names, dates, exact counts, who has what) live in the private interview records and the content
@@ -82,7 +82,7 @@ The deadline gives it shape: the narrators fade, and the physical collection may
 - **No public sharing of anything whatsoever** — all access is family-only; the mechanism is TBD (accounts, §15).
 - No social feeds; no public publishing.
 - No destructive operations in the UI (no delete/edit of artifacts; corrections via "edit metadata", never delete).
-- **The archive file store is append-only (requirement, 2026-08-03):** nothing in the underlying file store is ever edited or deleted — a change is a new file that *supersedes* the old one, and the old file stays forever. Mechanism in `TECH-SPEC.md` §3; tests enforce it via a fake filesystem that fails on any write to an existing file. **One documented exception (2026-08-05):** the proposed-queue reject path deletes the *proposed* record file — a transient review work item that has never been published, not an artifact; everything that has ever shipped stays append-only. Rejecting deletes the file so a refused proposal cannot linger as a proposed record.
+- **The archive file store is append-only (requirement, 2026-08-03):** nothing in the underlying file store is ever edited or deleted — a change is a new file that *supersedes* the old one, and the old file stays forever. Mechanics in `TECHSPEC.md` §3. **One documented exception (2026-08-05):** the proposed-queue reject path deletes the *proposed* record file — a transient review work item that has never been published, not an artifact; everything that has ever shipped stays append-only. Rejecting deletes the file so a refused proposal cannot linger as a proposed record.
 
 ---
 
@@ -173,9 +173,9 @@ Because the collection is mostly physical, capture is a **core v1 flow**, not a 
 
 **The curation gate:** nothing enters the archive uncurated — a human selects, then the app catalogs. Thousands of digital photos exist from the later generations; they are curated first, never bulk-imported. The same gate applies to the ML suggestion layer: nothing is asserted, everything confirmed. **Import resolves identity:** the same alias resolver the reader uses runs at import time — person and place mentions in transcriptions become links, entering as `proposed` until the family confirms. **Capture priority:** the letters are the first layer; the **memoirs** — a writer's later-life reflections on the earlier letters, covering periods the correspondence doesn't — are the archive's own narrator and join the letters at the top.
 
-**Streamlined capture sessions.** The 30-second ritual becomes a session: import many items back-to-back, enter just the date per item — the app **suggests date+7 for weekly letters** — and batch-tag people/places/themes later. Title and the story line accept **speech-to-text** (Android Web Speech API), so nothing requires typing. Thumbnails and the derived index rebuild in-app; nothing blocks capture.
+**Streamlined capture sessions.** The 30-second ritual becomes a session: import many items back-to-back, enter just the date per item — the app **suggests date+7 for weekly letters** — and batch-tag people/places/themes later. Title and the story line accept **speech-to-text**, so nothing requires typing. Thumbnails and the derived index rebuild in-app; nothing blocks capture.
 
-**Bulk scanning (sheet-fed + slide/photo scanners).** The bulk digitization path is scanners: a **sheet-fed scanner** for letters (per-page JPEGs, or one PDF per letter), a **slide/photo scanner** for slides and prints (the travel photography is on slides). Scanner output lands on a laptop; `tools/import` (Python) uploads it into the archive with auto-naming; tagging happens on the phone as usual. Scanner output is the only capture path (proper 300 DPI legibility).
+**Bulk scanning (sheet-fed + slide/photo scanners).** The bulk digitization path is scanners: a **sheet-fed scanner** for letters (per-page JPEGs, or one PDF per letter), a **slide/photo scanner** for slides and prints (the travel photography is on slides). Scanner output lands on a laptop and is uploaded into the archive with auto-naming; tagging happens on the phone as usual. Scanner output is the only capture path (proper 300 DPI legibility).
 
 **Quality floor (reading, not archival):** shortest side ≥ ~1500px, flat, daylight, no flash, lens parallel to the page. Originals are kept; the app derives thumbnails.
 
@@ -187,9 +187,9 @@ archive/
   assets/<id>/…          # originals + derived thumbs, open formats (JPEG/PNG)
   index.json             # derived index, regenerable from sidecars (the app's fast path)
 ```
-The app is a viewer over this folder. **Backup = copy the folder.** No database lock-in. Sidecar-first, because the index is a convenience and the sidecars are the truth (§18). **Two surfaces, one archive (revised 2026-08-14: the two-app deployment — the capture backend lives beside the scanner for direct USB; the browsable front end is hosted cheaply and highly available; R14):**
-- **The archive = the capture backend's workspace at home (its real home).** The durable folder — full-res scans, sidecars, transcriptions, derived files — lives on the big disk beside the scanner, written only by the backend. The front end is a **thin client**: it views the projection and proposes (transcriptions, identity); the backend owns the write seam, and nothing confirmed is lost if a sync fails. Google Drive remains the **backup mirror** — not the live home.
-- **The site = the front end, hosted cheaply and highly available.** A cheap static host serves the app + the projection (metadata, thumbnails, stories; full-res placement TBD, §15), and a small API server hosts the interactive surfaces — transcription verification and the identity-extraction chat — which propose back to the backend. **No access is public:** everything is family-only, mechanism TBD (accounts, §15). The app never reads the archive directly — the projection for reading, the sync contract for writing.
+The app is a viewer over this folder. **Backup = copy the folder.** No database lock-in. Sidecar-first, because the index is a convenience and the sidecars are the truth (§18). **Two surfaces, one archive (revised 2026-08-14, R14):**
+- **The archive = the home workspace (its real home).** The durable folder — full-res scans, sidecars, transcriptions, derived files — lives on the big disk beside the scanner, written only by the backend. The browsable site views a published projection and proposes changes (transcriptions, identity); nothing confirmed is lost if a sync fails. Google Drive remains the **backup mirror** — not the live home.
+- **The site = the browsable front end, hosted cheaply and highly available.** Everything the family sees is **family-only — no public access** (mechanism TBD, accounts, §15), and the site keeps working when the home machine is off. **The app never reads the archive directly** — the projection for reading, the sync contract for writing (deployment mechanics: `TECHSPEC.md`).
 - **Durability is load-bearing on export:** the home workspace holds the live archive; the **annual full export** (folder download + CSV) to a second household and external media is the 3-2-1's second and third copies (§18.6). Files stay plain and open — if any service changes terms, the folder downloads whole.
 
 ---
@@ -225,12 +225,12 @@ Four doors + the lens:
 | **Places** | The geography | **Heatmap over time**: dot size ∝ activity in the slider window; a **timeline slider** (scrub the years) and a **person filter** (who you're tracking) — watch the geography of a life move; markers open place pages with the scrubbed window; place pages group the artifacts of each era; optional current street-view imagery for key locations ("a family home of the era — the street today"). **Scale-aware markers** (2026-08-03): the heat map stands alone at overview zoom — no dots, no labels (a dot at country zoom is a meaningless pixel and its label a blob; both obscure the heat). Dots appear from regional zoom, labels from street zoom, and a lone active place is always labelled; the cards below always list the active places. **A point is never presented as more precise than it is** (2026-08-05): an imprecise place (known only to a street/town/country) draws an uncertainty ring, not a pin. Place pages carry **Reflections** that mention them |
 | **Stories** | Guided paths | Curated collections (**auto-suggested** from the archive's patterns, confirmed or edited by users; users can also create their own) with connective text; **reader mode** = page-turn swipe through the items; every story links its artifacts |
 | **Museum** | The heirlooms | Object pages: big imagery, provenance narrative, detail shots |
-| **Show mode** | Showing, not browsing | Full-screen, no-navigation browse for showing someone the archive — big images, large type, auto-advance; operable by anyone in the room; started from any person or story (docs/plans/PLAN.md Slice 3 — the urgent one: elders' memory is fading) |
+| **Show mode** | Showing, not browsing | Full-screen, no-navigation browse for showing someone the archive — big images, large type, auto-advance; operable by anyone in the room; started from any person or story (docs/PLAN/PLAN.md Slice 3 — the urgent one: elders' memory is fading) |
 | **Item detail** | The lens | Pinch-zoom scan viewer; **a description line under the title** (the "what is this" that tells a letter apart from the rest of its correspondence — it also renders, two-line clamped, on the cards); transcription toggle with **mention links** into the cast; connections (same people / place / ±1yr); prev/next within current sequence; **web-page documents hyperlink their sources with the access date** ("accessed 2026-08-05"); **Clarifications** that attest the item |
 | **Search** | Find *that one letter* | Titles, people, places, themes, transcriptions; filterable results |
 | **Curator** | Capture + edit | Scanner import, 3-field form, auto-naming; edit metadata of existing items; never delete |
 
-**Connections at scale (everything → everything).** The entity graph is bidirectional: item ↔ person ↔ place ↔ theme, and entity pages carry counts-first chips for the other entity types. Full enumeration lives on the **Timeline via filters** (`?person=`, `?place=`), which is also the scale story: at 10,000 items no surface renders a raw wall of cards — decade bands, caps, and "see all" paths keep every page bounded (PRD §9 F2, TECH-SPEC §8). **Everything catalogued is visible somewhere** (2026-08-06): every item a reader can search for must actually render — on the timeline, or (for fragments/reflections) on the pages they attest/mention; guarded by the completeness eval (TECH-SPEC §4).
+**Connections at scale (everything → everything).** The entity graph is bidirectional: item ↔ person ↔ place ↔ theme, and entity pages carry counts-first chips for the other entity types. Full enumeration lives on the **Timeline via filters**, which is also the scale story: at 10,000 items no surface renders a raw wall of cards — decade bands, caps, and "see all" paths keep every page bounded (PRD §9 F2, TECHSPEC §8). **Everything catalogued is visible somewhere** (2026-08-06): every item a reader can search for must actually render — on the timeline, or (for fragments/reflections) on the pages they attest/mention; guarded by the completeness eval (TECHSPEC §4).
 
 **Back navigation — the principle (2026-08-16, researched + validated).** Users expect Back to return to what they *perceive* as the previous view, and they trust an in-app back more than the browser's (Smashing 2022; Baymard's large-scale testing: 59% of sites break back expectations — the perception principle + the History API fix). Platform guidance agrees on the one rule that matters: an in-app back must be **the same action as the system back** — one source of truth, never a second divergent stack (Android: "do not add your own Back button" — but the guidance's own exception is that a visible, behaviorally-identical control is safe; Apple HIG expects a visible top-left back on drilled-in pages; NN/g: label the back with its destination when it cannot simply undo the previous action). Recency check (2026): the core advice stands; **predictive back** (Android 13–16) now previews the destination, so the system back is more predictable — the in-app back's remaining job is discoverability, especially for less-able users (W3C cognitive-accessibility: keep back visible and never lose work).
 
@@ -313,6 +313,14 @@ consolidated user needs from every problem the review loop has hit):**
 - **R9 — The record reflects the family's certainty honestly, everywhere it travels.** A fact the family confirms is a fact; a guess is marked as a guess with the family's words and who said them; the machine's own guesses are never presented as facts. The exported family tree carries the same honesty: estimates are included with their evidence, never silently dropped and never presented as confirmed.
 - **R10 — The review is resumable.** The family can leave and come back; the conversation continues from where it stopped, in a new walk, without losing the record of earlier walks.
 
+**F10 — A memory arises while browsing** (2026-09-22, the fireside principle)
+- Given the family is browsing the archive, When a memory surfaces as they look at something, Then capturing it is right there — never an interview to start, never a wall.
+- Given the capture moment, When the family begins telling, Then the telling follows their tangents — wherever they go, at whatever length — and the flow returns them to their starting point without losing anything they said.
+- Given an unfinished memory, When the family stops telling, Then it is not lost — it joins the work queue — the same queue that carries the proposed identities from imports, because resuming is the same conversation (§19 req 11) — visibly unfinished, to complete on another visit.
+- Given an unfinished memory in the queue, When the family returns to it, Then the telling resumes without re-asking what was already told.
+- Given the moment of capture, When the assistant prompts, Then it prompts subtly and rarely — a nudge where a memory is most likely to surface, never an interrogation, never a required answer.
+- Given a capture session, When it ends, Then the whole session reads like a fireside chat — the family's voice leads, nothing is forced, nothing is required, nothing told is lost.
+
 ---
 
 ## 10. The Engagement Layer ("really engaging" = time in the past, spent with feeling)
@@ -330,7 +338,7 @@ consolidated user needs from every problem the review loop has hit):**
 | **Archive stats** | Should | "You've seen 212 of 1,847 artifacts" — quiet completion pull |
 | **Street-view place cards** | Should | The archive meets the living world: key locations show today's street view (public imagery only; family content stays local) |
 | **Second-screen / TV mode** | Should | Gatherings: mirror to the TV; fits the private household model |
-| **Show mode** | Should | The urgent one: familiar photos, shown now — elders' memory is fading (docs/plans/PLAN.md Slice 3) |
+| **Show mode** | Should | The urgent one: familiar photos, shown now — elders' memory is fading (docs/PLAN/PLAN.md Slice 3) |
 | **Map — heatmap over time** | Should | Places as a heatmap with a timeline slider and person filter — activity moving across geography as the years scrub; Leaflet/OSM tiles, degrades to the non-tile dot view offline |
 | **Family "add a memory"** | Could | Others contribute captions for review — curation was initially single-person, so deferred |
 
@@ -340,7 +348,7 @@ Anti-patterns rejected: streaks, badges, leaderboards, push notifications. A fam
 
 **Themes are the doors, evidence is the room.** With 800+ items, arrangement alone drowns the reader — the app must *actively offer curated themes as the way in* (family-chosen doors: "The music years", "The business years"). Inside a theme, nothing is interpreted — dates, order, facts. **Stories are suggested, not only hand-made:** theme/entity discovery proposes collections from the archive's own patterns; users confirm, edit, or create their own — and every story links its artifacts. **Honesty principle:** the app arranges evidence; it never interprets it — no mood labels, no AI summaries, no "this is when it went wrong". **People testify; the app doesn't.** A narrator's account is testimony from an *actor in the story* — attributed, personal, multi-viewpoint — not editorial; the app presents it as evidence and never reconciles competing accounts into one (§19). **Display priority: facts and the artifact itself come first; the reader's own commentary next; other people's commentary last.** Honesty includes timing: sensitive items live in the archive now and surface when the family decides. **Default is no censorship:** flags are the deliberate exception, never the default; the sensitive-timing decision (doctor's letter and similar) is deferred until the full collection and a working prototype exist (§15.11). And no flattening: the happy photos stay warm, the hard truths stay present, neither erases the other. **Seed content follows the same rule:** theme copy and captions are factual; personal observations are attributed testimony ("The curator: …"), never app prose.
 
-**The machine proposes; the family confirms.** Photo labeling (people, pets, boats) and theme/entity discovery are real asks from the curator — implemented as a *suggestion layer*: models propose labels with `proposed` status, the family accepts with one tap; nothing is asserted unreviewed. Letters are intimate, so the family chooses the privacy posture — the model runs in the mode they pick (the cloud vision model by default with a local-only mode available; the privacy posture is a mode, not a hard constraint — user, 2026-08-14). The schema ships the seam in v1; the models plug in later.
+**The machine proposes; the family confirms.** Photo labeling (people, pets, boats) and theme/entity discovery are real asks from the curator — implemented as a *suggestion layer*: models propose labels with `proposed` status, the family accepts with one tap; nothing is asserted unreviewed. Letters are intimate, so the family chooses the privacy posture — the model runs in the mode they pick (the cloud vision model by default with a local-only mode available; the privacy posture is a mode, not a hard constraint — user, 2026-08-14).
 
 **Machine guesses are proposed, never published** (2026-08-09). The machine's suggestions exist for the family's review and never reach any public surface — nothing the machine guessed, however plausible, appears where anyone outside the family could see it. The family's review is the only door from a guess to the archive, and the archive's public face never shows a guess.
 
@@ -408,7 +416,7 @@ import sessions — they bind every screen and every data decision:
 **Devices:** Android-first — the phone is the primary **curation** surface; any modern tablet/phone browser for browsing (no iOS requirement). Landscape + portrait. PWA installable ("Add to Home Screen").
 
 **Performance (at 10,000 items / 50,000 images):**
-- First meaningful paint ≤ 2 s on 4G; initial JS/CSS payload ≤ 100 KB (vanilla-first stack; a small JS/CSS library is allowed if it degrades well — decision recorded in `TECH-SPEC.md` §15).
+- First meaningful paint ≤ 2 s on 4G; initial JS/CSS payload ≤ 100 KB (the stack decision is `TECHSPEC.md` §15's).
 - Scrolling at 60 fps; images lazy-loaded as thumbnails, full-resolution swap on open.
 - Index loads incrementally (decade/year segments), never one giant fetch.
 - Runtime reads ride the family-only projection only — the app **never reads the archive directly** (the front end proposes through the sync contract; the backend records; full-res placement TBD, §15). The phone stores nothing.
@@ -473,14 +481,14 @@ import sessions — they bind every screen and every data decision:
 ## 15. Open Questions (from the interview)
 
 1. **App name — RESOLVED (working):** *The Loft* (user approved, 2026-08-02); revisitable before launch.
-2. **Hosting — RESOLVED (user, 2026-08-02; revised 2026-08-14):** the archive's home is the **capture backend's workspace at home** (the big disk beside the scanner — direct USB, R14), written only by the backend; the **front end — viewing, transcription verification, and the identity-extraction chat — is hosted cheaply and highly available in the cloud** (a static host for the projection + a small API server); the two sync via the backend-owned write seam, and nothing confirmed is lost if a sync fails (an outbox catches up). Google Drive is the **backup mirror** (annual export to a second household and external media remains the durability ritual). **Cousins:** invite-able later via the accounts mechanism; per-contributor folders / a merge tool is the seam (not built now, not ruled out).
+2. **Hosting — RESOLVED (user, 2026-08-02; revised 2026-08-14):** the durable archive lives at home beside the scanner (direct USB, R14); the browsable site — viewing, transcription verification, and the identity review — is hosted so it stays available when the home machine is off; nothing confirmed is lost if a sync fails. Google Drive is the **backup mirror**, never the live home — the annual export to a second household and external media remains the durability ritual. **Cousins:** invite-able later via accounts; per-contributor folders / a merge is the seam (deployment mechanics: `TECHSPEC.md`).
 3. **Photo volume — RESOLVED:** hundreds of physical photos to scan; thousands of digital photos exist (younger family members) but are **human-curated before import** (curation gate, §7).
 4. **Audio/video — RESOLVED:** some recordings likely exist but probably unrecoverable; **BBC archive is a research lead**; the schema stays future-proofed.
 5. **Back-of-photo writing — RESOLVED:** happens but rare → capture default is front-first; back captured when writing is noticed.
-6. **TV/second-screen mode — RESOLVED (via plan):** yes — gatherings are the activation metric; Show mode (Slice 3) and TV mode (Slice 6) are planned in `docs/plans/PLAN.md`.
-7. **Technical appetite — RESOLVED (user, 2026-08-02):** vanilla-first, no framework; a small JS/CSS library is allowed if it degrades well; revisit during development if the code gets messy (recorded in `TECH-SPEC.md` §15).
+6. **TV/second-screen mode — RESOLVED (via plan):** yes — gatherings are the activation metric; Show mode (Slice 3) and TV mode (Slice 6) are planned in `docs/PLAN/PLAN.md`.
+7. **Technical appetite — RESOLVED (user, 2026-08-02):** vanilla-first, no framework (recorded in `TECHSPEC.md` §15).
 8. **Secondary narrators — OPEN:** a family member is the physical collaborator for the clearing-out; do others hold stories worth harvesting?
-9. **The elders and the app — RESOLVED (via plan):** yes — elders may be shown familiar photos, via Show mode (`docs/plans/PLAN.md` Slice 3); the family decides when, and it is never a dependency. (Sensitive; see §4.)
+9. **The elders and the app — RESOLVED (via plan):** yes — elders may be shown familiar photos, via Show mode (`docs/PLAN/PLAN.md` Slice 3); the family decides when, and it is never a dependency. (Sensitive; see §4.)
 10. **Private letters** — are any letters/items not for the future user's eyes (e.g., while he's a child), and should the app support per-item privacy flags? (Currently everything is household-private; this is about *within*-family boundaries over time.)
 11. **Sensitive-item timing — DEFERRED (decision recorded):** anti-censorship is the default; sensitive items stay catalogued and searchable; *when* they surface for younger readers is decided at prototype stage with the full collection in view (user, 2026-08-02).
 12. **ML appetite & hosting — RESOLVED (user; revised 2026-08-14):** photo-labeling (people/pets/boats), theme discovery, and **handwriting OCR for transcription drafts** are wanted; the transcription default uses the vision model (cloud), with a **local-only mode** available when desired (the privacy posture is a mode, not a hard constraint — user, 2026-08-14); imperfect suggestions are accepted with family confirmation (the propose/confirm seam).
@@ -590,15 +598,28 @@ Discovery is the first roadmap phase, before v1 scope is final. Instruments live
 **Interview-module requirements (2026-08-03, from the session-1 harvest):**
 
 1. **Authentic voice vs. family harmony.** The narrator spoke as if in a private conversation; judgemental remarks were edited or omitted before storage ("being a bum", "after a fight with mum", "a sexist ass", "consistently very mean to"). The tension is real: the archive wants the authentic voice, and it must not start family arguments. The harvest flow must include a narrator review pass before anything is stored — capture fully, then let the narrator approve or redact.
-2. **Testimony provenance (OPEN).** Distinguish, at capture, what is evidenced (artifact-backed), what is first-hand experience, what is commentary, what is a guess about what happened, and what is second- or third-hand testimony. Decide whether interviews should probe for this and how the archive marks each.
+2. **Testimony provenance — RESOLVED (2026-09-22): the flow asks it.** When a statement's source matters (the family cites a source: "Mum said…", "Grandma used to…"), the capture flow asks the narrator directly — "Did she say that to you personally?" / "What did you see that made you think that?" — and records the answer verbatim, attributed, as the statement's provenance (e.g. `Pete: "Mum used to tell us this all the time"`). No taxonomy, no inference: the provenance is the narrator's own words (matches the §9 flow criterion).
 3. **Descriptions of artifacts (OPEN).** Answers often describe artifacts (the doctor's letter, slides of giraffes, viola trophies). Decide what to do with such descriptions — especially for artifacts that may never be found. A description of an artifact that is never found is still useful: it is testimony that the thing existed. The prototype models it as its own item (`doc-doctor-letter-2009`, "not yet located") that links back to its description when the artifact turns up.
 4. **Questions surface where they are relevant.** Interview answers link to the people/places/themes they name, so each answer appears on those entities' pages — a question about the places is reachable from the Places door.
 5. **Prod for dates (2026-08-03).** Answers often leave dates vague — the harvest flow should prod for dates, and record precision honestly when the narrator cannot say (PRD §6). How the timeline and map treat vague or unknown dates is open (PRD §15).
 6. **Broader place identification (2026-08-03).** Informal or referential place names are place candidates, not just proper names — a local landmark, or a family's nickname for a structure, is a place. The import worksheet and any future ML extraction should catch them.
-7. **Places with uncertain locations (2026-08-03).** A place may be identified but not located — identification and location are separate facts; approximate coordinates plus a "location uncertain" marker; refine later. **Ask the narrator in the interview** when a place's location is uncertain — they may be able to clarify (but may not). **Locations must be exactly correct wherever possible** (2026-08-03): geolocations are geocoded, never guessed — exact postcodes via postcodes.io, named places via Nominatim/OSM, and each place records its geocoded source. **No vague locations lying about** (2026-08-03): a county-, country- or continent-level place stays only while an artifact evidences it independently of any more specific place, is marked by a structured `precision` field (never process prose in the note), and is dropped once specific locations replace it — e.g. the Chenzou letters may pin real cities, and then the Chenzou place is removed and items relink to the specifics.
+7. **Places with uncertain locations (2026-08-03).** A place may be identified but not located — identification and location are separate facts; approximate coordinates plus a "location uncertain" marker; refine later. **Ask the narrator in the interview** when a place's location is uncertain — they may be able to clarify (but may not). **Locations must be exactly correct wherever possible** (2026-08-03): geolocations are geocoded, never guessed — exact postcodes or named places via a geocoder, and each place records its geocoded source. **No vague locations lying about** (2026-08-03): a county-, country- or continent-level place stays only while an artifact evidences it independently of any more specific place, is marked by a structured `precision` field (never process prose in the note), and is dropped once specific locations replace it — e.g. the Chenzou letters may pin real cities, and then the Chenzou place is removed and items relink to the specifics.
 8. **Ask who was present (2026-08-03).** Group artifacts get people attributed by inference — and inference has been wrong: a person was once "proposed" as present at an event that predates their birth. The harvest flow should ask who was actually there when an artifact involves several people or spans years — dates or ages would catch such cases (req 9).
-9. **Politely discover dates of birth and ages (2026-08-03).** Birth dates disambiguate presence by date and anchor the timeline; the interviewer may ask, politely, and record what is offered — nothing is required. `dob` is an optional schema field (§4) waiting on this.
+9. **Politely discover dates of birth and ages (2026-08-03).** Birth dates disambiguate presence by date and anchor the timeline; the interviewer may ask, politely, and record what is offered — nothing is required. An optional date-of-birth record waits on this (§4).
 10. **Politely discover pronouns (2026-08-03).** The person's own statement is the gold standard; archive text by others is weaker evidence; nothing is guessed. The interviewer may ask, politely, and the person page shows what is attested.
+11. **Capture rides the browse — the fireside principle (2026-09-22).** The
+    archive captures memories where they arise: exploring an item, a place,
+    a person is itself the prompt, surfaced subtly — never an
+    interrogation. The narrator follows whatever tangents they wish; the
+    flow accommodates detours and returns, at any length. A memory left
+    unfinished is not lost: it joins the work queue — the **same queue
+    that carries the proposed identities from document imports**. An
+    unfinished memory may simply have more to tell, but the task is the
+    same conversation, one that elicits the family's further memories
+    about the item and about the identities that emerge — visibly
+    unfinished, and resumes without re-asking. The whole session is a
+    fireside chat:
+    the family's voice leads; nothing is forced, nothing is required (F10).
 
 ---
 

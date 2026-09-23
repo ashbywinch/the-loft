@@ -1,6 +1,9 @@
 # Pipeline stages — user requirements
 
-User requirements for the stages that an image needs to go through. 
+User requirements for the stages that an image needs to go through. The developer
+requirements the code must meet (the object model, the archive legibility, the
+website export) live in `docs/PLAN/pipeline-stages-plan.md`, alongside the
+refactor plan.
 
 ## UR1. The eight stages to process an image of writing
 
@@ -51,7 +54,7 @@ the portal.
 
 ## UR3. New scans are picked up automatically
 
-When scans are added, the backend notices them itself and runs the
+When scans are added, the app notices them itself and runs the
 machine stages — orient, marks, words, draft rows — so the pages arrive
 at the row-check stage with no manual steps. The draft rows must exist
 WITHOUT any drawn lines (the words' own line structure), because whether

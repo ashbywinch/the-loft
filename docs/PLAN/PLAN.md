@@ -1,7 +1,12 @@
 # Project Plan — The Loft
 
 - **Status:** v0.1 — approved shape, sequencing open to adjustment
-- **Date:** 2026-08-02 · Companion to `docs/prd/PRD.md` v0.6 and `TECH-SPEC.md` v0.2
+- **Status update (2026-09-22):** Slice 1 delivered — the inventory's
+  "built" rows now run on the real archive; Slices 2 and 4 partially
+  landed, 3/5/6 unstarted (per-slice status under Phase 2).
+- **Current work:** the remaining work on the active subset lives in
+  `WORK-PLAN.md`; the folder's map is `README.md`.
+- **Date:** 2026-08-02 · Companion to `docs/PRD/PRD.md` v0.6 and `TECHSPEC.md` v0.2
 
 ## The urgency
 
@@ -22,15 +27,15 @@ ships something usable that week, on the real collection, not the fake one.
    flag the moment real items exist.
 5. **Green every slice.** Lint + typecheck + tests pass and the browser walk
    confirms the slice before the next begins.
-6. **Framework decision is revisitable** if a slice gets messy (`TECH-SPEC.md` §15).
+6. **Framework decision is revisitable** if a slice gets messy (`TECHSPEC.md` §15).
 
 ## The shape
 
 | Phase | What | State |
 |---|---|---|
-| 0 | Docs (PRD/TECH-SPEC/records), scaffold, prototype with fake data | **Done** |
-| 1 | **Import flow sketch** — design of capture → archive → app (TECH-SPEC §16 + worked example) | **Reviewed via the import interview (2026-08-05)** — the flow spec is `docs/prd/IMPORT-PRD.md`; TECH-SPEC §16 is the normative home |
-| 2 | Slices 1–6, each shippable | After 1 |
+| 0 | Docs (PRD/TECHSPEC/records), scaffold, prototype with fake data | **Done** |
+| 1 | **Import flow sketch** — design of capture → archive → app (TECHSPEC §16 + worked example) | **Reviewed via the import interview (2026-08-05)** — the flow spec is `docs/PRD/IMPORT-PRD.md`; TECHSPEC §16 is the normative home |
+| 2 | Slices 1–6, each shippable | Slice 1 delivered; 2–6 per sequencing |
 
 ## Feature inventory (prototype → real)
 
@@ -60,12 +65,12 @@ from fake-data demo to real-archive feature.
 | Feature | Status | Owned by | Notes |
 |---|---|---|---|
 | Curator mode | **stub** | Slice 2 | the real Drive API write path is the slice's core |
-| proposed/confirmed UI | data-only | Slice 2 | proposed links render like confirmed today |
+| proposed/confirmed UI | partial — the import review chat confirms proposed people; proposed/estimated still render flatly (per-card R12 open) | Slice 2 | proposed links render like confirmed today |
 | Sensitive flags | data-only | Slice 5 | field exists; no UI uses it yet |
 | Memory controls (dismiss date/person/memory) | not built | Slice 5 | |
 | Testimony recording (voice / self-record / type) | designed (§19) | Slice 4 | |
-| Browse-side story & fact capture ("Add your memory") | **designed** (`docs/prd/MEMORIES.md`) | Slice 4 | AI-elicited interview; text v1, audio in Slice 4 |
-| OCR-assisted transcription | not built | Slice 4 | drafts via the propose/confirm seam |
+| Browse-side story & fact capture ("Add your memory") | **live** (text — `app/memories.js`, `tools/memory.py`) | Slice 4 | AI-elicited interview; text v1 (audio stays Slice 4) |
+| OCR-assisted transcription | **live** — drafts + the review surface + self-report flags | Slice 4 | drafts via the propose/confirm seam |
 | Semantic search (embeddings) | not built | Slice 4 | |
 | Street-view cards | **stub** | Slice 6 | embed/static images, graceful offline |
 | PWA / offline | not built | Slice 6 | |
@@ -73,7 +78,7 @@ from fake-data demo to real-archive feature.
 
 ## Phase 1 — Import flow sketch (draft delivered)
 
-A design document (extends `TECH-SPEC.md`), not code. It resolves:
+A design document (extends `TECHSPEC.md`), not code. It resolves:
 
 - **Scanner conventions** — sheet-fed output (per-page JPEGs or one PDF per
   letter) and slide/photo scanner output; naming from the sheet order;
@@ -89,10 +94,21 @@ A design document (extends `TECH-SPEC.md`), not code. It resolves:
   to the archive account.
 - **Transcription draft loop** — OCR drafts → reviewer corrects → searchable.
 
-**Output:** an "Import flow" section in `TECH-SPEC.md` + a worked example on
+**Output:** an "Import flow" section in `TECHSPEC.md` + a worked example on
 one real scan. The brother's scanner is the first real input.
 
 ## Phase 2 — Slices
+### Slice status (2026-09-22)
+
+| Slice | Status |
+|---|---|
+| 1 — The capture pipeline, end to end | **Delivered** — real archive (the adopt batches), import, transcription drafts + the review surface, publish; the 2026-08-03 implementation plan's steps 1–12 are on `main` |
+| 2 — Phone capture & curation (Drive API) | **Partial** — Google sign-in (`tools/auth.py`, PKCE) and the import review chat (proposed → confirmed) are live; curator mode is still the stub (`app/views/curator.js`); the Drive write path and phone capture sessions are unbuilt |
+| 3 — Show mode for Dad (and gatherings) | **Not started** — no `#/show` route |
+| 4 — Testimony at scale | **Partial** — OCR transcription drafts (+ self-report flags) and the story-capture flow (`app/memories.js`, `tools/memory.py`) are live; voice recording and semantic search (embeddings) are unbuilt |
+| 5 — Trust & continuity | **Not started** — no export tooling, memory controls, or sensitive-flag UI |
+| 6 — Scale & polish | **Not started** — no service worker, TV mode, or 10k virtualization |
+
 
 ### Slice 1 — The capture pipeline, end to end
 - **Value:** the first box of real letters digitized *now*; real items in the
@@ -117,7 +133,7 @@ Build order, each step behind the gate (`make test`):
 
 1. **Archive scaffold** — `~/loft/archive` (README-for-2060, `assets/`, `index.json`) outside the repo; `~/loft/inbox` staging; AGENTS-compliant.
 2. **Ingest adapter** — inbox jobs (per-page JPEG sets or PDFs) concatenated into one ordered page sequence; PIL validation; duplex page-count sanity; **append-only** — new scans are noticed, never re-processed.
-3. **Hashes + dedupe** — TECH-SPEC §16.10: per-asset sha256 + phash, derived `hashes.json`, letter-level fingerprints, batch + archive dedupe; `content_hash` on drafts.
+3. **Hashes + dedupe** — TECHSPEC §16.10: per-asset sha256 + phash, derived `hashes.json`, letter-level fingerprints, batch + archive dedupe; `content_hash` on drafts.
 4. **Session journal** — per-batch `state.json` (§16.11): pages seen, decisions made, letter statuses; atomic writes; crash-safe resume mid-stack.
 5. **Worksheet logic (one core)** — boundaries (structure-based review), date + precision (date+7 from the **same stack**), **per-stack run defaults** (asked at stack start; Dad's boat letters differ), dedupe questions, the four buckets; the queue file Slice 2 consumes. CLI client first.
 6. **Catalog** — date-based IDs (collision suffix, never renamed), atomic sidecar write (status `draft`) + an `edits.jsonl` audit entry, asset copy; catalogued jobs move to `done`.
@@ -185,7 +201,7 @@ Build order, each step behind the gate (`make test`):
 
 ## Sequencing logic
 
-- **Release gate — F6 before any public deploy.** Slice 1 publishes the projection (which carries transcriptions — transcription hosting is the product, PRD §6) to the static host; accounts (F6) are Slice 2. The first *public* deploy therefore waits for F6, or the projection deploys to a family-only host until then; until that gate, `make serve` is the only serving surface. (Recorded 2026-08-02: closes the window surfaced by PR review; the projection posture lives in TECH-SPEC §7.)
+- **Release gate — F6 before any public deploy.** Slice 1 publishes the projection (which carries transcriptions — transcription hosting is the product, PRD §6) to the static host; accounts (F6) are Slice 2. The first *public* deploy therefore waits for F6, or the projection deploys to a family-only host until then; until that gate, `make serve` is the only serving surface. (Recorded 2026-08-02: closes the window surfaced by PR review; the projection posture lives in TECHSPEC §7.)
 - **1 before 2–6:** the scans are the irreplaceable layer; every month risks
   the physical deadline (house sale) and the narrator's fidelity.
 - **2 before 3:** the phone is Alex's stated work surface. *Knob:* if a
@@ -215,4 +231,4 @@ from his phone, end to end. The backup ritual is documented and run once.
 
 Social feeds, public sharing of any kind, family tree view, the ML models
 themselves (labels, OCR, alt text, and story suggestions plug into the seam
-later). Accounts are Should — mechanism TBD (`docs/prd/PRD.md` §15).
+later). Accounts are Should — mechanism TBD (`docs/PRD/PRD.md` §15).

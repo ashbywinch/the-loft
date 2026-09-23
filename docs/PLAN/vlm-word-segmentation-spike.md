@@ -1,6 +1,15 @@
 # Spike: VLM-word-segmentation — numbered word boxes, VLM segments
 
-Status: spike (not committed to as the product path). Started 2026-09-12.
+Status: spike (not committed to as the product path). Started 2026-09-12;
+milestones 1–3's code landed in `tools/` (commit 29ae5ad: the numbered
+renderer `tools/word_numbering.py`, the schema `tools/spike_vlm_contract.py`).
+The trace-gold was superseded by the rows adjudication (`tests/fixtures/
+page01-rows-gold/`, 2026-09-18 — `row-data-migration-plan.md`). The
+model-call milestones (4–5) and the report never landed: the spike's
+kind/injection vocabulary was absorbed into the pipeline-stages agreement
+(2026-09-19) — the VLM decides interjections and their injection targets
+at transcription, and the Document schema carries `kind` +
+`injection_target`.
 
 ## Why
 

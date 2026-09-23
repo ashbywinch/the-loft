@@ -1,7 +1,7 @@
 """Tests for the FF-680W scan tool: device selection, job-dir guard, the
 scanimage -L parser, and the capture-side registry record — the
 deterministic contracts; the scan itself is hardware-bound and calibrated
-on the device (TECH-SPEC §16.8)."""
+on the device (TECHSPEC §16.8)."""
 
 from __future__ import annotations
 

@@ -1,11 +1,11 @@
 # Layout requirements — draft for adjudication
 
-Status: DRAFT (2026-08-30). This table is Phase 0 of the layout redesign:
-every line carries its source, its status, and the mechanism question it
-forces. Nothing here is agreed until the adjudication marks it. After
-adjudication the confirmed lines become/amend PRD requirements
-(TRANSCRIPTION-REVIEW-PRD) and the TECH-SPEC layout section is rewritten
-from them.
+Status: ADJUDICATED + LANDED (2026-09-22). Every line was walked and
+ruled on 2026-08-30 (the "Rulings so far" section); the requirement-side
+lines landed in TRANSCRIPTION-REVIEW-PRD as VR19–VR22 (2026-09-09), with
+VR23/VR24 from the same day's rulings; the TECHSPEC-side lines
+(L1/L9/L10/L11) landed in TECHSPEC §16.17 with the single-pass design.
+Kept as the adjudication record and requirement-source trace.
 
 ## The fidelity ruling (2026-08-30, user — to be written up as a VR)
 
@@ -30,9 +30,9 @@ This sharpens VR7 ("marginal notes... appear in their place") from
 |---|---|---|---|---|
 | L1 | A proposed transcription is produced for every page, made with prior knowledge of the set of people and places which may appear in the letter, and every segment is boxed — a page reaching review without the proposal and its boxes is a pipeline failure | L1 ruling 2026-08-30 + VR14 | NEW — write as VR (amends VR14's wording) | (design) the context source: the archive's people/places registry |
 | L2 | Text in any direction is captured — orientation never drops content | VR15 | documented — CONFIRMED (the fidelity table + the per-segment rulings already imply the capture; the rotation mechanism is design) | — |
-| L3 | A segment is the longest run of text on a single line that belongs together — it ends where the writing logically separates: a column, a margin annotation, an insertion, a distinct hand. Each segment carries its own text, box, and orientation. When the pipeline's proposed segmentation is wrong, the reviewer can merge or split segments | segment ruling 2026-08-30 | NEW — write as VR | (design, not requirement) how the pipeline finds segments — the mechanism is the TECH-SPEC's business |
+| L3 | A segment is the longest run of text on a single line that belongs together — it ends where the writing logically separates: a column, a margin annotation, an insertion, a distinct hand. Each segment carries its own text, box, and orientation. When the pipeline's proposed segmentation is wrong, the reviewer can merge or split segments | segment ruling 2026-08-30 | NEW — write as VR | (design, not requirement) how the pipeline finds segments — the mechanism is the TECHSPEC's business |
 | L4 | An insertion is one or more ordinary segments — text, box, orientation, positioned by the grid like any other segment. The insertion POINT is separate data: a character position within another segment. The inserted text is never merged into the target's text, never flattened into reading order | insertion ruling 2026-08-30 | NEW — write as VR | — |
-| L5 | When the writer drew an insertion mark (a caret, a line to the margin), the pipeline PROPOSES the point it indicates; the reviewer confirms or moves it — a proposed point is never treated as validated. With no mark, the point starts unset and the reviewer places it. A proposal never silently alters text | L5 ruling 2026-08-30 | NEW — write as VR | (design) how marks are detected is the TECH-SPEC's business |
+| L5 | When the writer drew an insertion mark (a caret, a line to the margin), the pipeline PROPOSES the point it indicates; the reviewer confirms or moves it — a proposed point is never treated as validated. With no mark, the point starts unset and the reviewer places it. A proposal never silently alters text | L5 ruling 2026-08-30 | NEW — write as VR | (design) how marks are detected is the TECHSPEC's business |
 | L6 | Margin annotations that are independent notes (not insertions) remain their own segments, at their position, never dropped, never merged | geometry log 2026-08-22 ("the item and its annotation are separate transcript lines"), user-confirmed | PROMOTED — write as VR | — |
 | L7 | The transcription is reconstructable into a markdown table where each segment sits at its original position; each segment's orientation is stored as data (markdown cannot render rotated text today — the storage makes it displayable the day a format can, by any renderer) — the table plus the stored orientations are the fidelity specification | L7 ruling 2026-08-30 (amended: store rotation as data) | NEW — write as VR | — |
 | L8 | Where a segment is a machine transcription and the machine is really uncertain about a word, that word is marked up visibly. The markup directs the reviewer's attention; it never alters the transcription's content | L8 ruling 2026-08-30 ("useful to have words marked up where it's a machine transcription and the machine is really uncertain") | NEW — write as VR | (design) how the pipeline knows it is uncertain — the multi-reader confidence check is one candidate mechanism, not the requirement |
@@ -63,7 +63,7 @@ This sharpens VR7 ("marginal notes... appear in their place") from
    mechanism is not a requirement — it is one candidate design.
 
 ADJUDICATED 2026-08-30: every line walked and ruled. The table is the
-working contract for the TECH-SPEC rewrite.
+working contract for the TECHSPEC rewrite.
 
 ## Open questions for the conversation (one at a time)
 
@@ -169,10 +169,10 @@ limited — so the UX is built around correcting it.
 
 Landed in TRANSCRIPTION-REVIEW-PRD 2026-09-09 as VR19–VR22:
 L2→VR15/VR18; L3→VR19 (as amended here); L4→VR19; L5→VR21; L6→VR19;
-L7→VR18+VR19; L8→VR4; L12→VR22. L1, L9, L10, L11 stay TECH-SPEC-side
+L7→VR18+VR19; L8→VR4; L12→VR22. L1, L9, L10, L11 stay TECHSPEC-side
 (the context source, gate granularity, cost, per-segment reading).
 The review/edit user stories:
-`docs/plans/segment-review-stories.md`.
+`docs/PLAN/segment-review-stories.md`.
 
 ## Ruling 2026-09-09 (II): the gate detects everything; the reviewer fixes a few
 
@@ -186,7 +186,7 @@ nearly completely correct — the reviewer fixes a couple of things,
 never re-structures a page; a page of wackadoo lines bearing no
 resemblance to the text is a pipeline failure, not a review surface.
 Landed as VR23. L9's mechanism questions (gate granularity) stay
-TECH-SPEC-side.
+TECHSPEC-side.
 
 Same ruling, the review-flow requirement: the reviewer must always
 know what part of the document they are transcribing and whether it is
@@ -195,5 +195,5 @@ structure is settled before the words are checked (landed as VR24).
 The presentation trilemma (reading order confusing to read; logical
 order confusing to check and dislocating) is resolved by the
 structure-first flow — worked through in
-`docs/plans/segment-review-stories.md` (the flow section, and Q5's
+`docs/PLAN/segment-review-stories.md` (the flow section, and Q5's
 answer).

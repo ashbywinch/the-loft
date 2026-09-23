@@ -1,0 +1,10 @@
+# Non-source directories the architecture graph must not scan
+# (archunitpython's exclude mechanism — the defaults cover .venv,
+# node_modules, .git, caches).
+.venv-htr
+.conda-tools
+.kilo
+.code-review-graph
+.sisyphus
+.omp
+.lucidlint-dist

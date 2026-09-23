@@ -1,6 +1,6 @@
 # spike-word-segmentation — the VLM word-segmentation spike's artifacts
 
-Everything the spike (`docs/plans/vlm-word-segmentation-spike.md`) produces
+Everything the spike (`docs/PLAN/vlm-word-segmentation-spike.md`) produces
 that a human or a future agent might want to look at: renders, gold maps,
 saved model responses, scores. Inputs live in
 `tests/fixtures/page01-wordseg/` (README there); the scan is read from the

@@ -2,8 +2,8 @@
 
 Status: agreed direction (2026-08-10, user). Purpose: this doc is
 requirements and user needs only — the mechanics live in
-`docs/plans/INGEST-PLAN.md`. Related: the app's F9 + the review principles in
-`docs/prd/PRD.md`; the artifact-import rules in `docs/prd/IMPORT-PRD.md`.
+`docs/PLAN/INGEST-PLAN.md`. Related: the app's F9 + the review principles in
+`docs/PRD/PRD.md`; the artifact-import rules in `docs/PRD/IMPORT-PRD.md`.
 
 ## The overarching goal
 
@@ -23,6 +23,14 @@ family. "Correctly populated" means:
 The telling is human and non-deterministic; the structure is not: every
 unknown travels the same phases, and the conversation never loses an
 unknown it has surfaced.
+
+**Unfinished memories enter the same queue (2026-09-22).** A memory left
+unfinished while browsing (PRD §9 F10, §19 req 11) resumes in this
+review, alongside the proposed identities from imports — the task is the
+same conversation: one question at a time, eliciting what the family
+remembers about the item, and about the identities that emerge. A memory
+may simply have more to tell; the walk continues from where it stopped,
+never re-asking what was already answered.
 
 ## Claims — the unit of work
 

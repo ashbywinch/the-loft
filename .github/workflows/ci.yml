@@ -22,7 +22,7 @@ jobs:
           cache: npm
       - name: Fail if family-history-album goes public (real family content)
         # The private repo carries real letter transcriptions, names and health
-        # history — the privacy posture (PRD F6, TECH-SPEC §7) requires it to
+        # history — the privacy posture (PRD F6, TECHSPEC §7) requires it to
         # stay private; this makes a public flip fail CI instead of leaking the
         # archive. The public the-loft ships a scrubbed, dataset-free tree and
         # is exempt by name.
@@ -57,7 +57,7 @@ jobs:
           filename: coverage.xml
           badge: true
           fail_below_min: true
-          thresholds: '0 90' # floor 0 until real code lands — raise to 80 as tools get tests
+          thresholds: '65 90' # floor below the measured 73.11% (2026-09-22) — raise as coverage lands; tracks the 90% goal
           format: markdown
           output: both
       - name: Post coverage comment

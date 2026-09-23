@@ -102,6 +102,24 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
   functions need no mocking; global patching is a last resort and a smell.
 - **Every test defends an observable contract** and fails on a plausible bug.
   A test that cannot fail is not a test.
+- **A check that fails inconsistently is fixed at the source — ALWAYS
+  (2026-09-23).** There is no other answer, for tests and evals alike: no
+  re-run-until-green, no "merge anyway, the content is safe", no golden
+  file that stops checking the behaviour, no widening the assertion until
+  the case passes. A test's bug is its data, seam, or assumption — fix it
+  deterministically. An eval's bug is the scenario, the prompt, the guard,
+  or the client's handling of the provider — fix it so the real behaviour
+  passes consistently, and prove the fix with the live suite. This is not
+  a judgement call with options; it is the only permitted answer (2026-09-23:
+  a persona-guard eval redded on a phrase the guard wrongly treated as
+  jargon — the resolution was fixing the guard and the test, not asking
+  how to handle the red).
+- **Failure messages never truncate the failing content (2026-09-23).** An
+  assertion must show the WHOLE offending output — the persona guard's
+  `text[:80]` hid the words that failed on 2026-09-23 and turned a
+  five-minute fix into a log-archaeology hunt. Truncation is for sliders
+  and previews, never for an error that must be diagnosable from its own
+  message.
 - **The 2060 test is a test.** The archive must be understandable with no app:
   a test walks the README + a sample sidecar and asserts a stranger could
   reconstruct the item.

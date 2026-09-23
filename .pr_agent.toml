@@ -1,5 +1,7 @@
 [openai]
-custom_llm_provider = "openai"
+# no custom_llm_provider: it forces the "openai/" provider prefix back
+# onto the model name, which the gateway compat route rejects (401,
+# swallowed). The provider comes from the workflow env (OPENAI_BASE_URL).
 # api_base intentionally NOT pinned here: the workflow env's OPENAI_BASE_URL
 # (the Cloudflare AI Gateway compat endpoint) is the one route. A repo-pinned
 # api_base overrides it for the /review path only, and pointed the review at

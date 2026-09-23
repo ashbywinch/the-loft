@@ -11,7 +11,7 @@ repos:
     hooks:
       - id: pyrefly
         name: pyrefly
-        entry: uv run pyrefly check
+        entry: .venv/bin/python scripts/pyrefly-lock.py check --pyrefly-config pyrefly.toml # the both-direction baseline lock — bare check fails on the 19 baselined errors (2026-09-22); NO `make` here: setup would uv-sync under pre-commit's stash and strip deps the lock needs
         language: system
         types: [python]
         pass_filenames: false # project check — pyrefly needs the whole-project context, not per-file

@@ -13,3 +13,8 @@ project_excludes = ["tools/code_health.py", "tools/check_records.py", "tools/lay
 # tools/layout_detect.py runs under .venv-htr (py3.13 — paddleocr lives
 # there); its deps are invisible to the main-venv checker, like the
 # vendored files above.
+
+[errors]
+missing-override-decorator = true   # every override must carry @override — real correctness guard
+missing-super-call = true           # __init__ must call super().__init__() — caught a real test-stub bug
+unknown-name = false                # three-LSP: never-defined names belong to ruff F821 — pyrefly must not double-report

@@ -5,7 +5,15 @@
 # suites run ONCE (inside coverage), never twice (2026-08-11: make test + make
 # coverage both re-ran pytest and vitest in CI). make test stays as the local
 # fast gate.
-.PHONY: help setup serve lint lint-github typecheck test coverage format clean eval evals eval-changed verify scan-docs scan-photos adopt ingest confirm
+
+# The shell pin — make's default /bin/sh is dash on Debian/Ubuntu and the
+# CI runners; dash has no pipefail. Pin bash once, never `set -o pipefail`
+# inside recipes (the scaffold standard: a bash-ism recipe passes on macOS
+# and dies in CI).
+SHELL := /bin/bash
+.SHELLFLAGS := -eu -o pipefail -c
+
+.PHONY: help setup serve lint lint-github typecheck typecheck-update-baseline test coverage format clean eval evals eval-changed verify scan-docs scan-photos adopt ingest confirm
 
 PYTHON := .venv/bin/python
 RUFF := .venv/bin/ruff
@@ -105,7 +113,12 @@ lint-github: setup
 	@$(NPM) run lint
 
 typecheck: setup
-	@$(PYREFLY) check
+	@$(PYTHON) scripts/pyrefly-lock.py check --pyrefly-config pyrefly.toml
+
+# After a deliberate diagnostic change, commit the refresh (the lock fails
+# on STALE baseline entries — an error the code no longer produces).
+typecheck-update-baseline: setup
+	@$(PYTHON) scripts/pyrefly-lock.py update-baseline --pyrefly-config pyrefly.toml
 
 test: setup lint typecheck
 	@$(PYTHON) -m pytest
@@ -168,8 +181,12 @@ lucidlint: install-lucidlint
 	# The tool scans its own baseline file and reports a noop on it — the
 	# filter drops that one self-finding (upstream: lucidlint must not scan
 	# its own data); everything else fails the gate.
-	@$(PYTHON) $(LUCIDLINT_BUNDLE) --repo . --baseline lucidlint.json --json 2>/dev/null | \
+	@{ $(PYTHON) $(LUCIDLINT_BUNDLE) --repo . --baseline lucidlint.json --json 2>/dev/null || true; } | \
 		$(PYTHON) -c 'import json, sys; d = json.load(sys.stdin); bad = [a for a in d["actions"] if a["severity"] == "fail" and a["file"] != "lucidlint.json"]; print(f"== lucidlint: {len(bad)} new action(s)"); sys.exit(1 if bad else 0)'
+	# the tool exits 1 when findings exist; the FILTER above derives the
+	# verdict from the JSON — the tool's own exit is absorbed (pipefail) so
+	# the gate's verdict is the filter's, never the scanner's. (2026-09-22,
+	# .SHELLFLAGS -o pipefail)
 
 eval: evals
 

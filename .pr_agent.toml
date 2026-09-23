@@ -1,5 +1,5 @@
 [openai]
-api_base = "https://gateway.ai.cloudflare.com/v1/e21a5be58ac1e8f7d5619539feb2dc3d/default/compat"  # the review path reads api_base from the CONFIG, not the env — unset, litellm sent the key to OpenAI's default endpoint (401 "Invalid API key", swallowed)
+api_base = "https://gateway.ai.cloudflare.com/v1/e21a5be58ac1e8f7d5619539feb2dc3d/default/compat"  # the review path reads api_base from the CONFIG, not the env — unset, the handler fell back to the default endpoint (401 "Invalid API key", swallowed)
 # no custom_llm_provider: it re-prefixed the model as "openai/deepseek-v4-flash",
 # which the gateway compat route rejects (401, swallowed).
 [config]

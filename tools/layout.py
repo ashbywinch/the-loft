@@ -1,4 +1,4 @@
-"""The layout model — how a page's review layout is built (TECH-SPEC
+"""The layout model — how a page's review layout is built (TECHSPEC
 §16.16, 2026-08-15).
 
 The VLM transcribes the words; PaddleOCR's detector supplies the geometry;

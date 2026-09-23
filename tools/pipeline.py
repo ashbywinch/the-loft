@@ -1,5 +1,5 @@
 """The ingest chain driver: orient → raw OCR → model guess → boundaries →
-user confirmation, per registered batch (TECH-SPEC §16.13/§16.14).
+user confirmation, per registered batch (TECHSPEC §16.13/§16.14).
 
 process runs the machine stages and leaves the batch awaiting review; the
 guess stage hands the noisy raw OCR plus the standing knowledge (people,

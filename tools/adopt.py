@@ -1,6 +1,6 @@
 """Adopt the user's scan folders into the registry — in place, never touching them.
 
-Adoption (MULTI-DOC-IMPORT-PRD.md R1–R4, TECH-SPEC §16.13/§16.14): a folder
+Adoption (MULTI-DOC-IMPORT-PRD.md R1–R4, TECHSPEC §16.13/§16.14): a folder
 of scans — ours, the user's separate scanning, or a pre-existing pile —
 is hashed where it sits and registered in Loft/registry/<batch-id>.json.
 The user's folder is never written, renamed, moved, or deleted. The

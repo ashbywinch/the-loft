@@ -1,6 +1,6 @@
 """Scan documents or photos from the Epson FF-680W into the user's scan area.
 
-Capture side of the capture seam (MULTI-DOC-IMPORT-PRD.md R1–R6, TECH-SPEC
+Capture side of the capture seam (MULTI-DOC-IMPORT-PRD.md R1–R6, TECHSPEC
 §16.13): this module writes <batch-id>-NN.jpg files (300 DPI colour, JPEG
 quality 88, the batch id embedded in every file name so a user-renamed
 folder stays recoverable) into the user's scan area — tools/loft_paths.py

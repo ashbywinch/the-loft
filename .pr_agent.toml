@@ -8,7 +8,7 @@ custom_llm_provider = "openai"
 # bot's stream ends at the chat call, and opencode returns "Invalid API key").
 
 [config]
-model = "openai/deepseek-v4-flash"
+model = "deepseek/deepseek-v4-flash"  # the gateway compat route's real model name — the "openai/" provider prefix made the gateway route to its openai provider (no key) -> 401 "Invalid API key", swallowed as a silent no-review (2026-09-23, diagnosed via a local reproduction + a direct gateway probe)
 custom_model_max_tokens = 128000
 max_model_tokens = 128000
 ai_timeout = 1800

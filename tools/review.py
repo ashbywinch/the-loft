@@ -439,7 +439,11 @@ def investigate(
         'lead went unanswered)">", '
         '"item_id": "<the document id from the tool results>"}, ...], '
         '"question": '
-        '"<the genealogist next question to the reviewer, asked the way a hired researcher '
+        '"<the genealogist next question to the reviewer, spoken to the family in their '
+        'own words — never the process vocabulary: no "the import", no "the archive", no '
+        '"the records", no statuses, no "awaiting" (2026-09-23: an off-topic conclusion '
+        'leaked "the import listed him as Pearl\'s brother" to the family). Asked the way '
+        "a hired researcher "
         'would — the provenance when the reviewer cited a source ("did she tell you that '
         'personally?"), the follow-up that would firm up the connection; or a short conclusion '
         "when no question is needed. When the reviewer expresses NO knowledge and has NO "

@@ -38,8 +38,9 @@ def _marker_input_matches(marker: Path, input_sha: str) -> bool:
     return data.get("input_sha") == input_sha
 
 
-# shape; the extra params (transcribe seam, people/places/label context) belong to this backend alone
-# lucidlint: ignore long-param-list the VLM backend's stage inputs — htr_pages takes only (pages, raw_dir), a disjoint
+# the extra params (transcribe seam, people/places/label context) belong to this backend alone — a
+# stage-inputs type would be ceremony for one use (2026-09-23: the htr_pages comparison died with the local backend)
+# lucidlint: ignore long-param-list the VLM backend's stage inputs are the seam and the reading context
 def htr_pages_vlm(
     pages: list[tuple[str, Path]],
     raw_dir: Path,

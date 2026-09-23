@@ -37,4 +37,4 @@ jobs:
         # eval gate for dependabot-landed changes is the merged main push —
         # ci.yml always runs evals on main, with keys on every normal merge
         # path, so a regression the PR skipped surfaces on main (2026-08-29).
-        run: gh pr merge --auto --merge "$PR_URL"
+        run: gh pr merge --auto --rebase "$PR_URL"  # the ruleset allows rebase-merge ONLY — --merge is blocked, which failed the step and left automerge un-armed (2026-09-23)

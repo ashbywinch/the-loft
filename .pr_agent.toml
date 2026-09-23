@@ -2,6 +2,13 @@
 api_base = "https://gateway.ai.cloudflare.com/v1/e21a5be58ac1e8f7d5619539feb2dc3d/default/compat"  # the review path reads api_base from the CONFIG, not the env — unset, the handler fell back to the default endpoint (401 "Invalid API key", swallowed)
 # no custom_llm_provider: it re-prefixed the model as "openai/deepseek-v4-flash",
 # which the gateway compat route rejects (401, swallowed).
+[litellm]
+# forward the raw model id to the openai provider UNCHANGED — empty lets
+# litellm rewrite "deepseek/..." into the deepseek provider (its own API,
+# where our gateway key 401s). Custom = openai: same client, the gateway
+# api_base below, the model id untouched, never the local litellm server.
+custom_llm_provider = "openai"
+
 [config]
 model = "deepseek/deepseek-v4-flash"  # the gateway compat route's real model name — the "openai/" provider prefix made the gateway route to its openai provider (no key) -> 401 "Invalid API key", swallowed as a silent no-review (2026-09-23, diagnosed via a local reproduction + a direct gateway probe)
 custom_model_max_tokens = 128000

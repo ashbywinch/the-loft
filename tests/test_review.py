@@ -71,7 +71,7 @@ def test_on_topic_answer_is_relevant() -> None:
     client = FakeClient(
         [
             '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
-            '"confidence": "think_so", "note": "Grandma used to say so.", "question": "", "findings": []}'
+            '"confidence": "think_so", "note": "Grandma used to say so.", "findings": []}'
         ]
     )
     result = investigate(client, text="Grandma used to say so.", person=_person(), who="Alex", facts=make_facts())
@@ -88,7 +88,7 @@ def test_off_topic_answer_is_flagged_not_recorded() -> None:
     client = FakeClient(
         [
             '{"relevant": false, "contradiction": {"found": false, "detail": ""}, '
-            '"confidence": "unclear", "note": "the house on Victoria Avenue", "question": "", "findings": []}'
+            '"confidence": "unclear", "note": "the house on Victoria Avenue", "findings": []}'
         ]
     )
     result = investigate(
@@ -110,8 +110,7 @@ def test_contradiction_with_the_attested_facts_is_flagged() -> None:
         [
             '{"relevant": true, "contradiction": {"found": true, '
             '"detail": "the war record attests Walter Whitlock died on 15 September 1916"}, '
-            '"confidence": "definitely", "note": "the reviewer said it was someone else", '
-            '"question": "", "findings": []}'
+            '"confidence": "definitely", "note": "the reviewer said it was someone else", "findings": []}'
         ]
     )
     result = investigate(
@@ -126,31 +125,19 @@ def test_contradiction_with_the_attested_facts_is_flagged() -> None:
     assert "Walter Whitlock" in result["contradiction"]["detail"]
 
 
-def test_a_typoed_verdict_key_is_repaired_by_the_correction_turn() -> None:
-    """2026-09-23: a verdict with "quetion" instead of "question" sailed
-    through the completeness gate with an empty question and failed the
-    follow-up condition. A turn missing any schema key is INCOMPLETE —
-    the existing correction turn repairs it, never a silent empty field."""
-    client = FakeClient(
-        [
-            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
-            '"confidence": "think_so", "note": "the reviewer is half-remembering", '
-            '"findings": [], "quetion": "Did you ever meet him?"}',
-            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
-            '"confidence": "think_so", "note": "the reviewer is half-remembering", '
-            '"findings": [], "question": "Did you ever meet him?"}',
-        ]
-    )
-    result = investigate(
-        client,
-        text="Grandma used to say so.",
-        person=_person(),
-        who="Alex",
-        facts=make_facts(),
-    )
-    assert result["question"] == "Did you ever meet him?"
-    assert len(client.calls) == 2, "the incomplete verdict was accepted instead of corrected"
-    assert "That was neither a tool call nor the complete verdict" in client.calls[1][1]
+def test_a_typoed_question_key_fails_loudly_never_silently() -> None:
+    """2026-09-23: a verdict with "quetion" instead of "question" read as
+    an empty question and failed confusingly ("should ask a follow-up
+    question: ''"). The condition now reports the missing key WITH the
+    whole output — and the eval stays red; the model is NOT given a
+    second chance (user: fix the actual thing, never retry)."""
+    from tools.eval_review import PlaceLeadFlow, condition_question
+
+    raw = '{"relevant": true, "findings": [], "quetion": "Did you ever meet him?"}'
+    error = condition_question(PlaceLeadFlow(), {"question": "", "raw": raw})
+    assert error is not None
+    assert "lacks the 'question' key" in error
+    assert raw in error, "the guard must carry the FULL output (2026-09-23)"
 
 
 def test_the_model_can_dig_with_the_tools_and_reports_findings() -> None:
@@ -162,8 +149,7 @@ def test_the_model_can_dig_with_the_tools_and_reports_findings() -> None:
             '{"tool": "search_people", "args": {"query": "Walter"}}',
             '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
             '"confidence": "think_so", "note": "the reviewer is half-remembering the right thing", '
-            '"question": "", "findings": ["one of Nora\'s siblings, Walter, died in the war — the archive has his '
-            'record"]}',
+            '"findings": ["one of Nora\'s siblings, Walter, died in the war — the archive has his record"]}',
         ]
     )
     result = investigate(
@@ -189,7 +175,7 @@ def test_the_tools_are_read_only() -> None:
         [
             '{"tool": "delete_person", "args": {"id": "p-walter"}}',
             '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
-            '"confidence": "think_so", "note": "fine", "question": "", "findings": []}',
+            '"confidence": "think_so", "note": "fine", "findings": []}',
         ]
     )
     investigate(client, text="I think so.", person=_person(), who="Alex", facts=make_facts())
@@ -202,8 +188,7 @@ def test_the_model_never_derives_relationships() -> None:
     client = FakeClient(
         [
             '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
-            '"confidence": "think_so", "note": "the reviewer words are recorded verbatim", '
-            '"question": "", "findings": []}'
+            '"confidence": "think_so", "note": "the reviewer words are recorded verbatim", "findings": []}'
         ]
     )
     result = investigate(client, text="He was her brother, I think.", person=_person(), who="Alex", facts=make_facts())
@@ -512,7 +497,7 @@ def test_over_budget_tool_calls_are_logged_and_fed_back() -> None:
     over = '{"tool": "search_people", "args": {"query": "Nora"}}'
     verdict = (
         '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
-        '"confidence": "think_so", "note": "fine", "question": "", "findings": []}'
+        '"confidence": "think_so", "note": "fine", "findings": []}'
     )
     client = FakeClient([tool, tool, tool, tool, over, verdict])
     result = investigate(

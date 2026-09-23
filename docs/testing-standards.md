@@ -114,6 +114,21 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
   a persona-guard eval redded on a phrase the guard wrongly treated as
   jargon — the resolution was fixing the guard and the test, not asking
   how to handle the red).
+- **A retry is never the fix (2026-09-23).** The eval evaluates the ONE
+  output the flow produced. Building a re-ask into the flow so a
+  content condition can pass on a later attempt — a "correction turn"
+  for a missing or misspelled verdict key, a regenerate-on-empty-field,
+  a "repair" loop that re-rolls the model until the guard is satisfied —
+  is the rerun lottery by another name, and it is forbidden: the flow
+  must not reshape or regenerate the model's content to satisfy the
+  eval's conditions. A malformed verdict FAILS the eval loudly, carrying
+  the full output (the missing-field guard reports "lacks the 'question'
+  key — the output was: …", never a silently empty field); the eval
+  stays red until the scenario (the schema's presentation) makes the
+  model pass. The ONE permitted retry: the client may re-attempt a
+  transient transport/provider failure — a response with NO content at
+  all (a 5xx, a dropped connection, a 0-token 200) — as part of the same
+  logical run; content the model produced is never regenerated.
 - **Failure messages never truncate the failing content (2026-09-23).** An
   assertion must show the WHOLE offending output — the persona guard's
   `text[:80]` hid the words that failed on 2026-09-23 and turned a

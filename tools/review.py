@@ -452,6 +452,12 @@ def investigate(
     # once before the shape appeared, doubling the cost of every exchange
     # (2026-08-11 review)
     prompt = prompt + "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + verdict
+    prompt += (
+        "\n\nThe verdict MUST contain ALL of these keys, spelled exactly as written — "
+        "relevant, contradiction, confidence, note, findings, question — no others, "
+        "no misspellings, no missing keys (a misspelled key is a failed verdict, "
+        "2026-09-23)."
+    )
     tool_calls = 0
     trace: list[dict[str, Any]] = []
     # the stable prompt — the static plus the conversation before the
@@ -524,13 +530,14 @@ def _verdict_result(
     normalized findings, the trace and the final prompt attached
     (completeness). None when the turn is neither a tool call nor a
     complete verdict — the caller feeds it back for a correction."""
-    required_keys = ("relevant", "contradiction", "confidence", "note", "findings", "question")
-    if not all(key in parsed_dict for key in required_keys):
-        # a turn missing a schema key is incomplete — including a typo'd
-        # key ("quetion" on 2026-09-23 silently emptied the question and
-        # failed the follow-up condition): the caller's correction turn
-        # repairs it, exactly like any other incomplete verdict
-        return None
+    # the completeness gate is the ORIGINAL contract: a turn whose fields
+    # carry valid values is accepted AS-IS and evaluated once. A missing
+    # or typo'd key is NOT repaired by re-asking the model (that retries
+    # the eval's conditions — the 2026-09-23 correction-turn change did
+    # exactly that and is reverted): it produces an empty field and the
+    # condition FAILS LOUDLY with the full output, staying red until the
+    # scenario (the schema presentation) makes the model pass — never a
+    # second chance (user, 2026-09-23).
     relevant = str(parsed_dict.get("relevant", "")).strip().lower()
     raw_contradiction = parsed_dict.get("contradiction")
     contradiction: dict[str, Any] = raw_contradiction if isinstance(raw_contradiction, dict) else {}

@@ -309,6 +309,14 @@ def condition_no_term(flow: ReviewFlow, result: dict[str, Any]) -> str | None:
 def condition_question(flow: ReviewFlow, result: dict[str, Any]) -> str | None:
     question = str(result.get("question", ""))
     if flow.has_question and not question:
+        raw = str(result.get("raw", ""))
+        if '"question"' not in raw:
+            # a verdict without the question key is a MISSING field, not a
+            # silent empty one — it fails loudly with the whole output, never
+            # "asked nothing" (a typo'd key, "quetion", reads as an empty
+            # question; 2026-09-23). The eval stays red until the model
+            # emits the schema; it is NOT given another chance (user).
+            return f"the verdict JSON lacks the 'question' key — the output was: {raw}"
         return f"the genealogist should ask a follow-up question: {question!r}"
     if flow.question_concludes and not any(word in question for word in ("leave", "guess", "record", "unless")):
         return (

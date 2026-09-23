@@ -46,6 +46,14 @@ BOT_STEP_MARK = "Run the-pr-agent/pr-agent"
 _ERROR_MARKERS = (
     "Failed to process the command.",
     "Traceback (most recent call last)",
+    # the route/auth class: the review 401s at the API boundary and dies
+    # silently (2026-09-23: the gateway rejected the provider-prefixed
+    # model name with "Invalid API key" and v0.45.0 swallowed it — the
+    # litellm error only surfaced in a local reproduction)
+    "AuthenticationError",
+    "Invalid API key",
+    "Unauthorized",
+    "401",
 )
 _SIZE_RE = re.compile(r"Tokens:\s*(\d+),\s*total tokens over limit:\s*(\d+)")
 _TRACEBACK_TAIL = 12  # lines after a traceback/marker worth reporting
@@ -104,9 +112,16 @@ def _job_log(repo: str, token: str) -> str | None:
             # host 404'd/URLError'd in CI and the gate crashed instead of
             # reporting the reason)
             try:
-                return (
-                    urllib.request.urlopen(e.headers["Location"], timeout=60).read().decode("utf-8", errors="replace")
+                # the signed blob host's WAF rejects urllib's default UA
+                # (the same rule that hit the gateway) — send the house's
+                # known-good UA or the log read degrades to the generic
+                # message (2026-09-23: the auth-failure diagnosis needed
+                # this read and got "could not be read from the checks API")
+                req2 = urllib.request.Request(
+                    e.headers["Location"],
+                    headers={"User-Agent": "opencode/1.14.20"},
                 )
+                return urllib.request.urlopen(req2, timeout=60).read().decode("utf-8", errors="replace")
             except (urllib.error.URLError, OSError):
                 return None
     except (HTTPError, KeyError, ValueError, urllib.error.URLError, OSError):

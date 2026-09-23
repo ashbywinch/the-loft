@@ -25,9 +25,9 @@
    "severity": "error"
   },
   {
-   "line": 74,
+   "line": 82,
    "column": 9,
-   "stop_line": 74,
+   "stop_line": 82,
    "stop_column": 25,
    "path": "tools/check_review_posted.py",
    "code": -2,

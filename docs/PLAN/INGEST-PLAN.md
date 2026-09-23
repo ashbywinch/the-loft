@@ -15,36 +15,31 @@ walk this plan replaces.
 class Evidence:
     """What makes a claim exist — the document's own words, or the
     family's own words for something they raised."""
-
     kind: Literal["document", "family"]
-    item_id: str | None  # the document, when kind == "document"
-    quote: str  # the direct quote that asserts the claim
-
+    item_id: str | None      # the document, when kind == "document"
+    quote: str               # the direct quote that asserts the claim
 
 @dataclass
 class Assertion:
     """What the claim asserts — any piece of data the store can hold."""
-
     kind: Literal["existence", "fact", "relation", "event", "story"]
-    subject: EntityRef | None  # the entity the fact/relation attaches to
-    predicate: str | None  # "was a doctor", "was married in…"
-    objects: tuple[EntityRef, ...]  # the other entities the assertion references
-
+    subject: EntityRef | None        # the entity the fact/relation attaches to
+    predicate: str | None            # "was a doctor", "was married in…"
+    objects: tuple[EntityRef, ...]   # the other entities the assertion references
 
 @dataclass
 class Claim:
     id: str
     assertion: Assertion
     source: Evidence
-    phase: ClaimPhase  # identity | disposition | population | closed
-    identification: Identification | None  # may arrive pre-answered
-    disposition: Disposition | None  # may arrive pre-answered (first-hand)
-    details: list[Detail] | None  # the population output
+    phase: ClaimPhase                # identity | disposition | population | closed
+    identification: Identification | None   # may arrive pre-answered
+    disposition: Disposition | None         # may arrive pre-answered (first-hand)
+    details: list[Detail] | None            # the population output
 
     def next_question(self) -> str | None:
         """Ask the first unanswered phase — never what's already answered.
         The flow's one rule."""
-
 
 @dataclass
 class Identification:
@@ -52,11 +47,10 @@ class Identification:
     record_id: str | None
     description: str | None
 
-
 @dataclass
 class Disposition:
     decision: Literal["attested", "estimated", "pending", "excluded"]
-    basis: dict[str, str] | None  # {text, by, when} — the family's words, verbatim
+    basis: dict[str, str] | None   # {text, by, when} — the family's words, verbatim
 ```
 
 The conversation is the queue: `claims: list[Claim]` + `current`. The

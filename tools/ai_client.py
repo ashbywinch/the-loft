@@ -133,7 +133,17 @@ class AIClient:
             try:
                 with self._urlopen(request, timeout=self.timeout) as response:
                     data = json.loads(response.read().decode("utf-8"))
-                break
+                try:
+                    choice = data["choices"][0]
+                    message = choice.get("message") if isinstance(choice, dict) else None
+                    # a choice can be a dict whose message is a non-dict (a string) —
+                    # .get on it would raise the uncaught AttributeError the null-
+                    # choice guard was meant to prevent (bot review, 2026-08-16)
+                    message = message if isinstance(message, dict) else {}
+                    content = message.get("content") or ""
+                except (KeyError, IndexError, TypeError) as e:
+                    raise AIClientError(f"unexpected API response: {json.dumps(data)[:300]}") from e
+                self.last_reasoning = str(message.get("reasoning_content") or message.get("reasoning") or "")
             except urllib.error.HTTPError as e:
                 if e.code in (429, 500, 502, 503, 529):
                     if attempt >= self.max_retries:
@@ -166,20 +176,18 @@ class AIClient:
                 delay *= 2
                 attempt += 1
                 continue
-        try:
-            choice = data["choices"][0]
-            message = choice.get("message") if isinstance(choice, dict) else None
-            # a choice can be a dict whose message is a non-dict (a string) —
-            # .get on it would raise the uncaught AttributeError the null-
-            # choice guard was meant to prevent (bot review, 2026-08-16)
-            message = message if isinstance(message, dict) else {}
-            content = message.get("content") or ""
-        except (KeyError, IndexError, TypeError) as e:
-            raise AIClientError(f"unexpected API response: {json.dumps(data)[:300]}") from e
-        self.last_reasoning = str(message.get("reasoning_content") or message.get("reasoning") or "")
-        if not content or not content.strip():
-            raise AIClientError("empty response from API")
-        return content
+            if content and content.strip():
+                return content
+            # a 200 with no content is a transient provider failure, not an
+            # answer — the gateway logged 0-token completions for the evals
+            # (2026-09-23), and surfacing them failed the suite with "no
+            # answer". Retry with the same backoff as a 5xx; exhaust the
+            # budget before failing.
+            if attempt >= self.max_retries:
+                raise AIClientError("empty response from API")
+            self._sleep(delay)
+            delay *= 2
+            attempt += 1
 
 
 def find_api_key(_env: Mapping[str, str] | None = None, _home: Path | None = None) -> str:
@@ -220,13 +228,27 @@ def find_api_key(_env: Mapping[str, str] | None = None, _home: Path | None = Non
 
 
 def json_object(text: str) -> dict[str, Any]:
-    """Extract one JSON object from model output, tolerating fences/prose."""
+    """Extract the LAST complete JSON object from model output, tolerating
+    fences, prose, and MULTIPLE objects — a reasoning preamble followed by
+    the verdict is the shape the model emits (2026-09-23: the first-{/last-}
+    slice spanned both objects and json.loads failed with "Extra data").
+    Scanning with raw_decode skips a malformed brace instead of failing."""
+    decoder = json.JSONDecoder()
     stripped = text.strip()
-    start = stripped.find("{")
-    end = stripped.rfind("}")
-    if start == -1 or end <= start:
+    found: dict[str, Any] | None = None
+    idx = 0
+    while idx < len(stripped):
+        if stripped[idx] != "{":
+            idx += 1
+            continue
+        try:
+            obj, end = decoder.raw_decode(stripped, idx)
+        except json.JSONDecodeError:
+            idx += 1
+            continue
+        if isinstance(obj, dict):
+            found = obj
+        idx = end
+    if found is None:
         raise AIClientError(f"no JSON object in model output: {text[:200]}")
-    try:
-        return json.loads(stripped[start : end + 1])
-    except ValueError as e:
-        raise AIClientError(f"invalid JSON in model output: {e}") from e
+    return found

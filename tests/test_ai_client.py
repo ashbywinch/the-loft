@@ -106,11 +106,52 @@ def test_chat_rejects_malformed_response() -> None:
 
 def test_chat_rejects_null_choice_cleanly() -> None:
     # a provider returning "choices": [null] must raise the clean
-    # AIClientError, not an AttributeError (review, 2026-08-15)
-    urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [None]})])
+    # AIClientError, not an AttributeError (review, 2026-08-15) — a null
+    # choice is an empty completion: retried to the budget, then the clean
+    # error (2026-09-23)
+    urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [None]}) for _ in range(3)])
     client = AIClient(api_key="k", urlopen=urlopen)
     with pytest.raises(AIClientError, match="empty response"):
         client.chat("s", "u")
+
+
+def test_chat_retries_an_empty_completion() -> None:
+    """A 200 with no content is a transient provider failure, not an answer
+    (the gateway logged 0-token completions, 2026-09-23) — the client must
+    retry it with the same backoff as a 5xx, never surface it."""
+    sleeps: list[float] = []
+    good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    urlopen, calls = make_fake_urlopen(
+        [
+            FakeResponse({"choices": [{"message": {"content": ""}}]}),
+            FakeResponse({"choices": [{"message": {"content": ""}}]}),
+            FakeResponse(good),
+        ]
+    )
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=sleeps.append, max_retries=2)
+    assert client.chat("s", "u") == '{"ok": true}'
+    assert len(calls) == 3, "the empty completions were returned instead of retried"
+    assert sleeps == [2.0, 4.0]
+
+
+def test_chat_gives_up_on_persistent_empty_completions() -> None:
+    sleeps: list[float] = []
+    urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [{"message": {"content": ""}}]}) for _ in range(3)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=sleeps.append, max_retries=2)
+    with pytest.raises(AIClientError, match="empty response from API"):
+        client.chat("s", "u")
+
+
+def test_json_object_takes_the_last_of_multiple_objects() -> None:
+    """A reasoning preamble followed by the verdict is the shape the model
+    emits — the first-{/last-} slice spanned both and failed with "Extra
+    data" (2026-09-23): the LAST complete object wins."""
+    assert json_object('{"type":"reasoning","text":"..."}\n{"verdict": "x"}') == {"verdict": "x"}
+    assert json_object('{"a": 1}\n{"b": 2}') == {"b": 2}
+
+
+def test_json_object_skips_a_malformed_brace() -> None:
+    assert json_object('{"a": 1} {"broken": }\n{"b": 2}') == {"b": 2}
 
 
 def test_json_object_tolerates_fences() -> None:
@@ -175,7 +216,7 @@ def test_chat_null_message_is_a_clean_error() -> None:
     # a provider returning {"choices": [{"message": null}]} must raise the
     # clean AIClientError, not an AttributeError that escapes as a 500
     # (2026-08-15 review: the message-capture change regressed this)
-    urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [{"message": None}]})])
+    urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [{"message": None}]}) for _ in range(3)])
     client = AIClient(api_key="k", urlopen=urlopen)
     with pytest.raises(AIClientError):
         client.chat("s", "u")

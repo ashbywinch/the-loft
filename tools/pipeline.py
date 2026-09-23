@@ -20,7 +20,6 @@ import argparse
 import concurrent.futures
 import contextlib
 import json
-import os
 import shutil
 import sys
 import tempfile
@@ -34,7 +33,7 @@ from PIL import Image
 from tools.ai_client import AIClient, AIClientError
 from tools.classify import route, run_classify
 from tools.grouping import score_boundaries
-from tools.htr import htr_pages, htr_pages_vlm
+from tools.htr import htr_pages_vlm
 from tools.layout_stage import run_layout as layout_stage_run
 from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR
 from tools.ocr import orient_pages
@@ -298,7 +297,7 @@ def process(
     cursive = _route_pages(classify, oriented_dir, classify_path, text_pages)
 
     # 4. transcribe the cursive pages (the 2026-08-14 decision: the vision
-    # model by default; LOFT_HTR_BACKEND=local keeps the orli+TrOCR privacy mode)
+    #    model — the only backend since 2026-09-23)
     _transcribe_cursive(cursive, oriented_dir, raw_dir, batch_id, registry_dir)
 
     # 5. model guess on the TEXT pages only (chunked past PAGE_LIMIT — a
@@ -324,7 +323,8 @@ def process(
     # confidence; VR15 — the multi-orientation pages get the combined
     # per-line-orientation layout). The vision-model orientation report
     # runs only for the arbiter-ambiguous pages; the pass itself runs
-    # under the .venv-htr interpreter (PaddleOCR lives there).
+    # on the main venv — the §16.17 single pass (2026-09-06: the
+    # .venv-htr/paddle engine left the layout path).
     report = orientation_report_fn if orientation_report_fn is not None else orientation_report
     # the module-level run_layout (tools.layout_stage) — the DI param of
     # the same name shadows it inside process, so resolve before use
@@ -428,16 +428,14 @@ def _transcribe_cursive(
     cursive: list[str], oriented_dir: Path, raw_dir: Path, batch_id: str, registry_dir: Path
 ) -> None:
     """Transcribe the cursive pages (the 2026-08-14 decision: the vision
-    model by default; LOFT_HTR_BACKEND=local keeps the orli+TrOCR privacy mode)."""
+    model — the only backend since 2026-09-23, when the local orli+TrOCR
+    privacy mode was removed as unused)."""
     if cursive:
         cursive_pages = [(name, oriented_dir / name) for name in cursive]
-        if os.environ.get("LOFT_HTR_BACKEND", "vlm") == "vlm":
-            people, places = _standing_knowledge()
-            with contextlib.suppress(PipelineError):
-                label = load_batch(batch_id, registry_dir).get("label")
-            htr_pages_vlm(cursive_pages, raw_dir, people=people, places=places, label=label)
-        else:
-            htr_pages(cursive_pages, raw_dir)
+        people, places = _standing_knowledge()
+        with contextlib.suppress(PipelineError):
+            label = load_batch(batch_id, registry_dir).get("label")
+        htr_pages_vlm(cursive_pages, raw_dir, people=people, places=places, label=label)
 
 
 # object would add a type for one use

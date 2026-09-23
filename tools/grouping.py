@@ -1,4 +1,4 @@
-"""The document grouping scorer (TECH-SPEC §16.14, 2026-08-17).
+"""The document grouping scorer (TECHSPEC §16.14, 2026-08-17).
 
 The guess's model flags (greeting/sign-off boundaries) decide text-only
 grouping; the scorer adds the physical evidence the model never sees —

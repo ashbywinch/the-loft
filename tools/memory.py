@@ -1,6 +1,6 @@
 """Memory — the AI assessment of a contribution and the story it becomes.
 
-Two phases (docs/prd/MEMORIES.md): the client closes the account open-endedly
+Two phases (docs/PRD/MEMORIES.md): the client closes the account open-endedly
 ("anything else?"), then :func:`assess` runs the model over the finished
 account — extracting the people/places/themes the story is *about* (matched
 against the standing knowledge, proposing new records, never guessing
@@ -233,7 +233,7 @@ class Person:
     @classmethod
     def proposed(cls, name: str, existing: set[str]) -> dict[str, Any]:
         """The archive record for a person the story introduces — proposed,
-        never confirmed (docs/prd/MEMORIES.md)."""
+        never confirmed (docs/PRD/MEMORIES.md)."""
         return {
             "id": _unique_id("p", _slug(name), existing),
             "name": name.strip(),
@@ -259,7 +259,7 @@ class Place:
     @classmethod
     def proposed(cls, name: str, existing: set[str]) -> dict[str, Any]:
         """The archive record for a place the story introduces — proposed,
-        location unknown (docs/prd/MEMORIES.md)."""
+        location unknown (docs/PRD/MEMORIES.md)."""
         return {
             "id": _unique_id("pl", _slug(name), existing),
             "name": name.strip(),
@@ -407,7 +407,7 @@ def _anchor_line(anchor: dict[str, str]) -> str:
 def _locale_date_order() -> str:
     """The archive's date order for ambiguous numerics. Default DMY (the
     family is British); LOFT_LOCALE (e.g. en_US) overrides — locale is
-    respected when reading dates (docs/prd/MEMORIES.md)."""
+    respected when reading dates (docs/PRD/MEMORIES.md)."""
     locale = os.environ.get("LOFT_LOCALE", "en_GB")
     return "MDY" if locale.lower().startswith("en_us") else "DMY"
 
@@ -1120,7 +1120,7 @@ class Fact:
 class Ref:
     """One link a story carries to an entity — ``confirmed`` means the
     narrator verified it in the review; ``proposed`` awaits a tap
-    (TECH-SPEC §16.4)."""
+    (TECHSPEC §16.4)."""
 
     id: str
     status: Literal["confirmed", "proposed"]
@@ -1129,7 +1129,7 @@ class Ref:
 @dataclass(frozen=True)
 class Story:
     """A story contribution as the capture flow's domain object
-    (docs/prd/MEMORIES.md): the sidecar's shape with typed links. The
+    (docs/PRD/MEMORIES.md): the sidecar's shape with typed links. The
     class owns the links invariant: a catalogued story never confirms a
     link the reader cannot see — an item ref is downgraded to ``proposed``
     when its artifact is still a draft (2026-08-05: story-2026-08-03-05
@@ -1314,7 +1314,7 @@ def _next_story_id(recorded: str, existing: set[str]) -> str:
 @dataclass(frozen=True)
 class StoryRequest:
     """A story-capture request — the narrator-approved draft the capture
-    flow saves (docs/prd/MEMORIES.md): the account, its assessment, and
+    flow saves (docs/PRD/MEMORIES.md): the account, its assessment, and
     the save's identity. The group travels together into both build_story
     entry points (docs/coding-standards.md: a group that travels together
     is a type)."""
@@ -1341,19 +1341,19 @@ def build_story(
 
     Pure: the caller writes the sidecar and the proposed records through the
     append-only store. The operator verifies the AI's guesses in the same
-    flow (docs/prd/MEMORIES.md): a completed, reviewed save is
+    flow (docs/PRD/MEMORIES.md): a completed, reviewed save is
     ``catalogued`` with ``confirmed`` refs; an abandoned one is ``draft``
     with ``proposed`` refs. Facts decide the dates: an asserted event date
     wins; a date of birth plus an age derives the events year (dob + age,
     arithmetic only); a dob the narrator asserts in answer to a direct
     question is confirmed, one merely stated in prose is proposed
-    (docs/prd/MEMORIES.md — no hand-coded date parsers).
+    (docs/PRD/MEMORIES.md — no hand-coded date parsers).
     """
     verified = request.status == "catalogued"
     recorded = recorded or date.today().isoformat()
     # an ongoing draft keeps ONE id through its life: the client's auto-saves
     # and the final save supersede the same story in place (append-only —
-    # every version stays, the newest wins; docs/TECH-SPEC.md §3). A fresh
+    # every version stays, the newest wins; docs/TECHSPEC.md §3). A fresh
     # save without an id mints the next story id.
     story_id = request.story_id or _next_story_id(recorded, existing_ids)
     speaker_id = knowledge.speaker_for(request.who)

@@ -2,7 +2,7 @@
 
 House conventions, copied in full from the canonical global standard
 (`docs/coding-standards.md` in the omp-config repo) and adapted to this
-project's explicit decisions (see `docs/TECH-SPEC.md` §15 for the rationale).
+project's explicit decisions (see `docs/TECHSPEC.md` §15 for the rationale).
 The reviewer (PR-Agent) enforces exactly the rules present in this file — the
 full global standard is copied below, so every rule is in force. When the
 upstream standard changes, refresh this copy.
@@ -45,7 +45,7 @@ good.
   conventions) — centralize it in code; don't re-document it. The checkpoint
   question: *can a developer who never saw this conversation learn the model
   from the code alone?* ✗ the item sidecar stayed an untyped `dict` whose
-  shape lived in PRD §6, TECH-SPEC and a worked example while the identity
+  shape lived in PRD §6, TECHSPEC and a worked example while the identity
   records (Person, Place, Org) each got a class (2026-08-05). ✓
   `tools/records.py` — Person/Place/Org/Relationship/Item, every closed
   vocabulary, one validation seam.
@@ -89,7 +89,7 @@ good.
 - **Real content never lives in code.** Anything a user provides or states
   directly — scans, story text, the identity tables (people, relationships,
   places, themes), a dated, attributed fact — is archive content
-  (`archive/`), changed only by add (docs/TECH-SPEC.md §3). Code is the
+  (`archive/`), changed only by add (docs/TECHSPEC.md §3). Code is the
   pipeline: `loft publish` (Archive.publish -> Projection) regenerates every derived file
   from the archive; `tools/demo_data.py` is the fictional demo generator and
   a test guards that the real family's names never appear in it. ✗ the
@@ -227,7 +227,7 @@ good.
   assertion exists.** The anti-pattern is a bespoke regex date scraper when
   the answer is "the model asserts what a value is, the library parses it".
   Dates: dateparser (locale-aware) validates values the model asserts — no
-  hand-written date parsers (docs/prd/MEMORIES.md).
+  hand-written date parsers (docs/PRD/MEMORIES.md).
 - **Dev is the environment, not the quality bar.** Code written during
   development is the code that ships — production standard from day one; the
   only thing dev changes is where the data lives.
@@ -463,7 +463,7 @@ a check is a wish:
 - Vanilla ES modules. **No runtime dependencies beyond vendored libraries** —
   the app ships as files; a small vendored runtime library is allowed if it
   degrades gracefully (e.g. Leaflet for the map, with the SVG dot view as the
-  offline fallback — `docs/TECH-SPEC.md` §15). Dev tooling (eslint, prettier,
+  offline fallback — `docs/TECHSPEC.md` §15). Dev tooling (eslint, prettier,
   vitest) is allowed and degrades well.
 - **Vanilla is not classless.** The stack decision is no framework, no build
   step, no runtime deps — `class` is ES2015 and always allowed. A value type
@@ -479,7 +479,7 @@ a check is a wish:
   never fetch or reach into module singletons.
 - No framework — if the code "starts to get messy," that is a decision point
   to revisit with the user, not a license to adopt one silently
-  (`docs/TECH-SPEC.md` §15).
+  (`docs/TECHSPEC.md` §15).
 
 ## Dependency injection
 

@@ -1,5 +1,5 @@
 """Schema v1 of the VLM word-segmentation spike (milestone 3,
-docs/plans/vlm-word-segmentation-spike.md).
+docs/PLAN/vlm-word-segmentation-spike.md).
 
 The JSON contract: the VLM returns {"segments": [{id, type, transcript?,
 word_ids, injection_point?}]} over the numbered render. This module validates

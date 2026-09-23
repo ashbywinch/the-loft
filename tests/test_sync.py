@@ -140,7 +140,7 @@ def test_draft_payloads_never_serves_a_bad_layout(tmp_path: Path) -> None:
 
 
 def test_draft_payloads_carries_the_layout_when_the_pass_has_run(tmp_path: Path) -> None:
-    """TECH-SPEC §16.16: the drafts payload gains the per-page layout (line
+    """TECHSPEC §16.16: the drafts payload gains the per-page layout (line
     boxes + per-word confidence) once the layout pass has written it —
     absent layouts stay absent, never fabricated."""
     guess = tmp_path / "adopt-0001" / "ocr-guess"

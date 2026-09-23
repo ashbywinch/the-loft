@@ -1,4 +1,4 @@
-"""The two-app sync contract (TECH-SPEC §16.15, MULTI-DOC-IMPORT-PRD.md R14).
+"""The two-app sync contract (TECHSPEC §16.15, MULTI-DOC-IMPORT-PRD.md R14).
 
 The backend owns the archive's write seam; the frontend proposes, the
 backend records. This module is the shared contract:
@@ -133,7 +133,7 @@ def record_confirmation(
     registry_dir: Path = REGISTRY_DIR,
 ) -> None:
     """The backend's single write path for a reviewed document — shared by
-    the CLI review gate and the sync receiver (TECH-SPEC §16.15): the
+    the CLI review gate and the sync receiver (TECHSPEC §16.15): the
     confirmed text lands in ocr-confirmed/<doc>.txt and the registry's
     boundaries are updated (replace-by-pages, append). ``text=None``
     records a rejection — nothing is silently dropped. The batch id is
@@ -167,7 +167,7 @@ def safe_page_name(page: str) -> bool:
 
 def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
     """The machine drafts the review surface reads: per-page guessed texts
-    + the document boundaries + the per-page layout (TECH-SPEC §16.16:
+    + the document boundaries + the per-page layout (TECHSPEC §16.16:
     line boxes + per-word confidence, when the layout pass has run), for
     one batch. The batch id is validated (it becomes a path segment —
     traversal guard, 2026-08-14 review)."""

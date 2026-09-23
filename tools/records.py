@@ -439,7 +439,7 @@ class PlacesTable:
 
 @dataclass(frozen=True)
 class Org:
-    """An organisation record — the third identity kind (docs/prd/IMPORT-PRD.md
+    """An organisation record — the third identity kind (docs/PRD/IMPORT-PRD.md
     §2.4): institutions the family engaged with (the Ministry of Supply,
     the Halifax Building Society). Same seam as Person/Place: confirmed in
     the identity table or proposed, one type. ``address`` and ``branch``
@@ -713,7 +713,7 @@ class ReviewQueue:
     already: int
 
 
-# The item's primary content, held outside the sidecar (docs/TECH-SPEC.md
+# The item's primary content, held outside the sidecar (docs/TECHSPEC.md
 # §3): a story is story.txt, a letter or document's transcription is
 # transcription.txt. Content files version with their sidecar: v1 ->
 # story.txt, v2 -> story-2.txt, … (append-only).

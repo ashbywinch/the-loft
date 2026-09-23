@@ -1,5 +1,5 @@
 """The numbered renderer for the VLM word-segmentation spike (milestone 1,
-docs/plans/vlm-word-segmentation-spike.md).
+docs/PLAN/vlm-word-segmentation-spike.md).
 
 Pure: a page image, a section, and the words in -> the numbered-boxes image
 the VLM reads, plus the chip placements (the tested part). The spike's caller

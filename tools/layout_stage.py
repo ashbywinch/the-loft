@@ -1,4 +1,4 @@
-"""The layout stage's subprocess launcher (TECH-SPEC §16.16, VR14).
+"""The layout stage's subprocess launcher (TECHSPEC §16.16, VR14).
 
 The layout stage (tools.layout_detect) is §16.17's single pass — one VLM
 call per page, on the main venv interpreter; no detector engine, no

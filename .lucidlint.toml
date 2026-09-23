@@ -1,4 +1,4 @@
-# lucidlint configuration — see docs/plans/lucidlint-review-log.md for the
+# lucidlint configuration — see docs/PLAN/lucidlint-review-log.md for the
 # full reasoning behind every scoped ignore. Each entry is acknowledged debt
 # where the tool's rule collides with the repo's coding standards (recorded
 # 2026-08-16, first full-repo run).
@@ -39,7 +39,7 @@ ignore = ["fakefs"]
 # IS the eval harness, so cross-file-reference counting is structurally
 # inapplicable. (Tool bug: a per-function `ignore unused` comment counts as
 # a reference, so the finding stops firing AND the suppression is reported
-# stale — see docs/plans/lucidlint-review-log.md §1.5.)
+# stale — see docs/PLAN/lucidlint-review-log.md §1.5.)
 [lucidlint."tools/eval_memory.py"]
 ignore = ["unused"]
 [lucidlint."tools/eval_review.py"]

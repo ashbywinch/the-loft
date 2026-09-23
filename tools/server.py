@@ -273,7 +273,7 @@ def build_app(
         # so the story renders in the app — idempotent, atomic. All archive
         # writes go through the archive library (docs/CONTRIBUTIONS.md). The
         # story text is primary content: it becomes a content file the
-        # sidecar references, never a sidecar JSON field (TECH-SPEC §3).
+        # sidecar references, never a sidecar JSON field (TECHSPEC §3).
         sidecar, content = split_content(story)
         archive.save_item(sidecar, content=content)
         for person in new_people:
@@ -661,7 +661,7 @@ def build_app(
                 return JSONResponse({"ok": False, "error": "sign in to read the archive"}, status_code=401)
         return await call_next(request)
 
-    # -- sync (TECH-SPEC §16.15: the backend owns the write seam; the
+    # -- sync (TECHSPEC §16.15: the backend owns the write seam; the
     # frontend proposes, the backend records; the outbox is the catch-up) --
 
     @app.get("/api/sync/batches")
@@ -678,7 +678,7 @@ def build_app(
     @app.get("/api/sync/batch/{batch_id}/drafts")
     def sync_drafts(batch_id: str, request: Request) -> Any:
         """The machine drafts the review surface reads (guesses + boundaries
-        + layout, TECH-SPEC §16.16), with the registry's per-document
+        + layout, TECHSPEC §16.16), with the registry's per-document
         review status merged in (the registry is the status' home — the
         guess stage's boundaries.json never changes after review)."""
         if session_user(request) is None:

@@ -32,7 +32,7 @@ def test_every_tools_module_has_a_docstring() -> None:
 
 
 def test_no_runtime_dependencies() -> None:
-    """docs/TECH-SPEC.md §2 / coding-standards.md: no framework, no build
+    """docs/TECHSPEC.md §2 / coding-standards.md: no framework, no build
     step, no runtime npm deps — the app ships as files. A "dependencies"
     entry in package.json is a decision point, never a silent addition."""
 

@@ -1,6 +1,6 @@
 """Where the loft's content lives — the one seam for paths across the pipeline.
 
-Two zones (MULTI-DOC-IMPORT-PRD.md R1–R3, TECH-SPEC §16.13):
+Two zones (MULTI-DOC-IMPORT-PRD.md R1–R3, TECHSPEC §16.13):
 - USER_SCAN_AREA — the user's scan folders (their org, their rules; we only
   read, and only add our own scan output folders).
 - WORKSPACE — our sibling folder on the big disk, named Loft, holding the

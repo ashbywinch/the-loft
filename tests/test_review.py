@@ -102,6 +102,23 @@ def test_off_topic_answer_is_flagged_not_recorded() -> None:
     assert "house" in result["note"]
 
 
+def test_the_question_schema_speaks_to_the_family_never_the_process() -> None:
+    """2026-09-23: an off-topic conclusion leaked 'the import' to the
+    family and the persona guard redded the suite. The question schema
+    must carry the family-voice rule — a prompt-contract pin so a
+    regression in the voice instruction fails here, deterministically."""
+    client = FakeClient(
+        [
+            '{"relevant": false, "contradiction": {"found": false, "detail": ""}, '
+            '"confidence": "unclear", "note": "the garden", "findings": [], "question": "Fine."}'
+        ]
+    )
+    investigate(client, text="We visited that house every summer.", person=_person(), who="Alex", facts=make_facts())
+    system = client.calls[0][0]
+    assert "never the process vocabulary" in system
+    assert 'no "the import"' in system
+
+
 def test_contradiction_with_the_attested_facts_is_flagged() -> None:
     """The wrong-person-for-the-attested-event shape (2026-08-09, user): the
     reviewer names the wrong person for an attested event — the check must

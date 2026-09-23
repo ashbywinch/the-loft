@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from tools.loft_paths import ARCHIVE_DIR  # the eval's media gate — the pipeline reads the archive's batch
 from tools.registry import load_batch
 from tools.sync import draft_payloads
 
@@ -116,7 +117,10 @@ def _assert_contracts(registry: Path, work: Path) -> None:
 
 
 @pytest.mark.eval
-@pytest.mark.skipif(not (BACK.exists() and FRONT.exists()), reason="the public-domain fixture images are missing")
+@pytest.mark.skipif(
+    not (BACK.exists() and FRONT.exists()) or not ARCHIVE_DIR.exists(),
+    reason="the public-domain fixture images or the archive are missing (media-gated, off-CI)",
+)
 def test_postcard_groups_two_sides_and_boxes_the_transcription(tmp_path: Path) -> None:
     """The full pipeline on the sample postcard: one document (picture
     side first), and the back's layout with the model's transcription at

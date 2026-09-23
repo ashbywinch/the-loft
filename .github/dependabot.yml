@@ -4,11 +4,31 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      # One PR per ecosystem per week for the routine bumps (auto-mergeable
+      # when green, dependabot-automerge.yml); majors stay separate so a
+      # breaking bump never rides along with the housekeeping.
+      minor-patch:
+        update-types: ["minor", "patch"]
+      major:
+        update-types: ["major"]
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      minor-patch:
+        update-types: ["minor", "patch"]
+      major:
+        update-types: ["major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      # Grouped for one reviewable PR, but never auto-merged: action refs
+      # carry the SHA-pin treatment (dependabot-automerge.yml excludes them).
+      minor-patch:
+        update-types: ["minor", "patch"]
+      major:
+        update-types: ["major"]

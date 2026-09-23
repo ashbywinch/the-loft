@@ -11,7 +11,12 @@ permissions:
 jobs:
   build-and-test:
     env:
-      LOFT_AI_KEY: ${{ secrets.LOFT_AI_KEY }}
+      # the eval key: the current convention (OPENAI_API_KEY = the Cloudflare
+      # gateway token, OPENAI_BASE_URL = the gateway endpoint) — the legacy
+      # LOFT_AI_KEY secret left the repo (2026-09-05), leaving the eval step's
+      # presence guard permanently false (evals silently never ran)
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_BASE_URL: https://gateway.ai.cloudflare.com/v1/e21a5be58ac1e8f7d5619539feb2dc3d/default/compat
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -41,15 +46,23 @@ jobs:
       - run: make verify # the archive-quality data checks — the gate keeps them; they skip in CI (no archive in the checkout) and run locally
       - run: make lucidlint # the code-health gate, wired from its own repo (github.com/ashbywinch/lucidlint); no baseline — a finding fails the gate and must be fixed (2026-08-29)
       - name: Provision .venv-htr for the evals' layout subprocess
+        if: ${{ github.actor != 'dependabot[bot]' || github.ref == 'refs/heads/main' }}
         run: make setup-htr
+      - name: Note the dependabot eval skip
+        # Evals on dependabot runs are IMPOSSIBLE, not optional: GitHub strips
+        # secrets from dependabot-triggered runs, so there is no key to run
+        # with. The skip is mandatory; this note makes it loud, never silent
+        # (the fail-fast rule applied to the skip itself, 2026-08-29). The real
+        # gate for merged dependabot changes is main's own evals run.
+        if: ${{ github.actor == 'dependabot[bot]' && github.ref != 'refs/heads/main' }}
+        run: echo "::warning::Real-model evals cannot run on dependabot runs (GitHub strips secrets here); main's evals run gates merged changes"
       - name: Real-model evals
-        # the key-existence guard: the LOFT legacy key left the repo's
-        # secrets (2026-09-05, the split) — the era's unconditional run
-        # assumed a configured key. The fail-fast rule governs a BAD key,
-        # not a MISSING one; the final convention (2bae422) gates on
-        # presence for the same reason. The guard reads the JOB env —
-        # the secrets context is not available in a step-level if.
-        if: env.LOFT_AI_KEY != ''
+        # Runs on every non-dependabot run: a missing key FAILS the gate loudly
+        # (fail-fast rule) — never test for key presence, never silently skip
+        # (2026-08-14). Except: GitHub strips secrets from dependabot-triggered
+        # runs, so the key is always absent there and the step can only fail —
+        # skip evals for dependabot PRs only, never on main (2026-08-28).
+        if: ${{ github.actor != 'dependabot[bot]' || github.ref == 'refs/heads/main' }}
         run: make evals
       - name: Coverage summary (Python tools)
         uses: irongut/CodeCoverageSummary@v1.3.0

@@ -1,30 +1,31 @@
 """The layout model — how a page's review layout is built (TECHSPEC
 §16.16, 2026-08-15).
 
-The VLM transcribes the words; PaddleOCR's detector supplies the geometry;
-this module is the deterministic half: the content-based line association
-(the engines read pages in different orders), the anchor resolution (which
-box and orientation a line takes when the sources disagree — ``Anchor``),
-the per-word flags, the reading order (``tools.reading``), and the
-fail-fast gates (``tools.gates`` — a layout that fails them is never
-written or served). It never imports PaddleOCR — the detection stage runs
-under the .venv-htr interpreter (tools/layout_detect.py) and hands its raw
-output to ``Layout.single`` / ``Layout.multi``.
+The VLM transcribes the words AND supplies the line geometry; this
+module is the deterministic half: the content-based line association,
+the anchor resolution (which box and orientation a line takes when the
+sources disagree — ``Anchor``), the per-word flags, the reading order
+(``tools.reading``), and the fail-fast gates (``tools.gates`` — a
+layout that fails them is never written or served). The detector
+engines (paddle, kraken) left with the pre-§16.17 paths (2026-09-06
+and 2026-09-23); the geometry comes from the same VLM that read the
+page.
 
 The layout JSON per page (written beside ocr-guess, atomic):
     {"page", "width", "height",
      "lines": [{index, text, box, conf, box_source, words: [{word, box, conf}]}],
      "unmatched": [{box, text, conf: 0.0}]}
 
-``box_source`` says how the anchor was found: "report" (the transcription
-model's OWN per-line box — it read the page, so its box is text-anchored
-and reading-consistent; the rec engine cannot read cursive and merges or
-misses its lines, 2026-08-16), "content" (the detector's rec text matched
-the line) or "positional" (the fallback filled the line with the next
-unmatched detection in reading order — the geometry is real, the text
-anchor is not; the surface renders these dashed). ``unmatched`` carries
-the detector's lines that matched no VLM line and were not positionally
-assigned (their geometry is real; a confident text anchor is not — conf 0).
+``box_source`` says how the anchor was found: "report" (the VLM's
+OWN per-line box — it read the page, so its box is text-anchored and
+reading-consistent; the rec engine could not read cursive and merged
+or missed lines, 2026-08-16), "content" (the detector's rec text
+matched the line) or "positional" (the fallback filled the line with
+the next unmatched detection in reading order — the geometry is real,
+the text anchor is not; the surface renders these dashed).
+``unmatched`` carries the detector's lines that matched no VLM line
+and were not positionally assigned (their geometry is real; a
+confident text anchor is not — conf 0).
 """
 
 from __future__ import annotations

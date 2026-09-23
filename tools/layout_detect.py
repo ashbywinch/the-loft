@@ -242,7 +242,8 @@ def _layout_one(
     api_key=None,
     _measure: Callable[[Path], list[dict[str, Any]]] | None = None,
 ) -> None:
-    """Layout ONE page: the strips measured (kraken, cached), the
+    """Layout ONE page: the strips measured (the VLM read, cached — the
+    kraken baseline detector left 2026-09-06), the
     grouping read partitions them into segments, each segment's box
     measured from its band's ink, the bounded findings loop closes the
     gates, and the layout persists via the store. ``batch`` =

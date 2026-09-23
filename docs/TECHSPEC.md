@@ -639,23 +639,23 @@ the naive approach and is not used. The pipeline order becomes:
 `classify → orient (text pages) → route → htr (cursive) / tesseract
 (print) → guess → review`.
 
-**The transcription backend decision (2026-08-14, user: "let's stop
-there, this is good enough").** After an evidence comparison on the
-family's own pages, the default transcription backend for cursive/mixed
-pages is the **vision-language model** (`tools/vlm.py`, the opencode-go
-vision role mimo-v2.5) — not the local TrOCR stack and not a specialist
-OCR API. The evidence on real pages: near-perfect pure-cursive and
-mixed-layout transcription (page-03's callout box, postmark, address and
-salutation all read correctly); ~85% word accuracy on the medal card's
-hardest element (handwritten digits in a dense form); ~11K tokens/page
-(~$2–15 per 1,000 pages at mid-tier rates). The local orli+TrOCR stack
-stack (segmentation OK, recognition garbage on the test pages) and the
-specialist OCR APIs (Azure Read — removed as dead code 2026-08-16, never
-referenced; Transkribus — UI-bound on individual plans, ~10× the price)
-remain as alternatives behind the same seam
-(`LOFT_HTR_BACKEND=vlm|local`, env-selected). The per-page VLM output
-is recorded in a sidecar (`ocr-raw/<stem>.vlm.json`, the token usage) so
-re-runs skip transcribed pages and the cost is auditable.
+    **The transcription backend decision (2026-08-14, user: "let's stop
+    there, this is good enough").** After an evidence comparison on the
+    family's own pages, the default transcription backend for cursive/mixed
+    pages is the **vision-language model** (`tools/vlm.py`, the opencode-go
+    vision role mimo-v2.5) — not a specialist OCR API. The evidence on real
+    pages: near-perfect pure-cursive and mixed-layout transcription
+    (page-03's callout box, postmark, address and salutation all read
+    correctly); ~85% word accuracy on the medal card's hardest element
+    (handwritten digits in a dense form); ~11K tokens/page (~$2–15 per
+    1,000 pages at mid-tier rates). The local orli+TrOCR stack behind the
+    same seam (segmentation passable, recognition garbage on the test
+    pages) was removed 2026-09-23 as unused; the specialist OCR APIs
+    (Azure Read — removed as dead code 2026-08-16, never referenced;
+    Transkribus — UI-bound on individual plans, ~10× the price) likewise
+    never shipped into the seam. The per-page VLM output
+    is recorded in a sidecar (`ocr-raw/<stem>.vlm.json`, the token usage) so
+    re-runs skip transcribed pages and the cost is auditable.
 
 **Scan UX (decided direction).** The capture command identifies the job at
 scan time: `make scan-docs ARGS="--label 'Box 1 — Letters 1977'"`, or a

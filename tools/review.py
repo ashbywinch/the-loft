@@ -329,7 +329,10 @@ def investigate(
             "A wrong answer is still an answer: when the reviewer names the wrong person for an "
             'attested family event — "it was Nora who died in the war" when the record says '
             "Walter died — the statement IS relevant, mistaken but on-topic (it is about the "
-            "family under review), and the contradiction flag surfaces the mistake. Only a "
+            "family under review), and the contradiction flag surfaces the mistake. This holds "
+            "for ANY attested family event, not only the claim's own: the reviewer misremembering "
+            "the war record is still speaking about the family's attested history (2026-09-23: "
+            "a run judged it not relevant). Only a "
             "statement about something else entirely (a house, a holiday, an unrelated "
             "person) is NOT relevant. "
             "A statement that opens 'I don't remember' and then brings in what they DO remember "

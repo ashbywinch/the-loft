@@ -16,16 +16,15 @@ The layout JSON per page (written beside ocr-guess, atomic):
      "lines": [{index, text, box, conf, box_source, words: [{word, box, conf}]}],
      "unmatched": [{box, text, conf: 0.0}]}
 
-``box_source`` says how the anchor was found: "report" (the VLM's
-OWN per-line box — it read the page, so its box is text-anchored and
-reading-consistent; the rec engine could not read cursive and merged
-or missed lines, 2026-08-16), "content" (the detector's rec text
-matched the line) or "positional" (the fallback filled the line with
-the next unmatched detection in reading order — the geometry is real,
-the text anchor is not; the surface renders these dashed).
-``unmatched`` carries the detector's lines that matched no VLM line
-and were not positionally assigned (their geometry is real; a
-confident text anchor is not — conf 0).
+    ``box_source`` says how the anchor was found: "report" (the read's
+    own per-line box — it read the page, so its box is text-anchored and
+    reading-consistent), "content" (the line matched to a segment's
+    recognized text, taking its box) or "positional" (the fallback filled
+    the line with the next unmatched segment's box in reading order — the
+    geometry is real, the text anchor is not; the surface renders these
+    dashed). ``unmatched`` carries the segments that matched no
+    transcription line and were not positionally assigned (their geometry
+    is real; a confident text anchor is not — conf 0).
 """
 
 from __future__ import annotations

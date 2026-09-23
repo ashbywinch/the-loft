@@ -417,6 +417,9 @@ def investigate(
         'records\\", \\"the archive\\", a generic \\"the war record\\", and NEVER the import '
         "itself (the import is not a document — only the tool results list real items; "
         "if the tools found no document for the point, do not make a finding about it — "
+        "and NEVER an empty findings array after a search surfaced a document bearing on "
+        "the statement: that document IS a finding (2026-09-23: the dig flow's verdict "
+        "said findings:[] while the note confirmed the surviving record) — "
         'and NEVER a bare absence like \\"no record connects X to Y\\": the findings report '
         "what the records DO show, not what they do not. A recollection is the family's "
         '— "Mum\'s recollection", "the recollection" — NEVER "the reviewer\'s". A PERSON '
@@ -521,6 +524,13 @@ def _verdict_result(
     normalized findings, the trace and the final prompt attached
     (completeness). None when the turn is neither a tool call nor a
     complete verdict — the caller feeds it back for a correction."""
+    required_keys = ("relevant", "contradiction", "confidence", "note", "findings", "question")
+    if not all(key in parsed_dict for key in required_keys):
+        # a turn missing a schema key is incomplete — including a typo'd
+        # key ("quetion" on 2026-09-23 silently emptied the question and
+        # failed the follow-up condition): the caller's correction turn
+        # repairs it, exactly like any other incomplete verdict
+        return None
     relevant = str(parsed_dict.get("relevant", "")).strip().lower()
     raw_contradiction = parsed_dict.get("contradiction")
     contradiction: dict[str, Any] = raw_contradiction if isinstance(raw_contradiction, dict) else {}

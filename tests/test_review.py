@@ -71,7 +71,7 @@ def test_on_topic_answer_is_relevant() -> None:
     client = FakeClient(
         [
             '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
-            '"confidence": "think_so", "note": "Grandma used to say so.", "findings": []}'
+            '"confidence": "think_so", "note": "Grandma used to say so.", "question": "", "findings": []}'
         ]
     )
     result = investigate(client, text="Grandma used to say so.", person=_person(), who="Alex", facts=make_facts())
@@ -88,7 +88,7 @@ def test_off_topic_answer_is_flagged_not_recorded() -> None:
     client = FakeClient(
         [
             '{"relevant": false, "contradiction": {"found": false, "detail": ""}, '
-            '"confidence": "unclear", "note": "the house on Victoria Avenue", "findings": []}'
+            '"confidence": "unclear", "note": "the house on Victoria Avenue", "question": "", "findings": []}'
         ]
     )
     result = investigate(
@@ -110,7 +110,8 @@ def test_contradiction_with_the_attested_facts_is_flagged() -> None:
         [
             '{"relevant": true, "contradiction": {"found": true, '
             '"detail": "the war record attests Walter Whitlock died on 15 September 1916"}, '
-            '"confidence": "definitely", "note": "the reviewer said it was someone else", "findings": []}'
+            '"confidence": "definitely", "note": "the reviewer said it was someone else", '
+            '"question": "", "findings": []}'
         ]
     )
     result = investigate(
@@ -125,6 +126,33 @@ def test_contradiction_with_the_attested_facts_is_flagged() -> None:
     assert "Walter Whitlock" in result["contradiction"]["detail"]
 
 
+def test_a_typoed_verdict_key_is_repaired_by_the_correction_turn() -> None:
+    """2026-09-23: a verdict with "quetion" instead of "question" sailed
+    through the completeness gate with an empty question and failed the
+    follow-up condition. A turn missing any schema key is INCOMPLETE —
+    the existing correction turn repairs it, never a silent empty field."""
+    client = FakeClient(
+        [
+            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+            '"confidence": "think_so", "note": "the reviewer is half-remembering", '
+            '"findings": [], "quetion": "Did you ever meet him?"}',
+            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+            '"confidence": "think_so", "note": "the reviewer is half-remembering", '
+            '"findings": [], "question": "Did you ever meet him?"}',
+        ]
+    )
+    result = investigate(
+        client,
+        text="Grandma used to say so.",
+        person=_person(),
+        who="Alex",
+        facts=make_facts(),
+    )
+    assert result["question"] == "Did you ever meet him?"
+    assert len(client.calls) == 2, "the incomplete verdict was accepted instead of corrected"
+    assert "That was neither a tool call nor the complete verdict" in client.calls[1][1]
+
+
 def test_the_model_can_dig_with_the_tools_and_reports_findings() -> None:
     """The ad-hoc digging conversation through the app (2026-08-09, user): the
     statement carries a lead; the model calls the read-only tools, the
@@ -134,7 +162,8 @@ def test_the_model_can_dig_with_the_tools_and_reports_findings() -> None:
             '{"tool": "search_people", "args": {"query": "Walter"}}',
             '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
             '"confidence": "think_so", "note": "the reviewer is half-remembering the right thing", '
-            '"findings": ["one of Nora\'s siblings, Walter, died in the war — the archive has his record"]}',
+            '"question": "", "findings": ["one of Nora\'s siblings, Walter, died in the war — the archive has his '
+            'record"]}',
         ]
     )
     result = investigate(
@@ -160,7 +189,7 @@ def test_the_tools_are_read_only() -> None:
         [
             '{"tool": "delete_person", "args": {"id": "p-walter"}}',
             '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
-            '"confidence": "think_so", "note": "fine", "findings": []}',
+            '"confidence": "think_so", "note": "fine", "question": "", "findings": []}',
         ]
     )
     investigate(client, text="I think so.", person=_person(), who="Alex", facts=make_facts())
@@ -173,7 +202,8 @@ def test_the_model_never_derives_relationships() -> None:
     client = FakeClient(
         [
             '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
-            '"confidence": "think_so", "note": "the reviewer words are recorded verbatim", "findings": []}'
+            '"confidence": "think_so", "note": "the reviewer words are recorded verbatim", '
+            '"question": "", "findings": []}'
         ]
     )
     result = investigate(client, text="He was her brother, I think.", person=_person(), who="Alex", facts=make_facts())
@@ -463,7 +493,7 @@ def test_known_facts_mark_guess_statuses_never_attested() -> None:
     client = FakeClient(
         [
             '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
-            '"confidence": "think_so", "note": "Grandma used to say so.", "findings": []}'
+            '"confidence": "think_so", "note": "Grandma used to say so.", "question": "", "findings": []}'
         ]
     )
     _ = investigate(client, text="Grandma used to say so.", person=_person(), who="Alex", facts=facts)
@@ -482,7 +512,7 @@ def test_over_budget_tool_calls_are_logged_and_fed_back() -> None:
     over = '{"tool": "search_people", "args": {"query": "Nora"}}'
     verdict = (
         '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
-        '"confidence": "think_so", "note": "fine", "findings": []}'
+        '"confidence": "think_so", "note": "fine", "question": "", "findings": []}'
     )
     client = FakeClient([tool, tool, tool, tool, over, verdict])
     result = investigate(

@@ -404,7 +404,11 @@ def investigate(
         "is ONLY the topic the answer was about — a short phrase ('the house on Victoria "
         "Avenue'). NEVER the reasoning, NEVER the third person ('the reviewer'), NEVER an "
         'explanation of why it is off-topic>", "findings": '
-        '[{"text": "<one short sentence per meaningful thing the tools surfaced, naming the '
+        '[{"text": "<the family reads these words: the family member is ALWAYS "you"/"your" — '
+        '"your recollection", "what you said" — never "the reviewer", never "the participant", '
+        'never "the user" (2026-09-23: a finding said "This matches the reviewer\'s '
+        'recollection" and the persona guard redded the suite). One short sentence per '
+        "meaningful thing the tools surfaced, naming the "
         "SPECIFIC document (its title from the tool results) and the fact — with the EXACT "
         "sentence from the document's quotes that attests it, verbatim in quotation marks "
         "(e.g. \"in the Whitlock family history email, Pearl is described as a cousin: 'Pearl "

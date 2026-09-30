@@ -526,6 +526,7 @@ def _index_lines(layout: dict[str, Any]) -> dict[str, Any]:
     without an index made ``lines.find(l => l.index === undefined)``
     match the FIRST line, so one "Verified" tap saved line 0's text as
     the edit for every row and the whole page rendered as the first
+    line, over and over (user: "the transcript on screen is just 'A
     picture of life in music college' repeated over and over again").
     Readers assign the position when the file lacks it — the
     layouts already on disk load correctly without a rewrite."""

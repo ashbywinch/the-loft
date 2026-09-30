@@ -46,9 +46,8 @@ def vlm_line_words(line: str) -> list[str]:
 
 def flag_line_words(line: str, flagged: set[str]) -> list[dict[str, Any]]:
     """The line's word dicts for the layout, with the self-report's
-    flagged words at conf 0.0 (2026-08-26: the wiring seam the batch
-    was missing — the UI colours conf-0 words red). Matching uses
-    normalize() on BOTH sides — the report cites display words,
+    flagged words at conf 0.0 — the UI colours conf-0 words red. Matching
+    uses normalize() on BOTH sides — the report cites display words,
     case-insensitively."""
     normalized = {normalize(f) for f in flagged}
     out: list[dict[str, Any]] = []
@@ -59,10 +58,10 @@ def flag_line_words(line: str, flagged: set[str]) -> list[dict[str, Any]]:
 
 def selfreport_words_by_line(lines: list[str], report: list[dict[str, Any]] | None) -> dict[int, set[str]]:
     """The self-report's flagged words matched by WORD CONTENT, not line
-    number (2026-08-26: the report cites the RAW VLM text's numbering,
-    but the layout's line indices come from proportional matching — the
-    numbers drift when the raw text has empty lines; the word is the
-    reliable key). Every line containing the word is flagged."""
+    number: the report cites the RAW VLM text's numbering, but the
+    layout's line indices come from proportional matching — the numbers
+    drift when the raw text has empty lines, so the word is the reliable
+    key. Every line containing the word is flagged."""
     flagged: dict[int, set[str]] = {}
     for entry in report or []:
         word = normalize(str(entry.get("word", "")))
@@ -89,7 +88,7 @@ def selfreport_by_line(report: list[dict[str, Any]] | None, n_lines: int) -> dic
 def is_struck(word: str) -> bool:
     """The VLM marks crossed-out words with ~~ — they always flag: struck
     text is content the reviewer must handle, whatever the confidence
-    signal (walk finding 5, 2026-08-15)."""
+    signal."""
     return "~~" in word
 
 

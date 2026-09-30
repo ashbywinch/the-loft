@@ -83,7 +83,7 @@ describe("chatBox layout (docs/CHAT-UX.md)", () => {
     expect(chat.node.querySelector(".chat-quick").hidden).toBe(true);
   });
 
-  it("puts the send button on the right of the input — the thumb side (user, 2026-08-03)", () => {
+  it("puts the send button on the right of the input — the thumb side (user)", () => {
     const chat = chatBox();
     const bar = chat.node.querySelector(".chat-bar");
     expect(bar.lastElementChild.classList.contains("btn")).toBe(true);
@@ -176,9 +176,8 @@ describe("autocomplete (a working dropdown, not a datalist)", () => {
   });
 
   it("Enter-selecting a suggestion enables the send button", () => {
-    // reviewer, 2026-08-03: the Enter path set the value without an input
-    // event, so updateSend never ran and send stayed disabled when the value
-    // arrived without a keystroke first
+    // the Enter path sets the value without an input event, so updateSend
+    // never runs and send stays disabled when the value arrives without a keystroke first
     const chat = chatBox();
     const ac = autocomplete({ suggestions: cast });
     chat.swapInput(ac);

@@ -1,6 +1,6 @@
 # Box detection — how a page's writing is found and boxed
 
-Status: working (2026-09-10). The reader is `tools/reader.py`, the page's
+Status: working. The reader is `tools/reader.py`, the page's
 scale is `tools/pagescale.py`, and the acceptance check is `tools/boxjig.py`.
 Tests: `tests/test_reader.py` (synthetic pages) and `tests/test_pagescale.py`
 (the scale). The design work and the user rulings behind it are in

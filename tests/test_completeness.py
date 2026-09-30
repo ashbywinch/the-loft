@@ -1,5 +1,5 @@
 """The completeness eval — everything in the archive is visible somewhere on
-the site (2026-08-06). The deterministic proxies for visibility:
+the site. The deterministic proxies for visibility:
 
 1. Every catalogued item that renders on the timeline (published: not a
    clarification or reflection) must have a parseable date — the timeline
@@ -79,7 +79,7 @@ def test_every_object_and_photo_is_attested() -> None:
     # artifact: the giraffes, the Greenhaven house, the shared flat, the
     # beach and "you on Sunlight" photos were all invented with placeholder
     # images and removed — the attic's real photos arrive as their own
-    # scanned items (2026-08-06).
+    # scanned items.
     archive = Archive(DiskStore(ARCHIVE_DIR))
     refs: dict[str, list[str]] = {}
     for item_id in archive.item_ids():
@@ -106,7 +106,7 @@ def test_every_object_and_photo_is_attested() -> None:
 @pytest.mark.archive
 @pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_every_items_link_is_bidirectional() -> None:
-    # All links are bidirectional (2026-08-06): the back link ("Referenced
+    # All links are bidirectional: the back link ("Referenced
     # by") is derived from the forward items refs at render, so a one-way
     # link is structurally unrepresentable — the only way to break it is a
     # forward ref that cannot resolve (a missing or draft target, so no back

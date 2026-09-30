@@ -1,4 +1,4 @@
-"""The review surface's serve-walk (2026-08-26): every stored layout in
+"""The review surface's serve-walk: every stored layout in
 the real work directory, walked through the exact load+validate path
 the server uses — the structural half of the assurance the user asked
 for ("how will we ensure this actually happens?"). Runs under
@@ -55,7 +55,7 @@ def test_every_stored_layout_is_clean_or_loudly_refused() -> None:
 @pytest.mark.archive
 @pytest.mark.skipif(not WORK_DIR.is_dir(), reason="work disk not mounted")
 def test_serve_walk_boxes_carry_ink_and_single_lines() -> None:
-    """The image-aware gates at batch level (2026-08-26): every boxed
+    """The image-aware gates at batch level: every boxed
     line must sit on ink (Gate D) and enclose ONE text band (the
     projection gate). These are the cheap checks that make most vision
     audits unnecessary — they catch offset bugs and multi-line boxes

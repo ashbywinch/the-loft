@@ -1,11 +1,11 @@
-"""The ink-measurement machinery (2026-08-22): the rec's detection
-pieces are REAL ink — its recognition is garbage, its boxes are
-measurements. The postcard's message boxes came out right by clustering
-the pieces into rows and unioning each row. This module makes that
-reusable (the letter's P.S. block, the whole letter, any region): the
-cluster, the union, and the label matching. The labels come from the
-transcription's lines in ORDER — the proportional assignment — because
-the model's own boxes are schematic and cannot be trusted as positions.
+"""The ink-measurement machinery: the rec's detection pieces are REAL
+ink — its recognition is garbage, its boxes are measurements. The
+postcard's message boxes came out right by clustering the pieces into
+rows and unioning each row. This module makes that reusable (the
+letter's P.S. block, the whole letter, any region): the cluster, the
+union, and the label matching. The labels come from the transcription's
+lines in ORDER — the proportional assignment — because the model's own
+boxes are schematic and cannot be trusted as positions.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ def _split_by_x_gap(row: list[list[float]], gap: float = 300.0) -> list[list[lis
     date and the HERNSPETH sharing a band; a line whose words sit at
     the two ends with a blank middle). Each side becomes its own row -
     the union-boxes tighten to the ink, and the text-extent gates stop
-    false-positives (2026-08-22)."""
+    false-positives."""
     ordered = sorted(row, key=lambda b: b[0])
     parts: list[list[list[float]]] = []
     current = [ordered[0]]
@@ -44,10 +44,10 @@ ROW_HEIGHT_FACTOR = 2.5
 
 def _split_tall_row(row: list[list[float]], factor: float = ROW_HEIGHT_FACTOR) -> list[list[list[float]]]:
     """Split an implausibly tall row at its internal y-gaps until every
-    part could be ONE line (2026-08-25): single-linkage chaining merges
-    pieces whose every ADJACENT gap is small into rows spanning many
-    real lines — the birth certificate's form table chained 40 cells
-    into one 290px row (6.2x its own piece scale), a photo's big
+    part could be ONE line: single-linkage chaining merges pieces whose
+    every ADJACENT gap is small into rows spanning many real lines — the
+    birth certificate's form table chained 40 cells into one 290px row
+    (6.2x its own piece scale), a photo's big
     handwriting 13 pieces into 1077px (6.3x). A line's extent stays
     within ~2.5x its own pieces' median height (ascenders, descenders,
     slant); past that the row splits at its widest center-gap,
@@ -121,11 +121,11 @@ def _merge_gap_runs(runs: list[tuple[int, int]], gap: int) -> list[tuple[int, in
 
 
 def split_by_bands(box: Sequence[float], image: Any) -> list[list[float]]:
-    """A multi-line union divided along its own ink bands (2026-08-26):
-    when the projection shows several separated writing bands, their
-    row ranges — and each band's inked x-extent — ARE the true line
-    boxes. Splitting before label matching turns too-few-rows into
-    accurate-rows (the birth certificates' 40-vs-25 mismatch) instead
+    """A multi-line union divided along its own ink bands: when the
+    projection shows several separated writing bands, their row ranges —
+    and each band's inked x-extent — ARE the true line boxes. Splitting
+    before label matching turns too-few-rows into accurate-rows (the
+    birth certificates' 40-vs-25 mismatch) instead
     of refusing the page. Fewer than two bands: the box comes back
     unchanged — single-line and blank boxes are not this function's
     business."""
@@ -169,9 +169,9 @@ def cluster_rows(
     at the two ends — the union must not span the blank middle).
 
     The thresholds default to fractions of the MEASURED piece sizes
-    (2026-08-22: the absolute pixel values were tuned on one batch's
-    scan resolution — a half-scale scan merged every row, a double-
-    scale split every line). y-gap defaults to 0.65× the median piece
+    (absolute pixel values tuned on one batch's scan resolution fail at
+    any other scale — a half-scale scan merges every row, a double-scale
+    split splits every line). y-gap defaults to 0.65× the median piece
     height (between within-line jitter and the next line's top);
     x-gap defaults to 1.5× the median piece width (word gaps stay,
     column gaps split). Rows that chained implausibly tall split
@@ -207,10 +207,9 @@ def union(boxes: list[list[float]]) -> list[float]:
 
 def transcription_line_count_plausible(line_count: int, row_count: int) -> bool:
     """Did the model's transcription plausibly cover the rows the rec
-    measured? The collapse detector (2026-08-25): the birth certificate's
-    read folded 26 measured rows into one 323-char line — every row then
-    carried the same blob and Gate B refused the page. A page needs
-    roughly two-fifths of its measured rows as transcription lines (the
+    measured? The collapse detector: a read that folds many measured
+    rows into one long line makes every row carry the same blob and Gate
+    B refuses the page. A page needs
     rec over-splits; the model merges some). Conservative: pages with
     fewer than 10 measured rows are photo-caption territory where the
     rec's row count is unreliable — any count is accepted."""
@@ -227,9 +226,9 @@ def match_labels(
     """The rows' labels — the transcription's lines, in order. The
     PROPORTIONAL assignment: each row's y-center, as a fraction of the
     content's y-span, picks the line at the same fraction — no model
-    boxes involved (2026-08-22: the y-overlap matching collapsed when
-    the model's full-page boxes were schematic — every row matched the
-    first band). When the model's bands are given AND their y-overlap
+    boxes involved (the y-overlap matching collapses when the model's
+    full-page boxes are schematic — every row matches the first band).
+    When the model's bands are given AND their y-overlap
     assigns distinct bands to at least 60% of the rows (the model's
     boxes trustworthy — the rotated panel), the overlap labels refine
     the assignment; a degenerate overlap falls back to the

@@ -75,7 +75,7 @@ export function captureButton(state, anchor, label) {
 }
 
 export function memoriesSection(state, { title, stories, buttonLabel, anchor, exclude = [] }) {
-  // Render-once rule (2026-08-06): an item appears once per page — a story
+  // Render-once rule: an item appears once per page — a story
   // already shown in the page's other lists is never re-shown in the
   // memories block. Pages pass the ids they have already rendered.
   const already = new Set(exclude);
@@ -154,7 +154,7 @@ function openSheet(state, anchor, resume = null) {
     ...resume,
   };
 
-  // -- abandon: get rid of the draft (user, 2026-08-03). Two taps — the
+  // -- abandon: get rid of the draft (user). Two taps — the
   //    first asks, the second confirms. The draft is tombstoned on the
   //    server (append-only: the files stay, it stops existing) and never
   //    re-saved by close.
@@ -182,13 +182,11 @@ function openSheet(state, anchor, resume = null) {
         session.saved = true; // the draft is going away — no re-save may resurrect it
         // a draft save may still be landing — wait for it, then delete by the
         // resolved id; an abandon never orphans a draft the narrator thought
-        // they'd discarded (reviewer, 2026-08-03)
+        // they'd discarded.
         if (session.savePromise) await session.savePromise.catch(() => {});
         if (session.draftId) {
-          // the delete is awaited too — a fire-and-forget chain leaks past
-          // the test's mocks into the next test (the ECONNREFUSED flake,
-          // 2026-09-19): a chain this view starts must be settled before it
-          // closes, like the save promise above.
+          // the delete is awaited too — a chain this view starts must be
+          // settled before it closes, like the save promise above.
           session.deletePromise = fetch("/api/delete", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -225,7 +223,7 @@ function openSheet(state, anchor, resume = null) {
 
   // -- the draft auto-save: the transcript lands on the server within a
   //    moment of any change, superseding in place — a distraction or a
-  //    reboot loses at most the last few words (user, 2026-08-03) --------
+  //    reboot loses at most the last few words (user) --------
   let draftTimer = null;
   const touch = () => {
     if (session.saved) return;
@@ -250,8 +248,8 @@ function openSheet(state, anchor, resume = null) {
     overlay.remove();
   }
 
-  // -- who: the narrator IS the signed-in identity (2026-08-06, user:
-  //    google auth — the localStorage name claim is gone). Signed in: the
+  // -- who: the narrator IS the signed-in identity (user: google auth —
+  //    the localStorage name claim is gone). Signed in: the
   //    story stage starts under their name. Not signed in: the capture API
   //    requires the session, so the flow asks them to sign in first.
   const signedIn = me(state);
@@ -289,7 +287,7 @@ function openSheet(state, anchor, resume = null) {
     session.who_id = signedIn.person ?? null;
     chat.setSelection({ label: signedIn.name }); // the identity, not a claim
     // a resume rebuilds the prompt from the transcript below — the fresh
-    // flow's prompt would duplicate it (review, 2026-08-07)
+    // flow's prompt would duplicate it
     if (!resume) {
       chat.addAssistant("Signed in as you — what do you remember?");
       enterStory();
@@ -305,9 +303,9 @@ function openSheet(state, anchor, resume = null) {
     ]);
   }
 
-  // -- resume: reconstruct the chat from the stored transcript (user,
-  //    2026-08-03 — a distraction or a reboot must never lose more than the
-  //    last few words). The stored messages render as the transcript; the
+  // -- resume: reconstruct the chat from the stored transcript (user: a
+  //    distraction or a reboot must never lose more than the last few
+  //    words). The stored messages render as the transcript; the
   //    flow is wired live so it continues exactly where the narrator left.
   if (resume) {
     const stage = resume.stage ?? "review"; // legacy drafts (no chat) → review
@@ -373,7 +371,7 @@ function openSheet(state, anchor, resume = null) {
       session.questions = assessment.questions ?? [];
     } else {
       // the AI is unavailable — the story can still be saved without links,
-      // and the narrator is told why the review is empty (reviewer, 2026-08-03)
+      // and the narrator is told why the review is empty
       console.warn("memories: assessment unavailable — saving without links");
       session.assessNote =
         "The reader couldn't read your story just now — it will be saved as you told it, without any links. You can try again another time.";
@@ -437,7 +435,7 @@ function openSheet(state, anchor, resume = null) {
           onRemove: () => {
             session.personPicks = session.personPicks.filter((n) => n !== name);
             // the proposed link goes with the pill — the review must never
-            // offer a person the narrator removed (reviewer, 2026-08-03)
+            // offer a person the narrator removed
             session.extractions = session.extractions.filter(
               (ex) => !(ex.kind === "person" && ex.reason === "the narrator named them" && ex.name === name),
             );
@@ -572,7 +570,7 @@ function openSheet(state, anchor, resume = null) {
           session.extractions.push({
             kind: addKind.value,
             name,
-            match: matched, // a cast member links, never re-mints (reviewer, 2026-08-03)
+            match: matched, // a cast member links, never re-mints
             bucket: "proposed",
             on: true,
             reason: "added by the narrator",
@@ -626,7 +624,7 @@ function openSheet(state, anchor, resume = null) {
               () => renderSaved(),
             );
             // a failed save re-enables the button — the narrator's review
-            // edits must be retryable, never stranded (reviewer, 2026-08-03)
+            // edits must be retryable, never stranded
             if (!session.saved) saveBtn.disabled = false;
           },
         },
@@ -658,7 +656,7 @@ function openSheet(state, anchor, resume = null) {
 
 /** The one way a saved story lands in the in-memory state: id-replacing
  *  upsert. A completed draft supersedes its own entry — a stale draft card
- *  must never linger until a reload (user, 2026-08-03). */
+ *  must never linger until a reload (user). */
 const mergeStory = (state, story) => {
   state.byId.set(story.id, story);
   const at = state.items.findIndex((it) => it.id === story.id);
@@ -667,8 +665,7 @@ const mergeStory = (state, story) => {
 };
 
 /** Id-replacing merges for the records a save brings back — a resumed
- *  draft's already-merged person must never land twice (reviewer,
- *  2026-08-03). */
+ *  draft's already-merged person must never land twice. */
 const mergeById = (list, records) => {
   for (const record of records) {
     const at = list.findIndex((x) => x.id === record.id);
@@ -679,9 +676,9 @@ const mergeById = (list, records) => {
 
 /** The structured transcript behind a draft — who, every message, the
  *  assessment, and where the flow was — so the chat can be reconstructed
- *  later (docs/CHAT-UX.md, user 2026-08-03). */
+ *  later (docs/CHAT-UX.md, user). */
 const chatPayload = (session) => ({
-  anchor: session.anchor, // the page the narrator started from (reviewer, 2026-08-03)
+  anchor: session.anchor, // the page the narrator started from
   who: session.who,
   stage: session.stage,
   entries: session.entries,
@@ -694,7 +691,7 @@ const chatPayload = (session) => ({
 /** POST the draft; on success merge the story and any proposed records into
  *  the in-memory state so navigation works without a reload. */
 async function save(session, state, payload, onDone) {
-  session.finalizing = true; // a tab close mid-save must not fire a draft save (reviewer, 2026-08-03)
+  session.finalizing = true; // a tab close mid-save must not fire a draft save
   try {
     const res = await fetch("/api/save", {
       method: "POST",
@@ -724,14 +721,14 @@ async function save(session, state, payload, onDone) {
  *  of any change, superseding the same story id in place (append-only — the
  *  archive keeps every version, the newest wins). Never marks the session
  *  saved: the final catalogued save does that. At most one fetch at a time;
- *  changes during a fetch coalesce into the next (user, 2026-08-03 — a
- *  reboot or a distraction loses at most the last few words). */
+ *  changes during a fetch coalesce into the next (user: a reboot or a
+ *  distraction loses at most the last few words). */
 async function saveDraft(session, state) {
   // finalizing: the catalogued save is in flight — a draft save would race it
   // (and could supersede the finished story); the guard lives here so every
-  // caller — close, unload, the debounce — honours it (reviewer, 2026-08-03).
+  // caller — close, unload, the debounce — honours it.
   // A skip while saving re-queues itself: words typed mid-save must not wait
-  // for the next change (reviewer, 2026-08-03).
+  // for the next change.
   if (session.saved || session.finalizing || !session.entries.length) return;
   if (session.saving) {
     session.resavePending = true;
@@ -739,7 +736,7 @@ async function saveDraft(session, state) {
   }
   session.saving = true;
   // the in-flight promise — abandon awaits it so a draft that is landing
-  // still gets deleted, never orphaned (reviewer, 2026-08-03)
+  // still gets deleted, never orphaned
   const run = (async () => {
     try {
       const res = await fetch("/api/save", {
@@ -764,7 +761,7 @@ async function saveDraft(session, state) {
       // merge the draft into the in-memory state so the drafts surface and
       // navigation work without a reload — archival views filter it out. A
       // first-time narrator's minted person record must arrive too, or they
-      // can never see their own draft (reviewer, 2026-08-03).
+      // can never see their own draft.
       mergeStory(state, body.story);
       for (const person of body.people ?? []) state.people.push(person);
       for (const place of body.places ?? []) state.places.push(place);
@@ -778,7 +775,7 @@ async function saveDraft(session, state) {
   session.savePromise = run;
   await run;
   // a change arrived while this save was in flight — go again so the newest
-  // words land without waiting for the next touch (reviewer, 2026-08-03)
+  // words land without waiting for the next touch
   if (session.resavePending && !session.saved && !session.finalizing) {
     session.resavePending = false;
     await saveDraft(session, state);
@@ -787,7 +784,7 @@ async function saveDraft(session, state) {
 
 /** The owner continues an unfinished draft: the sheet opens at the review,
  *  pre-filled from the sidecar — verify the links, edit the account, save it
- *  catalogued (user, 2026-08-03: a draft is for the person who claimed it). */
+ *  catalogued (user: a draft is for the person who claimed it). */
 export function openDraft(state, draft) {
   const signedIn = me(state);
   const narrator = state.people.find((p) => p.id === draft.told_by);

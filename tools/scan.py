@@ -8,7 +8,7 @@ USER_SCAN_AREA — and writes the batch's registry record (label, source,
 page hashes, status pending) into our workspace registry. The folder in the
 user's area carries only pages; the label lives in the registry record,
 never in the folder name. The FF-680W is added to the user SANE config by
-IP because mDNS discovery on the home router is unreliable (2026-08-13).
+IP because mDNS discovery on the home router is unreliable.
 
 Usage:
     python tools/scan.py docs --label "Box 1 — Letters 1977"
@@ -92,8 +92,7 @@ def ensure_job_dir(inbox: Path, job: str) -> Path:
     name = job.strip()
     if not re.match(r"^[A-Za-z0-9-]+$", name):
         # the job name becomes the registry's batch id — one charset, the
-        # registry's (2026-08-14 final review: a spaced --job registered a
-        # batch the registry then rejected)
+        # registry's
         raise ScanError(f"job name must be letters, digits, or hyphens — got {job!r}")
     try:
         inbox.mkdir(exist_ok=True)
@@ -215,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
             ).stdout
         except (OSError, subprocess.SubprocessError) as exc:
             # scanimage missing, or SANE misconfigured — the same clean error
-            # the other failure paths give, not a raw traceback (review, 2026-08-14)
+            # the other failure paths give, not a raw traceback
             raise ScanError(f"{SCANIMAGE} -L failed ({exc}) — is the scanner connected and SANE configured?") from exc
         device = args.device or pick_device(parse_devices(listed))
         job_dir = scan_job(device, args.mode, job, inbox=args.inbox, resolution=args.resolution)

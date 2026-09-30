@@ -3,7 +3,7 @@ and its verdict on a generated text card — upright, so 0 degrees must win.
 
 No committed fixture: the transcription-fidelity eval's printed-document
 fixture was deliberately removed with its eval (the transcription backend
-is the vision model, not the local tesseract path — user, 2026-08-15).
+is the vision model, not the local tesseract path — user).
 Orientation still runs in production — the pipeline orients every text page
 before the vision model reads it — so the arbiter keeps its real-tool tests,
 on a card the test renders itself (Pillow's bundled font, no system font

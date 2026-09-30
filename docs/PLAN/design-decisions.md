@@ -1,7 +1,7 @@
 # Design Decisions
 
 The register of the review surface's design decisions with their rationale
-(user, 2026-08-16: "let's make sure we're recording all our design decisions
+(user: "let's make sure we're recording all our design decisions
 with rationale"). The detailed records — the problems, the walks, the
 evidence — live in `docs/PLAN/ux-fixes-plan.md`; this register is the
 one-line memory: the decision, why, and where. The standards that govern the

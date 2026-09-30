@@ -21,14 +21,14 @@ if TYPE_CHECKING:
 def _import_data() -> dict[str, Any]:
     """The import's declared content, read once per process. The real family
     data lives in the gitignored archive (archive/import-content.json), never
-    in code — the public repo ships a data-free import (2026-08-08, user)."""
+    in code — the public repo ships a data-free import (user)."""
     path = ARCHIVE_DIR / "import-content.json"
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 def email_cast() -> list[dict[str, Any]]:
     """The letter's declared cast (people the import asserts). The real
-    content lives in the gitignored archive, never in code (2026-08-08)."""
+    content lives in the gitignored archive, never in code."""
     return _import_data()["email"]["people"]
 
 
@@ -210,7 +210,7 @@ def _apply_record_patches(table: dict[str, Any], by_id: dict[str, dict[str, Any]
 def _capture_demo_places(archive: Archive) -> None:
     """The address on the family houses. (Household moved to
     Person.residence — the GEDCOM-aligned seam; a `household` key on a
-    place is silently dropped by the Place model, 2026-08-06 review.)"""
+    place is silently dropped by the Place model.)"""
     places = archive.get_identity("places")
     assert places is not None, "archive has no places table"
     pl_by_id = {p["id"]: p for p in places["places"]}

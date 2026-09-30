@@ -1,7 +1,7 @@
 # Long-lived personal software — research summary
 
-Date: 2026-08-09. Research question: who else is building software meant to
-outlive its creators by decades, and what are the established patterns?
+Research question: who else is building software meant to outlive its
+creators by decades, and what are the established patterns?
 
 Context: this archive must survive ~2046 with minimal skilled human
 intervention, stay plain-text/append-only (the no-PII guard scans tracked

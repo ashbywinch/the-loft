@@ -89,8 +89,7 @@ def test_rows_are_numbered_in_reading_order() -> None:
 
 def test_a_word_under_two_lines_joins_the_nearest() -> None:
     """A word lying under two lines goes to the line whose drawn height is
-    nearest its centre — not the first line in order (2026-09-18: rows
-    18/19 of page-01 were wrongly merged by first-claim)."""
+    nearest its centre — not the first line in order."""
     words = _words((100, 195, 250, 215), (300, 205, 450, 225))
     rows = Rows.build(words, [_line(100, 400, 200), _line(100, 400, 220)], PAGE_SIZE)
     assert len(rows) == 2, f"the nearer line was not separated: {len(rows)} rows"
@@ -133,7 +132,7 @@ def test_the_adjudicated_rows_are_reproduced() -> None:
             f"built row {row.number} (band centred y{centre(row.band):.0f}) has no adjudicated row within 75px"
         )
 
-    # (3) the rulings (2026-09-18/19): the span's y-window is one writing
+    # (3) the rulings: the span's y-window is one writing
     # height, so a tall mark within its row's band stays with its line
     # (the mark at y4218-4270 belongs to line 34); an annotation is
     # discounted — below its line's bottom or poking above its words —
@@ -147,7 +146,7 @@ def test_the_adjudicated_rows_are_reproduced() -> None:
 def test_an_annotation_poking_above_the_line_is_discounted() -> None:
     """A box that floats fully inside a line word's x-range, starting
     above that word's top, is an annotation — the line does not claim it
-    (the asterisk, user 2026-09-19); a word whose box starts at its own
+    (the asterisk, user); a word whose box starts at its own
     ascenders stays in the line."""
     words = _words((100, 100, 500, 130), (200, 60, 230, 90))
     rows = Rows.build(words, [_line(100, 500, 115)], PAGE_SIZE)

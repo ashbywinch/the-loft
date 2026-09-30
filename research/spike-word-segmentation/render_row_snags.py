@@ -1,7 +1,7 @@
 """The row-snag windows, both assignments shown with the house renderer.
 
-Each question is two maps side by side — left: the user's confirmed rows
-(2026-09-12); right: `Rows.build` — both drawn by `render_map` (the
+Each question is two maps side by side — left: the user's confirmed rows;
+right: `Rows.build` — both drawn by `render_map` (the
 library's generic renderer: `tint_row` over each row's words, the ink
 staying loudest). The words a question concerns carry their reading-order
 numbers; yellow strokes are the user's line indications.

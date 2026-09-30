@@ -1,4 +1,4 @@
-"""The no-family-PII guard (2026-08-08, user): the public repo (the-loft)
+"""The no-family-PII guard (user): the public repo (the-loft)
 ships code and synthetic fixtures, never family content. Every identifying
 name, alias, email and place from the live dataset must be absent from the
 tracked files — the markers load from the gitignored archive at runtime, so
@@ -32,7 +32,7 @@ def test_no_family_pii_in_tracked_files() -> None:
         ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True
     ).stdout.splitlines()
     # fast path: one compiled alternation per file instead of one re.search
-    # compilation per marker per file (the 30 s hotspot, 2026-08-13). Emails
+    # compilation per marker per file (the 30 s hotspot). Emails
     # compared lowercased — the same case the authoritative scan normalises.
     emails = sorted(m for m in markers if "@" in m)
     words = sorted(m for m in markers if "@" not in m)

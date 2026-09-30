@@ -1,4 +1,4 @@
-/** The web-flow sign-in (2026-08-06): houses' proven mechanism.
+/** The web-flow sign-in: houses' proven mechanism.
 
  * The callback host is a registered hostname that resolves to the LAN IP
  * (`192.168.1.251.sslip.io`) — Google accepts hostname redirect URIs, so
@@ -12,7 +12,7 @@
 export async function signInSheet() {
   // fetch the login endpoint and follow the auth_url it returns — the
   // endpoint answers JSON, so navigating straight to it would render the
-  // URL as text (2026-08-06, user: 'I just pasted you exactly what I saw')
+  // URL as text
   try {
     const res = await fetch("/api/auth/login");
     const data = await res.json();

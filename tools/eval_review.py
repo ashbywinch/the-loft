@@ -4,15 +4,14 @@ Not part of `make test` (tests never hit the network): this needs a network
 and a configured key (OPENAI_API_KEY / OPENCODE_API_KEY / opencode auth.json).
 Run with `loft eval-review` (tools/cli.py).
 
-The cases cover the review flow's model behaviours (2026-08-09, user):
+The cases cover the review flow's model behaviours (user):
 - the relevance verdict (an answer about the exact claim is on-topic);
 - the off-topic steer (an answer about something else is never recorded);
 - the contradiction gate — especially the case where the USER IS WRONG:
   the reviewer names the wrong person for an attested event (the
-  wrong-person-for-the-attested-event shape — we don't confirm until contradictions with the
-  existing data are resolved);
-- the never-derive rule (the model never turns words into a relationship —
-  the walk's "your ex-husband" failure).
+  wrong-person-for-the-attested-event shape — we don't confirm until
+  contradictions with the existing data are resolved);
+- the never-derive rule (the model never turns words into a relationship).
 
 The cast is fictional (the Whitlocks) so the eval cannot be tuned to one
 household's data, and the PII guard never sees a real name.
@@ -62,7 +61,7 @@ class ReviewFlow:
     claim. The session fixture in tests/test_evals.py runs each flow ONCE
     and caches the output; the condition tests are independent, unaware
     they share the run, and each verifies the output against one condition
-    declared here (2026-08-10, user: "name all the flows… have a fixture
+    declared here (user: "name all the flows… have a fixture
     that caches the results of running the flow. The individual tests can
     remain independent and not be aware that they share flow outputs"). A
     condition a flow does not pin keeps its default."""
@@ -166,19 +165,17 @@ def _facts() -> ReviewContext:
     )
 
     # The assistant's words never echo the system's — the hired genealogist's
-    # voice (PRD: "the assistant reads as a hired genealogist, not a computer",
-    # 2026-08-09; user: "make sure the requirement is in all relevant evals").
+    # voice (PRD: "the assistant reads as a hired genealogist, not a computer";
+    # user: "make sure the requirement is in all relevant evals").
     # The family never meets the process vocabulary: no third-person "the user",
     # no "the import", no statuses or internal states, no "awaiting" — UNLESS
     # the reviewer used the word themselves: echoing the family's own
-    # vocabulary is how they understand you (2026-08-15, user).
+    # vocabulary is how they understand you (user).
     #
     # "link" is deliberately NOT here: it is an ordinary word normal people
     # use about family connections ("his link to Pearl", "the brother link",
-    # "the link between them" — 2026-09-04 and 2026-09-23 eval runs both
-    # tripped the guard on natural prose). The requirement is to spare the
-    # family jargon they do not understand; "link" is not that jargon
-    # (user, 2026-09-23).
+    # "the link between them"). The requirement is to spare the
+    # family jargon they do not understand; "link" is not that jargon (user).
 
 
 PERSONA_JARGON = (
@@ -191,9 +188,8 @@ PERSONA_JARGON = (
     "status",
     "estimated",
     "proposed",
-    # the third-person and the dead-ends the transcript showed (2026-08-09):
-    # the assistant never speaks about the family as "the reviewer", and
-    # never reports a bare absence
+    # the third-person and the dead-ends: the assistant never speaks about
+    # the family as "the reviewer", and never reports a bare absence
     "the reviewer",
     "no record connects",
     "no record of",
@@ -208,14 +204,13 @@ def persona_errors(result: dict[str, Any], reviewer_text: str = "") -> list[str]
     answer is off-topic) never contain the process vocabulary, the
     third-person, or a bare absence. For a relevant answer the note is
     internal reasoning and never surfaces; for an off-topic one it becomes
-    the steer's topic, so it must be clean there (2026-08-09, user: the
-    note-as-analysis read as "That's about the reviewer has no idea…").
+    the steer's topic, so it must be clean there.
 
     Vocabulary the reviewer themselves introduced is acceptable — echoing
     the family's own word is how the genealogist is understood, not a
-    violation (user, 2026-08-15: "it's always acceptable to use vocabulary
-    that the user themselves introduces"). A jargon word the reviewer's
-    statement also contains is allowed in the assistant's reply."""
+    violation (user: "it's always acceptable to use vocabulary that the
+    user themselves introduces"). A jargon word the reviewer's statement
+    also contains is allowed in the assistant's reply."""
     fields: list[tuple[str, str]] = [("question", result.get("question", ""))]
     if result.get("relevant") != "true":
         fields.append(("note", result.get("note", "")))
@@ -231,15 +226,13 @@ def persona_errors(result: dict[str, Any], reviewer_text: str = "") -> list[str]
 
 
 def _feedback_errors(result: dict[str, Any]) -> list[str]:
-    """The intra-turn completeness property (2026-08-09, user: "how can it
-    be that you wrote comprehensive evals to make sure our transcript went
-    back verbatim, and now you've found that things were missing"): the
-    transcript-going-back principle has a second surface — INSIDE an
-    investigation, every answer the model produces (a partial response, a
-    verdict) must be fed back into the prompt verbatim, so a re-answer
-    happens in the context of the model's own reasoning. Tool calls are
-    the exception: their deterministic results are the fed-back content,
-    and they are logged in the trace."""
+    """The intra-turn completeness property: the transcript-going-back
+    principle has a second surface — INSIDE an investigation, every answer
+    the model produces (a partial response, a verdict) must be fed back
+    into the prompt verbatim, so a re-answer happens in the context of the
+    model's own reasoning. Tool calls are the exception: their
+    deterministic results are the fed-back content, and they are logged in
+    the trace."""
     errors: list[str] = []
     final = result.get("final_prompt", "")
     steps = result.get("trace", [])
@@ -396,8 +389,7 @@ def condition_arc_lead(result: dict[str, Any]) -> str | None:
     findings (the tool path) or in the question (the known-facts path):
     "Is the Seascale visit you remember the same one recorded in the
     archive…?" is the genealogist's move, either way (R3: the tools — and
-    the archive's facts — inform the conversation). The live stall repeated
-    the question and never acknowledged the visit."""
+    the archive's facts — inform the conversation)."""
     t2 = result["t2"]
     response_text = " ".join(
         [(f.get("text", "") if isinstance(f, dict) else str(f)) for f in t2.get("findings", [])]
@@ -420,7 +412,7 @@ def condition_arc_no_repeat(result: dict[str, Any]) -> str | None:
 
 
 class CachingFlow:
-    """The prefix contract (2026-08-09, user: "have ALL our evals cross
+    """The prefix contract (user: "have ALL our evals cross
     check this at the end"): a short conversation runs as one accumulating
     history, and every turn's prompt must start with the previous turn's
     exact text — the conversation renders verbatim and grows at the end."""

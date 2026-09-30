@@ -7,7 +7,7 @@ const STATE = {
   places: [],
   themes: [],
   byId: new Map(),
-  me: { name: "Alex Hale", person: "p-alex" }, // the signed-in identity (2026-08-06)
+  me: { name: "Alex Hale", person: "p-alex" }, // the signed-in identity
 };
 
 const story = (overrides = {}) => ({
@@ -30,7 +30,7 @@ const okJson = (data, status = 200) => ({ ok: status < 400, status, json: async 
 const tick = () => vi.advanceTimersByTimeAsync(0);
 
 beforeEach(() => {
-  vi.useFakeTimers(); // never real timers — every test's independence is visible here (2026-08-05)
+  vi.useFakeTimers(); // never real timers — every test's independence is visible here
   localStorage.clear(); // no narrator or draft state leaks between tests
   document.body.replaceChildren();
   vi.restoreAllMocks();
@@ -71,9 +71,9 @@ async function openSheetVia(state, anchor = ANCHOR) {
 
 describe("storyCard", () => {
   it("a required (non-skippable) question offers no Skip button", async () => {
-    // the events-date question is required (2026-08-05: the flow must make
-    // the narrator provide a date) — Skip must not be offered; the narrator's
-    // right to demur stays ("I'd rather not say"). Fake timers and a clean
+    // the events-date question is required — the flow must make the narrator
+    // provide a date — Skip must not be offered; the narrator's right to
+    // demur stays ("I'd rather not say"). Fake timers and a clean
     // localStorage come from beforeEach — this test is independent by setup,
     // not by position.
     const fetchMock = vi.fn((url) => {
@@ -189,7 +189,7 @@ describe("memoriesSection", () => {
 });
 
 describe("the capture chat", () => {
-  it("signed out, the chat asks them to sign in — never for a name (2026-08-06)", async () => {
+  it("signed out, the chat asks them to sign in — never for a name", async () => {
     vi.stubGlobal("fetch", flowFetch());
     const state = { ...STATE, me: null };
     const sheet = await openSheetVia(state);
@@ -284,7 +284,7 @@ describe("the capture chat", () => {
       return Promise.resolve(okJson({ ok: false }, 404));
     });
 
-  it("the identity pill is not a claim — no remove, the story continues (2026-08-06)", async () => {
+  it("the identity pill is not a claim — no remove, the story continues", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(() => Promise.resolve(okJson({ ok: true }, 200))),
@@ -304,8 +304,8 @@ describe("the capture chat", () => {
     const state = { ...STATE };
     const sheet = await openSheetVia(state);
 
-    // the narrator IS the session (2026-08-06, google auth) — the chat
-    // opens on the story, with the identity as a fixed pill
+    // the narrator IS the session — the chat opens on the story, with the
+    // identity as a fixed pill
     expect(sheet.textContent).not.toContain("Who's telling this?");
     expect(chipLabel()).toBe("Alex Hale");
     expect(document.querySelector(".chat-selection .chip-remove")).toBeNull(); // not a claim, not removable
@@ -417,7 +417,6 @@ describe("the capture chat", () => {
 
   it("an abandoned session saves exactly one draft, however often it closes", async () => {
     // close + unload in the same teardown must never pile up copies
-    // (user, 2026-08-03 — eight identical drafts once appeared in the archive)
     const fetchMock = vi.fn((url) => {
       if (url === "/api/health") return Promise.resolve(okJson({ ok: true }));
       if (url === "/api/save")
@@ -676,7 +675,7 @@ describe("the capture chat", () => {
     await tick();
   });
 
-  it("a resumed draft never shows the story prompt twice (review, 2026-08-07)", async () => {
+  it("a resumed draft never shows the story prompt twice", async () => {
     const state = { ...STATE };
     const draft = {
       id: "story-d1",
@@ -884,8 +883,8 @@ describe("the capture chat", () => {
   });
 
   it("a failed review save re-enables the button so the redactions can be retried", async () => {
-    // review, 2026-08-03: a failed save must never strand the narrator's
-    // edits behind a disabled button (the error note says "Try again")
+    // a failed save must never strand the narrator's edits behind a disabled
+    // button (the error note says "Try again")
     const fetchMock = vi.fn((url) => {
       if (url === "/api/health") return Promise.resolve(okJson({ ok: true }));
       if (url === "/api/save") return Promise.resolve(okJson({ ok: false }, 503));
@@ -928,7 +927,7 @@ describe("the capture chat", () => {
   });
 
   it("a first-time narrator's draft save merges their minted person record", async () => {
-    // review, 2026-08-03: a new narrator (Zofia, not in the cast) is minted
+    // a new narrator (Zofia, not in the cast) is minted
     // p-zofia-kowalski on the server — the draft save must bring that record
     // into state, or they can never see their own draft
     const fetchMock = vi.fn((url) => {
@@ -968,7 +967,7 @@ describe("the capture chat", () => {
   });
 
   it("abandon waits for an in-flight draft save, then deletes it — no orphan", async () => {
-    // reviewer, 2026-08-03: confirming Abandon while the auto-save fetch is
+    // confirming Abandon while the auto-save fetch is
     // still in flight must not leave a draft the narrator thought they'd
     // discarded (draftId is still null at confirm time)
     let resolveSave;
@@ -1009,7 +1008,7 @@ describe("the capture chat", () => {
   });
 
   it("a resumed draft keeps its original anchor through the save", async () => {
-    // reviewer, 2026-08-03: the anchor (the page the narrator started from)
+    // the anchor (the page the narrator started from)
     // must survive in the transcript — a draft started on a theme page must
     // not re-anchor itself to a null item on completion
     localStorage.setItem("loft.narrator", "Alex");
@@ -1071,7 +1070,7 @@ describe("the capture chat", () => {
   });
 
   it("picking a cast member in the multi-select links them, never re-mints", async () => {
-    // reviewer, 2026-08-03: picking "Mum" must match p-mum, not mint p-mum-2
+    // picking "Mum" must match p-mum, not mint p-mum-2
     const fetchMock = vi.fn((url) => {
       if (url === "/api/health") return Promise.resolve(okJson({ ok: true }));
       if (url === "/api/assess")
@@ -1165,7 +1164,7 @@ describe("the capture chat", () => {
   });
 
   it("removing a picked person's pill drops their proposed link too", async () => {
-    // reviewer, 2026-08-03: the X on a pick must not leave a stale extraction
+    // the X on a pick must not leave a stale extraction
     // behind — the review would otherwise offer a link the narrator removed
     const fetchMock = vi.fn((url) => {
       if (url === "/api/health") return Promise.resolve(okJson({ ok: true }));
@@ -1218,7 +1217,7 @@ describe("the capture chat", () => {
   });
 
   it("tab close during the final save never mints a competing draft", async () => {
-    // reviewer, 2026-08-03: beforeunload while the catalogued save is in
+    // beforeunload while the catalogued save is in
     // flight must not fire a draft save — a stale draft must never supersede
     // the finished story
     let resolveSave;
@@ -1268,7 +1267,7 @@ describe("the capture chat", () => {
   });
 
   it("the header X during the final save never mints a competing draft", async () => {
-    // reviewer, 2026-08-03: close() (the header X) must honour the final
+    // close() (the header X) must honour the final
     // save in flight just like beforeunload does
     let resolveSave;
     const fetchMock = vi.fn((url) => {
@@ -1317,7 +1316,7 @@ describe("the capture chat", () => {
   });
 
   it("words typed during an in-flight draft save are re-queued, never skipped", async () => {
-    // reviewer, 2026-08-03: the coalescing guard skipped a save while one
+    // the coalescing guard skipped a save while one
     // was in flight and never re-scheduled — the newest words waited for the
     // next change or close
     let resolveSave;
@@ -1357,7 +1356,7 @@ describe("the capture chat", () => {
   });
 
   it("abandon with a pending re-save never resurrects the tombstoned draft", async () => {
-    // reviewer, 2026-08-03: the round-13 re-queue could fire after an
+    // the round-13 re-queue could fire after an
     // abandon and supersede the tombstone — the draft would come back
     let resolveSave;
     const fetchMock = vi.fn((url) => {
@@ -1403,7 +1402,7 @@ describe("the capture chat", () => {
   });
 
   it("merging a saved story's people never duplicates cast members", async () => {
-    // reviewer, 2026-08-03: save and saveDraft pushed body.people blindly —
+    // save and saveDraft pushed body.people blindly —
     // a resumed draft's already-merged person could land twice in state
     const fetchMock = vi.fn((url) => {
       if (url === "/api/save")
@@ -1451,7 +1450,7 @@ describe("the capture chat", () => {
   });
 
   it("an unavailable AI tells the narrator instead of silently degrading", async () => {
-    // reviewer, 2026-08-03: assess failing must be said out loud — the
+    // assess failing must be said out loud — the
     // narrator otherwise sees an empty review and wonders where the links went
     const fetchMock = vi.fn((url) => {
       if (url === "/api/health") return Promise.resolve(okJson({ ok: true }));
@@ -1514,7 +1513,7 @@ describe("the capture chat", () => {
   });
 });
 
-describe("memoriesSection render-once (2026-08-06)", () => {
+describe("memoriesSection render-once", () => {
   it("never re-shows a story the page already rendered", () => {
     const story = {
       id: "s1",

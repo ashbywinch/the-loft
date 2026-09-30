@@ -204,7 +204,7 @@ def test_publish_copies_real_assets_and_generates_placeholders(tmp_path: Path) -
 def test_publish_leaves_no_staging_residue(tmp_path: Path) -> None:
     """Publish stages the assets beside the projection and swaps — a failed
     or interrupted copy must never leave assets.tmp behind or a fresh index
-    pointing at a deleted assets/ (2026-08-05 bot review)."""
+    pointing at a deleted assets/."""
     archive = sample_identity(tmp_path)
     archive.save_item(
         {
@@ -229,7 +229,7 @@ def test_publish_leaves_no_staging_residue(tmp_path: Path) -> None:
 
 def test_publish_copies_binary_scans_byte_identical(tmp_path: Path) -> None:
     """Real scans are binary — publish must copy them byte-for-byte, never
-    decode them as text (2026-08-04 review finding)."""
+    decode them as text."""
     archive = sample_identity(tmp_path)
     blob = b"\xff\xd8\xff\xe0" + bytes(range(256))
     archive.save_item(
@@ -260,7 +260,7 @@ def test_publish_writes_an_avatar_for_every_person_even_without_a_hue(tmp_path: 
     # A person without a hue still needs an avatar — a missing file is a
     # broken image link on every card (cast/tree render the img
     # unconditionally). The hue defaults deterministically from the id:
-    # same person, same colour, every publish (2026-08-05).
+    # same person, same colour, every publish.
     archive = make_archive(tmp_path)
     archive.save_identity("places", {"places": [{"id": "pl-town", "name": "Town"}]})
     archive.save_identity("themes", {"themes": [{"id": "t-boat", "title": "The boats"}]})
@@ -346,8 +346,7 @@ def _catalogued_story_linking(archive: Archive, target_id: str, target_status: s
 def test_publish_fails_on_missing_content_file(tmp_path: Path) -> None:
     """A sidecar referencing a content file the archive doesn't have is
     silent data loss — publish fails loudly instead of shipping a blank
-    story/transcription (2026-08-04 review, raised 3x; partial Drive sync
-    is the realistic trigger, PRD §7)."""
+    story/transcription (a partial Drive sync is the realistic trigger, PRD §7)."""
     archive = sample_identity(tmp_path)
     archive.save_item(
         {
@@ -367,8 +366,7 @@ def test_publish_fails_on_missing_content_file(tmp_path: Path) -> None:
 
 def test_publish_fails_on_confirmed_link_to_draft_artifact(tmp_path: Path) -> None:
     """A catalogued item confirming a link to a draft artifact is dangling
-    — publish fails loudly instead of shipping an invisible target
-    (2026-08-05: story-2026-08-03-05 confirmed a draft object-sb-mirosa)."""
+    — publish fails loudly instead of shipping an invisible target."""
     archive = sample_identity(tmp_path)
     _catalogued_story_linking(archive, "object-x", "draft")
     with pytest.raises(DeriveError, match="object-x"):
@@ -383,9 +381,9 @@ def test_publish_passes_when_confirmed_link_target_is_catalogued(tmp_path: Path)
 
 def test_publish_merges_proposed_records_with_status(tmp_path: Path) -> None:
     """Proposed people/places are part of the projection — the propose/confirm
-    seam means a catalogued story's ref to a proposed record must resolve
-    (2026-08-05: derive dropped proposed/ entirely, so a fresh publish would
-    dangle those refs)."""
+    seam means a catalogued story's ref to a proposed record must resolve —
+    a derive that dropped proposed/ entirely would leave a fresh publish
+    dangling those refs."""
     archive = sample_identity(tmp_path)
     archive.propose_person({"id": "p-nova", "name": "Nova", "relation": "added from a story"})
     archive.propose_place({"id": "pl-new", "name": "New place", "note": "Added from a story."})
@@ -407,8 +405,8 @@ def test_publish_dedupes_proposed_against_the_table(tmp_path: Path) -> None:
 
 
 def test_publish_strips_supersedes_from_identity_tables(tmp_path: Path) -> None:
-    """The supersession chain is archive-internal — never projection content
-    (2026-08-04 review finding: people.json shipped 'supersedes')."""
+    """The supersession chain is archive-internal — never projection
+    content: people.json must not ship 'supersedes'."""
     archive = sample_identity(tmp_path)
     archive.save_identity("people", {"people": [{"id": "p-mum", "name": "Mum", "hue": "amber"}], "relationships": []})
     people = json.loads(projection_json(archive)["people.json"])
@@ -417,9 +415,7 @@ def test_publish_strips_supersedes_from_identity_tables(tmp_path: Path) -> None:
 
 def test_publish_fails_on_theme_record_referencing_missing_item(tmp_path: Path) -> None:
     """A theme record's curated items list must resolve in the projection —
-    a tombstoned or missing letter left in a theme is a dangling card
-    (2026-08-05: the fake-letter tombstone batch cleaned 7 theme entries;
-    this guard keeps it that way)."""
+    a tombstoned or missing letter left in a theme is a dangling card."""
     archive = sample_identity(tmp_path)
     archive.save_identity(
         "themes",
@@ -432,7 +428,7 @@ def test_publish_fails_on_theme_record_referencing_missing_item(tmp_path: Path) 
 def test_publish_fails_on_theme_referencing_draft_item(tmp_path: Path) -> None:
     """A theme's curated card is public; a draft target is invisible to
     everyone but its owner — the same dangling-card class as confirmed item
-    refs and comment_on (2026-08-05 review)."""
+    refs and comment_on."""
     archive = sample_identity(tmp_path)
     archive.save_item(
         {
@@ -478,8 +474,7 @@ def test_publish_accepts_empty_and_resolving_theme_items(tmp_path: Path) -> None
 def test_publish_dedupes_proposed_places_by_name(tmp_path: Path) -> None:
     """The propose/confirm seam never multiplies a place entity: a proposed
     record whose NAME already exists in the table (a story mention minted a
-    fresh id) is skipped — the moored-barges ×3 came from exactly this
-    (2026-08-05)."""
+    fresh id) is skipped."""
     archive = sample_identity(tmp_path)
     archive.save_identity("places", {"places": [{"id": "pl-x", "name": "The dock", "note": "curated"}]})
     archive.propose_place({"id": "pl-x-2", "name": "The dock", "note": "Added from a story."})
@@ -489,8 +484,7 @@ def test_publish_dedupes_proposed_places_by_name(tmp_path: Path) -> None:
 
 def test_publish_fails_on_catalogued_story_commenting_on_draft(tmp_path: Path) -> None:
     """comment_on is a link too: a catalogued story whose anchor item is a
-    draft (or missing) ships with an invisible target (2026-08-05 bot
-    review, importance 7)."""
+    draft (or missing) ships with an invisible target."""
     archive = sample_identity(tmp_path)
     archive.save_item(
         {
@@ -522,8 +516,7 @@ def test_publish_fails_on_catalogued_story_commenting_on_draft(tmp_path: Path) -
 def test_publish_fails_on_extraction_match_that_does_not_resolve(tmp_path: Path) -> None:
     """chat.extractions carry the same promise as the four link kinds: a
     catalogued story whose extraction match names an entity the projection
-    cannot see is dangling — the p-dad/p-mum class (2026-08-05 bot review;
-    the data was fixed, the class needs a guard)."""
+    cannot see is dangling — the p-dad/p-mum class."""
     archive = sample_identity(tmp_path)
     archive.save_item(
         {
@@ -544,7 +537,7 @@ def test_publish_fails_on_extraction_match_that_does_not_resolve(tmp_path: Path)
 def test_publish_fails_on_extraction_match_to_draft_item(tmp_path: Path) -> None:
     """An extraction match is a link too: a catalogued story matching a
     draft artifact publishes a pointer invisible to every reader but its
-    owner (2026-08-05 review)."""
+    owner."""
     archive = sample_identity(tmp_path)
     archive.save_item(
         {
@@ -576,7 +569,7 @@ def test_publish_fails_on_extraction_match_to_draft_item(tmp_path: Path) -> None
 def test_publish_ignores_excluded_extraction_matches(tmp_path: Path) -> None:
     """An extraction the reviewer unticked (on: false) is excluded content —
     its match is not a link the projection must carry, so a dangling match
-    on it must not fail publish (2026-08-05 bot review)."""
+    on it must not fail publish."""
     archive = sample_identity(tmp_path)
     archive.save_item(
         {
@@ -654,8 +647,7 @@ def test_publish_passes_when_comment_on_target_is_catalogued(tmp_path: Path) -> 
 
 def test_publish_dedupes_proposed_people_by_name(tmp_path: Path) -> None:
     """The cast never fragments: a proposed person whose NAME already exists
-    in the table (or in another proposal) is skipped (2026-08-05 bot review —
-    the person analog of the moored-barges place dedup)."""
+    in the table (or in another proposal) is skipped."""
     archive = sample_identity(tmp_path)
     archive.save_identity("people", {"people": [{"id": "p-mum", "name": "Mum", "hue": "amber"}], "relationships": []})
     archive.propose_person({"id": "p-nora", "name": "Nora Smith", "relation": "added from a story"})
@@ -686,8 +678,8 @@ def test_publish_keeps_same_named_people_with_distinct_dobs(tmp_path: Path) -> N
 def test_publish_table_resolves_relationships_regardless_of_status(tmp_path: Path) -> None:
     """The people table is fully resolvable irrespective of status: a
     proposed-status person in the table is a first-class relationship
-    endpoint (2026-08-05 — the import flow's people enter the table with
-    status proposed; the proposed/ queue is story staging, not their home)."""
+    endpoint (the import flow's people enter the table with status
+    proposed; the proposed/ queue is story staging, not their home)."""
     archive = sample_identity(tmp_path)
     archive.save_identity(
         "people",
@@ -711,8 +703,7 @@ def test_publish_table_resolves_relationships_regardless_of_status(tmp_path: Pat
 
 def test_publish_dedupes_proposed_places_against_each_other(tmp_path: Path) -> None:
     """Two story mentions minting two proposed records with the same name
-    publish one — the moored-barges ×3 must never recur (2026-08-05 bot
-    review)."""
+    publish one."""
     archive = sample_identity(tmp_path)
     archive.propose_place({"id": "pl-new-1", "name": "The dock", "note": "Added from a story."})
     archive.propose_place({"id": "pl-new-2", "name": "The dock", "note": "Added from a story."})
@@ -744,8 +735,7 @@ def test_publish_fails_on_confirmed_ref_to_missing_person(tmp_path: Path) -> Non
 
 def test_publish_emits_orgs_and_validates_org_refs(tmp_path: Path) -> None:
     """The orgs identity table publishes; a catalogued item's org ref must
-    resolve in the projection, and a dangling one fails loudly (2026-08-05
-    import interview)."""
+    resolve in the projection, and a dangling one fails loudly."""
     archive = sample_identity(tmp_path)
     archive.save_identity(
         "orgs",
@@ -803,8 +793,7 @@ REPO = Path(__file__).resolve().parent.parent
 def _latest_sidecar(folder: Path) -> Path | None:
     """The highest-version sidecar — item.json is version 1, item-2.json
     version 2, … (tools/archive.py's resolution). A lexical sort picks the
-    wrong file once item-10.json exists — "item-10" < "item-2" < "item.json"
-    (2026-08-06 review: the gate validated a stale sidecar)."""
+    wrong file once item-10.json exists — "item-10" < "item-2" < "item.json"."""
     best: tuple[int, Path] | None = None
     for p in folder.glob("item*.json"):
         m = re.search(r"item(?:-(\d+))?\.json$", p.name)
@@ -819,7 +808,7 @@ def _latest_sidecar(folder: Path) -> Path | None:
 def test_committed_sidecars_all_validate() -> None:
     """Every committed sidecar satisfies the Item record — the write seam
     refuses anything that doesn't, so the archive and the model can never
-    drift (2026-08-05)."""
+    drift."""
     from tools.records import Item  # local import — records is not this module's subject
 
     scanned = 0
@@ -841,8 +830,7 @@ def test_committed_projection_equals_publish_of_committed_archive(tmp_path: Path
     projection, a formatting drift, or a lost identity table (the
     relationships bug) fails here. Compares the whole tree, including the
     derived assets (placeholder pages, avatars), which the five-JSON
-    compare used to miss (2026-08-05 bot review). Edit the archive, then
-    re-publish."""
+    compare does not cover. Edit the archive, then re-publish."""
     archive = Archive(DiskStore(ARCHIVE_DIR))
     out = REPO / "app" / "data"
     fresh = tmp_path / "fresh"
@@ -887,8 +875,7 @@ def test_projection_has_no_unattributed_commentary() -> None:
     personal observation is attributed testimony, never app prose. Story
     items are the narrator's own words (exempt); every other description,
     bio and note must carry no commentary phrase, or attribute it
-    ("Alex: …"). Restored after the 2026-08-04 review flagged editorial
-    phrases in object/photo descriptions."""
+    ("Alex: …")."""
     index = json.loads((REPO / "app" / "data" / "index.json").read_text(encoding="utf-8"))
     people = json.loads((REPO / "app" / "data" / "people.json").read_text(encoding="utf-8"))
     places = json.loads((REPO / "app" / "data" / "places.json").read_text(encoding="utf-8"))
@@ -920,7 +907,7 @@ def test_projection_has_no_unattributed_commentary() -> None:
 
 def test_latest_sidecar_picks_the_highest_version(tmp_path: Path) -> None:
     """item-10.json beats item-2.json beats item.json — a lexical sort would
-    pick item-9 for item1..item10 (2026-08-06 review)."""
+    pick item-9 for item1..item10."""
     folder = tmp_path / "x"
     folder.mkdir()
     for name in ("item.json", "item-2.json", "item-10.json", "item-3.json"):

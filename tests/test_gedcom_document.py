@@ -1,7 +1,7 @@
 """Tests for the GEDCOM 7.0 export (tools/gedcom_document.py): the one-to-one
 mapping holds, the output parses under gedcom7's strict ABNF grammar (a
 successful parse IS the standard validation), and the export policy holds —
-nothing unconfirmed leaves the archive (2026-08-05 alignment decision)."""
+nothing unconfirmed leaves the archive (the alignment decision)."""
 
 from __future__ import annotations
 
@@ -202,7 +202,7 @@ def test_round_trip_preserves_bound_precisions() -> None:
 
 def test_multi_married_parent_children_route_by_co_parent() -> None:
     """A person with several marriages: each child goes to the FAM of its
-    attested co-parent — never the parent's last spouse (2026-08-06)."""
+    attested co-parent — never the parent's last spouse."""
     archive = Archive(MemoryStore())
     archive.save_identity(
         "people",
@@ -248,7 +248,7 @@ def test_multi_married_parent_children_route_by_co_parent() -> None:
 
 def test_role_never_infers_gender() -> None:
     """A person without she/he pronouns is not forced into HUSB by default —
-    the pair's position decides (2026-08-06)."""
+    the pair's position decides."""
     from tools.gedcom_document import _role
 
     assert _role({"pronouns": "she/her"}, 0) == "WIFE"
@@ -260,7 +260,7 @@ def test_role_never_infers_gender() -> None:
 
 def test_dated_marriage_exports_as_marr() -> None:
     """A dated spouse edge's date is attested data — it exports as 1 MARR,
-    never dropped (2026-08-06 review)."""
+    never dropped."""
     archive = Archive(MemoryStore())
     archive.save_identity(
         "people",
@@ -290,7 +290,7 @@ def test_dated_marriage_exports_as_marr() -> None:
 
 def test_dated_marriage_round_trips_onto_the_spouse_edge() -> None:
     """Export emits 1 MARR; import reads it back onto the spouse edge —
-    a dated marriage survives the round trip (2026-08-06 review)."""
+    a dated marriage survives the round trip."""
     archive = make_archive()
     archive.save_identity(
         "people",
@@ -321,7 +321,7 @@ def test_dated_marriage_round_trips_onto_the_spouse_edge() -> None:
 def test_residence_with_unknown_place_fails_loud() -> None:
     """A GEDCOM RESI naming a place outside the archive's place set is
     data loss if swallowed — the import raises, naming the place
-    (2026-08-06 review, fail-loud)."""
+    (fail-loud)."""
     text = "\n".join(
         [
             "0 HEAD",
@@ -338,9 +338,9 @@ def test_residence_with_unknown_place_fails_loud() -> None:
 
 
 def test_estimated_people_and_edges_export_with_their_evidence() -> None:
-    """2026-08-09 (user: "Estimated things should be IN along with the
+    """(user: "Estimated things should be IN along with the
     conversation that generated the estimate, so we know what the evidence
-    is for this estimate"): an estimated person and an estimated edge are
+    is for this estimate") — an estimated person and an estimated edge are
     part of the family record — they export, each annotated with a NOTE
     carrying the review conversation's recorded basis (who said it, when,
     their own words). Proposed records still stay out."""

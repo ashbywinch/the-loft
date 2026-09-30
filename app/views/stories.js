@@ -88,7 +88,7 @@ export function themePage(main, ctx, state) {
   );
 
   // --- stories told about this theme (PRD §19) — never the arranged ones
-  // again: an item appears once per page (2026-08-06) ---
+  // again: an item appears once per page ---
   const stories = published(state.items).filter(
     (it) => it.type === "story" && it.themes?.some((t) => t.id === theme.id),
   );

@@ -29,7 +29,7 @@ const ITEMS = [
   },
 ];
 
-describe("personAtPlace — the one attribution rule (2026-08-03 review)", () => {
+describe("personAtPlace — the one attribution rule", () => {
   const item = {
     id: "letter",
     people: [{ id: "p-writer" }, { id: "p-recipient" }],
@@ -42,7 +42,7 @@ describe("personAtPlace — the one attribution rule (2026-08-03 review)", () =>
     expect(personAtPlace("p-outsider", item.places[0])).toBe(false);
   });
 
-  it("without a per-place list, co-mention is not presence (2026-08-05)", () => {
+  it("without a per-place list, co-mention is not presence", () => {
     // An item mentioning a place links nobody to it — the 2001 email's 91
     // people and 8 places are mentions, not attestations that anyone was
     // anywhere. Presence must be attested per place.
@@ -88,7 +88,7 @@ describe("aggregate — everything-to-everything counts", () => {
     expect(agg.people.size).toBe(0);
   });
 
-  it("with a person: a place attaches only to the people AT it (2026-08-03)", () => {
+  it("with a person: a place attaches only to the people AT it", () => {
     // the 1977-letter shape: the writer's gigs, the in-laws' house, and the
     // sister-in-law's Tornia are nobody else's places — least of all the recipient's
     const letter = {
@@ -115,7 +115,7 @@ describe("aggregate — everything-to-everything counts", () => {
     expect(aggregate([letter], "p-sister-in-law").places.get("pl-tornia")).toBe(1);
   });
 
-  it("with a person: a place without an explicit people list attaches to nobody (2026-08-05)", () => {
+  it("with a person: a place without an explicit people list attaches to nobody", () => {
     // "we sailed" is not an attestation that everyone was at the iron wharf —
     // presence is per-place or it is nothing.
     const item = {
@@ -185,7 +185,7 @@ describe("windowFromQuery", () => {
   });
 });
 
-describe("clarificationsFor — the fragments that attest a target (2026-08-06)", () => {
+describe("clarificationsFor — the fragments that attest a target", () => {
   it("returns clarification stories that name the target in people or items refs", () => {
     const items = [
       { id: "c1", clarification: true, people: [{ id: "p-owen" }], items: [] },
@@ -199,7 +199,7 @@ describe("clarificationsFor — the fragments that attest a target (2026-08-06)"
   });
 });
 
-describe("itemDateFor — placement by involvement (2026-08-06)", () => {
+describe("itemDateFor — placement by involvement", () => {
   const record = {
     id: "r",
     date: "1868-03-20",
@@ -225,7 +225,7 @@ describe("itemDateFor — placement by involvement (2026-08-06)", () => {
   });
 });
 
-describe("referencedBy — the back link (2026-08-06)", () => {
+describe("referencedBy — the back link", () => {
   it("finds every item that references the target in its items refs", () => {
     const items = [
       { id: "story-1", items: [{ id: "object-sunlight" }] },

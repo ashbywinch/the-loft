@@ -1,6 +1,6 @@
 # The document-ingest review — requirements (INGEST-PRD)
 
-Status: agreed direction (2026-08-10, user). Purpose: this doc is
+Status: agreed direction (user). Purpose: this doc is
 requirements and user needs only — the mechanics live in
 `docs/PLAN/INGEST-PLAN.md`. Related: the app's F9 + the review principles in
 `docs/PRD/PRD.md`; the artifact-import rules in `docs/PRD/IMPORT-PRD.md`.
@@ -24,7 +24,7 @@ The telling is human and non-deterministic; the structure is not: every
 unknown travels the same phases, and the conversation never loses an
 unknown it has surfaced.
 
-**Unfinished memories enter the same queue (2026-09-22).** A memory left
+**Unfinished memories enter the same queue.** A memory left
 unfinished while browsing (PRD §9 F10, §19 req 11) resumes in this
 review, alongside the proposed identities from imports — the task is the
 same conversation: one question at a time, eliciting what the family
@@ -71,7 +71,7 @@ themselves raise — the family's own words.
   attests that mum existed and was a tree surgeon — is not asked about
   those. The conversation asks only the first unanswered phase.
 - **The conversation flows naturally — one claim and its fan-out are
-  bottomed out before the next (2026-08-10).** When a claim's resolution
+  bottomed out before the next.** When a claim's resolution
   surfaces new claims (Bill's marriage → Bill, and the marriage itself),
   they are worked immediately after the current claim is bottomed out —
   not deferred to the end of the queue. The family is not asked about

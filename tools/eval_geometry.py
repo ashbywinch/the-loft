@@ -1,6 +1,6 @@
 """The geometry experiment — measure how accurately the pipeline anchors
 the tricky pages' lines, and A/B the enhancement candidates against a
-KNOWN ground truth (2026-08-20).
+KNOWN ground truth.
 
 The fixtures are SYNTHETIC: a generated letter with margin blocks and
 injected failings (misplaced transcription boxes, loose boxes) whose
@@ -37,7 +37,7 @@ class TruthLine:
 
 @dataclass
 class CropReading:
-    """One crop's model reading (2026-08-22): the crop's region in the
+    """One crop's model reading: the crop's region in the
     page frame and the lines the model measured within it — each line's
     box in the crop's OWN normalized 0-1000 frame (the same contract as
     the location report, per-crop: the model's geometry is trustworthy
@@ -440,7 +440,7 @@ def clip_location_cost(n_lines: int, batch_size: int) -> LocationCost:
 
 
 class ClipLocation:
-    """The clip-location candidate (2026-08-20): clip each line's marker
+    """The clip-location candidate: clip each line's marker
     box, ask the model to LOCATE the batch's lines (the exact box within
     the clip + the angle), map the crop boxes back to the page. The
     batch size is the experimental variable — one call per batch, not

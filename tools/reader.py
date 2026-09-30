@@ -217,9 +217,9 @@ def split_shapes(shapes: list[Mark], lines: list[Line], unit: float) -> list[Mar
     """The words these marks make at this scale, exposed for the tests.
 
     The pipeline itself cuts via the Writing's own methods; a bare
-    shapes/lines/unit tuple is a Writing waiting to be measured (lucidlint
-    2026-09-18: the three threaded through the cut functions are the
-    writing's own fields)."""
+    shapes/lines/unit tuple is a Writing waiting to be measured (the
+    three threaded through the cut functions are the writing's own
+    fields)."""
     return Writing(
         marks=shapes,
         lines=lines,
@@ -282,9 +282,9 @@ class Writing:
 
     `Writing.of` is the whole measurement, a fixpoint over MEASURE, CUT, STRIP,
     REGROUP: a line is only separable once a cut has separated it from the words
-    it welds, and stripping it separates the words it was welding (user
-    2026-09-16: 'the words are only joined by the underline. We shouldn't
-    consider an underline as joining anything'). `cut` is the cutting of the
+    it welds, and stripping it separates the words it was welding (user:
+    'the words are only joined by the underline. We shouldn't consider an
+    underline as joining anything'). `cut` is the cutting of the
     marks into words, `_settled` the lines re-fitted to them."""
 
     marks: list[Mark]
@@ -330,10 +330,10 @@ class Writing:
     # The words: every boundary a mark may hold, and the tests that judge it.
     # These live on the Writing, not on the mark — whether a strip of ink is
     # one word, two words or a line is answered by the page's own rows, ruler
-    # and other marks, never by the strip alone (lucidlint 2026-09-18: the
-    # (marks, lines, unit) clump threaded through the cut functions is the
-    # writing's own state). The gap cut uses the word test with its two
-    # waived bars named at the call site.
+    # and other marks, never by the strip alone (the (marks, lines, unit)
+    # clump threaded through the cut functions is the writing's own state).
+    # The gap cut uses the word test with its two waived bars named at the
+    # call site.
 
     def _words_of(self) -> list[Mark]:
         """The marks, cut where the writing's geometry says each holds more
@@ -395,8 +395,8 @@ class Writing:
     def _gap_pieces_are_words(self, shape: Mark, group: list[int], split_y: int) -> bool:
         """The two pieces a gap split makes must be tall enough to hold
         letters and joined up — the gap proves the pieces are separate, but
-        it does not make a sliver or a pair of ascenders into a word (user
-        2026-09-18: the y3456 gap cut produced 'just two ascenders'). The
+        it does not make a sliver or a pair of ascenders into a word (user:
+        never 'just two ascenders'). The
         thin and flat checks are waived: they exist to spot fragments at
         fit-proposed cuts, and a gap needs no such guess — it admits narrow
         words like 'of' and flat crossed-out rows."""
@@ -409,12 +409,11 @@ class Writing:
 
     def _gap_row(self, shape: Mark) -> int | None:
         """The row whose ink is a deep local minimum, if any: the boundary
-        between stacked words or crossed-out rows (user 2026-09-17: 'cut
-        where the gap is'). The row's longest run must be at most a quarter
-        of the flanking ink, the flanks substantial, and the two sides on
+        between stacked words or crossed-out rows (user: 'cut where the
+        gap is'). The row's longest run must be at most a quarter of the
+        flanking ink, the flanks substantial, and the two sides on
         DIFFERENT fitted lines — a gap inside one line is a word's letter
-        space (user 2026-09-18: the gap rule split 6475 and 2875, words with
-        internal gaps; their pieces' majority lines matched)."""
+        space."""
         rows, runs = self._row_runs(shape)
         score, split_y = self._deepest_gap(rows, runs)
         if score >= GAP_FRACTION:
@@ -491,9 +490,8 @@ class Writing:
         """The mark directly beneath the shape whose ink is the same word's
         rest: its ink starts exactly at the shape's bottom edge, it sits on
         the boundary's own fitted line, and it is NOT a word on its own (a
-        full word below is a different word — measured 2026-09-18: 342, w9,
-        is the only such mark on the page; the seven others are whole words
-        and must not be absorbed). The word leans, so no column overlap."""
+        full word below is a different word and must not be absorbed). The
+        word leans, so no column overlap."""
         candidates = [
             other
             for other in self.marks
@@ -581,7 +579,7 @@ class Writing:
         A vertical rule is the one column of ink that runs continuously for the
         height of several lines. On this page exactly one column does — the 2px
         form rule at x2008 whose long run welds the crossed-out rows into the
-        fake "square" (user 2026-09-17: 'the weird vertical rule that we don't
+        fake "square" (user: 'the weird vertical rule that we don't
         [want]'). Letters' strokes never run that far continuously, so the
         floor is safe. The rule's run, not the whole column, is removed: the
         column's other ink is writing that merely crosses the rule."""

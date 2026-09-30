@@ -1,10 +1,10 @@
 # Single-Pass Landing Plan — What Remains
 
-**Status:** COMPLETE (2026-09-22) — all three remaining items are done:
+**Status:** COMPLETE — all three remaining items are done:
 the four superseded PRs are closed, the confirm-flow audit found no
 old-path references left, and the end-to-end real-data run served
-through the review surface. Written 2026-09-07 as a session handoff;
-kept for the record and the operational traps below.
+through the review surface. Kept for the record and the operational
+traps below.
 
 ## What this is
 
@@ -53,7 +53,7 @@ content. They must be **closed, not merged**.
 
 ### 1. Close the four superseded PRs — DONE (all four CLOSED)
 
-Each diff vs `main` was checked on 2026-09-07 with
+Each diff vs `main` was checked with
 `git diff loft/main..loft/<branch> --numstat`: every delta is an *older*
 version of a file `main` has since superseded. Merging would revert the review
 surface, the gate rewrite, or the old-path deletion.
@@ -66,13 +66,13 @@ surface, the gate rewrite, or the old-path deletion.
 | #38 | `pr/ink-pipeline` | Its one unique contribution (the conversion) is on `main`; the remaining 9-file diff would revert the review surface and scoring tests. |
 
 Done: closed with the one-line comment (content landed via #31/#33/#35;
-the diff would revert newer `main` content). Verified 2026-09-22: all
+the diff would revert newer `main` content). Verified: all
 four are CLOSED on GitHub.
 
 ### 2. Audit the confirm flow for old-path references — DONE
 
-Grep of `tools/pipeline.py`, `tools/sync.py` and `tools/server.py`
-(2026-09-22): no `ENGINE`/`region` references remain; the surviving
+Grep of `tools/pipeline.py`, `tools/sync.py` and `tools/server.py`:
+no `ENGINE`/`region` references remain; the surviving
 `detect` mentions are prose (boundary detection, a historical
 `layout_detect` comment). The single-pass Layout (per-line `words_out`,
 self-report flags applied per line index) is the only path.
@@ -81,18 +81,17 @@ self-report flags applied per line index) is the only path.
 
 The strip-grouping DoD served page-01/page-02 of the Music College
 letter through `make pipeline ARGS="layout …"` with 0 gate violations and
-rendered in the review surface (2026-09-09); the Godolphin VR15 contract
+rendered in the review surface; the Godolphin VR15 contract
 is pinned in `tests/test_eval_postcard.py` (in the passing suite).
 
 ## Operational traps this session paid for (hours each)
 
 - **CI run attribution is unreliable.** `gh run list` rows misattribute
   `head_branch` across pushes. Match runs by head SHA, never by PR number or
-  branch name. Only output artifacts count — v0.41.1's `PRAgent.handle_request`
-  swallows exceptions, so a bot step can claim success while publishing nothing.
+   branch name. Only output artifacts count — `PRAgent.handle_request`
+   swallows exceptions, so a bot step can claim success while publishing nothing.
 - **Branch surgery: verify from the refs, never from memory.**
-  `git show $branch:<file> | grep …` before every merge decision. A stale
-  memory of which branch carried which commit caused the day's worst churn.
+   `git show $branch:<file> | grep …` before every merge decision.
 - **Rebase-merge is the only allowed method** (the ruleset blocks merge and
   squash). A blocked `gh pr merge --rebase` means the branch needs rebasing
   onto `main` first, not `--auto` and not a base switch.

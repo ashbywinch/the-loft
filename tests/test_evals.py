@@ -1,10 +1,10 @@
-"""The real-model evals as pytest tests (2026-08-10, user: "name all the
+"""The real-model evals as pytest tests (user: "name all the
 flows that the tests do… and have a fixture that caches the results of
 running the flow. Then the individual tests can remain independent and not
 be aware that they share flow outputs. They just verify the output against
 their condition").
 
-The eval suite splits by marker (2026-08-15): the review evals carry
+The eval suite splits by marker: the review evals carry
 ``eval`` — ``pytest -m eval`` (``make evals``) runs them; the memory
 evals read the archive's projection (``app/data``) and carry ``archive``
 like the data checks, running locally in ``make verify`` and skipping in
@@ -20,7 +20,7 @@ the runs. A failure is a failure to fix, never a re-run
 (testing-standards: evals are never flaky).
 
 The transcription-fidelity eval was removed — the transcription backend
-is the vision model, not the local HTR path (user, 2026-08-14).
+is the vision model, not the local HTR path (user).
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ def client() -> AIClient:
         return AIClient()
     except AIClientError as e:
         # fail loudly, never a silent skip: an eval that cannot run must say
-        # so (2026-08-05) — a skip would green a suite that never ran
+        # so — a skip would green a suite that never ran
         pytest.fail(f"no API key — the eval cannot run: {e}")
 
 
@@ -56,7 +56,7 @@ def default_knowledge() -> dict[str, list[dict[str, Any]]]:
 @pytest.fixture(scope="session")
 def review_outputs(client: AIClient) -> dict[str, dict[str, Any]]:
     """Run every review flow ONCE and cache the outputs — the condition
-    tests are independent and unaware they share the runs (2026-08-10)."""
+    tests are independent and unaware they share the runs."""
     return {f.name: review_evals.run_flow(client, f) for f in review_evals.FLOWS}
 
 
@@ -108,7 +108,7 @@ def test_caching_prefix(caching_outputs: dict[str, Any]) -> None:
 @pytest.fixture(scope="session")
 def memory_outputs(client: AIClient, default_knowledge: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, Any]]:
     """Run every memory flow ONCE — the assess stage — and cache the
-    outputs; the condition tests share the runs (2026-08-10)."""
+    outputs; the condition tests share the runs."""
     return {f.name: memory_evals.run_flow(client, f, default_knowledge) for f in memory_evals.FLOWS}
 
 

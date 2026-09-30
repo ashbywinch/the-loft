@@ -1,8 +1,7 @@
-"""The eval scoring contract (2026-08-26, second settlement): WORD-TOKEN
-LCS coverage. The first settlement (exact per-line matching) scored
-page-03 at 0.02 — the layout splits by HANDWRITING line while any
-fixed reference granularity differs, so exact line matching is the
-wrong contract. Words are granularity-invariant; the LCS over
+"""The eval scoring contract: WORD-TOKEN LCS coverage. Exact per-line
+matching is the wrong contract — the layout splits by HANDWRITING line
+while any fixed reference granularity differs, so exact line matching
+scored page-03 at 0.02. Words are granularity-invariant; the LCS over
 normalized tokens still penalizes reordering and captures write-skip."""
 
 from __future__ import annotations

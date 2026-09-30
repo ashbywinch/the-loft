@@ -11,7 +11,6 @@ failed lines with a deterministic, failure-facts prompt
 Runs on the MAIN venv (urllib + PIL — no detector engine, no
 .venv-htr; the paddle stack left the layout path with the
 detect-then-match pipeline it served, 2026-09-06).
-
 Usage: make pipeline ARGS="layout <batch_id> [page ...]" — or
 python -m tools.layout_detect <batch_id> [--work-dir DIR] [page ...]
 """
@@ -321,11 +320,10 @@ def _warn_missing_guess(image_name: str, txt_name: str, page_names: list[str] | 
 def _run_log(work_dir: Path, batch_id: str) -> Any:
     """Tee the run's stderr diagnostics to ``work/<batch>/logs/
     layout-<run>.log`` — a problematic run stays examinable after the
-    fact (2026-08-22: the rebuild timeouts were undiagnosable because the
-    layout stage's VLM calls were silent)."""
+    fact."""
     # a FRESH file per run (the microseconds + the pid make the name
     # unique) — never an accumulating log the runs keep appending to
-    # (2026-08-22, user: no one big growing log file)
+    # (user: no one big growing log file)
     log_path = work_dir / batch_id / "logs" / f"layout-{datetime.now():%Y%m%d-%H%M%S-%f}-{os.getpid()}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log = log_path.open("w", encoding="utf-8")
@@ -359,7 +357,7 @@ def main(argv: list[str] | None = None) -> int:
         # §16.17: the single-pass segment stage IS the layout build — one
         # VLM call per page for text, boxes and orientation. No detector
         # engine: the paddle stack (and the .venv-htr interpreter it
-        # required) is gone from the layout path (2026-09-06).
+        # required) is gone from the layout path.
         return run_batch(args.batch_id, args.pages or None, args.work_dir)
 
 

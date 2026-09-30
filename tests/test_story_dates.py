@@ -1,8 +1,6 @@
 """The story-date invariant — a story's date is the events' date, never the
-day it was told (2026-08-05: the assessor fabricated telling-day dates and
-four stories shipped with them; the moment card then served "0 years ago
-this week"). The flow now asks for the events' date and refuses a fabricated
-telling-day default. One legitimate exception: a diary-style story whose
+day it was told. The flow now asks for the events' date and refuses a
+fabricated telling-day default. One legitimate exception: a diary-style story whose
 narrator explicitly said the events happened that day — the guard requires
 the transcript to show the narrator's words for it.
 

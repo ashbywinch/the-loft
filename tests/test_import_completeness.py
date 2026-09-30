@@ -1,13 +1,13 @@
-"""The import-completeness eval (2026-08-06): the live archive must
-contain everything the import declares.
+"""The import-completeness eval: the live archive must contain everything
+the import declares.
 
-The import script grew Theo Kendall Sr/Jr and their edges while the
-live archive stayed put — the import's "already in the table — skipping"
-note hid the drift, and the tree silently lacked two people. This eval
-compares the import's declared casts and edges against the live archive
-and refuses the build when the archive has less than the import
-declares. The reverse direction (the archive holding more than the
-import declares) is fine — captures land in the archive by other routes.
+The import's "already in the table — skipping" note can hide drift
+between what the import declares and what the archive holds, leaving
+the tree silently short of people. This eval compares the import's
+declared casts and edges against the live archive and refuses the build
+when the archive has less than the import declares. The reverse
+direction (the archive holding more than the import declares) is fine —
+captures land in the archive by other routes.
 """
 
 from __future__ import annotations

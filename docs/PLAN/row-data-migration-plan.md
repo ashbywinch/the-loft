@@ -1,6 +1,6 @@
 # Plan: user-lines → rows library, replacing the spike-gold system
 
-Status: LANDED (2026-09-19) — the library, the fixtures, and the removals
+Status: LANDED — the library, the fixtures, and the removals
 are on `main`; the snag settle ran as the spike-mapping commits (the six
 adjudicated corrections); `make test` is green with no known-red (the 4
 pre-existing spike-gold failures are gone), and
@@ -27,7 +27,7 @@ failures). Root causes, measured:
    data (`words.json`, 455 boxes) and user-line data (`strokes.json`) are
    committed once and unchanged.
 
-User decisions (2026-09-18):
+User decisions:
 
 1. **Types return to the file format** — identifiers carry their kind again.
 2. **A proper library** for user-provided lines → word boxes, residing with

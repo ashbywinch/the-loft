@@ -30,8 +30,7 @@ def atomic_write(path: Path, content: str | bytes) -> None:
     # creation, so the published file keeps the umask-derived mode WITHOUT
     # the process-global os.umask() dance — which zeroed the process umask
     # for a window, letting a concurrent file creation publish 0o666
-    # (world-readable) in an archive of intimate family letters (review,
-    # 2026-08-14/15: two bots flagged the race).
+    # (world-readable) in an archive of intimate family letters.
     tmp = None
     fd = -1
     for _ in range(TEMP_NAME_ATTEMPTS):

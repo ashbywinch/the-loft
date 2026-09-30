@@ -53,7 +53,7 @@ def test_validate_confirmation_rejects_bad_shapes() -> None:
 
 def test_validate_confirmation_rejects_non_integer_doc_index() -> None:
     # a float (1e309 -> OverflowError in the receiver's int()) or a bool
-    # would 500 instead of 400 (review, 2026-08-15)
+    # would 500 instead of 400
     with pytest.raises(ValueError, match="doc_index"):
         validate_confirmation(_confirmation(doc_index=1.5))
     with pytest.raises(ValueError, match="doc_index"):
@@ -68,8 +68,7 @@ def test_validate_confirmation_rejects_non_integer_doc_index() -> None:
 
 def test_validate_confirmation_accepts_a_rejection_without_text() -> None:
     # record_confirmation treats text=None as the rejection marker — the
-    # validator must not demand a string for it (review, 2026-08-15: a
-    # rejection with text null got a 400 and was never recorded)
+    # validator must not demand a string for it
     payload = validate_confirmation(_confirmation(status="rejected", text=None))
     assert payload["status"] == "rejected"
     with pytest.raises(ValueError, match="text"):
@@ -174,10 +173,10 @@ def test_draft_payloads_carries_the_layout_when_the_pass_has_run(tmp_path: Path)
 
 
 def test_draft_payloads_carries_the_layout_revision(tmp_path: Path) -> None:
-    """2026-08-22: the drafts payload carries each layout's revision (the
-    store version at write) so the review surface can DETECT a stale
-    layout — a rebuild bumps the revision, and the client refreshes
-    when the payload's revision differs from the one it rendered."""
+    """The drafts payload carries each layout's revision (the store version
+    at write) so the review surface can DETECT a stale layout — a rebuild
+    bumps the revision, and the client refreshes when the payload's
+    revision differs from the one it rendered."""
     from tools.layout import write_layout_store
     from tools.pipeline_store import PipelineStore
 
@@ -286,8 +285,7 @@ def test_record_confirmation_rejects_unknown_batch_without_writing(tmp_path: Pat
 
 def test_safe_page_name_allows_phone_duplicate_suffixes(tmp_path: Path) -> None:
     """Phone export duplicates arrive as "name~2.jpg" — the guard must not
-    reject real scans (walk finding 1, 2026-08-16: the PhotoScan batch was
-    unopenable). Traversal stays blocked."""
+    reject real scans. Traversal stays blocked."""
     from tools.sync import safe_page_name
 
     assert safe_page_name("1782635795946-5f7905a9~2.jpg")
@@ -356,10 +354,9 @@ def test_rotate_page_fixes_the_orientation(tmp_path: Path) -> None:
 
 
 def test_rotate_page_preserves_the_per_line_orientations(tmp_path: Path) -> None:
-    """L7 (the fidelity ruling, 2026-08-30) + VR18: each segment's
-    orientation is stored as data, and the reviewer's page rotation
-    remaps it WITH the boxes — a 90° CW turn takes upright text to 90
-    and a 270 margin note to 0 (now upright). The rebuild must never
+    """Each segment's orientation is stored as data, and the reviewer's page
+    rotation remaps it WITH the boxes — a 90° CW turn takes upright text
+    to 90 and a 270 margin note to 0 (now upright). The rebuild must never
     drop the field: the drafts' covered-orientation set (VR15) and the
     aspect gate both read it."""
     batch = tmp_path / "adopt-0001"
@@ -405,7 +402,7 @@ def test_rotate_page_preserves_the_per_line_orientations(tmp_path: Path) -> None
 def test_rotate_page_is_idempotent_and_cumulative(tmp_path: Path) -> None:
     """The sync intents are the DESIRED cumulative rotation — a retried
     intent (the same quarters again) is a no-op, and two presses add up
-    (2026-08-16: offline queues must not over-rotate on redelivery)."""
+    (offline queues must not over-rotate on redelivery)."""
     batch = tmp_path / "adopt-0001"
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)

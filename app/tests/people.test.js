@@ -19,7 +19,7 @@ describe("mentionMatches — the import resolution seam", () => {
     expect(mentionMatches("mummy is here", PEOPLE).map((h) => h.person.id)).toEqual(["p-mum"]);
   });
 
-  it("matches a canonical name that ends in punctuation (2026-08-03 review)", () => {
+  it("matches a canonical name that ends in punctuation", () => {
     // \b can never match after ")" — the canonical-name-always-matches
     // invariant broke for names like "Marta (Ida)"
     const punctuated = [{ id: "p-marta", name: "Marta (Ida)", aliases: ["Ida"] }];

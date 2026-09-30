@@ -1,4 +1,4 @@
-/** The top-bar identity (2026-08-06, user): the industry-standard shape —
+/** The top-bar identity (user): the industry-standard shape —
  *  signed in: the person's avatar, tapped opens a small account sheet
  *  (name, email, Sign out); signed out: a compact Sign in button. The ⌂
  *  home button is gone (back + the in-app stack reach home).
@@ -18,7 +18,7 @@ function button(label, onclick) {
 
 async function signIn() {
   // follow the login endpoint's auth_url — navigating to the endpoint
-  // renders its JSON as a page (2026-08-06)
+  // renders its JSON as a page
   try {
     const res = await fetch("/api/auth/login");
     const data = await res.json();

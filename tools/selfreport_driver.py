@@ -1,9 +1,7 @@
 """The shared CLI driver of the batch report tools (selfreport,
 layout_apply_selfreport): one parser shape — a batch id, an optional page
 filter, --work-dir — and the dispatch to the tool's run_batch. Each tool's
-run_batch does the per-batch work; the driver is the argv surface
-(2026-08-16 duplicate review: the two mains were the same parser+dispatch
-copy-pasted).
+run_batch does the per-batch work; the driver is the argv surface.
 """
 
 from __future__ import annotations

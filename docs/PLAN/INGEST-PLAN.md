@@ -1,10 +1,10 @@
 # The document-ingest review — implementation plan (INGEST-PLAN)
 
-Status: agreed direction (2026-08-10, user). Mechanics for
+Status: agreed direction (user). Mechanics for
 `docs/PRD/INGEST-PRD.md`; the requirements doc is authoritative. Each slice
 lands with its evals (the flow-per-phase shape of `tests/test_evals.py`),
 and no eval covers another's ground.
-Implementation status (2026-09-22): no slice has landed — none of the
+Implementation status: no slice has landed — none of the
 claim classes exist in `tools/`; the app still runs the disposition-first
 walk this plan replaces.
 
@@ -54,7 +54,7 @@ class Disposition:
 ```
 
 The conversation is the queue: `claims: list[Claim]` + `current`. The
-queue is **depth-first** (2026-08-10, user: "we should finish bottoming
+queue is **depth-first** (user: "we should finish bottoming
 out the current claim but then go through Bill and his marriage right
 after that"): a claim's fan-out — the claims its resolution surfaces —
 is worked immediately after the current claim, before the next
@@ -101,7 +101,7 @@ transcript; these classes are the flow.
 - An unfinished memory from the browse (PRD §9 F10) resumes here: its
   story's population continues, and the identities it surfaces join the
   queue as claims — the conversation structure is the same as a
-  document's (§19 req 11, 2026-09-22: the same queue, the same walk).
+  document's (§19 req 11: the same queue, the same walk).
 - The walk never loses a mention; closure cannot happen while a
   discovered claim is unresolved.
 - Evals: a mention mid-conversation produces a new claim; the discovered

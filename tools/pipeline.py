@@ -46,9 +46,9 @@ from tools.vlm import VlmError, line_orientation_degrees, orientation_report
 
 PAGE_LIMIT = 30  # one guess call per batch; beyond this the context is too big — chunking is future work
 GUESS_PAGE_CHUNK = 5  # the guess re-emits each page's corrected text; the OUTPUT size binds — 5 pages of
-# verbatim text + JSON fits the client's max_tokens (2026-08-14: a 12-page pile's JSON response truncated)
+# verbatim text + JSON fits the client's max_tokens.
 
-# The multi-orientation gate (PRD VR15, 2026-08-17): a page whose arbiter
+# The multi-orientation gate (PRD VR15): a page whose arbiter
 # scores suggest text in more than one direction gets the vision model's
 # orientation report — and only then. The second-best rotation must carry
 # a meaningful share of the winner's strong words (the postcard's 0:16 /
@@ -56,10 +56,10 @@ GUESS_PAGE_CHUNK = 5  # the guess re-emits each page's corrected text; the OUTPU
 AMBIGUITY_RATIO = 0.25  # the second-best rotation's share of the winner
 AMBIGUITY_FLOOR = 5  # ...and it must clear this many strong words outright
 
-# The guess model (2026-08-17): the default chat model (deepseek-v4-flash)
-# reasons UNBOUNDED on the correction tasks — reproduced: 12K then 24K
-# tokens of pure reasoning, finish_reason "length", zero content, the
-# guess stage failed with "empty response from API". The vision model
+# The guess model: the default chat model (deepseek-v4-flash) reasons
+# UNBOUNDED on the correction tasks — 12K-24K tokens of pure
+# reasoning, finish_reason "length", zero content, an empty response.
+# The vision model
 # (mimo-v2.5, the pipeline's proven model — it completes the same prompt
 # with finish_reason "stop") is the completing choice on this endpoint;
 # the thinking-disable/budget params are ignored by the endpoint, so the
@@ -122,7 +122,7 @@ def _guess_prompt(
 
 def _flag_bool(value: object) -> bool:
     """The model's boundary flags are JSON booleans; string forms must not
-    coerce ("false" → True would mis-group documents, 2026-08-14 review)."""
+    coerce ("false" → True would mis-group documents)."""
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -678,7 +678,7 @@ def _clip_orientation_report(
     (``{"lines": [{index, box, degrees}]}``). Out-of-bounds or degenerate
     boxes are DROPPED — the model's normalized geometry sometimes exceeds
     the canvas (page-12's refusal), and such a line cannot be clipped and
-    must not anchor the layout (2026-08-20)."""
+    must not anchor the layout."""
     classify_fn = classify if classify is not None else line_orientation_degrees
     img = Image.open(image)
     img.load()  # PIL lazy-loads on crop; concurrent crops race the load (OSError: truncated)
@@ -781,7 +781,7 @@ def _read_multiline(prompt: str, readline: Callable[[str], str]) -> str:
         line = readline("")
         if line.strip() == ".":
             break
-        if line == "":  # EOF (Ctrl-D) — stop, don't hang (2026-08-14 review)
+        if line == "":  # EOF (Ctrl-D) — stop, don't hang
             break
         lines.append(line)
     return "\n".join(lines)

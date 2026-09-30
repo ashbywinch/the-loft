@@ -1,19 +1,19 @@
 # Testing Standards — The Loft
 
-> **Standard, 2026-08-10** — the Definitions below are the repo's live
+> **Standard** — the Definitions below are the repo's live
 > standard, read by every agent and reviewer working here (they replace the
 > older "eval == e2e" wording). This is a repo document, not a symlinked
 > skill: it takes effect for agents reading the repo immediately — no
-> `make install`, no `omp` restart (2026-08-11, review compliance note).
+> `make install`, no `omp` restart.
 
-## Definitions (2026-08-10, user — the vocabulary is strict, one meaning everywhere)
+## Definitions (user — the vocabulary is strict, one meaning everywhere)
 
 - **Test** — a check that is *deterministic*: same inputs, same result, always, on any machine. No network, no model, no wall-clock.
 - **Eval** — a check that runs deliberately *non-deterministic* code — a real model. An eval costs money and takes time, so the discipline is economy: **never more than one eval covering the same thing** (duplicate coverage is waste); and when the code under test can be run **once** and its output evaluated for several conditions in one go, do that — never recreate the output for each condition.
-- **Tests and evals share the same harness** (pytest, 2026-08-10) for consistency. Both run exactly **once** — a check that would need re-running to go green is flaky, and flakiness is a bug in the check, never a reason to re-run ("we run it once. If it fails we fix it" — user, 2026-08-10). Both **fail fast** — a check that cannot run because needed infra is missing (the API key, tesseract) fails loudly and is **never skipped**: a skipped check would green a suite that never ran (2026-08-05).
+- **Tests and evals share the same harness** (pytest) for consistency. Both run exactly **once** — a check that would need re-running to go green is flaky, and flakiness is a bug in the check, never a reason to re-run ("we run it once. If it fails we fix it" — user). Both **fail fast** — a check that cannot run because needed infra is missing (the API key, tesseract) fails loudly and is **never skipped**: a skipped check would green a suite that never ran.
 - **Unit test** — a single class or function, with fakes for any dependencies.
 - **Real-world data enters tests as committed fixtures of the pipeline's
-  detector output (2026-09-19, user).** Never open the archive's scans or
+  detector output (user).** Never open the archive's scans or
   images in a test, and never hardcode an archive path in a test: a real
   page's correctness is tested from the detector's **committed output —
   the marks file, image-free** (page-01: `tests/fixtures/page01-marks.json`
@@ -33,7 +33,7 @@ Given the definitions, the repo's inventory:
 | **Tests** (pytest + vitest) | yes | always | the archive-quality checks (drift guard, description, place-note, story-date, completeness — the older wording called them "evals"; they were always tests) |
 | **Evals** (the `eval` marker in pytest) | no — a real model | **no** — deselected by `addopts -m 'not eval'`, run only with `pytest -m eval` (or `-k` for one piece) | the review cases (each a single conversation turn), the multi-turn arc, the caching prefix check, the memory cases, the transcription pipeline (the one e2e-shaped eval) |
 
-The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-10): most evals are per-turn checks against the model, not end-to-end processes.
+The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition: most evals are per-turn checks against the model, not end-to-end processes.
 
 ## The split
 
@@ -54,9 +54,7 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
 - **Never sleep.** A test must not wait wall-clock — `time.sleep`,
   `await sleep`, a busy-wait loop, or a fixed tick count in a test is a
   bug, not a convenience: it makes the suite order- and
-  machine-dependent and slow (2026-09-06: the review-posted gate's
-  polling loop burned ~72s per test run before the delay was made
-  injectable). Production code that legitimately waits (retries,
+  machine-dependent and slow. Production code that legitimately waits (retries,
   polling, backoff) takes its delay as a parameter — the DI seam — so
   tests inject `0` and the same code path runs instantly and
   deterministically. A rule that needs "if not CI: sleep" to pass is
@@ -68,18 +66,13 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
   unstubbed, on the real network (happy-dom resolves relative URLs against
   `http://localhost:3000`). Every suite drains pending chains until a full
   macrotask passes with no new call before the next test — condition-based
-  quiescence, never a fixed tick count (2026-08-11: the coverage run's
-  slower istanbul transforms left the "kept link" test's chain in flight
-  and the re-render test saw four phantom message calls + an ECONNREFUSED;
-  the plain `make test` run passed, so the flake only showed under
-  `make coverage` — one more reason CI and the local gate run the SAME
-  command).
+  quiescence, never a fixed tick count; CI and the local gate run the SAME
+  command.
 - **Never real timers.** A test must not wait wall-clock: vitest fake timers
   (`vi.useFakeTimers()` + `vi.advanceTimersByTimeAsync`) drive every
   timeout, debounce and interval; a real `setTimeout`/`await sleep` in a
   test is a bug, not a convenience — it makes the suite order- and
-  machine-dependent (2026-08-05: a draft-save debounce leaked across tests
-  because the fix used a real wait). Timers are drained
+  machine-dependent. Timers are drained
   (`advanceTimersByTimeAsync`) before the test ends so nothing fires into
   the next test. **The discipline lives in `beforeEach`/`afterEach` — every
   test's independence is visible from the setup, never from a test's
@@ -102,19 +95,16 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
   functions need no mocking; global patching is a last resort and a smell.
 - **Every test defends an observable contract** and fails on a plausible bug.
   A test that cannot fail is not a test.
-- **A check that fails inconsistently is fixed at the source — ALWAYS
-  (2026-09-23).** There is no other answer, for tests and evals alike: no
+- **A check that fails inconsistently is fixed at the source — ALWAYS.**
+  There is no other answer, for tests and evals alike: no
   re-run-until-green, no "merge anyway, the content is safe", no golden
   file that stops checking the behaviour, no widening the assertion until
   the case passes. A test's bug is its data, seam, or assumption — fix it
   deterministically. An eval's bug is the scenario, the prompt, the guard,
   or the client's handling of the provider — fix it so the real behaviour
   passes consistently, and prove the fix with the live suite. This is not
-  a judgement call with options; it is the only permitted answer (2026-09-23:
-  a persona-guard eval redded on a phrase the guard wrongly treated as
-  jargon — the resolution was fixing the guard and the test, not asking
-  how to handle the red).
-- **A retry is never the fix (2026-09-23).** The eval evaluates the ONE
+  a judgement call with options; it is the only permitted answer.
+- **A retry is never the fix.** The eval evaluates the ONE
   output the flow produced. Building a re-ask into the flow so a
   content condition can pass on a later attempt — a "correction turn"
   for a missing or misspelled verdict key, a regenerate-on-empty-field,
@@ -129,10 +119,9 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
   transient transport/provider failure — a response with NO content at
   all (a 5xx, a dropped connection, a 0-token 200) — as part of the same
   logical run; content the model produced is never regenerated.
-- **Failure messages never truncate the failing content (2026-09-23).** An
+- **Failure messages never truncate the failing content.** An
   assertion must show the WHOLE offending output — the persona guard's
-  `text[:80]` hid the words that failed on 2026-09-23 and turned a
-  five-minute fix into a log-archaeology hunt. Truncation is for sliders
+  `text[:80]` hid the words that failed. Truncation is for sliders
   and previews, never for an error that must be diagnosable from its own
   message.
 - **The 2060 test is a test.** The archive must be understandable with no app:
@@ -145,8 +134,14 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
 - `make coverage` emits `coverage.xml` (Python, CI gate) and
   `app/coverage/clover.xml` (JS). CI floor starts at 0 until real code lands
   and is raised toward 80 as tools get tests.
-- **Archive-quality tests are part of the gate (2026-08-05/06; split to
-  `make verify` 2026-08-13, user: "make test should take a couple of seconds")** —
+- **A refactor never reduces coverage.** Migrating code brings its
+  tests: same cases, same assertions, re-pointed to the new home —
+  never dropped "to be re-added later." The only tests a refactor may
+  delete are those pinning the code it deletes. The coverage floor is
+  a floor, not a target that falls when code moves: `make coverage`
+  stays green, and a moved module's test count does not shrink.
+- **Archive-quality tests are part of the gate (split to
+  `make verify` at the user's request: "make test should take a couple of seconds")** —
   the archive itself is under test, not just the code: the projection drift
   guard (committed `app/data` ≡ publish of committed archive), the
   description check (letters/documents are specific and correspondence-
@@ -159,14 +154,14 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
   the checkout). A data change that breaks one is a bug, not a test update —
   unless the *rule* changed, in which case the check is rewritten with the
   rule, failing first.
-- **The private dataset never lives in the public repo (2026-08-08).** The
+- **The private dataset never lives in the public repo.** The
   real family archive (`archive/`) and its derived projection (`app/data/`)
   are gitignored — the public repo carries the code and the synthetic
   fixtures, never real content. The archive-quality tests therefore run
   **locally** (the dataset is present in the working tree) and **skip in
   CI** (the checkout has no archive): each carries
   `skipif(not (REPO / "archive" / "people.json").exists())` — the one
-  deliberate exception to the fail-fast rule (2026-08-10): a check whose
+  deliberate exception to the fail-fast rule: a check whose
   dataset is intentionally absent from the environment is SKIPPED with the
   reason stated, never a green lie — and never silently. Every evals and
   other infrastructure gap (the API key, tesseract) FAILS loudly instead.
@@ -214,7 +209,7 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
   (`DISCOVERY.md`) — there is deliberately no analytics in the product, so
   observation is the substitute, not a test gap.
 
-- **Evals run once and are never flaky (2026-08-10).** The real-model
+- **Evals run once and are never flaky.** The real-model
   evals (review, memory, transcription) run each case exactly once — never
   a retry, never a majority-of-runs (the Definitions). The model's judgment
   varies even at temperature 0, so a case that fails its single run is a
@@ -226,8 +221,8 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
   re-run. If a case proves genuinely stochastic despite a fair scenario,
   the fix is to make the scenario unambiguous (anchor the pronouns, name
   the claim), not to give the case another chance.
-- **Eval economy — no duplicate coverage, one run many conditions
-  (2026-08-10).** No two evals cover the same thing: every eval pins a
+- **Eval economy — no duplicate coverage, one run many conditions.**
+  No two evals cover the same thing: every eval pins a
   distinct contract facet, and a new eval that re-exercises ground an
   existing one covers is a review finding, not an addition. When one run of
   the code under test produces an output that several conditions must hold,
@@ -236,15 +231,15 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition (2026-08-1
   need their own run; the persona guard and the feedback property are
   evaluated on every case's one output.)
 
-- **When a failing test catches a narrow problem, hunt the pattern
-  (2026-08-06).** The named case is the symptom, not the whole bug: if one
+- **When a failing test catches a narrow problem, hunt the pattern.**
+  The named case is the symptom, not the whole bug: if one
   invented artifact exists, check them all; if one date is mis-placed,
   scan the dataset for the same class. The failing test for the narrow
   problem is written first, then the pattern-hunt widens it into the
   rule's test.
 
 - **When a narrow bug appears more than once, refactor the duplicate code
-  that caused it (2026-08-06).** The same class of bug recurring in
+  that caused it.** The same class of bug recurring in
   several places is a duplicated-implementation smell: fix the shared
   seam (a helper, a component, a single rule) and let the tests cover it
   once — the place/theme/item pages' story-lists each re-implemented the

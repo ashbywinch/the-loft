@@ -1,7 +1,7 @@
 """The family's identifying markers, loaded from the gitignored dataset at
 runtime — names, aliases, emails and place names from the archive's identity
 tables. Test files must never contain these markers; this module never writes
-them (2026-08-08, user: the no-PII-in-the-repo guard and the demo-fictionality
+them (user: the no-PII-in-the-repo guard and the demo-fictionality
 guard both load from here, so the markers live in the dataset, not in code).
 """
 
@@ -172,9 +172,7 @@ def family_markers() -> set[str]:
 def file_offenders(text: str, markers: set[str]) -> list[str]:
     """The markers present in *text* — the identity data that must not ship.
 
-    One shared matcher (the guard and its fast path must agree; 2026-08-14,
-    review: the fast path tested original-case emails against lowercased text,
-    so an uppercase email marker silently bypassed the per-marker scan).
+    One shared matcher (the guard and its fast path must agree).
     Emails compare case-insensitively against the lowercased text; names and
     places match at word boundaries in the original case.
     """

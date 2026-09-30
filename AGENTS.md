@@ -12,17 +12,15 @@ Instructions for AI agents working in this repo. Humans can read this too.
 
 - ALWAYS use `make` targets; NEVER construct ad-hoc test commands.
 - CI runs exactly: `make setup && make lint-github && make coverage && make verify` — the
-  suites run ONCE, inside `make coverage` (2026-08-11: running `make test`
-  AND `make coverage` re-ran pytest + vitest twice, and the second,
-  coverage-instrumented run surfaced a timing flake the first missed).
+  suites run ONCE, inside `make coverage`.
 - `make test` and `make coverage` both depend on `make lint` and
   `make typecheck` — lint gates test.
 - Three pytest selections, never mixed: `make test` = the fast unit gate
   (excludes `eval` and `archive` markers via addopts); `make verify` = the
   archive-quality data checks (`-m archive`, skipped in CI — no archive);
   `make evals` = the real-model evals (`-m eval`, need the API key;
-  CI runs them only when `OPENAI_API_KEY` is configured). Split 2026-08-13
-  (user: `make test` must stay fast).
+  CI runs them only when `OPENAI_API_KEY` is configured). Split (user:
+  `make test` must stay fast).
 - Tests must be deterministic: no wall-clock, network, or order dependence
   (see `docs/testing-standards.md`).
 
@@ -86,13 +84,14 @@ default. Real content never lives in code (`docs/coding-standards.md`).
 - NEVER commit to main. Branch off main, PR required, protected main.
 - NEVER commit with `--no-verify`. If a pre-commit hook blocks a commit (a
   formatter modified files), re-stage the modified files, verify the staged
-  diff matches your intent, and re-commit with the hook (2026-08-06: a
-  blocked commit's stash/restore reverted a fix, and a blind re-add
-  committed the stale content).
+  diff matches your intent, and re-commit with the hook.
 - Atomic commits; reference issues with `Fixes #N`.
-- Archive data (scans, sidecars) is committed during dev; on prod it is not committed but regularly backed up (user, 2026-08-03). The concurrency model for the archive's writers: `docs/archive-concurrency-plan.md`.
+- Archive data is NEVER committed: the `archive/` directory is gitignored
+  and data-free in the repo; the real family content lives on the
+  workspace volume and is regularly backed up. The concurrency model for
+  the archive's writers: `docs/archive-concurrency-plan.md`.
 
-## Public repo (2026-08-08, user)
+## Public repo (user)
 
 - The live repo is **the-loft** (github.com/ashbywinch/the-loft); local
   `main` tracks `loft/main`. The private repo (family-history-album) is

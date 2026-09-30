@@ -384,7 +384,7 @@ def review_image(sheet: Image.Image, width: int = REVIEW_WIDTH, quality: int = R
     saved at `quality`. Handwriting scans are paper-coloured noise around dark
     ink — JPEG at this quality keeps the ink and drops ~90% of the PNG bytes,
     so a six-sheet review page loads over LAN in seconds, not tens of
-    seconds (2026-09-13: the PNG contact page weighed 3MB)."""
+    seconds."""
     if sheet.width > width:
         sheet = sheet.resize((width, int(sheet.height * width / sheet.width)), Image.Resampling.LANCZOS)
     buf = io.BytesIO()

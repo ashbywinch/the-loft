@@ -1,4 +1,4 @@
-"""Change-aware eval selection (2026-08-10, user: an incremental option for
+"""Change-aware eval selection (user: an incremental option for
 regular use — the neighbour project's pattern, an explicit conservative
 mapping instead of a graph). Prints the pytest marker expression for the
 suites the current changes affect, or ``none``:

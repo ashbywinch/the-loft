@@ -1,10 +1,9 @@
 """The archive's user-facing text stays in family language — never the
-import/elicitation process's shorthand. The import session leaked "(open
-pile)", "Interview 1 · Q3", and "verbatim from the session transcript"
-into relation/note/description/source fields (2026-08-06, user sign-off:
-superseded the instances and fixed the generator). This test is the guard
-that keeps the recurrence out — scanned at the live-archive level, so a
-future import that re-introduces process jargon fails the build."""
+import/elicitation process's shorthand: "(open pile)", "Interview 1 · Q3",
+and "verbatim from the session transcript" must never reach
+relation/note/description/source fields. This test is the guard that
+keeps them out — scanned at the live-archive level, so a future import
+that re-introduces process jargon fails the build."""
 
 import json
 import re

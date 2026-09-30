@@ -1,4 +1,4 @@
-"""Google OAuth for the Loft — the identity seam (2026-08-06, user).
+"""Google OAuth for the Loft — the identity seam (user).
 
 Ported from the houses repo's web/auth.py (the pattern the family already
 runs): the authorization-code flow with PKCE via ``google_auth_oauthlib``,
@@ -7,7 +7,7 @@ itsdangerous (30 days, survives restarts). The callback URL is the LAN
 address the server prints — Google's OAuth client accepts the registered IP
 callback (houses does the same). The person is resolved server-side from the
 verified email against the archive's people records (Person.email) — the
-identity lives in the DB, never in code (user, 2026-08-06).
+    identity lives in the DB, never in code (user).
 
 Routes (mounted on the Server's handler):
   GET  /api/auth/login     -> {auth_url} (start the flow)
@@ -126,7 +126,7 @@ def session_user_from_cookie(cookie: str | None) -> dict[str, Any] | None:
     """The verified session payload from the ``session`` cookie, or None.
 
     Accepts the raw Cookie header (``session=<payload>; …``) or the bare
-    payload — the serializer must never see the name= prefix (2026-08-06)."""
+    payload — the serializer must never see the name= prefix."""
     if not cookie:
         return None
     if f"{COOKIE_NAME}=" in cookie:
@@ -208,7 +208,7 @@ def exchange_code(code: str, state: str) -> dict[str, Any] | None:
 
 def person_for_email(archive: Archive, email: str | None) -> str | None:
     """The archive person whose Person.email matches the verified account —
-    casefolded, the identity lives in the DB (user, 2026-08-06)."""
+    casefolded, the identity lives in the DB (user)."""
     if not email:
         return None
     folded = email.casefold()
@@ -237,7 +237,7 @@ def callback_error_url(error: str) -> str:
     return f"{public_url()}/?auth_error={quote(error)}"
 
 
-# -- the device flow (houses parity, 2026-08-06) ----------------------------
+# -- the device flow (houses parity) ----------------------------------------------
 # The browser flow's callback can't be a LAN IP (Google won't register one)
 # and the phone can't reach this machine's localhost — so sign-in runs the
 # OAuth device grant: a code shown to the narrator, approved at
@@ -265,7 +265,7 @@ def _device_grant_post(url: str, data: dict[str, str]) -> dict[str, Any]:
             return _parse_grant_response(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         # Google's token endpoint answers "authorization_pending" with an
-        # HTTP 428 — the body IS the meaningful payload (2026-08-06)
+        # HTTP 428 — the body IS the meaningful payload
         return _parse_grant_response(e.read().decode("utf-8"))
     # lucidlint: ignore broad-except the auth boundary wraps and re-raises (the noqa explains the why)
     except Exception as e:  # noqa: BLE001  # the endpoint reports the failure
@@ -315,9 +315,9 @@ def start_device_grant(
 
 def minted_session(state: str) -> dict[str, Any] | None:
     """The session minted for this state, while the grace window holds —
-    the device-complete navigation's source (2026-08-06: the phone's
-    network can reject fetch responses, so the cookie lands on a page
-    navigation instead, houses' proven mechanism)."""
+    the device-complete navigation's source (the phone's network can
+    reject fetch responses, so the cookie lands on a page navigation
+    instead, houses' proven mechanism)."""
     recent = _auth_state.recent_sessions.get(state)
     if not recent or time.time() - recent.get("_minted_at", 0) >= AuthState.SESSION_GRACE_SECONDS:
         return None
@@ -354,7 +354,7 @@ def poll_device_grant(
 
 def _grant_grace_reissue(state: str) -> dict[str, Any]:
     """A grant consumed by a mint whose response the phone lost — re-issue
-    the session so a retry lands the cookie (2026-08-06)."""
+    the session so a retry lands the cookie."""
     recent = _auth_state.recent_sessions.get(state)
     if recent and time.time() - recent.get("_minted_at", 0) < AuthState.SESSION_GRACE_SECONDS:
         logger.info("auth: re-issuing the minted session (grace) for %s", recent.get("email"))

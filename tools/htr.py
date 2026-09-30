@@ -5,9 +5,8 @@ Newer field precedent: the vision-language model reads the page
 (``tools/vlm.py``, the opencode-go vision role) — verbatim text, token
 usage in a sidecar, and the line geometry the layout pass needs. The
 local detector/recognition stack (kraken/orli/TrOCR/transformers in a
-.venv-htr) was removed 2026-09-23: its recognition was measured garbage
-on the family's pages (TECHSPEC §16.14, the 2026-08-14 comparison) and
-nothing outside it used the stack.
+.venv-htr) is unused — nothing outside it uses the stack, and its
+recognition measured garbage on the family's pages (TECHSPEC §16.14).
 """
 
 from __future__ import annotations
@@ -28,9 +27,7 @@ def _marker_input_matches(marker: Path, input_sha: str) -> bool:
     """Does the completion marker record the CURRENT input fingerprint?
     The marker is stale when the page's image changed after it was
     written (a re-orientation rewrote the jpg) — the text was read from
-    the old image, so the skip must not reuse it (2026-08-20: page-02's
-    marker predated its orientation fix, so the chain "reused" the
-    corrupt guess)."""
+    the old image, so the skip must not reuse it."""
     try:
         data = json.loads(marker.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -39,7 +36,7 @@ def _marker_input_matches(marker: Path, input_sha: str) -> bool:
 
 
 # the extra params (transcribe seam, people/places/label context) belong to this backend alone — a
-# stage-inputs type would be ceremony for one use (2026-09-23: the htr_pages comparison died with the local backend)
+# stage-inputs type would be ceremony for one use
 # lucidlint: ignore long-param-list the VLM backend's stage inputs are the seam and the reading context
 def htr_pages_vlm(
     pages: list[tuple[str, Path]],
@@ -51,15 +48,14 @@ def htr_pages_vlm(
     label: str | None = None,
     store_root: Path = WORK_DIR,
 ) -> None:
-    """The vision-model backend (the 2026-08-14 decision; the only
-    backend since 2026-09-23 — the local TrOCR stack was removed as
-    unused): each page in, verbatim text out, token usage recorded in a
-    sidecar so re-runs skip transcribed pages and the cost is auditable.
+    """The vision-model backend: each page in, verbatim text out, token
+    usage recorded in a sidecar so re-runs skip transcribed pages and
+    the cost is auditable.
     ``transcribe`` is the injectable seam (transcribe_image_vlm shape).
     The system prompt carries the context that helps the model READ —
     the family's known names and places (a familiar name is read
     correctly, not guessed letter-by-letter), the pile's label, and the
-    previous page's text for continuity (user, 2026-08-15: "whatever
+    previous page's text for continuity (user: "whatever
     useful context we have to help it guess better")."""
     call = transcribe if transcribe is not None else transcribe_image_vlm
     previous: str | None = None
@@ -71,8 +67,7 @@ def htr_pages_vlm(
         # promises exist and are non-empty, AND the marker records the
         # CURRENT input image's fingerprint. A marker whose input changed
         # (a re-orientation rewrote the jpg) is stale — the text was read
-        # from the old image (2026-08-20: page-02's marker predated its
-        # orientation fix, so the chain "reused" the corrupt guess).
+        # from the old image.
         # Existence alone is a lie of a completion proxy; validate the
         # input dependency before skipping.
         input_sha = file_sha256(image)
@@ -99,9 +94,9 @@ def htr_pages_vlm(
         if boxes is not None:
             # the VLM's own line geometry (normalized 0-1000) — the layout
             # pass uses it instead of the rec association, which cannot read
-            # cursive (2026-08-16: the rec merges lines into tall boxes and
+            # cursive: the rec merges lines into tall boxes and
             # misses the top line entirely — the VLM that READ the page can
-            # anchor each line it transcribed). Only the entries with boxes
+            # anchor each line it transcribed. Only the entries with boxes
             # ride along; a page without geometry keeps the old fallback.
             marker_data["lines"] = [{"text": plain.split("\n")[i], "box": boxes[i]} for i in sorted(boxes)]
         PipelineStore(store_root).write(

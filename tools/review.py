@@ -1,4 +1,4 @@
-"""The import review (2026-08-09, user): the review resolves the
+"""The import review (user): the review resolves the
 DISPOSITION of each proposed link in the chat — attested, estimated (with
 the reviewer's own words recorded verbatim as the basis), pending, or
 deleted. The model never invents relationships: ``check_relevance`` only
@@ -24,18 +24,15 @@ MAX_RESOLVE_ATTEMPTS = 2
 
 def _relevant_sentences(text: str, needles: tuple[str, ...], limit: int = 3) -> list[str]:
     """The sentences of a document that mention any needle — the RELEVANT
-    part to quote, never the opening (2026-08-09, user: the model was
-    "extremely bad at identifying the relevant part of the document to
-    quote when explaining the attestation" — the tools returned the
-    document's first 200-300 characters, so the model could only quote the
-    opening). Returns up to ``limit`` matching sentences, capped in length,
-    or the first content sentence when nothing matches (a fallback, never
-    silence)."""
+    part to quote, never the opening (user: the tools returned the
+    document's first 200-300 characters, so the model could only quote
+    the opening). Returns up to ``limit`` matching sentences, capped in
+    length, or the first content sentence when nothing matches (a
+    fallback, never silence)."""
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if s.strip()]
     # case-insensitive: search_items lowercases its query, so "Seascale"
-    # must still match "seascale" — a case-sensitive match returned the
-    # document's opening sentences instead of the relevant ones, exactly
-    # the failure R2 was written to stop (2026-08-11 review)
+    # must still match "seascale" — a case-sensitive match returns the
+    # document's opening sentences instead of the relevant ones
     lower = [s.lower() for s in sentences]
     hits = [s for s, lowered in zip(sentences, lower, strict=True) if any(n.lower() in lowered for n in needles)]
     pool = hits or sentences
@@ -44,7 +41,7 @@ def _relevant_sentences(text: str, needles: tuple[str, ...], limit: int = 3) -> 
 
 class _Chat(Protocol):
     # instance method using self
-    # lucidlint: ignore detached-method protocol seam declaration — AIClient and test doubles implement it as an
+
     def chat(self, system: str, user: str, *, thinking: bool = False) -> str: ...
 
 
@@ -59,8 +56,8 @@ def _known_facts(facts: ReviewContext) -> str:
         # proposed/estimated are guesses, never attested facts — the people
         # table handed to the review still holds the proposed person under
         # review, so their import relation must be marked, or the
-        # contradiction check treats the guess as attested (2026-08-11
-        # review: the never-an-unverified-import-guess rule)
+        # contradiction check treats the guess as attested (the
+        # never-an-unverified-import-guess rule)
         if p.status != "confirmed":
             bits.append(f"(status: {p.status})")
         if p.dob:
@@ -74,9 +71,9 @@ def _known_facts(facts: ReviewContext) -> str:
     for it in facts.items:
         story = (it.get("story") or it.get("transcription") or "").strip()
         if story:
-            # Rule L (2026-08-11 review): a draft transcription is marked —
-            # the model must know which texts are unverified so it never
-            # quotes one as the document's own words
+            # Rule L: a draft transcription is marked — the model must
+            # know which texts are unverified so it never quotes one as
+            # the document's own words
             draft = (
                 " (DRAFT TRANSCRIPTION — machine-read, unverified)" if it.get("transcription_status") == "draft" else ""
             )
@@ -223,9 +220,9 @@ def assistant_message(result: dict[str, Any], person: Person) -> str:
 
 def confirmation_message(name: str, decision: str, basis: dict[str, Any] | None) -> str:
     """The assistant's rendered confirmation — the receipt the family sees,
-    in the genealogist's voice, naming the consequence (2026-08-09; the
-    vocabulary is the family's, never the statuses': fact / guess / left
-    for later / delete — user, 2026-08-10)."""
+    in the genealogist's voice, naming the consequence (the vocabulary is
+    the family's, never the statuses': fact / guess / left for later /
+    delete — user)."""
     if decision == "attested":
         return f"Done — {name} joins the tree as a fact."
     if decision == "estimated":
@@ -238,7 +235,7 @@ def confirmation_message(name: str, decision: str, basis: dict[str, Any] | None)
 
 def steer_message(person: Person, note: str) -> str:
     """The off-topic steer — the genealogist's words, never the model's
-    internal note (the note was leaking into the parens, 2026-08-09)."""
+    internal note."""
     return (
         f"That's about {note or 'something else'} — let's come back to {person.name}: does that fit what you remember?"
     )
@@ -247,9 +244,7 @@ def steer_message(person: Person, note: str) -> str:
 def render_history(messages: tuple[Message, ...]) -> str:
     """The conversation so far, verbatim — the family's words and the
     assistant's reasoning and speech, in order — so the model sees the
-    whole arc (2026-08-09, user: the flow misunderstood because the model
-    couldn't see that an answer was re-answering an earlier question; the
-    model needs its own history to do its job)."""
+    whole arc (user: the model needs its own history to do its job)."""
     lines: list[str] = []
     # branching append: user vs assistant, and the assistant also emits a conditional
     # reasoning line — a comprehension would need sentinel tuples
@@ -275,7 +270,7 @@ def investigate(
     facts: ReviewContext,
     history: tuple[Message, ...] = (),
 ) -> dict[str, Any]:
-    """The tool-using review of a free-text answer (2026-08-09, user): the
+    """The tool-using review of a free-text answer (user): the
     model can call the archive's read-only lookups to dig into the
     reviewer's statement — follow the leads and surface what the archive
     already attests — then return the verdict: {relevant, contradiction,
@@ -295,14 +290,13 @@ def investigate(
     if person.relation:
         # family language, never the system's — the model echoes the claim's
         # own words, and the persona rule forbids 'the import'/'proposes'/
-        # 'link' (2026-08-15: the question mirrored 'the import proposes
-        # adding' verbatim — the prompt must not model the jargon it forbids)
+        # 'link' (the prompt must not model the jargon it forbids)
         claim += f" — the record under review says: {person.relation}"
     # the conversation renders uniformly and sits LAST in the prompt — the
     # static (the reviewer, the claim, the facts, the instructions) comes
     # before it, so the previous prompt's exact text is the current prompt's
     # prefix and the model's prompt-cache reuses the whole thing
-    # (2026-08-09, user: 'the exact same text goes back… cheaper if so,
+    # (user: 'the exact same text goes back… cheaper if so,
     # because of caching'). The latest line is part of the same render, so
     # a message that re-answers an earlier question is seen in context.
     conversation = render_history(history + (Message(role="user", text=text, when=""),))
@@ -457,7 +451,6 @@ def investigate(
     # the verdict shape must be in the INITIAL prompt — the schema was only
     # revealed in the correction branch, so every first call was rejected
     # once before the shape appeared, doubling the cost of every exchange
-    # (2026-08-11 review)
     prompt = prompt + "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + verdict
     prompt += (
         "\n\nThe verdict MUST contain ALL of these keys, spelled exactly as written — "
@@ -485,8 +478,8 @@ def investigate(
             if tool_calls > MAX_TOOL_CALLS:
                 # an over-budget tool-shaped turn is still the model's own
                 # words — logged in the trace AND fed back verbatim, never
-                # discarded (2026-08-11 review: the completeness property —
-                # everything the model produced is fed back and logged)
+                # discarded (the completeness property — everything the model
+                # produced is fed back and logged)
                 trace.append({"model": raw, "reasoning": getattr(client, "last_reasoning", "")})
                 user += (
                     "\n\n[your previous answer] "
@@ -499,8 +492,6 @@ def investigate(
             result = run_tool(tool, args, facts)
             # the tool call and its deterministic result are part of the
             # model's reasoning — logged verbatim, never discarded
-            # (2026-08-09: 'why would that stop you logging them correctly?'
-            # — nothing does; the gap was that we didn't)
             trace.append(
                 {
                     "model": raw,
@@ -539,12 +530,11 @@ def _verdict_result(
     complete verdict — the caller feeds it back for a correction."""
     # the completeness gate is the ORIGINAL contract: a turn whose fields
     # carry valid values is accepted AS-IS and evaluated once. A missing
-    # or typo'd key is NOT repaired by re-asking the model (that retries
-    # the eval's conditions — the 2026-09-23 correction-turn change did
-    # exactly that and is reverted): it produces an empty field and the
+    # or typo'd key is NOT repaired by re-asking the model (a retry
+    # re-runs the eval's conditions): it produces an empty field and the
     # condition FAILS LOUDLY with the full output, staying red until the
     # scenario (the schema presentation) makes the model pass — never a
-    # second chance (user, 2026-09-23).
+    # second chance (user).
     relevant = str(parsed_dict.get("relevant", "")).strip().lower()
     raw_contradiction = parsed_dict.get("contradiction")
     contradiction: dict[str, Any] = raw_contradiction if isinstance(raw_contradiction, dict) else {}
@@ -576,7 +566,7 @@ def _verdict_result(
             "prompt": base_prompt,
             # the final user string after the loop's appends — the
             # completeness property: everything the model produced is
-            # fed back (2026-08-09, user)
+            # fed back (user)
             "final_prompt": user,
         }
     return None

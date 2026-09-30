@@ -1,4 +1,4 @@
-"""The family tree's membership (2026-08-06, user): people the archive
+"""The family tree's membership (user): people the archive
 attests as family must have family edges — Ernie Draper (married Marta
 Voss), Quentin Whitlock (Pearl's husband), and Walter Lionel
 Draper (Ernie's child, per the user) were confirmed people with no edges, so
@@ -44,5 +44,5 @@ def test_confirmed_family_members_have_family_edges() -> None:
     missing = sorted(confirmed - linked)
     assert not missing, (
         f"confirmed family members have no family edge and appear in 'Also in the archive': {missing} "
-        f"— Ernie↔Marta spouse, Ernie→Walter parent, Quentin↔Pearl spouse (user, 2026-08-06)"
+        f"— Ernie↔Marta spouse, Ernie→Walter parent, Quentin↔Pearl spouse (user)"
     )

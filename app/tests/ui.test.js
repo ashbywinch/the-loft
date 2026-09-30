@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { el, esc, itemCard } from "../ui.js";
 
-describe("boolean form attrs (reviewer, 2026-08-03)", () => {
+describe("boolean form attrs", () => {
   it("checked: false sets the property, never a truthy attribute", () => {
     const box = el("input", { type: "checkbox", checked: false });
     expect(box.checked).toBe(false);
@@ -42,7 +42,7 @@ describe("ui primitives", () => {
     expect(el("svg:a", { href: "#/x" }) instanceof SVGElement).toBe(true);
   });
 
-  it("itemCard shows the description line when present (2026-08-05)", () => {
+  it("itemCard shows the description line when present", () => {
     // A letter's description is what tells it apart from the rest of the
     // same correspondence on the timeline — it must render, not just exist
     // in the data.

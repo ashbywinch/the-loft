@@ -107,8 +107,8 @@ def test_page_files_lists_images_recursively(tmp_path: Path) -> None:
 
 
 def test_register_adopted_preserves_confirmed_content_on_change(tmp_path: Path) -> None:
-    """2026-08-14 review: a content-changed pile with confirmed transcriptions
-    must NOT have them cleared — the change is flagged for a manual review."""
+    """A content-changed pile with confirmed transcriptions must NOT have
+    them cleared — the change is flagged for a manual review."""
     from PIL import Image
 
     from tools.sync import record_confirmation
@@ -135,7 +135,7 @@ def test_register_adopted_preserves_confirmed_content_on_change(tmp_path: Path) 
 
 def test_register_adopted_clears_stages_when_nothing_confirmed(tmp_path: Path) -> None:
     """The no-confirmed-content branch still clears the regenerable stages
-    so the reprocess is real (2026-08-14 review: the flag's consumer)."""
+    so the reprocess is real."""
     from PIL import Image
 
     folder = _pile(tmp_path)
@@ -155,8 +155,8 @@ def test_register_adopted_clears_stages_when_nothing_confirmed(tmp_path: Path) -
 
 
 def test_register_adopted_reassociates_a_moved_and_changed_pile(tmp_path: Path) -> None:
-    """2026-08-14 final review: a move combined with a content change must
-    update the same record (large overlap), not orphan it as a duplicate."""
+    """A move combined with a content change must update the same record
+    (large overlap), not orphan it as a duplicate."""
     from PIL import Image
 
     folder = _pile(tmp_path)

@@ -1,12 +1,12 @@
 # Precedent Scan Notes (D7) — Family History Album
 
-Companion to `PRD/PRD.md` §17, step D7. What exists, what works, what to avoid. Sources at the end. Status: completed 2026-08-02.
+Companion to `PRD/PRD.md` §17, step D7. What exists, what works, what to avoid. Sources at the end. Status: completed.
 
 ## 1. Family-history platforms (Findmypast, Ancestry, FamilySearch)
 
 **The anti-pattern is real and documented.** The tree-and-records model is built for expert genealogists; beginners drop off because onboarding requires a parallel curriculum *outside* the product (YouTube, genealogist friends). Ancestry's own post-mortem: "one experience cannot serve both expert and novice."
 
-- **Lesson A — we are not a genealogy tool.** No tree view, no "records" browsing, no census-workflow. The moment the app smells like homework it dies. (Roadmap: tree view removed from Could. **Refined 2026-08-02:** the anti-pattern is the expert genealogy *tool* — records, census workflows, homework. A person-centred relationship view is a museum surface, not a genealogy tool — see §5.)
+- **Lesson A — we are not a genealogy tool.** No tree view, no "records" browsing, no census-workflow. The moment the app smells like homework it dies. (Roadmap: tree view removed from Could. The anti-pattern is the expert genealogy *tool* — records, census workflows, homework. A person-centred relationship view is a museum surface, not a genealogy tool — see §5.)
 - **Lesson B — outcomes language, never task language.** Findmypast's UX case study: the word "task" reads as chore; framing everything as *discovery outcomes* ("find a relative", "hear their voice") beats instruction bars. Our capture ritual must say "save a story", never "complete metadata".
 - **Lesson C — two experiences, one app.** Ancestry's fix was a separate opt-in novice path. Our IA already does this structurally: **Stories/Cast are the novice doors, Timeline/Search are the deep doors.** Home must front-door the novice path, or the 15-year-old lands in homework.
 
@@ -45,7 +45,7 @@ The closest professional analog to "a walk through a collection with feelings."
 | TTS accessibility | Cuseum/WCAG | Text-to-speech (Could) |
 | Observation over analytics | Cuseum vs. privacy | D8/D10 manual testing |
 
-## 5. Family tree UI patterns (added 2026-08-02)
+## 5. Family tree UI patterns
 
 Research question: are there established UI patterns for family trees, especially on mobile?
 
@@ -54,7 +54,7 @@ Research question: are there established UI patterns for family trees, especiall
 - **Pedigree and fan charts are ancestor-only.** Space-efficient for lineage, useless for descendants, siblings and in-laws — the wrong shape for a family whose story runs sideways.
 - **Sequential single-view flows** (MEGGIE QU's guided tree builder) work for *building* a tree, not for browsing one.
 
-**Decision (2026-08-02):** the whole-tree generation view is replaced by the person-centred view (`#/tree?person=<id>`): one person at the centre, parents above, partner beside, siblings and children below, wider relations (in-laws, teachers) as tags; tap a card to re-centre, the centre card opens the profile. Same data, better reading, zero new dependencies. (Our own first attempt — generation rows — failed exactly the way the research predicts: relationships were inferable only by counting rows.)
+**Decision:** the whole-tree generation view is replaced by the person-centred view (`#/tree?person=<id>`): one person at the centre, parents above, partner beside, siblings and children below, wider relations (in-laws, teachers) as tags; tap a card to re-centre, the centre card opens the profile. Same data, better reading, zero new dependencies. (Our own first attempt — generation rows — failed exactly the way the research predicts: relationships were inferable only by counting rows.)
 
 ## Sources
 - Findmypast task/reward UX case study — https://medium.com/@ryanconnaughton/task-reward-experiment-ux-case-study-for-findmypast-152a40c9755e

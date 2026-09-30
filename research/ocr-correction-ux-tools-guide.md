@@ -3,7 +3,7 @@
 UX patterns, real-world examples, and tooling for building a UI where humans
 review and correct Optical Character Recognition (OCR) or Handwritten Text
 Recognition (HTR) outputs. (Converted from the PDF "OCR Correction UX & Tools
-Guide" — the transcription review surface 2026-08.)
+Guide" — the transcription review surface.)
 
 Building such an interface bridges two very different mediums: **spatial visual
 data** (scanned images, archival manuscripts) and **sequential textual data**

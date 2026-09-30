@@ -1,4 +1,4 @@
-"""The flag pass (2026-08-15, user-approved): the transcription model's OWN
+"""The flag pass (user-approved): the transcription model's OWN
 doubt is the flag source. Runs in the main venv (tools/vlm.py — the model
 API), one call per page: the model reviews its own transcription with line
 numbers and marks the words it is least sure of, or that read oddly in
@@ -60,9 +60,9 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path) -> in
     if page_names:
         # The CLI takes bare stems ("page-02"); the glob yields full
         # filenames ("page-02.jpg") — normalize so the filter actually
-        # matches (2026-08-22: a raw ``p.name in wanted`` silently produced
-        # an empty page list and exit 0, a no-op that looked like success —
-        # the same bug layout_detect's filter had, 2026-08-20).
+        # matches: a raw ``p.name in wanted`` comparison would silently
+        # produce an empty page list and exit 0, a no-op that looks like
+        # success.
         wanted = {p if p.endswith(".jpg") else p + ".jpg" for p in page_names}
         pages = [p for p in pages if p.name in wanted]
     if not pages:

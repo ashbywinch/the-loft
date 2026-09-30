@@ -1,10 +1,9 @@
 """The fail-fast validation layer — the gates a layout must pass before it
 is written or served. Each gate is one check with a plain-language
 violation; ``validate_layout`` runs the collection in order. The gates
-exist because the review surface must never show a wrong box (2026-08-17:
-page-02's approximate boxes reached the review silently) — and they now
-detect the geometry failings the pure checks could not see (the inkless
-estimates, the duplicated regions).
+exist because the review surface must never show a wrong box — and they
+now detect the geometry failings the pure checks could not see (the
+inkless estimates, the duplicated regions).
 """
 
 from __future__ import annotations
@@ -56,7 +55,7 @@ class IntegrityGate(Gate):
 
 
 class AspectGate(Gate):
-    """Gate A (2026-08-20): the line's orientation must be consistent with
+    """Gate A: the line's orientation must be consistent with
     its box's aspect. The AXIS (mod 180) handles EXACT angles — an 88.4°
     line is vertical-axis and must have a tall box. Lenient: a 45°
     diagonal and a near-square box never flag."""
@@ -86,7 +85,7 @@ def text_extent_violation(text: str, box: list[float], orientation: float | None
         # spaces carry no ink — density is judged on real glyphs only
         glyphs = len(text.strip().replace(" ", ""))
         px_per_char = axis / max(1, glyphs)
-        # perpendicular extent (2026-08-26): a letter's advance is
+        # perpendicular extent: a letter's advance is
         # proportional to its own height, so big print (the Heinz
         # crest's '57 Varieties' at 90 px/char, 'REMINDER', 'POST
         # CARD') is legitimate where the old absolute 80 refused it.
@@ -98,13 +97,11 @@ def text_extent_violation(text: str, box: list[float], orientation: float | None
         perpendicular = (box[2] - box[0]) if vertical else (box[3] - box[1])
         # Two calibrated ceilings. Handwriting's 1.7 stays for SHORT
         # texts (< 8 glyphs): a 2-glyph text matching a 1341px band is
-        # the false-match signature (the postcard's stamp, 2026-08-20).
+        # the false-match signature (the postcard's stamp).
         # Dense lines (>= 8 glyphs) get 2.6: a letterspaced typewriter
         # measures ~2.0 advances per glyph height (the Music College
-        # letter, 2026-09-07: 46 px/char on 23 px glyphs — real kraken-
-        # measured ink, real text, refused by the old ceiling). The
-        # nonsense catches survive either way: a 2 px axis, 50 characters
-        # in a sliver.
+        # letter, 46 px/char on 23 px glyphs). The nonsense catches
+        # survive either way: a 2 px axis, 50 characters in a sliver.
         multiplier = 2.6 if glyphs >= 8 else 1.7
         ceiling = max(30.0, perpendicular * multiplier)
         if px_per_char < 2 or px_per_char > ceiling:
@@ -116,7 +113,7 @@ def text_extent_violation(text: str, box: list[float], orientation: float | None
 
 
 def glyph_extent_violation(text: str, box: list[float], orientation: float | None) -> str | None:
-    """The STRICT pair for MEASURED ink unions (2026-08-26): the batch's
+    """The STRICT pair for MEASURED ink unions: the batch's
     boxes come from the rec's detection pieces, so their perpendicular
     extent IS the glyph size — both bounds go glyph-relative (advance
     within [0.12, 1.7] × perpendicular; ground truth: audited-correct
@@ -141,7 +138,7 @@ def glyph_extent_violation(text: str, box: list[float], orientation: float | Non
 
 
 class TextExtentGate(Gate):
-    """Gate B (2026-08-20): the recognized text length must not be WILDLY
+    """Gate B: the recognized text length must not be WILDLY
     out of sync with the box's reading-axis extent — a 500px-wide box
     holding 3 characters is empty or truncated; a 50px box holding 40
     characters is impossible. Loose (only ~2-80 px/char fails — the
@@ -162,7 +159,7 @@ class TextExtentGate(Gate):
 
 
 class RegionGate(Gate):
-    """Gate E (2026-08-20): the same region claimed by DIFFERENT text is a
+    """Gate E: the same region claimed by DIFFERENT text is a
     geometry failing — the postcard's location report gave two message
     lines the same box. The same text in one region is the dedupe's job
     (a fragment); different texts in one region is ambiguity the review
@@ -183,14 +180,14 @@ class RegionGate(Gate):
 
 
 class BoxlessGate(Gate):
-    """Gate F (2026-08-22, user: "I want boxless lines to fail during the
+    """Gate F (user: "I want boxless lines to fail during the
     pipeline run so we can figure out how to fix our pipeline!"): a line
     without a box is an unfinished pipeline result — the anchor
     arbitration found no candidate that holds the text, which means the
     geometry pass needs fixing, not a flag in the review. The page fails
     loudly at the write; the reviewer never sees a half-anchored layout.
-    (The older ``None``-box-passes rule belongs to the flag era; the
-    user's explicit choice supersedes it.)"""
+    (The older ``None``-box-passes rule is superseded by the user's
+    explicit choice.)"""
 
     def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
         return [
@@ -207,7 +204,7 @@ GATES: tuple[Gate, ...] = (IntegrityGate(), AspectGate(), TextExtentGate(), Regi
 
 
 def validate_layout(layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
-    """The fail-fast guard (2026-08-17): a layout whose lines fail any
+    """The fail-fast guard: a layout whose lines fail any
     gate must NEVER reach the front end — the reviewer must never see
     wrong boxes. Returns the violations; [] = clean."""
     findings: list[str] = []

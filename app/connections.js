@@ -21,18 +21,18 @@ export function itemInvolves(item, personId) {
  *  'in' rule: a story's teller gains nothing from telling it — a teller
  *  outside the item's people[] and outside any per-place list never gets its
  *  places; a teller who IS a subject of the story (in people[]) is at its
- *  places like anyone else ("we sailed", 2026-08-03). The single attribution
+ *  places like anyone else ("we sailed"). The single attribution
  *  rule shared by the map, the person page and the chips. */
 export function personAtPlace(personId, place) {
   // Presence must be attested per place — co-mention in an item is not being
   // there: the 2001 email mentions 8 places and 91 people, and nobody was at
-  // all of them (2026-08-05). The explicit per-place people list is the only
+  // all of them. The explicit per-place people list is the only
   // seam; a place ref without one links nobody.
   return place.people?.includes(personId) ?? false;
 }
 
 /** The clarification fragments that attest a target — a fragment names its
- *  target in people or items refs, and it renders only there (2026-08-06). */
+ *  target in people or items refs, and it renders only there. */
 export function clarificationsFor(items, targetId) {
   return items.filter(
     (it) => it.clarification && (it.people?.some((p) => p.id === targetId) || it.items?.some((x) => x.id === targetId)),
@@ -41,7 +41,7 @@ export function clarificationsFor(items, targetId) {
 
 /** The reflections that mention a target — a reflection names who or where
  *  it is about in people or places refs, and it renders only there: it has
- *  no events' date, only the telling day (2026-08-06). */
+ *  no events' date, only the telling day. */
 export function reflectionsFor(items, targetId) {
   return items.filter(
     (it) => it.reflection && (it.people?.some((p) => p.id === targetId) || it.places?.some((p) => p.id === targetId)),
@@ -50,7 +50,7 @@ export function reflectionsFor(items, targetId) {
 
 /** The evidence records that attest a target — a found record (a web
  *  capture, a directory page) renders on the pages it attests, never on
- *  the timeline (2026-08-06). */
+ *  the timeline. */
 export function evidenceFor(items, targetId) {
   return items.filter(
     (it) =>
@@ -66,8 +66,7 @@ export function evidenceFor(items, targetId) {
  *  logbook's boat entry — else the derived floor: an involvement can't
  *  predate the item, nor (for a person) their birth, so a birth-linked
  *  record sits at the person's entry (the family record at 1945 on Nora's
- *  page, never 1868). Calculated floors, attested dates override
- *  (2026-08-06). */
+ *  page, never 1868). Calculated floors, attested dates override. */
 export function refDateFor(item, kind, entity) {
   const ref = (item[kind] ?? []).find((r) => r.id === entity?.id);
   if (ref?.date?.date) return ref.date.date;
@@ -81,7 +80,7 @@ export function itemDateFor(item, person) {
 }
 
 /** The back link: every item that references the target in its items refs —
- *  all links are bidirectional (2026-08-06): the boat story names Sunlight,
+ *  all links are bidirectional: the boat story names Sunlight,
  *  and Sunlight's page shows "Referenced by: the boat story". */
 export function referencedBy(items, itemId) {
   return items.filter((it) => (it.items ?? []).some((r) => r.id === itemId));
@@ -89,7 +88,7 @@ export function referencedBy(items, itemId) {
 
 /** The non-story items of a set — stories render once, in the Memories
  *  block beside the list; an artifact list never re-shows them
- *  (2026-08-06, the render-once rule). */
+ *  (the render-once rule). */
 export function artifacts(items) {
   return items.filter((it) => it.type !== "story");
 }

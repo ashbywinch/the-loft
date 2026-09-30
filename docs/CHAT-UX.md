@@ -1,6 +1,6 @@
 # Chat UX — the capture dialog and any future chat surface
 
-- **Status:** guidelines (2026-08-03). Applies to the story-capture sheet and
+- **Status:** guidelines. Applies to the story-capture sheet and
   any chat UI the app adds. Backed by `app/chat.js` — new chat functionality
   goes through the library so the layout stays consistent
   (docs/PRD/MEMORIES.md). Research basis: mobile chat-app guidance (bottom
@@ -12,8 +12,8 @@
 - The chat is a column: **messages → quick replies → input bar**. The
   composer is the bottom-most interactive element; **nothing sits below it**
   (standard guidance, e.g. Ethora's chat patterns, setproduct's AI-chat
-  anatomy). An earlier "actions below the input" call is reversed (user,
-  2026-08-03): it looked wrong in practice and the guidance is unanimous.
+  anatomy). An earlier "actions below the input" call is reversed (user):
+  it looked wrong in practice and the guidance is unanimous.
 - **Quick replies are chips** (pill buttons, 3–4 max, wrapping) between the
   last message and the composer (BotHero; shadcn; Telerik). Tapping a chip
   "sends" it and the row clears, like any sent reply. "That's everything" is
@@ -29,9 +29,9 @@
   any change, superseding the same draft id in place (append-only), plus on
   close and unload. A distraction or a server reboot loses at most the last
   few words; Continue on a draft **replays the chat** up to where the
-  narrator left it and the flow carries on live (user, 2026-08-03).
+  narrator left it and the flow carries on live (user).
 - **Send button on the bottom right** — the phone-thumb side (user,
-  2026-08-03, correcting an earlier mistaken "left" call; right is the
+  correcting an earlier mistaken "left" call; right is the
   standard guidance this app researched and follows).
 
 ## Messages
@@ -50,7 +50,7 @@
   prompt** (the prompt is a bubble, the placeholder is guidance for the box).
 - The send button is **disabled when the input is empty and whenever the
   assistant is busy** (reading / assessing / saving) — the narrator cannot
-  type or send while the assistant is working (user, 2026-08-03).
+  type or send while the assistant is working (user).
 - Primary actions ("That's everything", "Use this date", "Skip") live in the
   action row below the input, always reachable while not busy.
 
@@ -58,7 +58,7 @@
 
 - Name fields autocomplete over the cast (names + aliases) with a **custom
   dropdown that filters as you type** — not a native `<datalist>`, which does
-  not work on mobile browsers (user, 2026-08-03). Tap to select; arrow
+  not work on mobile browsers (user). Tap to select; arrow
   keys + Enter as the keyboard fallback.
 
 ## States and feedback
@@ -77,7 +77,7 @@
 
 - Say what happens in plain words: "These connections were picked out of
   your story — tick to keep, untick to leave out." The review IS the
-  verification of the AI's guesses (user, 2026-08-03) — no later gate.
+  verification of the AI's guesses (user) — no later gate.
 - Kept links read as kept (checked); removed ones visibly leave the list;
   adding a person or place is one inline row (kind + name + Add).
 - The save button says what it does ("Save story") and the outcome is stated
@@ -98,4 +98,4 @@
   the picker without losing the story already told (uxpatterns.dev, Chip
   A11y patterns, Material 3).
 - Custom dropdown, never a native datalist — datalists do not work on
-  mobile (user, 2026-08-03).
+  mobile (user).

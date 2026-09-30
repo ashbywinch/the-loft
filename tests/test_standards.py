@@ -14,7 +14,7 @@ REPO = Path(__file__).resolve().parent.parent
 # vendored — the .venv-htr-only stage, foreign-interpreter code not subject
 # to this repo's module contract; the same set ruff and pyrefly exclude.
 # (The code-health tools were vendored here but are now served by lucidlint
-# from its own repo — deleted 2026-08-16.)
+# from its own repo.)
 VENDORED = {"layout_detect.py"}
 
 

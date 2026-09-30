@@ -1,4 +1,4 @@
-"""The VLM read cache (2026-08-26): the user's question — future passes
+"""The VLM read cache: the user's question — future passes
 must not re-pay tokens for pages whose panels and prompts did not
 change. The cache keys on the PANEL IMAGE's bytes + the full call spec;
 a hit returns the stored transcription for zero tokens, so gate and

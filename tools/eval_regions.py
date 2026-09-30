@@ -1,4 +1,4 @@
-"""The column-region experiment (2026-08-22): the ink's x-projection
+"""The column-region experiment: the ink's x-projection
 segments the page into column regions; each region is read at its own
 text orientation (upright, or rotated +90 when the boxes are vertical —
 the postcard's message), the boxes remapped into the page frame. The

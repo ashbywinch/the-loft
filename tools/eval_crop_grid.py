@@ -1,4 +1,4 @@
-"""The crop-grid experiment's real run (2026-08-22, Phase 2): one page
+"""The crop-grid experiment's real run (Phase 2): one page
 read as a grid of overlapping crops, each crop read by the VLM — the
 model measures the lines WITHIN the crop (its geometry is trustworthy
 only when the question is LOCAL; the full-page location report is
@@ -83,7 +83,7 @@ def read_crop(
             api_key=api_key,
             # the crop read's completion is ~1-4k tokens; 64000 (the
             # full-page location budget) EXCEEDS the glm-4.5v's 65536
-            # context once the image is in — the 400 (2026-08-22)
+            # context once the image is in.
             max_tokens=8000,
         )
         plain, boxes = parse_transcription_response(text)
@@ -116,7 +116,7 @@ def read_crop(
             plain2, boxes2 = None, None
         if boxes2 and plain2:
             # the +90 rotation's inverse: the rotated frame's height is
-            # the crop's width (pinned empirically 2026-08-22)
+            # the crop's width (pinned empirically)
             rot_h = int(crop.w)
             boxes2 = {li: remap_rotated(b, int(crop.h), rot_h) for li, b in boxes2.items()}
             plain, boxes, tokens = plain2, boxes2, tokens + int(usage2.get("total_tokens", 0) or 0)
@@ -127,7 +127,7 @@ def read_crop(
         return None
     # the rotated re-read's lines carry the crop's text orientation: the
     # +90 rotation makes them horizontal for the read, and the page-frame
-    # consumer needs to know they are vertical on the page (2026-08-30)
+    # consumer needs to know they are vertical on the page
     orientation = 90 if rotated_ok else 0
     lines = [{"text": plain.split("\n")[li], "box": boxes[li], "orientation": orientation} for li in sorted(boxes)]
     print(
@@ -152,10 +152,8 @@ def remap_rotated(box: list[float], rot_w: int, rot_h: int) -> list[float]:
     """The NORMALIZED box (0-1000) in the +90-rotated frame -> the
     original crop frame's pixels. The +90 rotation maps (x, y) -> (y,
     H' - x); the inverse is x = H' - y', y = x'. The normalized box
-    must scale to the rotated frame's pixels FIRST — the 2026-08-22
-    bug used the normalized y' directly against the pixel height, and
-    the message's strips landed ~1000px off. The x-order flips too
-    (the panel's x increases as the rotated frame's y decreases)."""
+    must scale to the rotated frame's pixels FIRST. The x-order flips
+    too (the panel's x increases as the rotated frame's y decreases)."""
     x0n, y0n, x1n, y1n = box
     return [
         rot_h - (y1n / 1000) * rot_h,

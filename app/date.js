@@ -35,7 +35,7 @@ export function dayOf(item) {
  *  calculated at render, never stored. Exact dates give the exact age (a
  *  29-Feb birthday rolls over on 1 Mar in common years); anything coarser
  *  gives the honest possible range. Null when a date is missing or not
- *  point-placed ("after 1917" has no age) (2026-08-06). */
+ *  point-placed ("after 1917" has no age). */
 export function ageInYears(birth, death) {
   if (!birth || !death) return null;
   const yb = yearOf({ date: birth.date });
@@ -117,7 +117,7 @@ export function sortByDate(items) {
 
 /** Recently added, not recently dated: the archive's own recorded/created
  *  stamp decides the "recent" feed — a story about 1963 recorded today is
- *  recent (user, 2026-08-03). created_at (full timestamp) breaks the tie
+ *  recent (user). created_at (full timestamp) breaks the tie
  *  between the stories added on the same day. */
 export function sortByRecorded(items) {
   const stamp = (item) => item.created_at ?? item.recorded ?? item.created ?? item.date;

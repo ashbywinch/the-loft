@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderMarkdown } from "../markdown.js";
 
-describe("the transcription markdown renderer (2026-08-08: a medal index card is a table — the site must render it as one, not a run-on paragraph)", () => {
+describe("the transcription markdown renderer — a medal index card is a table and must render as one, not a run-on paragraph", () => {
   it("renders a pipe table with a header and body rows", () => {
     const md =
       "| Name | Corps | Remarks |\n|---|---|---|\n| BARLOW, Jack | R F A | Dead |\n| BARLOW, Harry | Lan. Fus | do |";
@@ -29,14 +29,14 @@ describe("the transcription markdown renderer (2026-08-08: a medal index card is
     expect(nodes[0].textContent).toBe("just | a | line");
   });
 
-  it("a leading pipe line without a separator is still verbatim — never dropped (2026-08-09 review)", () => {
+  it("a leading pipe line without a separator is still verbatim — never dropped", () => {
     const nodes = renderMarkdown("| the boat's name |\n\nA line after.");
     expect(nodes).toHaveLength(2);
     expect(nodes[0].textContent).toBe("| the boat's name |");
     expect(nodes[1].textContent).toBe("A line after.");
   });
 
-  it("two adjacent tables stay separate — the second is never swallowed (2026-08-11 review)", () => {
+  it("two adjacent tables stay separate — the second is never swallowed", () => {
     const md =
       "| Name | Corps |\n|---|---|\n| BARLOW, Jack | R F A |\n" + "| Name | Rank |\n|---|---|\n| BARLOW, Harry | Pvt |";
     const nodes = renderMarkdown(md);
@@ -48,7 +48,7 @@ describe("the transcription markdown renderer (2026-08-08: a medal index card is
     expect(nodes[1].querySelector("tbody td").textContent).toBe("BARLOW, Harry"); // its own row, not a body row of table 1
   });
 
-  it("the paragraphs carry the transcription-text class so the pre-line styling applies everywhere (2026-08-09 review)", () => {
+  it("the paragraphs carry the transcription-text class so the pre-line styling applies everywhere", () => {
     const nodes = renderMarkdown("Line one\nLine two");
     expect(nodes[0].className).toBe("transcription-text");
   });
@@ -58,7 +58,7 @@ describe("the transcription markdown renderer (2026-08-08: a medal index card is
   });
 });
 
-describe("the inline format conventions — ~~struck~~ and ~underlined~ (2026-08-16)", () => {
+describe("the inline format conventions — ~~struck~~ and ~underlined~", () => {
   it("renders the strike and underline as spans, never literal tildes", () => {
     const nodes = renderMarkdown("a ~~crossed out~~ and ~underlined~ word");
     const p = nodes[0];

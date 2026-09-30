@@ -127,7 +127,7 @@ def _draw_reported_boxes(image: Path, segments: list[dict[str, Any]], path: Path
 # the model GROUPS the numbered pieces into segments and transcribes
 # each group verbatim — it never generates a coordinate (L3/L11).
 
-GROUP_BATCH_PIECES = 50  # the coverage contract's batch ceiling (the plan, 2026-09-08)
+GROUP_BATCH_PIECES = 50  # the coverage contract's batch ceiling
 GROUP_CROP_MARGIN_PX = 40  # the batch crop pads the band's top/bottom so edge strips read whole
 _GROUP_SYSTEM = (
     "You transcribe scanned family documents verbatim and group their "

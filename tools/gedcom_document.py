@@ -1,8 +1,8 @@
 """GEDCOM 7.0 export of the archive's genealogy (tools/export-gedcom).
 
 The one-to-one mapping (ours -> GEDCOM 7.0), so every departure is a
-decision, not an accident (alignment decision, 2026-08-05 — GEDCOM X as the
-object-model reference, GEDCOM 7.0 as the interchange target):
+decision, not an accident (GEDCOM X as the object-model reference,
+GEDCOM 7.0 as the interchange target):
 
 | Ours                           | GEDCOM 7.0                          |
 |--------------------------------|-------------------------------------|
@@ -85,9 +85,8 @@ def gedcom_date(value: str, precision: str, date2: str | None = None) -> str:
 
 def _lines(text: str, level: int = 1) -> list[str]:
     """Payload text split into GEDCOM lines with CONT continuations — the
-    NOTE rides at `level` (1 under an INDI, 2 under an ASSO; 2026-08-11
-    review: a level-1 note under an association attached itself to the
-    person instead)."""
+    NOTE rides at `level` (1 under an INDI, 2 under an ASSO; a level-1
+    note under an association attaches itself to the person instead)."""
     lines = text.splitlines() or [""]
     out = [f"{level} NOTE {lines[0]}"]
     out += [f"{level + 1} CONT {line}" for line in lines[1:]]
@@ -98,7 +97,7 @@ def _role(person: dict[str, Any], position: int) -> str:
     """HUSB/WIFE from attested pronouns when present, else positionally
     (the first of a pair gets HUSB) — gender is never inferred: a
     they/them or unstated person is not forced into either role by
-    default (2026-08-06)."""
+    default."""
     pronouns = str(person.get("pronouns") or "").lower()
     if pronouns.startswith("she"):
         return "WIFE"
@@ -110,9 +109,8 @@ def _role(person: dict[str, Any], position: int) -> str:
 def _estimate_basis(archive: Archive, person_id: str) -> dict[str, str] | None:
     """The recorded basis of an estimated link — the review session's
     decision carries the conversation's evidence (who said it, when, their
-    own words). 2026-08-09 (user: estimated things export WITH the
-    conversation that generated them, so the evidence for the estimate is
-    visible)."""
+    own words). Estimated things export WITH the conversation that
+    generated them, so the evidence for the estimate is visible (user)."""
     imports = archive.get_identity("imports") or {}
     for imp in imports.get("imports", []):
         for attempt in imp.get("attempts", []):
@@ -127,7 +125,7 @@ def _estimate_basis(archive: Archive, person_id: str) -> dict[str, str] | None:
 def _estimate_note(basis: dict[str, str] | None, level: int = 1) -> list[str]:
     """The estimate's evidence as a GEDCOM NOTE — the reviewer's own words,
     who said them, and when, so a reader of the export can weigh the guess
-    (2026-08-09, user). The level places the note under its owner: the
+    (user). The level places the note under its owner: the
     person (1) or the association it evidences (2)."""
     if basis and basis.get("text"):
         by = str(basis.get("by") or "the family")
@@ -363,13 +361,13 @@ def _family_lines(
         lines.append(f"1 {_role(by_id[fam['b']], 1)} @{xref[fam['b']]}@")
     if fam.get("marriage"):
         # a dated spouse edge exports as a MARR event — the date is
-        # attested data, never dropped on export (2026-08-06 review)
+        # attested data, never dropped on export
         marriage = fam["marriage"]
         lines.append("1 MARR")
         date_payload = gedcom_date(marriage["date"], marriage.get("precision", "exact"), marriage.get("date2"))
         lines.append(f"2 DATE {date_payload}")
     lines += [f"1 CHIL @{xref[c]}@" for c in fam["children"]]
-    lines += fam_notes.get(fam["id"], [])  # an estimated edge's evidence (2026-08-09, user)
+    lines += fam_notes.get(fam["id"], [])  # an estimated edge's evidence (user)
     return lines
 
 
@@ -393,13 +391,13 @@ def _story_notes(archive: Archive, exported_ids: set[str]) -> dict[str, list[str
 def _associations(edges: list[dict[str, Any]], archive: Archive) -> dict[str, list[tuple[str, str, list[str]]]]:
     """The non-family edges (sibling/inlaw/teacher) as ASSO records keyed
     by the subject person; an estimated edge's evidence attaches to the
-    association, not the person (2026-08-11 review)."""
+    association, not the person."""
     associations: dict[str, list[tuple[str, str, list[str]]]] = {}
     for edge in edges:
         if edge["kind"] in ("sibling", "inlaw", "teacher"):
             note = (
                 # level 2: the evidence attaches to THIS association, not the
-                # person (2026-08-11 review)
+                # person
                 _estimate_note(_estimate_basis(archive, edge["b"]) or _estimate_basis(archive, edge["a"]), level=2)
                 if edge.get("status") == "estimated"
                 else []
@@ -436,7 +434,7 @@ def _person_lines(
         lines += _lines(note)
     if person.get("status") == "estimated":
         # the estimate's evidence rides on the person — their own words,
-        # who said them, and when (2026-08-09, user)
+        # who said them, and when (user)
         lines += _estimate_note(person.get("basis") or _estimate_basis(archive, pid))
     lines += _association_lines(associations, xref)
     return lines
@@ -458,8 +456,8 @@ def _residence_lines(person: dict[str, Any], place_names: dict[str, str]) -> lis
 
 def _association_lines(associations: list[tuple[str, str, list[str]]], xref: dict[str, str]) -> list[str]:
     """The ASSO record lines for one person's non-family edges (sibling /
-    in-law / teacher) — an estimated edge's evidence rides the association
-    (2026-08-11 review)."""
+    in-law / teacher) — an estimated edge's evidence rides the
+    association."""
     lines: list[str] = []
     for other, kind, note in sorted(associations):
         label = "in-law" if kind == "inlaw" else kind
@@ -655,8 +653,8 @@ def _residence(record: Any, place_ids: dict[str, str]) -> dict[str, str]:
                 out["from"] = out["to"] = child.text.strip()
         elif child.tag == "PLAC" and child.text.strip():
             # an unknown place is data loss, silently swallowed — surface it
-            # (fail loud, 2026-08-06 review: Rule S, unlocatable places get
-            # research, never a silent fallback)
+            # (fail loud: Rule S — unlocatable places get research, never a
+            # silent fallback)
             if child.text.strip() not in place_ids:
                 raise ValueError(f"GEDCOM RESI names a place not in the archive's place set: {child.text.strip()!r}")
             out["place"] = place_ids[child.text.strip()]
@@ -678,7 +676,7 @@ class GedcomDocument:
     file's people/relationships into archive wire shapes, ``to_text`` writes
     the confirmed genealogy out as GEDCOM 7.0. (``import`` is a Python
     keyword, so the methods are from_text/to_text — the object-model naming
-    rule, 2026-08-06.)
+    rule.)
     """
 
     @staticmethod

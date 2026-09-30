@@ -49,8 +49,8 @@ RULE_LONG = 70  # 1/2 px: a line spans more than a word; a word's tail does not
 class WordShape:
     """A piece's shape as the word tests read it: height, width and
     joined-up-ness — the three numbers the word test and the gap rule judge
-    with (lucidlint 2026-09-18: the 3-tuple's positions carried meaning the
-    call sites could not see)."""
+    with (the 3-tuple's positions carried meaning the call sites could not
+    see)."""
 
     height: float
     width: float
@@ -59,9 +59,7 @@ class WordShape:
 
 def word_measures(piece: Mark) -> WordShape:
     """The piece's shape numbers — both the word test and the gap rule read
-    them (lucidlint 2026-09-18: the duplicated measurement in the gap rule
-    was a 91% copy of is_word_shaped). The piece must hold ink; the guard is
-    the caller's."""
+    them. The piece must hold ink; the guard is the caller's."""
     ys, xs = np.asarray(piece.pix[0]).astype(int), np.asarray(piece.pix[1]).astype(int)
     width = float(xs.max() - xs.min() + 1)
     return WordShape(
@@ -154,10 +152,8 @@ class Mark:
         """A piece that could be a word: tall enough to hold letter bodies, wide
         enough to hold more than a stroke, and joined up.
 
-        User 2026-09-16, on the case sheets: 2911's upper piece is 'a full word
-        that's all joined up'; 1970's is 'very discontinuous pieces of
-        ascender'. So a fragment is short, narrow, or full of empty columns —
-        and a cut that would leave one is a chop, not a word boundary.
+        A fragment is short, narrow, or full of empty columns — and a cut
+        that would leave one is a chop, not a word boundary.
 
         `waive_band` and `waive_width` relax the two checks that exist to
         spot fragments at cuts the line-fit proposes: a fit-sliced piece tends
@@ -169,8 +165,8 @@ class Mark:
         despite being flatter than the aspect check allows. The height and
         joined-up checks are about the piece itself, not the boundary: a gap
         can separate two things but cannot make an 8-pixel sliver or two stray
-        ascenders into a word, so they stay enforced (user 2026-09-18: the gap
-        rule must never accept 'just two ascenders')."""
+        ascenders into a word, so they stay enforced (user: the gap rule
+        must never accept 'just two ascenders')."""
         shape = word_measures(self)
         if shape.height < WORD_MIN_HEIGHT * unit or (shape.width < WORD_MIN_WIDTH * unit and not waive_width):
             return False
@@ -188,14 +184,13 @@ class Mark:
         A line is a pen stroke: thin (LINE_HEIGHT × the writing's x-height at
         most) and long (RULE_ASPECT wider than tall), and detached from the
         writing it accompanies — a word's chopped half shares its boundary with
-        the rest of the word (user 2026-09-16: 'an underline is entirely or
-        nearly entirely disconnected from the word'). `others` is the ink it is
+        the rest of the word (user: 'an underline is entirely or nearly
+        entirely disconnected from the word'). `others` is the ink it is
         welded to.
 
-        Which kind, by the width of the writing above it on the page (user
-        2026-09-16: '14187 is nearly exactly the width of the text above it; the
-        other one is not. A rule is a line that is not aligned with the words
-        above it, whether wider or narrower or offset.')."""
+        Which kind, by the width of the writing above it on the page (user:
+        a rule is a line that is not aligned with the words above it,
+        whether wider or narrower or offset)."""
         width, height = self.x1 - self.x0, self.y1 - self.y0
         if height <= 0 or height > LINE_HEIGHT * unit or width < RULE_ASPECT * height:
             return None
@@ -227,8 +222,8 @@ class Mark:
         classifier; this carve separates it (a bottom row-run whose spans
         run RULE_LONG far, with a gap of non-band rows above it), shrinks
         the piece to its remaining ink, and returns the band for
-        `line_pieces` to feed the existing classifier (2026-09-19, user:
-        use the underline detection we already have)."""
+        `line_pieces` to feed the existing classifier (user: use the
+        underline detection we already have)."""
         rows = self.rows()
         ordered = sorted(rows)
         if not ordered:

@@ -5,8 +5,7 @@ Relationship, Item and the table wrappers. This module IS the object model:
 every vocabulary (relationship kinds, date precisions, item types and
 statuses) lives here, and ``validate_identity`` / ``Item.from_dict`` are the
 single validation seam — a record or item that isn't one of these types was
-never written (2026-08-05: the Item record closed the gap — items were raw
-dicts whose shape lived only in the docs).
+never written.
 
 One type for a person whether confirmed (in the identity table) or proposed
 (awaiting review) — the difference is the ``status`` field, and every record
@@ -15,7 +14,7 @@ is the persisted state, so the classes own the wire format). The classes
 are the only place the table invariants live: unique ids, required fields,
 closed relationship kinds, every relationship resolves. ``validate_identity``
 is what derive calls at publish — a bad table fails loudly instead of
-shipping (2026-08-05: the raw-dict tables had none of these guards).
+shipping.
 """
 
 from __future__ import annotations
@@ -29,14 +28,14 @@ from typing import Any, Literal, TypeVar, cast
 
 RELATIONSHIP_KINDS = frozenset({"spouse", "parent", "sibling", "inlaw", "teacher"})
 
-# The date-precision vocabulary (2026-08-05, GEDCOM alignment): exact /
+# The date-precision vocabulary (GEDCOM alignment): exact /
 # month / year express granularity (a year-only date is exact at year
 # granularity, never uncertainty); approx = about; before / after / between
 # carry bounds the artifacts actually state ("Aft. 1881", "Bet. 1880-1881").
 # ``between`` carries the upper bound in date2.
 PRECISIONS = frozenset({"exact", "month", "year", "approx", "before", "after", "between"})
 
-# The place-coordinate granularity (2026-08-05): how precisely the stored
+# The place-coordinate granularity: how precisely the stored
 # point locates the place. "" = unset (treated as a point); exact = the
 # coordinate is the place (street address, surveyed point); street = the
 # point is the street/square and the place is on it (the Lark Inn is on
@@ -46,10 +45,10 @@ PRECISIONS = frozenset({"exact", "month", "year", "approx", "before", "after", "
 # uncertainty at the right size.
 PLACE_PRECISIONS = frozenset({"", "exact", "street", "town", "county", "region", "country", "continent"})
 
-# The item vocabulary (2026-08-05): the sidecar's closed sets. ``deleted``
+# The item vocabulary: the sidecar's closed sets. ``deleted``
 # is the tombstone shape (id/type/title/status/reason only). ``event`` is an
 # attested happening (a birth, a marriage, a concert a letter mentions) —
-# its kind is required and closed (2026-08-05).
+# its kind is required and closed.
 ITEM_TYPES = frozenset({"letter", "document", "photo", "object", "ephemera", "audio", "video", "story", "event"})
 EVENT_KINDS = frozenset({"birth", "marriage", "death", "other"})
 ITEM_STATUSES = frozenset({"draft", "catalogued", "deleted"})
@@ -58,8 +57,8 @@ TRANSCRIPTION_STATUSES = frozenset({"none", "draft", "confirmed"})
 # The one record-id rule: a lowercase letter then letters/digits/hyphens
 # (a person, a place, a story — the dataset's ids). Record ids become
 # store paths (assets/<id>/, proposed/people/<id>.json) and output
-# filenames (avatar-<id>.svg) — anything else could escape the archive root
-# (2026-08-05 bot review, security). The classes own the rule; archive.py's
+# filenames (avatar-<id>.svg) — anything else could escape the archive root.
+# The classes own the rule; archive.py's
 # write paths enforce it too.
 EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
@@ -76,7 +75,7 @@ def _viable_date(value: str) -> bool:
     """A real calendar date in the archive's flexible forms: YYYY,
     YYYY-MM, or YYYY-MM-DD with valid month and day — 2026-99-99 and
     2026-02-31 are not dates. The granularity stays the precision's
-    business; the form just has to be true (2026-08-06 review)."""
+    business; the form just has to be true."""
     m = re.fullmatch(r"(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?", value)
     if not m:
         return False
@@ -101,15 +100,15 @@ def _require(raw: dict[str, Any], key: str) -> str:
 
 def _parse_dated(value: Any, key: str) -> dict[str, str] | None:
     """A dated fact: {date, precision, date2?} — the person dob/dod shape,
-    shared with relationship dates (a marriage's date rides the spouse edge,
-    2026-08-05). None when the field is absent; raises on a malformed one."""
+    shared with relationship dates (a marriage's date rides the spouse edge).
+    None when the field is absent; raises on a malformed one."""
     if not value:
         return None
     date_str = str(value.get("date", "")).strip()
     if not date_str:
         raise ValueError(f"{key} needs a date")
     if not _viable_date(date_str):
-        raise ValueError(f"{key} has an impossible date {date_str!r}")  # 2026-99-99 is not a date (review, 2026-08-07)
+        raise ValueError(f"{key} has an impossible date {date_str!r}")  # 2026-99-99 is not a date
     precision = str(value.get("precision", "exact"))
     if precision not in PRECISIONS:
         raise ValueError(f"{key} has unknown precision {precision!r}")
@@ -124,8 +123,8 @@ def _parse_dated(value: Any, key: str) -> dict[str, str] | None:
     return out
 
 
-# The record statuses (people, places, orgs, and — since 2026-08-08 —
-# relationships). The vocabulary is GEDCOM-flavoured; the meanings are strict:
+# The record statuses (people, places, orgs, and relationships). The
+# vocabulary is GEDCOM-flavoured; the meanings are strict:
 #   confirmed — actually confirmed, by attestation or the owner's verified word.
 #   proposed  — guessed by an AGENT (the import, the AI) — awaiting review.
 #   estimated — guessed by a HUMAN who wants it in the database as a guess
@@ -133,7 +132,7 @@ def _parse_dated(value: Any, key: str) -> dict[str, str] | None:
 #               confidence). Never promoted to confirmed without a source.
 # "estimated" is the only status a person may give their own guess; agents
 # must not mark their guesses estimated (they get proposed), and nothing
-# reaches confirmed without being confirmed (user, 2026-08-08).
+# reaches confirmed without being confirmed (user).
 RECORD_STATUSES = frozenset({"confirmed", "proposed", "estimated"})
 
 
@@ -171,13 +170,13 @@ class Person:
     exact date; ``occupations`` are forms attested in the artifacts.
     ``residence`` records where they lived and when — {place, from, to,
     status} — the household rule, modelled as residence events (GEDCOM X
-    alignment, 2026-08-05: a residence is the person's fact, not a place's
+    alignment: a residence is the person's fact, not a place's
     field); a deduction is proposed, never asserted."""
 
     id: str
     name: str
     aliases: tuple[str, ...] = ()
-    email: str | None = None  # the identity seam (2026-08-06): a verified Google account
+    email: str | None = None  # the identity seam: a verified Google account
     pronouns: str | None = None
     years: str = "—"
     relation: str = ""
@@ -191,7 +190,7 @@ class Person:
     # The estimated record's basis — {text, by, when}: the reviewer's own
     # words, the named person who recalled them, and the date. An estimate
     # without a basis isn't an estimate; the chip renders only what the
-    # dataset carries (user, 2026-08-09).
+    # dataset carries (user).
     basis: dict[str, str] | None = None
 
     @classmethod
@@ -281,7 +280,7 @@ class Place:
     Person). Coordinates stay null until they are known; the note is honest
     provenance, never padding. ``address`` is the written form (house name,
     street, town). Households live on the people as residence events
-    (GEDCOM X alignment, 2026-08-05), not on the place."""
+    (GEDCOM X alignment), not on the place."""
 
     id: str
     name: str
@@ -346,7 +345,7 @@ class Relationship:
     closed — the tree and the person pages branch on them. A spouse edge may
     carry the marriage date ({date, precision}, the dated-fact shape). The
     optional status distinguishes the import's proposals from a link the
-    owner has put in themselves (user, 2026-08-08): proposed = awaiting
+    owner has put in themselves (user): proposed = awaiting
     review, confirmed = the owner's call. A missing status is an asserted
     edge with no review seam."""
 
@@ -444,7 +443,7 @@ class Org:
     the Halifax Building Society). Same seam as Person/Place: confirmed in
     the identity table or proposed, one type. ``address`` and ``branch``
     are the written forms — an org's address is the org's, never a place
-    record (2026-08-05 import interview)."""
+    record."""
 
     id: str
     name: str
@@ -514,7 +513,7 @@ class Message:
     assistant's lines also carry their THINKING: the model's raw verdict,
     verbatim. Both persist, and both go back to the model on every later
     call — the model always sees the whole conversation including its own
-    reasoning (2026-08-09, user: the flow misunderstood because the model
+    reasoning (user: the flow misunderstood because the model
     couldn't see that an answer was re-answering an earlier question)."""
 
     role: Literal["user", "assistant"]
@@ -544,7 +543,7 @@ class Message:
 @dataclass(frozen=True)
 class ReviewDecision:
     """A review's outcome — the person, the disposition, and the basis
-    (2026-08-09; the decision vocabulary is not the status vocabulary:
+    (the decision vocabulary is not the status vocabulary:
     attested / estimated / pending / delete)."""
 
     person_id: str
@@ -579,7 +578,7 @@ class ReviewDecision:
 class Attempt:
     """One walk of an import review — the conversation (the messages the
     family saw) and the outcomes of that walk, separated so a diagnosis
-    never mixes walks (2026-08-09: the accumulated-mess fix)."""
+    never mixes walks."""
 
     started: str
     messages: tuple[Message, ...] = ()
@@ -611,7 +610,7 @@ class Attempt:
 class Session:
     """An import-review session — the lifecycle at a glance: the status,
     the resume point (``current``), and one attempt per walk. The archive's
-    sessions' API (2026-08-09, user: "restructure how we store the
+    sessions' API (user: "restructure how we store the
     sessions so it's more obvious to fresh agents; extend the API to cover
     them") — the class owns the wire format and the invariants: a new
     attempt starts only when the last is empty or finished; a decision
@@ -695,7 +694,7 @@ class ReviewContext:
     people (deaths, relations), the recorded items' stories, and the
     family edges. The Knowledge's converted models drop the deaths and the
     stories, so the investigation reads the raw projection through this
-    type (2026-08-09; coding-standards: groups that travel together are a
+    type (coding-standards: groups that travel together are a
     type)."""
 
     people: tuple[Person, ...]
@@ -851,9 +850,8 @@ class Item:
             raise ValueError(f"unknown date precision: {precision!r}")
         if not _viable_date(str(raw.get("date", ""))):
             # fail loudly at the write seam — an item with no viable date is
-            # invisible or misdated everywhere (2026-08-06); the whole form
+            # invisible or misdated everywhere; the whole form
             # must parse, not just the year prefix: 2026-99-99 is not a date
-            # (review, 2026-08-06)
             raise ValueError(f"date is not parseable: {raw.get('date')!r}")
         if precision == "between" and not _viable_date(str(raw.get("date2", ""))):
             raise ValueError(f"date2 is not parseable: {raw.get('date2')!r}")
@@ -913,7 +911,7 @@ def _validate_refs(refs: Any, label: str) -> None:
     Any ref may carry an involvement date — when THAT entity's involvement
     with the item happened, for long-lived documents written into over time
     (a family record's entries, a guest book's signatures, a logbook's
-    boats; 2026-08-06)."""
+    boats)."""
     for ref in refs or []:
         if not str(ref.get("id", "")).strip():
             raise ValueError(f"{label} ref missing id: {ref!r}")

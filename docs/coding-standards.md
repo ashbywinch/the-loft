@@ -46,20 +46,20 @@ good.
   question: *can a developer who never saw this conversation learn the model
   from the code alone?* ✗ the item sidecar stayed an untyped `dict` whose
   shape lived in PRD §6, TECHSPEC and a worked example while the identity
-  records (Person, Place, Org) each got a class (2026-08-05). ✓
+  records (Person, Place, Org) each got a class. ✓
   `tools/records.py` — Person/Place/Org/Relationship/Item, every closed
   vocabulary, one validation seam.
 - **Enforce at the write seam.** A path that persists state validates its
   input against the model before writing — one chokepoint, one rule; a call
   site never writes an invalid shape "just this once". ✗ `save_item`
-  validated only the id while the item shape lived in prose (2026-08-05). ✓
+  validated only the id while the item shape lived in prose. ✓
   `archive.save_item` runs `Item.from_dict` first; the archive and the model
   cannot drift.
 - **Fixtures obey the model.** Test fixtures write shapes the model accepts —
   a fixture that violates it (an item without a date, when PRD §6 requires
   every item to carry one, even approximate) masks the gap instead of
   exercising it; when new enforcement breaks old fixtures, the fixtures were
-  the bug. ✗ 14 test fixtures saving dateless items (2026-08-05). ✓ the
+  the bug. ✗ 14 test fixtures saving dateless items. ✓ the
   `_item()` fixture helper in `tests/test_archive.py` that always produces a
   valid sidecar.
 - **One formatter per artifact, decided here.** Machine-generated files are
@@ -71,7 +71,7 @@ good.
   `app/data/`, so `make format` never churns generated output. ✗ the
   projection prettier-formatted (2-space, inline arrays) while the Python
   writers emitted `indent=1` — two formatters fought and every regeneration
-  churned the diff (2026-08-04). This paragraph is the decision; a "nicer"
+  churned the diff. This paragraph is the decision; a "nicer"
   formatter is a standards change, never a local improvement.
 - **Derived data is regenerated, never hand-edited — and a test proves
   it.** Any file computed from other data (the projection `app/data`,
@@ -79,7 +79,7 @@ good.
   bug, and a test pins the committed output to what the generator produces,
   so drift fails CI instead of silently diverging. ✗ the relationships
   table hand-edited into `app/data/people.json` — it was the only copy, a
-  merge dropped it, nothing noticed (2026-08-04). ✓ `loft publish` is the
+  merge dropped it, nothing noticed. ✓ `loft publish` is the
   sole writer and `tests/test_publish.py` fails if the committed projection
   diverges from publish of the committed archive. A derived cache is never
   a migration source either: bootstrap scripts read the archive or the
@@ -95,8 +95,8 @@ good.
   a test guards that the real family's names never appear in it. ✗ the
   family's PEOPLE/RELATIONSHIPS/letters hardcoded in the old
   `tools/demo_data.py` — it forked the archive into the codebase, drifted
-  from the projection, and the relationships were lost in a merge (removed,
-  2026-08-04). ✓ `archive/people.json` (append-only, versioned) + the
+  from the projection, and the relationships were lost in a merge. ✓
+  `archive/people.json` (append-only, versioned) + the
   derivation engine; the committed projection must equal what publish
   produces, enforced by test.
 - **Never generate testimony.** A story is a person's own words, verbatim —
@@ -104,7 +104,7 @@ good.
   never framed as the narrator speaking ("Alex: …"), and never committed to
   the archive or projection as if told. ✗ the import flow's synthesized
   "seed stories" about the flat hunt and the Sundown gigs, attributed to
-  the narrator (removed, user 2026-08-03). ✓ the capture flow: the account
+  the narrator (user). ✓ the capture flow: the account
   is typed, saved verbatim, and only then linked by the AI — the AI's
   summaries stay curator prose or stay unwritten.
 - **Nothing asserted unreviewed.** The `proposed`/`confirmed` seam is product
@@ -174,7 +174,7 @@ good.
   enum living as string literals. ✗ the identity tables as raw dicts with no
   integrity checks, the proposed queue as dicts with no promotion path, dates
   as an ad-hoc string plus a stringly precision — every one a concept that
-  existed with no name to carry its invariants (2026-08-05). ✓
+  existed with no name to carry its invariants. ✓
   `tools/records.py` (`Person`, `Place`, `Relationship`, `PeopleTable`),
   `Story`/`Ref`/`Fact` in `tools/memory.py`, `Knowledge` and its member
   records. **The default is the class; the raw dict is the smell, not the
@@ -256,8 +256,8 @@ good.
   consumer must never observe a half-written file: every produced file
   (registry records, stage outputs, archive sidecars) is written to a temp
   sibling, flushed, then renamed — `tools/atomic.py` `atomic_write`, the one
-  helper, used by the store's `write_new` and by every pipeline component
-  (2026-08-13). ✗ `write_bytes` straight to the target (a reader can see the
+  helper, used by the store's `write_new` and by every pipeline component.
+  ✗ `write_bytes` straight to the target (a reader can see the
   file mid-write). ✓ temp + `os.replace`; the target appears complete or not
   at all.
 - **Deterministic checks beat model judgment.** A rule that can be checked in
@@ -285,9 +285,7 @@ good.
   comment); nothing behaves differently because of something the reader
   cannot see (module-level mutable state, order dependence, hidden timers).
   ✗ a test that only passes in a particular position, or a module whose
-  behavior depends on a module-level flag set by an earlier caller
-  (2026-08-05: a draft-save debounce leaked across tests because the timer
-  discipline lived inside one test instead of the setup). ✓ the timer
+  behavior depends on a module-level flag set by an earlier caller. ✓ the timer
   discipline in `beforeEach`/`afterEach`; `save_item` running
   `Item.from_dict` first; the record classes owning their invariants
   ("Domain concepts are classes" above). If a comment must explain why
@@ -318,7 +316,7 @@ good.
   an operator error and is surfaced, never treated as "absent". ✗
   `tools/ai_client.py find_api_key` treated a corrupt `auth.json` as "no
   stored keys", so a miswritten file the operator *had* fixed read as a plain
-  missing key (2026-08-16). ✓ the corrupt file now raises
+  missing key. ✓ the corrupt file now raises
   `AIClientError("cannot read the opencode auth file <path>")` — the
   degradation message names the file.
 - **Two-tier failure messages.** A user-facing failure emits a plain-language
@@ -337,9 +335,9 @@ good.
 
 - ruff with `select = E,F,I,UP,B,SIM,N`, line-length 120, double quotes.
 - pyrefly (`pyrefly.toml`, `preset = "default"`), gated inside `make test`
-  on zero errors (2026-08-13, replacing basedpyright).
+  on zero errors (replacing basedpyright).
 - **A type-checker flag is fixed with a cast only when the cast NARROWS a
-  value the code has already proven (2026-08-10).** The one legitimate
+  value the code has already proven.** The one legitimate
   shape is validate-then-narrow: the runtime immediately before the cast
   raised (or returned 400, or exhaustively checked) on any value outside
   the target set, and the cast tells the type-checker what the check
@@ -382,7 +380,7 @@ good.
   after a verb ("publish", "derive", "import"), a transport medium
   ("email"), or out-of-domain jargon ("elicitation" — the UI's word is
   memory). When the UI has a word for a concept, the code uses the same
-  word (2026-08-06: import_email.py → Archive.capture_document, after the
+  word.
 
 - **A class names the object, never its serialisation — no `File` suffix.**
   Any object can be written to a file; "File" is the transport, not the
@@ -392,9 +390,9 @@ good.
   `UserRowAdjustmentsFile` — the shape's name described the storage. ✓
   `tools/schemas.py`'s `Rows`, `RawWords`, `UserRowAdjustments` — the
   name says what the data IS; the `.json` file suffix is just one
-  serialisation of it. (2026-09-19, user: "Any object can be a file if
+  serialisation of it. (user: "Any object can be a file if
   you serialise it.")
-**Web servers are FastAPI + uvicorn** (2026-08-06, houses parity): the
+**Web servers are FastAPI + uvicorn** (houses parity): the
   framework owns request parsing — query decoding, cookies, JSON bodies,
   redirects — which the former hand-rolled http.server handler
   reimplemented wrong one at a time (the auth bug class: a percent-encoded
@@ -440,7 +438,7 @@ a check is a wish:
   `loft eval-memory`. The CLI constructs the nouns and calls the methods; a
   module's argv handling lives in the subcommand, never in the module
   (the old `tools/demo_data.py` ignored its argument and silently
-  regenerated the real projection in `app/data` — 2026-08-04). ✓
+  regenerated the real projection in `app/data`). ✓
   `loft` forwards argv by construction.
 
 ## JavaScript (`app/`)

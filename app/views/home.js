@@ -11,7 +11,7 @@ function todayMoment(items) {
   for (const item of items) {
     // A story's moment-worthy date is the events' date, never the day it was
     // told: a story whose date equals its recorded/created stamp has no
-    // distinct event date and is not an anniversary (2026-08-05).
+    // distinct event date and is not an anniversary.
     if (item.type === "story") {
       const told = (item.recorded || item.created || "").slice(0, 10);
       if (told && told === item.date) continue;
@@ -27,12 +27,12 @@ function todayMoment(items) {
   if (!best) return null;
   // The anniversary that just passed is `delta` days before today; derive the
   // elapsed years from it, not the current calendar year, so a Dec 31 item
-  // read on Jan 1 keeps its correct year (review: off-by-one at New Year).
+  // read on Jan 1 keeps its correct year.
   const anniversary = new Date(now.getFullYear(), now.getMonth(), now.getDate() + best.delta);
   const years = anniversary.getFullYear() - Number.parseInt(best.item.date.slice(0, 4), 10);
   // An anniversary requires a past year: an item dated this year (a story
   // told this week) is not history — "0 years ago this week" is a lie, and a
-  // fresh testimony is not a memory card (2026-08-05).
+  // fresh testimony is not a memory card.
   if (years < 1) return null;
   const when =
     best.delta === 0
@@ -48,7 +48,7 @@ function todayMoment(items) {
 }
 
 export function render(main, _ctx, state) {
-  main.append(header("The Loft", state)); // the top bar: title + the identity (2026-08-06)
+  main.append(header("The Loft", state)); // the top bar: title + the identity
   // drafts are for the person who claimed them; sensitive items (PRD §6/§10)
   // are catalogued and searchable but never on serendipity surfaces
   const items = published(state.items).filter((it) => !it.sensitive);
@@ -75,7 +75,7 @@ export function render(main, _ctx, state) {
     ),
   );
   // The review door appears when there are batches awaiting review — a
-  // different use case from browsing (user, 2026-08-15), but the same app
+  // different use case from browsing (user), but the same app
   // and the same auth. The fetch is fire-and-forget: a 401 means the user
   // isn't signed in (no review to show), and an empty response means no
   // work to do.
@@ -184,12 +184,12 @@ export function render(main, _ctx, state) {
 }
 
 /** The owner's unfinished stories — where they find them after dinner
- *  (user, 2026-08-03): drafts render ONLY here and on their own page, never
+ *  (user): drafts render ONLY here and on their own page, never
  *  among the archival views. Once logins exist, this follows the login. A
  *  fresh window (no remembered narrator) is asked who they are first — the
  *  drafts are claimed by name, so incognito can still find them. */
 
-/** The unfinished import session (user, 2026-08-07): the front page shows
+/** The unfinished import session (user): the front page shows
  *  the session the import left behind — never the pending people list
  *  itself. The review (confirm/dismiss) lives at #/import/<id>. Visible
  *  only to the signed-in owner. */

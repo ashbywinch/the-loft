@@ -75,8 +75,7 @@ def test_separated_lines_never_merge(tmp_path: Path) -> None:
 
 def test_page_edge_shading_does_not_measure_as_a_line(tmp_path: Path) -> None:
     """A dark band on the page's last rows is scan/binding edge shading,
-    not writing — it drops instead of measuring as a full-width line
-    (page-02, 2026-09-09: the edge band refused the page)."""
+    not writing — it drops instead of measuring as a full-width line."""
     page = tmp_path / "page.png"
     img = Image.new("L", (1000, 800), 255)
     draw = ImageDraw.Draw(img)

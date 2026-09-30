@@ -1,6 +1,6 @@
 # UI Pattern Library — tokens and components
 
-- **Status:** guidelines (2026-08-03). The one way to style the app: components
+- **Status:** guidelines. The one way to style the app: components
   reference semantic tokens only, and new UI goes through the classes below —
   a new component style requires updating this library (the design-system
   counterpart of the archive library, docs/CHAT-UX.md, docs/PRD/MEMORIES.md).
@@ -47,7 +47,7 @@ Semantic tokens only — components never hard-code values:
    in a component rule is a gap — use the token.
 2. **Never invent a parallel button/input/bubble style.** If `.btn` /
    `.field` / `.bubble` don't fit, extend them here — that is the mechanism
-   that keeps the app consistent (user, 2026-08-03).
+   that keeps the app consistent (user).
 3. **The primary action stands out.** The flow-ending action is
    `.btn-primary`; supporting actions are quiet `.btn`.
 4. **Touch targets ≥ 44px**; contrast on the beige palette; respect
@@ -55,7 +55,7 @@ Semantic tokens only — components never hard-code values:
 5. **Chat surfaces go through `app/chat.js`** (docs/CHAT-UX.md) — the
    components are the styling layer under it.
 
-## Components added by the 2026-08-05/06 rounds (all in styles.css)
+## Added components (all in styles.css)
 
 - `.period` / `.period-summary` — the timeline's count-sized periods: the
   range (serif, accent), the theme hook (italic serif), the entry count

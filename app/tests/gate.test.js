@@ -6,7 +6,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("the boot gate (2026-08-06)", () => {
+describe("the boot gate", () => {
   it("is a definitive 'not authenticated' that gates the archive", async () => {
     vi.stubGlobal(
       "fetch",

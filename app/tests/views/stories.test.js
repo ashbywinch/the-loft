@@ -43,7 +43,7 @@ describe("theme page stories block", () => {
   });
 });
 
-describe("theme render-once (2026-08-06)", () => {
+describe("theme render-once", () => {
   it("a story curated into the theme's arrangement never repeats in Memories", () => {
     const arrangedTheme = { ...theme, items: [{ id: "story-1", note: "the boat years" }] };
     const main = document.createElement("main");
@@ -62,7 +62,7 @@ describe("theme render-once (2026-08-06)", () => {
   });
 });
 
-describe("themes door naming (2026-08-06, Eli walk)", () => {
+describe("themes door naming", () => {
   it("heads the page 'Themes' — matching the door, not 'Stories'", () => {
     const main = document.createElement("main");
     render(main, {}, { items: [], themes: [], people: [], places: [], byId: new Map() });
@@ -77,7 +77,7 @@ describe("themes door naming (2026-08-06, Eli walk)", () => {
   });
 });
 
-describe("theme list labels (2026-08-06, Eli walk)", () => {
+describe("theme list labels", () => {
   it("a seeded theme says 'the collection is still arriving' — never 'seeded'", () => {
     const main = document.createElement("main");
     render(

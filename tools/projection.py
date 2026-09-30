@@ -74,7 +74,7 @@ def identity(archive: Archive, name: str) -> dict[str, Any]:
     Validated on the way out (unique ids, required fields, every
     relationship resolves, kinds closed) with the archive-internal
     ``supersedes`` chain stripped — the projection is content, the chain is
-    not (2026-08-04 review finding: people.json shipped 'supersedes')."""
+    not."""
     table = archive.get_identity(name)
     if table is None:
         raise DeriveError(f"archive has no {name} identity table")
@@ -228,10 +228,9 @@ def _validate_refs(
     projection — a ref to an entity the reader cannot see is dangling.
     Items are the special case: a draft artifact is hidden from everyone
     but its owner, so a confirmed item ref to a draft (or missing) target
-    is dangling even though the item exists (2026-08-05: story-2026-08-03-05
-    confirmed a draft object-sb-mirosa). A theme record's curated items
-    list must resolve too — a tombstoned letter left in a theme is a
-    dangling card (2026-08-05)."""
+    is dangling even though the item exists. A theme record's curated
+    items list must resolve too — a tombstoned letter left in a theme is a
+    dangling card."""
     item_ids = {it["id"] for it in items}
     by_id = {it["id"]: it for it in items}
     known = {
@@ -333,7 +332,7 @@ def _require_catalogued(
 
 def _check_theme_items(themes: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> None:
     """A theme record's curated items list must resolve too — a tombstoned
-    letter left in a theme is a dangling card (2026-08-05)."""
+    letter left in a theme is a dangling card."""
     for theme in themes.get("themes") or []:
         for entry in theme.get("items") or []:
             eid = entry.get("id")

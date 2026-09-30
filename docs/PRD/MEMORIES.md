@@ -1,6 +1,6 @@
 # Story & Fact Capture — "Add your memory" (Feature PRD)
 
-- **Status:** requirements (the flow shipped 2026-08-03 →; mechanics in
+- **Status:** requirements (the flow shipped; mechanics in
   `TECHSPEC.md` §3/§4/§16.9/§16.11/§16.12)
 - **Companions:** `PRD.md` §19 (story harvest), `TECHSPEC.md` §16.9/
   §16.11/§16.12 (mechanics), `docs/PLAN/PLAN.md`
@@ -106,47 +106,46 @@ anyone else; curation is a role anyone can hold, not a person record.
 ## What a memory is (content rules)
 
 - **A memory is a story, not a new kind of thing** — a story item like any
-  other artifact (user, 2026-08-03). It can respond to an artifact or to
+  other artifact (user). It can respond to an artifact or to
   another story. The page the narrator started from becomes a proposed
   link — the narrator's own aboutness evidence.
-- **`date` = the events, `recorded` = when told** (user, 2026-08-03): the
+- **`date` = the events, `recorded` = when told** (user): the
   timeline places the memory with its subject matter. Precision is honest
   when the narrator cannot say (PRD req 5). **The date is never defaulted
   to the telling day** — the flow always asks for the events' date
-  (non-skippable) and never lets the telling day stand in for it (2026-08-05:
-  fabricated telling-day dates shipped and the moment card served "0 years
-  ago this week"; enforced in elicitation and guarded by tests).
+  (non-skippable) and never lets the telling day stand in for it
+  (enforced in elicitation and guarded by tests).
 - **A story is the narrator's own words, verbatim — never generated
-  testimony** (PRD §10, user, 2026-08-03). No generated content is ever
+  testimony** (PRD §10, user). No generated content is ever
   attributed to a person; an AI's summary is curation prose, never narrator
   testimony.
-- **Facts are stories too** (user, 2026-08-03): a terse fact ("her birthday
+- **Facts are stories too** (user): a terse fact ("her birthday
   was 12 March 1928") is a verbatim story item; the AI's extraction proposes
   entity-field updates (dates of birth, aliases, relationships, place
   precision) that the review confirms or drops.
 - **Clarification fragments and reflections** are story-shaped records with
-  a flag, not a new type (2026-08-06). A clarification asserts an identity
+  a flag, not a new type. A clarification asserts an identity
   fact ("Lex is an alias of Alex") and renders **only on the pages it
   attests** — never on the timeline. A reflection is the narrator's
   perspective, has no events' date other than its telling day, and renders
   **only on the pages it mentions** — never on the timeline. A story is one
   or the other, never both; each must reference its target.
-- **Verification is the review, not a later gate** (user, 2026-08-03):
+- **Verification is the review, not a later gate** (user):
   every AI guess enters proposed and the operator flips it in the same
   flow's review — kept = confirmed, dropped = gone. A completed, reviewed
   save is live immediately; an abandoned one stays a draft with proposed
   refs (nothing asserted unreviewed, P4).
-- **Attribution** (2026-08-06): the narrator IS the signed-in identity;
+- **Attribution:** the narrator IS the signed-in identity;
   signed out, the flow asks them to sign in. The contributor names
   themselves — autocomplete over the cast (names + aliases) — and a name
   that matches nobody is a **new proposed person**: the assistant says so
   and asks how they are connected to the family, unless the story already
   makes it obvious.
-- **Organisations and memorabilia are story links too** (2026-08-05): a
+- **Organisations and memorabilia are story links too:** a
   story may reference organisations and objects, with the same
   propose/confirm refs — one content model, two capture flows (IMPORT-PRD
   §2.5).
-- **A known object family is disambiguated, never guessed** (2026-08-06):
+- **A known object family is disambiguated, never guessed:** a
   when an account references a family of known objects without naming one
   ("we were on the boat"), the flow asks which — "Which boat?" — rather
   than assuming. An object link is an assertion; the name comes from the
@@ -154,7 +153,7 @@ anyone else; curation is a role anyone can hold, not a person record.
   that names it.
 - **Display:** a told account reads as **"Memory"** with its "told by /
   told <date>" stamp on every card — never "Story", which reads like
-  another scanned document to a visitor (user, 2026-08-03).
+  another scanned document to a visitor (user).
 - **Privacy:** the AI's reading never happens on the reader's device;
   family content leaves the household machine only for the explicitly
   requested AI call (house rule; §7 — no third-party cloud processing of

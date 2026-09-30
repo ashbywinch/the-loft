@@ -5,8 +5,8 @@ The JSON contract: the VLM returns {"segments": [{id, type, transcript?,
 word_ids, injection_point?}]} over the numbered render. This module validates
 it deterministically — a garbage response is a loud failure, never a silent
 merge (the plan's reconciliation), and it builds the prompt from the segment
-definition the user pointed to (L3 as amended 2026-09-09: a segment is a
-logically consecutive run of writing).
+definition the user pointed to (L3: a segment is a logically consecutive
+run of writing).
 
 Pure: no model call, no network, no image — the numbered render is the
 caller's; here live the words of the contract.

@@ -40,7 +40,7 @@ describe("person-centred family tree (PRECEDENT.md §5)", () => {
     expect(childBand.textContent).toContain("Alex Hale");
   });
 
-  it("every card re-centres the tree; the focus card grows an explicit open button (2026-08-06)", () => {
+  it("every card re-centres the tree; the focus card grows an explicit open button", () => {
     const main = renderAt("p-alex");
     // one action per card — the focus card is no longer a second kind of target
     const focusCard = main.querySelector(".tree-focus .tree-card");
@@ -71,7 +71,7 @@ describe("person-centred family tree (PRECEDENT.md §5)", () => {
     expect(defaultFocus(STATE)).toBe("p-dad");
   });
 
-  it("prefers the narrator when they are in the tree — never ancient history (2026-08-05)", () => {
+  it("prefers the narrator when they are in the tree — never ancient history", () => {
     // defaultFocus(STATE) alone lands on the most-connected person, which with
     // a deep archive is a 19th-century hub nobody recognises. The narrator
     // ("you") is the sensible first centre; the most-connected is the fallback.
@@ -79,7 +79,7 @@ describe("person-centred family tree (PRECEDENT.md §5)", () => {
     expect(defaultFocus(STATE, "p-hartley")).toBe("p-dad"); // teacher — no family edge
   });
 
-  it("the narrator is the signed-in person, never a claimed name (2026-08-06)", () => {
+  it("the narrator is the signed-in person, never a claimed name", () => {
     const main = renderAt("p-alex", { person: "p-alex" });
     expect(main.querySelector(".tree-path")).toBeNull(); // you're home
   });
@@ -90,7 +90,7 @@ describe("person-centred family tree (PRECEDENT.md §5)", () => {
     expect(main.querySelector(".tree-focus .tree-name").textContent).toBe("Alex Hale");
   });
 
-  it("flags cards with links beyond the current view (2026-08-05)", () => {
+  it("flags cards with links beyond the current view", () => {
     // Looking at ancient history, a card's family continues off-screen — the
     // card must say so. Owen has a spouse and a child that Miles's view
     // cannot show: "+2 more".
@@ -101,7 +101,7 @@ describe("person-centred family tree (PRECEDENT.md §5)", () => {
     expect(ireneCard.textContent).not.toContain("more");
   });
 
-  it("marks the person who leads back to the narrator (2026-08-05)", () => {
+  it("marks the person who leads back to the narrator", () => {
     // From Miles's generation the way back to Alex is through Owen — the
     // card must say so, and only that card.
     const main = renderAt("p-miles", { person: "p-alex" });
@@ -127,7 +127,7 @@ describe("person-centred family tree (PRECEDENT.md §5)", () => {
   });
 });
 
-describe("tree card life lines (2026-08-06)", () => {
+describe("tree card life lines", () => {
   it("shows dates on cards so same-name people differ", () => {
     const state = {
       people: [
@@ -160,7 +160,7 @@ describe("tree card life lines (2026-08-06)", () => {
   });
 });
 
-describe("the path to you (2026-08-06)", () => {
+describe("the path to you", () => {
   it("shows the route from the focus to the narrator; hops re-centre, the endpoint opens the record", () => {
     const main = renderAt("p-miles", { person: "p-alex" });
     {
@@ -201,7 +201,7 @@ describe("the path to you (2026-08-06)", () => {
   });
 });
 
-describe("proposed people are not family until confirmed (2026-08-07, user)", () => {
+describe("proposed people are not family until confirmed (user)", () => {
   // p-proposed is the ONLY link between p-dad and p-mum — the graph must not
   // place or route through an unconfirmed identity
   const onlyThroughProposed = () => ({

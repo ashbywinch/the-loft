@@ -19,7 +19,7 @@ const state = (items) => ({
   byId: new Map(items.map((item) => [item.id, item])),
 });
 
-describe("draft privacy (review, 2026-08-03: the banner's claim must be true)", () => {
+describe("draft privacy — the banner's claim must be true", () => {
   afterEach(() => localStorage.clear());
 
   const draftItem = () =>
@@ -46,8 +46,8 @@ describe("draft privacy (review, 2026-08-03: the banner's claim must be true)", 
     render(main, { arg: "story-d1", query: new URLSearchParams() }, peopleState([draftItem()]));
     expect(main.textContent).toContain("Unfinished");
     expect(main.textContent).not.toContain("The secret half-told account"); // the unverified words stay hidden
-    expect(main.textContent).not.toContain("The secret half-told"); // the title stays hidden too (reviewer, 2026-08-03)
-    expect(main.textContent).not.toContain("The private what-is-this line."); // the description too (reviewer, 2026-08-07)
+    expect(main.textContent).not.toContain("The secret half-told"); // the title stays hidden too
+    expect(main.textContent).not.toContain("The private what-is-this line."); // the description too
     expect(main.textContent).not.toContain("Details");
   });
 
@@ -111,7 +111,7 @@ describe("item view", () => {
     expect(main.querySelector(".transcription-text").textContent).toBe("Some machine-read text");
   });
 
-  it("labels a story item as Memory in the Type row (2026-08-03)", () => {
+  it("labels a story item as Memory in the Type row", () => {
     const main = document.createElement("main");
     render(main, { arg: "item-x", query: new URLSearchParams() }, state([makeItem({ type: "story" })]));
     const dd = [...main.querySelectorAll(".details div")]
@@ -120,7 +120,7 @@ describe("item view", () => {
     expect(dd?.textContent).toBe("Memory");
   });
 
-  it("never surfaces a sensitive item in Nearby in the archive (PRD §6, 2026-08-03)", () => {
+  it("never surfaces a sensitive item in Nearby in the archive (PRD §6)", () => {
     const main = document.createElement("main");
     const item = makeItem({ people: [{ id: "p-nora" }] });
     const sensitive = makeItem({
@@ -333,7 +333,7 @@ describe("item view", () => {
     expect(details.textContent).toContain("Sunlight");
 
     // the artifact's page lists the story in Referenced by — an items ref
-    // is an attestation, not a response (2026-08-06, render-once)
+    // is an attestation, not a response (render-once)
     const main2 = document.createElement("main");
     render(main2, { arg: "object-sunlight", query: new URLSearchParams() }, st);
     const responses = [...main2.querySelectorAll(".block")].find(
@@ -347,7 +347,7 @@ describe("item view", () => {
   });
 });
 
-describe("draft exposure (user, 2026-08-03: a draft is for the person who claimed it)", () => {
+describe("draft exposure (user: a draft is for the person who claimed it)", () => {
   afterEach(() => {
     localStorage.clear();
   });
@@ -396,7 +396,7 @@ describe("draft exposure (user, 2026-08-03: a draft is for the person who claime
 });
 
 describe("item description", () => {
-  it("renders the description under the title (2026-08-05)", () => {
+  it("renders the description under the title", () => {
     const main = document.createElement("main");
     render(
       main,
@@ -443,7 +443,7 @@ describe("item clarification fragments", () => {
 });
 
 describe("item sources", () => {
-  it("renders web sources as hyperlinks with their access dates (2026-08-06)", () => {
+  it("renders web sources as hyperlinks with their access dates", () => {
     const main = document.createElement("main");
     render(
       main,
@@ -462,7 +462,7 @@ describe("item sources", () => {
   });
 });
 
-describe("item back links (2026-08-06)", () => {
+describe("item back links", () => {
   it("shows the items that reference this one — all links are bidirectional", () => {
     const story = {
       id: "story-1",
@@ -489,7 +489,7 @@ describe("item back links (2026-08-06)", () => {
   });
 });
 
-describe("item responses vs referenced-by (2026-08-06)", () => {
+describe("item responses vs referenced-by", () => {
   it("an items-ref story renders once — in Referenced by, never in Responses", () => {
     const attesting = {
       id: "story-1",
@@ -521,7 +521,7 @@ describe("item responses vs referenced-by (2026-08-06)", () => {
   });
 });
 
-describe("response-with-items-ref renders once (2026-08-06)", () => {
+describe("response-with-items-ref renders once", () => {
   it("an item that is both a response and an items-ref appears only in Responses", () => {
     const both = {
       id: "story-2",

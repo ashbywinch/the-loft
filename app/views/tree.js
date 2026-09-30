@@ -17,7 +17,7 @@ const FAMILY_KINDS = new Set(["spouse", "parent", "sibling", "inlaw"]);
  *  (approx reads "circa 1790–circa 1862"), else the short "b. 1828" /
  *  "d. 1909" forms. Year-granularity: a tree card must stay short enough
  *  to sit two-to-a-row on a phone — a full "b. 12 Aug 1820" wraps to three
- *  lines and stretches the row (2026-08-06, user). The person page keeps
+ *  lines and stretches the row (user). The person page keeps
  *  the full dates. */
 function lifeLine(person) {
   const dob = person.dob;
@@ -32,7 +32,7 @@ function lifeLine(person) {
 
 /** The people the tree can place — those with at least one family edge. */
 /** The import's unconfirmed person ids — never family until the owner
- *  confirms them (2026-08-07, user: proposed people are a pending import). */
+ *  confirms them (user: proposed people are a pending import). */
 function proposedIds(state) {
   return new Set((state.people ?? []).filter((p) => p.status === "proposed").map((p) => p.id));
 }
@@ -71,7 +71,7 @@ export function defaultFocus(state, preferredId = null) {
 }
 
 /** The undirected family graph — the tree's placement and the path clues
- *  (2026-08-06: extracted so render() can trace the route without a second
+ *  (render() traces the route through it without a second
  *  build). */
 export function familyGraph(state) {
   const family = new Map();
@@ -119,7 +119,7 @@ export function pathTo(family, from, to) {
 /** The signed-in narrator's person id — the target of the "leads back to
  *  you" clue and the preferred first centre. Null when not signed in: the
  *  tree opens on the most-connected person and no path bar renders — the
- *  identity is the verified session, never a claimed name (2026-08-06). */
+ *  identity is the verified session, never a claimed name. */
 export function narratorId(state) {
   return me(state)?.person ?? null;
 }
@@ -132,7 +132,7 @@ export function buildTree(state, focusId, opts = {}) {
   if (!person) return el("p", { class: "empty" }, "Person not found.");
 
   // The undirected family graph — the tree's placement and the "unseen
-  // links" / "leads back to you" clues (2026-08-05).
+  // links" / "leads back to you" clues.
   const family = familyGraph(state);
   const proposed = proposedIds(state);
 
@@ -169,7 +169,7 @@ export function buildTree(state, focusId, opts = {}) {
       "a",
       {
         // every card moves the tree — one action per card, never a link
-        // inside a link (2026-08-06, UX walk 3): the open action lives in
+        // inside a link: the open action lives in
         // the button the focus card grows
         class: "tree-card",
         href: `#/tree?person=${id}`,
@@ -190,8 +190,7 @@ export function buildTree(state, focusId, opts = {}) {
       card(id),
       // the affordance-on-selection (the map-pin / MyHeritage pattern): the
       // centred card grows its open action, so no target hides a second
-      // meaning (2026-08-06, UX walks 2+3: "the centre card opens their
-      // page" was learned only by trial)
+      // meaning
       el("a", { class: "tree-open", href: `#/person/${id}` }, "Open their page"),
     ]);
   };
@@ -221,7 +220,7 @@ export function buildTree(state, focusId, opts = {}) {
     "div",
     { class: "tree-ego" },
     // drop null bands — an empty band renders as a literal "null" text node
-    // (cast.js convention; review, 2026-08-03)
+    // (cast.js convention)
     [
       band("Parents", parents),
       centre,
@@ -234,7 +233,7 @@ export function buildTree(state, focusId, opts = {}) {
 }
 
 /** The path bar — "The path to you: …" (the breadcrumb pattern from the
- *  research, 2026-08-06): each hop re-centres the tree, the narrator's name
+ *  research): each hop re-centres the tree, the narrator's name
  *  links to their record. Full trail up to five hops; beyond that the middle
  *  collapses to an ellipsis — the first and last steps carry the route. Only
  *  when the narrator is known, reachable, and not the focus. */

@@ -7,7 +7,7 @@ itsdangerous (30 days, survives restarts). The callback URL is the LAN
 address the server prints — Google's OAuth client accepts the registered IP
 callback (houses does the same). The person is resolved server-side from the
 verified email against the archive's people records (Person.email) — the
-    identity lives in the DB, never in code (user).
+identity lives in the DB, never in code (user).
 
 Routes (mounted on the Server's handler):
   GET  /api/auth/login     -> {auth_url} (start the flow)

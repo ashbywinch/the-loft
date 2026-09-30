@@ -1,12 +1,11 @@
 # SQLite-as-projection migration plan
 
-Status: agreed direction (2026-08-09, user), revised after review (2026-08-09,
-user: the frontend cannot fetch from the big archive disk — assets need their
-own projection; and the user's app-authored additions must flow back into the
-archive as part of the sync). Supersedes the per-event-file design in
-`docs/archive-concurrency-plan.md` (which a DBA critique rejected — its
-findings are the bomb-proofing table below; the full critique was session-local
-and is not in this repo).
+Status: agreed direction (user), revised after review (user: the frontend
+cannot fetch from the big archive disk — assets need their own projection;
+and the user's app-authored additions must flow back into the archive as part
+of the sync). Supersedes the per-event-file design in
+`docs/archive-concurrency-plan.md` (the DBA critique's findings are the
+bomb-proofing table below).
 Research: `research/archive-longevity-research.md`.
 
 ## The topology
@@ -104,10 +103,10 @@ plain-text archive (big disk — system of record, append-only)
 ## Concurrency story
 
 - **The app writes only the DB** — SQLite's problem, solved by SQLite: WAL
-  mode, one writer, `busy_timeout`, transactions. The 2026-08-09 crash
-  (concurrent rewrites of a shared JSON table) cannot recur: the app's writes
-  are DB transactions, and the archive side is content-independent appends
-  done by the single sync writer.
+  mode, one writer, `busy_timeout`, transactions. Concurrent rewrites of a
+  shared JSON table cannot recur: the app's writes are DB transactions, and
+  the archive side is content-independent appends done by the single sync
+  writer.
 - **The archive has one writer kind for app content** — the sync (plus the
   CLI, which writes distinct versioned files). The atomic create-if-absent
   store primitive claims versions; collisions mean re-claim. The old

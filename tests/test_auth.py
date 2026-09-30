@@ -1,4 +1,4 @@
-"""The identity seam (2026-08-06): the Google session cookie round-trips,
+"""The identity seam: the Google session cookie round-trips,
 the archive's email mapping resolves the narrator, and the login endpoint
 fails honestly when the OAuth client isn't configured."""
 
@@ -114,7 +114,7 @@ def test_device_grant_round_trip_state(monkeypatch: pytest.MonkeyPatch) -> None:
     assert ok["status"] == "ok"
     assert ok["id_info"]["email"] == "alex.hale@example.com"
     # the grace window: a lost poll response (the phone's network) must be
-    # able to re-issue the minted session — then it expires (2026-08-06)
+    # able to re-issue the minted session — then it expires
     again = auth.poll_device_grant(
         started["state"],
         _post=lambda url, data: {"id_token": "jwt"},
@@ -127,7 +127,7 @@ def test_device_grant_round_trip_state(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_minted_session_grace_window(monkeypatch: pytest.MonkeyPatch) -> None:
     """The complete endpoint's source: the minted session, while the grace
-    holds — then gone (2026-08-06)."""
+    holds — then gone."""
     # lucidlint: ignore monkeypatch the device client config is the env seam the flow reads
     monkeypatch.setenv("THE_LOFT_GOOGLE_DEVICE_CLIENT_ID", "device-client")
     # lucidlint: ignore monkeypatch same env seam — the pair configures the device client

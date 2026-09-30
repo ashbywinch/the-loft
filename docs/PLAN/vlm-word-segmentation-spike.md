@@ -1,13 +1,13 @@
 # Spike: VLM-word-segmentation — numbered word boxes, VLM segments
 
-Status: spike (not committed to as the product path). Started 2026-09-12;
-milestones 1–3's code landed in `tools/` (commit 29ae5ad: the numbered
+Status: spike (not committed to as the product path). Milestones 1–3's
+code landed in `tools/` (commit 29ae5ad: the numbered
 renderer `tools/word_numbering.py`, the schema `tools/spike_vlm_contract.py`).
 The trace-gold was superseded by the rows adjudication (`tests/fixtures/
-page01-rows-gold/`, 2026-09-18 — `row-data-migration-plan.md`). The
+page01-rows-gold/` — `row-data-migration-plan.md`). The
 model-call milestones (4–5) and the report never landed: the spike's
 kind/injection vocabulary was absorbed into the pipeline-stages agreement
-(2026-09-19) — the VLM decides interjections and their injection targets
+— the VLM decides interjections and their injection targets
 at transcription, and the Document schema carries `kind` +
 `injection_target`.
 
@@ -71,7 +71,7 @@ no transcript to it; it exists so the word ids reconcile).
   ids.
 
 - `transcript` carries the page's formatting AS MARKERS, the existing
-  convention (2026-08-16, `design-decisions.md`; prompted in `tools/vlm.py`
+  convention (`design-decisions.md`; prompted in `tools/vlm.py`
   and `tools/segment_page.py`; rendered in `app/markdown.js`): a word the
   writer crossed out is `~~word~~` (double tilde — GFM's strike), a word the
   writer underlined is `~word~` (single tilde — the deliberate in-house
@@ -194,8 +194,7 @@ spike is judged against them):
   library) until the contract settles.
 ## Rulings while starting (2026-09-12) — the definitions that landed
 
-The session that started implementation settled every open mechanic. All
-user rulings:
+All user rulings:
 
 1. **The judgement is attribution.** The correct output: "the model
    correctly attributes every word to the correct segment, as adjudicated
@@ -230,7 +229,7 @@ user rulings:
    served strip-path layout. "Ideally this path produces correct results
    and then it's better than geometry by definition."
 8. **The word set.** The /tmp-era copy (346 words) contained the 526×492
-   "grey mass" — already ruled not-a-word (commit 7f3d4aa, 2026-09-11:
+   "grey mass" — already ruled not-a-word (commit 7f3d4aa:
    components over 2.5× the spacing are unclaimed ink). The fresh reader
    run emits 455 marks, the blob split into per-line pieces. The user
    confirmed the detection "mostly fine"; a couple of stacked words
@@ -238,12 +237,12 @@ user rulings:
    finder vs. let the VLM point them out and fix after the fact).
 9. **Detection state.** `tools/reader.py`'s trace path was broken — it
    constructed the old `Mark(strokes=…)` shape; `Trace` (`tools/trace.py`)
-   is the class. Fixed 2026-09-12 (import + two renames); the tests had
+   is the class. Fixed (import + two renames); the tests had
    passed only because they ran with empty strokes. Word detection's home:
    `tools/reader.py` (`read_page`), `tools/mark.py` (`find_marks`,
    `baseline_row`, `waistline_row`), `tools/pagescale.py` (the ruler).
-   The find-it path is being added to AGENTS.md's decision tree — this
-   session's organisation lesson: the detection was undiscoverable, three
+   The find-it path is being added to AGENTS.md's decision tree — an
+   organisation lesson: the detection was undiscoverable, three
    stale pycs under the dead boxdet/boxrows names.
 10. **Data lives in the repo.** Inputs moved from `/tmp/trace` to
     `tests/fixtures/page01-wordseg/` (`strokes.json` — the 44 raw traces,

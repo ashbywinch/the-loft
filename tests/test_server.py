@@ -66,16 +66,16 @@ class ServerFixture:
         self.data_dir: Path = data_dir
         self._reprocess: Any | None = _reprocess
         # the session secret before any app build — the server refuses to
-        # start without it (2026-08-14 review: forgeable sessions otherwise)
+        # start without it (forgeable sessions otherwise)
         import os
 
         os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
         # the sync surfaces are bound to tmp dirs, never the real workspace
-        # (2026-08-14 review: the endpoints must not touch the home disk in tests)
+        # (the endpoints must not touch the home disk in tests)
         self.work_dir: Path = data_dir.parent / "work"
         self.outbox: Outbox = Outbox(data_dir.parent / "outbox")
         self.registry_dir: Path = data_dir.parent / "registry"
-        # the identity seam (2026-08-06): the archive's people carry the
+        # the identity seam: the archive's people carry the
         # verified Google accounts; the capture API resolves the narrator
         # from the session, never from the client
         from tools.archive import Archive
@@ -96,9 +96,8 @@ class ServerFixture:
         self.archive.save_identity("places", {"places": [{"id": "pl-marlock", "name": "Marlock"}]})
         self.archive.save_identity("themes", {"themes": []})
         # the server refuses to start without a session secret (forgeable
-        # sessions, 2026-08-14 review) — the test secret must be set BEFORE
-        # create_server, not after (the old order worked locally only because
-        # the dev shell exports the secret; CI has none, 2026-08-15)
+        # sessions) — the test secret must be set BEFORE create_server, not
+        # after (the dev shell exports the secret; CI has none)
         import os
 
         os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
@@ -189,7 +188,7 @@ def test_assess_requires_the_ai(server: ServerFixture) -> None:
 
 def test_save_writes_sidecar_and_refreshes_projection(server: ServerFixture) -> None:
     """A saved contribution lands in the append-only store as a draft and the
-    projection is refreshed (drafts are committed during dev, 2026-08-03)."""
+    projection is refreshed (drafts are committed during dev)."""
     status, body = server.post(
         "/api/save",
         {
@@ -242,7 +241,7 @@ def test_save_is_append_only_through_the_store(server: ServerFixture) -> None:
 
 def test_save_attributes_to_the_session_narrator(server: ServerFixture) -> None:
     """The narrator is the verified session person — a client-claimed 'who'
-    is ignored (2026-08-06, user: google auth, no name claims)."""
+    is ignored (user: google auth, no name claims)."""
     status, body = server.post(
         "/api/save",
         {
@@ -320,8 +319,8 @@ def test_save_without_ai_keeps_a_pending_typed_date_answer_null(server: ServerFi
 def test_draft_auto_saves_supersede_in_place(server: ServerFixture) -> None:
     """The client's draft auto-saves keep ONE story id: each save supersedes
     the previous version (append-only — item.json, item-2.json, … the newest
-    wins) and the projection holds a single entry (user, 2026-08-03: a
-    reboot mid-chat loses at most the last few words)."""
+    wins) and the projection holds a single entry (user: a reboot mid-chat
+    loses at most the last few words)."""
     payload: dict[str, Any] = {
         "anchor": {"kind": "theme", "id": "t-the-boats", "name": "The boats"},
         "who": "Alex",
@@ -371,7 +370,7 @@ def test_draft_auto_saves_supersede_in_place(server: ServerFixture) -> None:
 def test_delete_tombstones_a_draft_and_drops_it_from_the_projection(server: ServerFixture) -> None:
     """Abandon: the draft is superseded with a tombstone (append-only — the
     files stay, the newest version says deleted) and vanishes from the
-    projection (user, 2026-08-03)."""
+    projection (user)."""
     status, body = server.post(
         "/api/save",
         {
@@ -408,7 +407,7 @@ def test_delete_tombstones_a_draft_and_drops_it_from_the_projection(server: Serv
 
 def test_write_apis_reject_a_foreign_origin(server: ServerFixture) -> None:
     """CSRF guard: a web page on another origin must not be able to POST to
-    the household capture server (reviewer, 2026-08-03)."""
+    the household capture server."""
     from urllib.request import Request
 
     req = Request(
@@ -448,9 +447,9 @@ def test_write_apis_reject_a_foreign_origin(server: ServerFixture) -> None:
 
 
 def test_data_files_require_a_session(server: ServerFixture) -> None:
-    """The archive's data is the private layer (2026-08-06, user: content
-    gated behind sign-in) — a session is required to read people.json, and
-    the app shell stays public so the gate can load."""
+    """The archive's data is the private layer (user: content gated behind
+    sign-in) — a session is required to read people.json, and the app shell
+    stays public so the gate can load."""
     status, body = server.get("/data/people.json")
     assert status == 401
     assert b"sign in" in body
@@ -464,7 +463,7 @@ def test_data_files_require_a_session(server: ServerFixture) -> None:
 def test_auth_callback_decodes_the_percent_encoded_code(server: ServerFixture) -> None:
     """Google returns the auth code percent-encoded (4%2F0AXE…) — the
     callback must decode it before the token exchange, or Google answers
-    'Malformed auth code' (2026-08-06, the invalid_grant)."""
+    'Malformed auth code' (the invalid_grant)."""
 
     # an unregistered state fails cleanly BEFORE the exchange — this pins
     # the decode path by driving the callback with a real encoded shape
@@ -507,7 +506,7 @@ def _seed_pending(server: ServerFixture) -> None:
 
 def test_decide_attested_flips_proposed_to_confirmed(server: ServerFixture) -> None:
     """Attested = the reviewer's own verified word — the status drops, the
-    import's relation text stays untouched (2026-08-09)."""
+    import's relation text stays untouched."""
     _seed_pending(server)
     status, body = server.post(
         "/api/review/decide", {"session_id": "import-documents", "person_id": "p-judith", "decision": "attested"}
@@ -517,7 +516,7 @@ def test_decide_attested_flips_proposed_to_confirmed(server: ServerFixture) -> N
     assert "status" not in body["person"]  # confirmed records omit the status key
     # the response carries the server's accurate remaining count — the
     # client's projection is stale until reload, so the count comes from
-    # here (user 2026-08-16: the count must always be accurate)
+    # here (user: the count must always be accurate)
     assert body["pending"] == 0  # the seed's only proposed person is now decided
     table = server.archive.get_identity("people")
     assert table is not None
@@ -527,7 +526,7 @@ def test_decide_attested_flips_proposed_to_confirmed(server: ServerFixture) -> N
 
 
 def test_decide_estimated_records_the_basis_verbatim(server: ServerFixture) -> None:
-    """Estimated = the reviewer's own words, named + dated (2026-08-09)."""
+    """Estimated = the reviewer's own words, named + dated."""
     _seed_pending(server)
     basis = {"text": "Grandma used to say this was the case.", "by": "Alex", "when": "2026-08-09"}
     status, body = server.post(
@@ -586,7 +585,7 @@ def test_decide_rejects_an_unknown_decision(server: ServerFixture) -> None:
 
 
 def test_text_requires_the_ai(server: ServerFixture) -> None:
-    """The free-text relevance check needs the model (2026-08-09)."""
+    """The free-text relevance check needs the model."""
     _seed_pending(server)
     status, body = server.post(
         "/api/review/text",
@@ -638,9 +637,8 @@ def test_decide_delete_removes_the_person_and_their_relationships(server: Server
 
 def test_decide_delete_of_an_already_resolved_person_is_a_state_not_an_error(server: ServerFixture) -> None:
     """The queue never holds resolved people — a stale delete is a state,
-    not the old "not proposed" 400 (2026-08-09); and it must not record a
-    false confirmation ("removed" when nothing was removed, 2026-08-11
-    review)."""
+    not the "not proposed" 400; and it must not record a false confirmation
+    ("removed" when nothing was removed)."""
     _seed_pending(server)
     status, body = server.post(
         "/api/review/decide", {"session_id": "import-documents", "person_id": "p-robert", "decision": "delete"}
@@ -658,11 +656,10 @@ def test_decide_delete_of_an_already_resolved_person_is_a_state_not_an_error(ser
 
 
 def test_decide_pending_on_an_already_resolved_person_is_stale_too(server: ServerFixture) -> None:
-    """2026-08-11 review: a "leave for later" on a confirmed person used to
-    fall through the stale guard and record a false kept-decision —
-    moving the session's resume point to a resolved person and even
-    marking the walk finished. The queue never holds resolved people, so
-    a keep on a never-proposed person is stale like any other decision."""
+    """A "leave for later" on an already-resolved person is stale like any
+    other decision — it must not record a kept-decision, move the session's
+    resume point to a resolved person, or mark the walk finished. The queue
+    never holds resolved people."""
     _seed_pending(server)
     status, body = server.post(
         "/api/review/decide", {"session_id": "import-documents", "person_id": "p-robert", "decision": "pending"}
@@ -679,11 +676,10 @@ def test_decide_pending_on_an_already_resolved_person_is_stale_too(server: Serve
 
 
 def test_decide_duplicate_delete_on_a_removed_person_is_a_state(server: ServerFixture) -> None:
-    """2026-08-11 review: a second delete (double-tap, two devices) for a
-    person already REMOVED from the table used to 400 ("no person") and
-    the UI showed "That didn't save" for a deletion that had already
-    succeeded. The missing-person case is the already-resolved state —
-    nothing recorded, honest message, nothing written."""
+    """A second delete (double-tap, two devices) for a person already
+    REMOVED from the table is the already-resolved state — nothing recorded,
+    honest message, nothing written, never a 400 ("no person") for a
+    deletion that already succeeded."""
     _seed_pending(server)
     status, body = server.post(
         "/api/review/decide", {"session_id": "import-documents", "person_id": "p-judith", "decision": "delete"}
@@ -717,12 +713,10 @@ def test_deciding_the_last_proposed_person_completes_the_session(server: ServerF
 
 
 def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -> None:
-    """2026-08-09 (user: "extremely bad at identifying the relevant part of
-    the document to quote when explaining the attestation"): the review's
-    facts must carry the VERBATIM transcription — the text the family sees
-    in the claim and the item page — never the sidecar's archival summary.
-    The projection used to read only the sidecar's story field, so the
-    model could not see the document's own words at all."""
+    """(user: "extremely bad at identifying the relevant part of the
+    document to quote when explaining the attestation"): the review's facts
+    must carry the VERBATIM transcription — the text the family sees in the
+    claim and the item page — never the sidecar's archival summary."""
     _seed_pending(server)
     seen: dict[str, str] = {}
 
@@ -735,7 +729,7 @@ def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -
             )
 
     # a second server over the same store, with the model client injected
-    # (DI, 2026-08-09) — the fixture's server deliberately runs clientless
+    # (DI) — the fixture's server deliberately runs clientless
     server2 = ServerFixture(server.data_dir, server.store, client=FakeChat())
     try:
         _seed_pending(server2)  # the second init re-seeded the people table
@@ -767,15 +761,13 @@ def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -
         assert status == 200
         # the response carries ONLY the UI's fields — the model's raw
         # output, tool trace, and prompt texts never reach the browser
-        # (R7; 2026-08-11 review)
+        # (R7)
         assert set(body) == {"ok", "message", "relevant", "contradiction", "confidence", "note", "findings", "question"}
         # the model's prompt carries the transcription's own words — never
         # the summary, and never a bare "no documents" note
         assert "Pearl Whitlock was the one who kept the photographs" in seen["user"]
         # AND the reviewer's own words — the loop must never overwrite the
-        # request's text with an item's content (2026-08-10 review, high:
-        # the verdict was computed against the last item's transcription and
-        # that content was persisted as the user's line)
+        # request's text with an item's content
         assert "Grandma used to say so." in seen["user"]
         imports = server2.archive.get_identity("imports")
         assert imports is not None
@@ -784,19 +776,18 @@ def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -
         user_lines = [m["text"] for m in messages if m["role"] == "user"]
         # the transcript holds the user's words verbatim, EXACTLY ONCE —
         # the record-before-the-call fix must not double them on the
-        # success path (2026-08-11 review: the line recorded twice)
+        # success path
         assert user_lines == ["Grandma used to say so."]
     finally:
         server2.close()
 
 
 def test_review_reads_transcription_only_mentions(server: ServerFixture) -> None:
-    """2026-08-11 review: the metadata pre-filter must NOT drop an item
-    whose only mention of the person lives in the verbatim transcription
-    (a draft with no people refs and no story yet) — the bounded
-    first-chunk read settles the shortlist, so the model can still attest
-    from the document's own words. The sidecar story alone must never be
-    the item's only window."""
+    """The metadata pre-filter must NOT drop an item whose only mention of
+    the person lives in the verbatim transcription (a draft with no people
+    refs and no story yet) — the bounded first-chunk read settles the
+    shortlist, so the model can still attest from the document's own words.
+    The sidecar story alone must never be the item's only window."""
     _seed_pending(server)
     seen: dict[str, str] = {}
 
@@ -838,11 +829,11 @@ def test_review_reads_transcription_only_mentions(server: ServerFixture) -> None
 
 
 def test_review_shortlist_matches_mentions_case_insensitively(server: ServerFixture) -> None:
-    """2026-08-11 review: the shortlist filter matched the person's name
-    case-sensitively against story/transcription — an item whose only
-    mention is lowercased (OCR text, an uppercase heading) was silently
-    dropped, and the document became invisible to the investigation. The
-    needles and the compared text are now lowered."""
+    """The shortlist filter matches the person's name case-insensitively
+    against story/transcription — an item whose only mention is lowercased
+    (OCR text, an uppercase heading) must not be silently dropped, or the
+    document becomes invisible to the investigation. The needles and the
+    compared text are lowercased."""
     _seed_pending(server)
     seen: dict[str, str] = {}
 
@@ -884,10 +875,8 @@ def test_review_shortlist_matches_mentions_case_insensitively(server: ServerFixt
 
 
 def test_decide_rejects_a_stale_session_before_any_mutation(server: ServerFixture) -> None:
-    """2026-08-10 review: /api/review/decide resolved and saved the person
-    BEFORE checking the session existed — a stale session_id changed the
-    archive and then returned 500. The session is now validated first:
-    a stale id gets a 404 and the person is untouched."""
+    """The session is validated before any mutation: a stale session_id gets
+    a 404 and the person is untouched."""
     _seed_pending(server)
     status, body = server.post(
         "/api/review/decide",
@@ -901,11 +890,10 @@ def test_decide_rejects_a_stale_session_before_any_mutation(server: ServerFixtur
 
 
 def test_review_text_keeps_the_words_when_the_model_call_fails(server: ServerFixture) -> None:
-    """2026-08-11 review: the family's line was recorded only AFTER the
-    model call, so an AI outage (ElicitationError) lost their words from
-    the transcript — the transcript no longer equalled what the family saw
-    (R7/R8). The line now joins the transcript the moment it arrives; the
-    failure returns 422 but the record stands."""
+    """The family's line joins the transcript the moment it arrives — an AI
+    outage (ElicitationError) must not lose their words; the transcript
+    equals what the family saw (R7/R8). The failure returns 422 but the
+    record stands."""
     _seed_pending(server)
 
     class FailingChat:
@@ -932,10 +920,9 @@ def test_review_text_keeps_the_words_when_the_model_call_fails(server: ServerFix
 
 
 def test_start_returns_the_lines_already_recorded_in_the_attempt(server: ServerFixture) -> None:
-    """2026-08-10 review (duplicate transcript on re-render): the start
-    response carries the current attempt's recorded lines, so the app
-    records only what's new — the transcript never duplicates the opening
-    or a claim."""
+    """The start response carries the current attempt's recorded lines, so
+    the app records only what's new — the transcript never duplicates the
+    opening or a claim."""
     _seed_pending(server)
     archive = server.archive
     archive.record_review_message("import-documents", "assistant", "Thanks for coming back.", "2026-08-10")
@@ -981,11 +968,10 @@ def test_sync_drafts_serves_the_guessed_texts(server: ServerFixture) -> None:
 
 def test_sync_drafts_hides_photo_only_documents(server: ServerFixture) -> None:
     """The transcription review shows only documents with a text page,
-    and only their TEXT pages (2026-08-17, user): a standalone photo has
-    nothing to transcribe — it belongs to the people/places identification
-    flow, which reads the same structure unfiltered. A two-sided item's
-    picture side stays in the structure but the review pages through only
-    its text side."""
+    and only their TEXT pages (user): a standalone photo has nothing to
+    transcribe — it belongs to the people/places identification flow, which
+    reads the same structure unfiltered. A two-sided item's picture side
+    stays in the structure but the review pages through only its text side."""
     import json as _json
 
     guess = server.work_dir / "adopt-0001" / "ocr-guess"
@@ -1174,8 +1160,8 @@ def test_sync_confirmations_rejects_a_non_numeric_doc_index(server: ServerFixtur
 
 
 def test_sync_confirmations_rejects_a_non_scalar_doc_index(server: ServerFixture) -> None:
-    """2026-08-14 review: int(doc_index) raises TypeError for non-scalars —
-    a 400 like the ValueError case, never a 500."""
+    """int(doc_index) raises TypeError for non-scalars — a 400 like the
+    ValueError case, never a 500."""
     _seed_sync_batch(server)
     status, _ = server.post(
         "/api/sync/confirmations",
@@ -1192,10 +1178,10 @@ def test_sync_confirmations_rejects_a_non_scalar_doc_index(server: ServerFixture
 
 
 def test_serve_app_factory_builds_from_the_environment(tmp_path: Path) -> None:
-    """The uvicorn factory for --reload (2026-08-16: make serve always
-    auto-reloads): the server's configuration travels via the environment
-    the CLI set, so the reloader's subprocess can rebuild the app fresh on
-    every source change."""
+    """The uvicorn factory for --reload (make serve always auto-reloads): the
+    server's configuration travels via the environment the CLI set, so the
+    reloader's subprocess can rebuild the app fresh on every source
+    change."""
     app_data = make_app_data(tmp_path)
     (tmp_path / "archive").mkdir()
 

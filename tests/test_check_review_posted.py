@@ -1,9 +1,8 @@
 """The review-posted gate's contract: the head commit counts as reviewed
 ONLY when an output artifact exists — a completed "PR Agent - Review"
 check run, or a guide/skip comment covering the commit. Nothing else:
-the action exits 0 whether or not the review happened (v0.41.1
-PRAgent.handle_request swallows every exception; the 2026-09-04 401
-incident ran to completion producing nothing), so a gate that trusts the
+the action exits 0 whether or not the review happened (PRAgent.
+handle_request swallows every exception), so a gate that trusts the
 bot's own word re-introduces the exact bug it exists to catch."""
 
 from tools import check_review_posted as gate
@@ -47,8 +46,7 @@ def _review_check(status: str) -> dict:
 def test_completed_review_check_run_covers_the_head() -> None:
     """The artifact path: the bot published its review as a check —
     covered even when the comment trail is empty. The query must target
-    the actual repo — the placeholder-repo variant 404'd in production
-    and crashed the gate (2026-09-06)."""
+    the actual repo."""
     seen: list[str] = []
 
     def hook(url: str) -> None:
@@ -126,8 +124,7 @@ def test_silent_skip_is_still_coverage_via_the_comment() -> None:
 def test_comments_fetch_filters_since_the_head_commit() -> None:
     """The comments fetch carries the since filter and a wide page: the
     guide for the head commit must be server-side visible regardless of
-    how many older comments the PR carries (2026-09-06: PR 31's guide
-    sat beyond the default first-30 page and the gate never saw it)."""
+    how many older comments the PR carries."""
     seen: list[str] = []
 
     def fetch(url: str, token: str):
@@ -149,10 +146,9 @@ def test_comments_fetch_filters_since_the_head_commit() -> None:
 
 def test_poll_catches_a_review_that_lands_moments_later() -> None:
     """The gate races the bot's publish: the guide posts at the very end
-    of the bot step and the comments API lags it by seconds. The poll must
-    re-fetch — a review that lands during the window is coverage, not a
-    failure (2026-09-06: PR 38's guide at 06:48:05Z beat the gate's first
-    fetch, failing a review that had succeeded)."""
+    of the bot step and the comments API lags it by seconds. The poll
+    must re-fetch — a review that lands during the window is coverage,
+    not a failure."""
     state = {"calls": 0}
 
     def fetch(url: str, token: str):

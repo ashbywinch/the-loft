@@ -4,7 +4,7 @@ The companion to `docs/PRD/pipeline-stages-spec.md` (the requirements).
 This is the plan only: the object model agreed first, then the typed
 scaffold, the missing surfaces, and the sequencing.
 
-**Status (2026-09-22):** the rows foundation landed 2026-09-19/20 — the
+**Status:** the rows foundation landed — the
 row library (`tools/rows.py`), the per-stage typed schema loaders
 (`tools/schemas.py`), the fixture (`tests/fixtures/page01-rows-gold/`).
 Of the sequencing: step 1's rows-adjacent schemas exist, but the `Stage`
@@ -38,7 +38,7 @@ is not domain vocabulary and appears nowhere in the model.
 
 ## The interjection / marginalia decision
 
-User ruling (2026-09-19): the VLM decides what is an interjection and
+User ruling: the VLM decides what is an interjection and
 where it injects, at the transcription phase (stage 6). The code today
 does not record the decision: segments carry {label, text, orientation,
 box} and the draft Document's lines {index, text, box, conf, box_source, words} —

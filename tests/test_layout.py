@@ -94,8 +94,8 @@ class TestAssociateLines:
 
     def test_below_threshold_fills_positionally(self) -> None:
         # the rec text never matched — the fallback still anchors the line
-        # with the detection's geometry (2026-08-16: cursive pages never
-        # content-match; the box is real, the text anchor is not)
+        # with the detection's geometry (cursive pages never content-match;
+        # the box is real, the text anchor is not)
         vlm = ["the quick brown fox"]
         dets = [_det([0, 0, 200, 20], "zzz qqq wwww eeee rrrr")]
         matches, unmatched = associate_lines(vlm, dets)
@@ -293,15 +293,11 @@ class TestWriteLoadLayout:
         assert load_layout_store(store, path)["revision"] == 2
 
     def test_every_line_carries_its_index(self, tmp_path) -> None:
-        """2026-09-04 (user: "the transcript on screen is just 'A picture
-        of life in music college' repeated over and over again"): the
+        """(user: "the transcript on screen is just 'A picture
+        of life in music college' repeated over and over again") — the
         review surface keys the verify/edit state, the box clicks and the
         dual-pane links on ``line.index`` — and the pipeline's writers did
-        not all emit it. Every line's index was ``undefined`` in the
-        browser, so ONE "Verified" tap ran
-        ``lines.find(l => l.index === undefined)``, matched the FIRST
-        line, and saved line 0's text as the edit for every row: the
-        whole page rendered as its first line. The writer stamps the
+        not all emit it. The writer stamps the
         position; the reader assigns it for the files already on disk."""
         layout = {
             "page": "p.jpg",
@@ -344,10 +340,10 @@ class TestWriteLoadLayout:
 
 
 def test_layout_payload_declares_the_box_frame() -> None:
-    """2026-08-22: the payload declares the boxes' coordinate frame — the
+    """The payload declares the boxes' coordinate frame — the
     ORIGINAL image's pixels, the same space as width/height — so a reader
-    can check, never assume (the VLM-canvas drift was a box in the wrong
-    frame that looked valid: right size, right proportions, gates pass)."""
+    can check, never assume: a box in the wrong frame looks valid (right
+    size, right proportions, gates pass)."""
     from tools.layout import Layout
 
     layout = Layout("p.jpg", 100, 200, [], [])
@@ -355,8 +351,8 @@ def test_layout_payload_declares_the_box_frame() -> None:
 
 
 def test_validate_layout_rejects_a_boxless_line() -> None:
-    """2026-08-22 (user: "I want boxless lines to fail during the pipeline
-    run so we can figure out how to fix our pipeline!"): a line without a
+    """(user: "I want boxless lines to fail during the pipeline
+    run so we can figure out how to fix our pipeline!") — a line without a
     box is an unfinished pipeline result — the page must FAIL loudly at
     the write, never reach the review as a flag-riddled layout."""
     from tools.gates import validate_layout
@@ -375,7 +371,7 @@ def test_validate_layout_rejects_a_boxless_line() -> None:
 
 
 def test_write_layout_store_refuses_a_boxless_line(tmp_path: Path) -> None:
-    """The write gate (2026-08-22): a layout with a boxless line is
+    """The write gate: a layout with a boxless line is
     refused — the pipeline run fails loudly for that page, and the
     reviewer never sees a half-anchored layout."""
     from tools.layout import write_layout_store
@@ -394,8 +390,8 @@ def test_write_layout_store_refuses_a_boxless_line(tmp_path: Path) -> None:
 
 
 class TestRotateDetections:
-    """The reviewer's orientation fix re-anchors the boxes by a rigid remap
-    (2026-08-16) — the rotation must be exact and order-preserving."""
+    """The reviewer's orientation fix re-anchors the boxes by a rigid remap —
+    the rotation must be exact and order-preserving."""
 
     def test_identity(self) -> None:
         dets = [_det([10, 20, 30, 40], "text")]
@@ -540,9 +536,7 @@ def test_remap_box_maps_back_to_the_original_frame() -> None:
 
     # 200x100 original; rotated -90° (clockwise, expand) the frame is
     # 100x200. A box at the top of the rotated frame (y=0-20) maps back
-    # to the original's LEFT edge, vertically centered (2026-08-20: the
-    # old matrix form mirrored this to the right edge — page-03's rebuilt
-    # layout put the letter's lines at the image top).
+    # to the original's LEFT edge, vertically centered.
     box = remap_box([40, 0, 60, 20], 90, (200, 100), (100, 200))
     assert box[0] < 5  # the far edge touches the left side (0)
     assert 30 < box[1] < 70 and 30 < box[3] < 70  # y near the center (50)
@@ -643,9 +637,7 @@ def test_multi_layout_orientation_comes_from_the_pass_not_the_report() -> None:
 
 def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
     """VR14: every piece of text has a bounding box, and the box holds the
-    words it claims (2026-08-17 — the reproduced fault: the lines carried
-    the rec's fragments mispaired with the det's boxes, so the review's
-    text was nonsense and the boxes didn't match the words). With the
+    words it claims. With the
     model's per-line geometry the lines ARE the model's transcription
     anchored to its own boxes; a rec detection agreeing on content marks
     the line confident; rec lines no VLM line claims stay as flagged
@@ -702,7 +694,7 @@ def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
 
 
 def test_anchor_prefers_the_disjoint_positional_ink_when_the_rec_read_the_line() -> None:
-    """page-01 (2026-08-22): the location report's boxes sit in the VLM's
+    """page-01: the location report's boxes sit in the VLM's
     compressed canvas — the whole letter squeezed into the top of the
     0-1000 frame — so the scaled report box lands ~500px ABOVE the real
     text (the title region claimed by 'Last term I was called upon').
@@ -732,7 +724,7 @@ def test_anchor_prefers_the_disjoint_positional_ink_when_the_rec_read_the_line()
 
 
 def test_anchor_disjoint_positional_with_unrelated_reading_keeps_the_report_box() -> None:
-    """The other half of the same rule (2026-08-22): the order-based
+    """The other half of the same rule: the order-based
     fallback CAN mispair — the rec's 17 detections vs the guess's 31
     lines means the tail's positional boxes are the wrong lines' ink.
     When the rec did NOT read the line's text at the match's box (the
@@ -763,7 +755,7 @@ def test_anchor_disjoint_positional_with_unrelated_reading_keeps_the_report_box(
 def test_anchor_report_box_still_refines_an_agreeing_positional_box() -> None:
     """The regression guard: when the report's estimate AGREES with the
     positional ink (the same region), the report box is the per-line
-    refinement and wins — the pre-2026-08-22 behavior stays for the
+    refinement and wins — the prior behavior stays for the
     normal pages (02-12), where the report's boxes are on the text."""
     from tools.layout import Anchor
 
@@ -886,7 +878,7 @@ def test_multi_layout_uses_the_guess_text_located_by_the_report() -> None:
 
 
 def test_validate_layout_rejects_bad_boxes() -> None:
-    """The fail-fast guard (2026-08-17): a layout whose line has a box
+    """The fail-fast guard: a layout whose line has a box
     that is degenerate or outside the image must never reach the front
     end — the reviewer must never see wrong boxes. Returns the
     violations; a clean layout passes."""
@@ -910,7 +902,7 @@ def test_validate_layout_rejects_bad_boxes() -> None:
 
 
 def test_stitch_crop_box_maps_the_crop_local_frame_into_the_page() -> None:
-    """The crop-grid's stitch (2026-08-22): the model measures each line
+    """The crop-grid's stitch: the model measures each line
     within a crop's own frame (normalized 0-1000 in the crop); the
     stitch maps that local box into the page by the crop's known
     offset — the page box, exactly."""
@@ -925,12 +917,11 @@ def test_stitch_crop_box_maps_the_crop_local_frame_into_the_page() -> None:
 
 
 def test_gate_b_calibrates_the_ceiling_by_glyph_size() -> None:
-    """2026-08-22's absolute 80/160 ceilings assumed handwriting scale;
-    2026-08-26 replaced them with a ceiling that scales with the box's
-    OWN perpendicular extent (x1.7, floor 30) — a letter's advance is
-    proportional to its glyph size, so big print is legitimate while
-    mislabeled normal-height rows stay tight. This test pins both the
-    survivors and the consciously-flipped assertions."""
+    """The ceiling scales with the box's OWN perpendicular extent
+    (x1.7, floor 30) — a letter's advance is proportional to its glyph
+    size, so big print is legitimate while mislabeled normal-height
+    rows stay tight. This test pins both the survivors and the
+    consciously-flipped assertions."""
     from tools.gates import text_extent_violation
 
     # the postcard's message line: 19 chars in a 1539px-tall vertical
@@ -939,26 +930,23 @@ def test_gate_b_calibrates_the_ceiling_by_glyph_size() -> None:
     # the absurd vertical: 3 chars in a 1500px box -> 500 px/char vs a
     # 50px-wide column's ceiling of 85: still caught
     assert text_extent_violation("abc", [0, 0, 50, 1500], 90) is not None
-    # FLIPPED (2026-08-26): 81 px/char on a 50px-tall row is now
+    # FLIPPED: 81 px/char on a 50px-tall row is now
     # plausible big-ish handwriting (ceiling 85) — the old horizontal
     # 80 absolute ceiling refused it; sparsity is judged per glyph size
     assert text_extent_violation("abc", [0, 0, 243, 50], 0) is None
-    # FLIPPED (2026-09-07): a letterspaced typewriter line measures ~2.0
-    # advances per glyph height — the Music College letter's 24-char
-    # line on an 875x23 strip (36 px/char, old ceiling 39) was REAL ink
-    # measured by kraken, refused by the old 1.7 ceiling; the 2.6 dense-
-    # line allowance accepts it. The genuinely absurd stays caught: 10
-    # chars on a 600x20 strip is 60 px/char against a 52 ceiling.
+    # FLIPPED: a letterspaced typewriter line measures ~2.0 advances per
+    # glyph height — the Music College letter's 24-char line on an 875x23
+    # strip (36 px/char) is real ink; the 2.6 dense-line allowance
+    # accepts it. The genuinely absurd stays caught: 10 chars on a
+    # 600x20 strip is 60 px/char against a 52 ceiling.
     assert text_extent_violation("week at the end of term.", [0, 0, 875, 23], 0) is None
     assert text_extent_violation("x" * 10, [0, 0, 600, 20], 0) is not None
 
 
 def test_transcription_line_count_plausible() -> None:
-    """The collapse detector (2026-08-25): the birth certificate's model
-    read folded 26 measured rows into one line — every row then carried
-    the same 323-char blob and Gate B refused the page. Conservative:
-    only pages with >= 10 measured rows are judged (photo captions
-    fragment into more rows than real lines)."""
+    """The collapse detector: conservative — only pages with >= 10
+    measured rows are judged (photo captions fragment into more rows
+    than real lines)."""
     from tools.ink import transcription_line_count_plausible as plausible
 
     assert not plausible(2, 26)  # the birth-cert collapse
@@ -969,7 +957,7 @@ def test_transcription_line_count_plausible() -> None:
 
 
 def test_ink_match_labels_assigns_by_order() -> None:
-    """The order-based label matching (2026-08-22, the user's item 2):
+    """The order-based label matching (user's item 2):
     each row's y-center, as a fraction of the content's span, picks the
     transcription line at the same fraction — the 1:1 case."""
     from tools.ink import match_labels
@@ -1022,7 +1010,7 @@ def test_ink_match_labels_keeps_the_overlap_when_it_is_not_degenerate() -> None:
 
 
 def test_ink_cluster_rows_splits_side_by_side_pieces() -> None:
-    """The x-split (2026-08-22): the rec's y-band clustering can merge
+    """The x-split: the rec's y-band clustering can merge
     side-by-side pieces - the postcard's date and the HERNSPETH sharing
     a band - and the union would span the blank middle, tripping the
     text-extent gates. The split at wide x-gaps gives each side its own
@@ -1053,7 +1041,7 @@ def test_ink_cluster_rows_keeps_a_lines_words_together() -> None:
 
 
 def test_ink_cluster_row_thresholds_are_scale_invariant() -> None:
-    """The thresholds derive from the measured piece sizes (2026-08-22):
+    """The thresholds derive from the measured piece sizes:
     the same layout at half the scan resolution must cluster the same
     way - the absolute pixel gaps were tuned on one batch and would
     merge every row at a different scale."""
@@ -1076,13 +1064,11 @@ def test_ink_cluster_row_thresholds_are_scale_invariant() -> None:
 
 
 def test_ink_cluster_rows_splits_a_runaway_row() -> None:
-    """The tall-split (2026-08-25): single-linkage chaining merges
-    pieces whose every ADJACENT gap is small into a row spanning many
-    real lines - the birth certificate's form table chained 40 cells
-    into one 290px row (6.2x its own piece scale), the photo's big
-    handwriting 13 pieces into 1077px (6.3x). One line's extent cannot
-    exceed ~2.5x its own pieces' median height; an over-tall row splits
-    at its internal gaps until every part is plausible."""
+    """The tall-split: single-linkage chaining merges pieces whose every
+    ADJACENT gap is small into a row spanning many real lines. One
+    line's extent cannot exceed ~2.5x its own pieces' median height; an
+    over-tall row splits at its internal gaps until every part is
+    plausible."""
     from tools.ink import cluster_rows, union
 
     # three tight text bands (h=40) at staggered x's, centers 25px
@@ -1194,8 +1180,7 @@ def test_orientation_passes_mirror_a_reported_vertical_direction() -> None:
 
 def test_layout_run_batch_fails_loud_on_explicit_page_without_guess(tmp_path: Path) -> None:
     """A layout for an explicitly requested page with no guess text must
-    fail loudly (return 2), never silently skip — the bad page-02 layout
-    was exactly a geometry-only build (2026-08-20)."""
+    fail loudly (return 2), never silently skip."""
     from tools.layout_detect import run_batch
 
     work = tmp_path
@@ -1247,11 +1232,11 @@ def test_reading_order_sorts_top_to_bottom_then_left_to_right() -> None:
 
 
 def test_layout_run_batch_returns_1_when_a_page_is_refused(tmp_path: Path) -> None:
-    """2026-08-22 (user: boxless lines must FAIL the pipeline run), now
-    via the single pass: a page whose segment response violates the
-    contract refuses the run — return 1, never a silent 0 with the page
-    missing from the output, and NEVER a fallback to the old
-    detect-then-match path (user, 2026-09-06)."""
+    """(user: boxless lines must FAIL the pipeline run) now via the
+    single pass: a page whose segment response violates the contract
+    refuses the run — return 1, never a silent 0 with the page missing
+    from the output, and NEVER a fallback to the old detect-then-match
+    path (user)."""
     import json as _json
 
     from tools.layout_detect import run_batch
@@ -1368,7 +1353,7 @@ def test_reading_order_degenerate_box_does_not_crash() -> None:
 
 
 def test_validate_layout_orientation_matches_box_aspect() -> None:
-    """Gate A (2026-08-20): a line's orientation must be consistent with its
+    """Gate A: a line's orientation must be consistent with its
     box's aspect. A wide box (width >> height) holds horizontal text (axis
     near 0/180); a tall box holds vertical text (axis near 90/270). The
     check uses the orientation's AXIS (mod 180) so exact angles work —
@@ -1411,14 +1396,14 @@ def test_validate_layout_orientation_consistent_cases_pass() -> None:
     assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 300, 200], "orientation": 90}]))
     # no orientation field -> pass (nothing to check)
     assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50]}]))
-    # no box -> FAILS (2026-08-22, user: boxless lines must fail the
+    # no box -> FAILS (user: boxless lines must fail the
     # pipeline run so the geometry pass gets fixed — the older
     # boxless-passes rule is superseded)
     assert validate_layout(_layout([{"text": "x" * 25, "orientation": 90}]))
 
 
 def test_validate_layout_text_length_matches_box_extent() -> None:
-    """Gate B (2026-08-20): a line's recognized text length must not be
+    """Gate B: a line's recognized text length must not be
     WILDLY out of sync with the box's reading-axis extent. The reading
     axis is the width for a horizontal line (axis near 0/180) and the
     height for a vertical one (axis near 90/270). A 500px-wide box holding
@@ -1453,7 +1438,7 @@ def test_validate_layout_text_length_reasonable_cases_pass() -> None:
     assert not validate_layout(_layout([{"text": "N.B", "box": [0, 0, 120, 50], "orientation": 0}]))
     # a vertical 500px box with ~25 chars at 90° -> axis is the height
     assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 50, 500], "orientation": 90}]))
-    # no box -> FAILS (2026-08-22, user: boxless lines must fail the
+    # no box -> FAILS (user: boxless lines must fail the
     # pipeline run so the geometry pass gets fixed)
     assert validate_layout(_layout([{"text": "anything", "orientation": 0}]))
     # no orientation -> the axis defaults to the width (horizontal)
@@ -1462,7 +1447,7 @@ def test_validate_layout_text_length_reasonable_cases_pass() -> None:
 
 class TestRecognizeExtra:
     """The clip->rotate->recognize flow for extra (rec-only) lines
-    (2026-08-20, user's direction): a line the rec engine read as a
+    (user's direction): a line the rec engine read as a
     fragment is clipped from the ORIGINAL image, rotated UPRIGHT by its
     orientation, and recognized there — the de-rotated reading, never
     the rotated-frame garbage. Fail fast (drop the line) when the clip
@@ -1880,7 +1865,7 @@ def test_multi_layout_drops_the_box_when_no_candidate_holds_the_text() -> None:
 
 
 def test_build_layout_keeps_the_transcription_order_for_margin_blocks() -> None:
-    """The single-orientation reading order (2026-08-20, user's
+    """The single-orientation reading order (user's
     requirement): a page's transcription order IS the block-aware reading
     — the model read the page block-by-block (page-03: the P.S. margin
     top-to-bottom, then the address block, then the body; each block's
@@ -1959,10 +1944,9 @@ def test_multi_layout_keeps_the_physical_reading_order() -> None:
 
 
 def test_dedupe_regions_survives_boxless_lines() -> None:
-    """The boxless anchored lines (2026-08-20 — the arbitration drops a
-    box when no candidate holds the text) must not crash the dedupe: the
-    region-overlap check skips lines without a box — the postcard's
-    rebuild crashed on a None box in _box_area."""
+    """The boxless anchored lines (the arbitration drops a box when no
+    candidate holds the text) must not crash the dedupe: the
+    region-overlap check skips lines without a box."""
     from tools.layout import dedupe_regions
 
     lines = [
@@ -2012,7 +1996,7 @@ def test_multi_layout_keeps_text_order_when_orientations_resolve_single() -> Non
 
 
 def test_block_order_reads_each_block_whole() -> None:
-    """The block-aware reading order (2026-08-20, user's requirement): the
+    """The block-aware reading order (user's requirement): the
     lines cluster into physical blocks (lines sharing ink), each block
     reads WHOLE — the postcard's printed top (0°), then the vertical
     message, then the address — never the reading-start sort's row-by-row
@@ -2057,12 +2041,11 @@ def test_block_order_keeps_boxless_lines_in_place() -> None:
 
 
 def test_validate_layout_catches_duplicate_region_claims() -> None:
-    """Gate E (2026-08-20): two lines whose boxes claim the same region
-    with DIFFERENT text is a geometry failing — the postcard's location
-    report gave 'We are from' and 'beauford & Mrs' the SAME box (the
-    model's message geometry duplicated). The same text in one region is
-    the dedupe's job (a fragment); different texts in one region is
-    ambiguity the review must see."""
+    """Gate E: two lines whose boxes claim the same region with
+    DIFFERENT text is a geometry failing — a location report can give
+    two lines the SAME box (the model's message geometry duplicated).
+    The same text in one region is the dedupe's job (a fragment);
+    different texts in one region is ambiguity the review must see."""
     from tools.layout import validate_layout
 
     layout = {
@@ -2081,8 +2064,7 @@ def test_validate_layout_catches_duplicate_region_claims() -> None:
 
 
 def test_drop_inkless_boxes_removes_blank_estimates(tmp_path) -> None:
-    """Gate D (2026-08-20): a line's box must contain the ink it claims —
-    page-03's transcription boxes sat ~200px above the real text, and a
+    """Gate D: a line's box must contain the ink it claims — a
     well-proportioned box in a blank region is an ESTIMATE, not an
     anchor (the gates cannot see it: in-bounds, aspect-consistent,
     text-synced). The layout stage checks the ink and drops the box —
@@ -2105,12 +2087,10 @@ def test_drop_inkless_boxes_removes_blank_estimates(tmp_path) -> None:
 
 
 def test_box_overlap_is_intersection_over_the_smaller_box() -> None:
-    """2026-08-20: the zero-division guard was ``min(a, b, eps)`` — the
-    epsilon is the MINIMUM, so every overlap divided by 1e-9 and any
-    1px intersection read as ~1e12. The dedupe, the anchor arbitration
-    and Gate E all consumed the inflated value. The overlap is the
-    intersection over the SMALLER box: identical = 1, disjoint = 0,
-    half-covered = 0.5."""
+    """The overlap is the intersection over the SMALLER box: identical
+    = 1, disjoint = 0, half-covered = 0.5. An epsilon in the
+    denominator must not be the minimum — ``min(a, b, eps)`` divides
+    every overlap by 1e-9 and reads any 1px intersection as ~1e12."""
     from tools.box import overlap as _box_overlap
 
     assert _box_overlap([0, 0, 100, 100], [0, 0, 100, 100]) == 1.0
@@ -2123,12 +2103,12 @@ def test_box_overlap_is_intersection_over_the_smaller_box() -> None:
 
 
 def test_drop_conflicting_boxes_keeps_the_confirmed_anchor() -> None:
-    """Gate E as a correction (2026-08-22): when two lines claim the same
-    region with DIFFERENT text, the lower-confidence line's box is an
-    estimate that shadows the confirmed anchor — page-03's boxless
-    'critic's view. To quote:' box sat on the P.S. margin, refusing the
-    whole page at the serve gate. The lower-conf box drops (the line
-    stays flagged); the confirmed anchor keeps its region."""
+    """Gate E as a correction: when two lines claim the same region with
+    DIFFERENT text, the lower-confidence line's box is an estimate that
+    shadows the confirmed anchor — an unconfirmed box sitting on the
+    anchor's region would refuse the whole page at the serve gate. The
+    lower-conf box drops (the line stays flagged); the confirmed anchor
+    keeps its region."""
     from tools.layout import drop_conflicting_boxes
 
     lines = [
@@ -2144,12 +2124,11 @@ def test_drop_conflicting_boxes_keeps_the_confirmed_anchor() -> None:
 
 
 def test_box_line_count_by_projection() -> None:
-    """The cheap multi-line gate (2026-08-25): the vision audit caught
-    boxes enclosing 3-4 handwriting lines apiece (1782635795946's stale
-    layout). A box's row-projection counts the separated ink bands it
-    holds — pure PIL, no model. Bands separated by a clear blank gap
-    are distinct lines; a line's own ascender/descender gaps are too
-    small to split it."""
+    """The cheap multi-line gate: boxes can enclose several handwriting
+    lines apiece, and a box's row-projection counts the separated ink
+    bands it holds — pure PIL, no model. Bands separated by a clear
+    blank gap are distinct lines; a line's own ascender/descender gaps
+    are too small to split it."""
     from PIL import Image, ImageDraw
 
     from tools.box import text_line_count
@@ -2179,11 +2158,11 @@ def test_empty_box_has_no_lines() -> None:
 
 
 def test_has_ink_sees_pencil_on_photo_paper() -> None:
-    """Faint-pencil regression (2026-08-26): the Silver-Wedding photo's
-    annotations are pencil (~level 170) on cream card (~220) — the fixed
-    <128 cutoff called every box blank and the serve-walk refused pages
-    whose boxes were visibly on the writing. Ink must be measured
-    against the crop's OWN paper level."""
+    """Faint-pencil ink: pencil annotations (~level 170) on cream card
+    (~220) sit ABOVE a fixed <128 cutoff, so such a cutoff calls every
+    box blank and the serve-walk refuses pages whose boxes are visibly
+    on the writing. Ink must be measured against the crop's OWN paper
+    level."""
     from PIL import Image, ImageDraw
 
     from tools.box import has_ink
@@ -2198,11 +2177,10 @@ def test_has_ink_sees_pencil_on_photo_paper() -> None:
 
 
 def test_split_by_bands_divides_a_multi_line_union() -> None:
-    """Band-split feedback (2026-08-26): when a measured union spans
-    several handwriting lines, the image itself gives the true line
-    boundaries — the projection's ink bands. Splitting before label
-    matching turns too-few-rows into accurate-rows instead of refusing
-    the page (the birth certificates' 40-vs-25 mismatch)."""
+    """Band-split: when a measured union spans several handwriting
+    lines, the image itself gives the true line boundaries — the
+    projection's ink bands. Splitting before label matching turns
+    too-few-rows into accurate-rows instead of refusing the page."""
     from PIL import Image, ImageDraw
 
     from tools.ink import split_by_bands
@@ -2231,12 +2209,10 @@ def test_split_by_bands_keeps_single_line_boxes_whole() -> None:
 
 
 def test_gate_b_ceiling_scales_with_glyph_size() -> None:
-    """The scale-aware Gate B (2026-08-26): the absolute px/char ceiling
-    assumed handwriting scale and refused correctly-boxed BIG print —
-    '57 Varieties' at 90 px/char on the Heinz crest, 'REMINDER',
-    'POST CARD'. A letter's advance scales with its own glyph size, so
-    the ceiling is the box's PERPENDICULAR extent × 1.7: big-print rows
-    are also tall, mislabeled normal-height rows stay tight."""
+    """The scale-aware Gate B: a letter's advance scales with its own
+    glyph size, so the ceiling is the box's PERPENDICULAR extent × 1.7
+    — big-print rows (90 px/char on the Heinz crest, 'REMINDER', 'POST
+    CARD') are also tall, mislabeled normal-height rows stay tight."""
     from tools.gates import glyph_extent_violation
 
     # big print: tall row, few large characters — legitimately 90px/char
@@ -2254,7 +2230,7 @@ def test_gate_b_density_direction_unchanged() -> None:
 
 
 def test_selfreport_flags_mark_words_in_the_layout() -> None:
-    """The wiring seam (2026-08-26): the self-report stage exists
+    """The wiring seam: the self-report stage exists
     (selfreport_words + build_layout's conf-0.0 flagging) but the batch
     never runs it — the UI's "red words are ones the machine wasn't
     sure of" promise goes unmet on every served layout. These helpers
@@ -2282,7 +2258,7 @@ def test_selfreport_flags_mark_words_in_the_layout() -> None:
 
 
 def test_selfreport_flags_match_by_word_content() -> None:
-    """The index-misalignment fix (2026-08-26): the self-report cites
+    """The index-misalignment fix: the self-report cites
     line numbers of the RAW VLM text, but out_lines' indices come from
     proportional matching — the numbers drift when the raw text has
     empty lines. The word is the reliable key: match each flagged word

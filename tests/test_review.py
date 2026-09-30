@@ -1,7 +1,7 @@
-"""Tests for the import-review investigation (2026-08-09, user: the review
-never invents relationships — the model may dig into the reviewer's
-statement with the read-only archive tools, then return the verdict; the
-reviewer's own words are recorded verbatim or nothing is).
+"""Tests for the import-review investigation (user: the review never
+invents relationships — the model may dig into the reviewer's statement
+with the read-only archive tools, then return the verdict; the reviewer's
+own words are recorded verbatim or nothing is).
 """
 
 from __future__ import annotations
@@ -103,10 +103,9 @@ def test_off_topic_answer_is_flagged_not_recorded() -> None:
 
 
 def test_the_question_schema_speaks_to_the_family_never_the_process() -> None:
-    """2026-09-23: an off-topic conclusion leaked 'the import' to the
-    family and the persona guard redded the suite. The question schema
-    must carry the family-voice rule — a prompt-contract pin so a
-    regression in the voice instruction fails here, deterministically."""
+    """The question schema must carry the family-voice rule — a
+    prompt-contract pin so a regression in the voice instruction fails
+    here, deterministically."""
     client = FakeClient(
         [
             '{"relevant": false, "contradiction": {"found": false, "detail": ""}, '
@@ -120,9 +119,9 @@ def test_the_question_schema_speaks_to_the_family_never_the_process() -> None:
 
 
 def test_contradiction_with_the_attested_facts_is_flagged() -> None:
-    """The wrong-person-for-the-attested-event shape (2026-08-09, user): the
-    reviewer names the wrong person for an attested event — the check must
-    surface the attested fact so the chat can resolve it before confirming."""
+    """The wrong-person-for-the-attested-event shape (user): the reviewer
+    names the wrong person for an attested event — the check must surface
+    the attested fact so the chat can resolve it before confirming."""
     client = FakeClient(
         [
             '{"relevant": true, "contradiction": {"found": true, '
@@ -240,10 +239,10 @@ def test_empty_text_fails_loudly() -> None:
 
 
 def test_the_model_sees_the_whole_conversation_including_its_own_reasoning() -> None:
-    """(2026-08-09, user): the flow misunderstood because the model could
-    not see that an answer was re-answering an earlier question — the
-    history (the family's words AND the assistant's previous reasoning,
-    verbatim) is part of every investigation."""
+    """(user): the flow misunderstands when the model cannot see that an
+    answer is re-answering an earlier question — the history (the family's
+    words AND the assistant's previous reasoning, verbatim) is part of every
+    investigation."""
     client = FakeClient(
         [
             '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
@@ -279,10 +278,10 @@ def test_the_model_sees_the_whole_conversation_including_its_own_reasoning() -> 
 
 
 def test_the_history_goes_back_verbatim_byte_for_byte() -> None:
-    """(2026-08-09, user: 'does the exact same text really go back to the
-    model? — makes it cheaper if so, because of caching'): the rendered
-    history is the messages unmodified — quotes, apostrophes, unicode —
-    so the model's prompt-cache can reuse the stable prefix."""
+    """(user: 'does the exact same text really go back to the model? —
+    makes it cheaper if so, because of caching'): the rendered history is
+    the messages unmodified — quotes, apostrophes, unicode — so the
+    model's prompt-cache can reuse the stable prefix."""
     from tools.records import Message
     from tools.review import render_history
 
@@ -314,11 +313,10 @@ def test_the_history_goes_back_verbatim_byte_for_byte() -> None:
 
 
 def test_the_previous_prompt_is_the_current_prompts_prefix() -> None:
-    """The caching property (2026-08-09, user: 'the exact same text goes
-    back… cheaper if so, because of caching'): the conversation renders
-    uniformly and sits last, so the previous prompt's exact text is the
-    current prompt's prefix — the model's prompt-cache reuses the whole
-    thing."""
+    """The caching property (user: 'the exact same text goes back… cheaper
+    if so, because of caching'): the conversation renders uniformly and
+    sits last, so the previous prompt's exact text is the current prompt's
+    prefix — the model's prompt-cache reuses the whole thing."""
     from tools.records import Message
 
     client = FakeClient(
@@ -343,9 +341,9 @@ def test_the_previous_prompt_is_the_current_prompts_prefix() -> None:
 
 
 def test_the_tool_calls_are_logged_in_the_trace_and_fed_back() -> None:
-    """(2026-08-09, user: 'why would that stop you logging them correctly?'
-    — nothing does: the tool calls and their deterministic results are part
-    of the model's reasoning, logged verbatim in the trace, and the next
+    """(user: 'why would that stop you logging them correctly?' — nothing
+    does: the tool calls and their deterministic results are part of the
+    model's reasoning, logged verbatim in the trace, and the next
     investigation sees them in its history)."""
     import json as _json
 
@@ -381,11 +379,11 @@ def test_the_tool_calls_are_logged_in_the_trace_and_fed_back() -> None:
 
 
 def test_the_off_topic_steer_names_the_topic_never_the_reasoning() -> None:
-    """2026-08-09 (user, the transcript's third departure): the steer is
-    the genealogist's return to the claim — it names the topic the answer
-    was about (the note, when it is the topic) and never the model's
-    internal reasoning. The reasoning-shaped note would read as nonsense;
-    the eval's persona guard catches it at the write seam."""
+    """(user): the steer is the genealogist's return to the claim — it names
+    the topic the answer was about (the note, when it is the topic) and
+    never the model's internal reasoning. The reasoning-shaped note would
+    read as nonsense; the eval's persona guard catches it at the write
+    seam."""
     person = Person(id="p-pearl", name="Pearl Whitlock", relation="cousin of Quentin Whitlock")
     steer = steer_message(person, "the house on Victoria Avenue")
     assert "That's about the house on Victoria Avenue" in steer
@@ -398,9 +396,9 @@ def test_the_off_topic_steer_names_the_topic_never_the_reasoning() -> None:
 
 
 def test_the_attested_tool_returns_the_sentence_that_mentions_the_person() -> None:
-    """2026-08-09 (user: "extremely bad at identifying the relevant part of
-    the document to quote when explaining the attestation"): the attested
-    tool returns the sentences that MENTION the person — the quotable
+    """(user: "extremely bad at identifying the relevant part of the
+    document to quote when explaining the attestation"): the attested tool
+    returns the sentences that MENTION the person — the quotable
     attestation — never the document's opening. The model can only quote
     what the tools surface, so the relevant part must be what they surface."""
     facts = make_facts()
@@ -423,15 +421,12 @@ def test_the_attested_tool_returns_the_sentence_that_mentions_the_person() -> No
 
 
 def test_a_partial_answer_is_fed_back_verbatim_on_the_correction() -> None:
-    """2026-08-09 (user: "how can it be that you wrote comprehensive evals
-    to make sure our transcript went back verbatim, and now you've found
-    that things were missing"): the transcript-going-back principle has a
-    second surface — INSIDE an investigation, when the harness re-prompts
-    after a partial response, the model's own words must go back too. The
-    eval pinned the cross-turn surface only; the intra-turn correction
-    dropped the model's reasoning, and the second pass flipped its own
-    correct judgment. The correction now feeds the previous answer back
-    verbatim."""
+    """(user: "how can it be that you wrote comprehensive evals to make sure
+    our transcript went back verbatim, and now you've found that things were
+    missing"): the transcript-going-back principle has a second surface —
+    INSIDE an investigation, when the harness re-prompts after a partial
+    response, the model's own words must go back too. The correction feeds
+    the previous answer back verbatim."""
     partial = (
         '{"verdict": "uncertain", "reasoning": "The reviewer has no knowledge of Pearl and '
         'cannot confirm or deny the relationship."}'
@@ -459,11 +454,10 @@ def test_a_partial_answer_is_fed_back_verbatim_on_the_correction() -> None:
 
 
 def test_the_attested_tool_matches_mentions_case_insensitively() -> None:
-    """2026-08-11 review: the attested tool matched the person's name
-    case-sensitively while its own quote extractor lowercases — an item
-    whose only mention is lowercased (OCR text) was silently dropped, so
-    the model could conclude no document attests the person. The item
-    door now matches the case-insensitive quote semantics."""
+    """The attested tool matches the person's name case-insensitively, like
+    its own quote extractor — an item whose only mention is lowercased (OCR
+    text) must not be silently dropped, or the model concludes no document
+    attests the person."""
     facts = make_facts()
     lower_item = {
         "id": "doc-ocr-letter",
@@ -478,11 +472,10 @@ def test_the_attested_tool_matches_mentions_case_insensitively() -> None:
 
 
 def test_known_facts_mark_guess_statuses_never_attested() -> None:
-    """2026-08-11 review: the people table handed to the review still holds
-    the proposed person under review, and their import relation used to be
-    listed as an attested fact with no status — the contradiction check
-    could treat the unverified import guess as attested. Non-confirmed
-    statuses are now marked in the rendered facts."""
+    """The people table handed to the review holds the proposed person under
+    review, and their import relation is listed as an attested fact with no
+    status — the contradiction check could treat the unverified import guess
+    as attested. Non-confirmed statuses are marked in the rendered facts."""
     proposed = Person.from_dict(
         {"id": "p-nova", "name": "Nova Whitlock", "relation": "cousin of Pearl", "status": "proposed"}
     )
@@ -505,11 +498,9 @@ def test_known_facts_mark_guess_statuses_never_attested() -> None:
 
 
 def test_over_budget_tool_calls_are_logged_and_fed_back() -> None:
-    """2026-08-11 review: a tool-shaped response beyond the four-call budget
-    was consumed and discarded — neither logged in the trace nor fed back,
-    so the model's own words for that turn vanished (the completeness
-    property: everything the model produced is fed back and logged). It is
-    now traced and fed back verbatim."""
+    """A tool-shaped response beyond the four-call budget is traced and fed
+    back verbatim, never consumed and discarded — the completeness
+    property: everything the model produced is fed back and logged."""
     tool = '{"tool": "search_people", "args": {"query": "Walter"}}'
     over = '{"tool": "search_people", "args": {"query": "Nora"}}'
     verdict = (
@@ -533,7 +524,7 @@ def test_over_budget_tool_calls_are_logged_and_fed_back() -> None:
 def test_persona_guard_allows_reviewer_introduced_vocabulary() -> None:
     # the family never meets the process vocabulary UNLESS they introduced it
     # themselves — echoing the reviewer's own word aids understanding
-    # (user, 2026-08-15; PRD R1)
+    # (user; PRD R1)
     from tools.eval_review import persona_errors
 
     result = {"relevant": "true", "question": "Where did the import get that idea — did Pearl ever mention a brother?"}
@@ -544,8 +535,8 @@ def test_persona_guard_allows_reviewer_introduced_vocabulary() -> None:
 
 def test_persona_guard_error_carries_the_full_text() -> None:
     # a failed evaluation must show the WHOLE model output, never a
-    # truncated slice — the 80-char cut hid the offending words on
-    # 2026-09-23 and made the diagnosis a gateway-log archaeology hunt
+    # truncated slice — the 80-char cut hides the offending words and
+    # makes the diagnosis a gateway-log archaeology hunt
     from tools.eval_review import persona_errors
 
     question = (

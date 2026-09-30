@@ -42,7 +42,7 @@ function matchEntities(text, entities) {
       if (!alias) continue;
       // lookarounds, not \b: a canonical name ending in punctuation like
       // "Marta (Voss)" can never match with \b (no boundary after ")")
-      // — the canonical-name-always-matches invariant (review, 2026-08-03)
+      // — the canonical-name-always-matches invariant
       const re = new RegExp(`(?<![\\w])(${escapeRe(alias)})(?![\\w])`, entity.ci ? "gi" : "g");
       for (const m of text.matchAll(re)) {
         matches.push({ start: m.index, end: m.index + m[0].length, entity, text: m[0] });

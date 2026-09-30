@@ -6,8 +6,8 @@
 let state = null;
 
 async function fetchJson(url) {
-  // revalidate every load — the projection regenerates and the curator kept
-  // seeing stale cached data (2026-08-03)
+  // revalidate every load — the projection regenerates, so a cached copy
+  // goes stale between loads
   const res = await fetch(url, { cache: "no-cache" });
   if (!res.ok) {
     throw new Error(`loadData: ${url} -> ${res.status}`);
@@ -45,12 +45,12 @@ export function assetUrl(itemId, file) {
 export function typeLabel(type) {
   // story = testimonies and interview answers — a first-class artifact type
   // (PRD §19.5); it displays as a Memory so it never reads as a scanned
-  // document (user, 2026-08-03). The DATA type stays "story".
+  // document. The DATA type stays "story".
   return { letter: "Letter", photo: "Photo", object: "Object", document: "Document", story: "Memory" }[type] ?? type;
 }
 
-/** A draft is for the person who claimed it — never an archival reader
- *  (user, 2026-08-03): the owner is the logged-in person once logins exist;
+/** A draft is for the person who claimed it — never an archival reader:
+ *  the owner is the logged-in person once logins exist;
  *  until then, the person who said they were writing it. The archival views
  *  read through ``catalogued()``; only the drafts surface reads ``drafts()``.
  *  This is the one seam — a view that filters statuses itself is a finding. */
@@ -63,7 +63,7 @@ export function catalogued(items) {
  *  are family happenings: a fragment attests identity, a reflection is
  *  perspective, an evidence record (a web capture, a directory page) is
  *  found material ABOUT the family — each renders only on the pages it
- *  attests (2026-08-06). */
+ *  attests. */
 export function published(items) {
   return catalogued(items).filter((item) => !item.clarification && !item.reflection && !item.evidence);
 }
@@ -73,13 +73,13 @@ export function drafts(items) {
 }
 
 /** The import's unconfirmed people — a pending review, never family until
- *  confirmed (2026-08-07, user: proposed people are an unfinished import). */
+ *  confirmed (user: proposed people are an unfinished import). */
 export function proposedPeople(state) {
   return (state.people ?? []).filter((p) => p.status === "proposed");
 }
 
 /** The unfinished document import sessions — the front page shows these,
- *  never the pending people list itself (user, 2026-08-07). */
+ *  never the pending people list itself (user). */
 export function pendingImports(state) {
   return (state.imports ?? []).filter((s) => s.status === "pending");
 }
@@ -87,8 +87,8 @@ export function pendingImports(state) {
 /** The signed-in identity — state.me comes from /api/auth/me at boot (the
  *  capture server mints it from a verified Google account; the static host
  *  has no API, so me is null and the archive stays browsable). The narrator
- *  IS this identity — the localStorage name claim is gone (2026-08-06, user:
- *  implement google auth, get rid of the hackery). */
+ *  IS this identity — the localStorage name claim is gone (user: implement
+ *  google auth, get rid of the hackery). */
 export function me(state) {
   return state.me ?? null;
 }
@@ -101,7 +101,7 @@ export function mePerson(state) {
 }
 
 /** Is this draft the signed-in narrator's? The server mints told_by from
- *  the verified session — the client never claims a name (2026-08-06). */
+ *  the verified session — the client never claims a name. */
 export function isMine(draft, state) {
   const mine = me(state);
   if (!mine?.person) return false;

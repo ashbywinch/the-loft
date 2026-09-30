@@ -1,9 +1,9 @@
-"""The document grouping scorer (TECHSPEC §16.14, 2026-08-17).
+"""The document grouping scorer (TECHSPEC §16.14).
 
 The guess's model flags (greeting/sign-off boundaries) decide text-only
 grouping; the scorer adds the physical evidence the model never sees —
 the full page sequence (photo pages included), the paper sizes, and the
-page numbers. Evidence priority (user, 2026-08-17):
+page numbers. Evidence priority (user):
 
 1. Duplex sides — a photo/drawing page adjacent to a text page of the
    same paper is the two sides of one sheet: same document, the picture
@@ -27,7 +27,7 @@ _ASPECT_EPS = 1e-9  # float division-underflow guard
 
 # The paper-size tolerance for phone scans: the SAME physical sheet
 # photographed twice differs in pixel dims (distance, crop — the
-# postcard's two sides measure 3500x2215 and 2333x3500, 2026-08-17), so
+# postcard's two sides measure 3500x2215 and 2333x3500), so
 # the comparison is the normalized aspect (min/max), within 12%: a
 # postcard (0.63-0.70) vs A4 (0.71) vs letter (0.77) stay separable
 # while the two sides of one sheet match.
@@ -46,7 +46,7 @@ def paper_aspect(width: int, height: int) -> float:
 def same_paper(a: tuple[int, int], b: tuple[int, int], tolerance: float = PAPER_TOLERANCE) -> bool:
     """Two page images are the same physical paper when their normalized
     aspects agree within the tolerance (the phone-scan proxy for paper
-    size, 2026-08-17)."""
+    size)."""
     pa, pb = paper_aspect(*a), paper_aspect(*b)
     return abs(pa - pb) / max(min(pa, pb), _ASPECT_EPS) <= tolerance
 

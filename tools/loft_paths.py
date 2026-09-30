@@ -20,7 +20,7 @@ from pathlib import Path
 # The big disk — the one machine-dependent input. Defaults to the current
 # family's mount; override with LOFT_DISK_ROOT on a machine where the
 # workspace lives elsewhere, so the data checks run there too instead of
-# silently skipping as "archive not found" (review, 2026-08-14).
+# silently skipping as "archive not found".
 _DISK = Path(os.environ.get("LOFT_DISK_ROOT", "/run/media/ashby/One Touch"))
 
 USER_SCAN_AREA = _DISK / "scans"

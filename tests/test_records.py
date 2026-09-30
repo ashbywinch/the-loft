@@ -1,6 +1,6 @@
 """Tests for the archive's domain record types (tools/records.py): typed,
 validated, serialisable — the same JSON shape the store writes and reads,
-with the invariants the raw-dict tables were missing (2026-08-05)."""
+with the invariants the raw-dict tables were missing."""
 
 from __future__ import annotations
 
@@ -12,8 +12,7 @@ from tools.records import Item, Org, OrgsTable, PeopleTable, Person, Place, Plac
 def test_place_rejects_escaping_record_id() -> None:
     """The record-id rule applies to every record the classes parse — Place
     ids may derive filenames in future paths (proposed/<id>.json exists
-    today), so a crafted id fails parse like a person's does (2026-08-05
-    bot review)."""
+    today), so a crafted id fails parse like a person's does."""
     with pytest.raises(ValueError, match="invalid record id"):
         Place.from_dict({"id": "../evil", "name": "Evil"})
     with pytest.raises(ValueError, match="invalid record id"):
@@ -23,7 +22,7 @@ def test_place_rejects_escaping_record_id() -> None:
 def test_person_rejects_escaping_record_id() -> None:
     """The record id is the wire format's one filename source (avatar-<id>.svg,
     proposed/<id>.json) — a crafted id must fail parse, never reach a store
-    path (2026-08-05 bot review, security)."""
+    path."""
     with pytest.raises(ValueError, match="invalid record id"):
         Person.from_dict({"id": "../../evil", "name": "Evil"})
     with pytest.raises(ValueError, match="invalid record id"):
@@ -114,7 +113,7 @@ def test_places_table_rejects_duplicate_ids() -> None:
 def test_place_precision_round_trip() -> None:
     """The structured precision field (country/continent) survives the
     Place round-trip — vague places must never be presented as exact on
-    the map (PRD §19.7, 2026-08-05 bot review)."""
+    the map (PRD §19.7)."""
     raw = {
         "id": "pl-tornia",
         "name": "Tornia",
@@ -138,7 +137,6 @@ def test_place_precision_is_a_closed_vocabulary() -> None:
     # An imperfectly specified place must carry an honest granularity —
     # "town" for a building known to be somewhere in a settlement (the
     # Lark Inn), never a made-up value the renderer can't understand
-    # (2026-08-05).
     for precision in ("exact", "street", "town", "county", "region", "country", "continent"):
         place = Place.from_dict({"id": "pl-x", "name": "X", "precision": precision})
         assert place.to_dict()["precision"] == precision
@@ -157,7 +155,7 @@ def test_validate_identity_rejects_bad_people_table() -> None:
 
 def test_person_round_trip_with_dates_and_occupations() -> None:
     """dob/dod carry honest precision; occupations are attested forms — all
-    survive the wire format (2026-08-05 import interview)."""
+    survive the wire format."""
     raw = {
         "id": "p-fern",
         "name": "Fern Voss",
@@ -176,7 +174,7 @@ def test_person_round_trip_with_dates_and_occupations() -> None:
 
 def test_person_round_trip_with_residence() -> None:
     """Residence is a person fact — {place, from, to, status} — the GEDCOM X
-    alignment for the household rule (2026-08-05); a deduction is proposed."""
+    alignment for the household rule; a deduction is proposed."""
     raw = {
         "id": "p-miles",
         "name": "Miles Hale",
@@ -201,7 +199,7 @@ def test_person_rejects_invalid_residence_place_id() -> None:
 
 def test_person_dates_support_bound_precisions() -> None:
     """before / after / between carry the bounds the artifacts actually
-    state ("Aft. 1881", "Bet. 1880-1881") — GEDCOM 7 alignment (2026-08-05);
+    state ("Aft. 1881", "Bet. 1880-1881") — GEDCOM 7 alignment;
     between needs date2, and the wire format omits it otherwise."""
     raw = {
         "id": "p-x",
@@ -370,7 +368,7 @@ def test_item_sources_are_validated() -> None:
 def test_clarification_flag_is_validated() -> None:
     # A clarification fragment ("yes BF means Owen") is a story-shaped record
     # that attests a person or item — it is not an event and must name its
-    # target (2026-08-06).
+    # target.
     base = _event_item()
     base.update({"type": "story", "title": "BF", "items": [{"id": "letter-1977", "status": "confirmed"}]})
     item = Item.from_dict(dict(base, clarification=True))
@@ -389,7 +387,7 @@ def test_clarification_flag_is_validated() -> None:
 def test_people_refs_may_carry_an_involvement_date() -> None:
     # An item that spans time (a family record written into over five
     # generations) involves different people at different dates — the ref
-    # states when THAT person's involvement happened (2026-08-06). The
+    # states when THAT person's involvement happened. The
     # person's page and the person-filtered timeline place the item by it.
     base = _event_item()
     base.update({"type": "document", "title": "The family record", "date": "1868-03-20", "date_precision": "exact"})
@@ -409,7 +407,7 @@ def test_people_refs_may_carry_an_involvement_date() -> None:
 
 def test_evidence_flag_is_validated() -> None:  # A found record — a web capture, a directory page — is evidence ABOUT
     # the family, not a family happening: it renders on the pages it attests,
-    # never on the timeline (2026-08-06, the recognition principle).
+    # never on the timeline (the recognition principle).
     base = _event_item()
     base.update({"type": "document", "title": "A web page", "places": [{"id": "pl-x", "status": "confirmed"}]})
     item = Item.from_dict(dict(base, evidence=True))
@@ -427,7 +425,7 @@ def test_evidence_flag_is_validated() -> None:  # A found record — a web captu
 def test_reflection_flag_is_validated() -> None:
     # A reflection is the narrator's perspective — it has no events' date
     # other than the telling day and renders on the people/places it
-    # mentions (2026-08-06). Same shape as a clarification: flag on story.
+    # mentions. Same shape as a clarification: flag on story.
     base = _event_item()
     base.update({"type": "story", "title": "Meeting her", "people": [{"id": "p-nora", "status": "confirmed"}]})
     item = Item.from_dict(dict(base, reflection=True))
@@ -444,7 +442,7 @@ def test_reflection_flag_is_validated() -> None:
 
 def test_relationship_accepts_an_optional_date() -> None:
     # A spouse edge may carry the marriage date — the timeline derives the
-    # marriage event from it (2026-08-05).
+    # marriage event from it.
     rel = Relationship.from_dict(
         {
             "a": "p-a",
@@ -459,7 +457,7 @@ def test_relationship_accepts_an_optional_date() -> None:
 
 
 def test_relationship_carries_the_owner_status() -> None:
-    # The statuses are strict (2026-08-08, user): proposed = guessed by an
+    # The statuses are strict (user): proposed = guessed by an
     # agent; estimated = guessed by a human, in the DB as a guess (GEDCOM's
     # EST); confirmed = actually confirmed. A missing status round-trips as
     # absent.
@@ -532,7 +530,7 @@ def test_item_rejects_bad_refs_assets_and_transcription_status() -> None:
 
 def test_event_tombstone_needs_no_kind() -> None:
     """A tombstone carries only id/type/title/status/reason — an event
-    tombstone must not require a kind (2026-08-06 review)."""
+    tombstone must not require a kind."""
     Item.from_dict({"id": "event-x", "type": "event", "title": "X", "status": "deleted", "reason": "gone"})
     with pytest.raises(ValueError, match="needs a kind"):
         Item.from_dict(dict(_event_item(), status="catalogued"))  # live events still need one
@@ -540,7 +538,7 @@ def test_event_tombstone_needs_no_kind() -> None:
 
 def test_date_validation_rejects_garbage_forms() -> None:
     """The write seam checks the whole date, not the year prefix — 2026-99-99
-    and 2026-02-31 are not dates (2026-08-06 review)."""
+    and 2026-02-31 are not dates."""
     base = {
         "id": "letter-x",
         "type": "letter",
@@ -564,8 +562,7 @@ def test_date_validation_rejects_garbage_forms() -> None:
 
 def test_person_seam_rejects_impossible_dates() -> None:
     """The person seam validates the date itself, not just the precision —
-    2026-99-99 must fail at write time, not crash the GEDCOM export later
-    (review, 2026-08-07)."""
+    2026-99-99 must fail at write time, not crash the GEDCOM export later."""
     with pytest.raises(ValueError, match="impossible date"):
         Person.from_dict({"id": "p-x", "name": "X", "dob": {"date": "2026-99-99", "precision": "exact"}})
     with pytest.raises(ValueError, match="impossible date"):
@@ -580,7 +577,7 @@ def test_person_seam_rejects_impossible_dates() -> None:
 
 def test_person_email_is_validated_and_normalised() -> None:
     """The identity seam: a person's Google account email — lowercase,
-    shape-checked at the write seam (2026-08-06)."""
+    shape-checked at the write seam."""
     person = Person.from_dict({"id": "p-alex", "name": "Alex Hale", "email": "Alex.Hale@Example.COM "})
     assert person.email == "alex.hale@example.com"
     for bad in ("not-an-email", "missing@tld", "@nowhere"):

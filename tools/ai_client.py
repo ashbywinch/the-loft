@@ -73,7 +73,7 @@ class AIClient:
         self.timeout: float = timeout
         self.max_retries: int = max_retries
         # the last response's reasoning — captured so a failed judgment is
-        # diagnosable from its trace (2026-08-14, user: "we should be able
+        # diagnosable from its trace (user: "we should be able
         # to read the model's thought process to understand why it got it
         # wrong")
         self.last_reasoning: str = ""
@@ -85,11 +85,11 @@ class AIClient:
         """One text chat completion call; returns the assistant text.
 
         *thinking* enables the model's reasoning: the review judgments
-        flipped run to run at temperature 0 with it disabled (2026-08-14:
-        the review evals failed 3 of 4 runs), and the reasoning is captured
-        in ``last_reasoning`` so a wrong judgment is diagnosable. Thinking
-        needs output headroom — deepseek-v4-flash at 3000 tokens spent the
-        whole budget reasoning and returned empty content."""
+        flipped run to run at temperature 0 with it disabled, and the
+        reasoning is captured in ``last_reasoning`` so a wrong judgment is
+        diagnosable. Thinking needs output headroom — deepseek-v4-flash at
+        3000 tokens spent the whole budget reasoning and returned empty
+        content."""
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
@@ -138,7 +138,7 @@ class AIClient:
                     message = choice.get("message") if isinstance(choice, dict) else None
                     # a choice can be a dict whose message is a non-dict (a string) —
                     # .get on it would raise the uncaught AttributeError the null-
-                    # choice guard was meant to prevent (bot review, 2026-08-16)
+                    # choice guard was meant to prevent
                     message = message if isinstance(message, dict) else {}
                     content = message.get("content") or ""
                 except (KeyError, IndexError, TypeError) as e:
@@ -179,9 +179,7 @@ class AIClient:
             if content and content.strip():
                 return content
             # a 200 with no content is a transient provider failure, not an
-            # answer — the gateway logged 0-token completions for the evals
-            # (2026-09-23), and surfacing them failed the suite with "no
-            # answer". Retry with the same backoff as a 5xx; exhaust the
+            # answer. Retry with the same backoff as a 5xx; exhaust the
             # budget before failing.
             if attempt >= self.max_retries:
                 raise AIClientError("empty response from API")
@@ -230,9 +228,8 @@ def find_api_key(_env: Mapping[str, str] | None = None, _home: Path | None = Non
 def json_object(text: str) -> dict[str, Any]:
     """Extract the LAST complete JSON object from model output, tolerating
     fences, prose, and MULTIPLE objects — a reasoning preamble followed by
-    the verdict is the shape the model emits (2026-09-23: the first-{/last-}
-    slice spanned both objects and json.loads failed with "Extra data").
-    Scanning with raw_decode skips a malformed brace instead of failing."""
+    the verdict is the shape the model emits. Scanning with raw_decode
+    skips a malformed brace instead of failing."""
     decoder = json.JSONDecoder()
     stripped = text.strip()
     found: dict[str, Any] | None = None

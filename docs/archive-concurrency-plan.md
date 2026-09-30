@@ -1,8 +1,8 @@
 # Archive concurrency architecture — plan and context for review
 
 Status: design under critique. Nothing here is implemented yet.
-Date: 2026-08-09. Author: the session. Reviewer wanted: a DBA-grade critique
-of the concurrency and performance properties, with alternatives.
+Reviewer wanted: a DBA-grade critique of the concurrency and performance
+properties, with alternatives.
 
 ---
 

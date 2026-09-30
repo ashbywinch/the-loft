@@ -20,11 +20,7 @@ def area(box: list[float]) -> float:
 
 def overlap(a: list[float], b: list[float]) -> float:
     """The intersection over the SMALLER box — a tall strip inside a wide
-    box still claims the same region. (2026-08-20: the zero-division
-    guard was once ``min(area_a, area_b, eps)`` — the epsilon is the
-    minimum of the three, so every overlap divided by 1e-9 and any 1px
-    intersection read as ~1e12; the dedupe, the anchor arbitration and
-    the gates all consumed the inflated value.)"""
+    box still claims the same region."""
     x = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
     y = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
     return (x * y) / max(min(area(a), area(b)), _AREA_EPSILON)
@@ -40,12 +36,11 @@ def reading_axis(box: list[float], orientation: float | None) -> float:
 
 def aspect_consistent(orientation: float, box: list[float] | None) -> bool:
     """Is the orientation consistent with the box's aspect — Gate A's rule,
-    shared by the orientation resolution (a line's orientation must come
-    from geometry-validated data, 2026-08-20): a clearly-wide box is
-    horizontal text, a clearly-tall box is vertical. Near-square boxes
-    and diagonal angles (45°) are always consistent (lenient — a diagonal
-    line is genuinely diagonal). A ``None`` box (no geometry) is always
-    consistent."""
+    shared by the orientation resolution: a line's orientation must come
+    from geometry-validated data. A clearly-wide box is horizontal text,
+    a clearly-tall box is vertical. Near-square boxes and diagonal angles
+    (45°) are always consistent (lenient — a diagonal line is genuinely
+    diagonal). A ``None`` box (no geometry) is always consistent."""
     if not box:
         return True
     box_w = box[2] - box[0]
@@ -62,12 +57,10 @@ def aspect_consistent(orientation: float, box: list[float] | None) -> bool:
 
 def orientation_from_aspect(box: list[float] | None) -> int:
     """The reading direction the box's shape implies — aspect_consistent's
-    inverse, used when labelling ink-measured rows (the batch runner,
-    2026-08-25): a clearly-tall union is vertical text (90°), everything
-    else defaults horizontal. Near-square boxes are lenient under Gate A,
-    so the horizontal default is always safe there. Hardcoding 0 for
-    every row refused seven photo pages ('orientation 0.0° inconsistent
-    with a 65x396 box')."""
+    inverse, used when labelling ink-measured rows: a clearly-tall union
+    is vertical text (90°), everything else defaults horizontal.
+    Near-square boxes are lenient under Gate A, so the horizontal default
+    is always safe there."""
     if not box:
         return 0
     box_w = box[2] - box[0]
@@ -83,13 +76,10 @@ INK_MIN = 0.001
 
 def has_ink(box: Sequence[float], image: Any) -> bool:
     """Does the box's region contain ink relative to its OWN paper
-    level? (Gate D, 2026-08-20: page-01's transcription boxes sat
-    ~770px above the real text — a well-proportioned box in a blank
-    region is an estimate, not an anchor. 2026-08-26: the fixed <128
-    cutoff was tuned for pen on white and called every pencil note on
-    cream photo-card blank; the threshold is now the crop's median
-    level minus 35, so faint-but-darker-than-paper marks count and
-    blank paper never does.)"""
+    level? (Gate D): a well-proportioned box in a blank region is an
+    estimate, not an anchor. The threshold is the crop's median level
+    minus 35, so faint-but-darker-than-paper marks count and blank
+    paper never does."""
     x0, y0, x1, y1 = (int(v) for v in box)
     w, h = image.size
     x0, y0 = max(0, x0), max(0, y0)
@@ -113,8 +103,7 @@ def has_ink(box: Sequence[float], image: Any) -> bool:
 
 def text_line_count(box: Sequence[float], image: Any, *, min_band_rows: int = 3, min_gap_rows: int = 3) -> int:
     """How many separated ink bands the box's region holds — the cheap
-    multi-line gate (2026-08-25): the vision audit caught stale boxes
-    enclosing 3-4 handwriting lines apiece. The crop's row-projection
+    multi-line gate. The crop's row-projection
     (PIL getprojection — no numpy, no model) counts bands; runs merged
     across gaps shorter than ``min_gap_rows`` are one band, and only
     bands of at least ``min_band_rows`` rows count (noise filter). The

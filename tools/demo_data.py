@@ -14,8 +14,8 @@ if TYPE_CHECKING:
     from tools.archive import Archive
 
 # The demo default is a dedicated folder, never the real projection — a bare
-# run must not be able to clobber app/data with fictional content (2026-08-04
-# review, raised twice; the projection has one writer: tools/publish).
+# run must not be able to clobber app/data with fictional content; the
+# projection has one writer: tools/publish.
 OUT = Path(__file__).resolve().parent.parent / "demo" / "data"
 
 # --------------------------------------------------------------------------
@@ -133,7 +133,7 @@ PLACES: list[dict[str, Any]] = [
         "x": 42,
         "y": 48,
         "lat": 52.1,
-        "lng": -1.4,  # lucidlint: ignore magic-number demo longitude — invented geography data, not a computed constant
+        "lng": -1.4,
         "precision": "town",
     },
     {
@@ -143,7 +143,7 @@ PLACES: list[dict[str, Any]] = [
         "x": 58,
         "y": 55,
         "lat": 52.3,
-        "lng": -1.1,  # lucidlint: ignore magic-number demo longitude — invented geography data, not a computed constant
+        "lng": -1.1,
         "precision": "town",
     },
     {
@@ -153,7 +153,7 @@ PLACES: list[dict[str, Any]] = [
         "x": 61,
         "y": 62,
         "lat": 52.32,
-        "lng": -1.05,  # lucidlint: ignore magic-number demo longitude — invented geography data, data, not a constant
+        "lng": -1.05,
         "precision": "town",
     },
     {
@@ -163,7 +163,7 @@ PLACES: list[dict[str, Any]] = [
         "x": 55,
         "y": 50,
         "lat": 52.29,
-        "lng": -1.12,  # lucidlint: ignore magic-number demo longitude — invented geography data, data, not a constant
+        "lng": -1.12,
         "precision": "town",
     },
     {
@@ -173,7 +173,7 @@ PLACES: list[dict[str, Any]] = [
         "x": 63,
         "y": 66,
         "lat": 52.33,
-        "lng": -1.02,  # lucidlint: ignore magic-number demo longitude — invented geography data, data, not a constant
+        "lng": -1.02,
         "precision": "region",
     },
 ]

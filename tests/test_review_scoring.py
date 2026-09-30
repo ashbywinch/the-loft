@@ -1,4 +1,4 @@
-"""The calibration regression gate (2026-08-26): the served archive's
+"""The calibration regression gate: the served archive's
 transcription coverage against the reference set — the first measured
 numbers for the pipeline (aggregate 0.68 on serving pages when written;
 page-03 0.62, page-10 0.77). A change that drops serving coverage

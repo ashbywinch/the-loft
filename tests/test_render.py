@@ -1,4 +1,4 @@
-"""Tests for the row renderer (tools/render.py).
+"""Tests for the row renderer (tools/boxrows_render.py).
 
 The renderer is a presentation function: the joins are the minimum band
 between a row's words, the tint is faint, and the yellow lines come numbered.
@@ -73,7 +73,7 @@ def _fixture_ink_canvas() -> Image.Image:
     marks' pixels — the real page's ink as data, WITHOUT the scan: the
     drawing pins' audit works at this scale (the detector's own view of
     the ink), and real-world data enters tests as the marks file, never
-    by opening the archive's images (testing standard, 2026-09-19)."""
+    by opening the archive's images."""
     import numpy as np
 
     records = json.loads(Path(__file__).parent.joinpath("fixtures", "page01-marks.json").read_text())["marks"]

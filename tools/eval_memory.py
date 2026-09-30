@@ -38,7 +38,7 @@ def load_projection() -> dict[str, list[dict[str, Any]]]:
 
 # The elicitation speaks the family's language, never the process's — the
 # hired genealogist's voice (PRD: "the assistant reads as a hired
-# genealogist, not a computer", 2026-08-09; user: "make sure the
+# genealogist, not a computer"; user: "make sure the
 # requirement is in all relevant evals").
 _PROCESS_JARGON = (
     "session",
@@ -163,7 +163,7 @@ class MemoryFlow:
     account. The session fixture runs each flow ONCE (the assess stage —
     the production call self-corrects internally, so the eval runs it
     exactly once); the condition tests verify the single output against
-    the flow's ``assert_`` and the shared contract (2026-08-10, user:
+    the flow's ``assert_`` and the shared contract (user:
     name the flows, cache the runs, independent tests)."""
 
     name = ""
@@ -405,8 +405,8 @@ def run_flow(
         # Knowledge's own conversion point for the projection's plain dicts
         # — the raw constructor's annotation is loose (it normalizes in
         # __post_init__); from_projection declares the dict-accepting
-        # contract (2026-08-10: the cast/Any that papered over the
-        # mismatch was a bodge — the class's own seam is the fix)
+        # contract — the class's own seam, never a cast/Any papering over
+        # the mismatch.
         knowledge=Knowledge.from_projection(
             people=knowledge["people"],
             places=knowledge["places"],

@@ -243,8 +243,7 @@ def _fixture_mask(marks: list[Mark]) -> np.ndarray:
 def _fixture_marks() -> list[Mark]:
     """Page-01's real marks, committed as data — the detector's output on
     the canonical scan, WITHOUT the scan: real-world data enters tests as
-    the marks file, never by opening the archive's images (testing
-    standard, 2026-09-19)."""
+    the marks file, never by opening the archive's images."""
     records = json.loads(Path(__file__).parent.joinpath("fixtures", "page01-marks.json").read_text())["marks"]
     return [
         Mark(
@@ -273,10 +272,9 @@ def _fixture_strokes() -> list[list[tuple[float, float]]]:
 @pytest.fixture(scope="module")
 def page01_marks() -> dict:
     """The mark finder's output on page-01, from the committed marks file.
-    No line fitting, no box splitting. User 2026-09-14: the four-word
-    block (upper pair over Myra Hess) must arrive as left and right marks
-    apart, each spanning both lines (the vertical weld is the splitter's
-    job)."""
+    No line fitting, no box splitting. User: the four-word block (upper
+    pair over Myra Hess) must arrive as left and right marks apart, each
+    spanning both lines (the vertical weld is the splitter's job)."""
 
     return {m.id: m for m in _fixture_marks()}
 
@@ -336,8 +334,8 @@ def page01_shapes() -> tuple:
     return {s.id: s for s in shapes}, LineFitter(scale).fit(shapes), scale
 
 
-# Live splitter status, measured 2026-09-14 against the min-overlap waist
-# rule (WAIST_RUN=10, WAIST_OVERLAP=0.5) — the status each pin below asserts.
+# Live splitter status, measured against the min-overlap waist rule
+# (WAIST_RUN=10, WAIST_OVERLAP=0.5) — the status each pin below asserts.
 # Whole (1 piece): 19583, 3780, 22082. Split: 4503→2, 9690→2, 6475→2,
 # 5555→3, 1970→2, 683→3, 2723→2, 2875→2, 2911→2, 5514→2, 23194→3, 23150→2,
 # 4847→4. The one-word pins below FAIL on this code: that is the open defect
@@ -383,9 +381,9 @@ def page01_writing() -> tuple:
 
 
 def test_an_underline_does_not_join_words(page01_writing) -> None:
-    """User 2026-09-16: 'the words are only joined by the underline. We
-    shouldn't consider an underline as joining anything.' The ink that arrived
-    as one mark holding five words under one underline therefore comes back as
+    """User: 'the words are only joined by the underline. We shouldn't
+    consider an underline as joining anything.' The ink that arrived as one
+    mark holding five words under one underline therefore comes back as
     five separate marks — the underline's ink is out of the raster."""
     from tools.mark import SCALE
 
@@ -395,10 +393,10 @@ def test_an_underline_does_not_join_words(page01_writing) -> None:
         for s in marks.values()
         if s.x0 * SCALE >= 1164 and s.x1 * SCALE <= 1802 and s.y0 * SCALE >= 3640 and s.y1 * SCALE <= 3718
     ]
-    # six marks now (2026-09-19): the underline's residue is stripped before
-    # the weld, so the five words return separately AND the island that was
-    # inside the weld's envelope (mark 13897, "Henny"'s W) is exposed as its
-    # own component instead of hidden — a joining decision for the gap rule.
+    # six marks: the underline's residue is stripped before the weld, so the
+    # five words return separately AND the island that was inside the weld's
+    # envelope (mark 13897, "Henny"'s W) is exposed as its own component
+    # instead of hidden — a joining decision for the gap rule.
     assert len(window) == 6, f"{len(window)} marks in the five-word window, want 6 incl. the exposed island"
 
 
@@ -427,7 +425,7 @@ def _words_within(words, window: tuple[float, float, float, float]) -> list:
 
 
 def test_the_box_above_342_is_two_words(page01_words) -> None:
-    """User 2026-09-16, on the render: 'your box 2 in the image shows two words
+    """User, on the render: 'your box 2 in the image shows two words
     stacked' — box 334 (x1416-1520, y4492-4544) holds word 1 (y4492-4536) and
     the top of word 2 (y4538-4544, its rest in 342's component below, up to
     y4570). The window reaches y4600 so the merged second word counts."""
@@ -436,16 +434,16 @@ def test_the_box_above_342_is_two_words(page01_words) -> None:
 
 
 def test_the_box_47_is_two_words(page01_words) -> None:
-    """User 2026-09-16: box 47 (x1950-2002, y2542-2596) 'is also two words
-    stacked' — one word box today."""
+    """User: box 47 (x1950-2002, y2542-2596) 'is also two words
+    stacked' — one word box."""
     inside = _words_within(page01_words, (1940.0, 2535.0, 2010.0, 2605.0))
     assert len(inside) == 2, f"{len(inside)} word box(es) at x1950-2002 y2542-2596, want the two words"
 
 
 def test_no_word_box_contains_another(page01_words) -> None:
-    """User 2026-09-16: box 37 (x1484-2010, y2276-2768) 'is obviously not a
-    word since it contains many other word boxes' — a box holding another whole
-    box is a weld, not a word."""
+    """User: box 37 (x1484-2010, y2276-2768) 'is obviously not a word since
+    it contains many other word boxes' — a box holding another whole box is
+    a weld, not a word."""
     nested = [
         (outer, inner)
         for outer in page01_words
@@ -460,11 +458,10 @@ def test_no_word_box_contains_another(page01_words) -> None:
 
 
 def test_the_crossed_out_rows_split_at_the_gap(page01_shapes) -> None:
-    """id=4847's two crossed-out rows are two pieces (user 2026-09-17: 'each
-    crossed-out line its own box'). The gap rule cuts at the near-empty rows
-    y2730-2734 between the bands — the boundary lands in the gap, neither row
-    loses its ink (supersedes the 2026-09-16 pin, which held the lower body's
-    crown on: the crown IS the first crossed-out row)."""
+    """id=4847's two crossed-out rows are two pieces (user: 'each crossed-out
+    line its own box'). The gap rule cuts at the near-empty rows y2730-2734
+    between the bands — the boundary lands in the gap, neither row loses its
+    ink."""
     from tools.mark import SCALE
     from tools.reader import split_shapes
 
@@ -477,10 +474,9 @@ def test_the_crossed_out_rows_split_at_the_gap(page01_shapes) -> None:
 
 
 def test_the_split_pair_is_one_word(page01_shapes) -> None:
-    """User 2026-09-16, ruled on the zoomed cut rows: raw 5514 is a SINGLE
-    word and must not be divided. This supersedes the 2026-09-13 pin ('renders
-    75 + 81 are two parts of ONE word... the splitter must keep them apart'),
-    which was taken from the render boxes rather than from the ink."""
+    """User, ruling on the zoomed cut rows: raw 5514 is a SINGLE word and
+    must not be divided; the contrary reading came from the render boxes
+    rather than from the ink."""
     from tools.reader import split_shapes
 
     by_id, lines, scale = page01_shapes
@@ -489,16 +485,16 @@ def test_the_split_pair_is_one_word(page01_shapes) -> None:
 
 
 def test_the_pupil_block_reads_four_words(page01_shapes) -> None:
-    """User 2026-09-16: the block reads 'Pupil of / Myra Hess' — four words.
+    """User: the block reads 'Pupil of / Myra Hess' — four words.
     Rulings from the case sheets: raw 2723 is ONE digit (the mid-body cut
     y2556 is a chop, must refuse). Raw 2875's upper piece is a word fragment
-    that must NOT be split off (user 2026-09-16: 'that upper piece is indeed a
-    word fragment that shouldn't be split. That's unrelated to the fact that
-    the picture contains two words'), so the mid-word chop stays merged; the
-    picture's TWO words are 'of' and 'hess', and user 2026-09-17 ruled box 47
-    (same mark) splits there — the gap rule cuts at y2558. Raw 2911 welds
-    the word on the line above to the word below and that separation is
-    correct (2 pieces). No rule/underline is claimed in 2875."""
+    that must NOT be split off (user: 'that upper piece is indeed a word
+    fragment that shouldn't be split. That's unrelated to the fact that the
+    picture contains two words'), so the mid-word chop stays merged; the
+    picture's TWO words are 'of' and 'hess', and user ruled box 47 (same
+    mark) splits there — the gap rule cuts at y2558. Raw 2911 welds the word
+    on the line above to the word below and that separation is correct (2
+    pieces). No rule/underline is claimed in 2875."""
     from tools.reader import split_shapes
 
     by_id, lines, scale = page01_shapes
@@ -511,9 +507,9 @@ def test_the_pupil_block_reads_four_words(page01_shapes) -> None:
 
 
 def test_stacked_pair_stays_two_words(page01_shapes) -> None:
-    """User 2026-09-13: render 327 (raw 23194's upper piece) sits above a
-    separate lower word with clean paper between — the split is correct and
-    the pieces must stay two words, never merged."""
+    """User: render 327 (raw 23194's upper piece) sits above a separate
+    lower word with clean paper between — the split is correct and the
+    pieces must stay two words, never merged."""
     from tools.mark import SCALE
     from tools.reader import split_shapes
 
@@ -524,21 +520,21 @@ def test_stacked_pair_stays_two_words(page01_shapes) -> None:
 
 
 def test_the_gapped_marks_keep_their_own_pieces(page01_shapes) -> None:
-    """User 2026-09-16, ruled against each mark's OWN outlined sheet: raw
-    22082 (render 324) is ONE piece; raw 23150 (render 332) is TWO — its cut
-    stands. The earlier 'each raw shape stays its own piece' ruling was given
-    against a sheet that outlined 22082 while the question named 23150."""
+    """User, ruling against each mark's OWN outlined sheet: raw 22082
+    (render 324) is ONE piece; raw 23150 (render 332) is TWO — its cut
+    stands."""
     from tools.reader import split_shapes
 
     by_id, lines, scale = page01_shapes
     assert len(split_shapes([by_id["22082"]], lines, scale.unit)) == 1, "render 324 (22082) split"
     assert len(split_shapes([by_id["23150"]], lines, scale.unit)) == 2, "render 332 (23150) did not split in two"
 
+    # Marks the user ruled hold more than one word: welded ink the detector
+    # reports as one word. 18092 = "life" over "facilities"; 7105 = "some
+    # composition". 14187's five words are covered by the underline test
+    # below — they were welded by the underline, not by each other.
 
-# Marks the user ruled hold more than one word (2026-09-16): welded ink the
-# detector reports as one word. 18092 = "life" over "facilities"; 7105 =
-# "some composition". 14187's five words are covered by the underline test
-# below — they were welded by the underline, not by each other.
+
 _WELDED_CASES = {
     "18092": 2,
     "7105": 2,
@@ -549,7 +545,7 @@ _WELDED_CASES = {
 def test_a_welded_mark_yields_its_words(page01_shapes, raw_id: str) -> None:
     """A mark holding several words comes back as several pieces: the words
     are welded (no clean column gap), so the splitter must find them anyway.
-    User rulings 2026-09-16."""
+    User rulings."""
     from tools.reader import split_shapes
 
     by_id, lines, scale = page01_shapes
@@ -560,10 +556,10 @@ def test_a_welded_mark_yields_its_words(page01_shapes, raw_id: str) -> None:
 def test_a_detached_line_is_a_rule_or_an_underline_and_a_fragment_is_neither(page01_shapes) -> None:
     """A line the writer drew cedes from the words; a word's fragment does not.
 
-    User 2026-09-16, on the boxed pieces: 7105's lower piece is a rule (it is
-    not directly aligned with the words above), 9676's is an underline (it is),
-    and 683's bottom fragment, 2875's upper piece and 6475's first piece are not
-    lines at all — they stay with their words."""
+    User, on the boxed pieces: 7105's lower piece is a rule (it is not
+    directly aligned with the words above), 9676's is an underline (it is),
+    and 683's bottom fragment, 2875's upper piece and 6475's first piece are
+    not lines at all — they stay with their words."""
     from tools.reader import split_shapes
 
     by_id, lines, scale = page01_shapes

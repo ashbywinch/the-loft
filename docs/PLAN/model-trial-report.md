@@ -1,14 +1,14 @@
 # The layout geometry: what we learned and where we're going
 
-Status: SUPERSEDED as the mechanism (2026-09-22) — the verdict
+Status: SUPERSEDED as the mechanism — the verdict
 (glm-4.6v) informed the served path (the grouped-strips layout reads
 via the gateway's `dynamic/image` route; `eval_regions` defaults to
 `z-ai/glm-4.6v`); the crop-grid integration this report awaited (§7's
 region-sized crops) was replaced by the strip path's ink-projection
-measurement, which SERVED the layout stage (2026-09-09,
+measurement, which SERVED the layout stage (
 `strip-grouping-plan.md`); the postcard rotation problem became
 dual-orientation detection — cursive-page measurement REOPENED there;
-the self-report stage (§8) is wired as the flag source (2026-08-15;
+the self-report stage (§8) is wired as the flag source (
 `tools/layout_apply_selfreport.py`). The running experiment ledger:
 `docs/PLAN/geometry-experiments-log.md`.
 

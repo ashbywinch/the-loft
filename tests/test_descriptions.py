@@ -1,7 +1,7 @@
 """The description eval — every catalogued letter/document must carry a
 description specific enough to tell it apart from the rest of the same
 correspondence, even when a suitcase of letters between the same two people
-turns up (2026-08-05).
+turns up.
 
 The checks:
 1. A description exists and is not just the title.

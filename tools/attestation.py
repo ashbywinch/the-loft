@@ -1,4 +1,4 @@
-"""The attested-edge scanner (2026-08-06, user: edges must not get lost).
+"""The attested-edge scanner (user: edges must not get lost).
 
 The family tree can only place people who have family edges — a person
 whose *text* attests a family link ("married X", "X's son") but whose

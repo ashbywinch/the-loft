@@ -1,5 +1,4 @@
-"""The attested-edges eval (2026-08-06, user: make sure edges don't get
-lost again).
+"""The attested-edges eval (user: make sure edges don't get lost again).
 
 The family tree can only place people who have family edges — a person
 whose *text* attests a family link ("married X", "X's son") but whose

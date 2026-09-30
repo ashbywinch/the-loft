@@ -1,9 +1,7 @@
 """Tests for the placeholder engine (tools/placeholders.py): the stand-in
 SVG for a missing scan is family-agnostic — the shape follows the item's
 type, the label comes from the item's own data (``demo`` for fictional
-stand-in text, else the title). Never from the item's id (2026-08-05: the
-engine once branched on the real family's artifact ids, baking attested and
-unattested content into code)."""
+stand-in text, else the title). Never from the item's id."""
 
 from __future__ import annotations
 
@@ -53,8 +51,7 @@ def test_engine_never_branches_on_an_id() -> None:
 
 def test_label_with_xml_special_characters_is_escaped() -> None:
     """Publish generates placeholders for real archive items, so a title
-    containing & < or " must not produce malformed SVG (2026-08-05 review,
-    importance 6)."""
+    containing & < or " must not produce malformed SVG."""
     svg = asset_svg(_item(title='Boat & "Sparrow" <the>'), "w.svg")
     assert "&amp;" in svg and "&lt;" in svg and "&quot;" in svg
     assert 'Boat & "Sparrow" <the>' not in svg  # raw characters never reach the SVG
@@ -65,7 +62,6 @@ def test_label_with_xml_special_characters_is_escaped() -> None:
 
 def test_letter_asset_not_named_page_falls_back_to_page_one() -> None:
     """A letter asset that isn't page-N (an envelope, a back) must not
-    abort the whole publish with an IndexError (2026-08-05 review,
-    importance 5)."""
+    abort the whole publish with an IndexError."""
     svg = asset_svg(_item(id="letter-a", type="letter", assets=[{"file": "envelope.jpg"}]), "envelope.jpg")
     assert "1 / 1" in svg

@@ -29,7 +29,7 @@ review-chat findings R1–R14 (`ux-fixes-plan.md`) stay open until these
 land.
 
 Unfinished memories (PRD §9 F10) enter this same review — the same
-queue, the same walk (INGEST-PRD, 2026-09-22 ruling: an unfinished
+queue, the same walk (INGEST-PRD ruling: an unfinished
 memory may simply have more to tell; the conversation is the same one
 that elicits further memories about the item and the identities that
 emerge).

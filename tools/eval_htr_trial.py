@@ -1,4 +1,4 @@
-"""The HTR head-to-head (2026-08-26): existing tools vs our pipeline on
+"""The HTR head-to-head: existing tools vs our pipeline on
 the SAME real pages. The user's challenge — "are you sure we shouldn't
 be using existing tools?" — gets an empirical answer: same pages, same
 reference, normalized outputs, honest table. Engines: tesseract (local,

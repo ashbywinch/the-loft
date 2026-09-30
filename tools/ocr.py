@@ -1,27 +1,25 @@
-"""Minimal OCR of scanned pages into a transcription (2026-08-10).
+"""Minimal OCR of scanned pages into a transcription.
 
 The import flow's transcription machinery is not built yet — IMPORT-PRD
 Rule L (the transcript gate: the machine's transcript is checked and fixed
 by the reviewer BEFORE any proposal is built on it) has no implementation.
 This is the minimal seam: orient each page, OCR it with tesseract, join the
 text. The output is a PROPOSAL — the item's transcription_status stays
-``draft`` until the gate exists and a human verifies it (2026-08-10, user:
-"we might not have code to do this at all, then we should make a minimal
-function just to do the OCR job into the transcription").
+``draft`` until the gate exists and a human verifies it (user: "we might
+not have code to do this at all, then we should make a minimal function
+just to do the OCR job into the transcription").
 
 Orientation (Rule J): scans may be rotated. Every explicit orientation
 detector we tried was unreliable — the vision models gave contradictory
 answers (LEFT vs RIGHT against an upright page) and tesseract's own OSD
-misreported an upright page as 180 degrees (2026-08-10). The orientation
-pass is therefore DETERMINISTIC AND SELF-VERIFYING: the page is read in
-all four rotations and the read recognizing the most words (tesseract's
-per-word confidence >= 60) wins. This exploits a property of the LSTM
-recognizer itself — it was trained on upright text, so a rotated read
-fragments and scores low; no orientation classifier is needed, and the
-arbiter cannot guess wrong. A vision-model pre-check was tried and ditched
-(2026-08-10): slower than the arbiter, wrong on the rotated pages, and it
-saved nothing — the read always had to judge anyway. Four reads per page
-is the cost of never hallucinating a rotation.
+misreported an upright page as 180 degrees. The orientation pass is
+therefore DETERMINISTIC AND SELF-VERIFYING: the page is read in all four
+rotations and the read recognizing the most words (tesseract's per-word
+confidence >= 60) wins. This exploits a property of the LSTM recognizer
+itself — it was trained on upright text, so a rotated read fragments and
+scores low; no orientation classifier is needed, and the arbiter cannot
+guess wrong. Four reads per page is the cost of never hallucinating a
+rotation.
 """
 
 from __future__ import annotations
@@ -97,7 +95,7 @@ def _strong_word_count(image: Path, lang: str) -> int:
 def _rotate(image: Path, degrees: int) -> Path:
     """Rotate the page with ImageMagick into a temp file (90/180/270)."""
     fd, tmp_path = tempfile.mkstemp(suffix=".jpg")
-    os.close(fd)  # magick opens the path itself; the fd would leak (2026-08-11 review)
+    os.close(fd)  # magick opens the path itself; the fd would leak
     tmp = Path(tmp_path)
     _rotate_to(image, degrees, tmp)
     return tmp
@@ -181,9 +179,8 @@ def ocr_pages(pages: list[Path], lang: str = "eng") -> list[str]:
 
     Each page is read in all four rotations and the read recognizing the
     most strongly-recognized words wins — the orientation can never be
-    guessed wrong (Rule J; 2026-08-10: the vision models and tesseract's
-    OSD both misreported orientations, so no guesser is trusted — the
-    recognizer's own confidence is the arbiter). The pages' line structure
+    guessed wrong (Rule J: the recognizer's own confidence is the
+    arbiter). The pages' line structure
     is preserved — a genealogy printout stays lines, a letter's paragraphs
     stay paragraphs (Rule M). Raises loudly when a page cannot be read — a
     transcription that cannot be produced is never silently skipped (the
@@ -211,7 +208,7 @@ def ocr_pages(pages: list[Path], lang: str = "eng") -> list[str]:
             # blank page, an unsupported image type, a scan too poor to
             # trust) is a page-level failure — an empty or garbage-only
             # transcription must reach the import gate as an error, never
-            # as a silently meaningless string (2026-08-11 review)
+            # as a silently meaningless string
             raise RuntimeError(f"OCR read no reliable text from {page.name} — the page cannot be read")
         out.append(best_text)
     return out

@@ -15,8 +15,7 @@ import { render as importReview } from "../views/import.js";
 const REPO = `${process.cwd()}/`;
 
 /** The real projection — a view that crashes on the actual data is a blank
- *  page in the app (the-loft 2026-08-08: the import review went blank after
- *  a rework; the view tests used fixtures, so no suite caught it). */
+ *  page in the app. */
 function realState() {
   const index = JSON.parse(readFileSync(`${REPO}app/data/index.json`, "utf8"));
   const people = JSON.parse(readFileSync(`${REPO}app/data/people.json`, "utf8"));
@@ -63,7 +62,7 @@ const ROUTES = [
 ];
 
 describe.skipIf(!hasData)(
-  "every view renders on the real projection (2026-08-08: a blank page is a view crashing on the actual data)",
+  "every view renders on the real projection — a blank page is a view crashing on the actual data",
   () => {
     it.each(ROUTES)("renders %s", (_name, render, ctx) => {
       const main = document.createElement("main");

@@ -138,7 +138,7 @@ def test_review_reject_records_the_rejection(tmp_path: Path) -> None:
 
 
 def test_review_skips_photo_only_documents(tmp_path: Path) -> None:
-    """A photo-only document (the postcard's standalone fronts, 2026-08-17)
+    """A photo-only document (the postcard's standalone fronts)
     has nothing to transcribe — the confirm gate notes it and moves on;
     the text document confirms normally, and the photo doc stays "review"
     for the people/places identification flow."""
@@ -179,7 +179,7 @@ def test_review_skips_photo_only_documents(tmp_path: Path) -> None:
 
 
 def test_review_photo_only_batch_confirms_nothing(tmp_path: Path) -> None:
-    """2026-08-14 final review: make confirm on a photo-only batch must not error."""
+    """Make confirm on a photo-only batch must not error."""
     import json as _json
 
     registry = tmp_path / "registry"

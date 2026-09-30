@@ -22,8 +22,7 @@ function autoGrow(textarea) {
 }
 
 /** An input that autocompletes over suggestions with a filtered dropdown —
- *  NOT a native datalist, which does not work on mobile browsers (user,
- *  2026-08-03). */
+ *  NOT a native datalist, which does not work on mobile browsers (user). */
 export function autocomplete({ suggestions = [], placeholder = "" } = {}) {
   const input = el("input", { class: "field", placeholder, autocomplete: "off", "aria-label": "Type to search" });
   const list = el("div", { class: "ac-list", role: "listbox", hidden: true });
@@ -56,7 +55,7 @@ export function autocomplete({ suggestions = [], placeholder = "" } = {}) {
       ),
     );
     // the input bar is pinned at the bottom — open upward when there is more
-    // room above, so the list never falls off the screen (user, 2026-08-03)
+    // room above, so the list never falls off the screen (user)
     const rect = input.getBoundingClientRect();
     node.classList.toggle("ac-up", rect.top > window.innerHeight - rect.bottom);
     list.hidden = items.length === 0;
@@ -147,7 +146,7 @@ export function chatBox({ placeholder = "Write here…" } = {}) {
     scroll();
   }
 
-  /** The thinking indicator (2026-08-09, user): the assistant's slot shows
+  /** The thinking indicator (user): the assistant's slot shows
    *  three animated dots with a visually-hidden "is thinking" label the
    *  instant the reviewer sends — never a silently disabled input. A real
    *  assistant message replaces it in the same slot; the dots pause under
@@ -165,7 +164,7 @@ export function chatBox({ placeholder = "Write here…" } = {}) {
 
   function addAssistant(text, label = ASSISTANT_NAME) {
     // the thinking indicator is the pending reply — a real message replaces
-    // it in the same slot instead of stacking under it (2026-08-09)
+    // it in the same slot instead of stacking under it
     messages.querySelector(".thinking")?.remove();
     messages.append(
       el("div", { class: "bubble bubble-ai" }, [
@@ -177,7 +176,7 @@ export function chatBox({ placeholder = "Write here…" } = {}) {
   }
 
   /** Busy disables typing and sending while the assistant works (reading,
-   *  assessing, saving) — the narrator cannot type over it (user, 2026-08-03).
+   *  assessing, saving) — the narrator cannot type over it (user).
    *  The thinking indicator appears in the assistant's slot while busy. */
   function setBusy(flag, note = null) {
     busy = flag;
@@ -196,7 +195,7 @@ export function chatBox({ placeholder = "Write here…" } = {}) {
   // chip "sends" it, and the suggestions clear like any sent reply; in
   // multi mode (a "who was there" question) chips stay so the narrator can
   // pick several before the finishing chip. The input stays LIVE beside the
-  // chips — the standard pattern (2026-08-09): the placeholder names the
+  // chips — the standard pattern: the placeholder names the
   // free-text path so it is clear the options can be ignored (research:
   // Conferbot, Lovable — "always offer a free-text input hint").
   function setQuickReplies(chips, { multi = false, placeholder = "Or type your own answer…" } = {}) {
@@ -231,7 +230,7 @@ export function chatBox({ placeholder = "Write here…" } = {}) {
         el("div", { class: "chip chip-selection" }, [
           el("span", { class: "chip-label" }, label),
           // a committed value's remove is a real button (docs/CHAT-UX.md);
-          // a fixed identity (the signed-in narrator, 2026-08-06) has no
+          // a fixed identity (the signed-in narrator) has no
           // remove — it is not a claim to dismiss
           ...(onRemove
             ? [

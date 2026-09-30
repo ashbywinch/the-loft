@@ -14,7 +14,7 @@ const STATE = {
 
 beforeEach(() => {
   vi.unstubAllGlobals();
-  vi.useFakeTimers(); // never real timers — every test's independence is visible here (2026-08-11 review)
+  vi.useFakeTimers(); // never real timers — every test's independence is visible here
 });
 
 afterEach(async () => {
@@ -22,14 +22,11 @@ afterEach(async () => {
   // can outlive a test: a chain still in flight when the next test's
   // beforeEach unstubs the globals lands on a FOREIGN mock — or on the
   // real happy-dom fetch, which resolves relative URLs against its
-  // default origin http://localhost:3000 (ECONNREFUSED). 2026-08-11 CI:
-  // under the coverage run's slower istanbul transforms, the "kept link"
-  // test's chain straddled the boundary and the re-render test saw four
-  // phantom message calls. The drain waits until a full macrotask passes
-  // with no new fetch call — condition-based, never a fixed tick count —
-  // and fails loud if the app never settles. The clock is FAKE, so the
-  // drain advances it deterministically instead of waiting wall-clock
-  // (2026-08-11 review: real timers are a bug in a test).
+  // default origin http://localhost:3000 (ECONNREFUSED). The drain waits
+  // until a full macrotask passes with no new fetch call — condition-based,
+  // never a fixed tick count — and fails loud if the app never settles.
+  // The clock is FAKE, so the drain advances it deterministically instead
+  // of waiting wall-clock; real timers are a bug in a test.
   try {
     for (let i = 0; i < 20; i++) {
       const before = fetch?.mock?.calls?.length ?? 0;
@@ -116,7 +113,7 @@ function stubFetch({
 
 const decideCall = () => fetch.mock.calls.find(([url]) => url === "/api/review/decide");
 
-describe("the import review is the chat — one conversation resolves the pending links (2026-08-08/09)", () => {
+describe("the import review is the chat — one conversation resolves the pending links", () => {
   it("opens naming the exact claim with the four confidence dispositions — no list", () => {
     const main = document.createElement("main");
     render(main, { arg: "import-documents", query: new URLSearchParams() }, STATE);
@@ -134,7 +131,7 @@ describe("the import review is the chat — one conversation resolves the pendin
       "I think not",
     ]);
     // the standard free-text affordance: the input stays live beside the
-    // chips, and its placeholder names the typing path (2026-08-09)
+    // chips, and its placeholder names the typing path
     expect(main.querySelector(".chat-bar .field").placeholder).toBe("Or type your own answer…");
   });
 
@@ -161,7 +158,7 @@ describe("the import review is the chat — one conversation resolves the pendin
     expect(link).toBeTruthy(); // the document is linked
   });
 
-  it("the claim quotes the sentence that mentions the person, never the document's opening (2026-08-09, user)", () => {
+  it("the claim quotes the sentence that mentions the person, never the document's opening (user)", () => {
     const state = JSON.parse(JSON.stringify(STATE));
     state.items = [
       {
@@ -348,13 +345,12 @@ describe("the import review is the chat — one conversation resolves the pendin
     const decided = JSON.parse(decideCall()[1].body);
     // the contradicted words are the basis statement; the typed correction
     // rides as the note BESIDE them — never the other way round
-    // (2026-08-11 review)
     expect(decided.basis.text).toBe("It was Nora who died in the war, I remember that clearly.");
     expect(decided.basis.note).toContain("Ah, you're right — it was Walter.");
     expect(bubbles(main).some((b) => b.includes("joins the tree as a fact"))).toBe(true);
   });
 
-  it('"I don\'t know" chats first — only then are the options offered (2026-08-10, user: "don\'t suggest any of these until we\'ve chatted about what they know")', async () => {
+  it('"I don\'t know" chats first — only then are the options offered (user: "don\'t suggest any of these until we\'ve chatted about what they know")', async () => {
     stubFetch();
     const main = document.createElement("main");
     const state = JSON.parse(JSON.stringify(STATE));
@@ -503,7 +499,7 @@ describe("the import review is the chat — one conversation resolves the pendin
   });
 });
 
-it("a kept link is never re-asked this walk — it stays proposed as the resume point (2026-08-10 review)", async () => {
+it("a kept link is never re-asked this walk — it stays proposed as the resume point", async () => {
   stubFetch({ confidence: "dont_know" });
   const main = document.createElement("main");
   const state = JSON.parse(JSON.stringify(STATE));
@@ -520,7 +516,7 @@ it("a kept link is never re-asked this walk — it stays proposed as the resume 
   expect(state.people[0].status).toBe("proposed"); // untouched — the resume point for a later visit
 });
 
-it("a re-render does not duplicate the transcript — the start response's lines are not re-recorded (2026-08-10 review)", async () => {
+it("a re-render does not duplicate the transcript — the start response's lines are not re-recorded", async () => {
   vi.stubGlobal(
     "fetch",
     vi.fn((url, init) => {
@@ -550,7 +546,7 @@ it("a re-render does not duplicate the transcript — the start response's lines
   expect(fetch.mock.calls.filter(([url]) => url === "/api/review/message")).toHaveLength(0);
 });
 
-it("a mid-walk re-render never re-asks a link this attempt already decided (2026-08-11 review)", async () => {
+it("a mid-walk re-render never re-asks a link this attempt already decided", async () => {
   stubFetch();
   const main = document.createElement("main");
   const state = JSON.parse(JSON.stringify(STATE));
@@ -570,7 +566,7 @@ it("a mid-walk re-render never re-asks a link this attempt already decided (2026
   expect(bubbles(main).some((b) => b.includes("Next: Pearl Whitlock"))).toBe(false);
 });
 
-it("a re-render after every link was decided ends with the summary — never a re-ask (2026-08-11 review)", async () => {
+it("a re-render after every link was decided ends with the summary — never a re-ask", async () => {
   stubFetch();
   const main = document.createElement("main");
   const state = JSON.parse(JSON.stringify(STATE));
@@ -592,7 +588,7 @@ it("a re-render after every link was decided ends with the summary — never a r
   expect([...main.querySelectorAll(".chat-quick .chip")].map((c) => c.textContent)).toContain("See the family tree →");
 });
 
-it("a repeated contradiction keeps the first words as the basis — corrections accumulate beside them (2026-08-11 review)", async () => {
+it("a repeated contradiction keeps the first words as the basis — corrections accumulate beside them", async () => {
   const answers = [
     // first check: the contradiction is surfaced
     {
@@ -663,13 +659,13 @@ it("a repeated contradiction keeps the first words as the basis — corrections 
   await tick();
   const decided = JSON.parse(decideCall()[1].body);
   // the family's FIRST words stay the basis; every correction rides
-  // beside them — never the other way round (PRD R8, 2026-08-11 review)
+  // beside them — never the other way round (PRD R8)
   expect(decided.basis.text).toBe("It was Nora who died in the war, I remember that clearly.");
   expect(decided.basis.note).toContain("No wait — Nora's brother Walter, I think.");
   expect(decided.basis.note).toContain("Ah, you're right — it was Walter.");
 });
 
-it("a failed transcript record is logged, never silently swallowed (2026-08-11 review)", async () => {
+it("a failed transcript record is logged, never silently swallowed", async () => {
   const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   vi.stubGlobal(
     "fetch",

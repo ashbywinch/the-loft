@@ -56,7 +56,7 @@ describe("places fallback map", () => {
     expect(d).not.toContain("L");
   });
 
-  it("skips places without a position — no translate(null) dot, no crash (2026-08-05)", () => {
+  it("skips places without a position — no translate(null) dot, no crash", () => {
     // Rule O: unverified coordinates are null in the projection — a dot for a
     // place with no position is meaningless and `translate(null, null)` is
     // invalid SVG that kills the whole Places door.
@@ -77,7 +77,7 @@ describe("places fallback map", () => {
     expect(svg.innerHTML).not.toContain("translate(undefined");
   });
 
-  it("an imprecise place draws an uncertainty ring, not a precise pin (2026-08-05)", () => {
+  it("an imprecise place draws an uncertainty ring, not a precise pin", () => {
     // The Lark Inn is somewhere in Stonewick — its point is the town
     // centre and the map must say so, not lie with a pin.
     const places = [
@@ -99,7 +99,7 @@ describe("places fallback map", () => {
   });
 });
 
-describe("scale-aware markers and heat (2026-08-03)", () => {
+describe("scale-aware markers and heat", () => {
   it("heat is tuned per zoom: discrete vivid spots at world scale, smooth backdrop at street scale", () => {
     const world = heatStepForZoom(2);
     const regional = heatStepForZoom(7);
@@ -129,7 +129,7 @@ describe("scale-aware markers and heat (2026-08-03)", () => {
 });
 
 describe("place grid follows the map filter", () => {
-  it("lists only places with items in the current scope (2026-08-03)", () => {
+  it("lists only places with items in the current scope", () => {
     const state = {
       items: [
         {
@@ -157,7 +157,7 @@ describe("place grid follows the map filter", () => {
     expect(cards).not.toContain("B");
   });
 
-  it("skips malformed dates in the fresh view too (2026-08-03 review)", () => {
+  it("skips malformed dates in the fresh view too", () => {
     // fresh mode previously counted an undated item's places, but the windowed
     // view and the timeline skip it — views must agree
     const state = {
@@ -183,7 +183,7 @@ describe("place grid follows the map filter", () => {
     expect(cards).not.toContain("A");
   });
 
-  it("a coordinate-less place still lists in the grid — the door never crashes (2026-08-05)", () => {
+  it("a coordinate-less place still lists in the grid — the door never crashes", () => {
     // Rule O nulls unverified coordinates; the map must render without the
     // place while the cards below keep it explorable.
     const state = {
@@ -310,7 +310,7 @@ describe("place page stories block", () => {
     expect(block.querySelector("button.btn").textContent).toBe("Add a memory of X");
   });
 
-  it("stories about a place render once — in Memories, never in the items list (2026-08-06)", () => {
+  it("stories about a place render once — in Memories, never in the items list", () => {
     const state = {
       items: [
         {
@@ -354,7 +354,7 @@ describe("place page stories block", () => {
     expect(memories.textContent).toContain("A memory of Aldgate");
   });
 
-  it("the People row lists only people attested AT the place (2026-08-05)", () => {
+  it("the People row lists only people attested AT the place", () => {
     // The 2001 email mentions 8 places and 91 people — being mentioned in an
     // item that mentions a place is not being there. Only per-place lists
     // attest presence.
@@ -400,7 +400,7 @@ describe("place page stories block", () => {
   });
 });
 
-describe("place involvement dates (2026-08-06)", () => {
+describe("place involvement dates", () => {
   it("places a long-lived item by its place-ref involvement date", () => {
     const state = {
       items: [
@@ -444,7 +444,7 @@ describe("place involvement dates (2026-08-06)", () => {
   });
 });
 
-describe("place evidence (2026-08-06)", () => {
+describe("place evidence", () => {
   it("renders evidence records on the place they attest", () => {
     const state = {
       items: [

@@ -106,9 +106,8 @@ def test_chat_rejects_malformed_response() -> None:
 
 def test_chat_rejects_null_choice_cleanly() -> None:
     # a provider returning "choices": [null] must raise the clean
-    # AIClientError, not an AttributeError (review, 2026-08-15) — a null
-    # choice is an empty completion: retried to the budget, then the clean
-    # error (2026-09-23)
+    # AIClientError, not an AttributeError — a null choice is an empty
+    # completion: retried to the budget, then the clean error
     urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [None]}) for _ in range(3)])
     client = AIClient(api_key="k", urlopen=urlopen)
     with pytest.raises(AIClientError, match="empty response"):
@@ -117,8 +116,8 @@ def test_chat_rejects_null_choice_cleanly() -> None:
 
 def test_chat_retries_an_empty_completion() -> None:
     """A 200 with no content is a transient provider failure, not an answer
-    (the gateway logged 0-token completions, 2026-09-23) — the client must
-    retry it with the same backoff as a 5xx, never surface it."""
+    — the client must retry it with the same backoff as a 5xx, never
+    surface it."""
     sleeps: list[float] = []
     good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
     urlopen, calls = make_fake_urlopen(
@@ -144,8 +143,8 @@ def test_chat_gives_up_on_persistent_empty_completions() -> None:
 
 def test_json_object_takes_the_last_of_multiple_objects() -> None:
     """A reasoning preamble followed by the verdict is the shape the model
-    emits — the first-{/last-} slice spanned both and failed with "Extra
-    data" (2026-09-23): the LAST complete object wins."""
+    emits — a slice spanning both failed with "Extra data": the LAST
+    complete object wins."""
     assert json_object('{"type":"reasoning","text":"..."}\n{"verdict": "x"}') == {"verdict": "x"}
     assert json_object('{"a": 1}\n{"b": 2}') == {"b": 2}
 
@@ -170,8 +169,7 @@ def test_find_api_key_prefers_environment() -> None:
 
 def test_find_api_key_ignores_the_loft_legacy_env(tmp_path: Path) -> None:
     """LOFT_AI_KEY is the retired secret name — a stale value must never
-    be picked up, only the OPENAI_API_KEY / gateway-token convention
-    (2026-08-29: the CI's LOFT_AI_KEY was rejected 401 by the gateway)."""
+    be picked up, only the OPENAI_API_KEY / gateway-token convention."""
     with pytest.raises(AIClientError):
         find_api_key(_env={"LOFT_AI_KEY": "stale-token"}, _home=tmp_path)
 
@@ -203,8 +201,7 @@ def test_find_api_key_raises_when_missing(tmp_path: Path) -> None:
 
 def test_find_api_key_raises_on_corrupt_auth_file(tmp_path: Path) -> None:
     """A config file that exists but is corrupt is an operator error — it
-    surfaces loudly, never silently treated as 'no key' (fail-fast,
-    2026-08-16)."""
+    surfaces loudly, never silently treated as 'no key' (fail-fast)."""
     auth_dir = tmp_path / ".local" / "share" / "opencode"
     auth_dir.mkdir(parents=True)
     (auth_dir / "auth.json").write_text("this is not json", encoding="utf-8")
@@ -215,7 +212,6 @@ def test_find_api_key_raises_on_corrupt_auth_file(tmp_path: Path) -> None:
 def test_chat_null_message_is_a_clean_error() -> None:
     # a provider returning {"choices": [{"message": null}]} must raise the
     # clean AIClientError, not an AttributeError that escapes as a 500
-    # (2026-08-15 review: the message-capture change regressed this)
     urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [{"message": None}]}) for _ in range(3)])
     client = AIClient(api_key="k", urlopen=urlopen)
     with pytest.raises(AIClientError):

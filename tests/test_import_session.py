@@ -1,7 +1,6 @@
-"""The import session (2026-08-07, user): the document import records the
+"""The import session (user): the document import records the
 session it leaves behind — 'the document import' stays pending until the
-proposed people it proposed are confirmed or dismissed. The import code
-never wrote this (the miss the user flagged); this pins it."""
+proposed people it proposed are confirmed or dismissed."""
 
 from __future__ import annotations
 

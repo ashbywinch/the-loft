@@ -2,8 +2,7 @@
 place's description; it must never carry the machine's process status
 ("verification pending (Rule O)", "TODO", …). The import flow tracks
 verification in the data (coordinate precision, the stage-3 review), never
-in the note text (2026-08-05: the first import wrote pending-markers into
-8 notes and they rendered on the place pages).
+in the note text.
 """
 
 from __future__ import annotations

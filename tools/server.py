@@ -1,4 +1,4 @@
-"""The archive's one server — FastAPI (houses parity, 2026-08-06).
+"""The archive's one server — FastAPI (houses parity).
 
 Serves the app (no-cache) and the contribution API. The move from the
 hand-rolled http.server handler was forced by the auth bug class it kept
@@ -6,7 +6,7 @@ breeding: FastAPI decodes query parameters (the percent-encoded auth code),
 parses cookies and JSON bodies, and issues redirects — every one of those
 was hand-reimplemented wrong at least once.
 
-The archive's data is the private layer (user, 2026-08-06): /data/* 401s
+The archive's data is the private layer (user): /data/* 401s
 without a signed-in session; the app shell stays public so the gate loads.
 The capture API (assess/save/delete) requires the session and mints the
 narrator from it — never from a client-claimed name.
@@ -98,7 +98,7 @@ def build_app(
     (the session secret); None reads os.environ."""
     if not auth.session_secret(_env):
         # an empty signing key means forgeable sessions — and the sync write
-        # seam rides the session (2026-08-14 review): refuse to start
+        # seam rides the session: refuse to start
         raise RuntimeError("THE_LOFT_SESSION_SECRET is not set — refusing to start with forgeable sessions")
     archive = Archive(config.store)
     client = config.client
@@ -115,7 +115,7 @@ def build_app(
 
     def narrator(request: Request) -> dict[str, Any] | None:
         """The signed-in narrator — the verified session's person. The
-        capture API never trusts a client-claimed name (2026-08-06)."""
+        capture API never trusts a client-claimed name."""
         session = session_user(request)
         if not session:
             return None
@@ -175,7 +175,7 @@ def build_app(
     @app.get("/api/auth/callback")
     def callback(code: str = "", state: str = "", error: str = "") -> RedirectResponse:
         """Google's OAuth callback — FastAPI decodes the percent-encoded
-        query (the 4%2F0AXE… code that a raw parser mangled, 2026-08-06)."""
+        query."""
         if error:
             return RedirectResponse(auth.callback_error_url(f"google:{error}"))
         id_info = auth.exchange_code(code, state) if code and state else None
@@ -193,7 +193,7 @@ def build_app(
     def device_poll(body: dict[str, Any]) -> dict[str, Any]:
         """The device grant's poll (headless tools; the browser uses the web
         flow). The cookie rides the complete NAVIGATION, never this response
-        — the phone's network rejects fetch-carried cookies (2026-08-06)."""
+        — the phone's network rejects fetch-carried cookies."""
         result = auth.poll_device_grant(str(body.get("state", "")))
         if result.get("status") == "ok" and result.get("id_info"):
             return {"ok": True, "complete": True}
@@ -268,7 +268,7 @@ def build_app(
             knowledge=knowledge(),
             existing_ids=existing_ids(),
         )
-        # drafts are committed during dev (user, 2026-08-03): the archive
+        # drafts are committed during dev (user): the archive
         # store holds the canonical sidecar, and the projection is refreshed
         # so the story renders in the app — idempotent, atomic. All archive
         # writes go through the archive library (docs/CONTRIBUTIONS.md). The
@@ -286,7 +286,7 @@ def build_app(
     @app.post("/api/delete", response_model=None)
     def delete(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
         """Abandon: the draft is superseded with a tombstone — append-only,
-        the files stay, the newest version says deleted (user, 2026-08-03)."""
+        the files stay, the newest version says deleted (user)."""
         mine = narrator(request)
         if mine is None:
             return JSONResponse({"ok": False, "error": "sign in to tell a story"}, status_code=401)
@@ -300,7 +300,7 @@ def build_app(
     @app.post("/api/review/start", response_model=None)
     def review_start(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
         """Begin a new walk of the review — the sessions' storage is
-        attempt-separated (2026-08-09): a fresh attempt starts only when
+        attempt-separated: a fresh attempt starts only when
         the last is empty or finished, so a mid-walk re-render continues
         the same walk and the diagnosis never mixes attempts."""
         mine = narrator(request)
@@ -315,9 +315,7 @@ def build_app(
             return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
         # the lines already recorded in the current attempt — the app
         # records its rendered opening/claim only when they're new, so a
-        # mid-walk re-render never duplicates the transcript (2026-08-10
-        # review: "the persisted transcript then no longer equals what the
-        # family saw")
+        # mid-walk re-render never duplicates the transcript
         session_record = archive.get_review_session(session_id)
         attempt = session_record.current_attempt() if session_record else None
         messages = attempt.messages if attempt else ()
@@ -326,9 +324,8 @@ def build_app(
     @app.post("/api/review/message", response_model=None)
     def review_message(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
         """Record one of the app's own rendered lines (the opening, the
-        claim) so the transcript is exactly what the family saw (2026-08-09,
-        user: "when you load a given transcript, you see exactly what I
-        saw")."""
+        claim) so the transcript is exactly what the family saw (user:
+        "when you load a given transcript, you see exactly what I saw")."""
         mine = narrator(request)
         if mine is None:
             return JSONResponse({"ok": False, "error": "sign in to review the import"}, status_code=401)
@@ -345,7 +342,7 @@ def build_app(
 
     @app.post("/api/review/decide", response_model=None)
     def review_decide(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
-        """The import review (2026-08-09, user): one decision per proposed
+        """The import review (user): one decision per proposed
         link — attested (→ confirmed, the reviewer's own verified word),
         estimated (→ estimated with the recorded basis {text, by, when}),
         pending (→ the import's guess stays proposed), delete (→ gone).
@@ -371,9 +368,7 @@ def build_app(
         if not session_id:
             return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
         # the session must exist BEFORE anything mutates — a stale session id
-        # must not change the archive and then fail (2026-08-10 review:
-        # resolve_person saved the person, then the session lookup raised,
-        # returning 500 with the person already changed)
+        # must not change the archive and then fail
         if archive.get_review_session(session_id) is None:
             return JSONResponse({"ok": False, "error": f"no import session {session_id}"}, status_code=404)
         # the confirmation names the person — the resolve returns a
@@ -387,19 +382,18 @@ def build_app(
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
         # a stale decision on an already-resolved person is a state, not an
         # error — and it must not record a false confirmation ("removed"
-        # when nothing was removed; 2026-08-11 review). Both flags come
+        # when nothing was removed). Both flags come
         # from INSIDE the mutation lock: a concurrent decide cannot make a
         # stale pre-read look live, and a keep's exempted status is itself
         # reported by the mutation (was the person still proposed when the
-        # lock was taken) — the pre-read status is gone entirely
-        # (2026-08-11 review). A keep on a genuinely PROPOSED person is the
+        # lock was taken) — the pre-read status is gone entirely.
+        # A keep on a genuinely PROPOSED person is the
         # deliberate "leave for later" and is recorded.
         if not changed and (decision != "pending" or not was_proposed):
             message = f"{person_name} was already resolved — nothing changed."
             return {"ok": True, "person": person, "message": message}
         # the review record — the decision and the confirmation message the
-        # family saw, both persisted (2026-08-09: the transcript is the
-        # messages)
+        # family saw, both persisted (the transcript is the messages)
         when = datetime.now(UTC).date().isoformat()
         queue = archive.review_queue()
         archive.record_review_decision(
@@ -418,13 +412,13 @@ def build_app(
         archive.publish(data_dir)
         # the accurate remaining count — the server's post-decision truth
         # (the client's projection is stale until reload; the count must
-        # always be right, user 2026-08-16)
+        # always be right, user)
         return {"ok": True, "person": person, "message": message, "pending": len(queue.pending)}
 
     @app.post("/api/review/text", response_model=None)
     def review_text(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
-        """The reviewer's free text vs the exact claim under review
-        (2026-08-09): the relevance check — on-topic (the answer addresses
+        """The reviewer's free text vs the exact claim under review: the
+        relevance check — on-topic (the answer addresses
         the proposed record and is recorded verbatim) or off-topic (the
         chat names the mismatch and steers back). The model never derives
         relationships — the reviewer's words are the record or nothing is."""
@@ -440,7 +434,6 @@ def build_app(
             return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
         # the session must exist BEFORE the costly model call — a stale id
         # must not run the investigation and then 500 in the recording
-        # (2026-08-11 review; the decide endpoint fixed the same shape)
         if archive.get_review_session(session_id) is None:
             return JSONResponse({"ok": False, "error": f"no import session {session_id}"}, status_code=404)
         people = archive.get_identity("people") or {"people": []}
@@ -453,43 +446,40 @@ def build_app(
         try:
             # the model sees the whole conversation — its own reasoning and
             # speech, verbatim — so a message that re-answers an earlier
-            # question is recognised (2026-08-09, user). The history is the
+            # question is recognised (user). The history is the
             # conversation BEFORE this line: the investigation appends the
             # line itself, so a history that already held it would double
-            # the latest message for the model (2026-08-11 review)
+            # the latest message for the model
             session_record = archive.get_review_session(session_id)
             current_attempt = session_record.current_attempt() if session_record else None
             history = current_attempt.messages if current_attempt else ()
             # the family's line joins the transcript the moment it arrives —
             # the model call must not gate the record (R7/R8: the words are
-            # never lost, and the transcript equals what the family saw —
-            # 2026-08-11 review)
+            # never lost, and the transcript equals what the family saw)
             when = datetime.now(UTC).date().isoformat()
             archive.record_review_message(session_id, "user", text, when)
             # the investigation needs the attested facts the Knowledge
             # conversion drops — the raw people (deaths, relations), the
             # recorded items' texts, and the family edges — typed as the
-            # ReviewContext (2026-08-09). The projection carries the
+            # ReviewContext. The projection carries the
             # VERBATIM transcription when the item has one (the document
             # the family sees in the claim and the item page) — the
-            # sidecar's story is the archival summary, a different text
-            # (2026-08-09, user: the model quoted the wrong part of the
-            # document, because it was reading the summary). The people
-            # involvement is the structured match the tools need — the
+            # sidecar's story is the archival summary, a different text. The
+            # people involvement is the structured match the tools need — the
             # prose never carries ids. The FULL text is read only for the
             # shortlist that can attest this person: the metadata pass (one
             # sidecar per item, no transcription reads) filters first — at
             # the 10,000-item design target, reading every transcription
-            # per chat message would be thousands of disk reads (2026-08-11
-            # review). The metadata pass itself is still a full-archive
+            # per chat message would be thousands of disk reads. The
+            # metadata pass itself is still a full-archive
             # sidecar scan per message — O(N) disk reads at that target;
-            # deferred (2026-08-11, user): fine at the current family-
+            # deferred (user): fine at the current family-
             # archive scale (~100 items), revisit with a people→items
             # mention index before the 10,000-item target is real. The
             # name needles are lowered once and matched against lowered
             # text — OCR and captured text differ in case, and a
             # differently-cased mention must not hide the attesting
-            # document (2026-08-11 review)
+            # document
             needles = tuple(n.lower() for n in (person.name, person.name.split()[0]))
             items: list[dict[str, Any]] = []
             for item_id in archive.item_ids():
@@ -508,7 +498,6 @@ def build_app(
                     # the person lives in the verbatim text (a draft with no
                     # people refs yet) must still reach the model — the
                     # transcription is the evidence, never the summary
-                    # (2026-08-11 review)
                     transcription = (
                         archive.read_content_prefix(item_id, "transcription.txt", TRANSCRIPTION_PREFIX_BYTES) or ""
                     )
@@ -521,9 +510,8 @@ def build_app(
                             "id": item_id,
                             "title": item.get("title", ""),
                             "story": item_text,
-                            # Rule L (2026-08-11 review): a draft
-                            # transcription is machine-read and
-                            # unverified — its sentences are never the
+                            # Rule L: a draft transcription is machine-read
+                            # and unverified — its sentences are never the
                             # document's own words; the model must know
                             # which texts are drafts so it never quotes
                             # one as verified evidence
@@ -545,9 +533,9 @@ def build_app(
             )
         except ElicitationError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=422)
-        # the transcript is the MESSAGES — what the family saw (2026-08-09):
+        # the transcript is the MESSAGES — what the family saw:
         # the user's words (recorded BEFORE the call, so an outage never
-        # loses them — 2026-08-11 review) and the assistant's rendered
+        # loses them) and the assistant's rendered
         # words, built here, shown verbatim by the app, and stored verbatim.
         # The assistant's line also carries its THINKING — the model's raw
         # verdict, verbatim — which goes back to the model on later calls.
@@ -557,22 +545,18 @@ def build_app(
         if contradiction:
             # the contradiction surfaces before anything else — an off-topic
             # verdict that also flags one must not let the steer hide it
-            # (2026-08-11 review)
             message = f"That doesn't match the records — {result['contradiction'].get('detail')}. Which is right?"
         elif result.get("relevant") == "false":
             message = review.steer_message(person, result.get("note") or "")
         else:
             # never persist an empty assistant line the family never saw
-            # (2026-08-11 review)
             message = review.assistant_message(result, person).strip() or "Thank you — that's noted."
         archive.record_review_message(
             session_id, "assistant", message, when, thinking=json.dumps(result.get("trace"), ensure_ascii=False)
         )
         # the response carries ONLY what the UI consumes — the model's raw
         # output, its tool trace, and the prompt texts are the model's
-        # internals, never the family's (R7; 2026-08-11 review: the full
-        # result leaked raw/trace/prompt/final_prompt — and archive quotes
-        # — to the browser on every message)
+        # internals, never the family's (R7).
         return {
             "ok": True,
             "message": message,
@@ -625,11 +609,9 @@ def build_app(
 
     @app.middleware("http")
     async def app_shell_no_cache(request: Request, call_next: Any) -> Any:
-        # The app code must never be heuristically cached (2026-08-08: the
-        # phone's browser served a stale index.html for hours — the
-        # instrumentation deployed to the server never reached it, because
-        # StaticFiles sends only ETag/Last-Modified and the browser's
-        # heuristic kept the old shell). The shell + code revalidate every
+        # The app code must never be heuristically cached: StaticFiles sends
+        # only ETag/Last-Modified, so a browser's heuristic can keep serving
+        # a stale shell. The shell + code revalidate every
         # load; the data assets (the scans) keep the default caching.
         response = await call_next(request)
         if not request.url.path.startswith("/data/"):
@@ -638,10 +620,10 @@ def build_app(
 
     @app.middleware("http")
     async def origin_guard(request: Request, call_next: Any) -> Any:
-        # CSRF guard for the write APIs (2026-08-03): a page on another
-        # origin must not POST to the household server. The app's own
-        # fetches carry the server's origin (or none, for curl); the auth
-        # endpoints are exempt (the flow redirects cross-origin).
+        # CSRF guard for the write APIs: a page on another origin must not
+        # POST to the household server. The app's own fetches carry the
+        # server's origin (or none, for curl); the auth endpoints are
+        # exempt (the flow redirects cross-origin).
         if request.method == "POST" and not request.url.path.startswith("/api/auth/"):
             origin = request.headers.get("origin")
             if origin:
@@ -653,7 +635,7 @@ def build_app(
     @app.middleware("http")
     async def gate_data(request: Request, call_next: Any) -> Any:
         # the archive's data is the private layer — a session is required
-        # to read it (2026-08-06, user: content gated behind sign-in). The
+        # to read it (user: content gated behind sign-in). The
         # app shell stays public so the gate can load.
         if request.url.path.startswith("/data/"):
             session = auth.session_user_from_cookie(request.cookies.get(auth.COOKIE_NAME))
@@ -722,16 +704,16 @@ def build_app(
     def sync_page(batch_id: str, page: str, request: Request) -> Any:
         """The oriented page image the review surface renders (auth-gated
         like the drafts; batch id and page name become path segments —
-        validated by the sync contract's guard, 2026-08-15)."""
+        validated by the sync contract's guard)."""
         if session_user(request) is None:
             return JSONResponse({"ok": False, "error": "sign in to read the pages"}, status_code=401)
         if not BATCH_ID.match(batch_id) or not safe_page_name(page):
             return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
         image = work_dir / batch_id / "oriented" / page
         if not image.is_file():
-            # a photo/drawing page skips orientation entirely (2026-08-17:
-            # the grouping scorer puts the postcard's picture side into its
-            # document — the review surface must still see the image)
+            # a photo/drawing page skips orientation entirely (the grouping
+            # scorer puts the postcard's picture side into its document —
+            # the review surface must still see the image)
             record = load_batch(batch_id, registry_dir)
             raw = Path(str(record.get("path", ""))) / page
             if raw.is_file():
@@ -766,7 +748,7 @@ def build_app(
 
     @app.post("/api/sync/batch/{batch_id}/page/{page}/rotate")
     def sync_rotate_page(batch_id: str, page: str, request: Request, body: dict[str, Any] | None = None) -> Any:
-        """The reviewer's orientation fix (2026-08-16). The intent is the
+        """The reviewer's orientation fix. The intent is the
         DESIRED cumulative rotation in quarter-turns — no image travels, the
         backend has it (the front and back end are different boxes). The
         fast rotation (image + box remap) applies synchronously; the slow
@@ -892,8 +874,8 @@ class Server:
     """The archive's serving noun — one server, one serve().
 
     ``Server(...).serve()`` serves the app (no-cache) and the memory-capture
-    API — FastAPI under uvicorn (2026-08-06, houses parity: the framework
-    owns query decoding, cookie parsing, and redirects). ``create_server``
+    API — FastAPI under uvicorn (houses parity: the framework owns query
+    decoding, cookie parsing, and redirects). ``create_server``
     stays the DI factory the tests drive.
     """
 

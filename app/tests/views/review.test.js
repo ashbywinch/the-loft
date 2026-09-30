@@ -101,7 +101,7 @@ describe("flaggedCount — the lines still to check", () => {
 });
 
 describe("flaggedByPage — the navigation strip's flag dots", () => {
-  it("groups the remaining flagged lines per page (2026-08-16: the dots make a cross-page Next-flagged jump visible)", () => {
+  it("groups the remaining flagged lines per page — the dots make a cross-page Next-flagged jump visible", () => {
     expect(flaggedByPage([DOC], 0, {})).toEqual({ "p1.jpg": 2 });
     expect(flaggedByPage([DOC], 0, { "p1.jpg": { 1: "done" } })).toEqual({ "p1.jpg": 1 });
     expect(flaggedByPage([DOC], 0, { "p1.jpg": { 0: "a", 1: "b" } })).toEqual({});
@@ -181,7 +181,7 @@ describe("the reviewer's edits persist — resumable, VR9", () => {
   });
 });
 
-describe("formatParts — the strike and underline conventions (2026-08-16)", () => {
+describe("formatParts — the strike and underline conventions", () => {
   it("splits ~~struck~~ and ~underlined~ into their kinds", () => {
     expect(formatParts("a ~~crossed out~~ and ~underlined~ word")).toEqual([
       { text: "a ", kind: null },
@@ -288,7 +288,7 @@ describe("the review hub shows both transcriptions and import sessions", () => {
   });
 });
 
-describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)", () => {
+describe("the plain-image viewer geometry", () => {
   it("bandAnchor: the first line box anchors the band", () => {
     const layout = {
       lines: [{ box: [100, 500, 900, 600] }, { box: [50, 700, 800, 780] }],
@@ -371,7 +371,7 @@ describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)",
     expect(view.width).toBeCloseTo(79 * (812 / 131), 5);
   });
 
-  it("widthFitRect: the letter's width fills the pane; the height follows the aspect — the vertical scroll has room (user 2026-08-22)", () => {
+  it("widthFitRect: the letter's width fills the pane; the height follows the aspect — the vertical scroll has room (user)", () => {
     // page-06-like: the tall letter [481, 2246, 1881, 4642] in a 654×524
     // pane. The old whole-letter fit made the letter one screen tall —
     // nothing to pan, tiny text. The width-fit: the letter's x-extent
@@ -411,7 +411,7 @@ describe("the plain-image viewer geometry (2026-08-16: OpenSeadragon replaced)",
     expect(deep.width).toBe(2544 * 8);
   });
 
-  it("initialViewRect spans the WHOLE letter, not the first line (user 2026-08-22)", async () => {
+  it("initialViewRect spans the WHOLE letter, not the first line (user)", async () => {
     const { initialViewRect } = await import("../../views/review.js");
     // page-01-like: the reading-first line sits mid-letter; other lines
     // extend LEFT (the P.S. margin at x 526) and RIGHT (2017). The old
@@ -534,7 +534,7 @@ describe("the reviewer's orientation — { desired, acked } per page, set only b
   });
 });
 
-describe("the dual-pane link — the image-y to line mapping (2026-08-16)", () => {
+describe("the dual-pane link — the image-y to line mapping", () => {
   const LAYOUT = {
     lines: [
       { index: 0, box: [0, 100, 100, 120] },
@@ -566,7 +566,7 @@ describe("the dual-pane link — the image-y to line mapping (2026-08-16)", () =
 });
 
 describe("marking a line fine — the verbatim text counts as verified", () => {
-  it("the edit = the line's own text clears its flags (applyMarkedFine's mechanism, 2026-08-16)", () => {
+  it("the edit = the line's own text clears its flags (applyMarkedFine's mechanism)", () => {
     expect(flaggedCount([DOC], 0, { "p1.jpg": { 0: "line one" } })).toBe(1);
     expect(flaggedCount([DOC], 0, { "p1.jpg": { 0: "line one", 1: "line two" } })).toBe(0);
     // the corrected document text keeps the verbatim line unchanged
@@ -589,7 +589,7 @@ describe("marking a line fine — the verbatim text counts as verified", () => {
   });
 });
 
-describe("the document list shows only awaiting documents (user 2026-08-16)", () => {
+describe("the document list shows only awaiting documents (user)", () => {
   beforeEach(() => localStorage.clear());
 
   it("a confirmed document is not listed — the list is the work still to do", async () => {
@@ -640,9 +640,8 @@ describe("a multi-orientation page renders (VR15)", () => {
   it("shows the line texts, a check button on EVERY line, and the skip button", async () => {
     // the combined multi layout's shape (tools/layout.multi_layout): the
     // words carry their text, and a line the rec read weakly flags its
-    // words — the review's red doubt + the check button. The reproduced
-    // fault (2026-08-17, the postcard): the words were {box, conf} only,
-    // so the pane rendered blank lines with no check buttons.
+    // words — the review's red doubt + the check button. Without the text
+    // on the words, the lines render blank with no check buttons.
     const multiDoc = {
       batch_id: "adopt-1",
       pages: ["p1.jpg"],
@@ -706,7 +705,7 @@ describe("a multi-orientation page renders (VR15)", () => {
   });
 
   it("selecting a non-horizontal line rotates the view to read it", () => {
-    // the per-line read rotation (2026-08-17): a 270° line reads
+    // the per-line read rotation: a 270° line reads
     // horizontally when the view turns 90°; a 0° line leaves the view put.
     expect(viewRotation({ rotation: 0, readRotation: 0 })).toBe(0);
     expect(viewRotation({ rotation: 0, readRotation: 90 })).toBe(90);
@@ -809,9 +808,9 @@ describe("layout staleness — the drafts' revisions vs the rendered layout", ()
   });
 });
 
-/** The behavior tests for the 2026-08-26 user report: the approve tick
- *  needs TWO clicks on refused pages, and scrolling the image leaves
- *  the transcript behind. Behavior, not implementation. */
+/** The behavior tests: the approve tick needs TWO clicks on refused
+ *  pages, and scrolling the image leaves the transcript behind.
+ *  Behavior, not implementation. */
 
 const LONG_DOC = (batchId, n) => ({
   batch_id: batchId,
@@ -848,11 +847,9 @@ describe("the check control — a labelled checkbox (the pattern library: 'label
   afterEach(() => vi.unstubAllGlobals());
 
   it("the control is a real checkbox with a visible label saying what it is for", async () => {
-    // The user's report (2026-08-28): the check marks "STILL do not use
-    // UI components that would help a user understand what they are
-    // actually for" — the old control was an icon-only ○/✓ circle with a
-    // hover tooltip (invisible on mobile). The house pattern (docs/UI.md
-    // .link-toggle) is a labelled checkbox with an obvious state.
+    // an icon-only ○/✓ circle with a hover tooltip is invisible on
+    // mobile. The house pattern (docs/UI.md .link-toggle) is a labelled
+    // checkbox with an obvious state.
     const main = document.createElement("main");
     render(main, { arg: "b1", rest: ["review", "b1", "0", "0"] });
     await vi.waitFor(() => expect(main.querySelector(".rv-ok")).toBeTruthy());
@@ -986,8 +983,7 @@ describe("the dual-pane link — scrolling the image pans the transcript", () =>
     // The wheel must PAN the image — renderView re-runs and the layer
     // moves — AND the transcript must follow: the sync inside
     // renderView scrolls it to the line now at the view's top. The
-    // third round of this bug (2026-08-28, page-01's serving layout):
-    // the previous tests only asserted the pan, never the follow.
+    // assertions cover both the pan and the follow.
     await vi.waitFor(() => expect(layer.style.transform).not.toBe(beforeTransform));
     await vi.waitFor(() => expect(txb.scrollTop).toBeGreaterThan(0));
   });
@@ -1215,9 +1211,8 @@ describe("editing a line applies the correction", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("a corrected line keeps the correction after the accept's re-render", async () => {
-    // The user's report (2026-08-28): "when I edit a line my edits don't
-    // get applied". The accept stores the edit and re-renders; the render
-    // reconciles the edits against the layout — and the exact-match rule
+    // The accept stores the edit and re-renders; the render reconciles
+    // the edits against the layout — and the exact-match rule
     // (`lineAtIdx.text === text`) only survives edits that EQUAL the
     // layout's line text (the mark-fine ticks). A correction differs from
     // the line, falls into the re-map branch, and gets orphaned — the

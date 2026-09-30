@@ -1,6 +1,6 @@
 # lucidlint review log
 
-Working log for the first full-repo lucidlint run (2026-08-16, branch
+Working log for the first full-repo lucidlint run (branch
 `refactor/lucidlint-findings`). Every finding I disagreed with, or that took
 real time to decide, is recorded here with the reasoning. Fixes that were
 straightforward (swallow, noqa, boolean-arg, positional-literals, inline
@@ -56,7 +56,7 @@ handler in server.py logs because there is no caller to propagate to. The
 repo standard's "log" option is the *terminal* case, not a licence to hide
 a recoverable failure — the standard was tightened to say exactly this and
 `tools/ai_client.find_api_key`'s corrupt-file fallback (which was a genuine
-silently-degraded-config swallow) now raises instead (§ below, 2026-08-16).
+silently-degraded-config swallow) now raises instead (§ below).
 
 ---
 
@@ -532,7 +532,7 @@ what the fix engine covers):
   mechanical formatting smell from an edit tool landing mid-parens.
   (Finding 3.)
 
-**Confirmed again by the fingerprint work (2026-08-20, commit 4ce0500):**
+**Confirmed again by the fingerprint work (commit 4ce0500):**
 the same hand-edit failure class recurred three times in one small change,
 with one NEW shape:
 - **A duplicated statement block.** A `PUT` that replaced a loop header

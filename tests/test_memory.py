@@ -31,8 +31,7 @@ ITEMS = [{"id": "object-sunlight", "title": "Sunlight", "type": "object"}]
 
 ANCHOR = {"kind": "theme", "id": "t-the-boats", "name": "The boats"}
 
-# every story needs an events date (2026-08-05: the recorded-day fallback
-# was a fabrication the moment card served as an anniversary) — fixtures
+# every story needs an events date — fixtures
 # that don't test the date derivation carry a real event date
 EVENT_DATE = {"kind": "event_date", "text": "1963", "value": "1963", "precision": "year"}
 
@@ -254,10 +253,8 @@ def test_assess_deterministically_redoes_an_age_without_a_date_question() -> Non
 def test_assess_deterministically_refuses_a_telling_day_date() -> None:
     """The model must never date the story by the telling day — an event
     date equal to today is a fabrication, redone into a date question that
-    stays in the conversation (2026-08-05: the moment card served a story
-    told this week as '0 years ago this week' because exactly this
-    fabrication won; 2026-08-10: the question is skippable — the narrator
-    answers in their own words or declines, but the issue is not dropped)."""
+    stays in the conversation; the question is skippable — the narrator
+    answers in their own words or declines, but the issue is not dropped."""
     today = date.today().isoformat()
     bad = (
         '{"title": "T", "extractions": [], "facts": [{"kind": "event_date", "entity": null, '
@@ -281,7 +278,7 @@ def test_assess_deterministically_refuses_a_telling_day_date() -> None:
 def test_assess_accepts_a_narrator_stated_telling_day_date() -> None:
     """A diary-style story that really happened the day it was told is
     legitimate — the narrator's own words ("Today") are the discriminator;
-    only fabricated telling-day dates are refused (2026-08-05)."""
+    only fabricated telling-day dates are refused."""
     today = date.today().isoformat()
     ok = (
         '{"title": "Diary", "extractions": [], "facts": [{"kind": "event_date", "entity": null, '
@@ -297,9 +294,9 @@ def test_assess_accepts_a_narrator_stated_telling_day_date() -> None:
 
 def test_assess_requires_a_date_question_when_none_is_established() -> None:
     """The flow must keep pursuing the events date: no event date and no
-    computable dob+age -> a date question stays in the questions (2026-08-10,
-    user: every question is skippable — the narrator answers in their own
-    words or leaves it — but the issue is narrowed until they answer)."""
+    computable dob+age -> a date question stays in the questions (user:
+    every question is skippable — the narrator answers in their own words
+    or leaves it — but the issue is narrowed until they answer)."""
     bad = '{"title": "T", "extractions": [], "facts": [], "questions": []}'
     fixed = (
         '{"title": "T", "extractions": [], "facts": [], "questions": [{"text": "When did this '
@@ -409,7 +406,7 @@ def test_assess_normalizes_facts_with_the_date_library() -> None:
     facts = result["facts"]
     by_text = {f["text"]: f for f in facts}
     # the model's value contract is ISO: an exact day arrives as YYYY-MM-DD;
-    # a non-ISO phrase can never claim an exact day (reviewer, 2026-08-03)
+    # a non-ISO phrase can never claim an exact day
     assert by_text["15/09/1981"]["value"] == "1981-09-15"
     assert by_text["15/09/1981"]["precision"] == "exact"
     assert by_text["15/09/1981"]["entity"] == "p-mum"
@@ -507,7 +504,7 @@ def test_build_story_dates_events_from_dob_and_age_facts() -> None:
 
 def test_build_story_answered_dob_is_confirmed() -> None:
     """A dob the narrator asserts in answer to a direct question is
-    confirmed, not proposed — the answer IS the assertion (2026-08-03)."""
+    confirmed, not proposed — the answer IS the assertion."""
     with_ashby = PEOPLE + [{"id": "p-alex", "name": "Alex Hale", "aliases": ["Alex"]}]
     story, _, _ = build_story(
         request=StoryRequest(
@@ -556,7 +553,7 @@ def test_build_story_event_date_fact_wins() -> None:
 
 def test_build_story_unparseable_dob_stays_verbatim_for_the_keeper() -> None:
     """An unparseable dob phrase is recorded verbatim for a person to
-    resolve — and the story still needs its events date (2026-08-05)."""
+    resolve — and the story still needs its events date."""
     story, _, _ = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
@@ -623,9 +620,7 @@ def test_build_story_links_artifacts_and_leaves_unknowns_unresolved() -> None:
 
 def test_build_story_catalogued_item_link_to_draft_artifact_is_proposed() -> None:
     """A catalogued story never confirms a link the reader cannot see: an
-    item ref whose artifact is still a draft is downgraded to proposed
-    (2026-08-05 — story-2026-08-03-05 confirmed a draft object-sb-mirosa,
-    leaving a dangling link)."""
+    item ref whose artifact is still a draft is downgraded to proposed."""
     story, _, _ = build_story(
         request=StoryRequest(
             anchor=ANCHOR,

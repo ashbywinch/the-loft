@@ -1,11 +1,12 @@
-"""Strip measurement (strip-grouping-plan slice 1, reworked 2026-09-09):
-the page's writing measured into numbered line strips by INK PROJECTION —
-the row ink profile's line cores (the house's 0.1% ink floor), one strip
-per line of writing. The kraken/orli baseline detector was replaced: it
-fragmented ~25 handwritten lines into 768 baselines (and hallucinated
-768 more on blank paper in the rotated frame) — measurements that never
-corresponded to the page's real lines. Geometry is measurement; the
-model never generates a coordinate (layout-requirements-draft L3/L11)."""
+"""Strip measurement (strip-grouping-plan slice 1): the page's writing
+measured into numbered line strips by INK PROJECTION — the row ink
+profile's line cores (the house's 0.1% ink floor), one strip per line of
+writing. No baseline detector serves the measurement — the kraken/orli
+detector fragmented ~25 handwritten lines into 768 baselines (and
+hallucinated 768 more on blank paper in the rotated frame), measurements
+that never corresponded to the page's real lines. Geometry is
+measurement; the model never generates a coordinate
+(layout-requirements-draft L3/L11)."""
 
 from __future__ import annotations
 
@@ -85,8 +86,7 @@ def line_bands(image: Path) -> list[Extent]:
     measures each band across both columns and the grouping read splits
     them (it owns segment definition, L3). A band touching the page's
     top or bottom edge drops: scan and binding edges shade the outermost
-    rows dark, and the shading measures as a full-width "line" (page-02,
-    2026-09-09: a 7px band on the page's last rows refused the page)."""
+    rows dark, and the shading measures as a full-width "line"."""
     with Image.open(image) as im:
         gray = im.convert("L")
         width, height = gray.size

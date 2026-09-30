@@ -51,7 +51,7 @@ describe("home", () => {
     expect(moment.textContent).toContain("This day");
   });
 
-  it("never surfaces a sensitive item on serendipity surfaces (PRD §6, 2026-08-03)", () => {
+  it("never surfaces a sensitive item on serendipity surfaces (PRD §6)", () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
     const sensitive = {
@@ -70,7 +70,7 @@ describe("home", () => {
     expect(main.querySelector(".moment")).toBeNull();
     expect(main.textContent).not.toContain("A sensitive document");
     // …but the collection count stays honest: sensitive items are part of
-    // the archive, just never on serendipity surfaces (2026-08-05, UX loop).
+    // the archive, just never on serendipity surfaces.
     expect(main.textContent).toContain("3 items · the full collection is still arriving");
   });
 
@@ -86,7 +86,7 @@ describe("home", () => {
     expect(main2.querySelector(".moment").textContent).toContain("62 years ago this week");
   });
 
-  it('never renders "0 years ago" — an anniversary requires a past year (2026-08-05)', () => {
+  it('never renders "0 years ago" — an anniversary requires a past year', () => {
     vi.useFakeTimers();
     vi.setSystemTime(NOW);
     // a story told this week, dated this week: same month/day, same year
@@ -105,7 +105,7 @@ describe("home", () => {
     expect(main.textContent).not.toContain("0 years ago");
   });
 
-  it("matches a story's actual date, never the date it was told (2026-08-05)", () => {
+  it("matches a story's actual date, never the date it was told", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2027, 7, 2, 12)); // a year later — the year-check alone no longer protects
     // date == recorded: the date field IS the told-day, not an event date
@@ -140,7 +140,7 @@ describe("home", () => {
   });
 });
 
-describe("home drafts block (user, 2026-08-03: a draft is for the person who claimed it)", () => {
+describe("home drafts block (user: a draft is for the person who claimed it)", () => {
   const draft = (id, toldBy) => ({
     id,
     title: "The Mirosa",
@@ -220,7 +220,7 @@ describe("home drafts block (user, 2026-08-03: a draft is for the person who cla
   });
 });
 
-describe("home recent feed (user, 2026-08-03: recent means recently added)", () => {
+describe("home recent feed (user: recent means recently added)", () => {
   it('a story recorded today appears in "Recently in the archive" even when its events were in 1963', () => {
     const items = [
       {
@@ -289,7 +289,7 @@ describe("home recent feed (user, 2026-08-03: recent means recently added)", () 
   });
 });
 
-describe("home recent feed tie-break (user, 2026-08-03: actually recently added)", () => {
+describe("home recent feed tie-break (user: actually recently added)", () => {
   it("created_at (full timestamp) outranks a bare recorded date", () => {
     const items = [
       {
@@ -322,7 +322,7 @@ describe("home recent feed tie-break (user, 2026-08-03: actually recently added)
   });
 });
 
-describe("home drafts gate (user, 2026-08-03: incognito must still find the drafts)", () => {
+describe("home drafts gate (user: incognito must still find the drafts)", () => {
   const draft = (id, toldBy) => ({
     id,
     title: "The Mirosa",
@@ -379,7 +379,7 @@ describe("home drafts gate (user, 2026-08-03: incognito must still find the draf
   });
 });
 
-describe("home orientation (2026-08-06, Eli walk)", () => {
+describe("home orientation", () => {
   it("names the tree door and keeps the people subtitle honest", () => {
     const main = document.createElement("main");
     render(main, {}, STATE);
@@ -397,7 +397,7 @@ describe("home orientation (2026-08-06, Eli walk)", () => {
   });
 });
 
-describe("the home sign-in affordance (2026-08-06)", () => {
+describe("the home sign-in affordance", () => {
   it("shows a Sign in button in the top bar when signed out — even with no drafts", () => {
     const main = document.createElement("main");
     render(main, {}, { ...STATE, items: [], themes: [], me: null });
@@ -431,7 +431,7 @@ describe("the home sign-in affordance (2026-08-06)", () => {
   });
 });
 
-describe("the unfinished import session (2026-08-07, user: the front page shows the session, never the pending people)", () => {
+describe("the unfinished import session (user: the front page shows the session, never the pending people)", () => {
   const pendingState = (imports, people, me) => ({
     ...STATE,
     imports,
@@ -439,8 +439,8 @@ describe("the unfinished import session (2026-08-07, user: the front page shows 
     ...(me ? { me } : {}),
   });
   // The import sessions appear on the home page as a separate block below
-  // the review door (user, 2026-08-16: "put it back where it was, that
-  // was much better"). The review hub (#/review) also shows them.
+  // the review door (user: "put it back where it was, that was much
+  // better"). The review hub (#/review) also shows them.
 
   it("import sessions no longer appear on the home page (they are in the review hub)", () => {
     vi.useFakeTimers();

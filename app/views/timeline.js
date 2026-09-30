@@ -18,7 +18,7 @@ const FILTERS = [
 
 /** The distinguishing detail for a person on the spine — the first dated
  *  spouse's name ("married Clara Kendall"), else occupation, else an
- *  alias. Same-name people must not be four identical entries (2026-08-06):
+ *  alias. Same-name people must not be four identical entries:
  *  the 1828 and 1892 Walter Kendalls are told apart by who they married.
  *  Unknown-named spouses ("? Corbett") never carry the label. */
 function personDetail(p, rels, people) {
@@ -46,10 +46,10 @@ export function lifeEvents(people, relationships) {
   const push = (ev) => events.push({ derived: true, ...ev });
   for (const person of people) {
     // unconfirmed facts never render on the spine — a proposed person's
-    // dob/dod is a proposal, not a happening (2026-08-06, §10 propose/confirm)
+    // dob/dod is a proposal, not a happening (§10 propose/confirm)
     if (person.status === "proposed") continue;
     // only point precisions place an event on the spine — "died after 1917"
-    // is not a 1917 happening (2026-08-06, the recognition principle); the
+    // is not a 1917 happening (the recognition principle); the
     // fact stays on the person page
     if (person.dob && POINT.has(person.dob.precision)) {
       const detail = personDetail(person, relationships ?? [], people);
@@ -92,7 +92,7 @@ export function lifeEvents(people, relationships) {
 /** The timeline's periods: the chronological spine packed into count-sized,
  *  year-aligned buckets — hundreds of items must not mean hundreds of bands.
  *  A bucket closes once it holds *target* entries and the next year begins;
- *  a year alone over the target is its own period (2026-08-05). */
+ *  a year alone over the target is its own period. */
 export function bucketPeriods(entries, target = 20) {
   const byYear = new Map();
   for (const e of entries) {
@@ -134,8 +134,7 @@ export function periodRange(period) {
 
 /** The period's hook — the dominant theme's id when one genuinely keynotes
  *  the period's items (at least two items, and a fifth of the non-derived
- *  entries — life events carry no themes and must not dilute the share),
- *  else null. A single themed item is not "the key contents" (2026-08-05). */
+ *  else null. A single themed item is not "the key contents". */
 export function periodHook(period) {
   const counts = new Map();
   let items = 0;
@@ -159,7 +158,7 @@ const EVENT_VERBS = { birth: "born", death: "died", marriage: "married" };
 
 /** A derived life event's card — links to the person, reads as a spine
  *  entry with its own date: "Harper Pryce · born 1 May 1828". The date is on
- *  the card, never implied by the period's range (2026-08-06). */
+ *  the card, never implied by the period's range. */
 function eventCard(ev) {
   const verb = EVENT_VERBS[ev.kind] ?? ev.kind;
   const name = ev.people.map((p) => p.name).join(" and ");
@@ -185,7 +184,7 @@ export function render(main, ctx, state) {
 
   // Derived life events ride with Everything and the Events filter; the
   // letter/photo/object/story filters are item-only, and an event has no
-  // places to ride a place filter (2026-08-05).
+  // places to ride a place filter.
   let events = lifeEvents(state.people, state.relationships ?? []);
   if (personFilter) events = events.filter((ev) => ev.people.some((p) => p.id === personFilter));
   if (filter !== "all" && filter !== "event") events = [];
@@ -223,7 +222,7 @@ export function render(main, ctx, state) {
     main.append(
       emptyState(
         filter === "photo"
-          ? "No photos yet — the collection is still growing." // photos ARE supported; none have been added (2026-08-06, Eli walk)
+          ? "No photos yet — the collection is still growing." // photos ARE supported; none have been added
           : "Nothing here yet — the collection is still arriving.",
       ),
     );
@@ -232,7 +231,7 @@ export function render(main, ctx, state) {
 
   // Under a person filter, an item is placed by the person's involvement
   // date when the ref states one — the family record sits at 1945 on
-  // Nora's timeline, not 1868 (2026-08-06). The clone carries the date
+  // Nora's timeline, not 1868. The clone carries the date
   // through the period bucketing and the card's own date label.
   const spineEntries = personFilter
     ? items.map((it) => ({ ...it, date: itemDateFor(it, person) })).concat(events)

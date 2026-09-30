@@ -1,4 +1,4 @@
-"""The document grouping scorer (tools/grouping.py, 2026-08-17).
+"""The document grouping scorer (tools/grouping.py).
 
 The evidence hierarchy: duplex sides (photo+text, same paper) > paper
 size > page numbers > the model's greeting/sign-off flags. These pin
@@ -39,7 +39,7 @@ def test_duplex_pairs_a_photo_with_its_text_side() -> None:
 def test_duplex_reorders_a_text_side_scanned_first() -> None:
     """The postcard batch scans sides in mixed order — the text side at
     …038221 comes BEFORE the picture side at …077468. The picture side is
-    still page 1 (user, 2026-08-17)."""
+    still page 1 (user)."""
     pages = ["back.jpg", "front.jpg"]
     docs = score_boundaries(
         pages,

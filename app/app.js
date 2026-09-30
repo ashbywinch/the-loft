@@ -41,7 +41,7 @@ const ROUTES = {
   review,
 };
 
-/** The identity at boot (2026-08-06): null = unknown, {authenticated:
+/** The identity at boot: null = unknown, {authenticated:
  *  true} = signed in, or the sentinel NO_API when the deployment has no
  *  auth server (the static host) — that case stays open, because there is
  *  nothing to sign in against. A definitive "not authenticated" gates the
@@ -86,7 +86,7 @@ export async function boot() {
   );
   if (identity === null) {
     // the server says "not signed in" — the archive is private; the app
-    // shell stays public so this gate can load (2026-08-06, user)
+    // shell stays public so this gate can load (user)
     document.getElementById("app").replaceChildren(gateScreen());
     return;
   }
@@ -133,7 +133,7 @@ export async function boot() {
     }
     // On a browser back/forward REVISIT the browser restores the scroll
     // position itself — forcing scrollTo(0,0) would land the user at the top
-    // of a long list instead of where they were (PRD §8, 2026-08-16; Baymard
+    // of a long list instead of where they were (PRD §8; Baymard
     // product-list refinding; MFA11y: don't fight restoration).
     if (!revisit) window.scrollTo(0, 0);
   });

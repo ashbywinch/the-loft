@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { render } from "../views/letters.js";
 import { typeLabel } from "../data.js";
 
-describe("the told-vs-scanned distinction (user, 2026-08-03: his brother looked for the letters)", () => {
+describe("the told-vs-scanned distinction (user: his brother looked for the letters)", () => {
   it('a told account displays as a "Memory", never a "Story"', () => {
     expect(typeLabel("story")).toBe("Memory");
     expect(typeLabel("letter")).toBe("Letter");

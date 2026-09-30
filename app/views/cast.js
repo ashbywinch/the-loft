@@ -23,7 +23,7 @@ export function render(main, _ctx, state) {
 
   // people the tree can't place (no family edges yet) stay browsable;
   // proposed people are a pending import, not "also in the archive" — they
-  // live on the home page until confirmed (2026-08-07, user)
+  // live on the home page until confirmed (user)
   const inTree = familyIds(state);
   const others = state.people.filter((p) => !inTree.has(p.id) && p.status !== "proposed");
   if (others.length) {
@@ -37,7 +37,7 @@ export function render(main, _ctx, state) {
             el("img", { class: "avatar", src: `data/assets/avatar-${person.id}.svg`, alt: person.name }),
             el("div", { class: "cast-name" }, person.name),
             // clamp-2: a long relation must not stretch the card and its
-            // row-mates (2026-08-06, user: two tall cards in the grid)
+            // row-mates
             el("div", { class: "cast-relation clamp-2" }, person.relation),
           ]),
         ),
@@ -58,7 +58,7 @@ export function personPage(main, ctx, state) {
   main.append(header(person.name, state, canGoBackInApp() ? true : "Family Tree"));
   if (person.status === "proposed") {
     // a proposed person's facts are a proposal, not attested record — the
-    // page is the review surface, so they render, visibly marked (2026-08-06)
+    // page is the review surface, so they render, visibly marked
     main.append(
       el(
         "p",
@@ -69,7 +69,7 @@ export function personPage(main, ctx, state) {
   }
   if (person.status === "estimated" && person.basis) {
     // the estimated chip names the person and shows only what the dataset
-    // records — the basis is the reviewer's own words, verbatim (2026-08-09)
+    // records — the basis is the reviewer's own words, verbatim
     const { by, when, text } = person.basis;
     main.append(
       el("p", { class: "card-meta" }, `Estimated — from ${by}'s recollection${when ? `, ${when}` : ""}: "${text}".`),
@@ -118,7 +118,7 @@ export function personPage(main, ctx, state) {
   );
 
   // the capture affordance lives in the header — the person's told stories
-  // render once, in "Said by" below (main, 2026-08-03); drafts never render
+  // render once, in "Said by" below; drafts never render
   main.append(
     el("div", { class: "memories-cta" }, [
       captureButton(state, { kind: "person", id: person.id, name: person.name }, `Add a memory of ${person.name}`),
@@ -148,7 +148,7 @@ export function personPage(main, ctx, state) {
   // People row: the attested relationships only — who this person would
   // recognise as part of their life. Co-mention in an item is not being
   // with: the 2001 email names 91 people and Beatrice Beth Kendall is not
-  // linked to 90 of them (2026-08-06, the recognition principle).
+  // linked to 90 of them (the recognition principle).
   const peopleRow = (() => {
     const rels = (state.relationships ?? []).filter((r) => r.a === person.id || r.b === person.id);
     const entries = rels
@@ -159,7 +159,7 @@ export function personPage(main, ctx, state) {
         if (!p) return null;
         let text = `${p.name} — ${label}`;
         // a dated spouse edge shows the marriage date and this person's age
-        // at it — calculated, never stored (2026-08-06)
+        // at it — calculated, never stored
         if (r.kind === "spouse" && r.date) {
           const when = dateLabel({ date: r.date.date, date_precision: r.date.precision, date2: r.date.date2 });
           const years = ageInYears(person.dob, { date: r.date.date, precision: r.date.precision });
@@ -183,13 +183,13 @@ export function personPage(main, ctx, state) {
   // node, so drop the empty rows.
   main.append(...[peopleRow, row("places", "Places", "place"), row("themes", "Stories", "theme")].filter(Boolean));
 
-  // Complete and non-overlapping (2026-08-03): every item involving the
+  // Complete and non-overlapping: every item involving the
   // person lands in exactly one section — the artifacts they are IN as a
   // subject (people[], told by someone else or nobody), or the comments they
   // told (told_by them). Clarification fragments are neither — they render
-  // only in their own block below (2026-08-06). Placement is by the
+  // only in their own block below. Placement is by the
   // person's involvement date when the ref states one — the family record
-  // sits in the 1940s on Nora's page, not the 1860s (2026-08-06); the
+  // sits in the 1940s on Nora's page, not the 1860s; the
   // clone carries the date through the decade bands and the card labels.
   const involved = published(state.items)
     .filter((item) => itemInvolves(item, person.id))
@@ -216,7 +216,7 @@ export function personPage(main, ctx, state) {
     );
   }
 
-  // --- clarification fragments that attest this person (2026-08-06) ---
+  // --- clarification fragments that attest this person ---
   const clarifications = clarificationsFor(catalogued(state.items), person.id);
   if (clarifications.length) {
     main.append(
@@ -238,7 +238,7 @@ export function personPage(main, ctx, state) {
     );
   }
 
-  // --- reflections that mention this person (2026-08-06) ---
+  // --- reflections that mention this person ---
   const reflections = reflectionsFor(catalogued(state.items), person.id);
   if (reflections.length) {
     main.append(
@@ -260,7 +260,7 @@ export function personPage(main, ctx, state) {
     );
   }
 
-  // --- evidence records that attest this person (2026-08-06) ---
+  // --- evidence records that attest this person ---
   const evidence = evidenceFor(catalogued(state.items), person.id);
   if (evidence.length) {
     main.append(

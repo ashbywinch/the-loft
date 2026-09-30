@@ -12,7 +12,7 @@ requirement is left without a UX answer), lists the journeys to
 usability-test, and is enforced with the code (P6: behaviour is automated
 where checkable; acceptance is re-walking the scenarios — P13).
 
-Status: current (2026-09-22). Changes land only with user agreement and
+Status: current. Changes land only with user agreement and
 when a re-walk stops finding the targeted problems.
 
 ## 1. The posture (PRD §1–§3, §10, non-goals)
@@ -135,7 +135,7 @@ in-progress work; opening a zoom or filter never creates a history entry.
   differently (R12 of the review-chat walk).
 - A statement whose source matters carries **provenance in the narrator's
   own words** ("Pete: 'Mum used to tell us this all the time'") — the
-  provenance is asked, never inferred (§19 req 2, resolved 2026-09-22).
+  provenance is asked, never inferred (§19 req 2).
 - The user can always tell what the machine is unsure of: uncertain words
   are visibly marked and every line remains correctable (VR4, §8).
 

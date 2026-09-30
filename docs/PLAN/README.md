@@ -13,6 +13,7 @@ acceptance), then the pointed design doc for the item.
 | `PLAN.md` | the large-scale plan — the full PRD: slices 1–6, feature inventory, sequencing, per-slice status |
 | `WORK-PLAN.md` | the small-scale plan — the work remaining on the active subset (the ingest → transcription → identity pipeline), ordered with acceptance |
 | `SCRAPS.md` | loose ends that fit neither plan |
+| *moved* | the object model techspec now lives at `docs/object-model.md` |
 
 ## Records — history
 

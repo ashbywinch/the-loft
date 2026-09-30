@@ -1,10 +1,10 @@
-"""The architecture layers (2026-08-09, user): the review API subset over
+"""The architecture layers (user): the review API subset over
 the store is a layer boundary, and this pins the whole stack's direction.
 
 Layers: app (frontend) -> server (HTTP) -> archive (the domain API over
 the store) -> store (the append-only file store). The pipeline tools must
 also route through the store — the archive spans the full pipeline from
-source to final (user, 2026-08-18). The rules:
+source to final (user). The rules:
 - the HTTP layer reaches the data ONLY through the Archive's methods —
   never the store's file methods, never an ad-hoc identity-table write;
 - the review flow's operations (resolve/decide, the session records) are
@@ -30,7 +30,7 @@ def _source(name: str) -> str:
 
 def test_the_http_layer_routes_data_through_the_archive_api() -> None:
     server = _source("server.py")
-    # the review flow's operations are the Archive's API (2026-08-09): the
+    # the review flow's operations are the Archive's API: the
     # handlers call the domain methods — resolve, the queue, the session
     # records — never ad-hoc table edits
     for call in (
@@ -70,14 +70,14 @@ def test_the_pipeline_layer_routes_data_through_the_store() -> None:
     orientation reports, registry records) must go through the Store API
     or the Archive API — never directly to the filesystem.
 
-    The archive spans the full pipeline from source to final (user,
-    2026-08-18): the work_dir's layouts, guess text, orientation reports,
+    The archive spans the full pipeline from source to final (user):
+    the work_dir's layouts, guess text, orientation reports,
     and registry records are archive data, not scratch files. Direct
     atomic_write or Path.read/write calls in the pipeline tools bypass
     the append-only invariant and make the data invisible to versioning
     and the architecture test layer boundaries.
 
-    Currently KNOWN VIOLATIONS (2026-08-18): every listed tool uses
+    Currently KNOWN VIOLATIONS: every listed tool uses
     atomic_write or Path.read_text/write_text directly. Each will be
     migrated to the store API; this test tracks progress by requiring
     at minimum that the store or archive is imported — a dependency

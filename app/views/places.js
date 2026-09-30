@@ -23,7 +23,7 @@ const WINDOW = 2; // ± years around the slider
 const UK_VIEW = { lat: 53.0, lng: -1.2, zoom: 5 };
 const OSM_ATTR = "&copy; OpenStreetMap contributors";
 const DEFAULT_HINT = "Tap a glowing place to explore it — the window you’ve scrubbed to travels with you.";
-// Scale-aware markers (requirement, 2026-08-03): below DOTS_MIN_ZOOM the heat
+// Scale-aware markers (requirement): below DOTS_MIN_ZOOM the heat
 // map stands alone — a red dot at country zoom is a meaningless pixel and its
 // label a blob, and both obscure the heat layer. Dots become useful once
 // places separate at regional zoom; labels only where they cannot collide.
@@ -31,7 +31,7 @@ const DEFAULT_HINT = "Tap a glowing place to explore it — the window you’ve 
 const DOTS_MIN_ZOOM = 8;
 const LABELS_MIN_ZOOM = 12;
 const OVERVIEW_HINT = "Zoom in to mark places on the map — the cards below list what’s here.";
-// Heat tuning per zoom (requirement, 2026-08-03): the default heat (blur 30,
+// Heat tuning per zoom (requirement): the default heat (blur 30,
 // minOpacity 0.05, hidden above zoom 10) rendered a single point like Chenzou
 // as an invisible smudge — the map must show where you can explore from the
 // first paint. World scale: tight radius + high minOpacity so every place is
@@ -39,7 +39,7 @@ const OVERVIEW_HINT = "Zoom in to mark places on the map — the cards below lis
 // backdrop while dots and labels carry the precision.
 // The colour gradient stays the plugin default (blue → red) on purpose:
 // users have seen heat maps before and associate the colours — blue = few,
-// red = many (user, 2026-08-03).
+// red = many (user).
 const HEAT_STEPS = [
   { maxZoom: 6, radius: 16, blur: 8, minOpacity: 0.55 }, // world — discrete spots
   { maxZoom: 10, radius: 26, blur: 15, minOpacity: 0.4 }, // regional — splitting blobs
@@ -52,7 +52,7 @@ export function heatStepForZoom(zoom) {
 }
 
 /** What the map shows at this zoom: heat only, dots, dots+labels, or a
- *  lone active place always dot+label — pure, unit-tested (2026-08-03). */
+ *  lone active place always dot+label — pure, unit-tested. */
 export function scaleState(zoom, activeCount) {
   const solo = activeCount === 1;
   return {
@@ -78,7 +78,7 @@ const WIDE_PRECISIONS = new Set(["country", "continent"]);
 /** How a place's coordinate precision scales its marker: unset/exact is a
  *  pin; a place known to a street/square draws a small uncertainty ring; a
  *  town/county/region a larger one; a country/continent mention a wide ring
- *  — the point is never presented as more precise than it is (2026-08-05). */
+ *  — the point is never presented as more precise than it is. */
 export function markerScale(precision) {
   if (WIDE_PRECISIONS.has(precision)) return { ring: 4, cls: "map-ring map-ring-wide" };
   if (precision === "street") return { ring: 1.6, cls: "map-ring" };
@@ -125,7 +125,7 @@ function mapSection(places, state, gridEl) {
   // explorable). One rule at the seam; the fallback re-guards on x/y.
   const positioned = places.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
   // Range derives from the data — no hardcoded floor, so pre-1960 items in
-  // the real archive still appear on the map (review: silent exclusion).
+  // the real archive still appear on the map.
   const years = published(state.items)
     .map((item) => yearOf(item))
     .filter((y) => Number.isFinite(y));
@@ -133,8 +133,7 @@ function mapSection(places, state, gridEl) {
   const maxYear = years.length > 0 ? Math.max(...years) : 1960;
   // First visit: the whole archive at once — full date range, every place.
   // The first live draw fits the map to the positioned places (regional,
-  // never street) so the pins are there from the start — two walks reported
-  // "the map showed me nothing until I zoomed in" (2026-08-06). Any slider
+  // never street) so the pins are there from the start. Any slider
   // move engages the ±WINDOW window; person chips filter within the current
   // scope. Future (recorded, not built): explicit all-places / date-range /
   // person-subset modes, and remembering where a returning user was looking
@@ -156,10 +155,10 @@ function mapSection(places, state, gridEl) {
   });
   // Only people who can actually appear on the map — an item with places —
   // get a chip; a person whose items are all placeless (e.g. a testimony)
-  // would filter the map to nothing (requirement, 2026-08-03).
+  // would filter the map to nothing (requirement).
   // malformed dates are skipped in every view, and the ±WINDOW window applies
   // once the user scrubs — the ONE time predicate for counts, chips and the
-  // grid, so a chip can never map to an empty map (reviews, 2026-08-03)
+  // grid, so a chip can never map to an empty map
   const inWindow = (item) => {
     const y = yearOf(item);
     return Number.isFinite(y) && (fresh || (y >= cursor - WINDOW && y <= cursor + WINDOW));
@@ -187,7 +186,7 @@ function mapSection(places, state, gridEl) {
         // a person's map = the places they are AT (personAtPlace): the
         // explicit per-place people list is the only attestation — the
         // recipient of a letter is not at its places, and a co-mention in a
-        // multi-place item links nobody anywhere (2026-08-05)
+        // multi-place item links nobody anywhere
         if (person !== "all" && !personAtPlace(person, place)) continue;
         if (counts.has(place.id)) counts.set(place.id, counts.get(place.id) + 1);
       }
@@ -219,7 +218,7 @@ function mapSection(places, state, gridEl) {
 
   // Scale-aware marker display — run on every zoom change and after every
   // draw: heat only below DOTS_MIN_ZOOM; dots from regional zoom; labels only
-  // from street zoom; a single active place always shows both (2026-08-03).
+  // from street zoom; a single active place always shows both.
   const activePlaceCount = () => (currentCounts ? [...currentCounts.values()].filter((c) => c > 0).length : 0);
   const applyScale = () => {
     if (!map || currentMap !== map) return;
@@ -238,8 +237,7 @@ function mapSection(places, state, gridEl) {
   };
 
   // The heat layer re-tunes with zoom: discrete vivid spots at world scale,
-  // smooth backdrop at street scale (2026-08-03). Called on zoomend and after
-  // fitTo — the canvas re-renders via setOptions → redraw.
+  // smooth backdrop at street scale. Called on zoomend and after
   const applyHeatForZoom = () => {
     if (!map || currentMap !== map) return;
     const step = heatStepForZoom(map.getZoom());
@@ -301,9 +299,8 @@ function mapSection(places, state, gridEl) {
         }
       }
       // Fit to the settlement pins — the places you can open. Country and
-      // continent centroids (Chenzou, Ruzia, Anzoria) span the whole world and
-      // pinned every first visit at zoom 1 with no pins visible — the
-      // walkers' "the map showed me nothing until I zoomed in" (2026-08-06).
+      // continent centroids (Chenzou, Ruzia, Anzoria) span the whole world;
+      // fitting to one would pin the map at zoom 1 with no pins visible.
       // The wide places stay on the heat at the map's edge, reachable by
       // zooming out.
       const pins = positioned.filter((p) => counts.get(p.id) > 0 && !WIDE_PRECISIONS.has(p.precision));
@@ -319,7 +316,7 @@ function mapSection(places, state, gridEl) {
   };
 
   // The place list under the map follows the same filter as the map — only
-  // places with activity in the current scope (2026-08-03).
+  // places with activity in the current scope.
   const renderGrid = (counts) => {
     const visible = places
       .filter((p) => (counts.get(p.id) ?? 0) > 0)
@@ -342,7 +339,7 @@ function mapSection(places, state, gridEl) {
   const drawChips = () => {
     // a chip only for people who are AT some place via an item in the current
     // window — same predicate as countsFor, recomputed on every scrub so a chip
-    // never maps to an empty map (reviews, 2026-08-03)
+    // never maps to an empty map
     const visible = state.people.filter((p) =>
       published(state.items).some(
         (item) => inWindow(item) && (item.places ?? []).some((pl) => personAtPlace(p.id, pl)),
@@ -350,7 +347,6 @@ function mapSection(places, state, gridEl) {
     );
     // if the active person dropped out of the window's chip set, reset to
     // Everyone — never a silently-applied filter with no visible chip
-    // (review, 2026-08-03)
     if (person !== "all" && !visible.some((p) => p.id === person)) person = "all";
     const option = (id, name) =>
       el(
@@ -505,7 +501,7 @@ export function placePage(main, ctx, state) {
   const agg = aggregate(allItems);
   // The People row is who is attested AT this place — the union of the
   // per-place people lists on the place's items. Co-mention in an item is
-  // not presence (2026-08-05): the 2001 email's 91 people are not all at
+  // not presence: the 2001 email's 91 people are not all at
   // its 8 places.
   const peopleAt = new Map();
   for (const item of allItems) {
@@ -540,11 +536,10 @@ export function placePage(main, ctx, state) {
     );
   }
   // the items list is the artifacts about the place — stories render once,
-  // in the Memories block below, never twice (2026-08-06: Aldgate showed
-  // "5 items" where 2 were the same stories as "Memories about Aldgate").
+  // in the Memories block below, never twice.
   // Placement is by the place's involvement date when the ref attests one
   // (a long-lived document's entry about this place), else the item's own
-  // date (2026-08-06).
+  // date.
   const artifacts = artifactsOf(items).map((it) => ({ ...it, date: refDateFor(it, "places", place) }));
   main.append(
     el("section", {}, [
@@ -574,7 +569,7 @@ export function placePage(main, ctx, state) {
     }),
   );
 
-  // --- reflections that mention this place (2026-08-06) ---
+  // --- reflections that mention this place ---
   const reflections = reflectionsFor(catalogued(state.items), place.id);
   if (reflections.length) {
     main.append(
@@ -596,7 +591,7 @@ export function placePage(main, ctx, state) {
     );
   }
 
-  // --- evidence records that attest this place (2026-08-06) ---
+  // --- evidence records that attest this place ---
   const evidence = evidenceFor(catalogued(state.items), place.id);
   if (evidence.length) {
     main.append(

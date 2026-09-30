@@ -1,6 +1,6 @@
 # Strip-grouping production plan — the layout stage's measured-geometry path
 
-**Status:** SERVED (2026-09-09) — page-01 and page-02 of the Music
+**Status:** SERVED — page-01 and page-02 of the Music
 College letter layout through `make pipeline ARGS="layout …"` with 0
 gate violations (20 and 14 lines, box_source "grouped-strips") in ~6
 minutes end to end. See the postmortem block at the bottom of this
@@ -9,9 +9,9 @@ measurement primitive, and the gateway route), and both changes are
 recorded there with the evidence.
 
 Spike evidence: `geometry-experiments-log.md` §"The numbered-strips
-spike" and §"Ink-projection line bands" (2026-09-09).
+spike" and §"Ink-projection line bands".
 
-**The Godolphin correction + resolution (2026-09-08, user):** the
+**The Godolphin correction + resolution (user):** the
 card's substantial message is written at 90° on its left side. The
 grid read transcribed it correctly but NORMALIZED it to upright
 horizontal boxes — the rotation was never detected or handled. The
@@ -42,12 +42,12 @@ letter.
 - **L3/L11** (layout-requirements-draft): segmentation is decided by
   reading; every segment's transcription comes from a reading of its
   own extent.
-- The user, 2026-09-07: "We don't know what text is meant to be part of
+- The user: "We don't know what text is meant to be part of
   the same segment as other text without reading it" — grouping is the
   reading act; geometry is measurement.
 - **L9**: the gates keep arbitrating. A page that still fails after the
   findings loop refuses exactly as before.
-- No fallback to the paddle path (2026-09-06 ruling). Test data never
+- No fallback to the paddle path (ruling). Test data never
   enters the family archive.
 
 ## Work slices
@@ -63,7 +63,7 @@ laptop CPU — see slice 6). Acceptance: on page-01, 768 baselines →
 and the sliver filter on a synthetic fixture.
 
 ### 2. The grouping read replaces the coordinate read — for ALL pages
-(ruling revised 2026-09-08: the Godolphin card proves the coordinate
+(ruling revised: the Godolphin card proves the coordinate
 path fails on rotated writing too; there is no working path to
 protect). `segment_page(grid=True)` → `group_segments(...)`: the system
 prompt becomes the grouping prompt (segment definition L3 as negatives
@@ -117,7 +117,7 @@ per-site suppressions in tools/segment_page.py come out with it.
 kraken segmentation is ~32 min/page locally — load-bearing now. Options
 researched: Riksarkivet's hosted HTR (free, purpose-built; account
 needed), Transkribus layout API (account exists; READ-COOP activation
-blocked in August — one support email), GPU-hosted kraken
+blocked — one support email), GPU-hosted kraken
 (Modal/Replicate container of the exact CLI, ~1h setup, cents/page).
 Spike Riksarkivet first; fall back to the container. Acceptance: page-01
 baselines from a remote run match the local run's strip clustering.
@@ -138,8 +138,8 @@ model's behavior pinned without network.
   decomposition (smaller batches), schema-validated full-coverage
   responses, and verification rounds (Liao et al. 2024; TRIG 2025) —
   matching the built design. CONTRACT: batches of ≤50 pieces, every
-  piece accounted per batch, ONE re-ask for omissions. RULING (2026-09-08,
-  user): pieces still unaccounted after the re-ask are dropped loudly and
+  piece accounted per batch, ONE re-ask for omissions. RULING (user):
+  pieces still unaccounted after the re-ask are dropped loudly and
   the page SERVES — the loss named in the run log (L10). Deliberately the
   starting posture, not the settled one: "We don't know until we see it.
   Serving them to start with is an easy way to help me see them so I can

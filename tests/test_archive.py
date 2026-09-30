@@ -19,7 +19,7 @@ def make_archive() -> tuple[Archive, MemoryStore]:
 
 
 def _item(**overrides: object) -> dict[str, object]:
-    """A valid minimal sidecar (the Item record's required shape, 2026-08-05)
+    """A valid minimal sidecar (the Item record's required shape)
     with per-test overrides."""
     defaults: dict[str, object] = {
         "id": "story-x",
@@ -40,7 +40,7 @@ def _item(**overrides: object) -> dict[str, object]:
 def test_content_paths_reject_escaping_ids_and_filenames() -> None:
     """save_file/read_content/read_file_bytes build store paths from caller
     input — an id or filename containing '..' or '/' must be rejected, not
-    resolved outside the archive root (2026-08-05 bot review, security)."""
+    resolved outside the archive root."""
     archive, store = make_archive()
     with pytest.raises(ArchiveError, match="invalid record id"):
         archive.save_file("../escape", "a.txt", "x")
@@ -58,8 +58,7 @@ def test_content_paths_reject_escaping_ids_and_filenames() -> None:
 def test_sidecar_read_paths_reject_escaping_ids() -> None:
     """get_item composes 'assets/<id>/item.json' from the caller's id — the
     last read seam still composing a store path from an unvalidated id; a
-    crafted id must be rejected, not resolved outside the archive root
-    (2026-08-05 bot review, security)."""
+    crafted id must be rejected, not resolved outside the archive root."""
     archive, _ = make_archive()
     with pytest.raises(ArchiveError, match="invalid record id"):
         _ = archive.get_item("a/../../../tmp")
@@ -70,7 +69,7 @@ def test_sidecar_read_paths_reject_escaping_ids() -> None:
 def test_corrupt_proposed_record_fails_loudly() -> None:
     """A corrupt proposed file (partial write, hand-edit) must raise at read
     time — silently skipping it hides the corruption and produces a
-    confusing dangling-ref failure later (2026-08-05 bot review, fail-fast)."""
+    confusing dangling-ref failure later."""
     archive, store = make_archive()
     store.write_new("proposed/people/p-bad.json", '{"id": "p-bad"}')  # missing required name
     with pytest.raises(ArchiveError, match="proposed/people/p-bad.json"):
@@ -83,8 +82,7 @@ def test_corrupt_proposed_record_fails_loudly() -> None:
 def test_reject_also_sees_extraction_matches() -> None:
     """A catalogued story whose chat extraction (kept by the reviewer) matches
     the proposed record references it too — rejecting must fail in the same
-    session, not later at publish with a dangling extraction match
-    (2026-08-05 bot review)."""
+    session, not later at publish with a dangling extraction match."""
     archive, store = make_archive()
     archive.propose_person({"id": "p-grandma", "name": "Grandma"})
     archive.save_item(
@@ -130,8 +128,7 @@ def test_reject_also_sees_extraction_matches() -> None:
 def test_reject_refuses_when_a_catalogued_story_references_the_record() -> None:
     """Rejecting a proposed record that catalogued stories still reference
     would leave dangling refs at publish — refuse loudly at the review
-    action instead: relink the stories first, or keep the record
-    (2026-08-05 bot review)."""
+    action instead: relink the stories first, or keep the record."""
     archive, store = make_archive()
     archive.propose_person({"id": "p-grandma", "name": "Grandma"})
     archive.propose_place({"id": "pl-yard", "name": "The yard"})
@@ -160,7 +157,7 @@ def test_chain_with_missing_base_version_fails_loudly() -> None:
     """A partial sync that loses the base version (item.json) but keeps
     item-2.json must fail loudly — an empty chain would let the item vanish
     from the projection or a fresh v1 be shadowed by the stale higher
-    version (2026-08-05 bot review)."""
+    version."""
     archive, store = make_archive()
     store.write_new("assets/story-x/item-2.json", '{"id": "story-x", "title": "Two"}')
     with pytest.raises(ArchiveError, match="gap"):
@@ -173,7 +170,7 @@ def test_chain_with_missing_base_version_fails_loudly() -> None:
 
 def test_sidecar_version_gap_fails_loudly() -> None:
     """A lost middle version (a partial Drive sync) must fail loudly, never
-    silently serve the older contiguous run (2026-08-05 bot review)."""
+    silently serve the older contiguous run."""
     archive, store = make_archive()
     _ = archive.save_item(_item(title="One"))
     _ = archive.save_item(_item(title="Two"))
@@ -236,7 +233,7 @@ def test_item_ids_lists_every_folder() -> None:
 def test_store_delete_removes_a_file_and_fails_on_missing() -> None:
     """The proposed queue's reject path: a dropped proposal is gone. This is
     the ONE delete on the store — primary content (items, identity tables,
-    content files) never uses it: those supersede or tombstone (2026-08-05).
+    content files) never uses it: those supersede or tombstone.
     """
     from tools.store import MemoryStore
 
@@ -299,8 +296,7 @@ def test_identity_tables_missing_returns_none() -> None:
 def test_re_save_with_content_updates_the_content_entry() -> None:
     """An edit that loads the current sidecar (whose content entry carries the
     versioned name) and re-saves must update that entry, not append a second
-    one — otherwise publish would read the stale first entry (2026-08-04
-    review finding)."""
+    one — otherwise publish would read the stale first entry."""
     archive, store = make_archive()
     _ = archive.save_item(
         _item(title="One"),
@@ -320,9 +316,8 @@ def test_save_recovers_after_a_crash_mid_save() -> None:
     """The sidecar is written before the content files: a crash mid-save
     leaves the version advanced (sidecar present, content missing), so the
     next save supersedes and writes a fresh content file. Content-first
-    left an orphan content file with no sidecar — the next save collided
-    with the same filename and was permanently blocked (2026-08-04 review
-    finding)."""
+    would leave an orphan content file with no sidecar — the next save
+    would collide with the same filename and be permanently blocked."""
 
     class CrashOnSecondWrite(MemoryStore):
         """The first write lands, the second dies — the mid-save crash."""
@@ -418,8 +413,7 @@ def test_empty_content_is_skipped() -> None:
 
 def test_story_with_transcription_keeps_both_content_files() -> None:
     """A story item may carry both its account and a transcription (a
-    recorded testimony) — split_content must never drop either
-    (2026-08-04 review finding)."""
+    recorded testimony) — split_content must never drop either."""
     archive, store = make_archive()
     _ = archive.save_item(
         _item(title="One"),
@@ -436,9 +430,9 @@ def test_story_with_transcription_keeps_both_content_files() -> None:
 def test_re_save_clears_stale_content_entry() -> None:
     """A re-save that omits a content kind (cleared transcription, empty
     story) must strip the old asset entry — otherwise resolved_items keeps
-    publishing the previous text forever (2026-08-05 bot review, importance
-    7). The real scenario: the caller loads the current sidecar (which
-    carries the old entry) and re-saves without that content kind."""
+    publishing the previous text forever. The real scenario: the caller
+    loads the current sidecar (which carries the old entry) and re-saves
+    without that content kind."""
     archive, store = make_archive()
     # v1: save with transcription
     _ = archive.save_item(
@@ -463,7 +457,7 @@ def test_re_save_clears_stale_content_entry() -> None:
 def test_proposed_records_are_person_records_with_status() -> None:
     """A proposed person is the SAME type as a confirmed one — the
     difference is the status field, serialised in the proposed file
-    (2026-08-05: proposed and confirmed are states, not types)."""
+    (proposed and confirmed are states, not types)."""
     archive, store = make_archive()
     archive.propose_person({"id": "p-nova", "name": "Nova", "relation": "added from a story"})
     stored = json.loads(store.read("proposed/people/p-nova.json"))
@@ -512,8 +506,7 @@ def test_promote_place_supersedes_places_table() -> None:
 
 def test_reject_proposed_place_drops_the_record() -> None:
     """A proposal the review rejects is gone from the queue — a passing
-    story mention with no attestation is fiction, not a place entity
-    (2026-08-05: the moored-barges records came from a dev-test story)."""
+    story mention with no attestation is fiction, not a place entity."""
     archive, store = make_archive()
     archive.propose_place({"id": "pl-barges", "name": "the moored barges"})
     assert archive.proposed_ids() == {"pl-barges"}
@@ -534,8 +527,7 @@ def test_reject_proposed_person_drops_the_record() -> None:
 
 def test_proposed_operations_reject_path_traversal_ids() -> None:
     """A crafted id (../people) must never reach a store path — the
-    archive rules say identity tables are never deleted (2026-08-05 bot
-    review, security concern)."""
+    archive rules say identity tables are never deleted."""
     archive, store = make_archive()
     archive.save_identity("people", {"people": [], "relationships": []})
     for bad in ("../people", "../../people", "p/evil", "p..evil"):
@@ -561,7 +553,7 @@ def test_proposed_operations_reject_path_traversal_ids() -> None:
 
 
 def test_review_attempts_are_walk_separated() -> None:
-    """The sessions' storage (2026-08-09): a fresh attempt starts only when
+    """The sessions' storage: a fresh attempt starts only when
     the last is empty or finished — a mid-walk re-render continues the same
     walk, so the diagnosis never mixes attempts."""
     from tools.archive import Archive
@@ -612,12 +604,11 @@ def test_review_attempts_are_walk_separated() -> None:
 
 
 def test_ensure_import_session_is_atomic_and_idempotent() -> None:
-    """2026-08-11 review: _ensure_import_session read the imports table,
-    checked, and wrote OUTSIDE the lock — two concurrent cold starts could
-    both compute the same next version and the append-only store would
-    refuse the second, killing the walk. The read-check-write is now
-    atomic under the archive's lock (through the _mutate_identity seam),
-    and a repeat call writes nothing."""
+    """_ensure_import_session must read, check, and write atomically
+    under the archive's lock (through the _mutate_identity seam) —
+    outside the lock, two concurrent cold starts compute the same next
+    version and the append-only store refuses the second. A repeat call
+    writes nothing."""
     archive, _ = make_archive()
     assert archive.get_review_session("import-documents") is None
     archive._ensure_import_session()
@@ -635,17 +626,13 @@ def test_ensure_import_session_is_atomic_and_idempotent() -> None:
 
 
 def test_identity_saves_serialize_concurrent_writers() -> None:
-    """2026-08-09 (user: the walk died with "Sorry — the assistant
-    couldn't be reached. Try again?" after "refusing to edit existing
-    file: imports-27.json"): the review flow records the user's line and
-    the assistant's line while the app's fire-and-forget message records
-    land — two writers computed the same next version and the append-only
-    store refused the second, killing the whole walk. The write seam now
-    serializes the read-compute-write with the process-wide lock: every
-    writer reads AFTER the previous writer's write, so no collision and no
-    lost update. A retry-on-collision was rejected because re-writing a
-    stale snapshot would silently drop the concurrent writer's change (the
-    DBA critique's F4)."""
+    """The review flow records the user's line and the assistant's line
+    while the app's fire-and-forget message records land — the write
+    seam serializes the read-compute-write with the process-wide lock:
+    every writer reads AFTER the previous writer's write, so no collision
+    and no lost update. A retry-on-collision was rejected because
+    re-writing a stale snapshot would silently drop the concurrent
+    writer's change."""
     import threading
 
     store = MemoryStore()
@@ -658,7 +645,7 @@ def test_identity_saves_serialize_concurrent_writers() -> None:
             for i in range(15):
                 # the ATOMIC seam — the read must sit inside the lock; the
                 # get_identity-then-save_identity pattern this test used
-                # could lose a concurrent writer's update (2026-08-11 review)
+                # could lose a concurrent writer's update
                 def apply(table: dict[str, Any] | None, _i: int = i) -> dict[str, Any]:
                     current = table or {"imports": []}
                     current["imports"] = current["imports"] + [{"id": f"{prefix}-{_i}"}]
@@ -684,16 +671,16 @@ def test_identity_saves_serialize_concurrent_writers() -> None:
 
 
 def test_noop_resolve_writes_no_new_version() -> None:
-    """2026-08-11 review: a stale decision (the person already resolved) or
-    a pending writes NO new people version — byte-identical versions would
-    clutter the append-only chain the PRD describes as the archive's
-    troubleshooting record."""
+    """A stale decision (the person already resolved) or a pending writes
+    NO new people version — byte-identical versions would clutter the
+    append-only chain the PRD describes as the archive's troubleshooting
+    record."""
     store = MemoryStore()
     archive = Archive(store)
     archive.save_identity("people", {"people": [{"id": "p-x", "name": "X"}], "relationships": []})
     assert len(archive._identity_versions("people")) == 1
     _, changed, was_proposed = archive.resolve_person("p-x", "attested", None)  # stale — p-x is not proposed
-    assert changed is False  # the authoritative in-lock flag reports the no-op (2026-08-11 review)
+    assert changed is False  # the authoritative in-lock flag reports the no-op
     assert was_proposed is False  # and the person was not proposed at lock time
     assert len(archive._identity_versions("people")) == 1  # nothing written
     archive.resolve_person("p-x", "pending", None)
@@ -704,12 +691,11 @@ def test_noop_resolve_writes_no_new_version() -> None:
 
 
 def test_concurrent_message_recording_loses_nothing() -> None:
-    """2026-08-10 review (the lock covered only the version computation,
-    not the read): record_review_message used to read the imports table
-    BEFORE the lock, so two concurrent recordings could both compute from
-    the same snapshot and the second would supersede the first — a lost
-    line in the transcript. The mutation helper now holds the lock across
-    read, mutate, and write."""
+    """record_review_message must read the imports table under the lock —
+    the lock covers the read, not just the version computation: two
+    concurrent recordings computing from the same snapshot would let the
+    second supersede the first, a lost line in the transcript. The
+    mutation helper holds the lock across read, mutate, and write."""
     import threading
 
     store = MemoryStore()

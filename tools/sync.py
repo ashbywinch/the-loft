@@ -6,7 +6,7 @@ backend records. This module is the shared contract:
 - the frontend's ``Outbox`` — the catch-up backlog for real-time pushes
   that failed (the laptop was off); the backend pulls it and the website
   marks items received;
-- ``draft_payloads`` — the machine drafts the review surface reads.
+- ``Batch.draft_payloads`` — the machine drafts the review surface reads.
 
 Nothing confirmed is ever lost to a failed push.
 """
@@ -49,9 +49,9 @@ BATCH_ID = re.compile(r"^[A-Za-z0-9-]+$")
 
 # page names from boundaries.json become path segments in the drafts read —
 # a charset that excludes every separator and "..", so a hostile entry can't
-# read outside the batch's guess dir (defense-in-depth, review, 2026-08-14).
-# `~` is allowed: phone export duplicates arrive as "name~2.jpg" (the
-# PhotoScan batch, 2026-08-16 — the guard must not reject real scans).
+# read outside the batch's guess dir (defense-in-depth).
+# `~` is allowed: phone export duplicates arrive as "name~2.jpg" — the
+# guard must not reject real scans.
 _PAGE_NAME = re.compile(r"^[A-Za-z0-9._~-]+$")
 
 # Rotation degrees — the reviewer's orientation corrections are quarter
@@ -73,15 +73,14 @@ def validate_confirmation(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("confirmation pages must be a non-empty list")
     # doc_index becomes a registry boundary index and a file name — a float
     # (1e309 -> OverflowError) or bool would slip past the server's int()
-    # and 500 instead of 400 (review, 2026-08-15: the receiver's
-    # "client errors are 4xx, never 500" contract)
+    # and 500 instead of 400 (the receiver's "client errors are 4xx, never
+    # 500" contract)
     doc_index = payload["doc_index"]
     if isinstance(doc_index, bool) or not isinstance(doc_index, int) or doc_index < 1:
         raise ValueError(f"confirmation doc_index must be a positive integer, got {doc_index!r}")
     # a rejection carries no corrected text — record_confirmation treats
     # text=None as the rejection marker, so the validator must not demand a
-    # string for it (review, 2026-08-15: a rejection with text null got a
-    # 400 and was never recorded)
+    # string for it
     if payload["status"] != "rejected" and not isinstance(payload["text"], str):
         raise ValueError("confirmation text must be a string")
     return payload
@@ -138,12 +137,12 @@ def record_confirmation(
     boundaries are updated (replace-by-pages, append). ``text=None``
     records a rejection — nothing is silently dropped. The batch id is
     validated FIRST: it becomes a path segment, and the write must never
-    precede the guard (2026-08-14 review: write-before-validate)."""
+    precede the guard."""
     if not BATCH_ID.match(batch_id):
         raise ValueError(f"invalid batch id: {batch_id!r}")
     # load (and so validate the batch was adopted) BEFORE any write — an
     # unknown batch must fabricate nothing and raise RegistryError -> 4xx,
-    # not leave a stray review-output file behind (review, 2026-08-14).
+    # not leave a stray review-output file behind.
     record = load_batch(batch_id, registry_dir)
     if text is not None:
         confirmed_dir = work_dir / batch_id / "ocr-confirmed"
@@ -262,9 +261,7 @@ def _recover_crashed_layout(
                     steps = recovery // QUARTER_TURN_DEGREES
                     # the stale boxes live in the PRE-turn frame — rotate
                     # them by the STALE LAYOUT's recorded dims, not the
-                    # current image's (2026-08-26: the swapped image's
-                    # height sent every recovered box off-image; same
-                    # coordinate-frame class as the crop-origin bug)
+                    # current image's
                     detections = rotate_detections(
                         layout_detections(layout),
                         steps,
@@ -429,11 +426,11 @@ def _write_multi_sidecar(
     text: str,
     orientation_report_fn: Callable[[Path, str], dict[str, Any]] | None,
 ) -> None:
-    """The second pass does better (2026-08-17): the reviewer's rotate is
-    the signal the first pass missed an orientation — re-run the report on
-    the corrected image, locating the freshly re-read transcription; a
-    multi-direction report writes the sidecar the layout stage reads (the
-    per-line boxes + orientations, keyed to the text's line numbers)."""
+    """The reviewer's rotate signals the first pass missed an orientation
+    — re-run the report on the corrected image, locating the freshly
+    re-read transcription; a multi-direction report writes the sidecar the
+    layout stage reads (the per-line boxes + orientations, keyed to the
+    text's line numbers)."""
     report_fn = orientation_report_fn if orientation_report_fn is not None else orientation_report
     report = report_fn(image_path, text)
     hints = report.get("orientation_hint", []) if isinstance(report, dict) else []

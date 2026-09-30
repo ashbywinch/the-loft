@@ -1,7 +1,5 @@
 """The no-PII matcher's own contract — the shared per-file scan, including the
-case semantics the fast path relies on (2026-08-14, review: the guard's fast
-path compared original-case email markers against lowercased text, so an
-uppercase email marker silently bypassed the per-marker scan).
+case semantics the fast path relies on.
 """
 
 from __future__ import annotations

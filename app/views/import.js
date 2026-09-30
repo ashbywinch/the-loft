@@ -1,13 +1,13 @@
-/** The import review (user, 2026-08-07) — the review IS the chat (user,
- *  2026-08-08): opening the session's review starts the conversation about
+/** The import review (user) — the review IS the chat (user):
+ *  opening the session's review starts the conversation about
  *  the unfinished doc import and walks through the pending links one at a
  *  time. Each link's EXACT claim is named — "Next: X. The document mentions
  *  X — it says, …" — and the reviewer picks a disposition with their
- *  confidence (2026-08-09): Definitely, I think so, I don't know,
+ *  confidence: Definitely, I think so, I don't know,
  *  Definitely not / I think not. The confirmation chips are only offered
  *  AFTER the chat has gathered what they know, and only the options that
  *  obviously apply: Record as fact, Record as guess, Leave for later,
- *  Delete (2026-08-10, user: "don't suggest any of these until we've
+ *  Delete (user: "don't suggest any of these until we've
  *  chatted about what they know and excluded any options that obviously
  *  don't apply" — the chips name the consequence, never the statuses:
  *  the family never meets proposed/estimated/confirmed). The positives and
@@ -36,7 +36,7 @@ export function render(main, ctx, state) {
   main.append(header(session.title, state, canGoBackInApp() ? true : "Review"));
   const pending = proposedPeople(state);
   // the transcript lives on the page of the artifact being reviewed — this
-  // walk's decisions so far, named and dated (2026-08-09: the storage is
+  // walk's decisions so far, named and dated (the storage is
   // attempt-separated, so "the review so far" is the CURRENT walk's)
   const currentAttempt = session.attempts?.[session.attempts.length - 1];
   const decisions = currentAttempt?.decisions ?? [];
@@ -71,7 +71,7 @@ export function render(main, ctx, state) {
 /** One line of the review record: "Quentin Whitlock — recorded as a fact
  *  (9 Aug 2026)" or "— recorded as a guess, from Alex's recollection
  *  (9 Aug 2026): '…'." — the family's words, never the statuses
- *  (2026-08-10, user). */
+ *  (user). */
 function decisionLine(name, d) {
   const when = d.when ? ` (${d.when})` : "";
   if (d.decision === "attested") return `${name} — recorded as a fact${when}.`;
@@ -94,17 +94,16 @@ function reviewSession(state, session, countEl) {
   let pendingDecision = null; // {p, decision} while the free text's being checked
   let tally = { attested: 0, estimated: 0, pending: 0, deleted: 0 };
   // the links decided during THIS walk — a kept link stays proposed in the
-  // table, so the walk must not re-ask it (2026-08-10 review). Seeded from
+  // table, so the walk must not re-ask it. Seeded from
   // the current attempt's recorded decisions so a mid-walk re-render
   // (which continues the SAME attempt) never re-asks a link this walk has
-  // already decided; a genuinely new walk still starts fresh (2026-08-11
-  // review)
+  // already decided; a genuinely new walk still starts fresh.
   const currentAttempt = session.attempts?.[session.attempts.length - 1];
   const decidedIds = new Set((currentAttempt?.decisions ?? []).map((d) => d.person_id));
   const reviewer = state.me?.name ?? "the reviewer";
   const today = new Date().toISOString().slice(0, 10);
 
-  /** The claim, in the genealogist's voice (2026-08-09, user: the review
+  /** The claim, in the genealogist's voice (user: the review
    *  must read like a hired researcher's DM, never a system quoting its
    *  records — the internal annotation "the user's recollection" is the
    *  app telling the family about itself). */
@@ -119,10 +118,10 @@ function reviewSession(state, session, countEl) {
   /** The document that brought the person in — the earliest item that
    *  mentions them — with a DIRECT QUOTE from its transcription, so the
    *  family can see the document's own words versus the notes' summary
-   *  (2026-08-09, user: "specify which document… make it very clear
+   *  (user: "specify which document… make it very clear
    *  what's a direct quote and what's not… with a link"). The quote is the
    *  sentence that MENTIONS the person — the part that attests the fact —
-   *  never the document's first sentence (2026-08-09, user: "extremely bad
+   *  never the document's first sentence (user: "extremely bad
    *  at identifying the relevant part of the document to quote when
    *  explaining the attestation of the fact in question"); a captured
    *  letter's routing header ("… — email, Wed … to Quentin Whitlock,
@@ -142,7 +141,7 @@ function reviewSession(state, session, countEl) {
     const docs = (state.items ?? []).filter((it) => itemInvolves(it, p.id));
     const doc = [...docs].sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""))[0];
     if (!doc) return null;
-    // Rule L (2026-08-11 review): a draft transcription's sentence is
+    // Rule L: a draft transcription's sentence is
     // never presented as the document's own words — only verified text is
     // quoted as "it says"
     const quote = doc.transcription_status === "draft" ? null : quoteFrom((doc.transcription || "").trim(), p.name);
@@ -164,8 +163,7 @@ function reviewSession(state, session, countEl) {
         : claimText,
     );
     // the claim is part of the conversation the family saw — record it
-    // once per attempt (2026-08-10 review: a re-render must not duplicate
-    // the transcript)
+    // once per attempt
     recordIfNew("assistant", claimText);
     chat.setQuickReplies([
       { label: "Definitely", primary: true, onClick: () => askText(p, "How do you know?", "positive") },
@@ -177,23 +175,23 @@ function reviewSession(state, session, countEl) {
   };
 
   /** The follow-up: the reviewer's own words are the recollection, never
-   *  suggested (2026-08-09). The disposition (positive / negative /
+   *  suggested. The disposition (positive / negative /
    *  dont_know) is captured from the initial chip and kept — a
    *  question-answer never flips a "Definitely not" into an offer to
-   *  record the link as a fact (2026-08-10, user: the offered options must
+   *  record the link as a fact (user: the offered options must
    *  exclude what obviously doesn't apply). */
   const askText = (p, question, disposition = null) => {
     person = p;
     pendingDecision = { p, statement: null, provenance: [], disposition };
     chat.addAssistant(question);
-    chat.setQuickReplies([]); // the question replaces the disposition chips (2026-08-10)
+    chat.setQuickReplies([]); // the question replaces the disposition chips
     recordIfNew("assistant", question); // the questions are part of what the family saw
     chat.swapInput(el("textarea", { class: "field", rows: 2, placeholder: "Say it as you'd tell a family member…" }));
   };
 
   /** "I don't know" is not a dead end and not a button-push — the
    *  genealogist first asks what they know, even a little; only then are
-   *  the options offered (2026-08-10, user: "don't suggest any of these
+   *  the options offered (user: "don't suggest any of these
    *  until we've chatted about what they know"). */
   const askDontKnow = (p) => askText(p, "What do you remember about them, even a little?", "dont_know");
 
@@ -205,14 +203,14 @@ function reviewSession(state, session, countEl) {
     chat.setBusy(true);
     // the opening and the claim must be PERSISTED before this line — a
     // fast reviewer could type before the start fetch resolved, and the
-    // server would order the user's line first (2026-08-11 review, R7).
+    // server would order the user's line first (R7).
     // Wait for the actual record fetches too, so the model's history and
     // the persisted transcript match exactly what the family saw
     await Promise.all([started, ...pendingRecords]);
     pendingRecords.length = 0;
     // the free text is checked against the exact claim AND the attested
     // facts — off-topic answers steer back, contradictions surface and
-    // must be resolved before anything is confirmed (2026-08-09)
+    // must be resolved before anything is confirmed
     const res = await checkText(state, session.id, person, text);
     if (!res) {
       chat.addAssistant("Sorry — the assistant couldn't be reached. Try again?");
@@ -222,7 +220,7 @@ function reviewSession(state, session, countEl) {
       return;
     }
     // the assistant's words are built by the server and shown verbatim —
-    // the transcript records exactly what the family saw (2026-08-09: the
+    // the transcript records exactly what the family saw (the
     // steer, the contradiction, the findings, and the question all arrive
     // as the server's rendered message; the model's internal note never
     // reaches the user)
@@ -238,7 +236,7 @@ function reviewSession(state, session, countEl) {
     if (res.contradiction?.found === "true") {
       chat.setBusy(false);
       // the contradiction is surfaced; the reviewer is never stuck re-
-      // answering (2026-08-11 review, R4/R6): they can record their
+      // answering (R4/R6): they can record their
       // standing disagreement as a guess (their words become the basis),
       // leave it for later, or delete — "Record as fact" is never offered,
       // because the evidence disputes the claim
@@ -247,7 +245,7 @@ function reviewSession(state, session, countEl) {
       const GUESS = { label: "Record as a guess", primary: true, onClick: () => recordDecision(person, "estimated") };
       // the contradicted recollection STAYS the statement — each typed
       // correction joins the provenance BESIDE it, never replacing the
-      // family's first words (PRD R8, 2026-08-11 review); NO disposition
+      // family's first words (PRD R8); NO disposition
       // is captured, so a reviewer who then resolves the contradiction
       // flows through the normal confidence-based chips
       pendingDecision = {
@@ -263,13 +261,12 @@ function reviewSession(state, session, countEl) {
     chat.setBusy(false);
     // the first statement is the recollection; later answers (the
     // question's answers, the provenance) accumulate beside it. The
-    // disposition is captured from the initial chip and kept (2026-08-10).
+    // disposition is captured from the initial chip and kept.
     // After a surfaced contradiction the contradicted text STAYS the
     // statement and the typed correction joins the provenance BESIDE it —
     // never the other way round: the record is {text: the contradicted
     // recollection, note: the correction the reviewer settled on}, so the
     // original words are kept with the evidence that replaced them
-    // (2026-08-11 review)
     const statement = pending?.statement ?? text;
     let provenance;
     if (pending?.contradiction) {
@@ -277,14 +274,13 @@ function reviewSession(state, session, countEl) {
     } else {
       // the first answer IS the statement; only later replies (the
       // follow-ups after the recollection) accumulate as provenance — an
-      // empty provenance must not be truthy ([] is truthy in JS, which
-      // duplicated the statement into its own note — 2026-08-11 review)
+      // empty provenance must not be truthy ([] is truthy in JS)
       provenance = pending?.statement ? [...(pending.provenance ?? []), text] : [];
     }
     const disposition = pending?.disposition ?? null;
     pendingDecision = { p: person, statement, provenance, disposition };
     // the confirmation chips name the CONSEQUENCE, in the family's words —
-    // never the statuses (2026-08-10, user). Only the options that
+    // never the statuses (user). Only the options that
     // obviously apply are offered: a negative answer never offers "Record
     // as fact", a "don't know" never offers fact or delete, a definite
     // answer never offers "Record as guess".
@@ -313,7 +309,7 @@ function reviewSession(state, session, countEl) {
     chat.setQuickReplies(chipsFor(res.confidence, disposition));
   };
 
-  /** The explicit confirmation (2026-08-09, user): the reviewer confirms
+  /** The explicit confirmation (user): the reviewer confirms
    *  the resulting link by hand — estimated or attested — with their own
    *  words as the basis and any provenance answers beside it. */
   const recordDecision = async (p, decision) => {
@@ -330,15 +326,15 @@ function reviewSession(state, session, countEl) {
       if (decision === "attested") tally.attested += 1;
       else if (decision === "estimated") tally.estimated += 1;
       else tally.deleted += 1;
-      decidedIds.add(p.id); // a kept person stays proposed — the walk must not re-ask them (2026-08-10 review)
+      decidedIds.add(p.id); // a kept person stays proposed — the walk must not re-ask them
       // the count follows the SERVER's truth — a "leave for later" person
       // stays proposed and still awaits, an estimated/attested one leaves
-      // the queue (user 2026-08-16: the count must always be accurate)
+      // the queue (user: the count must always be accurate)
       if (result.pending !== null && countEl) {
         countEl.textContent = `${result.pending} ${result.pending === 1 ? "link" : "links"} awaiting a decision`;
       }
       // the confirmation is the server's rendered words — shown verbatim,
-      // recorded verbatim (2026-08-09)
+      // recorded verbatim
       chat.addAssistant(result.message === true ? `Done — ${p.name} is recorded.` : result.message);
       advance();
     } else {
@@ -354,7 +350,7 @@ function reviewSession(state, session, countEl) {
     const ok = await decide(state, session.id, p, "pending");
     if (ok) {
       tally.pending += 1;
-      decidedIds.add(p.id); // still proposed in the table — never re-ask this walk (2026-08-10 review)
+      decidedIds.add(p.id); // still proposed in the table — never re-ask this walk
       if (ok.pending !== null && countEl) {
         countEl.textContent = `${ok.pending} ${ok.pending === 1 ? "link" : "links"} awaiting a decision`;
       }
@@ -369,10 +365,9 @@ function reviewSession(state, session, countEl) {
   };
 
   /** One message per decision, then the next link — or the honest ending
-   *  with a summary and a next action (2026-08-09). The kept links are
+   *  with a summary and a next action. The kept links are
    *  filtered out of the queue for THIS walk — they stay proposed in the
-   *  table as the session's resume point (2026-08-10 review: the walk
-   *  re-asked the same kept link forever). */
+   *  table as the session's resume point. */
   const advance = () => {
     chat.setBusy(false); // success paths never cleared busy — the next
     // person's chips stayed hidden and the walkthrough dead-ended
@@ -380,11 +375,11 @@ function reviewSession(state, session, countEl) {
     // NOTE: the "N links awaiting a decision" count is NOT updated here —
     // it follows the server's post-decision truth from the decide response
     // (a left-for-later person still awaits; the client's stale projection
-    // would guess wrong — user 2026-08-16)
+    // would guess wrong — user)
     if (!pending.length) {
       const summary = `That's everyone — ${tally.attested ? `${tally.attested} recorded as facts, ` : ""}${tally.estimated ? `${tally.estimated} recorded as guesses, ` : ""}${tally.pending ? `${tally.pending} left for later, ` : ""}${tally.deleted ? `${tally.deleted} deleted` : "and nothing deleted"} — the rest were already in the tree, so nothing changed for them.`;
       chat.addAssistant(summary);
-      recordIfNew("assistant", summary); // the ending is part of what the family saw (2026-08-11 review)
+      recordIfNew("assistant", summary); // the ending is part of what the family saw
       chat.setQuickReplies([
         { label: "See the family tree →", primary: true, onClick: () => location.assign("#/tree") },
       ]);
@@ -399,7 +394,7 @@ function reviewSession(state, session, countEl) {
   // resume point), never from the top — but never onto a link this attempt
   // has already decided: the resume point IS the last decided person, so a
   // mid-walk re-render must skip it or it re-asks the very link the walk
-  // answered (2026-08-11 review)
+  // answered
   const remaining = pending.filter((p) => !decidedIds.has(p.id));
   const resumeId = session.current;
   const first =
@@ -407,10 +402,10 @@ function reviewSession(state, session, countEl) {
       ? (remaining.find((p) => p.id === resumeId) ?? remaining[0])
       : remaining[0];
   // begin the walk — a fresh attempt only when the last one is finished
-  // (2026-08-09: the sessions' storage is attempt-separated). The start
+  // (the sessions' storage is attempt-separated). The start
   // response carries the lines already recorded in the current attempt, so
   // a re-render records only what's new — the transcript never duplicates
-  // the opening or a claim (2026-08-10 review). Every app-rendered line
+  // the opening or a claim. Every app-rendered line
   // waits for this before recording, so the check is never raced
   let seenLines = new Set();
   const started = fetch("/api/review/start", {
@@ -423,11 +418,10 @@ function reviewSession(state, session, countEl) {
       if (Array.isArray(body?.messages)) seenLines = new Set(body.messages);
     })
     .catch(() => {});
-  /** Record one of the app's own rendered lines exactly once per attempt
-   *  (2026-08-10 review: "the persisted transcript then no longer equals
-   *  what the family saw"). Returns the record's promise — tracked so the
+  /** Record one of the app's own rendered lines exactly once per attempt.
+   *  Returns the record's promise — tracked so the
    *  free-text check can wait for every record fetch before the server
-   *  reads the history (2026-08-11 review: R7 — the transcript equals
+   *  reads the history (R7 — the transcript equals
    *  what the family saw, in order). */
   const pendingRecords = [];
   const recordIfNew = (role, text) => {
@@ -442,8 +436,7 @@ function reviewSession(state, session, countEl) {
   };
   if (!remaining.length) {
     // every link was already decided in this walk (a re-render after the
-    // last decision) — the ending is shown, never a re-ask (2026-08-11
-    // review)
+    // last decision) — the ending is shown, never a re-ask
     const decided = currentAttempt?.decisions ?? [];
     const count = (x) => decided.filter((d) => d.decision === x).length;
     const attested = count("attested");
@@ -464,7 +457,7 @@ function reviewSession(state, session, countEl) {
   return wrap;
 }
 
-/** One decision per proposed link — the four dispositions (2026-08-09).
+/** One decision per proposed link — the four dispositions.
  *  Returns whether it saved; the server's response person is merged (or
  *  dropped for a delete). */
 async function decide(state, sessionId, person, decision, basis = null) {
@@ -493,7 +486,7 @@ async function decide(state, sessionId, person, decision, basis = null) {
       );
     }
     // the confirmation's rendered words — shown verbatim, recorded verbatim;
-    // the server's accurate remaining count rides along (user 2026-08-16:
+    // the server's accurate remaining count rides along (user:
     // the count must always be accurate — the client's projection is stale
     // until reload)
     return { message: body.message ?? true, pending: typeof body.pending === "number" ? body.pending : null };
@@ -504,11 +497,11 @@ async function decide(state, sessionId, person, decision, basis = null) {
 }
 
 /** Record one of the app's own rendered lines (the claim, the opening) so
- *  the transcript is exactly what the family saw (2026-08-09). Returns
+ *  the transcript is exactly what the family saw. Returns
  *  the fetch promise — the callers wait for it before the server reads
- *  the history (2026-08-11 review, R7). A failed write is LOGGED, never
+ *  the history (R7). A failed write is LOGGED, never
  *  silently swallowed: a transcript silently diverging from what the
- *  family saw breaks R7 (2026-08-11 review, the fail-fast rule). */
+ *  family saw breaks R7 (the fail-fast rule). */
 function recordMessage(sessionId, role, text) {
   return fetch("/api/review/message", {
     method: "POST",

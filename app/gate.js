@@ -1,6 +1,6 @@
 /** The boot gate — shown when the server says the visitor isn't signed in
- *  (2026-08-06, user: the archive's content is gated behind sign-in; the
- *  app shell stays public so the sign-in can load). A no-API static host
+ *  (user: the archive's content is gated behind sign-in; the app shell
+ *  stays public so the sign-in can load). A no-API static host
  *  never renders this — boot only gates on a definitive
  *  {authenticated: false} from /api/auth/me. */
 

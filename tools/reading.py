@@ -1,6 +1,6 @@
 """The reading order — how the review pane's lines are displayed.
 
-The block-aware order (2026-08-20, user's requirement): the lines cluster
+The block-aware order (user's requirement): the lines cluster
 into physical blocks (lines sharing ink), the blocks read top-to-bottom,
 and within each block the TRANSCRIPTION order is preserved — each block
 reads WHOLE with one rotation, never the row-by-row interleave of

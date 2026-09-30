@@ -47,7 +47,7 @@ class ChatClient(Protocol):
     """The model seam — satisfied by AIClient and by test doubles."""
 
     # instance method using self
-    # lucidlint: ignore detached-method protocol seam declaration — AIClient and test doubles implement it as an
+
     def chat(self, system: str, user: str) -> str: ...
 
 
@@ -291,7 +291,7 @@ class Item:
     title: str
     type: str = ""
     status: str = ""  # catalogued | draft — the projection carries it; the
-    # story-confirm invariant needs it (2026-08-05)
+    # story-confirm invariant needs it
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Item:
@@ -462,8 +462,8 @@ def _demote_precision(phrase: str, parsed: datetime, precision: Any) -> tuple[st
     if precision == "exact":
         # an exact day is only provable from a full ISO value; a non-ISO
         # phrase ("July 1979", "31 July 1979") can never claim one — a
-        # month-only phrase must not become 1979-07-01 (reviewer, 2026-08-03;
-        # PRD §6: never fabricate a date part)
+        # month-only phrase must not claim an exact day (PRD §6: never
+        # fabricate a date part)
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", phrase):
             return f"{year:04d}-{parsed.month:02d}-{parsed.day:02d}", "exact"
         if re.fullmatch(r"\d{4}-\d{2}", phrase):
@@ -840,10 +840,10 @@ def _fabricated_today_violations(event_dates: list[dict[str, Any]]) -> list[str]
 
 def _missing_event_date_violations(assessment: dict[str, Any]) -> list[str]:
     """No events date and nothing to derive one from — the issue must stay
-    pursued, never forced and never dropped (2026-08-10, user: every
-    question is skippable, but the flow keeps narrowing the issue until
-    the narrator answers — even with a "leave it for now"; a story without
-    a date would otherwise slip through). The question is skippable: the
+    pursued, never forced and never dropped (user: every question is
+    skippable, but the flow keeps narrowing the issue until the narrator
+    answers — even with a "leave it for now"; a story without a date
+    would otherwise slip through). The question is skippable: the
     narrator answers in their own words or declines, and the item stays
     undated until a later pass."""
     violations: list[str] = []
@@ -872,12 +872,10 @@ def _check_new_item_question(assessment: dict[str, Any]) -> list[str]:
 
 
 # A bare kinship term names the writer's own relative — never a match to a
-# person record merely because that record carries the alias. The model
-# defaulted "Dad" to the only Dad-aliased person despite the prompt rule
-# (eval: kinship-term-not-an-archive-alias, 2026-08-05), so the code strips
-# the match deterministically: writer-relative resolution is a later seam
-# (option C), not the model's guess (docs/coding-standards.md — deterministic
-# checks beat model judgment).
+# person record merely because that record carries the alias. The code
+# strips the match deterministically: writer-relative resolution is a later
+# seam (option C), not the model's guess (docs/coding-standards.md —
+# deterministic checks beat model judgment).
 _KINSHIP_TERMS = frozenset(
     {
         "dad",
@@ -1011,10 +1009,10 @@ def _clean_questions(questions: list[Any]) -> list[dict[str, Any]]:
     """The assessment's questions, narrowed to the flow's fields — capped
     at MAX_QUESTIONS with at most MAX_SUGGESTIONS bounded suggestions.
     Skippability is the FLOW's guarantee, never the model's discretion
-    (2026-08-10, user: every question is skippable — the narrator answers
-    in their own words or declines, while the flow keeps pursuing the
-    issue): the schema's "skippable": true is enforced here, at the seam,
-    and the eval's contract pins it."""
+    (user: every question is skippable — the narrator answers in their
+    own words or declines, while the flow keeps pursuing the issue): the
+    schema's "skippable": true is enforced here, at the seam, and the
+    eval's contract pins it."""
     q_cleaned: list[dict[str, Any]] = []
     for q in questions[:MAX_QUESTIONS]:
         if isinstance(q, dict) and isinstance(q.get("text"), str) and q["text"].strip():
@@ -1203,11 +1201,11 @@ class Story:
                     people_refs.append(Ref(match, ref_status))
                 elif name:
                     # reuse a standing cast member by name/alias before minting —
-                    # a fresh id per story mention fragments the cast (2026-08-05
-                    # bot review, the person analog of the place name-dedup). A
-                    # bare kinship term is the writer's own relative, never a
-                    # cast alias — it stays proposed for the writer to identify
-                    # (the kinship filter's strip must stay effective).
+                    # a fresh id per story mention fragments the cast (the person
+                    # analog of the place name-dedup). A bare kinship term is the
+                    # writer's own relative, never a cast alias — it stays
+                    # proposed for the writer to identify (the kinship filter's
+                    # strip must stay effective).
                     existing = None
                     if name.strip().lower() not in _KINSHIP_TERMS:
                         existing = next((p for p in knowledge.people if p.matches(name)), None)
@@ -1219,7 +1217,7 @@ class Story:
                         # share ONE proposed record: a fresh proposed id per
                         # story makes the projection's name-dedup drop the
                         # second mint, and its story's ref then dangles at
-                        # publish (2026-08-05 bot review).
+                        # publish.
                         existing = next(
                             (p for p in knowledge.people if p.status == "proposed" and p.matches(name)), None
                         )
@@ -1236,7 +1234,7 @@ class Story:
                 elif name:
                     # reuse a standing place by name before minting — a fresh id
                     # per story mention multiplies one place into many (the
-                    # moored-barges ×3, 2026-08-05)
+                    # moored-barges ×3)
                     existing = next(
                         (pl for pl in knowledge.places if pl.name.strip().lower() == name.lower()),
                         None,
@@ -1446,10 +1444,10 @@ def _derive_event_year(
 ) -> tuple[str, str]:
     """The story's date: the asserted events date wins; else dob + age
     (arithmetic only — the parsing was the library's and the model's);
-    else the story cannot be saved — the old fallback dated the story by
-    its recording day, which the moment card then served as an anniversary
-    ("0 years ago this week"); the flow must make the narrator provide the
-    events date (2026-08-05). The recorded day is `recorded`, never `date`."""
+    else the story cannot be saved — dating the story by its recording
+    day would serve it as an anniversary ("0 years ago this week"); the
+    flow must make the narrator provide the events date. The recorded
+    day is `recorded`, never `date`."""
     if event_date:
         return event_date, event_precision or "year"
     if dob and ages:
@@ -1483,7 +1481,7 @@ def _ensure_speaker(
 class Memory:
     """The narrator's capture flow — a memory (story, clarification,
     reflection) captured in the narrator's own words. The UI's word is
-    memory ("Add a memory"); the code uses the same word (2026-08-06).
+    memory ("Add a memory"); the code uses the same word.
     The flow's two entries are assess() — the per-turn chat assessment over
     the finished account — and build_story(), which turns the approved
     draft into the archive sidecar. The class is the noun the server and

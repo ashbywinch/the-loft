@@ -1,9 +1,9 @@
-"""The VLM read cache (2026-08-26): the batch's reads are a pure
-function of (panel image bytes, call spec). Persisting them keyed by
-that pair means gate tweaks, assembly changes, and plain re-runs cost
-ZERO tokens for unchanged pages — the expensive call happens once per
-distinct panel. LOFT_VLM_CACHE=0 or fresh=True bypasses (a deliberate
-re-sample); the default location is work/.vlm-cache/."""
+"""The VLM read cache: the batch's reads are a pure function of (panel
+image bytes, call spec). Persisting them keyed by that pair means gate
+tweaks, assembly changes, and plain re-runs cost ZERO tokens for
+unchanged pages — the expensive call happens once per distinct panel.
+LOFT_VLM_CACHE=0 or fresh=True bypasses (a deliberate re-sample); the
+default location is work/.vlm-cache/."""
 
 from __future__ import annotations
 

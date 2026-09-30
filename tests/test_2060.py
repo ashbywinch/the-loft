@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parent.parent
 def test_committed_projection_is_self_describing() -> None:
     """Every committed item can be reconstructed from its files alone.
 
-    Drafts are committed during dev (user, 2026-08-03), so a known status is
+    Drafts are committed during dev (user), so a known status is
     the invariant — self-describability, not "everything catalogued"."""
     index = json.loads((REPO / "app" / "data" / "index.json").read_text(encoding="utf-8"))
     assert len(index["items"]) > 0, "the committed projection must not be empty"

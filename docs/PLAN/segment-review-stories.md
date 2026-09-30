@@ -1,10 +1,10 @@
 # Segment & box review — user stories (draft for agreement)
 
-Status: ADJUDICATED (2026-09-09) — all Q-rulings are in (Q1–Q3, Q5;
+Status: ADJUDICATED — all Q-rulings are in (Q1–Q3, Q5;
 Q4's anchor design and Q6's placement-first are deferred to the data
 model / TECHSPEC). The structure tools this works out are unbuilt:
 they are the build order of `pipeline-stages-plan.md` (step 4's drawing
-surface; stage 6's interjection decision). Inputs: the 2026-09-09
+surface; stage 6's interjection decision). Inputs: the
 rulings (the box's purpose; logical consecutiveness; the gate; the
 structure-first flow — recorded in `layout-requirements-draft.md`),
 VR19–VR24 (TRANSCRIPTION-REVIEW-PRD), and the box-issue evidence in
@@ -224,7 +224,7 @@ nothing commits until the lift is accepted; reshape handles stay.
 
 ## The gnarly corners (rulings needed)
 
-**Q1 — ANSWERED (2026-09-09): split is spatial; the text is re-read.**
+**Q1 — ANSWERED: split is spatial; the text is re-read.**
 A split cannot divide the transcript — no character-to-ink mapping
 exists — so the divided boxes' text is unconfirmed and re-read after
 the box pass (L11: a segment's text is a reading of its own extent;
@@ -248,7 +248,7 @@ or draw the divider stroke across (the two-lines case), snapped to the
 ink gap; the preview follows the sweep; release commits, undo covers
 (VR25).
 
-**Q2 — ANSWERED (2026-09-09): unconfirm the touched text.** Box
+**Q2 — ANSWERED: unconfirm the touched text.** Box
 checking precedes word checking, so the collision only happens when
 the reviewer goes back. When it does — split, confirm the new boxes —
 the text in the touched boxes is unconfirmed: the machine may re-fill
@@ -256,7 +256,7 @@ it (VR22's untouched state, restored) and the reviewer word-checks it
 again. eScriptorium carries the same warning (fix segmentation before
 transcribing, or you erase transcription work). AC39 stands.
 
-**Q3 — ANSWERED (2026-09-09): the reviewer adds it.** Drawing,
+**Q3 — ANSWERED: the reviewer adds it.** Drawing,
 extending, merging — the trace gestures (below). The miss is recorded
 and feeds VR23's improvement loop; VR14 amended ("the reviewer may
 supply what is missing, drawing or extending boxes, without hiding
@@ -270,7 +270,7 @@ VR21/AC36; the anchor choice is TECHSPEC. Noted so the data model
 isn't painted into a corner.
 
 **Q5 — How an insertion renders at rest — ANSWERED by the
-structure-first flow (2026-09-09): during the words pass, logical
+structure-first flow: during the words pass, logical
 order wins — insertions render inline at their points, visually
 distinct (struck words set the convention); independent notes stay
 rows. The trilemma dissolves because the passes split the concerns:
@@ -293,7 +293,7 @@ log); the rec model's own ink bounds (the gated recovery recovered 3 of
 the margin pieces but the reassembly refused); and the vision model
 proposing geometry as SVG — 15/16 boxes on real writing on the postcard
 test, block-level, frame rescaling required, never trusted raw
-(layout-requirements-draft, 2026-08-30 experiment) — combined with
+(layout-requirements-draft experiment) — combined with
 pre-rotated passes for rotated content and per-box clip reads for text
 (L11's candidate mechanism).
 
@@ -332,7 +332,7 @@ lines is split between them at the row where its nearest baseline changes
 gaps, extent = the ink's own, ascenders/descenders included, capped at
 ±0.8 pitch) → strokes → composition.
 
-**The semantics (user rulings, 2026-09-10).** The detector boxes the page;
+**The semantics (user rulings).** The detector boxes the page;
 the user only traces where it is wrong. A trace *is* its line — there is
 no such thing as tracing part of a line. A trace covering part of a box's
 text is the user saying the box holds two segments: the box splits, the

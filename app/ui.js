@@ -26,7 +26,6 @@ export function el(tag, attrs = {}, children = []) {
     } else if (key === "checked" || key === "disabled" || key === "selected") {
       // boolean form attrs are properties — setAttribute("checked", "false")
       // would leave a truthy attribute and render a checked box
-      // (reviewer, 2026-08-03)
       node[key] = Boolean(value);
     } else if (value !== null && value !== undefined) {
       node.setAttribute(key, String(value));
@@ -47,8 +46,8 @@ export function esc(text) {
 
 export function header(title, state = null, back = false) {
   // The title + the identity; a back arrow when the page is a drilled-in
-  // detail (item, import session, person, place, theme, story — walk finding
-  // 6, 2026-08-16). Per the research (PRD §8): the arrow names its
+  // detail (item, import session, person, place, theme, story). Per the
+  // research (PRD §8): the arrow names its
   // destination when the back goes UP on a deep link ("← Family Tree"),
   // and stays a plain "←" when it undoes the previous action (the
   // destination is wherever the user came from, which they know).
@@ -81,7 +80,7 @@ export function sectionTitle(text) {
 export function itemCard(item, subtitle = null) {
   const first = item.assets?.[0];
   // a told memory is stamped as such — its events date and its telling date
-  // both appear, so it never reads as a scanned document (user, 2026-08-03)
+  // both appear, so it never reads as a scanned document (user)
   const told =
     item.type === "story" && item.recorded
       ? ` · told ${dateLabel({ date: item.recorded, date_precision: "exact" })}`
@@ -101,7 +100,7 @@ export function itemCard(item, subtitle = null) {
       ),
       // the description is what tells a letter apart from the rest of its
       // correspondence — it renders on the cards, truncated, and in full on
-      // the item page (2026-08-05)
+      // the item page
       item.description ? el("p", { class: "card-desc" }, item.description) : null,
     ]),
   ]);

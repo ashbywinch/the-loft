@@ -12,7 +12,7 @@
 - ``document_capture`` — the scanned-document capture flows.
 - ``ai_client`` — the LLM client.
 - ``cli`` — the one operator surface, reached via the repo-root ``loft``
-  wrapper; no per-module ``__main__`` shims (coding-standards.md, 2026-08-06).
+  wrapper; no per-module ``__main__`` shims (coding-standards.md).
 """
 
 # The noun modules import lazily from cli.py and the Archive methods — this

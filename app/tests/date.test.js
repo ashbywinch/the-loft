@@ -69,7 +69,7 @@ describe("sorting and years", () => {
   });
 });
 
-describe("dateLabel bound precisions (2026-08-06)", () => {
+describe("dateLabel bound precisions", () => {
   it("labels before/after/between honestly", () => {
     expect(dateLabel({ date: "1917", date_precision: "after" })).toBe("after 1917");
     expect(dateLabel({ date: "1881", date_precision: "before" })).toBe("before 1881");
@@ -77,7 +77,7 @@ describe("dateLabel bound precisions (2026-08-06)", () => {
   });
 });
 
-describe("ageInYears — calculated, never stored (2026-08-06)", () => {
+describe("ageInYears — calculated, never stored", () => {
   it("computes the exact age from exact dates, handling a 29-Feb birth", () => {
     expect(ageInYears({ date: "1896-02-29", precision: "exact" }, { date: "1982-05-16", precision: "exact" })).toEqual({
       exact: 86,

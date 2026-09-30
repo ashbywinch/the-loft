@@ -4,23 +4,22 @@ failed silently; this check prevents merging unreviewed.
 
 Coverage, in order: a COMPLETED "PR Agent - Review" check run on the head
 SHA — the output artifact the bot publishes only with the review text in
-hand (github.publish_as_check_run; v0.41.1 _publish_check_run) — then the
-comment trail below. The bot's own step conclusion is NEVER trusted: as
-the 2026-08-11 v0.41.1 reading found (and the 2026-09-04 401 incident
-confirmed in the wild), the action exits 0 whether or not the review
-happened, so a green step claims nothing about a review existing.
+hand (github.publish_as_check_run; _publish_check_run) — then the
+comment trail below. The bot's own step conclusion is NEVER trusted: the
+action exits 0 whether or not the review happened, so a green step
+claims nothing about a review existing.
 
 A comment covers the head commit when its body references the commit's SHA
 (the incremental-review form, "Starting from commit .../<SHA>") or it was
 posted after the head commit landed (the first review on a PR is posted
-without the SHA marker — observed: pr-agent v0.41.1 regular reviews never
+without the SHA marker — regular reviews never
 contain the head SHA).
 
-Why the bot's own step cannot fail (2026-08-11, read from the v0.41.1
-source): ``PRAgent.handle_request`` catches EVERY exception with a bare
-``except`` — it logs "Failed to process the command." plus the traceback
-and returns False — and ``github_action_runner.py`` discards that return
-value, so the action exits 0 whether or not the review happened. A green
+Why the bot's own step cannot fail: ``PRAgent.handle_request`` catches
+EVERY exception with a bare ``except`` — it logs "Failed to process the
+command." plus the traceback and returns False — and
+``github_action_runner.py`` discards that return value, so the action
+exits 0 whether or not the review happened. A green
 bot step is therefore meaningless, and the only truthful signal is this
 check. To make the failure SELF-EXPLAINING rather than a guess, the check
 fetches the run's own log (the checks API) and extracts the bot's error
@@ -47,9 +46,7 @@ _ERROR_MARKERS = (
     "Failed to process the command.",
     "Traceback (most recent call last)",
     # the route/auth class: the review 401s at the API boundary and dies
-    # silently (2026-09-23: the gateway rejected the provider-prefixed
-    # model name with "Invalid API key" and v0.45.0 swallowed it — the
-    # litellm error only surfaced in a local reproduction)
+    # silently
     "AuthenticationError",
     "Invalid API key",
     "Unauthorized",
@@ -108,15 +105,12 @@ def _job_log(repo: str, token: str) -> str | None:
                 raise
             # the signed blob host rejects bare urllib (the WAF's UA rule);
             # fetch the Location bare — a refusal here degrades to None
-            # (the generic message), never a crash (2026-09-06: the blob
-            # host 404'd/URLError'd in CI and the gate crashed instead of
-            # reporting the reason)
+            # (the generic message), never a crash
             try:
                 # the signed blob host's WAF rejects urllib's default UA
                 # (the same rule that hit the gateway) — send the house's
                 # known-good UA or the log read degrades to the generic
-                # message (2026-09-23: the auth-failure diagnosis needed
-                # this read and got "could not be read from the checks API")
+                # message
                 req2 = urllib.request.Request(
                     e.headers["Location"],
                     headers={"User-Agent": "opencode/1.14.20"},
@@ -131,19 +125,16 @@ def _job_log(repo: str, token: str) -> str | None:
 def _completed_review_check_run(fetch, repo: str, sha: str) -> bool:
     """Is there a COMPLETED "PR Agent - Review" check run on the head
     commit? The bot creates it ONLY with the review output text in hand
-    (github_provider._publish_check_run in v0.41.1: called from
+    (github_provider._publish_check_run: called from
     publish_persistent_comment with the review text; a failed or skipped
     review produces no check). It is the output artifact, not the step's
-    self-reported success — the 2026-09-04 401 incident ran the action to
-    completion while producing nothing, so a step-conclusion gate would
-    have passed a review that never happened. (User, 2026-09-05: "isn't
-    this re-introducing our original bug where it just claims it's
-    successful even when it's not?".) The conclusion is always "neutral"
-    in v0.41.1; completed-neutral means the review text was published.
-    Any query failure degrades to False — the comment trail decides; a
-    crashed gate is the worst outcome (2026-09-06: the URL briefly used a
-    placeholder repo, the API 404'd, the HTTPError escaped and every
-    pr-review failed with a traceback, not a verdict)."""
+    self-reported success — the action can run to completion while
+    producing nothing, so a step-conclusion gate would pass a review that
+    never happened. (User: "isn't this re-introducing our original bug
+    where it just claims it's successful even when it's not?".) The
+    conclusion is always "neutral"; completed-neutral means the review
+    text was published. Any query failure degrades to False — the comment
+    trail decides; a crashed gate is the worst outcome."""
     try:
         runs = fetch(f"https://api.github.com/repos/{repo}/commits/{sha}/check-runs", "")
         return any(
@@ -176,8 +167,7 @@ def _bot_failure_reason(repo: str, token: str) -> str:
 
 def _size_reason(bot_lines: list[str]) -> str | None:
     """The size signal first — a review that died right after pruning is a
-    PR that outgrew the bot's review budget (2026-08-11: the model call
-    produced nothing immediately after "Tokens: 144757 ... pruning diff")."""
+    PR that outgrew the bot's review budget."""
     for ln in bot_lines:
         m = _SIZE_RE.search(ln)
         if m:

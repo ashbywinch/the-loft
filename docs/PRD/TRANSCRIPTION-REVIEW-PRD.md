@@ -1,9 +1,9 @@
 # Transcription Validation — Feature PRD (the review surface)
 
-- **Status:** draft for agreement (2026-08-15)
+- **Status:** draft for agreement
 - **Epic:** 6.11.3 Transcription Validation (Notion)
-- **Inputs:** `research/OCR Correction UX & Tools Guide.pdf` (2026-08-15); the capture pipeline's requirements `MULTI-DOC-IMPORT-PRD.md` R7/R10/R12/R13/R14; the sync contract (TECHSPEC §16.15)
-- **Requirements only.** How the screen is built — the viewer, the alignment, the confidence signals, the layout — is the TECHSPEC's job, and the new tech (bounding-box alignment, per-word confidence) is **spiked before the spec** (2026-08-15) to see what the pipeline can produce. This PRD says what the reviewer experiences, not what the UI is made of.
+- **Inputs:** `research/OCR Correction UX & Tools Guide.pdf`; the capture pipeline's requirements `MULTI-DOC-IMPORT-PRD.md` R7/R10/R12/R13/R14; the sync contract (TECHSPEC §16.15)
+- **Requirements only.** How the screen is built — the viewer, the alignment, the confidence signals, the layout — is the TECHSPEC's job, and the new tech (bounding-box alignment, per-word confidence) is **spiked before the spec** to see what the pipeline can produce. This PRD says what the reviewer experiences, not what the UI is made of.
 
 ## 1. Purpose
 
@@ -61,7 +61,7 @@ be corrected.
 **VR7 — Varied layouts survive the review.** Marginal notes, corner text
 boxes, and filled-in forms appear in the transcription in their place —
 the review never loses the layout content the pipeline transcribed (R12;
-sharpened into VR19, 2026-09-09).
+sharpened into VR19).
 
 **VR8 — The review works from the always-on home.** The reviewer can
 review the machine's drafts from the family home's always-on device, and
@@ -70,7 +70,7 @@ reviewer's tablet is the primary surface — **landscape is the natural
 reviewing posture** (the page and its words side by side, per the
 product's tablet-first platform, PRD §1). The same review works on a
 phone: the handwriting is big enough to read and the words are usable on
-the smaller screen (user, 2026-08-15).
+the smaller screen (user).
 
 **VR9 — The work is bounded and resumable.** The reviewer can see what
 remains in a batch, leave partway, and come back without re-reading what
@@ -84,7 +84,7 @@ that way on every look thereafter, whatever else is happening — what the
 reviewer set is what they see, and it never reverts; and (ii) the
 corrected transcription reliably arrives, and when it arrives late it
 updates the text, never the orientation the reviewer set (user
-requirement, 2026-08-16).
+requirement).
 
 **VR11 — The review proceeds page by page, in any order, at the reviewer's
 pace.** Each page is finished on its own; a document is finished only when
@@ -93,17 +93,17 @@ whatever order suits them — leaving a page or a document and coming back
 later — and the reviewer never loses their place or confuses their
 progress. The reviewer moves at their own speed: nothing in the app ever
 slows them down or asks for more than they choose to do (user
-requirement, 2026-08-16: power readers blast through without the app
+requirement: power readers blast through without the app
 getting in their way).
 
 **VR12 — Fully reviewed work leaves the pending pile.** A document whose
 pages are all finished is done: it disappears from the list of work still
-to be reviewed (user requirement, 2026-08-16).
+to be reviewed (user requirement).
 
 **VR13 — Completed work is visibly marked, so nothing is redone.** Lines
 and pages the reviewer has already handled stay clearly marked; returning
 to the batch shows exactly what remains, so no finished work is re-checked
-(user requirement, 2026-08-16).
+(user requirement).
 
 **VR14 — Every page arrives fully processed by the pipeline.** For every
 page, the pipeline identifies the text, produces its bounding boxes, and
@@ -111,19 +111,18 @@ provisionally transcribes it. The pipeline cannot know what it failed
 to see. Where it knows its output is unacceptably wrong it refuses
 the page (VR23); where it cannot know, no failure fires — the miss
 surfaces through the reviewer, who may supply what is missing (VR20),
-the miss recorded and feeding the loop (VR23) (user requirement,
-2026-08-16; amended 2026-09-09).
+the miss recorded and feeding the loop (VR23) (user requirement).
 
 **VR15 — Text in any direction is captured.** A page whose text runs in
 more than one direction — a postcard with a rotated message — still has
 every word identified, boxed, and provisionally transcribed: nothing is
-missed because of its orientation (user requirement, 2026-08-16).
+missed because of its orientation (user requirement).
 
 **VR16 — The app runs lightly on this laptop.** The review app and the
 processing pipeline keep their memory use steady no matter how long they
 run or how much they process, leave a CPU core free for other work, and
 the heavy analysis tools load only while a piece of work is being
-processed and free themselves afterwards (user requirement, 2026-08-17).
+processed and free themselves afterwards (user requirement).
 
 **VR17 — The reviewer can look at the document in any order and never
 lose their place.** Checking the machine's transcription means going
@@ -133,14 +132,14 @@ find the corresponding word in the transcription, and return to where
 they were reading without searching. The reviewer never gets stuck in a
 correction — they can always keep or abandon a change. The reviewer can
 mark a word as verified and change their mind later (user requirement,
-2026-08-17, walkthrough finding 2026-08-17).
+walkthrough finding).
 
 **VR18 — Rotated text can be read upright for validation.** The reviewer
 validates a segment's transcription by reading it, so a segment the
 pipeline captured in a rotated direction (VR15) can be shown in its
 correct orientation — turned upright for reading — without losing its
 place on the page and without changing the page's own orientation (user
-requirement, 2026-09-07). (What makes this possible — each segment's
+requirement). (What makes this possible — each segment's
 orientation stored as data, the fidelity ruling — is pipeline capability;
 the requirement is the reviewer's experience.)
 
@@ -158,8 +157,8 @@ relationships — *this segment inserts into that one at this character
 position* — never merged into the target's text, never flattened into
 reading order. The transcription reconstructs into a table where every
 segment sits at its original position and orientation — anything the
-table loses, the transcription has destroyed (user ruling 2026-09-09;
-the fidelity ruling 2026-08-30; sharpens VR7).
+table loses, the transcription has destroyed (user ruling;
+the fidelity ruling; sharpens VR7).
 
 **VR20 — The reviewer can correct the structure.** When the pipeline's
 proposed segmentation or relationships are wrong, the reviewer fixes
@@ -171,7 +170,7 @@ No structural act is irrevocable, and restructuring a segment the
 reviewer had validated un-validates its pieces honestly. A structural
 edit never silently destroys what the pipeline knew about a segment —
 its grouping and classification evidence survives the edit or is
-visibly cleared, never lost without a trace (user ruling 2026-09-09;
+visibly cleared, never lost without a trace (user ruling;
 extends VR2, VR17, AC30).
 
 **VR21 — An insertion point's state is never disguised.** An insertion
@@ -180,13 +179,13 @@ or confirmed. Correcting a target's words never silently moves or
 drops its point; restructuring a target visibly relocates any point it
 contained. A page is never confirmed with an unset point presented as
 settled — the surface says so plainly and offers to place it or mark
-the note independent (L5 ruling 2026-08-30; the AC14 plainness
+the note independent (L5 ruling; the AC14 plainness
 pattern).
 
 **VR22 — Human work supersedes the machine.** Once the reviewer has
 validated a segment's text or its structure, no pipeline re-run, new
 model, or rescue pass overwrites it; machine reads fill only segments
-the reviewer has not touched (L12 ruling 2026-08-30).
+the reviewer has not touched (L12 ruling).
 
 **VR23 — Problem detection is the gate; the reviewer fixes a few,
 never many.** The pipeline detects every problem it can with its own
@@ -202,21 +201,20 @@ cannot see — so a page with nothing flagged is never presented as
 problem-free: the reviewer's own reading is part of the gate, and
 anything they find, flagged or not, is fixed with the VR20 tools;
 what the reviewer supplies where the machine saw nothing is recorded
-as a miss and feeds the same loop (user ruling 2026-09-09; sharpens
+as a miss and feeds the same loop (user ruling; sharpens
 L9).
 
 **VR24 — The reviewer always knows what they are checking.** At every
 moment the reviewer can see what part of the document a segment is and
 whether it is a margin note or an insertion — and where the pipeline
-doesn't know, it says so rather than guessing silently (user
-2026-09-09).
+doesn't know, it says so rather than guessing silently (user).
 
 **VR25 — Every act is legible and reversible.** The reviewer can
 always see what the action they just took changed, and undo and redo
 their actions at will. No sequence of actions can produce a state they
 cannot get back from, and no action destroys work they have done:
 deletions are recoverable, and restructured text returns to
-unconfirmed rather than being discarded (user 2026-09-09; extends
+unconfirmed rather than being discarded (user; extends
 VR17, AC30).
 
 ## 3. Acceptance criteria
@@ -271,7 +269,7 @@ VR17, AC30).
     different blocks are not mixed even if they happen to be at the
     same height on the page. The page initially shows the way the
     pipeline determined is right-way-up — the printed writing upright
-    (VR15, user 2026-08-17).
+    (VR15, user).
 21. A two-sided item such as a postcard is one document — its picture side
     the first page, its text side the second — identified by the pipeline,
     never corrected by hand (VR6, VR14).
@@ -283,21 +281,20 @@ VR17, AC30).
 24. The reviewer can look at a different part of the document without
     losing their place in the transcription (VR17).
 25. The reviewer can tell whether a line has been checked and can change
-    their mind (VR17, walkthrough finding 2026-08-17).
+    their mind (VR17, walkthrough finding).
 26. The reviewer can work through the document in whatever order makes
-    sense to them (VR17, user 2026-08-17).
+    sense to them (VR17, user).
 27. The reviewer can review and confirm the later parts of a document
-    even when the earlier parts are not checked (VR17, user 2026-08-17).
+    even when the earlier parts are not checked (VR17, user).
 28. The reviewer can mark a document complete even when some lines are
-    not checked (VR17, user 2026-08-17).
+    not checked (VR17, user).
 29. The reviewer can move to the next document without confirming the
-    current one (VR17, user 2026-08-17).
+    current one (VR17, user).
 30. No action is irrevocable — the reviewer can change their mind,
-    including bringing a rejected document back from the bin (VR17, user
-    2026-08-17).
+    including bringing a rejected document back from the bin (VR17, user).
 31. A segment captured in a rotated direction can be viewed upright for
     validation while staying in its place on the page; the page's own
-    orientation is untouched by the view (VR18, user 2026-09-07).
+    orientation is untouched by the view (VR18, user).
 32. For every segment the reviewer sees the exact ink its box claims
     while reading its text — several lines sharing one box never leave
     the reviewer validating a jumble blind (VR19, VR1).

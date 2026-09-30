@@ -1,5 +1,5 @@
 """The end-to-end multi-orientation eval on the Caradog Roberts 1915
-postcard (public domain, Wikimedia Commons — NOT family data, 2026-08-17).
+postcard (public domain, Wikimedia Commons — NOT family data).
 
 Runs the REAL pipeline on the two sides of a postcard whose back carries
 text at 0° AND 90° (a handwritten Welsh message running up the left
@@ -67,9 +67,9 @@ def _seed_batch(tmp_path: Path) -> tuple[Path, Path]:
 
 def _assert_contracts(registry: Path, work: Path) -> None:
     """The review contracts the pipeline must satisfy (VR14/VR15) — the
-    assertions the review experience actually depends on (2026-08-17: the
-    faults the user hit — the rec's fragments as the transcription, the
-    words without text, the fragment extras — must fail this eval)."""
+    assertions the review experience actually depends on: the rec's
+    fragments as the transcription, the words without text, and the
+    fragment extras must fail this eval."""
     record = load_batch(BATCH, registry_dir=registry)
     # acceptance 21: the two sides are ONE document, the picture side first
     docs = [b for b in record.get("boundaries", []) if b.get("pages")]

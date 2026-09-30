@@ -1,5 +1,5 @@
 """Apply the self-report to an existing layout without re-running the
-detection stage (2026-08-15, user: "why do we need to rerun the layout
+detection stage (user: "why do we need to rerun the layout
 pass?"). Reads the existing layout.json, recomputes the per-word conf
 values from the self-report and the struck markers, and rewrites the
 file. Pure Python (main venv, no PaddleOCR), ~1s per page.
@@ -23,7 +23,7 @@ REPORT_NAME = "selfreport.json"
 
 
 def _word_flag(word: str, *, selfreport_line: set[str] | None) -> float:
-    """The per-word flag source (user, 2026-08-15): the self-report
+    """The per-word flag source (user): the self-report
     (the transcription model's own doubt) + the ~~struck~~ markers.
     Struck words always flag; self-reported words flag; everything else
     is confident."""

@@ -30,9 +30,8 @@ OUTDIR = Path(__file__).resolve().parent / "split-cases"
 
 
 # name -> raw component id, crop window (x0, y0, x1, y1, scale) in page px, title
-# (user rulings 2026-09-13: cases 2, 4, 5, 6, 7, 8, 9 are each ONE word the
-# splitter must NOT split — my "weld"/"kiss"/"three-line" labels were
-# misreads of the ink, checked only after the user corrected them.
+# (user rulings: cases 2, 4, 5, 6, 7, 8, 9 are each ONE word the
+# splitter must NOT split.
 # id=1970's "waist" is intra-word cursive; id=683's "three lines" are the
 # word's own ascenders; id=9690/6475's "touches" never reach the next line.)
 CASES = {
@@ -48,8 +47,8 @@ CASES = {
     "case10_twowords": ("2911", (1810, 2480, 2000, 2660, 2.5), "Case 10 — render 47: two words, one shape: MUST split"),
     "case11_pair": ("5514", (1430, 2710, 1750, 2880, 2.5), "Case 11 — renders 75 + 81: halves stay apart"),
     "case12_pair": ("22082", (1480, 4400, 1640, 4580, 2.5), "Case 12 — renders 324 + 332: two words, stay apart"),
-    "case13_pupil": ("2723", (1690, 2470, 1860, 2620, 3.0), "Case 13 — 2723: one digit, one piece (user 2026-09-16)"),
-    "case14_23150": ("23150", (1460, 4390, 1680, 4600, 3.0), "Case 14 — 23150: two pieces (user 2026-09-16)"),
+    "case13_pupil": ("2723", (1690, 2470, 1860, 2620, 3.0), "Case 13 — 2723: one digit, one piece (user)"),
+    "case14_23150": ("23150", (1460, 4390, 1680, 4600, 3.0), "Case 14 — 23150: two pieces (user)"),
     "case15_bug_slivers": ("4847", (1440, 2530, 2060, 2730, 2.0), "Case 15 — 4847's upper slivers: must merge"),
     "case16_rule": ("2875", (1900, 2500, 2060, 2640, 3.0), "Case 16 — 2875: two pieces (no rule claimed)"),
 }

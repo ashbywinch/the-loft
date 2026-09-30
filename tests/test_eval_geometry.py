@@ -1,10 +1,9 @@
-"""The geometry experiment's harness test (2026-08-20): the synthetic
+"""The geometry experiment's harness test: the synthetic
 fixture's truth is known BY CONSTRUCTION, so the candidate accuracy is
-measured exactly. The 2026-08-22 arbitration (the Anchor choosing the
-rec's ink-grounded match over the misplaced marker boxes) PREVENTED the
-injected failings — the tests now pin the fix (the baseline anchors at
-IoU 1.00) and the detection backstop (the gates fire when a failing
-reaches the layout).
+measured exactly. The Anchor's arbitration chooses the rec's
+ink-grounded match over the misplaced marker boxes; the tests pin the
+fix (the baseline anchors at IoU 1.00) and the detection backstop (the
+gates fire when a failing reaches the layout).
 
 No model calls — the synthetic fixture runs the pure layout build; the
 real-model candidates (the clip-location) extend the same harness.
@@ -22,7 +21,7 @@ pytestmark = pytest.mark.eval
 
 
 def test_the_arbitration_anchors_the_misplaced_marker_fixture() -> None:
-    """The single path's Anchor arbitration (2026-08-22) chooses the rec's
+    """The single path's Anchor arbitration chooses the rec's
     ink-grounded content match over the misplaced marker boxes — the
     injected failing (page-01/03's marker geometry ~200-770px off) is
     PREVENTED, not patched: the baseline anchors at IoU 1.00."""
@@ -56,7 +55,7 @@ def test_the_multi_path_resolves_the_postcard_fixture() -> None:
 
 
 def test_the_gates_catch_the_failings_when_they_reach_the_layout() -> None:
-    """The detection axis (2026-08-22): the duplicate-region and
+    """The detection axis: the duplicate-region and
     loose-box failings, WHEN PRESENT in a layout, are seen — the gates
     fire and the layout refuses (fail-loud, never silent bad data). The
     arbitration prevents them at the source; the gates are the backstop."""
@@ -78,7 +77,7 @@ def test_the_gates_catch_the_failings_when_they_reach_the_layout() -> None:
 
 
 def test_the_crop_grid_candidate_anchors_the_truth() -> None:
-    """The crop-grid candidate (2026-08-22): the page read as a grid of
+    """The crop-grid candidate: the page read as a grid of
     overlapping crops, each crop's lines measured in the crop's own
     frame, stitched into the page. The fixture's truth is known BY
     CONSTRUCTION; the model-perfect local boxes must anchor at IoU 1.00

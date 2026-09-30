@@ -1,6 +1,6 @@
 """A vision-language transcription path — the "standard image model" side of
 the cost/accuracy comparison against specialist OCR (Azure Document
-Intelligence etc., 2026-08-14).
+Intelligence etc.).
 
 Sends the page image to a multimodal chat model (the harness's opencode-go
 vision role by default) with the verbatim-transcription discipline
@@ -48,7 +48,7 @@ VLM_FORMAT_JSON = (
     "every glyph of that line, nothing else."
 )
 
-# The no-boxes format (2026-08-25): the ink-column pipeline measures
+# The no-boxes format: the ink-column pipeline measures
 # geometry from the rec's ink, so its reads need no coordinates. Plain
 # text costs a fraction of the tokens — headroom the reasoning budget
 # was eating (empty content and truncated '{"lines": ...' echoes were
@@ -81,12 +81,12 @@ def transcription_system_with_context(
     """The verbatim-transcription system prompt plus the context that helps
     the model READ: the family's known names (a familiar name is read
     correctly, not guessed letter-by-letter), the places, the pile's label,
-    and the previous page's text for continuity (user, 2026-08-15: "whatever
+    and the previous page's text for continuity (user: "whatever
     useful context we have to help it guess better").
 
     ``request_boxes=False`` swaps the JSON-and-coordinates format for
     plain text — for callers whose geometry comes from elsewhere (the
-    ink-column batch measures from the rec's ink; 2026-08-25)."""
+    ink-column batch measures from the rec's ink)."""
     lines = [_VLM_READING_RULES + (VLM_FORMAT_JSON if request_boxes else VLM_FORMAT_PLAIN)]
     if people or places:
         lines.append(
@@ -139,9 +139,8 @@ def parse_transcription_response(text: str) -> tuple[str, dict[int, list[float]]
     pixels). Empty lines are skipped — the .txt's own split skips them
     too, so the indexes stay aligned. ``boxes`` is None when the model
     returned no usable geometry (the pipeline falls back to the detector's
-    association — 2026-08-16: the geometry must come from the model that
-    can READ the cursive, not the rec engine that merges/misses its
-    lines)."""
+    association — the geometry must come from the model that can READ the
+    cursive, not the rec engine that merges/misses its lines)."""
     try:
         data = _extract_json(text)
     except VlmError:
@@ -160,10 +159,10 @@ def parse_transcription_response(text: str) -> tuple[str, dict[int, list[float]]
 
 def transcription_problem(text: str) -> str | None:
     """Why this transcription response cannot build a layout — None when
-    it can. The retry ladder's decision (2026-08-25): page-02 emitted the
-    identical raw-JSON prefix in two separate runs, and empty content is
-    the same completion-budget failure; both are worth a re-read rather
-    than letting the gates refuse the page on garbage. Usable: plain
+    it can. The retry ladder's decision: the identical raw-JSON prefix in
+    a second run, and empty content, are the same completion-budget
+    failure; both are worth a re-read rather than letting the gates refuse
+    the page on garbage. Usable: plain
     text, or JSON in the requested structure (parse_transcription_response
     extracts it). Unusable: blank, an unparseable JSON echo (the model
     wrote the requested format instead of transcribing), or parsed JSON
@@ -198,7 +197,7 @@ def transcribe_with_fallbacks(
     every attempt ERRORED, in which case the last exception re-raises.
     The returned usage sums every attempt's tokens — the honest cost."""
     usable = usable or (lambda text: transcription_problem(text) is None)
-    # the injectable seam (2026-08-29): the tests pass a fake instead of
+    # the injectable seam: the tests pass a fake instead of
     # monkeypatching the module attribute
     call = transcribe or transcribe_image_vlm
     last_error: Exception | None = None
@@ -251,10 +250,8 @@ def _collect_line_entries(entries: list[Any]) -> tuple[list[str], dict[int, list
 
 def _drop_degenerate_boxes(boxes: dict[int, list[float]]) -> dict[int, list[float]]:
     """Drop the model's degenerate boxes — they COLLAPSE at the page's
-    bottom edge (page-05's last four lines came back as a 9px sliver at
-    y4633-4642, 2026-08-16): any box smaller than a third of the median
-    line height is unusable; the line falls back to the detector's
-    association."""
+    bottom edge: any box smaller than a third of the median line height
+    is unusable; the line falls back to the detector's association."""
     if not boxes:
         return boxes
     heights = sorted(y1 - y0 for x0, y0, x1, y1 in boxes.values())
@@ -304,9 +301,9 @@ def transcribe_image_vlm(
             "max_tokens": max_tokens,
             # thinking disabled: transcription is an extraction task, not a
             # judgment — a reasoning model will otherwise spend the whole
-            # budget reasoning and return empty content (2026-08-30: the
-            # CI's postcard eval). A model that rejects the param gets one
-            # retry without it (the AIClient house pattern).
+            # budget reasoning and return empty content. A model that
+            # rejects the param gets one retry without it (the AIClient
+            # house pattern).
             "thinking": {"type": "disabled"},
         },
         timeout=timeout,
@@ -321,9 +318,7 @@ def transcribe_image_vlm(
         usage = dict(body.get("usage", {}))
         usage["reasoning"] = reasoning
         # The model's thinking, always captured — a failed call is diagnosable
-        # from its trace (2026-08-20: the orientation calls burned 64K tokens
-        # of reasoning with zero content; without the reasoning the cause was
-        # invisible). Mirrors AIClient.last_reasoning.
+        # from its trace. Mirrors AIClient.last_reasoning.
         if finish_reason == "length" and not content.strip():
             raise VlmError(
                 "vision model produced only reasoning tokens, no content — "
@@ -400,7 +395,7 @@ def line_orientation_degrees(crop: Path, *, max_tokens: int = 4000, timeout: flo
     """The exact clockwise angle of one clipped text line, in degrees.
     A single line crop is a trivial task for the model — ~600 total tokens,
     ~6s — vs the full-page location call that burned 64K reasoning tokens
-    with zero content (2026-08-20). The exact value disambiguates the
+    with zero content. The exact value disambiguates the
     90-vs-270 flip the rounded question never could."""
     text, _usage = transcribe_image_vlm(
         crop,
@@ -423,7 +418,7 @@ def selfreport_words(
     places: list[str] | None = None,
     transcribe: Any = None,
 ) -> list[dict[str, Any]]:
-    """The transcription model's own doubt (user, 2026-08-15): which of its
+    """The transcription model's own doubt (user): which of its
     words is it least sure of, or that read oddly in context — the flag
     source that replaces the noisy cross-reader agreement. ``transcribe``
     is the injectable seam (transcribe_image_vlm shape). The guess text is
@@ -484,7 +479,7 @@ _ORIENTATION_PROMPT = (
 
 def _parse_report_lines(raw_lines: list[Any]) -> list[dict[str, Any]]:
     """The report's located lines: {index, box (0-1000), degrees} — the
-    index keys to the given transcription's line numbers (2026-08-17)."""
+    index keys to the given transcription's line numbers."""
     lines: list[dict[str, Any]] = []
     for i, entry in enumerate(raw_lines):
         if not isinstance(entry, dict):
@@ -507,12 +502,12 @@ def orientation_report(image: Path, text: str | None = None) -> dict[str, Any]:
     """The page's text geometry, structured — used by the layout stage when
     the arbiter's scores suggest more than one direction (PRD VR15).
 
-    v3 (2026-08-17): when the page's transcription is known (``text`` —
-    the guess's corrected reading), the report LOCATES that text — the
-    model assigns each known line its box and orientation, so the layout
-    keeps the authoritative text and a partial report degrades only the
-    geometry, never the text (the reproduced fault: the report's own
-    transcription varied between calls and could drop whole paragraphs).
+    When the page's transcription is known (``text`` — the guess's
+    corrected reading), the report LOCATES that text — the model assigns
+    each known line its box and orientation, so the layout keeps the
+    authoritative text and a partial report degrades only the geometry,
+    never the text (the report's own transcription varies between calls
+    and can drop whole paragraphs).
     Returns {"orientation_hint": [...], "lines": [{"index", "box",
     "degrees"}]} — the lines keyed to the given text's line numbers."""
     numbered = "\n".join(f"{i}. {line}" for i, line in enumerate((text or "").splitlines()))

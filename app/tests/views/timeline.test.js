@@ -18,7 +18,7 @@ describe("timeline", () => {
     expect(main.textContent).not.toContain("NaN");
   });
 
-  it("offers a Stories filter and filters by type (2026-08-03)", () => {
+  it("offers a Stories filter and filters by type", () => {
     const state = {
       items: [
         { id: "l", title: "A letter", date: "1963-05-14", date_precision: "exact", type: "letter" },
@@ -35,7 +35,7 @@ describe("timeline", () => {
   });
 });
 
-describe("timeline periods (2026-08-05)", () => {
+describe("timeline periods", () => {
   it("packs the chronological spine into count-sized, year-aligned buckets", () => {
     const entries = [];
     for (let i = 0; i < 25; i++) entries.push(entry(`${1960 + i}-05-01`)); // 1960–1984, one per year
@@ -62,7 +62,7 @@ describe("timeline periods (2026-08-05)", () => {
     expect(periodRange([entry("1868-03-20"), entry("1949-01-27")])).toBe("1868–1949");
   });
 
-  it("names a period after its dominant theme — the hook (2026-08-05)", () => {
+  it("names a period after its dominant theme — the hook", () => {
     const items = [
       entry("1949-01-27", { themes: [{ id: "t-boats" }] }),
       entry("1949-02-04", { themes: [{ id: "t-boats" }] }),
@@ -85,7 +85,7 @@ describe("timeline periods (2026-08-05)", () => {
   });
 });
 
-describe("life events on the timeline (2026-08-05)", () => {
+describe("life events on the timeline", () => {
   it("derives birth and death events from a person's dated facts", () => {
     const people = [
       {
@@ -143,7 +143,7 @@ describe("life events on the timeline (2026-08-05)", () => {
     ]);
   });
 
-  it("carries the calculated ages at marriage on the card (2026-08-06)", () => {
+  it("carries the calculated ages at marriage on the card", () => {
     const people = [
       { id: "p-a", name: "Harper Pryce", dob: { date: "1830-05-03", precision: "exact" } },
       { id: "p-b", name: "Lionel Tyler", dob: { date: "1834-01-10", precision: "exact" } },
@@ -193,8 +193,8 @@ describe("life events on the timeline (2026-08-05)", () => {
     const card = [...main.querySelectorAll(".event-card")].find((c) => c.textContent.includes("Harper Pryce"));
     expect(card.getAttribute("href")).toBe("#/person/p-harper");
     // the card carries its own date — a period's range must never be
-    // misread as the event's date (2026-08-06: "died" inside "1972–1981"
-    // read as "died after 1972")
+    // misread as the event's date: "died" inside "1972–1981" must not
+    // read as "died after 1972"
     expect(card.textContent).toContain("3 May 1830");
     const period = [...main.querySelectorAll("details.period")].find(
       (d) => d.querySelector(".period-range")?.textContent === "1830–1963",
@@ -283,7 +283,7 @@ describe("life events on the timeline (2026-08-05)", () => {
     expect(ranges[ranges.length - 1]).toBe("1860–1879");
   });
 
-  it("sorts entries newest first within a period (2026-08-06)", () => {
+  it("sorts entries newest first within a period", () => {
     const state = {
       items: [
         { id: "a", title: "Oldest", date: "1949-01-27", date_precision: "exact", type: "letter" },
@@ -300,7 +300,7 @@ describe("life events on the timeline (2026-08-05)", () => {
     expect(titles).toEqual(["Newest", "Middle", "Oldest"]);
   });
 
-  it("clarification fragments never render on the timeline (2026-08-06)", () => {
+  it("clarification fragments never render on the timeline", () => {
     // "yes BF means Owen" is not an event — it appears only on the page of
     // what it attests.
     const state = {
@@ -326,7 +326,7 @@ describe("life events on the timeline (2026-08-05)", () => {
     expect(main.textContent).toContain("A letter");
   });
 
-  it("evidence records — found material, not family happenings — never render (2026-08-06)", () => {
+  it("evidence records — found material, not family happenings — never render", () => {
     // The blue-plaque capture is genuinely dated 2026, but nothing happened
     // to the family in 2026 (or ever): it attests the place, it is not a
     // happening. It lives on the pages it attests.
@@ -353,7 +353,7 @@ describe("life events on the timeline (2026-08-05)", () => {
     expect(main.textContent).toContain("A letter");
   });
 
-  it("a non-point death (after/before/between) never renders as a year point (2026-08-06)", () => {
+  it("a non-point death (after/before/between) never renders as a year point", () => {
     // "died after 1917" is not a 1917 happening — the fact stays on the
     // person page, but the timeline must not place it at the bound year.
     const events = lifeEvents([{ id: "p-r", name: "Walter", dod: { date: "1917", precision: "after" } }], []);
@@ -410,7 +410,7 @@ describe("life events on the timeline (2026-08-05)", () => {
   });
 });
 
-describe("person-filtered placement (2026-08-06)", () => {
+describe("person-filtered placement", () => {
   it("places the family record at the person's involvement year, not its own", () => {
     const state = {
       items: [
@@ -439,7 +439,7 @@ describe("person-filtered placement (2026-08-06)", () => {
   });
 });
 
-describe("proposed facts (2026-08-06)", () => {
+describe("proposed facts", () => {
   it("a proposed person's dated facts never render as events", () => {
     const events = lifeEvents(
       [{ id: "p-x", name: "X", status: "proposed", dob: { date: "1910", precision: "year" } }],
@@ -449,7 +449,7 @@ describe("proposed facts (2026-08-06)", () => {
   });
 });
 
-describe("same-name disambiguation on life events (2026-08-06)", () => {
+describe("same-name disambiguation on life events", () => {
   it("carries a distinguishing detail on birth/death events", () => {
     const people = [
       { id: "p-sr", name: "Walter Kendall", dob: { date: "1830-09-02", precision: "exact" } },
@@ -505,7 +505,7 @@ describe("same-name disambiguation on life events (2026-08-06)", () => {
   });
 });
 
-describe("photos empty state (2026-08-06, Eli walk)", () => {
+describe("photos empty state", () => {
   it("says photos are supported but not yet added — never that they don't exist", () => {
     const main = document.createElement("main");
     render(

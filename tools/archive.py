@@ -47,7 +47,7 @@ def _valid_record_id(record_id: str) -> str:
     """The record-id rule lives in tools.records (the classes own the wire
     format); this is the write-path enforcement — a crafted id must never
     reach a store path, where it could escape the proposed queue and delete
-    an identity table (2026-08-05 bot review, security concern)."""
+    an identity table."""
     if not is_valid_record_id(record_id):
         raise ArchiveError(f"invalid record id: {record_id!r}")
     return record_id
@@ -90,11 +90,11 @@ def _import_session_apply(table: dict[str, Any] | None) -> dict[str, Any]:
             "kind": "import-review",
             "title": "The document import",
             "status": "pending",
-            # the session's lifecycle at a glance (2026-08-09): current
+            # the session's lifecycle at a glance: current
             # is the resume point; attempts is one entry per walk of
             # the review — the transcript and decisions of each walk,
             # separated so a fresh agent can see what happened in THIS
-            # walk versus the last one (the accumulated-mess fix)
+            # walk versus the last one
             "current": None,
             "attempts": [],
         }
@@ -116,7 +116,7 @@ IDENTITY_TABLES = ("people", "places", "themes", "orgs", "imports")
 
 # The proposed-queue record kinds — the person/place methods differ only in
 # the record class and the queue/table name; the shared helpers are typed
-# over this (2026-08-16 duplicate review).
+# over this.
 ProposedRecord = TypeVar("ProposedRecord", Person, Place)
 
 
@@ -129,7 +129,7 @@ class ArchiveError(RuntimeError):
 class Archive:
     """Domain access to the archive: resolution, supersession, tombstones."""
 
-    # the identity-table write lock (2026-08-09): the server's threads share
+    # the identity-table write lock: the server's threads share
     # one Archive, and save_identity's read-compute-write must be atomic
     # between them — see save_identity for the full story
     _save_lock = threading.RLock()
@@ -154,8 +154,7 @@ class Archive:
         partial Drive sync of the archive folder is the realistic trigger)
         fails loudly instead of silently serving the older contiguous run —
         publish would otherwise regenerate the projection from stale
-        identity data and the drift guard would miss it (2026-08-05 bot
-        review)."""
+        identity data and the drift guard would miss it."""
         versions: list[int] = []
         version = 1
         while True:
@@ -174,7 +173,7 @@ class Archive:
             # the base itself missing (v1 gone, v2+ present) is the same
             # corruption: an empty chain would let the item vanish from the
             # projection, or a fresh v1 be shadowed by the stale higher
-            # version (2026-08-05 bot review)
+            # version
             missing = 1 if not versions else first_missing
             raise ArchiveError(
                 f"{label} version chain has a gap: v{missing} is missing but v{min(higher)} is present "
@@ -226,8 +225,7 @@ class Archive:
     def content_path(item_id: str, filename: str) -> str:
         """The store path for one content file — the same id guard as every
         other write path, and a filename is a bare name: no separators, no
-        '..', so a crafted id or filename cannot escape assets/<id>/
-        (2026-08-05 bot review, security concern)."""
+        '..', so a crafted id or filename cannot escape assets/<id>/."""
         item_id = _valid_record_id(item_id)
         if "/" in filename or "\\" in filename or ".." in filename:
             raise ArchiveError(f"invalid content filename: {filename!r}")
@@ -255,8 +253,8 @@ class Archive:
         """The item's content file's first ``limit`` bytes decoded, or None
         when the file doesn't exist — the bounded peek that lets a
         shortlist filter check a transcription WITHOUT reading the whole
-        file (2026-08-11 review: the review context never full-scans the
-        archive on a chat message)."""
+        file (the review context never full-scans the archive on a chat
+        message)."""
         return cast(str | None, self._read_content_file(item_id, filename, limit))
 
     def read_file_bytes(self, item_id: str, filename: str) -> bytes | None:
@@ -276,7 +274,7 @@ class Archive:
         """Create or supersede: writes the next version, never edits an
         existing file (the store refuses edits). The sidecar is validated
         against the Item record (tools/records.py) before writing — the
-        whole object model is enforced at the one write seam (2026-08-05).
+        whole object model is enforced at the one write seam.
         *content* maps a content kind ("story", "transcription") to the
         primary text, written as a versioned content file the sidecar
         references — primary content is never a sidecar JSON field. Returns
@@ -297,7 +295,7 @@ class Archive:
             present_kinds = {k for k, v in content.items() if v}
             # a content kind omitted from a re-save is a cleared field —
             # its old entry would otherwise publish the previous text
-            # forever (2026-08-05 bot review)
+            # forever
             payload["assets"] = [
                 a for a in payload["assets"] if a.get("kind") not in CONTENT_FILES or a.get("kind") in present_kinds
             ]
@@ -319,9 +317,9 @@ class Archive:
                     payload["assets"].append({"kind": kind, "file": filename, "caption": caption})
         # the sidecar goes FIRST: a crash mid-save leaves the version advanced
         # (sidecar present, content missing), so the next save supersedes and
-        # writes a fresh content file. Content-first left an orphan content
-        # file with no sidecar — the next save collided with the same filename
-        # and was permanently blocked (2026-08-04 review finding).
+        # writes a fresh content file. Content-first leaves an orphan content
+        # file with no sidecar — the next save collides with the same filename
+        # and is permanently blocked.
         self.store.write_new(self._sidecar_path(item_id, version), json.dumps(payload, indent=1, ensure_ascii=False))
         for filename, text in pending_content:
             self.store.write_new(self.content_path(item_id, filename), text)
@@ -340,10 +338,10 @@ class Archive:
         as sidecars: never edits, a change is the next version. Callers with
         a ready-made table use this; callers that READ then modify must use
         ``_mutate_identity`` instead — the lock here covers only the
-        version computation and the write (2026-08-10 review: a writer that
-        read the table before the lock could still supersede a concurrent
-        writer's change, silently dropping it — the claimed no-lost-update
-        guarantee only holds when the read is inside the lock)."""
+        version computation and the write: a writer that reads the table
+        before the lock could still supersede a concurrent writer's change,
+        silently dropping it — the no-lost-update guarantee only holds when
+        the read is inside the lock."""
         with self._save_lock:
             versions = self._identity_versions(name)
             version = (versions[-1] if versions else 0) + 1
@@ -354,10 +352,10 @@ class Archive:
             return version
 
     def _mutate_identity(self, name: str, mutate: Callable[[dict[str, Any] | None], dict[str, Any]]) -> int:
-        """Atomic read-modify-write of an identity table (2026-08-10
-        review: the lock must span the READ, the mutation, AND the write —
-        a writer that read the table before the lock still supersedes a
-        concurrent writer's change). The caller expresses its intent as a
+        """Atomic read-modify-write of an identity table: the lock must
+        span the READ, the mutation, AND the write — a writer that reads
+        the table before the lock supersedes a concurrent writer's change.
+        The caller expresses its intent as a
         function of the current table; the seam re-reads under the lock,
         applies, and writes the next version. Returns the version written."""
         with self._save_lock:
@@ -368,7 +366,7 @@ class Archive:
                 # a no-op mutation (a stale decision, a pending, an
                 # unchanged record) writes NOTHING — byte-identical versions
                 # would clutter the append-only history the PRD describes as
-                # the archive's troubleshooting record (2026-08-11 review)
+                # the archive's troubleshooting record
                 versions = self._identity_versions(name)
                 return versions[-1] if versions else 0
             versions = self._identity_versions(name)
@@ -432,7 +430,7 @@ class Archive:
         Supersedes the people table; a confirmed record omits the status
         key. ``relation`` pins the SPECIFIC kinship the review settled on
         ("first cousin once removed (Nora's cousin via Fern)") — never a
-        bare "cousin" (user, 2026-08-08). Idempotent: confirming a
+        bare "cousin" (user). Idempotent: confirming a
         confirmed person changes nothing."""
         table = self.get_identity("people")
         assert table is not None, "archive has no people table"
@@ -460,8 +458,8 @@ class Archive:
     def resolve_person(
         self, person_id: str, decision: str, basis: dict[str, str] | None = None
     ) -> tuple[dict[str, Any] | None, bool, bool]:
-        """The review's four dispositions for a proposed person (user,
-        2026-08-09): the decision vocabulary is NOT the status vocabulary —
+        """The review's four dispositions for a proposed person (user):
+        the decision vocabulary is NOT the status vocabulary —
         "confirm" is a status, never an action. ``attested`` -> confirmed
         (the reviewer's own verified word); ``estimated`` -> the status
         estimated with the recorded basis {text, by, when} — the reviewer's
@@ -472,10 +470,9 @@ class Archive:
         mutation alter the record, and was the person still proposed at
         mutation time. Both flags are set INSIDE the lock, in the mutation
         itself, so a concurrent duplicate decision cannot misread them — a
-        post-hoc status comparison raced (a confirmed record omits the
-        status key, and the pre-read status was stale for a second
-        concurrent decide; 2026-08-11 review). The whole read-check-write
-        is atomic."""
+        post-hoc status comparison would race (a confirmed record omits the
+        status key, and the pre-read status would be stale for a second
+        concurrent decide). The whole read-check-write is atomic."""
         result: dict[str, Any] = {}
 
         def apply(current: dict[str, Any] | None) -> dict[str, Any]:
@@ -484,16 +481,14 @@ class Archive:
             if person is None:
                 # a duplicate delete (double-tap, two devices) finds the
                 # person already removed — that is the already-resolved
-                # state, never an error (2026-08-11 review: it used to 400
-                # and the UI showed "That didn't save" for a deletion that
-                # had already succeeded)
+                # state, never an error
                 result["person"] = None
                 result["changed"] = False
                 result["was_proposed"] = False
                 return current
             if person.get("status") != "proposed":
                 # the queue never holds resolved people — a stale decision is a
-                # state, not an error: the person stays as they are (2026-08-09)
+                # state, not an error: the person stays as they are
                 result["person"] = person
                 result["changed"] = False
                 result["was_proposed"] = False
@@ -537,8 +532,7 @@ class Archive:
         """The queued proposed records of one kind — typed records; a
         corrupt file fails loudly (the fail-fast convention), never
         silently dropped: a skipped record would surface later as a
-        confusing dangling-ref failure, or vanish with no trace
-        (2026-08-05 bot review)."""
+        confusing dangling-ref failure, or vanish with no trace."""
         out: list[ProposedRecord] = []
         for path in self.store.list(f"proposed/{directory}"):
             try:
@@ -551,12 +545,12 @@ class Archive:
         """The queued proposed people — typed records; a corrupt file fails
         loudly (the fail-fast convention), never silently dropped: a skipped
         record would surface later as a confusing dangling-ref failure, or
-        vanish with no trace (2026-08-05 bot review)."""
+        vanish with no trace."""
         return self._proposed("people", Person.from_dict)
 
     def proposed_places(self) -> list[Place]:
         """The queued proposed places — typed records; corrupt files fail
-        loudly, never silently skipped (2026-08-05 bot review)."""
+        loudly, never silently skipped."""
         return self._proposed("places", Place.from_dict)
 
     def proposed_ids(self) -> set[str]:
@@ -600,7 +594,7 @@ class Archive:
     def _referencing_catalogued(self, record_id: str, ref_kind: str) -> list[str]:
         """Every catalogued item whose refs still point at *record_id* —
         rejecting a proposed record the stories reference would leave
-        dangling refs at publish (2026-08-05 bot review). An extraction the
+        dangling refs at publish. An extraction the
         reviewer kept is a link too; an unticked one (on: false) is excluded
         content and does not block the reject."""
         extraction_kind = "person" if ref_kind == "people" else "place"
@@ -624,7 +618,7 @@ class Archive:
         """Drop a proposed record the review did not confirm — the proposed
         queue is the one place the store deletes; a double reject fails
         loudly; a record that catalogued stories still reference is refused
-        — relink the stories first (2026-08-05 bot review)."""
+        — relink the stories first."""
         record_id = _valid_record_id(record_id)
         path = f"proposed/{table_name}/{record_id}.json"
         if not self.store.exists(path):
@@ -634,20 +628,18 @@ class Archive:
 
     def reject_proposed_person(self, person_id: str) -> None:
         """Drop a proposed person the review did not confirm — a passing
-        mention with no attestation is not a cast member (2026-08-05). The
+        mention with no attestation is not a cast member. The
         proposed queue is the one place the store deletes; a double reject
         fails loudly; a record that catalogued stories still reference is
-        refused — relink the stories first (2026-08-05 bot review)."""
+        refused — relink the stories first."""
         self._reject_proposed("people", person_id, "person")
 
     def reject_proposed_place(self, place_id: str) -> None:
         """Drop a proposed place the review did not confirm — a passing
         story mention with an unknown location is fiction, not a place
-        entity (2026-08-05: the moored-barges records came from a dev-test
-        story). The proposed queue is the one place the store deletes; a
+        entity. The proposed queue is the one place the store deletes; a
         double reject fails loudly; a record that catalogued stories still
-        reference is refused — relink the stories first (2026-08-05 bot
-        review)."""
+        reference is refused — relink the stories first."""
         self._reject_proposed("places", place_id, "place")
 
     def _refuse_reject_while_referenced(self, record_id: str, ref_kind: str) -> None:
@@ -658,7 +650,7 @@ class Archive:
                 f"({', '.join(sorted(referrers))}) — relink the stories or keep the record"
             )
 
-    # -- the high-level domain acts (the object-model surface, 2026-08-06) --
+    # -- the high-level domain acts (the object-model surface) --
 
     def publish(self, data_dir: Path = Path("app/data")) -> None:
         """Regenerate the projection (app/data) from the archive — the
@@ -669,7 +661,7 @@ class Archive:
         """Seed a demo archive with the fictional demo content (fictional
         only, never real names). The projection follows from a separate
         ``publish()`` — the CLI's create-demo chains seed then publish to
-        the demo's own data dir, never app/data (2026-08-06)."""
+        the demo's own data dir, never app/data."""
         create_demo(self)
 
     def capture_document(self, scans: Path) -> None:
@@ -678,10 +670,10 @@ class Archive:
         seam. `loft capture-document`."""
         # the record book first: the email's corrections patch people the
         # record book creates the confirmed cast (ids come from the dataset) — on
-        # a fresh archive the reverse order KeyErrors (review, 2026-08-07)
+        # a fresh archive the reverse order KeyErrors
         capture_demo_documents(self, scans)
         capture_document(self, scans)
-        # the session the import leaves behind (user, 2026-08-07): the
+        # the session the import leaves behind (user): the
         # document import stays pending until its proposed people are
         # confirmed or dismissed — the front page shows the session, and
         # refresh_import_status() completes it when nothing is pending
@@ -691,13 +683,13 @@ class Archive:
         """Idempotent: write the pending document-import session once — the
         read-check-write is atomic under the archive's lock, so two
         concurrent cold starts cannot both compute the same next version
-        and kill the walk (2026-08-11 review)."""
+        and kill the walk."""
         self._mutate_identity("imports", _import_session_apply)
 
     def refresh_import_status(self) -> None:
         """Complete pending import sessions when nothing is left to review:
         the import's proposals (proposed people) are all confirmed or
-        dismissed, so the session is done (2026-08-07, user)."""
+        dismissed, so the session is done (user)."""
         people = self.get_identity("people")
         pending_people = any(p.get("status") == "proposed" for p in (people or {}).get("people", []))
         if pending_people:
@@ -715,7 +707,7 @@ class Archive:
 
         self._mutate_identity("imports", apply)
 
-    # -- the sessions API (the archive's slice of the store API, 2026-08-09)
+    # -- the sessions API (the archive's slice of the store API)
     # The import session's page carries its review record — the transcript,
     # the decisions, and the resume point — persisted on the imports table
     # (user: "all these transcripts should be available from the page of the
@@ -749,7 +741,7 @@ class Archive:
     def _update_import_session(self, session_id: str, mutate: Callable[[Session], Session]) -> None:
         """Apply one Session mutation atomically: the read-modify-write
         happens inside the archive's lock, after any concurrent writer's
-        (2026-08-10 review). ``mutate`` runs on the session found in the
+        change. ``mutate`` runs on the session found in the
         imports table; a missing table or session is an error to raise."""
 
         def apply(table: dict[str, Any] | None) -> dict[str, Any]:
@@ -768,7 +760,7 @@ class Archive:
         """Begin a new walk of the review — a fresh attempt starts only when
         the last is empty or finished (Session.start_attempt), so a
         mid-walk re-render continues the same attempt. Returns the current
-        attempt's index. Atomic (2026-08-10 review)."""
+        attempt's index. Atomic."""
         result: dict[str, int] = {}
 
         def mutate(session: Session) -> Session:
@@ -784,10 +776,10 @@ class Archive:
     ) -> None:
         """Append one spoken line to the session's CURRENT attempt — the
         line the family saw, verbatim, and (for assistant turns) the raw
-        verdict as the thinking (2026-08-09: the transcript is the
-        messages; the model's reasoning goes back to it verbatim on later
-        calls). The read-modify-write is atomic — the read happens inside
-        the lock, after any concurrent writer's (2026-08-10 review)."""
+        verdict as the thinking (the transcript is the messages; the
+        model's reasoning goes back to it verbatim on later calls). The
+        read-modify-write is atomic — the read happens inside
+        the lock, after any concurrent writer's change."""
         if role not in ("user", "assistant"):
             raise ArchiveError(f"unknown message role: {role!r}")
 
@@ -798,7 +790,7 @@ class Archive:
 
     def record_review_decision(self, session_id: str, decision: ReviewDecision) -> None:
         """Record a review outcome — it advances the resume point; the last
-        decision clears it (Session.add_decision). Atomic (2026-08-10)."""
+        decision clears it (Session.add_decision). Atomic."""
         self._update_import_session(session_id, lambda session: session.add_decision(decision))
 
     def capture_memory(

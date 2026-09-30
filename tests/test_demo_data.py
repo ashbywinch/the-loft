@@ -42,7 +42,7 @@ def _all_text() -> str:
 @pytest.mark.skipif(not ARCHIVE.exists(), reason="archive not bootstrapped yet")
 def test_demo_content_is_fictional() -> None:
     """The demo never contains the real family's names, places or artifacts —
-    a demo instance must never leak anyone's data (user, 2026-08-04)."""
+    a demo instance must never leak anyone's data (user)."""
     text = _all_text().lower()
     for marker in family_markers():
         assert not re.search(r"\b" + re.escape(marker) + r"\b", text, re.IGNORECASE), (
@@ -52,8 +52,7 @@ def test_demo_content_is_fictional() -> None:
 
 def test_generated_demo_assets_are_fictional(tmp_path: Path) -> None:
     """The guard scans what the demo actually ships — including the generated
-    asset SVGs, where a placeholder could leak a real place name (the yard
-    svg once hardcoded "Iron Wharf", 2026-08-04 review)."""
+    asset SVGs, where a placeholder could leak a real place name."""
     from tools.archive import Archive
     from tools.store import DiskStore
 
@@ -148,7 +147,7 @@ def test_generated_copy_has_no_single_curator_voice() -> None:
 def test_create_demo_seeds_a_demo_archive(tmp_path: Path) -> None:
     """`Archive.create_demo()` seeds the archive it is given — the
     object-model surface, never a projection shim; the real archive and
-    app/data are untouched by construction (2026-08-06)."""
+    app/data are untouched by construction."""
     from tools.archive import Archive
     from tools.store import DiskStore
 
@@ -165,8 +164,7 @@ def test_create_demo_seeds_a_demo_archive(tmp_path: Path) -> None:
 
 def test_create_demo_publishes_to_its_own_data_dir(tmp_path: Path) -> None:
     """The demo's projection lands where the caller says — the CLI's
-    create-demo seeds then publishes to its own --data, never app/data
-    (2026-08-06; replaces the old projection-writer shim)."""
+    create-demo seeds then publishes to its own --data, never app/data."""
     from tools.archive import Archive
     from tools.store import DiskStore
 

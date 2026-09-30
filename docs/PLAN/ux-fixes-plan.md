@@ -1,6 +1,6 @@
 # UX fixes plan — family tree door (first loop, 2026-08-05)
 
-> **Status note (2026-08-06):** this is the fake-user loop's **working log** —
+> **Status note:** this is the fake-user loop's **working log** —
 > the findings and their statuses, not a normative spec. The repo's normative
 > layers are: **PRD** (requirements, incl. presentation), **TECHSPEC**
 > (mechanics), **CONTRIBUTIONS** + **IMPORT-PRD** (the two flow specs), and
@@ -111,7 +111,7 @@ Places cards-first.
 - **Contribution model** stated on the home footer: letters and documents
   are added by the family; anyone can add a memory from any page.
 
-**Resolved after the walks (user, 2026-08-06)**:
+**Resolved after the walks (user)**:
 - "(open pile)" (? Corbett) superseded — "his first name isn't in the
   records"; the generator (import_document.py) no longer emits it.
 - The content-language audit found and superseded the wider pattern:
@@ -155,10 +155,10 @@ a second pass on the chat's usability itself, ignoring the supersession.
 | R13 | minor | DESIGN | **Generic failure line** — "That didn't save — try again?" masks the real errors (the superseded-dismiss path 400s "not proposed") | OPEN |
 | R14 | minor | DESIGN | **Completion claim oversells** — "the tree now shows the confirmed family" when it already did | OPEN |
 
-**Status of R1–R14 (2026-09-22):** still open — the resolutions are
+**Status of R1–R14:** still open — the resolutions are
 designed in `docs/PLAN/ux-review-chat-solution.md`, and the mechanism was
 superseded by the claim-model agreement (`docs/PLAN/INGEST-PLAN.md`,
-2026-08-10, agreed direction, not yet implemented); the findings' fates
+agreed direction, not yet implemented); the findings' fates
 are tracked there.
 
 **The thinking-indicator spec** (researched: Frontend Patterns, metacto, the
@@ -194,7 +194,7 @@ the real page-03 scan) — served live at `http://192.168.1.251:8890/`
 the transcription text and the page image are **real family content** and the
 repo is public (the-loft) — never push these.
 
-**Approved design (user, 2026-08-15)**:
+**Approved design (user)**:
 - Phone: landscape-only review — portrait shows the batch list, then a
   "turn your phone sideways" prompt on entering a document (VR8).
 - Phone landscape = horizontal split: letter image edge-to-edge full width on
@@ -281,7 +281,7 @@ All fixed + verified in the browser against the real data:
 
 The transcription model (mimo-v2.5) IS the good reader — the transcription reads beautifully. The red flags came from the cross-reader comparison against PaddleOCR's RECOGNITION text, and that rec model garbles every cursive line: full-batch data shows **75-90% of lines flagged** (doc1: 52/54, doc2: 67/87, doc3: 166/182) with the rec's confidence high throughout (median 0.94-0.96 — confidently wrong), so the rec-score gate can't separate signal from noise. The flags carried almost no discriminative information.
 
-**Probe (2026-08-15)**: the transcription model asked directly "which words are you least sure of" flags **4 words on page-03 vs the cross-reader's 77** (the spike's uniform-confidence finding was about per-line NUMBERS — a targeted list is a different elicitation). But the self-report MISSED the struck words (~~reading~~, ~~complementary~~ — the walk's two substantive fixes): the model is sure of the crossed-out words it left in.
+**Probe:** the transcription model asked directly "which words are you least sure of" flags **4 words on page-03 vs the cross-reader's 77** (the spike's uniform-confidence finding was about per-line NUMBERS — a targeted list is a different elicitation). But the self-report MISSED the struck words (~~reading~~, ~~complementary~~ — the walk's two substantive fixes): the model is sure of the crossed-out words it left in.
 
 **Recommendation (pending the user's call)**: flag source = the VLM's self-report + the ~~struck~~ markers (content findings), one extra VLM call per page (~17k tokens, negligible). The cross-reader data stays in the layout payload as the underlying per-word comparison. This reverses the §16.16 spike decision on flag SOURCE with new evidence.
 
@@ -383,7 +383,7 @@ unambiguous backend/UI bugs; 3 needs both the orientation fix and a rotate contr
 5. MEDIUM — the import session's "N links awaiting a decision" count updates
    live as decisions land (the count element is refreshed in advance()).
 6. MEDIUM — the item page and the import session have a top-bar back arrow
-   (the 2026-08-06 "system back suffices" decision overruled for drilled-in
+   (the "system back suffices" decision overruled for drilled-in
    pages by the walk's evidence).
 
 **Skill fix**: ux-process now mandates the fake user navigates by LOOKING
@@ -559,7 +559,7 @@ vision agents, Playwright). Investigation proved both right:
    ink is measurable: 1253 dark px at page-01's band, 121 at page-02's).
 3. **OpenSeadragon 6.1.0's tile pipeline additionally never loads tiles in
    this headless** (`bestLoadTileCandidates` always empty, `maxLevel: 0`,
-   the 2026-08-06 build's rewritten draw path) — an unverifiable renderer,
+   the rewritten draw path) — an unverifiable renderer,
    which the perceptual-success standard now forbids.
 
 Decision (user): replace OSD with a **plain-image viewer** — one `<img>` +
@@ -675,7 +675,7 @@ navigation live in one wordy action bar. Research into prior art:
   (UX Patterns Guide, HITL inboxes): a persistent rail of items, current
   highlighted, everything reachable.
 
-Decision (user, 2026-08-16 — "try your recommendations, but consider the
+Decision (user — "try your recommendations, but consider the
 limited real estate especially horizontally"): TWO nested sequences become
 TWO visible groups in ONE compact strip under the topbar — document chips
 (numbers, ✓ confirmed, ● work remains) then a thin divider then the current
@@ -1064,7 +1064,7 @@ rec-fallback pages.
 
 ## The review's navigation and focus model (VR17, user + walkthrough, 2026-08-17)
 
-The fake-user walkthrough (Sam, 2026-08-17) and the UX research
+The fake-user walkthrough (Sam) and the UX research
 (Preview Panel, Master-Detail, Overview+Detail, Inline Edit patterns)
 established the focus model:
 
@@ -1092,8 +1092,8 @@ at a readable zoom level (all boxes' min/max y, not just the first
 line).
 
 **Implemented:** the focus model landed with the review surface v2 — the
-dual-pane, per-line-box walk (PR #31, 2026-09-07), served by the
-grouped-strips layout (2026-09-09, `strip-grouping-plan.md`).
+dual-pane, per-line-box walk, served by the
+grouped-strips layout (`strip-grouping-plan.md`).
 
 **Decision:** VR17 and acceptance criteria 24-28 recorded in the PRD.
 The focus model is the reference for the usability test.

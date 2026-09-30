@@ -1,5 +1,5 @@
 """tools/vlm.py — the vision-model seam: the context the transcription
-reads with, and the self-report flag pass (2026-08-15, user-approved: the
+reads with, and the self-report flag pass (user-approved: the
 transcription model's own doubt is the flag source)."""
 
 from __future__ import annotations
@@ -160,9 +160,8 @@ class TestParseTranscriptionResponse:
 
 class TestTranscriptionProblem:
     """Why a transcription response cannot build a layout — the retry
-    ladder's decision (2026-08-25: page-02 emitted the same raw-JSON
-    prefix in two separate runs; empty content and truncated JSON are
-    both the reasoning budget eating the completion)."""
+    ladder's decision: empty content and truncated JSON are
+    both the reasoning budget eating the completion."""
 
     def test_plain_text_has_no_problem(self) -> None:
         from tools.vlm import transcription_problem
@@ -195,7 +194,7 @@ class TestTranscriptionProblem:
 
 
 class TestPlainTranscriptionFormat:
-    """The no-boxes prompt variant (2026-08-25): the ink-column pipeline
+    """The no-boxes prompt variant: the ink-column pipeline
     measures geometry from the rec's ink; asking this pipeline's model
     for JSON boxes costs tokens (the budget the reasoning eats) and hands
     it a structure to fail mid-echoing."""
@@ -314,7 +313,7 @@ class TestTranscribeWithFallbacks:
 
 
 class _BytesResponse:
-    """The urlopen context-manager shim returning fixed bytes (DI, 2026-08-30)."""
+    """The urlopen context-manager shim returning fixed bytes."""
 
     def __init__(self, body: bytes) -> None:
         self._body = body
@@ -332,8 +331,7 @@ class _BytesResponse:
 class TestThinkingDisabled:
     """The transcription is an extraction task, not a judgment — thinking
     is disabled and a model that rejects the param gets one retry without
-    it (the AIClient house pattern; 2026-08-30: the CI's postcard eval
-    burned 64K tokens of reasoning with zero content)."""
+    it (the AIClient house pattern)."""
 
     @staticmethod
     def _png(tmp_path: Path) -> Path:
@@ -385,10 +383,10 @@ class TestThinkingDisabled:
         assert "thinking" not in calls[1]
 
     def test_usage_carries_the_reasoning(self, tmp_path: Path) -> None:
-        """The model's thinking is diagnosability data — tonight's strips
-        spike (2026-09-08) read the reasoning to learn why boxes were
-        fabricated ('since I can't see the image'). The usage carries it
-        to the caller instead of dropping it at the parse."""
+        """The model's thinking is diagnosability data — reading the
+        reasoning shows why boxes were fabricated ('since I can't see
+        the image'). The usage carries it to the caller instead of
+        dropping it at the parse."""
         body = TestThinkingDisabled._ok_body()
         body["choices"][0]["message"]["reasoning_content"] = "I cannot see the image, so I will estimate."
 

@@ -39,7 +39,7 @@ describe("person page connections", () => {
     expect(main.querySelectorAll(".block .chips").length).toBe(0);
   });
 
-  it("shows clarification fragments only in a Clarifications block, never as artifacts (2026-08-06)", () => {
+  it("shows clarification fragments only in a Clarifications block, never as artifacts", () => {
     const clar = {
       id: "c-bf",
       title: "BF",
@@ -66,7 +66,7 @@ describe("person page connections", () => {
     expect(main.querySelector(".card-title")).toBeNull();
   });
 
-  it("shows the dates and facts we know, with honest precision (2026-08-06)", () => {
+  it("shows the dates and facts we know, with honest precision", () => {
     const st = {
       ...STATE,
       people: [
@@ -96,7 +96,7 @@ describe("person page connections", () => {
     expect(text).toContain("Known as: Alex");
   });
 
-  it("shows the calculated age at death — never stored (2026-08-06)", () => {
+  it("shows the calculated age at death — never stored", () => {
     const st = {
       ...STATE,
       people: [
@@ -117,7 +117,7 @@ describe("person page connections", () => {
     expect(text).toContain("d. 16 May 1982 (aged 86)");
   });
 
-  it("shows the marriage date and the subject's age at it on the spouse chip (2026-08-06)", () => {
+  it("shows the marriage date and the subject's age at it on the spouse chip", () => {
     const st = {
       ...STATE,
       relationships: [
@@ -151,7 +151,7 @@ describe("person page connections", () => {
     expect(people).toEqual(["Owen Hale — husband (m. 20 Jun 1966, aged 19)"]);
   });
 
-  it("labels attested relationships; co-mention alone never links (2026-08-06)", () => {
+  it("labels attested relationships; co-mention alone never links", () => {
     const st = {
       ...STATE,
       relationships: [{ a: "p-mum", b: "p-dad", kind: "spouse", label_a: "husband", label_b: "wife" }],
@@ -182,7 +182,7 @@ describe("person page connections", () => {
     expect(people).toEqual(["Owen Hale — husband"]);
   });
 
-  it("splits Artifacts from Said by — complete and non-overlapping (2026-08-03)", () => {
+  it("splits Artifacts from Said by — complete and non-overlapping", () => {
     const letter = {
       id: "letter-1",
       title: "A letter",
@@ -235,7 +235,7 @@ describe("person page connections", () => {
     expect(text.split("Another comment").length - 1).toBe(1);
   });
 
-  it("lists comments the person made under “Said by” (2026-08-03)", () => {
+  it("lists comments the person made under “Said by”", () => {
     const said = {
       id: "story-1",
       title: "The boat story",
@@ -274,7 +274,7 @@ describe("person page connections", () => {
   });
 });
 
-describe("person page involvement dates (2026-08-06)", () => {
+describe("person page involvement dates", () => {
   it("places a spanning item at the person's involvement date, not the item's", () => {
     const st = {
       ...STATE,
@@ -322,7 +322,7 @@ describe("person page involvement dates (2026-08-06)", () => {
   });
 });
 
-describe("proposed person marking (2026-08-06)", () => {
+describe("proposed person marking", () => {
   it("marks a proposed person's page — the facts are a proposal, not record", () => {
     const state = {
       ...STATE,
@@ -349,7 +349,7 @@ describe("proposed person marking (2026-08-06)", () => {
   });
 });
 
-describe("the family tree's family membership (2026-08-06, user)", () => {
+describe("the family tree's family membership (user)", () => {
   const FAMILY_STATE = {
     people: [
       { id: "p-alf", name: "Ernie Draper", relation: "married Marta Voss, 1972" },

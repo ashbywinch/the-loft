@@ -1,6 +1,6 @@
 /** Letters — the written archive from the loft: every letter and document,
  *  in order. Told memories live elsewhere (the themes, the timeline) —
- *  this shelf is the scanned paper (user, 2026-08-03). */
+ *  this shelf is the scanned paper (user). */
 
 import { el, header, decadeList } from "../ui.js";
 import { published } from "../data.js";

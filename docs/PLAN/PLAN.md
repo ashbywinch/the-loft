@@ -1,7 +1,7 @@
 # Project Plan — The Loft
 
 - **Status:** v0.1 — approved shape, sequencing open to adjustment
-- **Status update (2026-09-22):** Slice 1 delivered — the inventory's
+- **Status update:** Slice 1 delivered — the inventory's
   "built" rows now run on the real archive; Slices 2 and 4 partially
   landed, 3/5/6 unstarted (per-slice status under Phase 2).
 - **Current work:** the remaining work on the active subset lives in
@@ -146,7 +146,7 @@ Build order, each step behind the gate (`make test`):
 
 **Deferred out of Slice 1:** Drive upload + OAuth (`tools/upload-drive`) → Slice 2 with the phone client; embeddings + semantic search → Slice 4 (machine *reading* is Slice 1, *understanding* stays 4).
 
-**The live system (Supabase) — sequencing (2026-08-03):** Slice 1 stays local-first — import writes the folder (sidecars + journal), the durable contract. The Supabase store (Postgres + pgvector, small family-user set, RESOLVED) enters as Slice 2's foundation with the multi-user curation surface: schema + migrations, write-through folder materialization (every committed change updates both the store and the folder), the audit log mirrored, review/admin surfaces reading from the store. The folder and the store rebuild each other — neither is a lock.
+**The live system (Supabase) — sequencing:** Slice 1 stays local-first — import writes the folder (sidecars + journal), the durable contract. The Supabase store (Postgres + pgvector, small family-user set, RESOLVED) enters as Slice 2's foundation with the multi-user curation surface: schema + migrations, write-through folder materialization (every committed change updates both the store and the folder), the audit log mirrored, review/admin surfaces reading from the store. The folder and the store rebuild each other — neither is a lock.
 
 ### Slice 2 — Phone capture & curation (Drive API)
 - **Value:** Alex's stated work surface — curation from the phone: capture
@@ -201,7 +201,7 @@ Build order, each step behind the gate (`make test`):
 
 ## Sequencing logic
 
-- **Release gate — F6 before any public deploy.** Slice 1 publishes the projection (which carries transcriptions — transcription hosting is the product, PRD §6) to the static host; accounts (F6) are Slice 2. The first *public* deploy therefore waits for F6, or the projection deploys to a family-only host until then; until that gate, `make serve` is the only serving surface. (Recorded 2026-08-02: closes the window surfaced by PR review; the projection posture lives in TECHSPEC §7.)
+- **Release gate — F6 before any public deploy.** Slice 1 publishes the projection (which carries transcriptions — transcription hosting is the product, PRD §6) to the static host; accounts (F6) are Slice 2. The first *public* deploy therefore waits for F6, or the projection deploys to a family-only host until then; until that gate, `make serve` is the only serving surface. (The projection posture lives in TECHSPEC §7.)
 - **1 before 2–6:** the scans are the irreplaceable layer; every month risks
   the physical deadline (house sale) and the narrator's fidelity.
 - **2 before 3:** the phone is Alex's stated work surface. *Knob:* if a

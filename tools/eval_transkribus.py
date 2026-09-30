@@ -1,4 +1,4 @@
-"""The Transkribus leg of the HTR head-to-head (2026-08-26): same 5
+"""The Transkribus leg of the HTR head-to-head: same 5
 pages, same reference, same CER — against Transkribus's Text
 Recognition API. Auth is OpenID Connect password-grant (Transkribus
 issues NO api keys: your account username+password exchange for a

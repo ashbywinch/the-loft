@@ -1,9 +1,8 @@
-"""The layout contact sheets (2026-08-25): every stored layout drawn onto
+"""The layout contact sheets: every stored layout drawn onto
 its own scan — the instrument that catches GEOMETRICALLY wrong but
 STRUCTURALLY valid layouts. The gates cannot catch page-01's class of
 fault (boxes pass validation yet sit off the handwriting); only eyes
-can, and eyes need the boxes rendered on the ink. Born the day the
-user asked "will the first page look correct?" and the answer was no.
+can, and eyes need the boxes rendered on the ink.
 
 Usage: PYTHONPATH=. .venv/bin/python -m tools.walk_review [batch_id ...]
 Writes work/<batch>/ocr-guess/layout-sheets/<page>.png and prints one

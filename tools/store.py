@@ -30,35 +30,35 @@ class FileStore(ABC):
     is the proposed queue's reject path — primary content (items, identity
     tables, content files) never uses it: those supersede or tombstone."""
 
-    @abstractmethod  # lucidlint: ignore detached-method abstract interface declaration; concrete stores use self
+    @abstractmethod
     def write_new(self, path: str, content: str | bytes) -> None:
         """Create *path* with *content*; raise ImmutableStoreError if it exists."""
 
-    @abstractmethod  # lucidlint: ignore detached-method abstract interface declaration; concrete stores use self
+    @abstractmethod
     def delete(self, path: str) -> None:
         """Remove *path* — the proposed-queue reject path only. Raises
         StoreError when the file is missing (a double reject is a bug)."""
 
-    @abstractmethod  # lucidlint: ignore detached-method abstract interface declaration; concrete stores use self
+    @abstractmethod
     def read(self, path: str) -> str:
         """Return the file's text content."""
 
-    @abstractmethod  # lucidlint: ignore detached-method abstract interface declaration; concrete stores use self
+    @abstractmethod
     def read_bytes(self, path: str) -> bytes:
         """Return the file's raw bytes (scans and images are binary)."""
 
-    @abstractmethod  # lucidlint: ignore detached-method abstract interface declaration; concrete stores use self
+    @abstractmethod
     def read_prefix(self, path: str, limit: int) -> str:
         """The first ``limit`` BYTES decoded as text — a bounded peek for a
-        cheap content filter (2026-08-11 review: a name check must not
-        read a whole transcription). Raises FileNotFoundError when the
+        cheap content filter (a name check must not read a whole
+        transcription). Raises FileNotFoundError when the
         file is missing; callers check exists() first."""
 
-    @abstractmethod  # lucidlint: ignore detached-method abstract interface declaration; concrete stores use self
+    @abstractmethod
     def exists(self, path: str) -> bool:
         """Does the file exist?"""
 
-    @abstractmethod  # lucidlint: ignore detached-method abstract interface declaration; concrete stores use self
+    @abstractmethod
     def list(self, directory: str) -> list[str]:
         """Relative paths of every file under *directory*, stable order."""
 

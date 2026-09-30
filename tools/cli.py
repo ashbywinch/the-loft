@@ -6,7 +6,7 @@ and calls its methods — Archive.publish(), Server.serve(),
 Archive.create_demo(), Archive.capture_document(), Archive.capture_memory(),
 GedcomDocument.to_text()/from_text() — so the domain vocabulary lives in the
 nouns, and the CLI is a thin argument surface. No per-module __main__ shims
-(coding-standards.md, 2026-08-06): a command's argv handling lives here, and
+(coding-standards.md): a command's argv handling lives here, and
 the repo-root ``loft`` wrapper forwards it.
 """
 
@@ -66,8 +66,8 @@ def _capture_client() -> AIClient | None:
 
 
 def serve_app(_env: Mapping[str, str] | None = None) -> Any:
-    """The uvicorn factory for --reload (2026-08-16: make serve always
-    auto-reloads the backend on source changes). The reloader re-imports
+    """The uvicorn factory for --reload (make serve always auto-reloads
+    the backend on source changes). The reloader re-imports
     this module and calls the factory fresh in a subprocess — the server's
     configuration travels via the environment the CLI set before running.
     ``_env`` is the injectable seam for tests; None reads the process env."""
@@ -103,7 +103,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             # Watch only the backend source — the whole-repo watch scans and
             # reloads on .venv/conda-tools churn, and uvicorn's reload-exclude
             # patterns can't match mid-path dirs (Path.match is right-aligned;
-            # absolute patterns are rejected outright, 2026-08-16). Narrow
+            # absolute patterns are rejected outright). Narrow
             # roots are the honest fix: tools/ + tests/ are all the backend
             # has; the frontend is served without a build step.
             reload_dirs=[str(ROOT / "tools"), str(ROOT / "tests")],
@@ -157,7 +157,7 @@ def cmd_gedcom(args: argparse.Namespace) -> int:
         print(f"wrote GEDCOM 7.0 to {args.file}")
         return 0
     # import: parse + report — applying a file's wire shapes to the archive
-    # is a reviewed, per-document capture, never a blind write (2026-08-06)
+    # is a reviewed, per-document capture, never a blind write
     text = Path(args.file).read_text(encoding="utf-8")
     places_table = archive.get_identity("places")
     result = GedcomDocument.from_text(text, (places_table or {}).get("places", []))
@@ -212,7 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     # the server's diagnostics must be visible — the auth flows log their
-    # outcomes at INFO (2026-08-06: the device flow was diagnosed blind)
+    # outcomes at INFO
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     args = build_parser().parse_args(argv)
     return int(args.fn(args))

@@ -15,17 +15,16 @@ export function render(main, ctx, state) {
     main.append(header("Item", state), el("p", { class: "empty" }, "Not found."));
     return;
   }
-  // a draft is for the person who claimed it (user, 2026-08-03): the owner
+  // a draft is for the person who claimed it (user): the owner
   // sees everything and can finish it; anyone else gets the banner alone —
   // the title and the unverified words never render for a visitor
-  // (reviewer, 2026-08-03)
   const mine = item.status === "draft" && isMine(item, state);
   main.append(
     header(mine || item.status !== "draft" ? item.title : "Unfinished story", state, canGoBackInApp() ? true : "Home"),
   );
   // the description is the "what is this" line — under the title, above the
-  // scan and the transcription (2026-08-05); a draft's words never render
-  // for anyone but its narrator, same gate as the title (review, 2026-08-07)
+  // scan and the transcription; a draft's words never render
+  // for anyone but its narrator, same gate as the title
   if (item.description && (mine || item.status !== "draft")) main.append(el("p", { class: "lede" }, item.description));
 
   if (item.status === "draft") {
@@ -115,8 +114,7 @@ export function render(main, ctx, state) {
         }
       } else {
         // the renderer's paragraph already carries the transcription-text
-        // class (2026-08-09 review: the reader appended bare <p> nodes and
-        // the pre-line styling never applied) — just link the mentions
+        // class — just link the mentions
         node.replaceChildren(...linkMentions(node.textContent, state.people, state.places));
       }
       text.append(node);
@@ -268,8 +266,8 @@ export function render(main, ctx, state) {
   // --- responses: dated, attributed stories about this item (PRD §19) ---
   // comment_on = responding to it. An items ref is an attestation (the
   // story names this artifact) and renders in "Referenced by" — never in
-  // both (2026-08-06: double-render fix). Drafts never render as finished
-  // responses (user, 2026-08-03).
+  // both. Drafts never render as finished
+  // responses (user).
   const published = publishedItems(state.items);
   const responses = published.filter((it) => it.comment_on === item.id);
   main.append(
@@ -281,7 +279,7 @@ export function render(main, ctx, state) {
     }),
   );
 
-  // --- clarification fragments that attest this item (2026-08-06) ---
+  // --- clarification fragments that attest this item ---
   const clarifications = clarificationsFor(catalogued(state.items), item.id);
   if (clarifications.length) {
     main.append(
@@ -311,7 +309,7 @@ export function render(main, ctx, state) {
   const responds = (other) => other.comment_on === item.id || other.items?.some((x) => x.id === item.id);
   const related = sortByDate(published)
     .filter((other) => other.id !== item.id && !other.sensitive) // PRD §6: never on suggested surfaces
-    .filter((other) => !responds(other)) // responses render once, in the Responses block (2026-08-06)
+    .filter((other) => !responds(other)) // responses render once, in the Responses block
     .filter((other) => {
       const otherYear = yearOf(other);
       if (!Number.isFinite(otherYear)) return false;
@@ -335,10 +333,10 @@ export function render(main, ctx, state) {
     );
   }
 
-  // the back link: everything that references this item (2026-08-06) —
+  // the back link: everything that references this item —
   // All links are bidirectional: the boat story names Sunlight, and
   // Sunlight's page shows who attests it. comment_on items already render
-  // in Responses; an item with both links renders once (2026-08-06).
+  // in Responses; an item with both links renders once.
   const referrers = referencedBy(catalogued(state.items), item.id).filter(
     (r) => r.id !== item.id && !r.comment_on && !r.clarification && !r.evidence,
   );
@@ -355,7 +353,7 @@ export function render(main, ctx, state) {
     );
   }
 
-  // --- evidence records that attest this item (2026-08-06) ---
+  // --- evidence records that attest this item ---
   const evidence = evidenceFor(catalogued(state.items), item.id);
   if (evidence.length) {
     main.append(

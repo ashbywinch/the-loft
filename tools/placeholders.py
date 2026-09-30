@@ -26,7 +26,7 @@ FILLS = {
 # falls back to 1. A shared tuple keeps the except clause short; the
 # py313 target (pyproject.toml) makes ruff PRESERVE parenthesised except
 # clauses, so the old "ruff strips the parens" justification no longer
-# applies (2026-08-11 review).
+# applies.
 _PAGE_PARSE_ERRORS = (IndexError, ValueError)
 
 # The ruled-paper look's SVG geometry (tuned once): 11 hand-written lines,
@@ -81,8 +81,7 @@ def svg_avatar(initials: str, hue: str) -> str:
 
 def svg_object(label: str, year: str) -> str:
     """The generic object stand-in — a framed item, never a family-specific
-    shape (the boat placeholder went: the app knows artifact TYPES, not the
-    family's boats, 2026-08-06)."""
+    shape: the app knows artifact TYPES, not the family's boats."""
     return (
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">'
         f'<rect width="400" height="300" rx="12" fill="#b7c0c9"/>'
@@ -109,8 +108,7 @@ def asset_svg(item: dict[str, Any], filename: str) -> str:
     item's type, the label comes from the item's own data: a ``demo`` field
     marks stand-in text that is not attested (fictional/demo content), and
     everything else falls back to the item's real title. Never the item's
-    id — the engine is family-agnostic (2026-08-05: it once branched on the
-    real family's artifact ids, baking content into code)."""
+    id — the engine is family-agnostic."""
     label = html.escape(str(item.get("demo") or item["title"]), quote=True)
     if item["type"] == "letter":
         page_no = _letter_page_no(filename)
@@ -139,8 +137,7 @@ class PlaceholderPhoto:
 
 class PlaceholderObject:
     """The generic object stand-in — a framed item. Never a family-specific
-    shape: the app knows artifact types, not the family's objects (the boat
-    placeholder went for this reason, 2026-08-06)."""
+    shape: the app knows artifact types, not the family's objects."""
 
     @staticmethod
     def svg(label: str, year: str) -> str:

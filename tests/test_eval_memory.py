@@ -1,8 +1,8 @@
 """Tests for the eval entry surface: the fail-fast contract — an eval that
-cannot run must say so loudly (2026-08-05). The evals now run under pytest
-(2026-08-10, user: use the framework's selection, not custom CLI flags), so
-the contract is pinned through that surface: ``pytest -m eval`` with no API
-key must fail with the message, never skip silently."""
+cannot run must say so loudly. The evals run under pytest (user: use the
+framework's selection, not custom CLI flags), so the contract is pinned
+through that surface: ``pytest -m eval`` with no API key must fail with
+the message, never skip silently."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parent.parent
 )
 def test_eval_fails_fast_without_api_key() -> None:
     """pytest -m eval with no API key must exit non-zero — a silent SKIP
-    hides an eval that never ran (2026-08-05). The env is scrubbed of every
+    hides an eval that never ran. The env is scrubbed of every
     key source (OPENAI_API_KEY, OPENCODE_API_KEY) and the opencode auth file is
     made unreachable via an empty XDG_DATA_HOME."""
     env = {

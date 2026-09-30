@@ -1,10 +1,9 @@
-"""The eval scoring contract (2026-08-26, settled after three sessions
-blocked on it): a served page's transcription is scored against a
-reference by ORDER-PRESERVING normalized-text matching — each truth
-line must appear in the layout's lines at the right place in the
-reading order. Position-based PIXEL truth is out of reach for the real
-archive (we have reference texts, not reference boxes); the reading-
-order dimension is the position that matters for transcription
+"""The eval scoring contract: a served page's transcription is scored
+against a reference by ORDER-PRESERVING normalized-text matching —
+each truth line must appear in the layout's lines at the right place
+in the reading order. Position-based PIXEL truth is out of reach for
+the real archive (we have reference texts, not reference boxes); the
+reading-order dimension is the position that matters for transcription
 fidelity, and write-skip is captured: a REFUSED page is counted as
 refused, never as wrong text. This is the calibration instrument the
 research synthesis demanded — incident-tuned gates become measured

@@ -1,9 +1,9 @@
 # Layout requirements — draft for adjudication
 
-Status: ADJUDICATED + LANDED (2026-09-22). Every line was walked and
-ruled on 2026-08-30 (the "Rulings so far" section); the requirement-side
-lines landed in TRANSCRIPTION-REVIEW-PRD as VR19–VR22 (2026-09-09), with
-VR23/VR24 from the same day's rulings; the TECHSPEC-side lines
+Status: ADJUDICATED + LANDED. Every line was walked and
+ruled (the "Rulings so far" section); the requirement-side
+lines landed in TRANSCRIPTION-REVIEW-PRD as VR19–VR22, with
+VR23/VR24 from the same rulings; the TECHSPEC-side lines
 (L1/L9/L10/L11) landed in TECHSPEC §16.17 with the single-pass design.
 Kept as the adjudication record and requirement-source trace.
 
@@ -62,29 +62,29 @@ This sharpens VR7 ("marginal notes... appear in their place") from
    and the machine is really uncertain. The multi-reader confidence
    mechanism is not a requirement — it is one candidate design.
 
-ADJUDICATED 2026-08-30: every line walked and ruled. The table is the
+ADJUDICATED: every line walked and ruled. The table is the
 working contract for the TECHSPEC rewrite.
 
 ## Open questions for the conversation (one at a time)
 
-1. **The fidelity table's shape** (L7) — RULED 2026-08-30: **a spatial
+1. **The fidelity table's shape** (L7) — RULED: **a spatial
    grid.** Rows = the page's vertical bands, columns = horizontal bands;
    each segment occupies the cell where its ink sits; rotated segments
-   each segment occupies the cell where its ink sits. AMENDED same day:
+   each segment occupies the cell where its ink sits. AMENDED:
    markdown cannot render rotated text — each segment's orientation is
    STORED as data, so any future format (or the app's own renderer) can
    display it. Open follow-up: how the bands are derived.
-2. **Segment granularity** (L3) — RULED 2026-08-30: **the longest run
+2. **Segment granularity** (L3) — RULED: **the longest run
    of text on a single line that belongs together** (ends at a logical
    separation: column, margin annotation, insertion, distinct hand).
    Stated in the document's terms; how the pipeline finds segments is
    implementation. The reviewer can merge or split when the proposal is
    wrong.
-3. **Insertion point** (L4/L5) — RULED 2026-08-30: **a character
+3. **Insertion point** (L4/L5) — RULED: **a character
    position within another segment.** Proposed by the pipeline when the
    writer's mark indicates it, otherwise unset; always reviewer-confirmed
    before validation. The inserted segments are ordinary segments.
-4. **The upright typed page** (L11) — RULED 2026-08-30: **every
+4. **The upright typed page** (L11) — RULED: **every
    segment's transcription comes from a reading of that segment's own
    extent, on every page.** No path remains where text is produced
    elsewhere and attached; reader agreement is confidence, reader
@@ -96,8 +96,8 @@ The evals assert the CURRENT (matching-era) design's behavior — they are
 acceptance data for that design, not sources for the redesign's
 requirements. Requirement sources: the PRD's verification requirements
 (VR1–VR17), the user's rulings. The multi-reader confidence mechanism
-was wrongly drawn from an eval contract into this table and removed on
-ruling 2026-08-30 (L8 now requires only the uncertainty markup itself).
+was wrongly drawn from an eval contract into this table and removed by
+ruling (L8 now requires only the uncertainty markup itself).
 
 ## What this session's evidence contributes
 
@@ -167,7 +167,7 @@ annotation needs its own box for both reasons. Consecutiveness cannot
 be fully enforced — the machine's understanding of the image is
 limited — so the UX is built around correcting it.
 
-Landed in TRANSCRIPTION-REVIEW-PRD 2026-09-09 as VR19–VR22:
+Landed in TRANSCRIPTION-REVIEW-PRD as VR19–VR22:
 L2→VR15/VR18; L3→VR19 (as amended here); L4→VR19; L5→VR21; L6→VR19;
 L7→VR18+VR19; L8→VR4; L12→VR22. L1, L9, L10, L11 stay TECHSPEC-side
 (the context source, gate granularity, cost, per-segment reading).

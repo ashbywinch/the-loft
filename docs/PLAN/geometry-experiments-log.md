@@ -128,7 +128,7 @@ already tried it and learned why it failed. Append chronologically.
   garbles every cursive line.
 - The selfreport CLI had the same bare-stem filter bug as layout_detect
   ("page-02" never matched "page-02.jpg" — silent no-op, exit 0).
-  FIXED (2026-08-22) — the normalized filter.
+  FIXED — the normalized filter.
 - After the fix + the run: 2 unsure words (violinist, performing) vs 111.
   Page-02 rebuilt: 17 lines, 2 flagged, gates clean, serving — the easy
   letter is ready for the user's in-app verification
@@ -301,7 +301,7 @@ real ink. The experiment (tools/eval_columns.py):
 6. The union-boxes remapped into the page frame.
 
 RESULT: 10 lines, 0 boxless, ~12.5k tokens, ~5 min. The visual
-verification (2026-08-30 correction): an overlay with green strips was
+verification: an overlay with green strips was
 generated and inspected by the AGENT, not by the user — the user never
 saw it, and it must not be cited as user-verified. The boxes measured
 plausibly from the rec's ink, not the model's attention — but the
@@ -686,7 +686,7 @@ building: PP-OCRv6's confidence is MEANINGLESS on cursive — page-10's
 pieces sit at score>=0.85 while reading "Aomeore says we should have"
 for "someone says we should have" (30/32 detections above the gate).
 Score-gating cannot separate the rec's good readings from its garbage;
-agreement would flag 75-90% of cursive lines (the 2026-08-15 finding,
+agreement would flag 75-90% of cursive lines (an earlier finding,
 reproduced). On print (birth cert: 93/93 at 1.0, correct text) the rec
 is a fine reader but agreement only confirms. Verdict: one strong
 reader + one weak reader does not give Consensus Entropy; the
@@ -910,7 +910,7 @@ the dual-pane sync is a state machine (view, floor, offsets, lock)
 whose transitions are environment-driven (the pane aspect decides the
 fit; the render timing decides the offsets) — and the tests covered
 only the pure functions (lineScrollFor, the pan), never the WIRING
-(event -> view -> renderView -> sync -> scrollTop). The 2026-08-26
+(event -> view -> renderView -> sync -> scrollTop). The earlier
 phone fix (the layout-less fractional sync), the resume-floor fix
 (c92dfe0), and this one each patched a link in a chain no test
 covered. The follow test (the wheel -> the transcript scrolls to the
@@ -1006,11 +1006,11 @@ frame, where orli hallucinates) — reopened.
 
 `tools/reader.py` `split_shapes` assigns each ink row to its nearest fitted
 line and cuts where the assignment changes, unless `_is_waist` says the cut
-runs mid-body. User rulings (2026-09-13): eight one-word pins (19583, 4503,
+runs mid-body. User rulings: eight one-word pins (19583, 4503,
 9690, 6475, 5555, 3780, 1970, 683) stay whole; 5514 stays 2 halves; the
 Pupil block reads four words; 23194 / 22082 / 23150 are stacked/gapped pairs.
 
-Baseline (WAIST_RUN=10, WAIST_OVERLAP=0.5), measured 2026-09-14: whole only
+Baseline (WAIST_RUN=10, WAIST_OVERLAP=0.5), measured: whole only
 19583, 3780, 22082. Oversplits: 4503→2, 9690→2, 6475→2, 5555→3, 1970→2,
 683→3, 2723→2, 2911→2, 23194→3, 23150→2, 4847→4. Correct: 2875→2, 5514→2.
 
@@ -1048,9 +1048,9 @@ one-word pins — 4503 (ov 0/17, shift 2.2) cuts first under overlap rules
 yet merges last under shift rules. 2911's seam is vertical (Myra|Hess side
 by side); the row-splitter is the wrong instrument. Next design: vertical
 inter-word-gap split (column projection through the x-height core, width
-bar from the gap histogram — unmeasured as of 2026-09-14).
+bar from the gap histogram — unmeasured).
 
-Status RESOLVED 2026-09-14 (user's eye rulings are ground truth):
+Status RESOLVED (user's eye rulings are ground truth):
 row-splitter kept at baseline; `tests/test_reader.py` pins the live status
 honestly (gate 14 failed / 712 passed: 10 reader pins + 4 pre-existing
 spike-gold). OPEN: the vertical-gap design.
@@ -1123,7 +1123,7 @@ three words (nested-pair test: 33 offenders at baseline).
   for both word tests). Filed as lucidlint issue ashbywinch/lucidlint#22.
 - `boxdet.py` / `boxsimple.py` / `boxscale.py` deleted (the dead predecessor pipeline;
   "boxdet's machinery dies" per boxsimple's own thesis; nothing imported them).
-- User ruling 2026-09-18: **9690** (998,3220,1076,3282) is two words — but the pipeline
+- User ruling: **9690** (998,3220,1076,3282) is two words — but the pipeline
   keeps it one (one fitted line; its inter-word gap scores 0.5, too shallow). OPEN
   targeted fix, deliberately not a new page-wide rule.
 - Numbered zoom renders: `research/spike-word-segmentation/evidence/` via

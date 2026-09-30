@@ -1,8 +1,8 @@
 /**
- * The transcription-review surface (TECH-SPEC §16.16 + the locked wireframe,
- * 2026-08-15): the reviewer checks the machine's drafts against the pages
+ * The transcription-review surface (TECH-SPEC §16.16 + the locked wireframe):
+ * the reviewer checks the machine's drafts against the pages
  * before they are archived. The page image (a plain <img> in a scaled
- * layer — the OpenSeadragon viewer was replaced 2026-08-16, see below)
+ * layer)
  * shows the detector's line boxes; the transcription pane shows the VLM's
  * verbatim lines with the low-confidence words flagged (the transcription
  * model's own self-report, tools/selfreport.py — a word the model is
@@ -17,7 +17,7 @@
  * Phone portrait shows a "turn your phone sideways" prompt; phone
  * landscape splits horizontally (letter full-width on top, words below);
  * tablet/desktop split vertically (letter left, words right) — the locked
- * design (VR8, user 2026-08-15).
+ * design (VR8, user).
  */
 
 import { el } from "../ui.js";
@@ -31,7 +31,7 @@ const EDITS_KEY = "loft-review-edits";
 // -- the reviewer's edits persist (VR9: bounded and resumable) ----------------
 // The confirmed write happens only on the last page, but the fixes must
 // survive an accidental exit mid-document — per (batch, doc), restored on
-// reopen, cleared once the confirmation lands (walk finding 3, 2026-08-15).
+// reopen, cleared once the confirmation lands.
 
 export function loadEdits(batchId, docIndex) {
   try {
@@ -53,7 +53,7 @@ export function reconcileEdits(edits, layout) {
   // stays valid ONLY while the line it belongs to still carries the same
   // text. When the pipeline rebuilds a page and the transcription changes,
   // the old edits must ORPHAN — the reviewer re-verifies the changed lines
-  // (user, 2026-08-22: "keeping the state if the new boxes or guessed
+  // (user: "keeping the state if the new boxes or guessed
   // transcriptions are different would also be bad"). The match is EXACT —
   // a fuzzy re-map (edit distance <=3) attached old corrections to the
   // wrong lines after a rebuild, mixing the user's verified text with the
@@ -84,10 +84,7 @@ export function reconcileEdits(edits, layout) {
 }
 
 /** The layout revisions of every page in a drafts payload — the
- *  rendered page must refresh when the server's revision moves on
- *  (2026-08-22: a layout rebuilt while the page was open stayed stale
- *  until something forced a re-fetch — five copies of a layout, no way
- *  to tell which was newest). */
+ *  rendered page must refresh when the server's revision moves on. */
 export function collectLayoutRevisions(documents) {
   const revisions = {};
   for (const doc of documents || []) {
@@ -180,11 +177,11 @@ function saveCurrentResumePosition(session) {
  * are no line boxes. The margin is the line-0 top: the band anchor\'s
  * half-line margin. */
 export function initialViewRect(layout) {
-  // The WHOLE letter, centered — 2026-08-22 (user: "the first line
+  // The WHOLE letter, centered (user: "the first line
   // appears anchored at the top left, instead of the letter itself being
   // centered so that as we continue on down we can display all the lines
-  // without having to jog the letter left and right"). The first-line
-  // zoom was the wrong anchor: every other line's x-extent needed a jog.
+  // without having to jog the letter left and right"). A first-line
+  // zoom is the wrong anchor: every other line's x-extent needs a jog.
   // The letter's full extent fills the pane; the vertical scroll then
   // reveals the rest with the letter centered the whole way down.
   return contentBounds(layout);
@@ -242,12 +239,10 @@ export function clearRejection(batchId, docIndex) {
 
 /** The document's lines still to check: lines carrying a flagged (conf 0)
  *  word that the reviewer hasn't verified by editing. The review unit is
- *  the LINE — fixing a line clears all its flags (the walk: one edit
- *  dropped six red words) — so the count names the work honestly
- *  (2026-08-15: "254 words" overstated it; the data showed the detector's
- *  rec model is confidently wrong on cursive, and most word-level flags
- *  are that second reader's noise). Pages without a layout have nothing to
- *  check. */
+ *  the LINE — fixing a line clears all its flags — so the count names the
+ *  work honestly (the detector's rec model is confidently wrong on cursive,
+ *  and most word-level flags are that second reader's noise). Pages without
+ *  a layout have nothing to check. */
 export function flaggedCount(documents, docIndex, edits) {
   return flaggedPositions(documents, docIndex, edits).length;
 }
@@ -270,7 +265,7 @@ export function flaggedPositions(documents, docIndex, edits) {
 }
 
 /** The remaining flagged lines per page — the page chips' flag dots
- *  (2026-08-16: the dots make a cross-page jump visible before any
+ *  (the dots make a cross-page jump visible before any
  *  press; the map replaces the hint words). */
 export function flaggedByPage(documents, docIndex, edits) {
   const byPage = {};
@@ -360,15 +355,13 @@ async function retryOutbox() {
 // -- the view -----------------------------------------------------------------
 
 export function render(main, ctx, state) {
-  // The pre-VR10 rotation outbox (`loft-review-rotates`) was an array of
-  // auto-delivered intents that could reorient a page the reviewer never
-  // touched. It is gone — the reviewer's orientation now lives as
-  // { desired, acked } in `loft-review-orientations`, set only by ↻. Drop
-  // any stale legacy entries so they can never re-deliver (2026-08-16).
+  // The reviewer's orientation lives as { desired, acked } in
+  // `loft-review-orientations`, set only by ↻. Drop the stale
+  // `loft-review-rotates` entries so they can never re-deliver.
   localStorage.removeItem("loft-review-rotates");
   if (ctx.arg) {
     // #/review/<batch>/<doc>/<page> — the surface's position lives in the
-    // URL (user 2026-08-16: refreshing the browser must restore the page
+    // URL (user: refreshing the browser must restore the page
     // you're on, not drop you back to the document list). rest is
     // [review, <batch>, <doc>, <page>] — the batch is also ctx.arg.
     const doc = Number(ctx.rest?.[2]);
@@ -386,9 +379,8 @@ function signedOut(main) {
   main.replaceChildren(gateScreen());
 }
 
-/** An error screen is never a dead end (walk finding 2, 2026-08-16: the
- *  PhotoScan 400 left Elaine trapped with no navigation — a non-technical
- *  user cannot be expected to find the browser's back arrow). Every
+/** An error screen is never a dead end (a non-technical user cannot be
+ *  expected to find the browser's back arrow). Every
  *  failure renders the top bar with a back arrow plus the message. */
 function renderError(main, message, backTarget = "home") {
   const root = el("div", { class: "rv" }, [
@@ -413,10 +405,10 @@ async function renderBatchList(main, state) {
     return;
   }
   // a batch with nothing left to review (all boundaries confirmed, or the
-  // registry says so) does not belong on the review hub (user 2026-08-16);
+  // registry says so) does not belong on the review hub (user);
   // the empty message appears only when there is genuinely no review work
   // anywhere — state is always the app state object, so `!state` never
-  // fired and the hub rendered blank (bot review, 2026-08-16)
+  // fires
   const open = batches.filter(
     (b) => b.status !== "confirmed" && (b.boundaries ?? []).some((x) => x.status !== "confirmed"),
   );
@@ -480,7 +472,7 @@ async function renderBatchList(main, state) {
     }
   }
 
-  // Drafts — unfinished stories (user, 2026-08-16: "Drafts ARE review work")
+  // Drafts — unfinished stories (user: "Drafts ARE review work")
   if (state) {
     const allDrafts = draftItems(state.items);
     const signedIn = me(state);
@@ -552,7 +544,7 @@ async function renderBatch(main, batchId, state, initial = null) {
     }
   }
   // Confirmed and rejected documents are not listed — the review list is
-  // the work still to do (user 2026-08-16: "if it WAS confirmed it
+  // the work still to do (user: "if it WAS confirmed it
   // shouldn't be listed"). The original documents index is kept for the
   // confirmation payload (the CLI gate's 1-based boundaries order).
   // apply persisted rejections before filtering
@@ -578,7 +570,6 @@ async function renderBatch(main, batchId, state, initial = null) {
     const chip = el("span", { class: "rv-chip" }, "Awaiting review");
     // the hint that makes a document identifiable: its greeting, or the
     // first line of its first page — never the technical page ids
-    // (walk finding 6, 2026-08-15)
     const hint =
       doc.greeting ||
       (doc.pages[0] && doc.texts?.[doc.pages[0]]
@@ -611,7 +602,7 @@ async function renderBatch(main, batchId, state, initial = null) {
 // -- the review surface -------------------------------------------------------
 
 /** The surface's position lives in the URL (#/review/<batch>/<doc>/<page>)
- * so the browser refresh restores the page you're on (user 2026-08-16:
+ * so the browser refresh restores the page you're on (user:
  * refreshing must never drop you back to a different page). replaceState
  * keeps the flips in-place (fast, selection preserved) while making the
  * position refreshable. */
@@ -682,11 +673,11 @@ function renderSurface(main, session) {
   // pending intent from the outbox (the reviewer's committed fix, restored
   // whether or not the sync has delivered it); a re-render of the SAME
   // page keeps the live value (the presses are uncommitted until the next
-  // navigation — 2026-08-16: front and back end are different boxes; the
+  // navigation — front and back end are different boxes; the
   // backend may be off).
   session.baseRotation = doc.layouts?.[page]?.rotation ?? 0;
   // a page being reworked on the backend must not be shown — land on the
-  // next available page instead (user 2026-08-16: "it shouldn't have
+  // next available page instead (user: "it shouldn't have
   // shown me it at all once we'd established that it needed rework")
   if (isReworking(batch, page)) {
     // land on the next available page after this one — never backward
@@ -723,10 +714,7 @@ function renderSurface(main, session) {
 
   const root = el("div", { class: "rv" });
   // One bar for the whole chrome: back, the document's name, and BOTH
-  // sequences as chips (2026-08-16: the count chip was the extraneous
-  // piece — the same count is already on the Next-flagged badge and the
-  // page dots; the document boundary and the cross-page jump are visible
-  // before any press, so nothing needs explaining).
+  // sequences as chips.
   const topbar = el("div", { class: "rv-topbar" }, [
     el(
       "button",
@@ -812,7 +800,7 @@ function renderSurface(main, session) {
   const imgBox = el("div", { class: "rv-imgbox" });
   imgPane.append(imgBox);
   // the ONLY floating control: the rotate press (the zoom buttons are gone
-  // — fingers pinch, and the buttons got in the way, user 2026-08-16). The
+  // — fingers pinch). The
   // rotate turns the VIEW instantly and queues the correction (the DESIRED
   // rotation, no image) — it commits on navigation and syncs when the
   // archive's computer is reachable (the arbiter cannot read cursive — an
@@ -847,10 +835,10 @@ function renderSurface(main, session) {
   const txBody = el("div", { class: "rv-txb" });
   const txPane = el("div", { class: "rv-txpane" }, [txBody]);
   const split = el("div", { class: "rv-split" }, [imgPane, txPane]);
-  // the dual-pane link (user, 2026-08-16): scrolling the words pans the
+  // the dual-pane link (user): scrolling the words pans the
   // picture so they stay matched (the reverse runs inside renderView)
   txBody.addEventListener("scroll", () => syncImageFromTx(session));
-  // clicking AWAY from a line accepts the open edit (user, 2026-08-16: one
+  // clicking AWAY from a line accepts the open edit (user: one
   // click edits, a click away accepts — the line's own click handles
   // itself and stops propagation)
   txBody.addEventListener("click", (e) => {
@@ -858,15 +846,12 @@ function renderSurface(main, session) {
     acceptEdit(session);
   });
   // The boxes are touchable (the overlay's own click handler) — the
-  // image pane itself does not start edits (2026-08-17: walkthrough
-  // finding — tapping the picture silently edited the text).
+  // image pane itself does not start edits.
 
   // The orientation fix's async half: while the backend re-reads the page's
   // text on the corrected image, the document is greyed with a note and the
   // confirm is blocked — the old text was read from the wrong-way page and
-  // is unreliable (2026-08-16: page-02's first line read "At last venture
-  // this form is the building of a" vs the corrected page's "A new venture
-  // this term is the holding of a"). The reviewer navigates on; a poll
+  // is unreliable. The reviewer navigates on; a poll
   // refreshes the page when the re-read lands.
   const pageState = (batch.processing || {})[page];
   // The re-read's async state, stated honestly (PRD VR10 AC12/AC14): a page
@@ -890,7 +875,7 @@ function renderSurface(main, session) {
   }
   session.pageProcessing = pageState;
 
-  // Fail-fast (2026-08-17): a page whose layout failed validation is
+  // Fail-fast: a page whose layout failed validation is
   // never shown with wrong boxes — the boxes are withheld and the reason
   // is stated loudly. The reviewer must never see boxes that don't
   // correspond to the page.
@@ -906,8 +891,8 @@ function renderSurface(main, session) {
   }
 
   // the honest label: only the LAST page's press confirms — earlier pages
-  // just advance (walk finding 3, 2026-08-15); the page rail is the pager.
-  // The "Next flagged" button is GONE (user, 2026-08-17): the page chips
+  // just advance; the page rail is the pager.
+  // The "Next flagged" button is GONE (user): the page chips
   // carry the flag dots — the reviewer taps the flagged chip to jump.
   const isLastPage = session.pageIndex === doc.pages.length - 1;
   const skipBtn = el(
@@ -957,8 +942,8 @@ function renderSurface(main, session) {
   /** Re-fetch the drafts and re-render when the server's state moved on —
    *  the page's re-read landed (the old transcription is gone, the stale
    *  edits orphan) OR any layout revision changed (a rebuild while the
-   *  page was open — 2026-08-22: five copies of a layout, and the page
-   *  rendered yesterday's boxes until something forced a re-fetch). The
+   *  page was open leaves stale revisions — the rendered page must
+   *  refresh when the server's revision moves on). The
    *  view/selection survive (they live on the session); the edits
    *  reconcile against the new layout at the re-render (the exact-text
    *  rule). Returns true when the surface re-rendered. */
@@ -1011,10 +996,9 @@ function renderSurface(main, session) {
       void refreshBatchState(session);
     }, 5000);
   }
-  // the rebuild-while-open staleness (2026-08-22): when the reviewer
-  // comes back to the tab, re-check the layouts and refresh if the
-  // server's moved on — the only moment the stale geometry matters is
-  // the moment it is looked at.
+  // When the reviewer comes back to the tab, re-check the layouts and
+  // refresh if the server's moved on — the only moment the stale geometry
+  // matters is the moment it is looked at.
   if (currentSession?.visHandler) document.removeEventListener("visibilitychange", currentSession.visHandler);
   session.visHandler = () => {
     if (document.visibilityState === "visible") void refreshBatchState(session);
@@ -1025,13 +1009,10 @@ function renderSurface(main, session) {
 }
 
 // -- the page-image viewer: a plain <img> in a transform-scaled layer --------
-// (2026-08-16: OpenSeadragon 6.1.0's tile pipeline never renders in the
-// headless browsers verification uses, and the surface only exercises a
-// fraction of it — a band of one jpeg, pinned boxes, drag-pan, three zoom
-// buttons. The plain viewer paints in ANY browser — an <img> and a CSS
+// The plain viewer paints in ANY browser — an <img> and a CSS
 // transform — so a screenshot can verify the actual pixels. The view is a
 // rectangle in DISPLAY pixels: the rotated image's own axes, so rotation
-// turns the image AND the boxes together.)
+// turns the image AND the boxes together.
 
 /** The rotation's display frame: display = R·original + (ox, oy), the
  *  image's rotated bounding box in display px (dw × dh). 90° multiples. */
@@ -1076,7 +1057,7 @@ export function bandAnchor(layout) {
  *  first line had no box at all, its ink 83px above the topmost box;
  *  page-02's cursive first line is 60px below its ink), so an anchor at
  *  the topmost box's own top clips the first line and the pan floor hides
- *  it entirely (user 2026-08-16: "the image won't let me scroll up at
+ *  it entirely (user: "the image won't let me scroll up at
  *  all"). Half a line covers the observed shifts; the writing still
  *  dominates the view above it. */
 export function bandMargin(layout) {
@@ -1111,18 +1092,18 @@ export function fitRect(paneW, paneH, rect) {
 }
 
 /** The width-fit — the letter's horizontal extent fills the pane, the
- *  height follows the pane's aspect. The initial view's fit (2026-08-22,
- *  user: "as we continue on down we can display all the lines without
+ *  height follows the pane's aspect. The initial view's fit (user:
+ *  "as we continue on down we can display all the lines without
  *  having to jog the letter left and right"): the whole-letter height-fit
- *  made the letter one screen tall — nothing to pan, tiny text. The
+ *  makes the letter one screen tall — nothing to pan, tiny text. The
  *  width-fit keeps the letter readable AND centered (the x-extent fills
  *  the view), and the vertical scroll reveals the rest. */
 export function widthFitRect(paneW, paneH, rect) {
-  // The height cap (2026-08-28): on a pane taller than the content's
+  // The height cap: on a pane taller than the content's
   // aspect, the aspect-slice exceeds the content — the view shows the
   // WHOLE writing, the pan range is ~0, and the wheel's pan is
   // swallowed (page-01's fit: view 2376px vs writing 2336px, the
-  // range 25px of margin — the third round of the sync bug). Capping
+  // range 25px of margin). Capping
   // the view at 80% of the content guarantees the pan room; the
   // vertical scroll reveals the rest, and the transcript can follow.
   return {
@@ -1133,7 +1114,7 @@ export function widthFitRect(paneW, paneH, rect) {
   };
 }
 
-/** The wheel's two behaviors (2026-08-28): PAN when the view shows a
+/** The wheel's two behaviors: PAN when the view shows a
  *  slice of the writing (the transcript-follow works), ZOOM when the
  *  view shows ~all of the writing's vertical extent — the degenerate
  *  state where the pan can never change the visible line (the
@@ -1174,8 +1155,7 @@ function fitBounds(session, rect) {
 }
 
 /** The page-image pane: the plain <img> with the detector's line boxes as
- *  absolutely-positioned guides inside a transform-scaled layer
- *  (2026-08-16: replaces OpenSeadragon — see the block comment above). */
+ *  absolutely-positioned guides inside a transform-scaled layer. */
 function openViewer(session, imgBox) {
   const { batch, docIndex, pageIndex } = session;
   const doc = batch.documents[docIndex];
@@ -1205,16 +1185,13 @@ function openViewer(session, imgBox) {
     // The layer's coordinate system is IMAGE pixels: it must be explicitly
     // sized to the image, or the absolute-position shrink-to-fit caps it at
     // the pane width and the transform scales it AGAIN — the letter renders
-    // at pane×scale px, a 5× sliver pushed off-pane (walk finding, 2026-08-16:
-    // ElaineWalksReview2 measured the rendered <img> at 95×173px in a
-    // 491×595px pane — "the letter's not there"). The phone's "still not
-    // visible" was this, all along.
+    // at pane×scale px, a 5× sliver pushed off-pane.
     layer.style.width = `${img.naturalWidth}px`;
     layer.style.height = `${img.naturalHeight}px`;
     if (layout) {
       layout.lines.forEach((line) => {
         if (!line.box) return;
-        // a positional box (2026-08-16: the content association found no
+        // a positional box (the content association found no
         // text anchor — the fallback assigned the next unmatched detection
         // in reading order) renders dashed: the geometry is real, the line
         // alignment is approximate — the reviewer must see the difference
@@ -1250,7 +1227,7 @@ function openViewer(session, imgBox) {
         box.classList.toggle("rv-lb--sel", box.dataset.line === String(session.selLine));
       });
       // the page's writing starts at the first line box — the initial band
-      // anchors there (the top margin is blank, user 2026-08-16); a page
+      // anchors there (the top margin is blank, user); a page
       // whose content association found no boxes anchors at the detector's
       // first line instead (page-02 — the rec model cannot read its cursive).
       // The anchor gets a HALF-LINE margin: the rec's detection boxes sit
@@ -1258,10 +1235,10 @@ function openViewer(session, imgBox) {
       // facilities. At the" had NO box — its ink starts 83px above the
       // topmost box; page-02's is 60px above), so without the margin the
       // first line's top is clipped and the pan floor hides it entirely —
-      // the image "wouldn't let me scroll up at all" (user 2026-08-16).
+      // the image "wouldn't let me scroll up at all" (user).
       session.contentTop = bandAnchor(layout) - bandMargin(layout);
     }
-    // Restore the resume position (2026-08-18): the scroll, image view,
+    // Restore the resume position: the scroll, image view,
     // selected line, and read rotation from the last session on this page.
     const saved = loadResumePosition(batch.batchId, page);
     if (saved && saved.docIndex === docIndex && saved.selLine !== undefined) {
@@ -1273,16 +1250,14 @@ function openViewer(session, imgBox) {
         // PAGE's writing-top anchor (the bandAnchor computed above, 0
         // for a layout-less page) — overwriting it with the saved
         // position made the image unable to pan back up, and the
-        // layout-less fractional sync mapped through the wrong range
-        // (2026-08-28: page-01's transcript would not show its top).
+        // layout-less fractional sync mapped through the wrong range.
         session.view = saved.view;
       } else {
         initialView(session, session.contentTop);
       }
       // RenderView fires syncTxFromImage which sets scrollTop from the
       // image view. We set the scrollTop AFTER renderView so our saved
-      // scroll position wins (2026-08-18: walkthrough 3 found that
-      // syncTxFromImage pulled the text back to the top).
+      // scroll position wins.
       if (session.view) renderView(session);
       session.txBody.scrollTop = saved.scrollTop ?? 0;
       // Highlight the selected line without a full renderTx (which would
@@ -1298,8 +1273,7 @@ function openViewer(session, imgBox) {
       initialView(session, session.contentTop);
       // The fit MUST paint before the pan — syncImageFromTx returns early
       // when the y already matches (no render!), leaving the layer
-      // untransformed (2026-08-22: the first visit showed the image at
-      // natural size — the blank top-left — "no text visible").
+      // untransformed.
       renderView(session);
       syncImageFromTx(session);
     } else {
@@ -1315,7 +1289,7 @@ function openViewer(session, imgBox) {
 
   // The pane is HIDDEN while portrait shows the rotate prompt — a fit at
   // open measures a 0-sized pane and lands wrong (the letter becomes a
-  // microscopic strip, user 2026-08-16). Re-fit when the pane resizes to a
+  // microscopic strip, user). Re-fit when the pane resizes to a
   // genuinely visible size, but never fight the reviewer's own pans/zooms
   // after that.
   session.resizer = new ResizeObserver(() => {
@@ -1327,8 +1301,7 @@ function openViewer(session, imgBox) {
       initialView(session, session.contentTop ?? 0);
       // The re-fit must PAINT — the onload's fit may have hit the hidden
       // 0-sized pane and returned without rendering, and this resize is
-      // the pane becoming visible (2026-08-22: the first visit showed the
-      // image at natural size — the blank top-left — "no text visible").
+      // the pane becoming visible.
       renderView(session);
     }
   });
@@ -1338,7 +1311,7 @@ function openViewer(session, imgBox) {
   // and the tester's mouse the same path (touch-action: none keeps the
   // browser from hijacking the pan into a scroll). The move/up listeners
   // live on window so the drag survives the pointer leaving the pane —
-  // and the flow works where pointer capture is flaky (2026-08-16: the
+  // and the flow works where pointer capture is flaky (the
   // verification browser drops the move/up stream after a capture call).
   const pointers = new Map();
   let dragStart = null;
@@ -1350,7 +1323,7 @@ function openViewer(session, imgBox) {
       const s = paneScale(session);
       session.view.x = dragStart.view.x - (e.clientX - dragStart.x) / s;
       session.view.y = dragStart.view.y - (e.clientY - dragStart.y) / s;
-      clampView(session); // never pan into the margins (user 2026-08-16)
+      clampView(session); // never pan into the margins (user)
       session.userMoved = true;
       renderView(session);
     } else if (pointers.size === 2 && pinchStart && session.imgSize) {
@@ -1394,10 +1367,7 @@ function openViewer(session, imgBox) {
     window.addEventListener("pointercancel", onUp);
   };
   imgBox.addEventListener("pointerdown", onDown);
-  // Mouse-wheel pans the image vertically (user, 2026-08-26: "when I
-  // scroll the image the transcript isn't scrolling with it" — there
-  // was NO wheel handler at all: the wheel scrolled the page, the view
-  // never moved, and the dual-pane sync never fired). The pan runs
+  // Mouse-wheel pans the image vertically — the pan runs
   // through renderView, which syncs the transcript.
   imgBox.addEventListener(
     "wheel",
@@ -1406,13 +1376,12 @@ function openViewer(session, imgBox) {
       e.preventDefault();
       // The fit zoom shows the whole writing — the view's height ~=
       // the writing's height, so the pan never changes the visible
-      // line and the transcript can never follow (user, 2026-08-28:
-      // "it STILL doesn't scroll the transcript when you scroll the
-      // image"; page-01's fit: view 2376px vs writing 2336px, the pan
-      // range 25px of margin). When the view shows ~all of the
-      // writing's vertical extent the wheel ZOOMS — the standard
-      // image-viewer behavior — giving the view a pan range, after
-      // which the pan + the transcript-follow work.
+      // line and the transcript can never follow (page-01's fit: view
+      // 2376px vs writing 2336px, the pan range 25px of margin).
+      // When the view shows ~all of the writing's vertical extent the
+      // wheel ZOOMS — the standard image-viewer behavior — giving the
+      // view a pan range, after which the pan + the transcript-follow
+      // work.
       const layout = doc.layouts?.[page];
       if (wheelZoomOrPan(session.view, layout) === "zoom") {
         const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
@@ -1448,7 +1417,7 @@ function openViewer(session, imgBox) {
     const s = paneScale(session);
     const imageX = session.view.x + (e.clientX - rect.left) / s;
     const imageY = session.view.y + (e.clientY - rect.top) / s;
-    // blank margin is a click-away, not a selection (user 2026-08-16)
+    // blank margin is a click-away, not a selection (user)
     const layout = doc.layouts?.[page];
     let idx = null;
     if (layout) {
@@ -1469,7 +1438,7 @@ function openViewer(session, imgBox) {
 
 /** The line whose box's display-y range contains (or sits just below) the
  *  image y — the image-pane-to-transcription mapping (the dual-pane link's
- *  pure half, 2026-08-16). Exported for tests. */
+ *  pure half). Exported for tests. */
 export function lineIndexForY(layout, rotation, imgSize, y) {
   const f = displayFrame(rotation, imgSize.w, imgSize.h);
   let firstBelow = null;
@@ -1483,7 +1452,7 @@ export function lineIndexForY(layout, rotation, imgSize, y) {
 }
 
 /** The transcription scrolled — pan the image so the top visible line's
- *  box sits near the pane's top, at the SAME zoom (user, 2026-08-16: the
+ *  box sits near the pane's top, at the SAME zoom (user: the
  *  panes should show roughly the same text at once; and selecting must
  *  never zoom). */
 function syncImageFromTx(session) {
@@ -1497,8 +1466,8 @@ function syncImageFromTx(session) {
   if (!layout) {
     // A LAYOUT-LESS page (the refused set): no boxes to pan to, but
     // the document still has position — the transcript's scroll
-    // FRACTION maps to the same fraction of the page height (user,
-    // 2026-08-26: "scrolling the transcript still does nothing to the
+    // FRACTION maps to the same fraction of the page height (user:
+    // "scrolling the transcript still does nothing to the
     // image" on the phone — doc 0's refused pages).
     const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
     const span = Math.max(1, txb.scrollHeight - txb.clientHeight);
@@ -1508,8 +1477,8 @@ function syncImageFromTx(session) {
     renderView(session);
     return;
   }
-  // so subtract the pane's own root offset (2026-08-16: comparing them
-  // raw picked a line ~6 rows off on the phone — the panes drifted apart)
+  // so subtract the pane's own root offset (comparing them
+  // raw picks a line ~6 rows off on the phone — the panes drift apart)
   const base = txb.offsetTop;
   let topEl = null;
   for (const el of txb.querySelectorAll(".rv-line")) {
@@ -1541,7 +1510,7 @@ function syncImageFromTx(session) {
   // a LARGE movement (a selection jump, the initial align) eases out —
   // never a dislocating leap (P18); the per-event scroll-follow steps are
   // small and the 60fps scroll events smooth them, so the transition only
-  // lags the follow (2026-08-16)
+  // lags the follow.
   if (Math.abs(session.view.y - y) > 150) {
     session.layer.classList.add("rv-layer--smooth");
     setTimeout(() => session.layer?.classList.remove("rv-layer--smooth"), 220);
@@ -1557,12 +1526,11 @@ function syncImageFromTx(session) {
  *  DIRECT, not smooth: the image drag is direct manipulation and must
  *  track 1:1 (P18 — no dislocating moves). The sync guard is held until
  *  the NEXT frame so the programmatic scroll's own events cannot re-trigger
- *  the image-side sync and fight the drag (2026-08-16: the guard cleared
- *  too early — the panes ping-ponged, "jumps about disconcertingly" — the
- *  established dual-pane pattern: isSyncing + requestAnimationFrame). */
+ *  the image-side sync and fight the drag — the established dual-pane
+ *  pattern: isSyncing + requestAnimationFrame. */
 export function lineScrollFor(viewY, layout, frame, offsets) {
-  // The transcript shows the LINE at the image's view top (2026-08-22,
-  // user: the proportional fraction "tracks along but doesn't display the
+  // The transcript shows the LINE at the image's view top (user:
+  // the proportional fraction "tracks along but doesn't display the
   // actual line from the image"). The physical y selects the line whose
   // box is there (the first below when the view sits in a gap), and the
   // transcript scrolls to THAT line's offset — the transcript's top is
@@ -1596,8 +1564,7 @@ function syncTxFromImage(session) {
   const layout = doc.layouts?.[page];
   if (!layout) {
     // The refused set's fractional mirror: the view's fraction of the
-    // page height maps to the transcript's scroll fraction (user,
-    // 2026-08-26 — the phone report).
+    // page height maps to the transcript's scroll fraction (user).
     const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
     const span = Math.max(1, txb.scrollHeight - txb.clientHeight);
     const frac = Math.min(1, Math.max(0, session.view.y / Math.max(1, f.dh - session.view.height)));
@@ -1611,12 +1578,10 @@ function syncTxFromImage(session) {
     return;
   }
   const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
-  // The offsets are re-queried AT the sync (2026-08-28): the query,
+  // The offsets are re-queried AT the sync: the query,
   // the target, and the scrollTop assignment are synchronous — no
-  // render can interleave — so the cached copy added staleness (a
-  // render after the cache with different content) without protection
-  // (the 2026-08-22 render-between-query bug needs an async gap the
-  // sync no longer has).
+  // render can interleave — so the cached copy adds staleness (a
+  // render after the cache with different content) without protection.
   const base = txb.offsetTop;
   const offsets = [...txb.querySelectorAll(".rv-line")].map((el) => el.offsetTop - base);
   const target = lineScrollFor(session.view.y, layout, f, offsets);
@@ -1629,7 +1594,7 @@ function syncTxFromImage(session) {
 }
 
 /** Clamp the view to the content's bounds — a pan can never scroll off
- *  into the blank top margin (user, 2026-08-16: "it allows me to scroll
+ *  into the blank top margin (user: "it allows me to scroll
  *  off the top"). The y-floor is the writing's top (the band anchor); the
  *  rotated views' floor is the page's own top. */
 function clampView(session) {
@@ -1641,7 +1606,7 @@ function clampView(session) {
 }
 
 /** The whole page back in view — the initial fit and the pane-resize
- *  re-fit (the Fit button is gone, user 2026-08-16 — fingers pinch). The
+ *  re-fit (the Fit button is gone, user — fingers pinch). The
  *  band is pane-aware: on a short pane (the phone) it fits the letter's
  *  WIDTH — the readable view; on a tall pane the whole page. The content
  *  band is a rot-0 notion — after a rotation, fit the whole page. */
@@ -1663,8 +1628,8 @@ function fitPage(session, { markMoved = true } = {}) {
   }
 }
 
-/** Turn the page 90° — a LOCAL view rotation, committed later (2026-08-16:
- *  the front and back end are different boxes and the backend may be off,
+/** Turn the page 90° — a LOCAL view rotation, committed later
+ *  (the front and back end are different boxes and the backend may be off,
  *  so the press never waits on it: the view rotates instantly, and the
  *  correction — the DESIRED rotation, not the image — queues on
  *  navigation and syncs when the backend is reachable. Multiple presses
@@ -1682,7 +1647,7 @@ function rotatePage(session) {
   const base = session.desired ?? baseQuarters(session.baseRotation);
   session.desired = (base + 1) % 4;
   session.rotation = deltaOfDesired(session.desired, session.baseRotation);
-  // The view-only rotate rule (VR15, 2026-08-17): a desired orientation
+  // The view-only rotate rule (VR15): a desired orientation
   // the pipeline already READ rotates the view only — nothing owed, no
   // re-read queued. An uncovered orientation is the signal the first pass
   // missed something: the correction stays owed (acked unchanged) and the
@@ -1697,7 +1662,7 @@ function rotatePage(session) {
   }
   // re-fit the view for the rotated frame — the view rect lives in the
   // previous frame's coordinates, and rendering it through the new frame
-  // drew the page in the wrong place, unreadable (user 2026-08-16: "it's
+  // drew the page in the wrong place, unreadable (user: "it's
   // not drawn in the right place after I rotate it")
   session.readRotation = 0; // the reviewer's own ↻ overrides the per-line read rotation
   fitPage(session, { markMoved: false });
@@ -1739,7 +1704,7 @@ function baseQuarters(baseDeg) {
 }
 
 /** Whether the pipeline has already READ the page at the reviewer's
- *  DESIRED orientation — the view-only rotate rule (2026-08-17, VR15):
+ *  DESIRED orientation — the view-only rotate rule (VR15):
  *  the covered set is the layout's per-line orientations, relative to
  *  the served image; the desired is absolute quarter-turns, so the set
  *  shifts by the backend's applied rotation. A covered rotate changes
@@ -1761,7 +1726,7 @@ export function deltaOfDesired(desiredQuarters, baseDeg) {
 }
 
 /** The combined display rotation: the reviewer's desired orientation plus
- *  the per-line read rotation (2026-08-17: selecting a line whose text
+ *  the per-line read rotation (selecting a line whose text
  *  runs sideways turns the view so that line reads horizontally — a pure
  *  view change, never an owed correction, so the ↻ state is untouched). */
 export function viewRotation(session) {
@@ -1775,7 +1740,7 @@ export function viewRotation(session) {
 
 /** A page being reworked on the backend: its transcription re-read is in
  *  flight (the async treat after a rotate) — it must not appear in the
- *  review flow until the backend has updated it (user 2026-08-16: "it
+ *  review flow until the backend has updated it (user: "it
  *  shouldn't have shown me it at all once we'd established that it needed
  *  rework on the back end"). A page the reviewer merely reoriented is
  *  shown as its desired orientation (VR10) — reworking is about the text,
@@ -1945,17 +1910,14 @@ async function rereadPage(session) {
 
 /** The default view: on a short pane (the phone's horizontal split) the
  *  whole-page fit is a keyhole — fit the letter's WIDTH to the pane so a
- *  readable band shows and the reviewer pans vertically (walk finding 8,
- *  2026-08-15). The band is positioned at the page's CONTENT, not its top —
- *  a scanned page's top margin is blank, and the first fit showed empty
- *  paper (user 2026-08-16: "I don't see any of the actual document").
+ *  readable band shows and the reviewer pans vertically. The band is
+ *  positioned at the page's CONTENT, not its top — a scanned page's top
+ *  margin is blank, and a fit to the top shows empty paper.
  *  Tall panes keep the whole page in view. Records the pane size it fitted
  *  against, so the resize handler can tell a real change from noise. */
 /** The default view: show the FULL bounding box of all line boxes so the
- *  reviewer sees the entire card at once (the walkthrough finding — the
- *  postcard's header was visible but the message was off-screen and
- *  unreachable via pan). On very wide/thin pages the zoom fills the pane
- *  width with the full height visible. */
+ *  reviewer sees the entire card at once. On very wide/thin pages the
+ *  zoom fills the pane width with the full height visible. */
 function initialView(session, contentTop = 0) {
   if (!session.imgSize) return;
   session.lastFitSize = [session.imgBox.clientWidth, session.imgBox.clientHeight];
@@ -1984,7 +1946,7 @@ function syncSelection(session, lineIndex) {
   });
 }
 
-/** Accept the open edit — the user's model (2026-08-16): one click edits,
+/** Accept the open edit — the user's model: one click edits,
  *  a click away ACCEPTS; there is no separate save button. */
 function acceptEdit(session) {
   if (session.editing === null) return;
@@ -1997,7 +1959,7 @@ function acceptEdit(session) {
   }
 }
 
-/** One click on a line enters edit mode (user, 2026-08-16 — no separate
+/** One click on a line enters edit mode (user — no separate
  *  select-then-edit): the prior edit, if any, accepts first. The line's
  *  box stays highlighted and the dual-pane link keeps its image region in
  *  view at the same zoom (never a surprise zoom). */
@@ -2006,7 +1968,7 @@ function startEdit(session, lineIndex) {
   syncSelection(session, lineIndex);
   session.editing = lineIndex;
   // the per-line read rotation: a line whose text runs sideways turns the
-  // view so it reads horizontally (2026-08-17, VR15 — the postcard's 270°
+  // view so it reads horizontally (VR15 — the postcard's 270°
   // message must be readable without pressing ↻). Pure view: the ↻ state
   // (desired/acked) is untouched.
   const doc = session.batch.documents[session.docIndex];
@@ -2015,12 +1977,10 @@ function startEdit(session, lineIndex) {
   const orientation = line?.orientation ?? 0;
   // the pass at orientation D reads its text with the image rotated CSS D°
   // (pass_at rotates -D in PIL = D in CSS) — the display rotation is the
-  // orientation itself, not its mirror (2026-08-17: (360-O) put the 270°
-  // message upside down)
+  // orientation itself, not its mirror
   session.readRotation = orientation;
-  // Zoom the image to the focused line (2026-08-20 — the recorded "never
-  // zoom" decision is superseded: the reviewer must SEE the line's
-  // original at a readable scale, not just a same-zoom pan). The line
+  // Zoom the image to the focused line: the reviewer must SEE the line's
+  // original at a readable scale, not just a same-zoom pan. The line
   // fills the pane with a margin; the read rotation is already in the
   // frame. A boxless line keeps the old turn-only view.
   if (line?.box && session.imgBox?.clientWidth && session.view) {
@@ -2043,17 +2003,17 @@ function startEdit(session, lineIndex) {
 
 /** Apply the line's corrected text — the line is now verified (its flags
  *  stop counting), the fix persists (resumable, VR9), and the flag tour
- *  continues AFTER this line (walk finding 2, 2026-08-15). */
+ *  continues AFTER this line. */
 function applyEdit(session, lineIndex, text) {
   const { batch, docIndex, pageIndex } = session;
   const doc = batch.documents[docIndex];
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page] || null;
-  // The edit records what it CHANGED FROM (2026-08-28): the reconcile's
+  // The edit records what it CHANGED FROM: the reconcile's
   // exact-match must compare the line's CURRENT text against the
-  // ORIGINAL — matching against the correction itself could never hold,
-  // so every correction was orphaned at the next render and the user's
-  // edits never applied. The layout-less pages (no line) record an
+  // ORIGINAL — matching against the correction itself can never hold, so
+  // every correction would orphan at the next render and the user's
+  // edits would never apply. The layout-less pages (no line) record an
   // empty original; their edits are never reconciled.
   const line = layout?.lines.find((l) => l.index === lineIndex);
   const original = line?.text ?? "";
@@ -2069,17 +2029,17 @@ function applyEdit(session, lineIndex, text) {
   // is NOT the top visible row (a line above it is still in view): three
   // rows visible and the SECOND is ticked → scroll up a line so the next
   // line becomes the middle row and the image (through the dual-pane
-  // link) shows its original centered (user 2026-08-16: "if I can see
+  // link) shows its original centered (user: "if I can see
   // three rows of transcription and I tick the second one, it should
   // scroll up a line, with nice animation and ease"). A TOP-row accept
   // holds — the next line is already the second row. Without any of this
   // the browser's scroll-anchoring (the edit row shrinks on accept)
-  // drifted the view UP (user 2026-08-16, earlier).
+  // drifts the view UP (user).
   // The advance fires ONLY when the next line continues physically BELOW:
   // the page's marginal notes sit far ABOVE the reading order (line 28's
-  // box at y2725 vs line 27's at y4142) — advancing to one yanked the
-  // image "WAY up to quite near the beginning again" (user 2026-08-16).
-  // A note's accept holds the view instead; the reviewer scrolls on.
+  // box at y2725 vs line 27's at y4142) — advancing to one yanks the
+  // image far back up. A note's accept holds the view instead; the
+  // reviewer scrolls on.
   requestAnimationFrame(() => {
     const txb = session.txBody;
     const el = txb?.querySelector(".rv-line--sel");
@@ -2100,7 +2060,7 @@ function applyEdit(session, lineIndex, text) {
 
 /** Mark a flagged line as CHECKED without changing its text — the line is
  *  verified (its flags stop counting) and the verbatim text stays in the
- *  confirmation (user, 2026-08-16: a line can be fine even with red
+ *  confirmation (user: a line can be fine even with red
  *  squiggles on it). The shared verified path: the edit is the line's own
  *  text. */
 function applyMarkedFine(session, lineIndex) {
@@ -2114,16 +2074,15 @@ function applyMarkedFine(session, lineIndex) {
     return;
   }
   // A LAYOUT-LESS page (the refused set — doc 0's pages): the surface
-  // falls back to the raw guess lines, which still get approve buttons.
-  // The old code silently returned here — the FIRST click did nothing
-  // (user, 2026-08-26: "the check boxes don't work the first time").
+  // falls back to the raw guess lines, which still get approve buttons —
+  // the first click must apply, never silently return.
   const fallback = (doc.texts?.[page] || "").split("\n").filter(Boolean);
   const text = fallback[lineIndex];
   if (text !== undefined) applyEdit(session, lineIndex, text);
 }
 /** Wrap the input's selection in a format marker (~~ strike, ~ underline)
  *  and keep the selection on the wrapped text — the edit row's format
- *  buttons (2026-08-16). With no selection, drop the markers at the cursor
+ *  buttons. With no selection, drop the markers at the cursor
  *  with the cursor between them. */
 function wrapSelection(input, marker) {
   const s = input.selectionStart;
@@ -2142,10 +2101,10 @@ function wrapSelection(input, marker) {
 
 /** Render a token with its ~~struck~~ spans as line-through text — the
  *  VLM marks crossed-out words with tildes; the reviewer must see them as
- *  crossed out, not literal tildes (walk finding 5, 2026-08-15). */
+ *  crossed out, not literal tildes. */
 /** Exported for tests: the format split of a token — ~~struck~~ (the
- *  crossed-out words) and ~underlined~ (underlined in the letter, user
- *  2026-08-16) — the surface renders them, never literal tildes. */
+ *  crossed-out words) and ~underlined~ (underlined in the letter, user)
+ *  — the surface renders them, never literal tildes. */
 export function formatParts(text) {
   const parts = [];
   const re = /~~([^~]+)~~|~([^~]+)~/g;
@@ -2181,8 +2140,8 @@ function wordNode(word, { flagged, onclick }) {
 /** Render the transcription pane: verbatim lines, flagged words, the
  *  selected line highlighted, the editing line as an input. The scroll
  *  position survives the re-render — replacing the children resets it,
- *  which drifted the panes apart until the next scroll re-aligned them
- *  (user 2026-08-16: "the two views got out of sync somehow"). */
+ *  which drifts the panes apart until the next scroll re-aligns them
+ *  (user: "the two views got out of sync somehow"). */
 function renderTx(session) {
   const { batch, docIndex, pageIndex } = session;
   const doc = batch.documents[docIndex];
@@ -2190,7 +2149,7 @@ function renderTx(session) {
   const layout = doc.layouts?.[page] || null;
   const pageEdits = session.edits[page] || {};
   // reconcile edits when the layout changed (different line indices, new
-  // pipeline run) — stale edits are re-mapped by text or dropped (2026-08-18)
+  // pipeline run) — stale edits are re-mapped by text or dropped
   const reconciled = reconcileEdits(pageEdits, layout);
   if (reconciled !== pageEdits) {
     session.edits[page] = reconciled;
@@ -2212,7 +2171,7 @@ function renderTx(session) {
     const shown = corrected?.text ?? corrected ?? line.text;
     const sel = session.selLine === line.index ? " rv-line--sel" : "";
     // one dense row: the text + the actions — no number gutter (the line
-    // numbers ate screen real estate for nothing, user 2026-08-16: "why?")
+    // numbers ate screen real estate for nothing — user: "why?")
     const lineEl = el("div", { class: `rv-line${sel}` });
     lineEl.dataset.index = String(line.index); // the dual-pane link's anchor
 
@@ -2221,7 +2180,7 @@ function renderTx(session) {
         class: "rv-wfi",
         value: shown,
         // enterkeyhint "done": the mobile keyboard's action key becomes
-        // Done, which dismisses the keyboard (user 2026-08-16: "no get rid
+        // Done, which dismisses the keyboard (user: "no get rid
         // of keyboard button on the keyboard — is that a setting?")
         enterkeyhint: "done",
         onkeydown: (e) => {
@@ -2235,11 +2194,8 @@ function renderTx(session) {
       });
       lineEl.append(el("div", { class: "rv-wfw" }, [input]));
 
-      // The format controls live IN the edit row — no floating menu
-      // (2026-08-16: the platform's edit menu — cut/copy/paste/select-all —
-      // appears on selection and cannot be suppressed or extended; a second
-      // popup duplicating it was wrong — "two popups looking slightly
-      // different"). The row adds what the platform cannot: the strike and
+      // The format controls live IN the edit row — no floating menu.
+      // The row adds what the platform cannot: the strike and
       // underline conventions. They apply to the current selection; with no
       // selection they drop the markers at the cursor.
       const strikeBtn = el(
@@ -2298,9 +2254,7 @@ function renderTx(session) {
       const textEl = el("span", { class: "rv-lt" });
       // An edited line shows the reviewer's OWN corrected text — the red
       // words are gone (the line is verified). The layout's word buttons
-      // render only for lines the reviewer hasn't touched (walk finding 4,
-      // 2026-08-16: the fix was stored but never displayed — "did it save
-      // or not?").
+      // render only for lines the reviewer hasn't touched.
       if (corrected !== undefined) {
         textEl.append(
           ...formatParts(shown).map((p) =>
@@ -2335,14 +2289,14 @@ function renderTx(session) {
       }
       lineEl.append(textEl);
       // "Mark this line as verified" — a checked line needs no text
-      // change (user, 2026-08-16: the verbatim text counts as
-      // verified). On EVERY line (2026-08-17): the multi-orientation
+      // change (user: the verbatim text counts as
+      // verified). On EVERY line: the multi-orientation
       // pages are provisional — the reviewer checks each line as they
       // read it. The control is the pattern library's LABELLED CHECKBOX
       // (docs/UI.md: "labelled checkbox, obvious state") — the old
-      // icon-only ○/✓ circle with a hover tooltip told a first-time
+      // icon-only ○/✓ circle with a hover tooltip tells a first-time
       // reviewer nothing, and the tooltip is invisible on mobile
-      // (user, 2026-08-28). The label's text names the action; the
+      // (user). The label's text names the action; the
       // checkbox's state shows it. Clicking a checked line unchecks it
       // (the edit is removed).
       const isChecked = corrected !== undefined || pageEdits[line.index] !== undefined;
@@ -2371,8 +2325,7 @@ function renderTx(session) {
           [el("input", { type: "checkbox", checked: isChecked }), el("span", {}, "Verified")],
         ),
       );
-      // every line is clickable — one click enters edit (user, 2026-08-16);
-      // clicking the already-editing line's own input must not re-render
+      // every line is clickable — one click enters edit (user);
       lineEl.addEventListener("click", () => {
         if (session.editing === line.index) return;
         startEdit(session, line.index);
@@ -2395,7 +2348,7 @@ function renderTx(session) {
  *  seam (outbox fallback), then moves on; earlier pages just advance. The
  *  confirmation is blocked while the page's orientation fix is in flight
  *  (the text would be the stale pre-fix reading). */
-/** Skip — advance WITHOUT confirming (user, 2026-08-17: the agreed
+/** Skip — advance WITHOUT confirming (user: the agreed
  *  replacement for the next-red-word button — a way to give up on
  *  something temporarily). The page, and on the last page the document,
  *  stays unconfirmed — the reviewer can come back to it. */
@@ -2445,7 +2398,7 @@ async function confirmNext(session) {
   if (session.pageIndex < doc.pages.length - 1) {
     // advance to the next AVAILABLE page — a page being reworked on the
     // backend is skipped (the reviewer must get past it to the next one,
-    // user 2026-08-16)
+    // user)
     const next = nextAvailableAfter(doc, batch, session.pageIndex);
     session.pageIndex = next === -1 ? session.pageIndex + 1 : next;
     session.selLine = null;
@@ -2477,8 +2430,7 @@ async function confirmNext(session) {
     );
   // advance to the next document still awaiting review — the confirmed/
   // rejected ones stay in the list with their done chips, so a raw
-  // index+1 can land on one and reopen it as a fresh surface (bot
-  // review, 2026-08-16)
+  // index+1 can land on one and reopen it as a fresh surface
   const next = batch.documents.findIndex((d, i) => i > docIndex && d.status !== "confirmed");
   if (next !== -1) {
     setTimeout(() => openReview(session.root, batch, next), 1800);
@@ -2494,8 +2446,7 @@ let currentSession = null; // the live surface (cleanup disconnects its observer
 export function cleanup() {
   // the pane's ResizeObserver and the reprocess poll are the only
   // long-lived resources — the DOM itself is discarded by the router's
-  // replaceChildren (2026-08-16: the OpenSeadragon viewer is gone; a plain
-  // <img> needs no teardown)
+  // replaceChildren
   clearInterval(currentSession?.processingTimer);
   currentSession?.resizer?.disconnect();
   currentSession = null;

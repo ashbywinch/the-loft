@@ -26,7 +26,7 @@ scanner, scans produced by the user on equipment we cannot see, and
 pre-existing piles of scans all become indistinguishable batches downstream.
 
 **R3 — Our records live apart.** Everything we record about the scans —
-status, tracking, derived work — lives in a separate area of our
+labels, status, tracking, derived work — lives in a separate area of our
 own, beside but never inside the user's scan folders. The user's folders
 contain only what the user put there.
 
@@ -41,10 +41,9 @@ both kinds of duplicate: the same file appearing twice, and the same
 physical document scanned again (a re-scan at different settings). It
 surfaces them; it never deletes or merges anything automatically.
 
-**R6 — The scan folder's name is the label.** The name the user gives a
-scan folder is its label; when they enter one it is recorded with the
-arrival, survives the folder being reorganised, and carries into the
-import so it is not re-entered per item.
+**R6 — Pile labels ride through.** An envelope or box label the user
+enters once stays associated with its pile, survives the pile being
+reorganised, and carries into the import so it is not re-entered per item.
 
 **R7 — Capture stages, in trust order.** Each document passes through the
 stages the user does the work in: the raw scan; the scan turned the right
@@ -91,11 +90,6 @@ classifying, transcribing — runs on the machine next to the scanner, so
 the scanner's USB connection is direct. The two stay in sync; a failed
 sync never loses a confirmed transcription.
 
-**R15 — Scan file names carry their timestamp.** Every file the scanner
-writes is named with the scan's timestamp and its position, so scans
-copied or moved between folders never overwrite an unrelated scan. A name
-given to the scan run — or the current date when none is given — names
-only the folder the scans land in, never the files' identity.
 
 ## 3. Acceptance criteria
 
@@ -129,9 +123,7 @@ only the folder the scans land in, never the files' identity.
 10. A multi-page letter is grouped into one document from its greeting
     and sign-off, and the reviewer confirms the grouping with the text
     (R13).
-11. A scan run's files carry the run's timestamp; copying them into a
-    folder that already holds an unrelated scan leaves both files intact
-    (R15).
+
 
 ## 4. Non-goals
 

@@ -192,7 +192,7 @@ spike is judged against them):
   logic gets unit tests the moment it draws).
 - The VLM calls + the gold extractor live in a spike script (not the
   library) until the contract settles.
-## Rulings while starting (2026-09-12) — the definitions that landed
+## Rulings while starting — the definitions that landed
 
 All user rulings:
 

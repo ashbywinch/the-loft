@@ -5,8 +5,8 @@ Newer field precedent: the vision-language model reads the page
 (``tools/vlm.py``, the opencode-go vision role) — verbatim text, token
 usage in a sidecar, and the line geometry the layout pass needs. The
 local detector/recognition stack (kraken/orli/TrOCR/transformers in a
-.venv-htr) is unused — nothing outside it uses the stack, and its
-recognition measured garbage on the family's pages (TECHSPEC §16.14).
+.venv-htr) was removed: its recognition was measured garbage on the
+family's pages (TECHSPEC §16.14) and nothing outside it used the stack.
 """
 
 from __future__ import annotations
@@ -48,7 +48,8 @@ def htr_pages_vlm(
     label: str | None = None,
     store_root: Path = WORK_DIR,
 ) -> None:
-    """The vision-model backend: each page in, verbatim text out, token
+    """The vision-model backend (the local TrOCR stack was removed as
+    unused): each page in, verbatim text out, token
     usage recorded in a sidecar so re-runs skip transcribed pages and
     the cost is auditable.
     ``transcribe`` is the injectable seam (transcribe_image_vlm shape).

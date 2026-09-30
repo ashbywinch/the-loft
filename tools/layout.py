@@ -525,7 +525,7 @@ def _index_lines(layout: dict[str, Any]) -> dict[str, Any]:
     ``line.index``. The pipeline's writers did not all emit it — a line
     without an index made ``lines.find(l => l.index === undefined)``
     match the FIRST line, so one "Verified" tap saved line 0's text as
-    line, over and over (user: "the transcript on screen is just 'A
+    the edit for every row and the whole page rendered as the first
     picture of life in music college' repeated over and over again").
     Readers assign the position when the file lacks it — the
     layouts already on disk load correctly without a rewrite."""

@@ -90,7 +90,6 @@ classifying, transcribing — runs on the machine next to the scanner, so
 the scanner's USB connection is direct. The two stay in sync; a failed
 sync never loses a confirmed transcription.
 
-
 ## 3. Acceptance criteria
 
 1. Scans from our scanner, from the user's separate scanning, and from an
@@ -123,7 +122,6 @@ sync never loses a confirmed transcription.
 10. A multi-page letter is grouped into one document from its greeting
     and sign-off, and the reviewer confirms the grouping with the text
     (R13).
-
 
 ## 4. Non-goals
 

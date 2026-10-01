@@ -18,6 +18,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image, ImageFilter
@@ -815,6 +816,39 @@ def read_page(page_path: Path, trace_dir: Path, split: bool = True) -> list[Box]
     write_outputs(trace_dir, page, final, shapes)
     print(f"boxes: {len(final)} ({len(traced_boxes)} from strokes, {len(final) - len(traced_boxes)} from the detector)")
     return final
+
+
+def rows_for_page(page: Image.Image) -> tuple[list[dict[str, Any]], int, int]:
+    """The page's rows — the fitted writing lines, boxes in page pixels —
+    for the pipeline's reading stage (object-model Phase 1: rows replace
+    the strip stage's layout). The ink mask is measured at the reader's
+    SCALE resolution, so each line's box is scaled back to page pixels.
+    The lines arrive in reading order (top to bottom), text-less; the
+    caller maps the page transcription onto them."""
+    mask = ink_mask(page)
+    writing = Writing.of(mask, [])
+    lines: list[dict[str, Any]] = []
+    for index, line in enumerate(writing.lines):
+        if not line.shapes:
+            continue
+        xs = [s.x0 for s in line.shapes] + [s.x1 for s in line.shapes]
+        ys = [s.y0 for s in line.shapes] + [s.y1 for s in line.shapes]
+        lines.append(
+            {
+                "index": index,
+                "text": "",
+                "box": [
+                    min(xs) * SCALE,
+                    min(ys) * SCALE,
+                    max(xs) * SCALE,
+                    max(ys) * SCALE,
+                ],
+                "orientation": 0,
+                "box_source": "reader",
+                "words": [],
+            }
+        )
+    return lines, page.width, page.height
 
 
 def main(argv: list[str] | None = None) -> int:

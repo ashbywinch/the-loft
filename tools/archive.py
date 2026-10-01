@@ -22,8 +22,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast, final
 
-from tools.demo_data import create_demo
-from tools.document_capture import capture_demo_documents, capture_document
 from tools.memory import Knowledge, Memory, StoryRequest
 from tools.projection import Projection, projection_json
 from tools.records import (
@@ -656,28 +654,6 @@ class Archive:
         """Regenerate the projection (app/data) from the archive — the
         curator's publish act; the derivation is Projection's machinery."""
         Projection(self, data_dir).build()
-
-    def create_demo(self) -> None:
-        """Seed a demo archive with the fictional demo content (fictional
-        only, never real names). The projection follows from a separate
-        ``publish()`` — the CLI's create-demo chains seed then publish to
-        the demo's own data dir, never app/data."""
-        create_demo(self)
-
-    def capture_document(self, scans: Path) -> None:
-        """Capture the scanned documents (the 2001 email; the interview
-        demo's documents) — idempotent, proposed records for the review
-        seam. `loft capture-document`."""
-        # the record book first: the email's corrections patch people the
-        # record book creates the confirmed cast (ids come from the dataset) — on
-        # a fresh archive the reverse order KeyErrors
-        capture_demo_documents(self, scans)
-        capture_document(self, scans)
-        # the session the import leaves behind (user): the
-        # document import stays pending until its proposed people are
-        # confirmed or dismissed — the front page shows the session, and
-        # refresh_import_status() completes it when nothing is pending
-        self._ensure_import_session()
 
     def _ensure_import_session(self) -> None:
         """Idempotent: write the pending document-import session once — the

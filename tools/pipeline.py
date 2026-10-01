@@ -34,15 +34,15 @@ from tools.ai_client import AIClient, AIClientError
 from tools.classify import route, run_classify
 from tools.grouping import score_boundaries
 from tools.htr import htr_pages_vlm
-from tools.layout_stage import run_layout as layout_stage_run
 from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR
 from tools.ocr import orient_pages
 from tools.pipeline_store import PipelineStore, text_sha256
+from tools.reader import rows_for_page
 from tools.registry import RegistryError as PipelineError
 from tools.registry import load_batch, record_path
 from tools.store import DiskStore, StoreError  # noqa: F401
 from tools.sync import record_confirmation
-from tools.vlm import VlmError, line_orientation_degrees, orientation_report
+from tools.vlm import VlmError, line_orientation_degrees
 
 PAGE_LIMIT = 30  # one guess call per batch; beyond this the context is too big — chunking is future work
 GUESS_PAGE_CHUNK = 5  # the guess re-emits each page's corrected text; the OUTPUT size binds — 5 pages of
@@ -189,7 +189,7 @@ def apply_routes(classify: dict[str, Any], rotations: dict[str, Any]) -> dict[st
 
 def _guess_is_stale(text_pages: list[str], raw_dir: Path, guess_dir: Path, boundaries_path: Path) -> bool:
     """Is the existing guess stale? Two failure modes: (1) individual page
-    .txt files were cleared (a bad layout_detect run) — the boundaries may
+    .txt files were cleared (a bad read run) — the boundaries may
     exist while the artifacts they promise are gone; (2) the RAW
     transcriptions the guess was built from changed (a re-orientation
     regenerated ocr-raw) — the recorded input fingerprints no longer
@@ -242,6 +242,49 @@ def _guess_inputs_changed(text_pages: list[str], raw_dir: Path, boundaries_path:
 
 # a single call site — the stage paths and DI seams are the caller's locals
 # lucidlint: ignore long-param-list a parameter object would be ceremony for one entry point
+def _read_pages(
+    text_pages: list[str],
+    guess_dir: Path,
+    oriented_dir: Path,
+    work_dir: Path,
+    batch_id: str,
+) -> None:
+    """The reading stage: each text page's rows (line boxes from the
+    fitted-lines chain) with the page's guess text mapped onto them in
+    order. Written as ``<page>.rows.json`` beside the guess; the review's
+    draft seam reads the rows, falling back to a strip-era ``layout.json``
+    for batches read before this change."""
+    store = PipelineStore(work_dir)
+    for page in text_pages:
+        rows_path = guess_dir / f"{Path(page).stem}.rows.json"
+        if rows_path.exists():
+            continue
+        image_path = oriented_dir / page
+        if not image_path.is_file():
+            continue
+        lines, width, height = rows_for_page(Image.open(image_path))
+        text_path = guess_dir / Path(page).with_suffix(".txt")
+        if text_path.is_file():
+            text_lines = [ln for ln in text_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        else:
+            text_lines = []
+        for i, line in enumerate(lines):
+            line["text"] = text_lines[i] if i < len(text_lines) else ""
+        payload = {
+            "page": page,
+            "width": width,
+            "height": height,
+            "rotation": 0,
+            "revision": 1,
+            "lines": lines,
+        }
+        store.write(
+            f"{batch_id}/ocr-guess/{Path(page).stem}.rows.json",
+            json.dumps(payload, indent=1, ensure_ascii=False) + "\n",
+        )
+        print(f"read: {page} -> {len(lines)} rows")
+
+
 def process(
     batch_id: str,
     *,
@@ -250,11 +293,9 @@ def process(
     archive_dir: Path = ARCHIVE_DIR,
     client: Callable[[str, str], str] | None = None,
     orientation_report_fn: Callable[[Path, str], dict[str, Any]] | None = None,
-    run_layout: Callable[[str, Path], None] | None = None,
 ) -> None:
     """Classify → orient (text pages) → route → HTR/tesseract → guess →
-    layout (boxes + flags; the multi-orientation pages get the combined
-    per-line layout) → review."""
+    read (the page's rows: line boxes + text per row) → review."""
     record = load_batch(batch_id, registry_dir)
     folder = Path(str(record["path"]))
     if not folder.is_dir():
@@ -319,18 +360,10 @@ def process(
             client,
         )
 
-    # 6. layout stage (VR14 — every text page gets line boxes + per-word
-    # confidence; VR15 — the multi-orientation pages get the combined
-    # per-line-orientation layout). The vision-model orientation report
-    # runs only for the arbiter-ambiguous pages; the pass itself runs
-    # on the main venv — the §16.17 single pass (2026-09-06: the
-    # .venv-htr/paddle engine left the layout path).
-    report = orientation_report_fn if orientation_report_fn is not None else orientation_report
-    # the module-level run_layout (tools.layout_stage) — the DI param of
-    # the same name shadows it inside process, so resolve before use
-    layout_runner = run_layout if run_layout is not None else layout_stage_run
-    _write_orientation_hints(text_pages, batch_work, oriented_dir, guess_dir, report)
-    layout_runner(batch_id, work_dir)
+    # 6. read the pages into rows (object-model Phase 1: the strip
+    # stage's layout is gone — the reading is the marks → fitted-lines
+    # chain, and the page's guess text maps onto the rows in order).
+    _read_pages(text_pages, guess_dir, oriented_dir, work_dir, batch_id)
 
     _update_status(record, batch_id, STATUS_REVIEW, registry_dir)
     print(f"batch {batch_id} awaiting review (make confirm ARGS={batch_id!r})")
@@ -958,21 +991,6 @@ def _regen_boundaries(
     reg_store.write(f"{batch_id}.json", json.dumps(record, indent=1, ensure_ascii=False) + "\n")
 
 
-def cmd_layout(batch_id: str, pages: list[str], work_dir: Path, registry_dir: Path) -> int:
-    """Surgical recovery (2026-08-20): run the layout stage for specific
-    pages only. The layout stage (the §16.17 single pass, on the main
-    venv) is the
-    slowest stage — re-running it for the whole batch to fix one page is
-    wasteful. Delegates to the layout stage's own page filter and its
-    fail-loud missing-input check."""
-    try:
-        layout_stage_run(batch_id, work_dir, pages or None)
-    except Exception as exc:  # lucidlint: ignore broad-except the subprocess surfaces its exit as CalledProcessError
-        print(f"layout: stage failed: {exc}", file=sys.stderr)
-        return 1
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pipeline", description="The ingest chain per batch")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -983,16 +1001,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("batch_id")
     p.add_argument("pages", nargs="*", help="page names (e.g. page-02); empty = all cursive pages")
     p.set_defaults(fn=cmd_guess)
-    p = sub.add_parser("layout", help="surgical recovery: layout specific pages only")
-    p.add_argument("batch_id")
-    p.add_argument("pages", nargs="*", help="page names (e.g. page-02); empty = all pages")
-    p.set_defaults(fn=cmd_layout)
     p = sub.add_parser("review", help="user confirmation gate for the guessed text")
     p.add_argument("batch_id")
     p.set_defaults(fn=review)
     args = parser.parse_args(argv)
     try:
-        if args.command in ("guess", "layout"):
+        if args.command == "guess":
             args.fn(args.batch_id, args.pages, WORK_DIR, REGISTRY_DIR)
         else:
             args.fn(args.batch_id)

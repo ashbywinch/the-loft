@@ -6,7 +6,6 @@ backend records. This module is the shared contract:
 - the frontend's ``Outbox`` — the catch-up backlog for real-time pushes
   that failed (the laptop was off); the backend pulls it and the website
   marks items received;
-- ``Batch.draft_payloads`` — the machine drafts the review surface reads.
 
 Nothing confirmed is ever lost to a failed push.
 """
@@ -28,18 +27,19 @@ from tools.htr import htr_pages_vlm
 from tools.layout import (
     build_layout,
     layout_detections,
-    load_layout,
     load_layout_store,
     rotate_detections,
     validate_layout,
     write_layout_store,
 )
-from tools.layout_stage import run_layout
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.pipeline_store import PipelineStore
+from tools.reader import rows_for_page
 from tools.registry import load_batch, record_path
 from tools.store import DiskStore  # noqa: F401
 from tools.vlm import orientation_report, selfreport_words
+
+ROWS_JSON = "rows.json"  # the reading's rows file beside the guess (object-model Phase 1)
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +196,14 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
         layouts = {}
         layout_errors = {}
         for page in pages:
+            rows_path = guess_dir / Path(page).with_suffix(f".{ROWS_JSON}")
+            if rows_path.exists():
+                # the reading's rows — the object-model Phase-1 source;
+                # already the shape the review surface consumes
+                layouts[page] = json.loads(rows_path.read_text(encoding="utf-8"))
+                continue
+            # strip-era fallback: batches read before the rows redirect
+            # keep their layout.json, still validated before serving
             layout_path = guess_dir / Path(page).with_suffix(".layout.json")
             if not layout_path.exists():
                 continue
@@ -290,86 +298,127 @@ def _recover_crashed_layout(
     return layout
 
 
+def _recover_crashed_rows(
+    journal_path: Path,
+    rows: dict[str, Any],
+    image_path: Path,
+    rows_path: Path,
+) -> None:
+    """Complete a half-rotated crash for a rows reading: advance the rows'
+    boxes to the journal's recorded intent so they never silently
+    misalign with the rotated image. An unreadable journal abandons
+    recovery (logged) and the stale rows stand; the caller computes the
+    delta from them."""
+    try:
+        journal = json.loads(journal_path.read_text(encoding="utf-8"))
+        intended = int(journal.get("rotation", 0)) % FULL_ROTATION_DEGREES
+        stale = int(journal.get("from", 0)) % FULL_ROTATION_DEGREES
+        if int(rows.get("rotation", 0)) % FULL_ROTATION_DEGREES == stale:
+            image = ImageOps.exif_transpose(Image.open(image_path))
+            if image.width == int(rows.get("width", 0)) and image.height == int(rows.get("height", 0)):
+                # the crash happened BEFORE the image swap — the rows are
+                # still consistent with the current image
+                journal_path.unlink(missing_ok=True)
+                return
+            recovery = (intended - stale) % FULL_ROTATION_DEGREES
+            steps = recovery // QUARTER_TURN_DEGREES
+            width, height = int(rows.get("width", image.width)), int(rows.get("height", image.height))
+            for _ in range(steps):
+                for line in rows["lines"]:
+                    x0, y0, x1, y1 = line["box"]
+                    line["box"] = [height - y1, x0, height - y0, x1]
+                width, height = height, width
+            rows["rotation"] = intended
+    except (OSError, json.JSONDecodeError, ValueError) as e:
+        logger.warning("sync: unreadable rotation journal %s — recovery abandoned: %s", journal_path, e)
+        journal_path.unlink(missing_ok=True)
+
+
 def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool:
     """Apply a reviewer's orientation correction: rotate the oriented page
-    clockwise by ``quarters`` × 90° and re-anchor its layout in place
+    clockwise by ``quarters`` × 90° and re-anchor its reading in place
     (2026-08-16 — the orientation arbiter cannot read cursive, so an
     upside-down page passes review; the fix must correct the pipeline's
-    data, not just the view). The rotation is a rigid remap of the
-    detection boxes — no re-OCR — and the transcription is
-    rotation-invariant content (the same words, rotated), so only the
-    image and the layout change. The layout records the CUMULATIVE applied
-    rotation ("rotation": degrees CW), so the sync's intents can be the
-    DESIRED cumulative and the delta is computed here — idempotent and
-    order-safe across offline queues (a retried intent is a no-op).
-    Returns whether anything rotated (the caller only reprocesses when it
-    did). Both writes are atomic — a reader never meets a half-rotated
-    page."""
+    data, not just the view). The rotation is a rigid remap of the line
+    boxes — no re-OCR — and the transcription is rotation-invariant
+    content (the same words, rotated), so only the image and the reading
+    change. The reading records the CUMULATIVE applied rotation
+    ("rotation": degrees CW), so the sync's intents can be the DESIRED
+    cumulative and the delta is computed here — idempotent and order-safe
+    across offline queues (a retried intent is a no-op). Returns whether
+    anything rotated (the caller only reprocesses when it did). Both
+    writes are atomic — a reader never meets a half-rotated page. The
+    rows reading is the source (object-model Phase 1); batches read by
+    the strip stage keep their layout.json path."""
     if not BATCH_ID.match(batch_id) or not safe_page_name(page):
         raise ValueError("invalid batch or page name")
     quarters = int(quarters) % QUARTERS_PER_TURN
     image_path = work_dir / batch_id / "oriented" / page
+    rows_path = work_dir / batch_id / "ocr-guess" / Path(page).with_suffix(f".{ROWS_JSON}")
     layout_path = work_dir / batch_id / "ocr-guess" / Path(page).with_suffix(".layout.json")
     if not image_path.is_file():
         raise ValueError(f"no such page: {page}")
-    if not layout_path.is_file():
-        raise ValueError(f"no layout for {page} — the layout pass must run before a rotate")
-    layout = load_layout_store(PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
-    # A crash between the image swap and the layout write leaves the image
-    # rotated while the layout still carries the old rotation and boxes —
-    # the pair is not transactional (bot review, 2026-08-16). The journal
-    # records the intent; the next rotate completes the layout BEFORE the
-    # delta is computed, so the boxes never silently misalign.
+    if not rows_path.is_file() and not layout_path.is_file():
+        raise ValueError(f"no reading for {page} — the read stage must run before a rotate")
     journal_path = work_dir / batch_id / "oriented" / f"{Path(page).stem}.rotate.json"
-    if journal_path.exists():
-        layout = _recover_crashed_layout(journal_path, layout, layout_path, image_path, page, work_dir, batch_id)
-    # the cumulative rotation the page already carries — the intent is the
-    # DESIRED total, so the delta is what we apply now. The desired CAN be
-    # 0 (a reviewer rotating the wrong way back to the original) — the
-    # delta is the no-op check, not the desired itself (2026-08-16: the
-    # early return on quarters==0 silently ignored the rotate-back).
-    current = int(layout.get("rotation", 0)) % FULL_ROTATION_DEGREES
+    if rows_path.is_file():
+        reading = json.loads(rows_path.read_text(encoding="utf-8"))
+        if journal_path.exists():
+            _recover_crashed_rows(journal_path, reading, image_path, rows_path)
+    else:
+        reading = load_layout_store(PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
+        if journal_path.exists():
+            reading = _recover_crashed_layout(journal_path, reading, layout_path, image_path, page, work_dir, batch_id)
+    current = int(reading.get("rotation", 0)) % FULL_ROTATION_DEGREES
     delta = (quarters * QUARTER_TURN_DEGREES - current) % FULL_ROTATION_DEGREES
     if delta == 0:
-        # the recovery may have just completed the layout from a crash —
-        # the journal's job is done either way (2026-08-16)
         journal_path.unlink(missing_ok=True)
         return False
     steps = delta // QUARTER_TURN_DEGREES
     image = ImageOps.exif_transpose(Image.open(image_path))
     rotated = image.rotate(-QUARTER_TURN_DEGREES * steps, expand=True)  # clockwise
     rotated.info.pop("exif", None)
-    detections = rotate_detections(layout_detections(layout), steps, image.width, image.height)
-    selfreport_path = work_dir / batch_id / "ocr-guess" / Path(page).with_suffix(".selfreport.json")
-    selfreport = json.loads(selfreport_path.read_text(encoding="utf-8")) if selfreport_path.exists() else None
-    vlm_text = "\n".join(line["text"] for line in layout.get("lines", []))
-    new_layout = build_layout(
-        layout.get("page", page),
-        rotated.width,
-        rotated.height,
-        vlm_text,
-        detections,
-        selfreport=selfreport,
-    )
-    new_layout["rotation"] = (current + delta) % FULL_ROTATION_DEGREES
-    # Rotation is a rigid remap: the transcription's order is authoritative.
-    # The rebuild's reading-order sort re-sorts by the ROTATED geometry,
-    # which scrambles the text order (2026-08-20 — after a 90° turn both
-    # lines sit in one horizontal band and the x-sort swaps them). Restore
-    # the transcription order: build_layout's index IS the vlm_text
-    # position, so sorting by it is the text order.
-    new_layout["lines"].sort(key=lambda ln: ln["index"])
+    if rows_path.is_file():
+        width, height = int(reading.get("width", image.width)), int(reading.get("height", image.height))
+        for _ in range(steps):
+            lines = []
+            for line in reading["lines"]:
+                x0, y0, x1, y1 = line["box"]
+                line["box"] = [height - y1, x0, height - y0, x1]
+                lines.append(line)
+            reading["lines"] = lines
+            width, height = height, width
+        reading["width"], reading["height"] = rotated.width, rotated.height
+        reading["rotation"] = (current + delta) % FULL_ROTATION_DEGREES
+    else:
+        detections = rotate_detections(layout_detections(reading), steps, image.width, image.height)
+        selfreport_path = work_dir / batch_id / "ocr-guess" / Path(page).with_suffix(".selfreport.json")
+        selfreport = json.loads(selfreport_path.read_text(encoding="utf-8")) if selfreport_path.exists() else None
+        vlm_text = "\n".join(line["text"] for line in reading.get("lines", []))
+        reading = build_layout(
+            reading.get("page", page),
+            rotated.width,
+            rotated.height,
+            vlm_text,
+            detections,
+            selfreport=selfreport,
+        )
+        reading["rotation"] = (current + delta) % FULL_ROTATION_DEGREES
+        reading["lines"].sort(key=lambda ln: ln["index"])
     tmp = image_path.with_name(image_path.name + ".tmp")
     rotated.save(tmp, format=image.format or "JPEG")
     # the journal lands BEFORE the image swap: a crash mid-rotate leaves a
-    # recoverable trail (the next rotate completes the layout) instead of a
-    # silently misaligned page (bot review, 2026-08-16)
+    # recoverable trail (the next rotate completes the reading) instead of
+    # a silently misaligned page (bot review, 2026-08-16)
     atomic_write(
         journal_path,
-        json.dumps({"from": current, "rotation": new_layout["rotation"]}, ensure_ascii=False) + "\n",
+        json.dumps({"from": current, "rotation": reading["rotation"]}, ensure_ascii=False) + "\n",
     )
     tmp.replace(image_path)
-    write_layout_store(new_layout, PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
+    if rows_path.is_file():
+        atomic_write(rows_path, json.dumps(reading, ensure_ascii=False, indent=1) + "\n")
+    else:
+        write_layout_store(reading, PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
     journal_path.unlink(missing_ok=True)
     return True
 
@@ -454,7 +503,6 @@ def reprocess_page_transcription(
     transcribe: Any = None,
     selfreport: Any = None,
     orientation_report_fn: Callable[[Path, str], dict[str, Any]] | None = None,
-    layout_runner: Callable[[str, Path, list[str] | None], None] | None = None,
     people: list[str] | None = None,
     places: list[str] | None = None,
     label: str | None = None,
@@ -478,11 +526,18 @@ def reprocess_page_transcription(
         raise ValueError("invalid batch or page name")
     guess_dir = work_dir / batch_id / "ocr-guess"
     image_path = work_dir / batch_id / "oriented" / page
-    layout_path = guess_dir / Path(page).with_suffix(".layout.json")
-    if not image_path.is_file() or not layout_path.is_file():
-        raise ValueError(f"no such page or layout: {page}")
+    rows_path = guess_dir / Path(page).with_suffix(f".{ROWS_JSON}")
+    if not image_path.is_file():
+        raise ValueError(f"no such page: {page}")
     try:
-        layout = load_layout_store(PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
+        rotation = 0
+        if rows_path.exists():
+            rotation = int(json.loads(rows_path.read_text(encoding="utf-8")).get("rotation", 0))
+        elif (guess_dir / Path(page).with_suffix(".layout.json")).is_file():
+            # strip-era fallback: carry the old layout's recorded rotation
+            layout_path = guess_dir / Path(page).with_suffix(".layout.json")
+            layout = load_layout_store(PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
+            rotation = int(layout.get("rotation", 0))
         # force the re-read: drop the markers the pipeline's skip logic uses
         raw_dir = guess_dir
         for suffix in (".txt", ".vlm.json", ".selfreport.json", ".orientation.json"):
@@ -509,12 +564,21 @@ def reprocess_page_transcription(
         # the fresh orientation report on the CORRECTED image — a
         # multi-direction report writes the sidecar the layout stage reads
         _write_multi_sidecar(page, image_path, raw_dir, new_text, orientation_report_fn)
-        runner = layout_runner if layout_runner is not None else run_layout
-        runner(batch_id, work_dir, [page])
-        new_layout = load_layout(layout_path)
-        if "rotation" in layout:
-            new_layout["rotation"] = layout.get("rotation", 0)
-            write_layout_store(new_layout, PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
+        # the fresh reading on the CORRECTED image — rows, not a layout:
+        # the line boxes come from the marks chain, the text re-mapped
+        rows, width, height = rows_for_page(ImageOps.exif_transpose(Image.open(image_path)))
+        text_lines = [ln for ln in new_text.splitlines() if ln.strip()]
+        for i, line in enumerate(rows):
+            line["text"] = text_lines[i] if i < len(text_lines) else ""
+        new_rows = {
+            "page": page,
+            "width": width,
+            "height": height,
+            "rotation": rotation,
+            "revision": 1,
+            "lines": rows,
+        }
+        atomic_write(rows_path, json.dumps(new_rows, ensure_ascii=False, indent=1) + "\n")
         set_page_job(batch_id, page, None, work_dir)
     # lucidlint: ignore broad-except the stage's terminal boundary — mark failed on ANY error, then re-raise
     except Exception:

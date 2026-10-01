@@ -305,12 +305,16 @@ def investigate(
             f"Reviewer: {who or 'unknown'}",
             f"The claim under review: {claim}.",
             "Known family (the archive's attested facts):\n" + _known_facts(facts),
-            "The reviewer's statement may carry leads worth checking — follow them with the "
-            "tools before concluding. ONLY dig when the statement names people or mentions "
-            "events the archive may attest (a death, a marriage, a place); a statement without "
-            "leads — 'Grandma used to say so', 'I vaguely remember' — needs no tool calls: "
-            "answer directly. When the reviewer mentions a PLACE or an EVENT (a visit, a "
-            "town, a death), search the items for it — do not stop at the people. "
+            "The reviewer's statement is either a recollection or a new claim, and the "
+            "rule that decides digging is exclusive. A LEAD is anything the statement "
+            "names concretely: a person, a place, a town, an event, a death, a marriage, "
+            "or a relationship/kinship claim ('Pearl's brothers', 'a cousin of Grandma', "
+            "'that house in Seascale'). When the statement carries a lead, SEARCH it with "
+            "the tools before concluding — search_items for a place or event, "
+            "person/relationships/attested for named people — and only then decide "
+            "whether the finding changes the disposition. A statement with NO lead — a "
+            "bare recollection that names nothing concrete ('Grandma used to say so', 'I "
+            "vaguely remember') — needs no tool calls: answer directly. "
             "When you have ALREADY spoken in this conversation, the reviewer's latest line "
             "is a NEW statement — it may not answer your earlier question at all: follow "
             "ITS leads, acknowledge what they said, and NEVER repeat your own earlier "

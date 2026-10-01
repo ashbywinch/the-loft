@@ -149,6 +149,21 @@ def test_chat_gives_up_on_persistent_empty_completions() -> None:
         client.chat("s", "u")
 
 
+def test_thinking_burn_retries_without_thinking() -> None:
+    """A thinking completion that burns its whole output budget
+    (finish_reason "length", zero content) is retried ONCE without
+    thinking — the unbounded-reasoner cure, free of the retry budget
+    (the 400/422 thinking-param fallback's shape)."""
+    burned: dict[str, object] = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
+    good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    urlopen, calls = make_fake_urlopen([FakeResponse(burned), FakeResponse(good)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
+    assert client.chat("s", "u", thinking=True) == '{"ok": true}'
+    assert len(calls) == 2
+    assert calls[0]["body"]["thinking"] == {"type": "enabled"}
+    assert calls[1]["body"]["thinking"] == {"type": "disabled"}
+
+
 def test_json_object_takes_the_last_of_multiple_objects() -> None:
     """A reasoning preamble followed by the verdict is the shape the model
     emits — a slice spanning both failed with "Extra data": the LAST

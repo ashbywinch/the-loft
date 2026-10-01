@@ -18,7 +18,6 @@ Working title: **The Loft** (approved by the user; revisitable before launch).
 - **Length note:** this canonical requirements document runs past the
   150–200 line ceiling in `docs/writing-documentation.md` — an explicit,
   documented exception for the requirements doc itself.
-- **Date:** 2026-08-02
 - **Platform:** Tablet-first web app (HTML/CSS/JS), any modern browser — **product is family-agnostic; content is family-specific**
 - **Requirement history (sanitised — family-instance facts live in the private interview records):**
   - **v0.2:** elders cannot be interviewed; the youngest children are the future users; narrators fade

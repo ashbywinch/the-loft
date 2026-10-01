@@ -101,7 +101,14 @@ _TOOLS_DESC = """You can investigate the archive with these READ-ONLY tools:
 
 To call a tool, return ONLY JSON: {"tool": "<name>", "args": {...}}.
 The tool's result will be appended and you may call another. When you have
-enough to answer, return the verdict JSON."""
+enough to answer, return the verdict JSON.
+
+Deliberate in ONE short pass: at most one round of tool calls, and each of
+the four decisions (leads, search, relevance, contradiction) made exactly
+once. Never re-analyse a decision you have already made, never re-plan a
+search you have already planned, and never restate the reviewer's
+statement back to yourself. If you catch yourself repeating a step,
+stop and emit the verdict."""
 
 
 def run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:

@@ -15,7 +15,7 @@ REPO = Path(__file__).resolve().parent.parent
 # to this repo's module contract; the same set ruff and pyrefly exclude.
 # (The code-health tools were vendored here but are now served by lucidlint
 # from its own repo.)
-VENDORED = {"layout_detect.py"}
+VENDORED: set[str] = set()
 
 
 def test_every_tools_module_has_a_docstring() -> None:

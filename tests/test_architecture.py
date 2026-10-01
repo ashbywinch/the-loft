@@ -87,7 +87,6 @@ def test_the_pipeline_layer_routes_data_through_the_store() -> None:
         "pipeline.py",
         "layout.py",
         "layout_apply_selfreport.py",
-        "layout_detect.py",
         "sync.py",
         "htr.py",
         "adopt.py",

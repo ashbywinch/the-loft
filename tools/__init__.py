@@ -8,8 +8,6 @@
 - ``projection`` — the derived app-facing surface (app/data).
 - ``server`` — the archive's one server (serve + the memory-capture API).
 - ``placeholders`` — the honest stand-in assets (paper/photo/object/avatar).
-- ``demo_data`` — fictional demo content (never real names).
-- ``document_capture`` — the scanned-document capture flows.
 - ``ai_client`` — the LLM client.
 - ``cli`` — the one operator surface, reached via the repo-root ``loft``
   wrapper; no per-module ``__main__`` shims (coding-standards.md).

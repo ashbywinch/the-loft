@@ -2,7 +2,7 @@
 outside the repo (the archive's real images are never committed, AGENTS.md).
 
 Used by ``tools/publish`` (a sidecar references a scan that isn't in the
-archive) and by the demo generator (``tools/demo_data``) — one copy of the
+archive) — one copy of the
 placeholder logic, never duplicated. A placeholder is honest: it is visibly a
 stand-in (paper, photo frame, object) so a reader never mistakes it for the
 artifact. When a real scan lands in the archive, publish copies it instead.

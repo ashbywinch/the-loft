@@ -1,12 +1,11 @@
 """The loft CLI — the one operator surface for the archive's tools.
 
-``loft publish | serve | create-demo | capture-document | capture-memory |
-gedcom in|out | eval-memory``. Every command constructs an object-model noun
-and calls its methods — Archive.publish(), Server.serve(),
-Archive.create_demo(), Archive.capture_document(), Archive.capture_memory(),
-GedcomDocument.to_text()/from_text() — so the domain vocabulary lives in the
-nouns, and the CLI is a thin argument surface. No per-module __main__ shims
-(coding-standards.md): a command's argv handling lives here, and
+``loft publish | serve | capture-memory | gedcom in|out | eval-memory``.
+Every command constructs an object-model noun and calls its methods —
+Archive.publish(), Server.serve(), Archive.capture_memory(),
+GedcomDocument.to_text()/from_text() — so the domain vocabulary lives in
+the nouns, and the CLI is a thin argument surface. No per-module __main__
+shims (coding-standards.md): a command's argv handling lives here, and
 the repo-root ``loft`` wrapper forwards it.
 """
 
@@ -47,12 +46,6 @@ def _publish_and_report(archive: Archive, archive_dir: str, data_dir: str, verb:
 
 def cmd_publish(args: argparse.Namespace) -> int:
     return _publish_and_report(_archive(args.archive), args.archive, args.data, "published")
-
-
-def cmd_create_demo(args: argparse.Namespace) -> int:
-    archive = _archive(args.archive)
-    archive.create_demo()  # the demo's own projection, never app/data by surprise
-    return _publish_and_report(archive, args.archive, args.data, "seeded demo archive")
 
 
 def _capture_client() -> AIClient | None:
@@ -127,11 +120,6 @@ def cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_capture_document(args: argparse.Namespace) -> int:
-    _archive(args.archive).capture_document(Path(args.scans))
-    return 0
-
-
 def cmd_capture_memory(args: argparse.Namespace) -> int:
     account = sys.stdin.read() if args.account == "-" else Path(args.account).read_text(encoding="utf-8")
     try:
@@ -182,16 +170,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--app", default=str(ROOT / "app"))
     p.add_argument("--reload", action="store_true", help="auto-reload the backend on source changes (make serve)")
     p.set_defaults(fn=cmd_serve)
-
-    p = sub.add_parser("create-demo", help="seed a demo archive with fictional content and publish")
-    p.add_argument("--archive", default="demo/archive")
-    p.add_argument("--data", default="demo/data")
-    p.set_defaults(fn=cmd_create_demo)
-
-    p = sub.add_parser("capture-document", help="capture the scanned documents (idempotent)")
-    p.add_argument("--scans", type=Path, default=Path("/tmp/paseo-attachments-gfNYXK"))
-    p.add_argument("--archive", default=str(ARCHIVE_DIR))
-    p.set_defaults(fn=cmd_capture_document)
 
     p = sub.add_parser("capture-memory", help="capture a narrator's memory from an account (file or -)")
     p.add_argument("account", help="the narrator's account text, or - for stdin")

@@ -97,7 +97,12 @@ class AIClient:
             ],
             # thinking needs room for the reasoning plus the JSON verdict;
             # only used tokens are billed, so the headroom is free when the
-            # model stops early
+            # model stops early. The length-empty burn reads, when captured,
+            # as a degenerate repetition loop on an ambiguous instruction
+            # (measured: 16,328 reasoning tokens at a 16,000 cap, 36,696 at
+            # 32,000 — the same sentence block repeated ~37 times) — so the
+            # cure is the one direct (non-thinking) answer below, never a
+            # larger cap.
             "max_tokens": 16000 if thinking else self.max_tokens,
             # structured output: the API guarantees a syntactically valid JSON
             # response, eliminating truncated/bare-object responses
@@ -181,12 +186,13 @@ class AIClient:
                 return content
             thinking_enabled = bool((payload.get("thinking") or {}).get("type") == "enabled")
             if thinking_enabled and finish_reason == "length":
-                # the completion is a reasoning burn: a model whose
-                # deliberation is unbounded spends its whole output budget
-                # thinking and emits nothing (measured: 16,328 reasoning
-                # tokens at a 16,000 cap, 36,696 at 32,000). A larger cap
-                # only costs more; the cure is one direct answer WITHOUT
-                # thinking — the same fallback shape as the 400/422
+                # the completion is a reasoning burn: the captured thinking
+                # reads as a degenerate repetition loop (the same sentence
+                # block repeated ~37 times across 16,328 reasoning tokens at
+                # a 16,000 cap; 36,696 at 32,000) — a model stuck on an
+                # ambiguous instruction, not a deep deliberation. A larger
+                # cap only extends the loop; the cure is one direct answer
+                # WITHOUT thinking — the same fallback shape as the 400/422
                 # thinking-param rejection, and like it, free of the retry
                 # budget.
                 logger.warning(

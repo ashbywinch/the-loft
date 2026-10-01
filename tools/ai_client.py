@@ -177,16 +177,30 @@ class AIClient:
                 # backoff
                 if attempt >= self.max_retries:
                     raise AIClientError(f"model API request failed: {e!r}") from e
-                self._sleep(delay)
-                delay *= 2
             if content and content.strip():
                 return content
+            thinking_enabled = bool((payload.get("thinking") or {}).get("type") == "enabled")
+            if thinking_enabled and finish_reason == "length":
+                # the completion is a reasoning burn: a model whose
+                # deliberation is unbounded spends its whole output budget
+                # thinking and emits nothing (measured: 16,328 reasoning
+                # tokens at a 16,000 cap, 36,696 at 32,000). A larger cap
+                # only costs more; the cure is one direct answer WITHOUT
+                # thinking — the same fallback shape as the 400/422
+                # thinking-param rejection, and like it, free of the retry
+                # budget.
+                logger.warning(
+                    "chat: thinking burned the output budget (finish_reason=length, %d reasoning tokens) — "
+                    "retrying without thinking",
+                    len(self.last_reasoning),
+                )
+                payload["thinking"] = {"type": "disabled"}
+                request.data = json.dumps(payload).encode("utf-8")
+                continue
             # a 200 with no content is a transient provider failure, not an
-            # answer — the completion's whole output budget can go to
-            # reasoning_content, finish_reason "length", zero content (this
-            # endpoint ignores the budget params). Log the response's actual
-            # signals so the failure mode is observable, then retry with the
-            # same backoff as a 5xx; exhaust the budget before failing.
+            # answer. Log the response's actual signals so the failure mode
+            # is observable, then retry with the same backoff as a 5xx;
+            # exhaust the budget before failing.
             logger.warning(
                 "chat: empty completion (finish_reason=%s, content_len=%d, reasoning_len=%d) — retrying",
                 finish_reason or "n/a",

@@ -91,7 +91,7 @@ is pinned in `tests/test_eval_postcard.py` (in the passing suite).
    branch name. Only output artifacts count — `PRAgent.handle_request`
    swallows exceptions, so a bot step can claim success while publishing nothing.
 - **Branch surgery: verify from the refs, never from memory.**
-   `git show $branch:<file> | grep …` before every merge decision.
+  `git show $branch:<file> | grep …` before every merge decision.
 - **Rebase-merge is the only allowed method** (the ruleset blocks merge and
   squash). A blocked `gh pr merge --rebase` means the branch needs rebasing
   onto `main` first, not `--auto` and not a base switch.

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -114,23 +115,30 @@ def test_chat_rejects_null_choice_cleanly() -> None:
         client.chat("s", "u")
 
 
-def test_chat_retries_an_empty_completion() -> None:
+def test_chat_retries_an_empty_completion(caplog: pytest.LogCaptureFixture) -> None:
     """A 200 with no content is a transient provider failure, not an answer
     — the client must retry it with the same backoff as a 5xx, never
-    surface it."""
+    surface it. The retry logs the response's finish_reason so an
+    output-budget-burned completion (length, zero content) is observable."""
     sleeps: list[float] = []
     good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    empty: dict[str, object] = {
+        "choices": [{"message": {"content": "", "reasoning_content": "b" * 2000}, "finish_reason": "length"}]
+    }
     urlopen, calls = make_fake_urlopen(
         [
-            FakeResponse({"choices": [{"message": {"content": ""}}]}),
-            FakeResponse({"choices": [{"message": {"content": ""}}]}),
+            FakeResponse(empty),
+            FakeResponse(empty),
             FakeResponse(good),
         ]
     )
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=sleeps.append, max_retries=2)
-    assert client.chat("s", "u") == '{"ok": true}'
+    with caplog.at_level(logging.WARNING, logger="tools.ai_client"):
+        assert client.chat("s", "u") == '{"ok": true}'
     assert len(calls) == 3, "the empty completions were returned instead of retried"
     assert sleeps == [2.0, 4.0]
+    assert "finish_reason=length" in caplog.text
+    assert "reasoning_len=2000" in caplog.text
 
 
 def test_chat_gives_up_on_persistent_empty_completions() -> None:

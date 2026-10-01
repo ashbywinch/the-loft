@@ -4,7 +4,6 @@ Adapted from books_to_anki/src/book_to_flashcards/opencode_translator.py (the
 house pattern): urllib-only, retry/backoff on 429/5xx, thinking-disable
 fallback, injectable urlopen for tests. The key comes from the environment,
 never from code — `OPENAI_API_KEY` (the Cloudflare gateway token), else
-`CLOUDFLARE_AIGATEWAY_TOKEN`, else `OPENCODE_API_KEY`, else opencode's
 auth.json (docs/coding-standards.md — secrets are shell-env only).
 """
 
@@ -129,6 +128,8 @@ class AIClient:
         )
         delay = 2.0
         attempt = 0
+        content = ""  # the completion content — set per attempt, used by the empty-path check
+        finish_reason = ""  # the response's finish_reason — set per attempt, used by the empty-path log
         while True:
             try:
                 with self._urlopen(request, timeout=self.timeout) as response:
@@ -141,6 +142,10 @@ class AIClient:
                     # choice guard was meant to prevent
                     message = message if isinstance(message, dict) else {}
                     content = message.get("content") or ""
+                    # why the completion is empty is the diagnostic, not the
+                    # emptiness: finish_reason "length" with no content means
+                    # the model spent its whole output budget reasoning.
+                    finish_reason = str(choice.get("finish_reason") or "") if isinstance(choice, dict) else ""
                 except (KeyError, IndexError, TypeError) as e:
                     raise AIClientError(f"unexpected API response: {json.dumps(data)[:300]}") from e
                 self.last_reasoning = str(message.get("reasoning_content") or message.get("reasoning") or "")
@@ -174,15 +179,22 @@ class AIClient:
                     raise AIClientError(f"model API request failed: {e!r}") from e
                 self._sleep(delay)
                 delay *= 2
-                attempt += 1
-                continue
             if content and content.strip():
                 return content
             # a 200 with no content is a transient provider failure, not an
-            # answer. Retry with the same backoff as a 5xx; exhaust the
-            # budget before failing.
+            # answer — the completion's whole output budget can go to
+            # reasoning_content, finish_reason "length", zero content (this
+            # endpoint ignores the budget params). Log the response's actual
+            # signals so the failure mode is observable, then retry with the
+            # same backoff as a 5xx; exhaust the budget before failing.
+            logger.warning(
+                "chat: empty completion (finish_reason=%s, content_len=%d, reasoning_len=%d) — retrying",
+                finish_reason or "n/a",
+                len(content),
+                len(self.last_reasoning),
+            )
             if attempt >= self.max_retries:
-                raise AIClientError("empty response from API")
+                raise AIClientError(f"empty response from API (finish_reason={finish_reason or 'n/a'})")
             self._sleep(delay)
             delay *= 2
             attempt += 1

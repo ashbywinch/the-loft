@@ -70,16 +70,19 @@ def test_chat_sends_system_user_and_returns_content() -> None:
     assert body["response_format"] == {"type": "json_object"}
 
 
-def test_chat_sends_the_reasoning_budget_for_thinking_calls() -> None:
-    """A thinking call carries OpenRouter's normalized reasoning budget —
-    the budget-forcing cap (arXiv:2502.08235) that bounds a stalled
-    deliberation — and a non-thinking call never does."""
+def test_chat_sends_no_reasoning_budget_by_default() -> None:
+    """The reasoning budget is OFF by default: the CI gateway ignores the
+    cap AND reshapes the response (the JSON answer lands in the reasoning
+    channel with empty content — the stop-empty cascade), so a thinking
+    call must not carry it unless explicitly configured. The opt-in path
+    still sends it (the local litellm gateway honors it)."""
     urlopen, calls = make_fake_urlopen([FakeResponse({"choices": [{"message": {"content": "ok"}}]}) for _ in range(2)])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
     client.chat("s", "u", thinking=True)
-    assert calls[0]["body"]["reasoning"] == {"max_tokens": 6000}
-    client.chat("s", "u")
-    assert "reasoning" not in calls[1]["body"]
+    assert "reasoning" not in calls[0]["body"]
+    opted = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0, reasoning_budget=6000)
+    opted.chat("s", "u", thinking=True)
+    assert calls[1]["body"]["reasoning"] == {"max_tokens": 6000}
 
 
 def test_chat_retries_transient_errors_with_backoff() -> None:
@@ -180,7 +183,7 @@ def test_thinking_burn_retries_on_a_fresh_sample() -> None:
     assert calls[0]["body"]["thinking"] == {"type": "enabled"}
     retry = calls[1]["body"]
     assert retry["thinking"] == {"type": "enabled"}  # reasoning stays on
-    assert retry["reasoning"] == {"max_tokens": 6000}  # the budget is unchanged
+    assert "reasoning" not in retry  # no budget param by default — the CI gateway reshapes the response with it
     assert retry["temperature"] == 0.5  # a genuinely different sample
     assert retry["messages"] == calls[0]["body"]["messages"]  # the prompt is never rewritten
 

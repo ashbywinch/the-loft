@@ -60,11 +60,15 @@ class AIClient:
         urlopen: Callable[..., Any] | None = None,
         _sleep: Callable[[float], None] | None = None,
         # the thinking-token cap for a reasoning call (OpenRouter's
-        # normalized reasoning.max_tokens). A deliberation that stalls
-        # circles its decisions until the output budget runs out with no
-        # verdict — budget forcing caps the circling so the model must
-        # conclude (arXiv:2502.08235; budget forcing in production).
-        reasoning_budget: int | None = 6000,
+        # normalized reasoning.max_tokens). OFF by default: measured on
+        # the CI gateway (Cloudflare->openrouter->deepseek-v4-flash) the
+        # param is not honored (a capped call burned ~16k reasoning
+        # tokens anyway) AND it reshapes the response — the model's JSON
+        # answer lands in the reasoning channel with empty content, the
+        # stop-empty cascade. Local litellm honors it (a 400-token budget
+        # gave a 135-token deliberation and a normal verdict), so it
+        # stays as an opt-in for gateways that handle it.
+        reasoning_budget: int | None = None,
     ) -> None:
         self.model: str = model or DEFAULT_MODEL
         self.base_url: str = (base_url or DEFAULT_BASE_URL).rstrip("/")
@@ -129,11 +133,10 @@ class AIClient:
             # (the 400/422 retry)
             "thinking": {"type": "enabled" if thinking else "disabled"},
         }
-        # the thinking-token cap — OpenRouter's normalized reasoning budget.
-        # The gateway's provider caps the reasoning when it is honored (the
-        # local probe: a 400-token budget produced a 135-token deliberation
-        # and the verdict); when not, the 16,000 max_tokens still bounds the
-        # call and the burn retry is the rescue.
+        # the thinking-token cap — only when explicitly configured: the
+        # CI gateway ignores the cap and reshapes the response (the JSON
+        # lands in reasoning, content empty — the stop-empty cascade),
+        # so the default is OFF; the local litellm path honors it.
         if thinking and self.reasoning_budget is not None:
             payload["reasoning"] = {"max_tokens": self.reasoning_budget}
         return self._post(payload)

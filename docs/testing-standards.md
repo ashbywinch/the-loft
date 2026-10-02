@@ -17,10 +17,11 @@
   suite and not the full gate: the suite and the gates run ONCE, for the
   final verification of a ready change. Running the whole suite to test
   each iteration is the same waste — and the same prohibited re-run — as
-  running it to find a green. For an EVAL change, iterate by reading the
-  failing test's output, the request, and the model's reasoning — the
-  real-model step runs once, at the end, strictly as the verification,
-  never as the iteration loop.
+  running it to find a green. For an EVAL change, the failing run is the
+  single paid run: read its output, the request, and the model's
+  reasoning from that captured artifact, iterate on the prompt or code
+  from that evidence alone, and keep the real-model step out of the loop
+  until the one final verification.
 - **Unit test** — a single class or function, with fakes for any dependencies.
 - **Real-world data enters tests as committed fixtures of the pipeline's
   detector output (user).** Never open the archive's scans or

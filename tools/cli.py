@@ -143,14 +143,19 @@ def cmd_gedcom(args: argparse.Namespace) -> int:
         return _gedcom_export(args.folder, args.path)
 
     # import: the GEDCOM file -> a self-contained island folder of record
-    # files (people.json + places.json, the archive's record structure).
+    # files (people.json + places.json — the same file names as the archive's records).
     # The folder is the import's storage — NO destination coupling, all
     # entries are created at import, places included. A target that
     # exists and is non-empty is refused: another import of the same file
     # = another identical structure elsewhere.
     target = Path(args.folder)
-    if target.exists() and any(target.iterdir()):
-        print(f"refusing: {args.folder} exists and is not empty — import into a fresh folder", file=sys.stderr)
+    # a target that exists is refused unless it is an EMPTY folder — a
+    # regular file (a swapped argument) refuses cleanly, never a traceback
+    if target.exists() and (not target.is_dir() or any(target.iterdir())):
+        print(
+            f"refusing: {args.folder} exists and is not an empty folder — import into a fresh folder",
+            file=sys.stderr,
+        )
         return 1
     text = Path(args.file).read_text(encoding="utf-8")
     shapes = GedcomDocument.from_text(text).wire_shapes()

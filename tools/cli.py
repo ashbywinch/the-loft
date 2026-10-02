@@ -203,6 +203,12 @@ def _gedcom_export(folder_arg: str, path_arg: str) -> int:
     if dest.exists():
         print(f"refusing: {path_arg} exists — no silent overwrite", file=sys.stderr)
         return 1
+    # 5. the destination's parent must exist — a swapped/mistyped path
+    #    with a missing parent would crash with FileNotFoundError, never
+    #    a clean refusal (review-bot finding)
+    if not dest.parent.is_dir():
+        print(f"refusing: {path_arg}'s parent directory does not exist", file=sys.stderr)
+        return 1
     people_table = json.loads((folder / "people.json").read_text(encoding="utf-8"))
     places_table = json.loads((folder / "places.json").read_text(encoding="utf-8"))
     shapes = {
@@ -237,8 +243,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("account", help="the narrator's account text, or - for stdin")
     p.add_argument("--who", default="")
     p.add_argument("--anchor", default="", help="JSON anchor context (item/person/theme)")
-    p.add_argument("--status", default="draft", choices=["draft", "catalogued"])
-    p.add_argument("--archive", default=str(ARCHIVE_DIR))
     p.set_defaults(fn=cmd_capture_memory)
 
     p = sub.add_parser(

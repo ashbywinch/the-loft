@@ -199,11 +199,10 @@ def _spouse_pairs(
     edges: list[dict[str, Any]], archive: Archive | None
 ) -> tuple[set[tuple[str, str]], dict[tuple[str, str], dict[str, str]], dict[tuple[str, str], list[str]]]:
     """The spouse edges -> the sorted pairs, their marriage dates, and the
-    estimate evidence notes (a dated marriage exports as 1 MARR, 2026-08-06;
-    an estimated edge's evidence rides the FAM it created)."""
-    pairs: set[tuple[str, str]] = set()
+    evidence notes for estimated pairs."""
     marriage_dates: dict[tuple[str, str], dict[str, str]] = {}
     pair_notes: dict[tuple[str, str], list[str]] = {}
+    pairs: set[tuple[str, str]] = set()
     for edge in edges:
         if edge["kind"] == "spouse":
             a, b = edge["a"], edge["b"]

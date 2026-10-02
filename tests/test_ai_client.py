@@ -70,6 +70,18 @@ def test_chat_sends_system_user_and_returns_content() -> None:
     assert body["response_format"] == {"type": "json_object"}
 
 
+def test_chat_sends_the_reasoning_budget_for_thinking_calls() -> None:
+    """A thinking call carries OpenRouter's normalized reasoning budget —
+    the budget-forcing cap (arXiv:2502.08235) that bounds a stalled
+    deliberation — and a non-thinking call never does."""
+    urlopen, calls = make_fake_urlopen([FakeResponse({"choices": [{"message": {"content": "ok"}}]}) for _ in range(2)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
+    client.chat("s", "u", thinking=True)
+    assert calls[0]["body"]["reasoning"] == {"max_tokens": 6000}
+    client.chat("s", "u")
+    assert "reasoning" not in calls[1]["body"]
+
+
 def test_chat_retries_transient_errors_with_backoff() -> None:
     sleeps: list[float] = []
     urlopen, _ = make_fake_urlopen(
@@ -91,11 +103,13 @@ def test_chat_gives_up_after_max_retries() -> None:
         client.chat("s", "u")
 
 
-def test_chat_retries_without_thinking_param_on_400() -> None:
+def test_chat_retries_without_reasoning_params_on_400() -> None:
     urlopen, calls = make_fake_urlopen([http_error(400), FakeResponse({"choices": [{"message": {"content": "ok"}}]})])
     client = AIClient(api_key="k", urlopen=urlopen, max_retries=0, _sleep=lambda _s: None)
-    assert client.chat("s", "u") == "ok"
-    assert "thinking" not in calls[1]["body"]  # the fallback must not consume the retry budget
+    assert client.chat("s", "u", thinking=True) == "ok"
+    retry = calls[1]["body"]
+    assert "thinking" not in retry and "reasoning" not in retry  # both params dropped; retry budget untouched
+    assert retry["temperature"] == 0.0  # the deterministic non-thinking path
 
 
 def test_chat_rejects_malformed_response() -> None:
@@ -149,11 +163,13 @@ def test_chat_gives_up_on_persistent_empty_completions() -> None:
         client.chat("s", "u")
 
 
-def test_thinking_burn_retries_without_thinking() -> None:
-    """A thinking completion that burns its whole output budget
-    (finish_reason "length", zero content) is retried ONCE without
-    thinking — the unbounded-reasoner cure, free of the retry budget
-    (the 400/422 thinking-param fallback's shape)."""
+def test_thinking_burn_retries_with_budget_fresh_sample_and_nudge() -> None:
+    """A thinking completion that stalls (finish_reason "length", zero
+    content) is retried ONCE with the reasoning KEPT: a tighter reasoning
+    budget, a fresh temperature sample, and a conclude-now nudge — the
+    analysis-paralysis fix, free of the retry budget. Thinking is never
+    disabled (a direct guess would lose the deliberation the verdict
+    needs)."""
     burned: dict[str, object] = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
     good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
     urlopen, calls = make_fake_urlopen([FakeResponse(burned), FakeResponse(good)])
@@ -161,7 +177,11 @@ def test_thinking_burn_retries_without_thinking() -> None:
     assert client.chat("s", "u", thinking=True) == '{"ok": true}'
     assert len(calls) == 2
     assert calls[0]["body"]["thinking"] == {"type": "enabled"}
-    assert calls[1]["body"]["thinking"] == {"type": "disabled"}
+    retry = calls[1]["body"]
+    assert retry["thinking"] == {"type": "enabled"}  # reasoning stays on
+    assert retry["reasoning"] == {"max_tokens": 3000}  # the budget halved (6000 // 2)
+    assert retry["temperature"] == 0.5  # a genuinely different sample
+    assert "Deliberate BRIEFLY now" in retry["messages"][1]["content"]  # the conclude-now nudge
 
 
 def test_json_object_takes_the_last_of_multiple_objects() -> None:

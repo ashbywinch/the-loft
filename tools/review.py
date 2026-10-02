@@ -11,6 +11,7 @@ never an action (user, 2026-08-09).
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Sequence
 from typing import Any, Protocol
@@ -103,12 +104,39 @@ To call a tool, return ONLY JSON: {"tool": "<name>", "args": {...}}.
 The tool's result will be appended and you may call another. When you have
 enough to answer, return the verdict JSON.
 
-Deliberate in ONE short pass: at most one round of tool calls, and each of
-the four decisions (leads, search, relevance, contradiction) made exactly
-once. Never re-analyse a decision you have already made, never re-plan a
-search you have already planned, and never restate the reviewer's
-statement back to yourself. If you catch yourself repeating a step,
-stop and emit the verdict."""
+Deliberate in ONE short pass: at most four tool calls in one round, and
+each of the four decisions (leads, search, relevance, contradiction)
+made exactly once. After each tool call a "Facts already gathered"
+ledger is appended — it is deduplicated and last-value-wins: consult it
+and NEVER re-fetch a fact it already lists, and once it covers your
+planned leads, stop deliberating about further calls and emit the
+verdict. Never re-analyse a decision you have already made, never
+re-plan a search you have already planned, and never restate the
+reviewer's statement back to yourself. If you catch yourself repeating
+a step, stop and emit the verdict."""
+
+
+def _facts_ledger(trace: list[dict[str, Any]], limit: int = 400) -> str:
+    """The deduplicated facts ledger — one line per (tool, args), last
+    value wins — placed at the END of the prompt so the model consults
+    what it already gathered instead of re-deriving or re-querying it.
+    The analysis-paralysis stall circles on exactly that: the model
+    re-reads tool results buried in the growing transcript and debates
+    further queries (arXiv:2502.08235's Analysis Paralysis; the
+    deduplicated-ledger fix from the tool-loop practice literature).
+    Each line truncates to ``limit`` characters; the full result stays
+    in the transcript above."""
+    lines: dict[tuple[str, str], str] = {}
+    for entry in trace:
+        tool = entry.get("tool")
+        if not tool:
+            continue
+        args = json.dumps(entry.get("args") or {}, sort_keys=True)
+        result = json.dumps(entry.get("result"), ensure_ascii=True)
+        if len(result) > limit:
+            result = result[:limit] + "…"
+        lines[(str(tool), args)] = f"- {tool}({args}) -> {result}"
+    return "\n".join(lines.values())
 
 
 def run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:
@@ -484,8 +512,6 @@ def investigate(
             raw_args = parsed_dict.get("args")
             args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
             result = run_tool(tool, args, facts)
-            # the tool call and its deterministic result are part of the
-            # model's reasoning — logged verbatim, never discarded
             trace.append(
                 {
                     "model": raw,
@@ -496,6 +522,13 @@ def investigate(
                 }
             )
             user += f"\n\nTool result ({tool}): {result!r}"
+            # the facts ledger sits LAST — the most salient position — and
+            # is deduplicated/last-value-wins: the model consults what it
+            # has instead of re-deriving it or debating further queries
+            user += (
+                "\n\nFacts already gathered (deduplicated, last value wins — "
+                "consult this, never re-fetch a fact you have):\n" + _facts_ledger(trace)
+            )
             continue
         trace.append({"model": raw, "reasoning": getattr(client, "last_reasoning", "")})
         result = _verdict_result(parsed_dict, raw, user, trace, base_prompt)

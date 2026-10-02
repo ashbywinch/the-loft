@@ -236,6 +236,20 @@ class AIClient:
                 payload["temperature"] = 0.5
                 request.data = json.dumps(payload).encode("utf-8")
                 continue
+            if not content.strip() and finish_reason == "stop" and self.last_reasoning.strip():
+                # the provider put the structured answer in the reasoning
+                # channel and produced zero content — the captured reasoning
+                # IS the completion (measured: deepseek-v4-flash via the CF
+                # gateway returns the verdict JSON in 'reasoning' with
+                # content=="" on some draws; the caller extracts the JSON).
+                # A stop-empty with reasoning is an ANSWER, not a stall —
+                # recovering it beats retrying the same lottery.
+                logger.warning(
+                    "chat: empty content with finish_reason=stop — the reasoning holds the answer; "
+                    "recovering it (reasoning_len=%d)",
+                    len(self.last_reasoning),
+                )
+                return self.last_reasoning
             # a 200 with no content is a transient provider failure, not an
             # answer. Log the response's actual signals so the failure mode
             # is observable, then retry with the same backoff as a 5xx;

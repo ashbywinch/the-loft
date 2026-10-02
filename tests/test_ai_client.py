@@ -188,6 +188,30 @@ def test_thinking_burn_retries_on_a_fresh_sample() -> None:
     assert retry["messages"] == calls[0]["body"]["messages"]  # the prompt is never rewritten
 
 
+def test_stop_empty_recovers_the_reasoning_answer() -> None:
+    """A stop-empty completion whose reasoning holds the structured answer
+    IS the answer — the client recovers it instead of retrying (measured:
+    deepseek-v4-flash via the CI gateway returns the verdict JSON in the
+    reasoning channel with content=="" on some draws)."""
+    verdict = '{"relevant": true, "contradiction": {"found": false, "detail": ""}}'
+    stop_empty: dict[str, object] = {
+        "choices": [{"message": {"content": "", "reasoning": verdict}, "finish_reason": "stop"}]
+    }
+    urlopen, _ = make_fake_urlopen([FakeResponse(stop_empty)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
+    assert client.chat("s", "u", thinking=True) == verdict
+
+
+def test_stop_empty_without_reasoning_still_retries() -> None:
+    """A stop-empty with NO reasoning is a genuine failure — the retry
+    path still applies (the reasoning-recovery is only for answers that
+    landed in the thinking channel)."""
+    urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]})])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
+    with pytest.raises(AIClientError, match="empty response from API"):
+        client.chat("s", "u", thinking=True)
+
+
 def test_json_object_takes_the_last_of_multiple_objects() -> None:
     """A reasoning preamble followed by the verdict is the shape the model
     emits — a slice spanning both failed with "Extra data": the LAST

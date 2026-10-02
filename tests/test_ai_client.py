@@ -149,6 +149,18 @@ def test_chat_retries_an_empty_completion(caplog: pytest.LogCaptureFixture) -> N
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=sleeps.append, max_retries=2)
     with caplog.at_level(logging.WARNING, logger="tools.ai_client"):
         assert client.chat("s", "u") == '{"ok": true}'
+    assert len(calls) == 3, "the empty completions were returned instead of retried"
+    assert sleeps == [2.0, 4.0]
+    assert "finish_reason=length" in caplog.text
+    assert "reasoning_len=2000" in caplog.text
+
+
+def test_chat_gives_up_on_persistent_empty_completions() -> None:
+    sleeps: list[float] = []
+    urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [{"message": {"content": ""}}]}) for _ in range(3)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=sleeps.append, max_retries=2)
+    with pytest.raises(AIClientError, match="empty response from API"):
+        client.chat("s", "u")
 
 
 def test_thinking_burn_retries_on_a_fresh_sample() -> None:

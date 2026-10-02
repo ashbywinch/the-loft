@@ -102,6 +102,32 @@ def test_off_topic_answer_is_flagged_not_recorded() -> None:
     assert "house" in result["note"]
 
 
+def test_facts_ledger_deduplicates_and_sits_last() -> None:
+    """After each tool call a "Facts already gathered" ledger is appended
+    LAST in the prompt: deduplicated per (tool, args), last value wins —
+    the model consults what it has instead of re-deriving it or debating
+    further queries (the analysis-paralysis fix)."""
+    client = FakeClient(
+        [
+            '{"tool": "relationships", "args": {"id": "p-quentin"}}',
+            '{"tool": "relationships", "args": {"id": "p-quentin"}}',
+            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+            '"confidence": "think_so", "note": "The visit.", "findings": [], '
+            '"question": "Did she tell you personally?"}',
+        ]
+    )
+    result = investigate(client, text="I think we visited him once.", person=_person(), who="Alex", facts=make_facts())
+    assert result["relevant"] == "true"
+    final_user = client.calls[2][1]
+    assert final_user.count("Facts already gathered (deduplicated") == 2  # appended after every tool call
+    # the FINAL ledger block sits at the very end and holds the repeated
+    # call exactly once — deduplicated, last value wins
+    ledger = final_user[final_user.rfind("Facts already gathered (deduplicated") :]
+    assert ledger.startswith("Facts already gathered")
+    assert ledger.count('relationships({"id": "p-quentin"})') == 1
+    assert "No more tool calls" not in final_user  # never hit the tool-call cap
+
+
 def test_the_question_schema_speaks_to_the_family_never_the_process() -> None:
     """The question schema must carry the family-voice rule — a
     prompt-contract pin so a regression in the voice instruction fails

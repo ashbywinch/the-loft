@@ -42,6 +42,18 @@ class AIClientError(RuntimeError):
     """Raised when the configured model endpoint cannot be used."""
 
 
+# appended to the user message when a thinking call stalls (burned its
+# whole output budget without a verdict): the fresh-sample retry keeps the
+# reasoning and asks for a SHORT deliberation — a deadline, not a
+# thinking-disable (arXiv:2502.08235's sample-and-select; the analysis-
+# paralysis stall circles until the budget runs out)
+CONCLUDE_NUDGE = (
+    "\n\nYour earlier attempts deliberated until the output budget ran out without "
+    "answering. Deliberate BRIEFLY now — the deliberation must leave room for the "
+    "verdict — then write the verdict JSON immediately."
+)
+
+
 @final
 class AIClient:
     """Chat completions against an OpenAI-compatible endpoint (JSON out)."""
@@ -59,6 +71,12 @@ class AIClient:
         max_retries: int = 2,
         urlopen: Callable[..., Any] | None = None,
         _sleep: Callable[[float], None] | None = None,
+        # the thinking-token cap for a reasoning call (OpenRouter's
+        # normalized reasoning.max_tokens). A deliberation that stalls
+        # circles its decisions until the output budget runs out with no
+        # verdict — budget forcing caps the circling so the model must
+        # conclude (arXiv:2502.08235; budget forcing in production).
+        reasoning_budget: int | None = 6000,
     ) -> None:
         self.model: str = model or DEFAULT_MODEL
         self.base_url: str = (base_url or DEFAULT_BASE_URL).rstrip("/")
@@ -71,6 +89,7 @@ class AIClient:
         self.max_tokens: int = max_tokens
         self.timeout: float = timeout
         self.max_retries: int = max_retries
+        self.reasoning_budget: int | None = reasoning_budget
         # the last response's reasoning — captured so a failed judgment is
         # diagnosable from its trace (user: "we should be able
         # to read the model's thought process to understand why it got it
@@ -97,12 +116,13 @@ class AIClient:
             ],
             # thinking needs room for the reasoning plus the JSON verdict;
             # only used tokens are billed, so the headroom is free when the
-            # model stops early. The length-empty burn reads, when captured,
-            # as a degenerate repetition loop on an ambiguous instruction
-            # (measured: 16,328 reasoning tokens at a 16,000 cap, 36,696 at
-            # 32,000 — the same sentence block repeated ~37 times) — so the
-            # cure is the one direct (non-thinking) answer below, never a
-            # larger cap.
+            # model stops early. The length-empty burn is a deliberation
+            # STALL, not deep thinking: the model circles the same decisions
+            # until the budget runs out with no verdict (measured: 16,000
+            # reasoning tokens, content a single space; the captured thinking
+            # re-reads one instruction line ~27 times). Budget forcing caps
+            # the circling (arXiv:2502.08235; production budget forcing in
+            # Claude/Qwen3); the burn retry below halves the cap.
             "max_tokens": 16000 if thinking else self.max_tokens,
             # structured output: the API guarantees a syntactically valid JSON
             # response, eliminating truncated/bare-object responses
@@ -115,15 +135,24 @@ class AIClient:
             # temperature 0 amplifies exactly that: "higher temperature
             # reduces brittle failure modes caused by deterministic
             # repetition loops" (arXiv:2602.03664). A small temperature
-            # breaks the attractor; the evals evaluate output properties,
-            # not draws, so this does not loosen the gates. The non-thinking
-            # (direct-answer) path stays at 0 for the deterministic fallback.
+            # breaks the attractor and gives the burn retry a genuinely
+            # different sample (arXiv:2502.08235's sample-and-select); the
+            # evals evaluate output properties, not draws, so this does not
+            # loosen the gates. The non-thinking (direct-answer) path stays
+            # at 0 for the deterministic fallback.
             "temperature": 0.3 if thinking else 0.0,
             # the model thinks its way to the structured verdict (see the
             # docstring); a model that rejects the param falls back below
             # (the 400/422 retry)
             "thinking": {"type": "enabled" if thinking else "disabled"},
         }
+        # the thinking-token cap — OpenRouter's normalized reasoning budget.
+        # The gateway's provider caps the reasoning when it is honored (the
+        # local probe: a 400-token budget produced a 135-token deliberation
+        # and the verdict); when not, the 16,000 max_tokens still bounds the
+        # call and the burn retry is the rescue.
+        if thinking and self.reasoning_budget is not None:
+            payload["reasoning"] = {"max_tokens": self.reasoning_budget}
         return self._post(payload)
 
     def _post(self, payload: dict[str, Any]) -> str:
@@ -173,51 +202,53 @@ class AIClient:
                     delay *= 2
                     attempt += 1
                     continue
-                if e.code in (400, 422) and payload.get("thinking"):
-                    # model doesn't understand the thinking param — retry
-                    # without it; the fallback must NOT consume the retry budget
+                if e.code in (400, 422) and (payload.get("thinking") or payload.get("reasoning")):
+                    # model/endpoint doesn't understand the reasoning params —
+                    # retry without them; the fallback must NOT consume the
+                    # retry budget
                     logger.warning(
-                        "model %s rejected the thinking param (HTTP %d); retrying without it",
+                        "model %s rejected the reasoning params (HTTP %d); retrying without them",
                         self.model,
                         e.code,
                     )
-                    payload.pop("thinking")
+                    payload.pop("thinking", None)
+                    payload.pop("reasoning", None)
                     # temperature follows the thinking state too: a rejected
                     # thinking param must not leave the retry running at the
                     # thinking 0.3 — it is a non-thinking call at 0.0
                     payload["temperature"] = 0.0
                     request.data = json.dumps(payload).encode("utf-8")
                     continue
-                raise AIClientError(f"model API error {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from e
-            except (urllib.error.URLError, OSError) as e:
-                # transport-level failures (connection refused, DNS, read
-                # timeouts) are OSErrors, not HTTPErrors; retry with the same
-                # backoff
-                if attempt >= self.max_retries:
-                    raise AIClientError(f"model API request failed: {e!r}") from e
             if content and content.strip():
                 return content
             thinking_enabled = bool((payload.get("thinking") or {}).get("type") == "enabled")
             if thinking_enabled and finish_reason == "length":
-                # the completion is a reasoning burn: the captured thinking
-                # reads as a degenerate repetition loop (the same sentence
-                # block repeated ~37 times across 16,328 reasoning tokens at
-                # a 16,000 cap; 36,696 at 32,000) — a model stuck on an
-                # ambiguous instruction, not a deep deliberation. A larger
-                # cap only extends the loop; the cure is one direct answer
-                # WITHOUT thinking — the same fallback shape as the 400/422
-                # thinking-param rejection, and like it, free of the retry
-                # budget.
+                # the completion is a deliberation stall: the model circled
+                # its decisions and spent the whole budget reasoning without
+                # a verdict (measured: 16,000 reasoning tokens, content a
+                # single space; the captured thinking re-reads one
+                # instruction line ~27 times). Decoding-side controls alone
+                # cannot stop the circling (arXiv:2602.14798); the fixes
+                # that work make the reasoning CONCLUDE while keeping it: a
+                # tighter reasoning budget, a fresh sample, and a
+                # conclude-now nudge (arXiv:2502.08235; budget forcing in
+                # production). Thinking is never disabled — a direct guess
+                # would lose the deliberation the verdict needs.
                 logger.warning(
                     "chat: thinking burned the output budget (finish_reason=length, %d reasoning tokens) — "
-                    "retrying without thinking",
+                    "retrying with a fresh sample, a tighter reasoning budget, and a conclude-now nudge",
                     len(self.last_reasoning),
                 )
-                payload["thinking"] = {"type": "disabled"}
-                # temperature follows the thinking state: a non-thinking call
-                # runs at the deterministic 0.0, never at the thinking 0.3
-                # (see the payload comment above)
-                payload["temperature"] = 0.0
+                # a different draw: the stall is stochastic, not a
+                # deterministic attractor (the temperature-0 loop class is
+                # already gone) — the new sample often concludes (2502.08235)
+                payload["temperature"] = 0.5
+                if self.reasoning_budget is not None:
+                    payload["reasoning"] = {"max_tokens": max(2000, self.reasoning_budget // 2)}
+                payload["messages"][1] = {
+                    "role": "user",
+                    "content": str(payload["messages"][1].get("content", "")) + CONCLUDE_NUDGE,
+                }
                 request.data = json.dumps(payload).encode("utf-8")
                 continue
             # a 200 with no content is a transient provider failure, not an

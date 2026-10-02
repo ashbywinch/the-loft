@@ -257,13 +257,20 @@ def _recover_crashed_layout(
         intended = int(journal.get("rotation", 0)) % FULL_ROTATION_DEGREES
         stale = int(journal.get("from", 0)) % FULL_ROTATION_DEGREES
         if int(layout.get("rotation", 0)) % FULL_ROTATION_DEGREES == stale:
-            image = ImageOps.exif_transpose(Image.open(image_path))
-            if image.width == int(layout.get("width", 0)) and image.height == int(layout.get("height", 0)):
+            swapped = journal.get("swapped")
+            if swapped is None:
+                # a journal written before the flag existed: fall back to
+                # the dimensions heuristic (blind at 180° — the flag is
+                # the reliable check for new journals)
+                image = ImageOps.exif_transpose(Image.open(image_path))
+                swapped = image.width != int(layout.get("width", 0)) or image.height != int(layout.get("height", 0))
+            if not swapped:
                 # the crash happened BEFORE the image swap — the journal
                 # is premature, the layout is still consistent
                 journal_path.unlink(missing_ok=True)
             else:
                 # the image IS rotated — recover the layout to the intent
+                image = ImageOps.exif_transpose(Image.open(image_path))
                 recovery = (intended - stale) % FULL_ROTATION_DEGREES
                 if recovery:
                     steps = recovery // QUARTER_TURN_DEGREES
@@ -306,29 +313,38 @@ def _recover_crashed_rows(
 ) -> None:
     """Complete a half-rotated crash for a rows reading: advance the rows'
     boxes to the journal's recorded intent so they never silently
-    misalign with the rotated image. An unreadable journal abandons
-    recovery (logged) and the stale rows stand; the caller computes the
-    delta from them."""
+    misalign with the rotated image, and PERSIST the recovered reading.
+    The journal's ``swapped`` flag (flipped after the image swap) tells
+    whether the image moved — reliable at every angle, including 180°,
+    where the dimensions never change. A legacy journal without the flag
+    falls back to the dimensions heuristic. An unreadable journal
+    abandons recovery (logged) and the stale rows stand."""
     try:
         journal = json.loads(journal_path.read_text(encoding="utf-8"))
         intended = int(journal.get("rotation", 0)) % FULL_ROTATION_DEGREES
         stale = int(journal.get("from", 0)) % FULL_ROTATION_DEGREES
-        if int(rows.get("rotation", 0)) % FULL_ROTATION_DEGREES == stale:
+        if int(rows.get("rotation", 0)) % FULL_ROTATION_DEGREES != stale:
+            return
+        swapped = journal.get("swapped")
+        if swapped is None:
             image = ImageOps.exif_transpose(Image.open(image_path))
-            if image.width == int(rows.get("width", 0)) and image.height == int(rows.get("height", 0)):
-                # the crash happened BEFORE the image swap — the rows are
-                # still consistent with the current image
-                journal_path.unlink(missing_ok=True)
-                return
-            recovery = (intended - stale) % FULL_ROTATION_DEGREES
-            steps = recovery // QUARTER_TURN_DEGREES
-            width, height = int(rows.get("width", image.width)), int(rows.get("height", image.height))
-            for _ in range(steps):
-                for line in rows["lines"]:
-                    x0, y0, x1, y1 = line["box"]
-                    line["box"] = [height - y1, x0, height - y0, x1]
-                width, height = height, width
-            rows["rotation"] = intended
+            swapped = image.width != int(rows.get("width", 0)) or image.height != int(rows.get("height", 0))
+        if not swapped:
+            # the crash happened BEFORE the image swap — the rows are
+            # still consistent with the current image
+            journal_path.unlink(missing_ok=True)
+            return
+        recovery = (intended - stale) % FULL_ROTATION_DEGREES
+        steps = recovery // QUARTER_TURN_DEGREES
+        width, height = int(rows["width"]), int(rows["height"])
+        for _ in range(steps):
+            for line in rows["lines"]:
+                x0, y0, x1, y1 = line["box"]
+                line["box"] = [height - y1, x0, height - y0, x1]
+            width, height = height, width
+        rows["rotation"] = intended
+        atomic_write(rows_path, json.dumps(rows, ensure_ascii=False, indent=1) + "\n")
+        journal_path.unlink(missing_ok=True)
     except (OSError, json.JSONDecodeError, ValueError) as e:
         logger.warning("sync: unreadable rotation journal %s — recovery abandoned: %s", journal_path, e)
         journal_path.unlink(missing_ok=True)
@@ -407,14 +423,21 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
         reading["lines"].sort(key=lambda ln: ln["index"])
     tmp = image_path.with_name(image_path.name + ".tmp")
     rotated.save(tmp, format=image.format or "JPEG")
-    # the journal lands BEFORE the image swap: a crash mid-rotate leaves a
-    # recoverable trail (the next rotate completes the reading) instead of
-    # a silently misaligned page (bot review, 2026-08-16)
+    # the journal lands BEFORE the image swap with swapped:false — a crash
+    # here leaves the image unrotated and the rows consistent. After the
+    # swap the flag flips to true BEFORE the reading write, so a crash
+    # between the two is recoverable at every angle (the flag, not the
+    # dimensions, says whether the image moved — dimensions are blind at
+    # 180°).
     atomic_write(
         journal_path,
-        json.dumps({"from": current, "rotation": reading["rotation"]}, ensure_ascii=False) + "\n",
+        json.dumps({"from": current, "rotation": reading["rotation"], "swapped": False}, ensure_ascii=False) + "\n",
     )
     tmp.replace(image_path)
+    atomic_write(
+        journal_path,
+        json.dumps({"from": current, "rotation": reading["rotation"], "swapped": True}, ensure_ascii=False) + "\n",
+    )
     if rows_path.is_file():
         atomic_write(rows_path, json.dumps(reading, ensure_ascii=False, indent=1) + "\n")
     else:
@@ -516,10 +539,10 @@ def reprocess_page_transcription(
     page's job state marks it while it runs. The second pass does better
     (2026-08-17): the reviewer's rotate IS the signal the first pass
     missed an orientation, so the orientation report re-runs on the
-    corrected image and the layout stage rebuilds the layout with FRESH
-    detections — never the old remapped boxes.
-    ``transcribe``/``selfreport``/``orientation_report_fn``/``layout_runner``
-    are the injectable seams for tests. On failure the page is marked
+    corrected image and the reading is rebuilt with FRESH boxes — never
+    the old remapped ones.
+    ``transcribe``/``selfreport``/``orientation_report_fn`` are the
+    injectable seams for tests. On failure the page is marked
     "failed" — the stale text stays visible with the warning, never a
     silent wrong answer."""
     if not BATCH_ID.match(batch_id) or not safe_page_name(page):

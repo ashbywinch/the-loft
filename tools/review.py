@@ -110,10 +110,16 @@ made exactly once. After each tool call a "Facts already gathered"
 ledger is appended — it is deduplicated and last-value-wins: consult it
 and NEVER re-fetch a fact it already lists, and once it covers your
 planned leads, stop deliberating about further calls and emit the
-verdict. Never re-analyse a decision you have already made, never
-re-plan a search you have already planned, and never restate the
-reviewer's statement back to yourself. If you catch yourself repeating
-a step, stop and emit the verdict."""
+verdict. The ledger is only an INDEX of the tool results — it changes
+nothing about what counts as a finding: relationship/person lines in it
+are not evidence (the person-record rule), and a document the tools
+surfaced is STILL a finding to report even when the ledger lists it
+(2026-10-02: a dig flow's verdict suppressed the attested death — the
+model read the ledger's sibling line as the only candidate, found it
+not evidence, and emptied the findings). Never re-analyse a decision
+you have already made, never re-plan a search you have already planned,
+and never restate the reviewer's statement back to yourself. If you
+catch yourself repeating a step, stop and emit the verdict."""
 
 
 def _facts_ledger(trace: list[dict[str, Any]], limit: int = 400) -> str:

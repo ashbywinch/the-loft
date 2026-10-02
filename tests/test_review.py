@@ -123,9 +123,15 @@ def test_facts_ledger_deduplicates_and_sits_last() -> None:
     # the FINAL ledger block sits at the very end and holds the repeated
     # call exactly once — deduplicated, last value wins
     ledger = final_user[final_user.rfind("Facts already gathered (deduplicated") :]
-    assert ledger.startswith("Facts already gathered")
-    assert ledger.count('relationships({"id": "p-quentin"})') == 1
+    assert ledger.count('relationships({"id": "p-quentin"})') == 1  # the repeated call appears once in the final ledger
     assert "No more tool calls" not in final_user  # never hit the tool-call cap
+    # the ledger boundary is in the descriptor: an index, not a new
+    # evidence class — a document the tools surfaced is still a finding
+    # (the 2026-10-02 dig-flow regression: the verdict suppressed the
+    user_flat = " ".join(client.calls[0][1].split())
+    assert "only an INDEX of the tool results" in user_flat
+    assert "a document the tools surfaced is STILL a finding to report even when the ledger lists it" in user_flat
+    assert "relationship/person lines in it are not evidence" in user_flat
 
 
 def test_the_question_schema_speaks_to_the_family_never_the_process() -> None:

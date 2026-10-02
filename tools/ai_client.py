@@ -182,6 +182,10 @@ class AIClient:
                         e.code,
                     )
                     payload.pop("thinking")
+                    # temperature follows the thinking state too: a rejected
+                    # thinking param must not leave the retry running at the
+                    # thinking 0.3 — it is a non-thinking call at 0.0
+                    payload["temperature"] = 0.0
                     request.data = json.dumps(payload).encode("utf-8")
                     continue
                 raise AIClientError(f"model API error {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from e
@@ -210,6 +214,10 @@ class AIClient:
                     len(self.last_reasoning),
                 )
                 payload["thinking"] = {"type": "disabled"}
+                # temperature follows the thinking state: a non-thinking call
+                # runs at the deterministic 0.0, never at the thinking 0.3
+                # (see the payload comment above)
+                payload["temperature"] = 0.0
                 request.data = json.dumps(payload).encode("utf-8")
                 continue
             # a 200 with no content is a transient provider failure, not an

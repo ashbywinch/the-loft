@@ -11,6 +11,16 @@
 - **Test** — a check that is *deterministic*: same inputs, same result, always, on any machine. No network, no model, no wall-clock.
 - **Eval** — a check that runs deliberately *non-deterministic* code — a real model. An eval costs money and takes time, so the discipline is economy: **never more than one eval covering the same thing** (duplicate coverage is waste); and when the code under test can be run **once** and its output evaluated for several conditions in one go, do that — never recreate the output for each condition.
 - **Tests and evals share the same harness** (pytest) for consistency. Both run exactly **once** — a check that would need re-running to go green is flaky, and flakiness is a bug in the check, never a reason to re-run ("we run it once. If it fails we fix it" — user). Both **fail fast** — a check that cannot run because needed infra is missing (the API key, tesseract) fails loudly and is **never skipped**: a skipped check would green a suite that never ran. **A gate's verdict is the run's verdict**: a failed CI step is never re-run in search of a pass — the code (or the check) changes, then the gate re-runs; a green obtained by re-running an unchanged failure is not green and is prohibited, locally and on CI, for tests and evals alike.
+- **Iterate on the failing check, never the suite.** A change in progress
+  is tested against the ONE failing test — or the smallest subset that
+  covers the change (`pytest path/to/test.py::test_name`), not the full
+  suite and not the full gate: the suite and the gates run ONCE, for the
+  final verification of a ready change. Running the whole suite to test
+  each iteration is the same waste — and the same prohibited re-run — as
+  running it to find a green. For an EVAL change, iterate by reading the
+  failing test's output, the request, and the model's reasoning — the
+  real-model step runs once, at the end, strictly as the verification,
+  never as the iteration loop.
 - **Unit test** — a single class or function, with fakes for any dependencies.
 - **Real-world data enters tests as committed fixtures of the pipeline's
   detector output (user).** Never open the archive's scans or

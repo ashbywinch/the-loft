@@ -39,7 +39,7 @@ content stay archive-only.
 
 The GEDCOM island (`loft gedcom import|export`, tools/cli.py): an import
 parses a file into a self-contained folder of record files (people.json
-+ places.json, the archive's record structure, unrelated to the live
++ places.json — the same file names as the archive's records, unrelated to the live
 archive — no resolution, no linking, all entries created at import,
 places included); an export reads such a folder and re-emits the
 attested / estimated / pending / delete — with pending as the only
@@ -518,6 +518,16 @@ def _is_pending(record: Any) -> bool:
     return any(c.tag == "_LOFT_STATUS" and c.text.strip().lower() == "pending" for c in record.children)
 
 
+def _collect_place_payloads(node: Any, names: set[str]) -> None:
+    """Every PLAC payload below ``node`` lands in ``names`` — a payload
+    can sit under RESI, DEAT, MARR, SLGS, SOUR DATA, nested past the
+    record's own children."""
+    for child in node.children:
+        if child.tag == "PLAC" and child.text.strip():
+            names.add(child.text.strip())
+        _collect_place_payloads(child, names)
+
+
 def _fact_date(record: Any) -> dict[str, str] | None:
     for child in record.children:
         if child.tag == "DATE" and child.text.strip():
@@ -776,14 +786,7 @@ class GedcomDocument:
                         names_by_id[name] = refn
                     if _is_pending(record):
                         pending.add(name)
-
-            def walk(node: Any) -> None:
-                for child in node.children:
-                    if child.tag == "PLAC" and child.text.strip():
-                        names.add(child.text.strip())
-                    walk(child)
-
-            walk(record)
+            _collect_place_payloads(record, names)
         taken: set[str] = set(names_by_id.values())
         places: list[dict[str, Any]] = []
         for name in sorted(names):
@@ -793,7 +796,7 @@ class GedcomDocument:
             if name in pending:
                 place["status"] = "pending"
             places.append(place)
-        return places
+        return sorted(places, key=lambda p: p["id"])  # id order, like every other record file
 
     @classmethod
     def from_archive(cls, archive: Archive) -> GedcomDocument:
@@ -820,7 +823,7 @@ class GedcomDocument:
         return cls(shapes)
 
     def wire_shapes(self) -> dict[str, Any]:
-        """The archive record shapes from this document's state — the
+        """The folder's record shapes from this document's state — the
         island folder's record files (people.json + places.json)."""
         return {"people": self._people, "relationships": self._relationships, "places": self._places}
 

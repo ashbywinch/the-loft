@@ -638,6 +638,39 @@ def test_person_association_role_round_trips() -> None:
     assert GedcomDocument.from_text(out).wire_shapes() == shapes
 
 
+def test_import_refuses_a_regular_file_target(tmp_path) -> None:
+    """A swapped import argument (a bare file as the folder) refuses
+    cleanly — never a NotADirectoryError traceback (review-bot finding
+    on PR #61)."""
+    from tools.cli import main
+
+    file_target = tmp_path / "existing.txt"
+    file_target.write_text("not a folder", encoding="utf-8")
+    assert main(["gedcom", "import", str(MAXIMAL70), str(file_target)]) == 1
+    assert file_target.read_text(encoding="utf-8") == "not a folder"  # untouched
+
+
+def test_places_sort_by_id_not_name() -> None:
+    """The island's places file is id-ordered like every other record
+    file — a PLAC record whose REFN does not sort like its name must not
+    reorder the table (review-bot finding on PR #61)."""
+    text = "\n".join(
+        [
+            "0 HEAD",
+            "0 @PL1@ PLAC",
+            "1 REFN zzz",
+            "1 NAME Alpha",
+            "0 @PL2@ PLAC",
+            "1 REFN aaa",
+            "1 NAME Zebra",
+            "0 TRLR",
+        ]
+    )
+    places = GedcomDocument.from_text(text).wire_shapes()["places"]
+    assert [p["id"] for p in places] == ["aaa", "zzz"]
+    assert [p["name"] for p in places] == ["Zebra", "Alpha"]
+
+
 def test_existing_folder_target_any_content_is_refused(tmp_path) -> None:
     """The import refusal is 'exists and is non-empty' — an EMPTY existing
     folder is a legal target (the double-import test covers the refusal);

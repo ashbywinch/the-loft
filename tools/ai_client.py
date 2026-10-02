@@ -107,9 +107,18 @@ class AIClient:
             # structured output: the API guarantees a syntactically valid JSON
             # response, eliminating truncated/bare-object responses
             "response_format": {"type": "json_object"},
-            # deterministic decoding: structured tasks are far more consistent
-            # at temperature 0
-            "temperature": 0.0,
+            # THINKING calls run at a small temperature, not 0. At exactly 0,
+            # a reasoning model's failures are deterministic loops: measured
+            # on this review — the identical ~70k-char deliberation repeated
+            # verbatim across runs (finish_reason "length", zero content).
+            # Conversational-inertia work on multi-turn agents finds
+            # temperature 0 amplifies exactly that: "higher temperature
+            # reduces brittle failure modes caused by deterministic
+            # repetition loops" (arXiv:2602.03664). A small temperature
+            # breaks the attractor; the evals evaluate output properties,
+            # not draws, so this does not loosen the gates. The non-thinking
+            # (direct-answer) path stays at 0 for the deterministic fallback.
+            "temperature": 0.3 if thinking else 0.0,
             # the model thinks its way to the structured verdict (see the
             # docstring); a model that rejects the param falls back below
             # (the 400/422 retry)

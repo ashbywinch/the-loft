@@ -349,6 +349,11 @@ def investigate(
             "own earlier question verbatim (a past stall: the reviewer "
             "answered with a visit and the assistant re-asked the identical "
             "question). "
+            "Your own previous reply is history, not a template: do NOT "
+            "continue this turn in the previous reply's shape, do NOT ask "
+            "again what you already asked, in substance or in reworded "
+            "form, and do NOT mimic your own prior verdict's question — the "
+            "reviewer's new line is the matter to answer now. ",
             "Then answer.",
             _TOOLS_DESC,
             # the conversation — the growing part — sits LAST so the

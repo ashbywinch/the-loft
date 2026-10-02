@@ -650,6 +650,19 @@ def test_import_refuses_a_regular_file_target(tmp_path) -> None:
     assert file_target.read_text(encoding="utf-8") == "not a folder"  # untouched
 
 
+def test_export_refuses_a_missing_parent_directory(tmp_path) -> None:
+    """A destination whose parent directory does not exist is refused
+    cleanly — never a FileNotFoundError traceback (the swapped/mistyped
+    path case the refusals guard against; review-bot finding)."""
+    from tools.cli import main
+
+    island = tmp_path / "island"
+    main(["gedcom", "import", str(MAXIMAL70), str(island)])
+    missing = tmp_path / "no-such-dir" / "out.ged"
+    assert main(["gedcom", "export", str(island), str(missing)]) == 1
+    assert not missing.exists()
+
+
 def test_places_sort_by_id_not_name() -> None:
     """The island's places file is id-ordered like every other record
     file — a PLAC record whose REFN does not sort like its name must not

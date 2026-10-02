@@ -548,17 +548,29 @@ def test_status_faithfulness(tmp_path) -> None:
             "1 _LOFT_STATUS pending",
             "1 HUSB @I1@",
             "1 WIFE @I2@",
+            "0 @PL1@ PLAC",
+            "1 NAME Seascale",
+            "1 _LOFT_STATUS pending",
+            "0 @PL2@ PLAC",
+            "1 NAME Dunmail",
             "0 TRLR",
         ]
     )
     shapes = GedcomDocument.from_text(text).wire_shapes()
     assert {p["id"]: p.get("status") for p in shapes["people"]} == {"p-a": "pending", "p-b": None}
     assert shapes["relationships"] == [{"a": "p-a", "b": "p-b", "kind": "spouse", "status": "pending"}]
-    # nothing pending leaves; the confirmed subset round-trips exactly
+    assert [{"id": pl["id"], "name": pl["name"], "status": pl.get("status")} for pl in shapes["places"]] == [
+        {"id": "dunmail", "name": "Dunmail", "status": None},
+        {"id": "seascale", "name": "Seascale", "status": "pending"},
+    ]
+    # nothing pending leaves — people, edges, places; the confirmed
+    # subset round-trips exactly
     out = GedcomDocument.from_text(text).to_text()
     assert "Beatrice" not in out and "_LOFT_STATUS" not in out
-    confirmed = [p for p in shapes["people"] if p.get("status") != "pending"]
-    assert GedcomDocument.from_text(out).wire_shapes()["people"] == confirmed
+    assert "Seascale" not in out and "Dunmail" in out  # the pending PLAC record stays out
+    reimported = GedcomDocument.from_text(out).wire_shapes()
+    assert reimported["people"] == [p for p in shapes["people"] if p.get("status") != "pending"]
+    assert reimported["places"] == [p for p in shapes["places"] if p.get("status") != "pending"]
 
 
 def test_export_four_refusals(tmp_path) -> None:

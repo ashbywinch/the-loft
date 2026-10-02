@@ -139,17 +139,74 @@ def cmd_capture_memory(args: argparse.Namespace) -> int:
 
 
 def cmd_gedcom(args: argparse.Namespace) -> int:
-    archive = _archive(args.archive)
     if args.action == "export":
-        Path(args.file).write_text(GedcomDocument.to_text(archive), encoding="utf-8")
-        print(f"wrote GEDCOM 7.0 to {args.file}")
-        return 0
-    # import: parse + report — applying a file's wire shapes to the archive
-    # is a reviewed, per-document capture, never a blind write
+        return _gedcom_export(args.folder, args.path)
+
+    # import: the GEDCOM file -> a self-contained island folder of record
+    # files (people.json + places.json, the archive's record structure).
+    # The folder is the import's storage — NO destination coupling, all
+    # entries are created at import, places included. A target that
+    # exists and is non-empty is refused: another import of the same file
+    # = another identical structure elsewhere.
+    target = Path(args.folder)
+    if target.exists() and any(target.iterdir()):
+        print(f"refusing: {args.folder} exists and is not empty — import into a fresh folder", file=sys.stderr)
+        return 1
     text = Path(args.file).read_text(encoding="utf-8")
-    places_table = archive.get_identity("places")
-    result = GedcomDocument.from_text(text, (places_table or {}).get("places", []))
-    print(f"parsed {args.file}: {len(result['people'])} people, {len(result['relationships'])} relationships")
+    shapes = GedcomDocument.from_text(text).wire_shapes()
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "people.json").write_text(
+        json.dumps({"people": shapes["people"], "relationships": shapes["relationships"]}, indent=2, sort_keys=True)
+        + "\n",
+        encoding="utf-8",
+    )
+    (target / "places.json").write_text(
+        json.dumps({"places": shapes["places"]}, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    print(
+        f"imported {args.file}: {len(shapes['people'])} people, "
+        f"{len(shapes['relationships'])} relationships, {len(shapes['places'])} places -> {args.folder}"
+    )
+    return 0
+
+
+def _gedcom_export(folder_arg: str, path_arg: str) -> int:
+    """The island export — re-emit an import folder's confirmed subset as
+    GEDCOM 7.0. The four swap-refusals run BEFORE anything is written: a
+    swapped command cannot make a mess."""
+    folder = Path(folder_arg)
+    dest = Path(path_arg)
+    # 1. the first argument must BE an import folder: not a bare file, not
+    #    a folder without the imported structure
+    if not folder.is_dir() or not (folder / "people.json").is_file() or not (folder / "places.json").is_file():
+        print(
+            f"refusing: {folder_arg} is not an import folder (needs people.json + places.json)",
+            file=sys.stderr,
+        )
+        return 1
+    # 2. the destination must not be the import folder or any path inside
+    #    it — the source island stays untouched
+    dest_resolved = dest.resolve()
+    folder_resolved = folder.resolve()
+    if dest_resolved == folder_resolved or folder_resolved in dest_resolved.parents:
+        print(f"refusing: {path_arg} is the import folder or a path inside it", file=sys.stderr)
+        return 1
+    # 3. an existing directory, 4. an existing file — no silent overwrite
+    if dest.is_dir():
+        print(f"refusing: {path_arg} is an existing directory", file=sys.stderr)
+        return 1
+    if dest.exists():
+        print(f"refusing: {path_arg} exists — no silent overwrite", file=sys.stderr)
+        return 1
+    people_table = json.loads((folder / "people.json").read_text(encoding="utf-8"))
+    places_table = json.loads((folder / "places.json").read_text(encoding="utf-8"))
+    shapes = {
+        "people": people_table.get("people", []),
+        "relationships": people_table.get("relationships") or [],
+        "places": places_table.get("places", []),
+    }
+    dest.write_text(GedcomDocument.from_shapes(shapes).to_text(), encoding="utf-8")
+    print(f"wrote GEDCOM 7.0 to {path_arg}")
     return 0
 
 
@@ -179,12 +236,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--archive", default=str(ARCHIVE_DIR))
     p.set_defaults(fn=cmd_capture_memory)
 
-    p = sub.add_parser("gedcom", help="GEDCOM 7.0 interchange — export the confirmed genealogy, or parse a file")
-    p.add_argument("action", choices=["export", "import"])
-    p.add_argument("file", help="the GEDCOM file to write (export) or read (import)")
-    p.add_argument("--archive", default=str(ARCHIVE_DIR))
-    p.set_defaults(fn=cmd_gedcom)
-
+    p = sub.add_parser(
+        "gedcom",
+        help="GEDCOM 7.0 interchange — import a file into a folder (the island), or export its confirmed subset",
+    )
+    g = p.add_subparsers(dest="gedcom_action", required=True)
+    pi = g.add_parser("import", help="parse a GEDCOM 7 file into a self-contained folder of record files")
+    pi.add_argument("file", help="the GEDCOM file to read")
+    pi.add_argument("folder", help="the import folder to write (refused when it exists and is not empty)")
+    pi.set_defaults(fn=cmd_gedcom, action="import")
+    pe = g.add_parser("export", help="re-emit an import folder's confirmed subset as GEDCOM 7.0")
+    pe.add_argument("folder", help="the import folder to read")
+    pe.add_argument("path", help="the GEDCOM file to write (must not exist)")
+    pe.set_defaults(fn=cmd_gedcom, action="export")
     return parser
 
 

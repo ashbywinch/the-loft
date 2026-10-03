@@ -37,6 +37,14 @@ describe("ui primitives", () => {
     expect(circle.namespaceURI).toBe("http://www.w3.org/2000/svg");
   });
 
+  it("every SVG shape the views draw is in the SVG namespace", () => {
+    // an HTML element inside an <svg> renders nothing and has no getBBox:
+    // the reviewer's drawn row lines were invisible until polyline was here
+    for (const tag of ["svg", "g", "path", "circle", "text", "line", "rect", "polyline"]) {
+      expect(el(tag, {}).namespaceURI, tag).toBe("http://www.w3.org/2000/svg");
+    }
+  });
+
   it("el creates HTML anchors, not SVG ones — doors must lay out", () => {
     expect(el("a", { href: "#/home" }) instanceof HTMLAnchorElement).toBe(true);
     expect(el("svg:a", { href: "#/x" }) instanceof SVGElement).toBe(true);

@@ -1061,9 +1061,48 @@ export function rowAdjustmentLine(points, size) {
   return points.map((p) => [clamp(p.x / size.w), clamp(p.y / size.h)]);
 }
 
-/** The drawn strokes → the correction request body. */
+/** The drawn strokes → the correction request body: the whole set, every
+ *  time — the merge is the library's, and an incomplete set is the normal
+ *  case (a correct row needs no line). */
 export function rowAdjustmentBody(strokes, size) {
   return { lines: (strokes || []).map((s) => rowAdjustmentLine(s, size)).filter(Boolean) };
+}
+
+/** The drawn stroke nearest ``point`` within ``tolerance`` page px — the
+ *  line a tap deletes, or null. The distance is to the stroke's segments,
+ *  never just its vertices (a long line is deletable along its whole
+ *  length). */
+export function strokeAt(strokes, point, tolerance) {
+  let best = null;
+  let bestDistance = tolerance;
+  (strokes || []).forEach((points, index) => {
+    for (let i = 1; i < points.length; i += 1) {
+      const a = points[i - 1];
+      const b = points[i];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const lengthSq = dx * dx + dy * dy;
+      const t = lengthSq ? Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / lengthSq)) : 0;
+      const distance = Math.hypot(point.x - (a.x + t * dx), point.y - (a.y + t * dy));
+      if (distance <= bestDistance) {
+        bestDistance = distance;
+        best = index;
+      }
+    }
+  });
+  return best;
+}
+
+/** How near a tap must land to delete a drawn line: half the page's own
+ *  line height (a comfortable finger target), floored so a coarse layout
+ *  still gives a usable one. */
+export function rowDeleteTolerance(layout, pageHeight) {
+  const heights = (layout?.lines || [])
+    .filter((l) => l.box)
+    .map((l) => l.box[3] - l.box[1])
+    .sort((a, b) => a - b);
+  const line = heights.length ? heights[Math.floor(heights.length / 2)] : pageHeight / 60;
+  return Math.max(line / 2, 12);
 }
 
 /** The persisted drawn lines (normalised) → original-px strokes for drawing
@@ -1163,7 +1202,6 @@ function drawStrokeLayer(session, svg, strokes, live) {
   });
 }
 
-
 /** A client point → the page's own coordinates: through the view's scale
  *  and the display rotation (the inverse of the on-screen transform, so a
  *  drawn line lands where the reviewer's finger pointed). */
@@ -1175,7 +1213,6 @@ function strokePoint(session, imgBox, clientX, clientY) {
   const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
   return displayToOriginal(f, x, y);
 }
-
 
 /** The corrected rows as tinted bands with their numbers — the reviewer
  *  sees what their lines made. Page-px, so the layer's transform places
@@ -1196,19 +1233,18 @@ function renderRowBands(session) {
   });
   session.rowTools?.classList.toggle("is-set", (session.adjustedRows || []).length > 0);
 }
-
-/** The drawn lines -> the backend's correction (`Rows.build` over the
- *  page's persisted words); the returned rows render as bands. A refusal
- *  (no words persisted, a malformed body) is surfaced, never silent. */
-async function applyRowAdjustments(session) {
+/** The drawn lines → the backend's correction (`Rows.from_words` over the
+ *  page's persisted words, an incomplete set merging with the draft rows);
+ *  the returned rows render as bands. Called on every finger-lift, so the
+ *  reviewer sees immediately whether the line they drew did what they
+ *  meant. A refusal (no words persisted, a malformed body) is surfaced,
+ *  never silent. */
+async function syncRowAdjustments(session) {
   const size = session.imgSize;
   // the page is the session's own position — never a stale local
   const page = session.batch.documents[session.docIndex]?.pages[session.pageIndex];
+  if (!size || !page) return;
   const body = rowAdjustmentBody(session.strokes, size);
-  if (!body.lines.length) {
-    console.warn("review: no row lines drawn — nothing to apply");
-    return;
-  }
   session.rowTools?.classList.add("is-busy");
   try {
     const res = await fetch(
@@ -1218,12 +1254,24 @@ async function applyRowAdjustments(session) {
     const payload = await res.json();
     if (!res.ok) throw new Error(payload?.error || `row adjustment rejected (${res.status})`);
     session.adjustedRows = payload.rows;
+    setRowStatus(session, "");
     renderRowBands(session);
   } catch (error) {
     console.error("review: the row correction failed — the page is unchanged", error);
+    setRowStatus(session, String(error?.message || error), true);
   } finally {
     session.rowTools?.classList.remove("is-busy");
   }
+}
+
+/** The toolbar's one line of state: how many lines are drawn, or why the
+ *  last one did not take. */
+function setRowStatus(session, message, failed = false) {
+  const status = session.rowTools?.querySelector(".rv-rowtools__status");
+  if (!status) return;
+  const drawn = (session.strokes || []).length;
+  status.textContent = message || (drawn ? `${drawn} line${drawn === 1 ? "" : "s"}` : "");
+  session.rowTools?.classList.toggle("is-failed", failed);
 }
 
 /** The wheel's two behaviors: PAN when the view shows a slice of the
@@ -1272,6 +1320,7 @@ function openViewer(session, imgBox) {
   const doc = batch.documents[docIndex];
   const page = doc.pages[pageIndex];
   const layout = doc.layouts?.[page] || null;
+  session.layout = layout;
 
   session.resizer?.disconnect();
   session.imgBox = imgBox;
@@ -1350,10 +1399,11 @@ function openViewer(session, imgBox) {
       session.contentTop = bandAnchor(layout) - bandMargin(layout);
     }
     // The row tools + the stroke layer: the reviewer's drawn row lines (the
-    // correction's input — `Rows.build` groups the page's words by them)
-    // live in a page-px SVG above the image; the corrected rows tint the
-    // page beneath. The mode is explicit: panning and drawing never fight
-    // for the same finger.
+    // correction's input — `Rows.from_words` groups the page's words by
+    // them, merging an incomplete set with the draft rows) live in a
+    // page-px SVG above the image; the corrected rows tint the page
+    // beneath. The mode is explicit: panning and drawing never fight for
+    // the same finger.
     session.drawRows = false;
     session.strokes = [];
     session.adjustedRows = doc.adjusted_rows?.[page]?.rows || null;
@@ -1369,25 +1419,39 @@ function openViewer(session, imgBox) {
       session.drawRows = !session.drawRows;
       imgBox.classList.toggle("rv-drawing", session.drawRows);
       toggleDraw.classList.toggle("is-on", session.drawRows);
+      setRowStatus(session, session.drawRows ? "draw over a row that is wrong; tap a line to delete it" : "");
     });
-    const applyBtn = el("button", { class: "btn rv-rowtools__apply", type: "button" }, ["Apply"]);
-    applyBtn.addEventListener("click", () => applyRowAdjustments(session));
     const clearBtn = el("button", { class: "btn rv-rowtools__clear", type: "button" }, ["Clear"]);
     clearBtn.addEventListener("click", () => {
       session.strokes = [];
       drawStrokeLayer(session, session.drawLayer, [], false);
       session.adjustedRows = null;
       renderRowBands(session);
+      syncRowAdjustments(session); // no lines: the draft rows are the rows
     });
-    imgBox.append(el("div", { class: "rv-rowtools" }, [toggleDraw, applyBtn, clearBtn]));
-    // a reopened page shows what the reviewer drew and the rows it made
-    drawStrokeLayer(session, drawLayer, strokesFromAdjustments(doc.row_adjustments?.[page], imageSize), false);
+    session.rowTools = el("div", { class: "rv-rowtools" }, [
+      toggleDraw,
+      el("span", { class: "rv-rowtools__status" }, []),
+      clearBtn,
+    ]);
+    // the toolbar sits inside the pane: a press on it is the toolbar's,
+    // never the pane's (the pane's click would re-render the viewer and
+    // reset the drawing mode the reviewer just entered)
+    for (const type of ["pointerdown", "click"]) {
+      session.rowTools.addEventListener(type, (e) => e.stopPropagation());
+    }
+    imgBox.append(session.rowTools);
+    // a reopened page shows what the reviewer drew and the rows it made —
+    // and holds them, so a tap can still delete them
+    session.strokes = strokesFromAdjustments(doc.row_adjustments?.[page], imageSize);
+    drawStrokeLayer(session, drawLayer, session.strokes, false);
+    renderRowBands(session);
+    setRowStatus(session, "");
     renderRowBands(session);
     // Restore the resume position: the scroll, image view,
     // selected line, and read rotation from the last session on this page.
     const saved = loadResumePosition(batch.batchId, page);
     if (saved && saved.docIndex === docIndex && saved.selLine !== undefined) {
-      session.selLine = saved.selLine;
       session.visibleLine = saved.selLine;
       session.readRotation = saved.readRotation ?? session.readRotation;
       if (saved.view) {
@@ -1494,11 +1558,25 @@ function openViewer(session, imgBox) {
   };
   const onUp = (e) => {
     if (drawing && pointers.size === 1) {
-      // the stroke ends with this finger: keep it when it is a line (the
-      // build drops taps), and stop panning/drawing until the next down
-      if (rowAdjustmentLine(drawing, session.imgSize)) session.strokes.push(drawing);
+      // the stroke ends with this finger. A line merges with the draft
+      // rows on the spot; a tap (too short to be a line) instead deletes
+      // the line it lands on — the reviewer's wrong line goes, and they
+      // redraw it immediately.
+      const stroke = drawing;
       drawing = null;
-      drawStrokeLayer(session, session.drawLayer, session.strokes, false);
+      let changed = true;
+      if (rowAdjustmentLine(stroke, session.imgSize)) {
+        session.strokes.push(stroke);
+      } else {
+        const at = strokeAt(session.strokes, stroke[0], rowDeleteTolerance(session.layout, session.imgSize.h));
+        if (at === null)
+          changed = false; // a tap on no line: nothing to do
+        else session.strokes.splice(at, 1);
+      }
+      if (changed) {
+        drawStrokeLayer(session, session.drawLayer, session.strokes, false);
+        syncRowAdjustments(session);
+      }
     }
     pointers.delete(e.pointerId);
     dragStart = null;

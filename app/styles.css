@@ -2145,6 +2145,21 @@ summary:focus-visible {
   line-height: 1.4;
   text-align: center;
 }
+.rv-rowtools__status {
+  align-self: center;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.rv-rowtools.is-failed .rv-rowtools__status {
+  color: #b3261e;
+  opacity: 1;
+}
+
+.rv-rowtools.is-busy .rv-rowtools__status::after {
+  content: " …";
+}
+
 .rv-rowtools {
   position: absolute;
   z-index: 5;

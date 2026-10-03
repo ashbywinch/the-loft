@@ -37,9 +37,10 @@ from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.pipeline_store import PipelineStore
 from tools.reader import reading_for_page
 from tools.registry import load_batch, record_path
-from tools.rows import Box, Rows
+from tools.rows import Rows
 from tools.store import DiskStore  # noqa: F401
 from tools.vlm import orientation_report, selfreport_words
+from tools.word import Word
 
 ROWS_JSON = "rows.json"  # the reading's rows file beside the guess (object-model Phase 1)
 WORDS_JSON = "words.json"  # the reading's words, written beside the rows
@@ -199,8 +200,10 @@ def record_confirmation(
 # carrier class would be the object-model Phase 6 package restructure, not this change
 # lucidlint: ignore latent-class the batch-path vocabulary is this module's shape; the restructure is Phase 6
 def apply_row_adjustments(batch_id: str, page: str, adjustments: Any, work_dir: Path) -> list[Any]:
-    """The reviewer's drawn row lines -> the page's rows (`Rows.build` over
-    the reading's own words), persisted beside the reading:
+    """The reviewer's drawn row lines -> the page's rows
+    (`Rows.from_words` over the words the read stage persisted, each with
+    its own reading line, so an incomplete set of lines merges with the
+    draft rows), persisted beside the reading:
 
     - ``<page>.row-adjustments.json`` — the drawn lines, as drawn;
     - ``<page>.rows-adjusted.json`` — the correction's rows, the wire
@@ -220,12 +223,22 @@ def apply_row_adjustments(batch_id: str, page: str, adjustments: Any, work_dir: 
         raise ValueError(f"no words for {page} — re-read the page, then draw its rows")
     words = json.loads(words_path.read_text(encoding="utf-8"))["words"]
     reading = json.loads(rows_path.read_text(encoding="utf-8"))
-    boxes = [Box(w["x0"], w["y0"], w["x1"], w["y1"]) for w in words]
-    rows = Rows.build(
+    boxes = [
+        Word(
+            w["x0"],
+            w["y0"],
+            w["x1"],
+            w["y1"],
+            baseline=w.get("baseline"),
+            waistline=w.get("waistline"),
+            line=w.get("line"),
+        )
+        for w in words
+    ]
+    rows = Rows.from_words(
         boxes,
         [list(line) for line in adjustments["lines"]],
         (int(reading["width"]), int(reading["height"])),
-        [w["baseline"] for w in words],
     )
     atomic_write(readings.adjustments_path(page), json.dumps(adjustments, ensure_ascii=False, indent=1) + "\n")
     atomic_write(readings.adjusted_rows_path(page), json.dumps(Rows.to_wire(rows), ensure_ascii=False, indent=1) + "\n")
@@ -500,7 +513,7 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
                     word["x0"], word["y0"], word["x1"], word["y1"] = height - y1, x0, height - y0, x1
                     # the measured baseline/waistline are horizontals now
                     # vertical: the rotated box's own edges keep the reading
-                    # order rule (Rows.build's rule B) in the new frame
+                    # order rule (Rows.from_words's rule B) in the new frame
                     word["waistline"], word["baseline"] = word["y0"], word["y1"]
             width, height = height, width
         reading["width"], reading["height"] = rotated.width, rotated.height

@@ -2,7 +2,7 @@
 
 - THE PROPOSAL — tools/reader.py rows_for_page (the ink/fitted-lines chain;
   what the pipeline writes before any user line exists).
-- THE CORRECTION — tools/rows.py Rows.build (the user's drawn lines decide).
+- THE CORRECTION — tools/rows.py Rows.from_words (the drawn lines decide).
 
 Both are scored by the same rule: for every word with an adjudicated row
 (the gold's own boxes, IoU-matched to the re-parsed words), is the word in
@@ -25,7 +25,7 @@ from tools.page_visuals import captioned_sheet, review_image, stack_sheets
 from tools.reader import reading_for_page
 from tools.render import render_rows
 from tools.row import Row
-from tools.rows import Box, Rows
+from tools.rows import Rows
 from tools.schemas import load_boxes, load_rows, load_user_row_adjustments, load_words
 from tools.word import Word
 
@@ -96,13 +96,25 @@ def _proposal_assignment(proposal: Sequence[Mapping[str, Any]], words: Sequence[
     return assigned
 
 
+def _word(record) -> Word:
+    return Word(
+        record["x0"],
+        record["y0"],
+        record["x1"],
+        record["y1"],
+        baseline=record.get("baseline"),
+        waistline=record.get("waistline"),
+        line=record.get("line"),
+    )
+
+
 def _correction_assignment(
     words: Sequence[Mapping[str, Any]], lines: Sequence[Sequence[tuple[float, float]]], page_size: tuple[int, int]
 ) -> tuple[list[Any], dict[int, int]]:
-    """`Rows.build` on the page's words and the drawn lines -> the built rows
-    and every word's built row."""
-    boxes = [Box(w["x0"], w["y0"], w["x1"], w["y1"]) for w in words]
-    built = Rows.build(boxes, [list(line) for line in lines], page_size, [w["baseline"] for w in words])
+    """`Rows.from_words` on the page's words and the drawn lines -> the built
+    rows and every word's built row."""
+    boxes = [_word(w) for w in words]
+    built = Rows.from_words(boxes, [list(line) for line in lines], page_size)
     box_index = {b: i for i, b in enumerate(boxes)}
     built_row: dict[int, int] = {}
     for r_i, row in enumerate(built):
@@ -148,7 +160,7 @@ def main() -> None:
 
     print(f"words: {len(words)} | adjudicated rows: {len(gold)}")
     p_right, p_judged = score("PROPOSAL  (reader.reading_for_page)", proposal_row, len(proposal), word_adj)
-    c_right, c_judged = score("CORRECTION (rows.py Rows.build)   ", built_row, len(built), word_adj)
+    c_right, c_judged = score("CORRECTION (rows.py Rows.from_words)", built_row, len(built), word_adj)
 
     def built_words(r_i: int) -> list[int]:
         return sorted(i for i, r in built_row.items() if r == r_i)
@@ -177,7 +189,7 @@ def main() -> None:
             [Row(words=sorted(i for i, r in proposal_row.items() if r == k)) for k in range(len(proposal))],
         ),
         (
-            f"THE CORRECTION — tools/rows.py Rows.build (your {len(lines)} drawn lines)  |  {len(built)} rows, "
+            f"THE CORRECTION — tools/rows.py Rows.from_words (your {len(lines)} drawn lines)  |  {len(built)} rows, "
             f"{c_right}/{c_judged} words in the correct row ({100 * c_right / c_judged:.1f}%)",
             [Row(words=built_words(k)) for k in range(len(built))],
         ),

@@ -3,7 +3,7 @@
 A row of writing is found on the page by the user, not by the detector:
 the user draws a line along each row, the line is assigned the word
 boxes whose centres fall within its span, and the row is that line's
-words bounded by their exact union. `Rows.build` turns the page's word
+words bounded by their exact union. `Rows.from_words` turns the page's word
 boxes and the user's line indications into those rows.
 
 The vocabulary is the page's own: the user's *lines* are the drawn row
@@ -18,7 +18,7 @@ same row drawn twice, not a new row (a reviewer's double pass): its
 words join the first row. Whether a row is an *interjection* (the
 page's small marginal writing) rather than a body row is an adjudicated
 fact that lives in the page's row data, not something the geometry can
-decide — `Rows.build` marks every row `body`, and the page's committed
+decide — `Rows.from_words` marks every row `body`, and the page's committed
 rows carry the confirmed kinds and numbers.
 """
 
@@ -31,9 +31,11 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-from tools.boxrows import Rectangle
+from tools.boxrows import Rectangle as InkRectangle
 from tools.boxrows_render import tint_row
 from tools.page_visuals import captioned_sheet, halo_text, review_image, scaled_crop
+from tools.rectangle import Rectangle
+from tools.word import Word
 
 TOUCH_FRACTION = 0.38  # x the writing height: how far a line's stroke claims a word
 SPACING_RATIO = 1.6  # x the writing height: where one row ends and the next begins
@@ -42,34 +44,9 @@ BUTT_GAP_MIN = 4.0  # px floor for a butting adjacency — physical, never unit-
 
 
 @dataclass(frozen=True)
-class Box:
-    """A rectangle on the page, in page pixels (left, top, right, bottom)."""
-
-    x0: float
-    y0: float
-    x1: float
-    y1: float
-
-    @property
-    def centre_x(self) -> float:
-        return (self.x0 + self.x1) / 2
-
-    @property
-    def centre_y(self) -> float:
-        return (self.y0 + self.y1) / 2
-
-    @property
-    def height(self) -> float:
-        return self.y1 - self.y0
-
-    @property
-    def width(self) -> float:
-        return self.x1 - self.x0
-
-
-@dataclass(frozen=True)
 class Row:
-    """One row of writing: the words one user line claimed, and their union.
+    """One row of writing: the words one drawn line (or one reading line)
+    claimed, and their union.
 
     The id carries its kind, so the file format never loses the type:
     `seg-6` is a body row, `int-41` an interjection row. The number is
@@ -81,110 +58,40 @@ class Row:
     id: str
     kind: str  # "body" | "interjection"
     number: int
-    word_boxes: list[Box]
-    band: Box
+    word_boxes: list[Word]
+    band: Rectangle
 
 
 class Rows:
-    """The rows the user's line indications make on a page.
+    """The rows a page's words make: from the drawn lines where the
+    reviewer drew them, from the words' own reading lines everywhere else.
 
-    Every row starts from a user line: each word box joins the line whose
-    span covers its centre (enlarged by the touch) and whose drawn height
-    is nearest the word — not the first line to cover it, so a word lying
-    under two lines goes to the row it most plausibly belongs to (a
-    reviewer's double pass is `the` same row twice, and its words all sit
-    nearest that one line). Rows come out numbered in reading order
-    (topmost band first).
+    A drawn line claims each word whose centre its stroke covers
+    (enlarged by the touch) and whose drawn height is nearest the word —
+    not the first line to cover it, so a word lying under two lines goes
+    to the row it most plausibly belongs to (a reviewer's double pass is
+    the same row twice, and its words all sit nearest that one line).
+    An incomplete set of drawn lines MERGES with the draft rows: a
+    reading line no drawn line claimed keeps its row untouched, so the
+    reviewer never draws over a row that is already right. Rows come out
+    numbered in reading order (topmost band first) and are all one type —
+    a corrected row and a proposed row are the same Row.
     """
 
     @staticmethod
-    def build(
-        words: list[Box],
+    def from_words(
+        words: list[Word],
         row_adjustments: list[list[tuple[float, float]]],
         page_size: tuple[int, int],
-        baselines: list[float] | None = None,
     ) -> list[Row]:
-        """The page's rows from `words` (the detected word boxes),
-        `row_adjustments` (the user's drawn row adjustments — the yellow
-        lines — as normalised points), and `page_size` (the page's pixel dimensions). When the
-        words carry measured baselines, pass them for the apportionment's
-        rule B ("roughly the same baseline" means the same drawn line,
-        not the neighbour's)."""
-        width, height = page_size
-        lines = [[(x * width, y * height) for x, y in line] for line in row_adjustments]
-        unit = _writing_height(words)
-        spacing = SPACING_RATIO * unit
-        spans = _line_spans(lines)
+        """The page's rows from `words` (the detected words, each carrying
+        its reading line), `row_adjustments` (the reviewer's drawn row
+        lines — the yellow lines — as normalised points), and `page_size`
+        (the page's pixel dimensions).
 
-        owner_of: list[int | None] = [None] * len(words)
-        for i, box in enumerate(words):
-            if _is_rule(box, words, spacing):
-                continue
-            candidates: list[tuple[float, int]] = []
-            for line_index, (x_lo, x_hi, y_lo, y_hi, mean_y) in enumerate(spans):
-                if x_lo <= box.centre_x <= x_hi and y_lo - unit <= box.centre_y <= y_hi + unit:
-                    candidates.append((abs(mean_y - box.centre_y), line_index))
-            if candidates:
-                owner_of[i] = min(candidates)[1]
-
-        # two discount patterns — a word matching either is an annotation,
-        # not a line word: it is unclaimed here and the apportionment
-        # decides its fate (user 2026-09-19).
-        # (1) fully below its line's drawn bottom, hanging directly under
-        #     a word of the line;
-        # (2) poking above the top of every word of its line, directly
-        #     over one of them (an asterisk floats above its line's
-        #     x-height; a real word's box starts at its own ascenders).
-        drawn_bottom = [span[3] for span in spans]
-        for i, box in enumerate(words):
-            owner = owner_of[i]
-            if owner is None:
-                continue
-            siblings = [words[j] for j, o in enumerate(owner_of) if o == owner and j != i]
-            over_siblings = [other for other in siblings if min(box.x1, other.x1) > max(box.x0, other.x0)]
-            hangs_under = box.y0 >= drawn_bottom[owner] and any(other.y1 <= box.y0 for other in over_siblings)
-            pokes_above = bool(over_siblings) and box.y0 < min(other.y0 for other in over_siblings)
-            if hangs_under or pokes_above:
-                owner_of[i] = None
-
-        for i in range(len(words)):
-            if owner_of[i] is not None:
-                continue
-            claimed = _apportion_target(i, words, owner_of, unit, baselines)
-            if claimed is not None:
-                owner_of[i] = claimed
-
-        word_sets: dict[int, list[int]] = {}
-        for i, owner in enumerate(owner_of):
-            if owner is not None:
-                word_sets.setdefault(owner, []).append(i)
-        numbered: list[Row] = []
-        for owner in sorted(word_sets, key=lambda o: min(words[i].centre_y for i in word_sets[o])):
-            owned = word_sets[owner]
-            sortable = sorted((words[i] for i in owned), key=lambda b: (b.y0, b.x0))
-            numbered.append(
-                Row(
-                    id="",
-                    kind="body",
-                    number=0,
-                    word_boxes=sortable,
-                    band=Box(
-                        min(box.x0 for box in sortable),
-                        min(box.y0 for box in sortable),
-                        max(box.x1 for box in sortable),
-                        max(box.y1 for box in sortable),
-                    ),
-                )
-            )
-        for number, row in enumerate(numbered, start=1):
-            numbered[number - 1] = Row(
-                id=f"seg-{number}",
-                kind=row.kind,
-                number=number,
-                word_boxes=row.word_boxes,
-                band=row.band,
-            )
-        return numbered
+        With no drawn lines this is the words' own line structure: the
+        draft rows exist before the reviewer draws anything."""
+        return _Claims(words, row_adjustments, page_size).rows()
 
     @staticmethod
     def to_wire(rows: Sequence[Row]) -> dict[str, Any]:
@@ -214,77 +121,191 @@ class Rows:
                 id=str(record["id"]),
                 kind=str(record["kind"]),
                 number=int(record["number"]),
-                word_boxes=[_box_from_wire(box) for box in record["word_boxes"]],
-                band=_box_from_wire(record["band"]),
+                word_boxes=[_word_from_wire(box) for box in record["word_boxes"]],
+                band=_rect_from_wire(record["band"]),
             )
             for record in data["rows"]
         ]
 
 
-def _box_wire(box: Box) -> dict[str, float]:
-    """One box as the wire record (the four fields, and only those)."""
-    return {"x0": box.x0, "y0": box.y0, "x1": box.x1, "y1": box.y1}
+class _Claims:
+    """The page's words and the drawn lines claiming them.
 
+    The measures, the two discount patterns and the apportionment all read
+    the same words, so they live here once — `Rows.from_words` is the
+    library's face, this is the measurement behind it."""
 
-def _box_from_wire(record: Mapping[str, Any]) -> Box:
-    return Box(float(record["x0"]), float(record["y0"]), float(record["x1"]), float(record["y1"]))
+    def __init__(
+        self,
+        words: list[Word],
+        row_adjustments: list[list[tuple[float, float]]],
+        page_size: tuple[int, int],
+    ) -> None:
+        width, height = page_size
+        self.words = words
+        self.unit = self._writing_height()
+        self.spacing = SPACING_RATIO * self.unit
+        self.spans = _line_spans([[(x * width, y * height) for x, y in line] for line in row_adjustments])
 
+    def rows(self) -> list[Row]:
+        """The rows the drawn lines and the words' own lines make."""
+        owner_of = self._claimed()
+        corrected = {self.words[i].line for i, owner in enumerate(owner_of) if owner is not None}
+        groups: dict[tuple[str, int], list[int]] = {}
+        for i, owner in enumerate(owner_of):
+            if owner is not None:
+                groups.setdefault(("drawn", owner), []).append(i)
+                continue
+            own_line = self.words[i].line
+            if own_line is not None and own_line not in corrected:
+                groups.setdefault(("draft", own_line), []).append(i)
 
-def _apportion_target(
-    index: int, words: list[Box], owner_of: list[int | None], unit: float, baselines: list[float] | None = None
-) -> int | None:
-    """Where an unclaimed word belongs, per the user's ruling (2026-09-18):
-    A — the line containing a word directly next to it above or below
-    (its box butting this one); B — else the line of the nearest word
-    left or right with roughly the same baseline (the same drawn line);
-    C — else none, and the word is left without a row."""
-    box = words[index]
+        rows: list[Row] = []
+        for key in sorted(groups, key=lambda k: min(self.words[i].cy for i in groups[k])):
+            sortable = sorted((self.words[i] for i in groups[key]), key=lambda w: (w.y0, w.x0))
+            rows.append(
+                Row(
+                    id=f"seg-{len(rows) + 1}",
+                    kind="body",
+                    number=len(rows) + 1,
+                    word_boxes=sortable,
+                    band=Rectangle(
+                        min(word.x0 for word in sortable),
+                        min(word.y0 for word in sortable),
+                        max(word.x1 for word in sortable),
+                        max(word.y1 for word in sortable),
+                    ),
+                )
+            )
+        return rows
 
-    def above_below(candidate: int) -> float | None:
-        """The gap between this word and the candidate, when the candidate
-        is directly above or below it: horizontal overlap and a vertical
-        gap no larger than an eighth of the writing height — the boxes
-        BUTT UP against each other (a split word's pieces sit ~2px apart;
-        a word merely passing overhead floats a real gap away)."""
-        other = words[candidate]
-        if min(box.x1, other.x1) <= max(box.x0, other.x0):
+    def _claimed(self) -> list[int | None]:
+        """Every word's drawn line, or None where no line claimed it."""
+        owner_of: list[int | None] = [None] * len(self.words)
+        for i, word in enumerate(self.words):
+            if self._is_rule(word):
+                continue
+            candidates: list[tuple[float, int]] = []
+            for line_index, (x_lo, x_hi, y_lo, y_hi, mean_y) in enumerate(self.spans):
+                if x_lo <= word.cx <= x_hi and y_lo - self.unit <= word.cy <= y_hi + self.unit:
+                    candidates.append((abs(mean_y - word.cy), line_index))
+            if candidates:
+                owner_of[i] = min(candidates)[1]
+        self._discount_annotations(owner_of)
+        for i in range(len(self.words)):
+            if owner_of[i] is None:
+                owner_of[i] = self._apportion(i, owner_of)
+        return owner_of
+
+    def _discount_annotations(self, owner_of: list[int | None]) -> None:
+        """Unclaim the annotations (user 2026-09-19): a word matching either
+        pattern is not a line word, and the apportionment decides its fate.
+
+        (1) fully below its line's drawn bottom, hanging directly under a
+            word of the line;
+        (2) poking above the top of every word of its line, directly over
+            one of them (an asterisk floats above its line's x-height; a
+            real word's box starts at its own ascenders)."""
+        words = self.words
+        drawn_bottom = [span[3] for span in self.spans]
+        for i, word in enumerate(words):
+            owner = owner_of[i]
+            if owner is None:
+                continue
+            siblings = [words[j] for j, o in enumerate(owner_of) if o == owner and j != i]
+            over = [other for other in siblings if min(word.x1, other.x1) > max(word.x0, other.x0)]
+            hangs_under = word.y0 >= drawn_bottom[owner] and any(other.y1 <= word.y0 for other in over)
+            pokes_above = bool(over) and word.y0 < min(other.y0 for other in over)
+            if hangs_under or pokes_above:
+                owner_of[i] = None
+
+    def _writing_height(self) -> float:
+        """The page's writing height: the median word box height."""
+        heights = sorted(word.height for word in self.words)
+        return heights[len(heights) // 2]
+
+    def _is_rule(self, word: Word) -> bool:
+        """Whether a word box is long-flat ink with no writing directly above it.
+
+        A rule is not part of any row; an underline — which HAS writing
+        directly above (the letters it underscores) — is. The box must be at
+        least `RULE_ASPECT` wider than tall, and no other word box (that is
+        itself not rule-flat) may sit within one line-spacing above it,
+        overlapping its width."""
+        if word.height <= 0 or word.width < RULE_ASPECT * word.height:
+            return False
+        for other in self.words:
+            if other is word or other.width >= RULE_ASPECT * other.height:
+                continue
+            if other.x1 > word.x0 and other.x0 < word.x1 and -self.spacing <= word.y0 - other.y1 <= self.spacing:
+                return False  # writing sits directly above — an underline, part of the row
+        return True
+
+    def _apportion(self, index: int, owner_of: list[int | None]) -> int | None:
+        """Where an unclaimed word belongs, per the user's ruling (2026-09-18):
+        A — the line containing a word directly next to it above or below
+        (its box butting this one); B — else the line of the nearest word
+        left or right with roughly the same baseline (the same drawn line);
+        C — else none, and the word is left without a row."""
+        word = self.words[index]
+        neighbours = [i for i in range(len(self.words)) if i != index and self._butts(index, i)]
+        if neighbours:
+            nearer = min(neighbours, key=lambda candidate: self._gap(index, candidate) or 0.0)
+            return owner_of[nearer]
+        same_band = [
+            i for i in range(len(self.words)) if i != index and owner_of[i] is not None and self._same_line(index, i)
+        ]
+        if same_band:
+            nearest = min(same_band, key=lambda i: abs(self.words[i].cx - word.cx))
+            return owner_of[nearest]
+        return None  # C: no row for this word
+
+    def _gap(self, index: int, candidate: int) -> float | None:
+        """The gap between two words when one is directly above or below the
+        other: horizontal overlap and a vertical gap — the boxes BUTT UP
+        against each other (a split word's pieces sit ~2px apart; a word
+        merely passing overhead floats a real gap away)."""
+        word = self.words[index]
+        other = self.words[candidate]
+        if min(word.x1, other.x1) <= max(word.x0, other.x0):
             return None  # no horizontal overlap: not "directly next to"
-        if other.y1 <= box.y0:
-            return box.y0 - other.y1
-        if other.y0 >= box.y1:
-            return other.y0 - box.y1
+        if other.y1 <= word.y0:
+            return word.y0 - other.y1
+        if other.y0 >= word.y1:
+            return other.y0 - word.y1
         return None  # vertically overlapping: it is a row-mate, not a neighbour
 
-    def butts(candidate: int) -> bool:
-        gap = above_below(candidate)
+    def _butts(self, index: int, candidate: int) -> bool:
+        gap = self._gap(index, candidate)
         # a floor: on a small-font page unit/8 can be only a couple of
         # pixels, too tight for a split piece's real gap — butting is a
         # physical adjacency, never smaller than a few px (PR review,
         # 2026-09-19).
-        return gap is not None and gap <= max(unit / 8, BUTT_GAP_MIN)
+        return gap is not None and gap <= max(self.unit / 8, BUTT_GAP_MIN)
 
-    # A: a word directly above or below (its box butting this one),
-    # whichever is nearer.
-    neighbours = [i for i in range(len(words)) if i != index and butts(i)]
-    if neighbours:
-        gap_of = lambda candidate: above_below(candidate) or 0.0  # noqa: E731  # only butting neighbours reach here
-        nearer = min(neighbours, key=gap_of)
-        return owner_of[nearer]
+    def _same_line(self, index: int, candidate: int) -> bool:
+        """Roughly the same baseline — the measured baseline when the words
+        carry one (the same drawn line), else the box centres within a
+        quarter of the writing height."""
+        word = self.words[index]
+        other = self.words[candidate]
+        if word.baseline is not None and other.baseline is not None:
+            return abs(other.baseline - word.baseline) <= self.unit / 4
+        return abs(other.cy - word.cy) <= self.unit / 4
 
-    # B: the nearest word left or right on roughly the same baseline —
-    # the measured baseline when given (the same drawn line), else the
-    # box centres within a quarter of the writing height.
-    def same_line(candidate: int) -> bool:
-        if baselines is not None:
-            return abs(baselines[candidate] - baselines[index]) <= unit / 4
-        return abs(words[candidate].centre_y - box.centre_y) <= unit / 4
 
-    same_band = [i for i in range(len(words)) if i != index and owner_of[i] is not None and same_line(i)]
-    if same_band:
-        nearest = min(same_band, key=lambda i: abs(words[i].centre_x - box.centre_x))
-        return owner_of[nearest]
+def _box_wire(box: Word | Rectangle) -> dict[str, float]:
+    """One box as the wire record (the four fields, and only those)."""
+    return {"x0": box.x0, "y0": box.y0, "x1": box.x1, "y1": box.y1}
 
-    return None  # C: no row for this word
+
+def _rect_from_wire(record: Mapping[str, Any]) -> Rectangle:
+    return Rectangle(float(record["x0"]), float(record["y0"]), float(record["x1"]), float(record["y1"]))
+
+
+def _word_from_wire(record: Mapping[str, Any]) -> Word:
+    """A wire word box as a Word — the wire carries the box only."""
+    return Word(float(record["x0"]), float(record["y0"]), float(record["x1"]), float(record["y1"]))
 
 
 def _line_spans(lines: list[list[tuple[float, float]]]) -> list[tuple[float, float, float, float, float]]:
@@ -296,31 +317,6 @@ def _line_spans(lines: list[list[tuple[float, float]]]) -> list[tuple[float, flo
         ys = [point[1] for point in line]
         spans.append((min(xs), max(xs), min(ys), max(ys), sum(ys) / len(ys)))
     return spans
-
-
-def _writing_height(words: list[Box]) -> float:
-    """The page's writing height: the median word box height."""
-    heights = sorted(box.height for box in words)
-    return heights[len(heights) // 2]
-
-
-def _is_rule(box: Box, words: list[Box], spacing: float) -> bool:
-    """Whether a word box is long-flat ink with no writing directly above it.
-
-    A rule is not part of any row; an underline — which HAS writing
-    directly above (the letters it underscores) — is. The box must be at
-    least `RULE_ASPECT` wider than tall, and no other word box (that is
-    itself not rule-flat) may sit within one line-spacing above it,
-    overlapping its width.
-    """
-    if box.height <= 0 or box.width < RULE_ASPECT * box.height:
-        return False
-    for other in words:
-        if other is box or other.width >= RULE_ASPECT * other.height:
-            continue
-        if other.x1 > box.x0 and other.x0 < box.x1 and -spacing <= box.y0 - other.y1 <= spacing:
-            return False  # writing sits directly above — an underline, part of the row
-    return True
 
 
 @dataclass(frozen=True)
@@ -351,7 +347,7 @@ def render_map(
     page: Image.Image,
     rows: list[Row],
     path: Path,
-    window: Box,
+    window: Rectangle,
     scale: float = 1.0,
     word_numbers: dict[tuple[float, float, float, float], int] | None = None,
     row_adjustments: list[list[tuple[float, float]]] | None = None,
@@ -368,7 +364,7 @@ def render_map(
     overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     for index, row in enumerate(rows):
-        rects = [Rectangle(box.x0, box.y0, box.x1, box.y1) for box in row.word_boxes]
+        rects = [InkRectangle(word.x0, word.y0, word.x1, word.y1) for word in row.word_boxes]
         tint_row(draw, rects, list(range(len(rects))), style.colour(index))
     rendered = Image.alpha_composite(canvas, overlay).convert("RGB")
     crop = scaled_crop(rendered, window.x0, window.y0, window.x1, window.y1, scale)

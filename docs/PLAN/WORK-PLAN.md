@@ -12,9 +12,9 @@ by dependency.
 | # | Item | State | Acceptance |
 |---|---|---|---|
 | 1.1 | `tools/stages.py` — the Stage enum (object, artefact, human flag) + the Document and identity artefacts' schemas (`schemas.py` has only the rows-side loaders today) | not started | typed scaffold, no behaviour change |
-| 1.2 | `Rows.from_words` — the agreed classmethod name (the code has `Rows.build`) | not started | rename, no behaviour change |
+| 1.2 | `Rows.from_words` — the agreed classmethod name (DR1) | done (PR #64) | rename, no behaviour change; the words' own reading lines are the no-adjustments draft path |
 | 1.3 | Scan pickup (UR3): watcher + worker run orient → marks → words → draft rows → `rows_pending` | not started | a dropped scan reaches the check-rows queue with no manual step |
-| 1.4 | Drawing UI (stage 4): trace with live merge on finger-lift; strokes save through typed `Traces` (design: `segment-review-stories.md`) | not started | drawing fixes a wrong row; the adjustment persists through the typed seams |
+| 1.4 | Drawing UI (stage 4): trace with live merge on finger-lift; strokes save through typed `Traces` (design: `segment-review-stories.md`) | partly landed (PR #64): draw + live merge on lift + tap-to-delete, persisting through the row-adjustments seam; the typed `Traces` name and the `rows_pending` status wait on 1.1/1.3 | drawing fixes a wrong row; the adjustment persists through the typed seams |
 | 1.5 | The portal: three doors + counts (rows to check / documents to review / identities proposed — unfinished memories ride the identities queue, per PRD §9 F10 / INGEST-PRD 2026-09-22) | not started | the home doors show the counts; each opens the right surface |
 | 1.6 | Identification review (stage 8): proposed entities from agreed Documents → confirmations into the identity tables | not started (depends on 1.5) | confirmations land in `IDENTITY_TABLES` |
 | 1.7 | Design task (DR2): where the non-per-page artefacts (identity tables, captured stories) live in the archive | undecided | a proposal showing each kind's home |

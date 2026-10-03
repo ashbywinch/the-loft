@@ -240,21 +240,24 @@ class AIClient:
                 continue
             if (
                 not content.strip()
-                and finish_reason == "stop"
+                and finish_reason in ("stop", "error")
                 and thinking_enabled
                 and self._reasoning_is_answer(self.last_reasoning)
             ):
                 # the provider put the structured answer in the reasoning
                 # channel and produced zero content — the captured reasoning
-                # IS the completion (measured: deepseek-v4-flash via the CF
-                # gateway returns the verdict JSON in 'reasoning' with
-                # content=="" on some draws; callers extract the JSON).
+                # IS the completion. Measured on the CI gateway, the
+                # verdict JSON lands in 'reasoning' with content=="" both
+                # on stop draws and on stream-failed completions
+                # (finish_reason=error, 9,852 reasoning chars, no content),
+                # which otherwise retry into the same provider hiccup.
                 # Gated on a parseable answer: deliberation prose with no
                 # JSON is a genuine failure and must keep the retry path
                 # (review-bot finding on PR #62).
                 logger.warning(
-                    "chat: empty content with finish_reason=stop — the reasoning holds the answer; "
+                    "chat: empty content with finish_reason=%s — the reasoning holds the answer; "
                     "recovering it (reasoning_len=%d)",
+                    finish_reason,
                     len(self.last_reasoning),
                 )
                 return self.last_reasoning

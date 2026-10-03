@@ -34,12 +34,24 @@ from tools.layout import (
 )
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.pipeline_store import PipelineStore
-from tools.reader import rows_for_page
+from tools.reader import reading_for_page
 from tools.registry import load_batch, record_path
 from tools.store import DiskStore  # noqa: F401
 from tools.vlm import orientation_report, selfreport_words
 
 ROWS_JSON = "rows.json"  # the reading's rows file beside the guess (object-model Phase 1)
+WORDS_JSON = "words.json"  # the reading's words, written beside the rows
+
+
+def _words_path(rows_path: Path) -> Path:
+    """The reading's words file beside its rows (``<page-stem>.words.json``,
+    the naming the read stage writes) — the words the drawn-lines
+    correction groups."""
+    name = rows_path.name
+    if name.endswith(ROWS_JSON):
+        return rows_path.with_name(name[: -len(ROWS_JSON)] + WORDS_JSON)
+    return rows_path.with_suffix(f".{WORDS_JSON}")
+
 
 logger = logging.getLogger(__name__)
 
@@ -386,6 +398,7 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
         if journal_path.exists():
             reading = _recover_crashed_layout(journal_path, reading, layout_path, image_path, page, work_dir, batch_id)
     current = int(reading.get("rotation", 0)) % FULL_ROTATION_DEGREES
+    words: dict[str, Any] | None = None
     delta = (quarters * QUARTER_TURN_DEGREES - current) % FULL_ROTATION_DEGREES
     if delta == 0:
         journal_path.unlink(missing_ok=True)
@@ -394,15 +407,25 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
     image = ImageOps.exif_transpose(Image.open(image_path))
     rotated = image.rotate(-QUARTER_TURN_DEGREES * steps, expand=True)  # clockwise
     rotated.info.pop("exif", None)
+    words_path = _words_path(rows_path)
     if rows_path.is_file():
         width, height = int(reading.get("width", image.width)), int(reading.get("height", image.height))
+        words = json.loads(words_path.read_text(encoding="utf-8")) if words_path.is_file() else None
         for _ in range(steps):
-            lines = []
+            lines: list[dict[str, Any]] = []
             for line in reading["lines"]:
                 x0, y0, x1, y1 = line["box"]
                 line["box"] = [height - y1, x0, height - y0, x1]
                 lines.append(line)
             reading["lines"] = lines
+            if words is not None:
+                for word in words["words"]:
+                    x0, y0, x1, y1 = word["x0"], word["y0"], word["x1"], word["y1"]
+                    word["x0"], word["y0"], word["x1"], word["y1"] = height - y1, x0, height - y0, x1
+                    # the measured baseline/waistline are horizontals now
+                    # vertical: the rotated box's own edges keep the reading
+                    # order rule (Rows.build's rule B) in the new frame
+                    word["waistline"], word["baseline"] = word["y0"], word["y1"]
             width, height = height, width
         reading["width"], reading["height"] = rotated.width, rotated.height
         reading["rotation"] = (current + delta) % FULL_ROTATION_DEGREES
@@ -440,6 +463,8 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
     )
     if rows_path.is_file():
         atomic_write(rows_path, json.dumps(reading, ensure_ascii=False, indent=1) + "\n")
+        if words is not None:
+            atomic_write(words_path, json.dumps(words, ensure_ascii=False, indent=1) + "\n")
     else:
         write_layout_store(reading, PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
     journal_path.unlink(missing_ok=True)
@@ -588,20 +613,26 @@ def reprocess_page_transcription(
         # multi-direction report writes the sidecar the layout stage reads
         _write_multi_sidecar(page, image_path, raw_dir, new_text, orientation_report_fn)
         # the fresh reading on the CORRECTED image — rows, not a layout:
-        # the line boxes come from the marks chain, the text re-mapped
-        rows, width, height = rows_for_page(ImageOps.exif_transpose(Image.open(image_path)))
+        # the line boxes come from the marks chain, the text re-mapped;
+        # the reading's words are written beside them (the drawn-lines
+        # correction groups those words)
+        reading = reading_for_page(ImageOps.exif_transpose(Image.open(image_path)))
         text_lines = [ln for ln in new_text.splitlines() if ln.strip()]
-        for i, line in enumerate(rows):
+        for i, line in enumerate(reading.lines):
             line["text"] = text_lines[i] if i < len(text_lines) else ""
         new_rows = {
             "page": page,
-            "width": width,
-            "height": height,
+            "width": reading.width,
+            "height": reading.height,
             "rotation": rotation,
             "revision": 1,
-            "lines": rows,
+            "lines": reading.lines,
         }
         atomic_write(rows_path, json.dumps(new_rows, ensure_ascii=False, indent=1) + "\n")
+        atomic_write(
+            _words_path(rows_path),
+            json.dumps({"words": reading.words}, ensure_ascii=False, indent=1) + "\n",
+        )
         set_page_job(batch_id, page, None, work_dir)
     # lucidlint: ignore broad-except the stage's terminal boundary — mark failed on ANY error, then re-raise
     except Exception:

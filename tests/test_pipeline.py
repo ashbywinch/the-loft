@@ -9,10 +9,37 @@ import json
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
-from tools.pipeline import _guess_prompt, apply_routes, guess_pages, review
+from tools.pipeline import _guess_prompt, _read_pages, apply_routes, guess_pages, review
 from tools.pipeline_store import PipelineStore
+from tools.reader import Reading
 from tools.registry import RegistryError
+
+
+def test_read_pages_writes_the_rows_and_the_words(tmp_path: Path) -> None:
+    """The read stage persists both halves of the reading: the row boxes
+    (with the guess text mapped onto them) and the words the drawn-lines
+    correction groups — a page persisted without its words cannot be
+    corrected in the review."""
+    batch = tmp_path / "adopt-0003"
+    guess, oriented = batch / "ocr-guess", batch / "oriented"
+    guess.mkdir(parents=True)
+    oriented.mkdir(parents=True)
+    Image.new("L", (40, 40), 255).save(oriented / "p1.jpg")
+    (guess / "p1.txt").write_text("line one\n", encoding="utf-8")
+    reading = Reading(
+        lines=[{"index": 0, "text": "", "box": [0, 0, 40, 10], "orientation": 0, "box_source": "reader", "words": []}],
+        words=[{"x0": 1.0, "y0": 1.0, "x1": 9.0, "y1": 9.0, "line": 0, "baseline": 9.0, "waistline": 1.0}],
+        width=40,
+        height=40,
+    )
+
+    _read_pages(["p1.jpg"], guess, oriented, tmp_path, "adopt-0003", _reading=lambda _image: reading)
+
+    rows = json.loads((guess / "p1.rows.json").read_text(encoding="utf-8"))
+    assert rows["lines"][0]["text"] == "line one"  # the guess text mapped onto the row
+    assert json.loads((guess / "p1.words.json").read_text(encoding="utf-8")) == {"words": reading.words}
 
 
 def _flag(page: str, starts: bool = False, ends: bool = False, **extra: object) -> dict[str, object]:

@@ -424,8 +424,14 @@ def _residence_lines(person: dict[str, Any], place_names: dict[str, str]) -> lis
             continue  # nothing unconfirmed leaves the archive
         lines.append("1 RESI")
         frm, to = residence.get("from", ""), residence.get("to", "")
-        if frm or to:
+        if frm and to:
             lines.append(f"2 DATE FROM {frm} TO {to}")
+        elif frm:
+            # a one-sided residence: emit the side that exists — never a
+            # dangling 'TO ' (review-bot finding on PR #61)
+            lines.append(f"2 DATE FROM {frm}")
+        elif to:
+            lines.append(f"2 DATE TO {to}")
         place = residence.get("place")
         if place:
             lines.append(f"2 PLAC {place_names.get(place, place)}")

@@ -146,16 +146,23 @@ def load_rows(path: Path) -> Rows:
     return data  # type: ignore[return-value]  # validated field-by-field above; the checker cannot narrow json.loads
 
 
-def load_user_row_adjustments(path: Path) -> UserRowAdjustments:
-    """The reviewer's drawn lines, validated."""
-    data = json.loads(path.read_text(encoding="utf-8"))
-    _validate(path=path, data=data, key="lines", expect="UserRowAdjustments")
+def validate_user_row_adjustments(data: Any, *, path: Path | None = None) -> UserRowAdjustments:
+    """The reviewer's drawn row lines, validated — ONE rule for the file
+    loader and the HTTP boundary (the write seam validates its own input)."""
+    label = f"{path}: " if path is not None else ""
+    _validate(path=path or Path("<request>"), data=data, key="lines", expect="UserRowAdjustments")
     for i, line in enumerate(data["lines"]):
         if not isinstance(line, list) or not all(
-            isinstance(p, list) and len(p) == 2 and all(isinstance(c, (int, float)) for c in p) for p in line
+            isinstance(point, list) and len(point) == 2 and all(isinstance(c, (int, float)) for c in point)
+            for point in line
         ):
-            raise ValueError(f"{path}: lines[{i}] — expected a polyline of [x, y] pairs")
+            raise ValueError(f"{label}lines[{i}] — expected a polyline of [x, y] pairs")
     return data  # type: ignore[return-value]  # validated polyline-by-polyline above; the checker cannot narrow json.loads
+
+
+def load_user_row_adjustments(path: Path) -> UserRowAdjustments:
+    """The reviewer's drawn lines, validated."""
+    return validate_user_row_adjustments(json.loads(path.read_text(encoding="utf-8")), path=path)
 
 
 def load_boxes(path: Path) -> Boxes:

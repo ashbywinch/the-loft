@@ -2096,6 +2096,90 @@ summary:focus-visible {
   background: rgba(180, 85, 45, 0.03);
 }
 
+/* The row correction: the drawn row lines and the rows they made.
+   The strokes and bands live in the layer's page-px space; both pass
+   pointers through except while drawing (a stroke layer that eats
+   pointers blocks the pan exactly where the reviewer grabs the page). */
+.rv-draw {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.rv-drawing .rv-draw {
+  pointer-events: auto;
+  touch-action: none;
+  cursor: crosshair;
+}
+.rv-stroke {
+  fill: none;
+  stroke: #e8b400;
+  stroke-width: 7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.9;
+}
+.rv-stroke--live {
+  stroke-dasharray: 18 12;
+}
+.rv-bands {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.rv-rowband {
+  position: absolute;
+  border: 2px solid rgba(40, 110, 60, 0.75);
+  border-radius: 4px;
+  background: rgba(40, 140, 70, 0.14);
+}
+.rv-rownum {
+  position: absolute;
+  left: -6px;
+  top: -22px;
+  min-width: 34px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  background: rgba(40, 110, 60, 0.92);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1.4;
+  text-align: center;
+}
+.rv-rowtools__status {
+  align-self: center;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.rv-rowtools.is-failed .rv-rowtools__status {
+  color: #b3261e;
+  opacity: 1;
+}
+
+.rv-rowtools.is-busy .rv-rowtools__status::after {
+  content: " …";
+}
+
+.rv-rowtools {
+  position: absolute;
+  z-index: 5;
+  left: 12px;
+  bottom: 12px;
+  display: flex;
+  gap: 8px;
+}
+.rv-rowtools .btn {
+  font-size: 20px;
+  padding: 10px 14px;
+}
+.rv-rowtools__draw.is-on {
+  background: var(--accent);
+  color: var(--on-accent);
+}
+.rv-rowtools.is-busy {
+  opacity: 0.6;
+}
+
 /* Phone portrait: the rotate prompt instead of the surface — and the
    topbar simplifies to back + title (the chip/subtitle make a silly
    three-column header, user 2026-08-16) */

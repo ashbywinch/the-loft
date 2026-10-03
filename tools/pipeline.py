@@ -37,7 +37,7 @@ from tools.htr import htr_pages_vlm
 from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR
 from tools.ocr import orient_pages
 from tools.pipeline_store import PipelineStore, text_sha256
-from tools.reader import rows_for_page
+from tools.reader import Reading, reading_for_page
 from tools.registry import RegistryError as PipelineError
 from tools.registry import load_batch, record_path
 from tools.store import DiskStore, StoreError  # noqa: F401
@@ -248,12 +248,16 @@ def _read_pages(
     oriented_dir: Path,
     work_dir: Path,
     batch_id: str,
+    _reading: Callable[[Image.Image], Reading] = reading_for_page,
 ) -> None:
     """The reading stage: each text page's rows (line boxes from the
     fitted-lines chain) with the page's guess text mapped onto them in
-    order. Written as ``<page>.rows.json`` beside the guess; the review's
-    draft seam reads the rows, falling back to a strip-era ``layout.json``
-    for batches read before this change."""
+    order, and the reading's WORDS beside them (``<page>.words.json``).
+    The drawn-lines correction (`Rows.from_words`) groups the words, so a page
+    without them cannot be corrected — both files are written together.
+    Written as ``<page>.rows.json`` beside the guess; the review's draft
+    seam reads the rows, falling back to a strip-era ``layout.json`` for
+    batches read before this change."""
     store = PipelineStore(work_dir)
     for page in text_pages:
         rows_path = guess_dir / f"{Path(page).stem}.rows.json"
@@ -262,27 +266,35 @@ def _read_pages(
         image_path = oriented_dir / page
         if not image_path.is_file():
             continue
-        lines, width, height = rows_for_page(Image.open(image_path))
+        reading = _reading(Image.open(image_path))
         text_path = guess_dir / Path(page).with_suffix(".txt")
         if text_path.is_file():
             text_lines = [ln for ln in text_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
         else:
             text_lines = []
-        for i, line in enumerate(lines):
+        for i, line in enumerate(reading.lines):
             line["text"] = text_lines[i] if i < len(text_lines) else ""
-        payload = {
-            "page": page,
-            "width": width,
-            "height": height,
-            "rotation": 0,
-            "revision": 1,
-            "lines": lines,
-        }
         store.write(
             f"{batch_id}/ocr-guess/{Path(page).stem}.rows.json",
-            json.dumps(payload, indent=1, ensure_ascii=False) + "\n",
+            json.dumps(
+                {
+                    "page": page,
+                    "width": reading.width,
+                    "height": reading.height,
+                    "rotation": 0,
+                    "revision": 1,
+                    "lines": reading.lines,
+                },
+                indent=1,
+                ensure_ascii=False,
+            )
+            + "\n",
         )
-        print(f"read: {page} -> {len(lines)} rows")
+        store.write(
+            f"{batch_id}/ocr-guess/{Path(page).stem}.words.json",
+            json.dumps({"words": reading.words}, indent=1, ensure_ascii=False) + "\n",
+        )
+        print(f"read: {page} -> {len(reading.lines)} rows, {len(reading.words)} words")
 
 
 def process(

@@ -16,6 +16,7 @@ import json
 import logging
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -34,12 +35,49 @@ from tools.layout import (
 )
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.pipeline_store import PipelineStore
-from tools.reader import rows_for_page
+from tools.reader import reading_for_page
 from tools.registry import load_batch, record_path
+from tools.rows import Rows
 from tools.store import DiskStore  # noqa: F401
 from tools.vlm import orientation_report, selfreport_words
+from tools.word import Word
 
 ROWS_JSON = "rows.json"  # the reading's rows file beside the guess (object-model Phase 1)
+WORDS_JSON = "words.json"  # the reading's words, written beside the rows
+ADJUSTMENTS_JSON = "row-adjustments.json"  # the reviewer's drawn row lines
+ADJUSTED_ROWS_JSON = "rows-adjusted.json"  # the correction's rows (the wire contract)
+
+
+@dataclass(frozen=True)
+class BatchReadings:
+    """One batch's reading files on disk — the one place the ocr-guess
+    path algebra lives. The read stage writes them, the review reads and
+    corrects them, a rotation remaps them: they travel together, so they
+    are one thing."""
+
+    work_dir: Path
+    batch_id: str
+
+    @property
+    def guess_dir(self) -> Path:
+        return self.work_dir / self.batch_id / "ocr-guess"
+
+    def rows_path(self, page: str) -> Path:
+        """The reading's rows file (the proposal)."""
+        return self.guess_dir / Path(page).with_suffix(f".{ROWS_JSON}")
+
+    def words_path(self, page: str) -> Path:
+        """The reading's words (what the drawn-lines correction groups)."""
+        return self.guess_dir / f"{Path(page).stem}.{WORDS_JSON}"
+
+    def adjustments_path(self, page: str) -> Path:
+        """The reviewer's drawn row lines."""
+        return self.guess_dir / Path(page).with_suffix(f".{ADJUSTMENTS_JSON}")
+
+    def adjusted_rows_path(self, page: str) -> Path:
+        """The correction's rows (the wire contract)."""
+        return self.guess_dir / Path(page).with_suffix(f".{ADJUSTED_ROWS_JSON}")
+
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +195,56 @@ def record_confirmation(
     atomic_write(record_path(batch_id, registry_dir), json.dumps(record, indent=1, ensure_ascii=False) + "\n")
 
 
+# the review seam's functions all take (batch_id, page, work_dir) — they are the
+# module's one vocabulary, each a thin file operation over the same batch tree; a
+# carrier class would be the object-model Phase 6 package restructure, not this change
+# lucidlint: ignore latent-class the batch-path vocabulary is this module's shape; the restructure is Phase 6
+def apply_row_adjustments(batch_id: str, page: str, adjustments: Any, work_dir: Path) -> list[Any]:
+    """The reviewer's drawn row lines -> the page's rows
+    (`Rows.from_words` over the words the read stage persisted, each with
+    its own reading line, so an incomplete set of lines merges with the
+    draft rows), persisted beside the reading:
+
+    - ``<page>.row-adjustments.json`` — the drawn lines, as drawn;
+    - ``<page>.rows-adjusted.json`` — the correction's rows, the wire
+      contract (`tools.schemas.Rows`).
+
+    A page whose words were never persisted (read before the read stage
+    wrote them) cannot be corrected — ValueError, never a silent empty
+    build."""
+    if not BATCH_ID.match(batch_id) or not safe_page_name(page):
+        raise ValueError("invalid batch or page name")
+    readings = BatchReadings(work_dir, batch_id)
+    rows_path = readings.rows_path(page)
+    words_path = readings.words_path(page)
+    if not rows_path.is_file():
+        raise ValueError(f"no reading for {page} — the read stage must run first")
+    if not words_path.is_file():
+        raise ValueError(f"no words for {page} — re-read the page, then draw its rows")
+    words = json.loads(words_path.read_text(encoding="utf-8"))["words"]
+    reading = json.loads(rows_path.read_text(encoding="utf-8"))
+    boxes = [
+        Word(
+            w["x0"],
+            w["y0"],
+            w["x1"],
+            w["y1"],
+            baseline=w.get("baseline"),
+            waistline=w.get("waistline"),
+            line=w.get("line"),
+        )
+        for w in words
+    ]
+    rows = Rows.from_words(
+        boxes,
+        [list(line) for line in adjustments["lines"]],
+        (int(reading["width"]), int(reading["height"])),
+    )
+    atomic_write(readings.adjustments_path(page), json.dumps(adjustments, ensure_ascii=False, indent=1) + "\n")
+    atomic_write(readings.adjusted_rows_path(page), json.dumps(Rows.to_wire(rows), ensure_ascii=False, indent=1) + "\n")
+    return rows
+
+
 def safe_page_name(page: str) -> bool:
     """A page name that is safe as a path segment (charset excludes every
     separator and "..") — the drafts read and the review surface's image
@@ -172,7 +260,8 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
     traversal guard, 2026-08-14 review)."""
     if not BATCH_ID.match(batch_id):
         raise ValueError(f"invalid batch id: {batch_id!r}")
-    guess_dir = work_dir / batch_id / "ocr-guess"
+    readings = BatchReadings(work_dir, batch_id)
+    guess_dir = readings.guess_dir
     boundaries_path = guess_dir / "boundaries.json"
     if not boundaries_path.exists():
         return []
@@ -195,7 +284,17 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
         # correspond to the page.
         layouts = {}
         layout_errors = {}
+        # the reviewer's persisted corrections, per page: the drawn lines
+        # and the rows they made — a reopened page shows what was drawn and
+        # the correction, not the proposal it replaced
+        adjustments: dict[str, Any] = {}
+        adjusted_rows: dict[str, Any] = {}
         for page in pages:
+            drawn_path = readings.adjustments_path(page)
+            corrected_path = readings.adjusted_rows_path(page)
+            if drawn_path.exists() and corrected_path.exists():
+                adjustments[page] = json.loads(drawn_path.read_text(encoding="utf-8"))
+                adjusted_rows[page] = json.loads(corrected_path.read_text(encoding="utf-8"))
             rows_path = guess_dir / Path(page).with_suffix(f".{ROWS_JSON}")
             if rows_path.exists():
                 # the reading's rows — the object-model Phase-1 source;
@@ -232,6 +331,8 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
                 "layouts": layouts,
                 "layout_errors": layout_errors,
                 "orientations": orientations,
+                "row_adjustments": adjustments,
+                "adjusted_rows": adjusted_rows,
                 **document,
             }
         )
@@ -386,6 +487,7 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
         if journal_path.exists():
             reading = _recover_crashed_layout(journal_path, reading, layout_path, image_path, page, work_dir, batch_id)
     current = int(reading.get("rotation", 0)) % FULL_ROTATION_DEGREES
+    words: dict[str, Any] | None = None
     delta = (quarters * QUARTER_TURN_DEGREES - current) % FULL_ROTATION_DEGREES
     if delta == 0:
         journal_path.unlink(missing_ok=True)
@@ -394,15 +496,25 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
     image = ImageOps.exif_transpose(Image.open(image_path))
     rotated = image.rotate(-QUARTER_TURN_DEGREES * steps, expand=True)  # clockwise
     rotated.info.pop("exif", None)
+    words_path = BatchReadings(work_dir, batch_id).words_path(page)
     if rows_path.is_file():
         width, height = int(reading.get("width", image.width)), int(reading.get("height", image.height))
+        words = json.loads(words_path.read_text(encoding="utf-8")) if words_path.is_file() else None
         for _ in range(steps):
-            lines = []
+            lines: list[dict[str, Any]] = []
             for line in reading["lines"]:
                 x0, y0, x1, y1 = line["box"]
                 line["box"] = [height - y1, x0, height - y0, x1]
                 lines.append(line)
             reading["lines"] = lines
+            if words is not None:
+                for word in words["words"]:
+                    x0, y0, x1, y1 = word["x0"], word["y0"], word["x1"], word["y1"]
+                    word["x0"], word["y0"], word["x1"], word["y1"] = height - y1, x0, height - y0, x1
+                    # the measured baseline/waistline are horizontals now
+                    # vertical: the rotated box's own edges keep the reading
+                    # order rule (Rows.from_words's rule B) in the new frame
+                    word["waistline"], word["baseline"] = word["y0"], word["y1"]
             width, height = height, width
         reading["width"], reading["height"] = rotated.width, rotated.height
         reading["rotation"] = (current + delta) % FULL_ROTATION_DEGREES
@@ -440,6 +552,8 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
     )
     if rows_path.is_file():
         atomic_write(rows_path, json.dumps(reading, ensure_ascii=False, indent=1) + "\n")
+        if words is not None:
+            atomic_write(words_path, json.dumps(words, ensure_ascii=False, indent=1) + "\n")
     else:
         write_layout_store(reading, PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
     journal_path.unlink(missing_ok=True)
@@ -588,20 +702,26 @@ def reprocess_page_transcription(
         # multi-direction report writes the sidecar the layout stage reads
         _write_multi_sidecar(page, image_path, raw_dir, new_text, orientation_report_fn)
         # the fresh reading on the CORRECTED image — rows, not a layout:
-        # the line boxes come from the marks chain, the text re-mapped
-        rows, width, height = rows_for_page(ImageOps.exif_transpose(Image.open(image_path)))
+        # the line boxes come from the marks chain, the text re-mapped;
+        # the reading's words are written beside them (the drawn-lines
+        # correction groups those words)
+        reading = reading_for_page(ImageOps.exif_transpose(Image.open(image_path)))
         text_lines = [ln for ln in new_text.splitlines() if ln.strip()]
-        for i, line in enumerate(rows):
+        for i, line in enumerate(reading.lines):
             line["text"] = text_lines[i] if i < len(text_lines) else ""
         new_rows = {
             "page": page,
-            "width": width,
-            "height": height,
+            "width": reading.width,
+            "height": reading.height,
             "rotation": rotation,
             "revision": 1,
-            "lines": rows,
+            "lines": reading.lines,
         }
         atomic_write(rows_path, json.dumps(new_rows, ensure_ascii=False, indent=1) + "\n")
+        atomic_write(
+            BatchReadings(work_dir, batch_id).words_path(page),
+            json.dumps({"words": reading.words}, ensure_ascii=False, indent=1) + "\n",
+        )
         set_page_job(batch_id, page, None, work_dir)
     # lucidlint: ignore broad-except the stage's terminal boundary — mark failed on ANY error, then re-raise
     except Exception:

@@ -268,6 +268,12 @@ def covered_by(stroke: list[tuple[float, float]], shapes: list[Mark], touch: flo
     ]
 
 
+def _nearest_line(shape: Mark, lines: list[Line]) -> int:
+    """The index of the line in `lines` this mark sits nearest — the index
+    space of the list given, never of some wider fit it came from."""
+    return min(range(len(lines)), key=lambda i: lines[i].distance(shape.cx, shape.baseline))
+
+
 def _page_scale(shapes: list[Mark], traced: list[float]) -> PageScale:
     """The page's writing scale: the marks' own heights, against the line
     spacing the reviewer's traces measured."""
@@ -507,8 +513,9 @@ class Writing:
         return min(candidates, key=lambda mark: mark.y0)
 
     def _line_of(self, shape: Mark) -> int:
-        """The fitted line this mark sits nearest — its row in the writing."""
-        return min(range(len(self.lines)), key=lambda i: self.lines[i].distance(shape.cx, shape.baseline))
+        """The fitted line this mark sits nearest — its row in the writing,
+        among the lines this writing holds (`_nearest_line`)."""
+        return _nearest_line(shape, self.lines)
 
     def _candidate_segments(self, shape: Mark) -> list[list[int]]:
         """The cuts the shape's row fit proposes: its ink rows grouped by
@@ -567,9 +574,13 @@ class Writing:
         return Writing(marks=self.marks, lines=lines, scale=self.scale, stripped=self.stripped)
 
     def _attach(self, lines: list[Line]) -> None:
-        """Every mark knows its line, and every line its marks."""
+        """Every mark knows its line, and every line its marks.
+
+        The indices are of THIS list — the lines the writing keeps. Numbering
+        the marks against `self.lines` while indexing the passed list left
+        marks pointing at dropped lines (page-01: 39 rows, 41 word-lines)."""
         for mark in self.marks:
-            mark.line = self._line_of(mark)
+            mark.line = _nearest_line(mark, lines)
         for index, line in enumerate(lines):
             line.shapes = [mark for mark in self.marks if mark.line == index]
 
@@ -818,15 +829,34 @@ def read_page(page_path: Path, trace_dir: Path, split: bool = True) -> list[Box]
     return final
 
 
-def rows_for_page(page: Image.Image) -> tuple[list[dict[str, Any]], int, int]:
-    """The page's rows — the fitted writing lines, boxes in page pixels —
-    for the pipeline's reading stage (object-model Phase 1: rows replace
-    the strip stage's layout). The ink mask is measured at the reader's
-    SCALE resolution, so each line's box is scaled back to page pixels.
-    The lines arrive in reading order (top to bottom), text-less; the
-    caller maps the page transcription onto them."""
+@dataclass(frozen=True)
+class Reading:
+    """One page's automatic reading, in page pixels: the fitted writing LINES
+    (the row proposal the review shows) and the SPLIT WORDS those lines group,
+    each word carrying its own measured baseline and waistline. The
+    drawn-lines correction (`Rows.from_words`) groups the words, so the reading
+    carries them — the pipeline persists both side by side."""
+
+    lines: list[dict[str, Any]]
+    words: list[dict[str, Any]]
+    width: int
+    height: int
+
+
+def reading_for_page(page: Image.Image) -> Reading:
+    """The page's automatic reading: the fitted writing lines (the row
+    proposal for the pipeline's reading stage — object-model Phase 1: rows
+    replace the strip stage's layout) and the split words.
+
+    The ink mask is measured at the reader's SCALE resolution, so every box
+    is scaled back to page pixels. The lines arrive in reading order (top to
+    bottom), text-less; the caller maps the page transcription onto them.
+    The words are the splitter's own (`Writing.cut`) — the same words
+    ``read_page`` writes to words.json — so the reviewer's drawn row lines
+    can correct the rows in the app."""
     mask = ink_mask(page)
     writing = Writing.of(mask, [])
+    writing = writing.cut(writing.scale.unit)
     lines: list[dict[str, Any]] = []
     for index, line in enumerate(writing.lines):
         if not line.shapes:
@@ -848,7 +878,19 @@ def rows_for_page(page: Image.Image) -> tuple[list[dict[str, Any]], int, int]:
                 "words": [],
             }
         )
-    return lines, page.width, page.height
+    words = [
+        {
+            "x0": s.x0 * SCALE,
+            "y0": s.y0 * SCALE,
+            "x1": s.x1 * SCALE,
+            "y1": s.y1 * SCALE,
+            "line": s.line,
+            "baseline": s.baseline * SCALE,
+            "waistline": s.waistline * SCALE,
+        }
+        for s in writing.marks
+    ]
+    return Reading(lines=lines, words=words, width=page.width, height=page.height)
 
 
 def main(argv: list[str] | None = None) -> int:

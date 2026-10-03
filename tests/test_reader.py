@@ -14,8 +14,9 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
+from tools.line import Line
 from tools.mark import Mark
-from tools.reader import read_page
+from tools.reader import Writing, ink_mask, read_page, reading_for_page
 
 PAGE_W, PAGE_H = 900, 1400
 LINE_SPACING = 60
@@ -72,9 +73,30 @@ def detected(request, tmp_path: Path) -> tuple:
     return boxes, words, baselines
 
 
-def test_every_line_gets_exactly_one_box(detected) -> None:
-    boxes, _, baselines = detected
-    assert len(boxes) == len(baselines), f"{len(baselines)} lines drawn, {len(boxes)} boxes found"
+def test_reading_for_page_carries_the_words(tmp_path: Path) -> None:
+    """The reading carries the words — the same split words the CLI reading
+    writes to words.json, with their own baselines and waistlines. The
+    drawn-lines correction (`Rows.from_words`) groups those words, so the
+    pipeline persists them beside the rows; a reading that discarded them
+    left the correction unreachable outside the gold tooling."""
+    page = tmp_path / "synthetic.png"
+    synthetic_page(page)
+    trace = tmp_path / "trace"
+    trace.mkdir()
+    (trace / "strokes.json").write_text(json.dumps({"strokes": []}), encoding="utf-8")
+    read_page(page, trace)  # the CLI reading, for the same page
+    cli_words = json.loads((trace / "words.json").read_text(encoding="utf-8"))["words"]
+
+    reading = reading_for_page(Image.open(page))
+    assert (reading.width, reading.height) == (PAGE_W, PAGE_H)
+    assert len(reading.lines) == LINES, f"{LINES} lines drawn, {len(reading.lines)} read"
+    assert reading.words == cli_words, "the reading's words differ from the CLI reading's"
+    assert {frozenset(w) for w in reading.words} == {
+        frozenset({"x0", "y0", "x1", "y1", "line", "baseline", "waistline"})
+    }
+    # every word names one of the reading's own lines, and carries its ink lines
+    assert {w["line"] for w in reading.words} <= {line["index"] for line in reading.lines}
+    assert all(w["baseline"] > w["waistline"] for w in reading.words)
 
 
 def test_every_word_is_inside_exactly_one_box(detected) -> None:
@@ -573,3 +595,32 @@ def test_a_detached_line_is_a_rule_or_an_underline_and_a_fragment_is_neither(pag
     assert kinds("9676") == [None, "underline"], f"9676: {kinds('9676')}, want its lower piece an underline"
     for mark_id in ("683", "2875", "6475"):
         assert not any(kinds(mark_id)), f"{mark_id}: {kinds(mark_id)} — none of that ink is a line"
+
+
+def test_every_mark_indexes_the_lines_the_writing_keeps(tmp_path: Path) -> None:
+    """A mark's line index is an index into the writing's OWN lines.
+
+    `_settled` drops the fitted lines no shape ended on, so the attachment
+    must number the marks against the filtered list it is given — numbering
+    against the wider pre-filter fit leaves marks pointing at lines the
+    writing does not have. That is the words' own line structure (the draft
+    rows a page shows before any line is drawn), so the leak showed up as a
+    page whose rows were numbered past the rows it had: page-01 read 39
+    lines with 41 word-lines; the draft rows came out 41."""
+    page = tmp_path / "p.png"
+    synthetic_page(page)
+    writing = Writing.of(ink_mask(Image.open(page)), [])
+    marks = writing.marks
+    assert marks
+    baseline = marks[0].baseline
+    # the fit before the filter: an empty line above the marks' own, which
+    # the filter then drops (the shape of the page-01 leak)
+    dropped = Line(a=0.0, b=baseline - 2 * LINE_SPACING)
+    kept_line = Line(a=0.0, b=baseline)
+    wide = Writing(marks=marks, lines=[dropped, kept_line], scale=writing.scale, stripped=0)
+    kept = [kept_line]
+
+    wide._attach(kept)
+
+    assert {mark.line for mark in marks} == {0}, "a mark points at a line the writing dropped"
+    assert len(kept_line.shapes) == len(marks), "the kept line lost the marks it holds"

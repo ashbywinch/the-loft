@@ -39,11 +39,14 @@ from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.memory import ElicitationError, Knowledge
 from tools.records import Person, ReviewContext, ReviewDecision, split_content
 from tools.registry import RegistryError, list_batches, load_batch
+from tools.rows import Rows
+from tools.schemas import validate_user_row_adjustments
 from tools.store import FileStore
 from tools.sync import (
     BATCH_ID,
     QUARTERS_PER_TURN,
     Outbox,
+    apply_row_adjustments,
     demote_stale_jobs,
     draft_payloads,
     page_job_state,
@@ -786,6 +789,28 @@ def build_app(
         set_page_job(batch_id, page, "transcribing", work_dir)
         (_reprocess or _reprocess_page)(batch_id, page)
         return {"ok": True, "batch_id": batch_id, "page": page, "processing": True}
+
+    @app.post("/api/sync/batch/{batch_id}/page/{page}/row-adjustments")
+    def sync_row_adjustments(batch_id: str, page: str, request: Request, body: dict[str, Any] | None = None) -> Any:
+        """The reviewer's drawn row lines -> the page's corrected rows.
+
+        The lines are the drawn indications (normalised polylines); the
+        build (`tools/rows.py` Rows.from_words) groups the page's PERSISTED
+        words and the correction is written beside the reading (the lines
+        and the rows they made), so a reopened page shows what the reviewer
+        drew and what it produced. A page without persisted words (read
+        before the read stage wrote them) is refused with the remedy —
+        never a silent empty build."""
+        if session_user(request) is None:
+            return JSONResponse({"ok": False, "error": "sign in to correct rows"}, status_code=401)
+        if not BATCH_ID.match(batch_id) or not safe_page_name(page):
+            return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
+        try:
+            adjustments = validate_user_row_adjustments(body or {})
+            rows = apply_row_adjustments(batch_id, page, adjustments, work_dir)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)  # client errors are 4xx, never 500
+        return {"ok": True, "batch_id": batch_id, "page": page, "rows": Rows.to_wire(rows)["rows"]}
 
     @app.post("/api/sync/confirmations")
     def sync_confirmations(payload: dict[str, Any], request: Request) -> Any:

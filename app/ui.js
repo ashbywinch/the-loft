@@ -9,7 +9,7 @@ import { goBack } from "./router.js";
  * Scrapbook-warm, not archival-clean (PRD §10): rounded cards, warm paper tones.
  */
 
-const SVG_TAGS = new Set(["svg", "g", "path", "circle", "text", "line", "rect", "title"]);
+const SVG_TAGS = new Set(["svg", "g", "path", "circle", "text", "line", "rect", "polyline", "title"]);
 
 export function el(tag, attrs = {}, children = []) {
   const isSvgAnchor = tag === "svg:a";

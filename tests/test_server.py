@@ -1265,3 +1265,89 @@ def test_sync_reread_retries_a_failed_re_read_without_reorienting(tmp_path: Path
     # a reread never re-orients — the rotation is untouched
     layout = _json.loads(layout_path.read_text(encoding="utf-8"))
     assert layout.get("rotation", 0) == 0
+
+
+def _seed_row_page(fixture: ServerFixture, batch_id: str = "adopt-0001") -> None:
+    """A page's reading with its words, ready to be corrected: the rows
+    reading (dims + one line) and the words the build groups."""
+    import json as _json
+
+    guess = fixture.work_dir / batch_id / "ocr-guess"
+    guess.mkdir(parents=True, exist_ok=True)
+    (guess / "p1.rows.json").write_text(
+        _json.dumps(
+            {
+                "page": "p1.jpg",
+                "width": 600,
+                "height": 1600,
+                "rotation": 0,
+                "revision": 1,
+                "lines": [{"index": 0, "text": "one two", "box": [50, 400, 550, 500], "words": []}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (guess / "p1.words.json").write_text(
+        _json.dumps(
+            {
+                "words": [
+                    {"x0": 60, "y0": 420, "x1": 160, "y1": 470, "line": 0, "baseline": 470, "waistline": 420},
+                    {"x0": 200, "y0": 420, "x1": 300, "y1": 470, "line": 0, "baseline": 470, "waistline": 420},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_row_adjustments_requires_a_session(server: ServerFixture) -> None:
+    status, _ = server.post("/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments", {"lines": []}, cookie="")
+    assert status == 401
+
+
+def test_row_adjustments_rejects_a_malformed_body(server: ServerFixture) -> None:
+    """The lines are validated at the seam: a body that is not polylines of
+    [x, y] pairs is a 4xx, never a 500 and never a silent empty build."""
+    _seed_row_page(server)
+    status, body = server.post("/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments", {"lines": [[[0.1, 0.2], "x"]]})
+    assert status == 400
+    assert "polyline" in body["error"]
+
+
+def test_row_adjustments_builds_and_persists_the_correction(server: ServerFixture) -> None:
+    """The drawn line -> the page's rows (Rows.from_words over the persisted
+    words), persisted as the wire contract beside the lines that made
+    them; the response carries the same rows the file holds."""
+    import json as _json
+
+    _seed_row_page(server)
+    # one drawn line across both words (normalised: y 0.29 of 1600 ≈ the row)
+    status, body = server.post(
+        "/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments",
+        {"lines": [[[0.05, 0.278], [0.55, 0.278]]]},
+    )
+    assert status == 200
+    rows = body["rows"]
+    assert len(rows) == 1 and len(rows[0]["word_boxes"]) == 2  # one row, both words
+    assert rows[0]["id"] == "seg-1" and rows[0]["number"] == 1
+    assert rows[0]["band"] == {"x0": 60.0, "y0": 420.0, "x1": 300.0, "y1": 470.0}  # the words' exact union
+    guess = server.work_dir / "adopt-0001" / "ocr-guess"
+    assert _json.loads((guess / "p1.rows-adjusted.json").read_text())["rows"] == rows  # the file IS the response
+    drawn = _json.loads((guess / "p1.row-adjustments.json").read_text())
+    assert drawn["lines"] == [[[0.05, 0.278], [0.55, 0.278]]]
+
+
+def test_row_adjustments_refuses_a_page_without_words(server: ServerFixture) -> None:
+    """A page read before the words were persisted cannot be corrected —
+    the refusal names the remedy instead of building empty rows."""
+    import json as _json
+
+    guess = server.work_dir / "adopt-0001" / "ocr-guess"
+    guess.mkdir(parents=True, exist_ok=True)
+    (guess / "p1.rows.json").write_text(
+        _json.dumps({"page": "p1.jpg", "width": 600, "height": 1600, "rotation": 0, "revision": 1, "lines": []}),
+        encoding="utf-8",
+    )
+    status, body = server.post("/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments", {"lines": []})
+    assert status == 400
+    assert "re-read" in body["error"]

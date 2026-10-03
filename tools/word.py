@@ -28,10 +28,12 @@ class Word:
         baseline: float | None = None,
         waistline: float | None = None,
         font_size: float = 0.0,
+        line: int | None = None,
     ) -> None:
         self.rect = Rectangle(x0, y0, x1, y1)
         self.baseline = baseline
         self.waistline = waistline
+        self.line = line  # the reading's line index: the word's own line structure
         self._font_size = font_size  # unmeasured fallback; 0 means unmeasured
 
     @property

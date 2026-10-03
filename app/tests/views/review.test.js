@@ -7,6 +7,7 @@ import {
   correctedDocumentText,
   correctedPageText,
   displayFrame,
+  displayToOriginal,
   fitRect,
   widthFitRect,
   flaggedByPage,
@@ -18,6 +19,11 @@ import {
   outboxAdd,
   outboxDrop,
   outboxPending,
+  rowAdjustmentBody,
+  rowDeleteTolerance,
+  strokeAt,
+  rowAdjustmentLine,
+  strokesFromAdjustments,
   deltaOfDesired,
   deliverOwed,
   isOrientationCovered,
@@ -1233,5 +1239,112 @@ describe("editing a line applies the correction", () => {
     });
     const edits = JSON.parse(localStorage.getItem("loft-review-edits") || "{}");
     expect(edits["b8"]?.["0"]?.["p1.jpg"]?.["0"]?.text ?? edits["b8"]?.["0"]?.["p1.jpg"]?.["0"]).toBe("my correction");
+  });
+});
+
+describe("the row correction's pure half", () => {
+  it("displayToOriginal is the exact inverse of the display frame", () => {
+    // a display point (the reviewer's finger) maps back to the page point
+    // the frame put there — under every rotation the viewer can be in
+    for (const rotation of [0, 90, 180, 270]) {
+      const f = displayFrame(rotation, 2544, 4642);
+      const dx = f.a * 100 + f.c * 200 + f.ox;
+      const dy = f.b * 100 + f.d * 200 + f.oy;
+      expect(displayToOriginal(f, dx, dy)).toEqual({ x: 100, y: 200 });
+    }
+  });
+
+  it("a stroke normalises to 0..1 page fractions; a tap is dropped", () => {
+    const size = { w: 1000, h: 2000 };
+    const line = rowAdjustmentLine(
+      [
+        { x: 100, y: 500 },
+        { x: 600, y: 500 },
+      ],
+      size,
+    );
+    expect(line).toEqual([
+      [0.1, 0.25],
+      [0.6, 0.25],
+    ]);
+    expect(
+      rowAdjustmentLine(
+        [
+          { x: 100, y: 500 },
+          { x: 105, y: 502 },
+        ],
+        size,
+      ),
+    ).toBeNull(); // a tap, not a row
+    expect(rowAdjustmentLine([{ x: 100, y: 500 }], size)).toBeNull();
+  });
+
+  it("the body carries only the line strokes, clamped to the page", () => {
+    const size = { w: 100, h: 100 };
+    const body = rowAdjustmentBody(
+      [
+        [
+          { x: -10, y: 50 },
+          { x: 200, y: 50 },
+        ], // overshoots: clamped
+        [{ x: 10, y: 10 }], // a tap
+      ],
+      size,
+    );
+    expect(body.lines).toEqual([
+      [
+        [0, 0.5],
+        [1, 0.5],
+      ],
+    ]);
+  });
+
+  it("persisted adjustments come back as page-px strokes", () => {
+    const strokes = strokesFromAdjustments(
+      {
+        lines: [
+          [
+            [0.1, 0.2],
+            [0.5, 0.2],
+          ],
+        ],
+      },
+      { w: 1000, h: 2000 },
+    );
+    expect(strokes).toEqual([
+      [
+        { x: 100, y: 400 },
+        { x: 500, y: 400 },
+      ],
+    ]);
+    expect(strokesFromAdjustments(null, { w: 1000, h: 2000 })).toEqual([]);
+  });
+
+  it("a tap finds the drawn line it lands on, vertex or mid-segment", () => {
+    // a long line is deletable along its whole length, not only at its
+    // recorded points (the pinch that drew it recorded two)
+    const strokes = [
+      [
+        { x: 100, y: 500 },
+        { x: 600, y: 500 },
+      ],
+      [
+        { x: 100, y: 700 },
+        { x: 600, y: 700 },
+      ],
+    ];
+    expect(strokeAt(strokes, { x: 350, y: 505 }, 20)).toBe(0); // mid-segment
+    expect(strokeAt(strokes, { x: 600, y: 700 }, 20)).toBe(1); // a vertex
+    expect(strokeAt(strokes, { x: 350, y: 600 }, 20)).toBeNull(); // between the lines
+    expect(strokeAt([], { x: 350, y: 500 }, 20)).toBeNull();
+  });
+
+  it("the delete target is half the page's line height, floored", () => {
+    const layout = {
+      lines: [{ box: [0, 100, 500, 140] }, { box: [0, 160, 500, 200] }, { box: [0, 220, 500, 260] }],
+    };
+    expect(rowDeleteTolerance(layout, 4642)).toBe(20); // half of 40
+    expect(rowDeleteTolerance({ lines: [] }, 4642)).toBeCloseTo(4642 / 120, 5); // no layout: a page fraction
+    expect(rowDeleteTolerance(null, 240)).toBe(12); // the floor
   });
 });

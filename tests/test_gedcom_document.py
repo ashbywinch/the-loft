@@ -360,8 +360,33 @@ def test_residence_place_is_the_name_as_given() -> None:
     # the round trip re-emits both the PLAC and the NOTE
     out = GedcomDocument.from_text(text).to_text()
     assert "2 PLAC Nowhere-in-Particular" in out
+
     assert "2 NOTE Lived in the village." in out
     assert GedcomDocument.from_text(out).wire_shapes() == shapes
+
+
+def test_one_sided_residence_dates_export_cleanly() -> None:
+    """A residence with only one date side emits that side — never a
+    dangling 'TO ' (review-bot finding on PR #61: hand-authored
+    residences can carry a single side)."""
+    doc = GedcomDocument.from_shapes(
+        {
+            "people": [
+                {
+                    "id": "p-a",
+                    "name": "Beatrice",
+                    "residence": [{"from": "1900", "to": ""}, {"from": "", "to": "1910"}],
+                }
+            ],
+            "relationships": [],
+            "places": [],
+        }
+    )
+    out = doc.to_text()
+    assert "2 DATE FROM 1900" in out
+    assert "2 DATE TO 1910" in out
+    assert "FROM 1900 TO " not in out  # no dangling side
+    _parse(out)  # the one-sided dates still parse under the strict grammar
 
 
 def test_estimated_people_and_edges_export_with_their_evidence() -> None:

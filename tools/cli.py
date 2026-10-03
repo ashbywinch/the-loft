@@ -243,6 +243,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("account", help="the narrator's account text, or - for stdin")
     p.add_argument("--who", default="")
     p.add_argument("--anchor", default="", help="JSON anchor context (item/person/theme)")
+    p.add_argument("--status", default="draft", choices=["draft", "catalogued"])
+    p.add_argument("--archive", default=str(ARCHIVE_DIR))
     p.set_defaults(fn=cmd_capture_memory)
 
     p = sub.add_parser(

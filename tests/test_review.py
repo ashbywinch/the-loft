@@ -134,6 +134,20 @@ def test_facts_ledger_deduplicates_and_sits_last() -> None:
     assert "relationship/person lines in it are not evidence" in user_flat
 
 
+def test_ledger_survives_unserializable_tool_results() -> None:
+    """A tool result that json cannot serialize must not crash the
+    investigation — the ledger falls back to the repr (review-bot
+    finding on PR #62)."""
+    from tools.review import _facts_ledger
+
+    class Exotic:
+        name = "not-json"
+
+    ledger = _facts_ledger([{"tool": "attested", "args": {"id": "p-x"}, "result": Exotic()}])
+    assert 'attested({"id": "p-x"})' in ledger
+    assert "Exotic" in ledger  # the repr carried the payload — no crash, no json failure
+
+
 def test_the_question_schema_speaks_to_the_family_never_the_process() -> None:
     """The question schema must carry the family-voice rule — a
     prompt-contract pin so a regression in the voice instruction fails

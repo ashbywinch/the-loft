@@ -12,6 +12,7 @@ never an action (user, 2026-08-09).
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections.abc import Sequence
 from typing import Any, Protocol
@@ -21,6 +22,8 @@ from tools.memory import ElicitationError
 from tools.records import Message, Person, ReviewContext
 
 MAX_RESOLVE_ATTEMPTS = 2
+
+logger = logging.getLogger(__name__)
 
 
 def _relevant_sentences(text: str, needles: tuple[str, ...], limit: int = 3) -> list[str]:
@@ -138,7 +141,11 @@ def _facts_ledger(trace: list[dict[str, Any]], limit: int = 400) -> str:
         if not tool:
             continue
         args = json.dumps(entry.get("args") or {}, sort_keys=True)
-        result = json.dumps(entry.get("result"), ensure_ascii=True)
+        # default=repr: an unserializable tool result serializes as its
+        # repr instead of raising — the ledger must never crash the
+        # investigation on an exotic payload (lucidlint: no swallow to
+        # flag, the fallback is declarative)
+        result = json.dumps(entry.get("result"), ensure_ascii=True, default=repr)
         if len(result) > limit:
             result = result[:limit] + "…"
         lines[(str(tool), args)] = f"- {tool}({args}) -> {result}"

@@ -159,6 +159,7 @@ class AIClient:
         attempt = 0
         content = ""  # the completion content — set per attempt, used by the empty-path check
         finish_reason = ""  # the response's finish_reason — set per attempt, used by the empty-path log
+        burn_retried = False  # the fresh-sample rescue fires ONCE — a second burn is a persistent stall
         while True:
             try:
                 with self._urlopen(request, timeout=self.timeout) as response:
@@ -208,7 +209,7 @@ class AIClient:
             if content and content.strip():
                 return content
             thinking_enabled = bool((payload.get("thinking") or {}).get("type") == "enabled")
-            if thinking_enabled and finish_reason == "length":
+            if thinking_enabled and finish_reason == "length" and not burn_retried:
                 # the completion is a deliberation stall: the model circled
                 # its decisions and spent the whole budget reasoning without
                 # a verdict (measured: 16,000 reasoning tokens, content a
@@ -234,6 +235,7 @@ class AIClient:
                 # deterministic attractor (the temperature-0 loop class is
                 # already gone) — the new sample often concludes (2502.08235)
                 payload["temperature"] = 0.5
+                burn_retried = True
                 request.data = json.dumps(payload).encode("utf-8")
                 continue
             if (

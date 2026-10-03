@@ -273,9 +273,33 @@ def test_find_api_key_prefers_environment() -> None:
 
 def test_find_api_key_ignores_the_loft_legacy_env(tmp_path: Path) -> None:
     """LOFT_AI_KEY is the retired secret name — a stale value must never
-    be picked up, only the OPENAI_API_KEY / gateway-token convention."""
+    defeat the gateway tokens."""
     with pytest.raises(AIClientError):
         find_api_key(_env={"LOFT_AI_KEY": "stale-token"}, _home=tmp_path)
+
+
+def test_burn_rescue_fires_once_then_terminates() -> None:
+    """The fresh-sample rescue is bounded to ONE attempt — a second
+    length-burn is a persistent stall and must take the terminating
+    backoff path, never loop unboundedly (review-bot finding on PR #62:
+    the unbound branch would re-issue forever with no counter)."""
+    burned: dict[str, object] = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
+    good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    urlopen, calls = make_fake_urlopen([FakeResponse(burned), FakeResponse(burned), FakeResponse(good)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=2)
+    assert client.chat("s", "u", thinking=True) == '{"ok": true}'
+    assert [c["body"]["temperature"] for c in calls] == [0.3, 0.5, 0.5]  # ONE fresh-sample retry, then backoff
+
+
+def test_burn_rescue_fires_once_then_terminates_on_persistent_burns() -> None:
+    """Two burns with no recovery exhaust the retry budget — the give-up
+    contract holds even when the stall persists (never an infinite
+    loop)."""
+    burned: dict[str, object] = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
+    urlopen, _ = make_fake_urlopen([FakeResponse(burned) for _ in range(3)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
+    with pytest.raises(AIClientError, match="empty response from API"):
+        client.chat("s", "u", thinking=True)
 
 
 def test_find_api_key_prefers_openai_api_key(tmp_path: Path) -> None:

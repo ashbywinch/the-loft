@@ -18,10 +18,15 @@
   final verification of a ready change. Running the whole suite to test
   each iteration is the same waste — and the same prohibited re-run — as
   running it to find a green. For an EVAL change, the failing run is the
-  single paid run: read its output, the request, and the model's
-  reasoning from that captured artifact, iterate on the prompt or code
-  from that evidence alone, and keep the real-model step out of the loop
-  until the one final verification.
+  single paid run OF THE ITERATION LOOP: read its output, the request,
+  and the model's reasoning from that captured artifact, iterate on the
+  prompt or code from that evidence alone, and make the final
+  verification the only further model run — a failed run is never
+  re-run as-is to sample a better draw.
+  *(Deployment: this file is the scaffolded copy of the standard — the
+  canonical lives in omp-config's `standards/`, and this repo's copy
+  does not update itself:`edit the canonical → make install → restart
+  omp` per `skill://update-skills`.)*
 - **Unit test** — a single class or function, with fakes for any dependencies.
 - **Real-world data enters tests as committed fixtures of the pipeline's
   detector output (user).** Never open the archive's scans or

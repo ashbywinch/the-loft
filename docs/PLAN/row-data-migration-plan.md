@@ -48,7 +48,10 @@ class, per the coding standards). It turns the page's words and the
 user's drawn row indications into rows of word boxes:
 
 - `Rows.build(words, user_lines, page_size) -> list[Row]` — present-tense
-  verb: builds the rows. One row per user line; a word box goes to the
+  verb: builds the rows. (Named at the time; DR1 later fixed the
+  classmethod's name as `Rows.from_words(words, row_adjustments,
+  page_size)`, with the words carrying their own reading line — `build`
+  below is the name as decided here.) One row per user line; a word box goes to the
   first line in reading order that covers its centre (the rule ported
   from the spike extractor, kept faithful — its disagreements with the
   adjudicated data are the snags, never silently "fixed").

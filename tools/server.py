@@ -795,7 +795,7 @@ def build_app(
         """The reviewer's drawn row lines -> the page's corrected rows.
 
         The lines are the drawn indications (normalised polylines); the
-        build (`tools/rows.py` Rows.build) groups the page's PERSISTED
+        build (`tools/rows.py` Rows.from_words) groups the page's PERSISTED
         words and the correction is written beside the reading (the lines
         and the rows they made), so a reopened page shows what the reviewer
         drew and what it produced. A page without persisted words (read

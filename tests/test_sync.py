@@ -616,3 +616,38 @@ def test_rotate_page_discards_a_premature_journal(tmp_path: Path) -> None:
     layout = _json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
     assert layout["rotation"] == 90
     assert not (batch / "oriented" / "p1.rotate.json").exists()
+
+
+def test_drafts_carry_the_persisted_row_correction(tmp_path: Path) -> None:
+    """A page the reviewer corrected carries both halves back: the drawn
+    lines and the rows they made — a reopened page shows the correction,
+    not the proposal it replaced."""
+    batch = tmp_path / "adopt-0004"
+    (batch / "ocr-guess").mkdir(parents=True)
+    (batch / "ocr-guess" / "boundaries.json").write_text(
+        json.dumps([{"pages": ["p1.jpg"], "greeting": None, "signoff": None}]), encoding="utf-8"
+    )
+    (batch / "ocr-guess" / "p1.txt").write_text("one two", encoding="utf-8")
+    (batch / "ocr-guess" / "p1.rows.json").write_text(
+        json.dumps({"page": "p1.jpg", "width": 100, "height": 200, "rotation": 0, "revision": 1, "lines": []}),
+        encoding="utf-8",
+    )
+    drawn = {"lines": [[[0.1, 0.2], [0.5, 0.2]]]}
+    corrected = {
+        "rows": [
+            {
+                "id": "seg-1",
+                "kind": "body",
+                "number": 1,
+                "word_boxes": [],
+                "band": {"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 1.0},
+            }
+        ]
+    }
+    (batch / "ocr-guess" / "p1.row-adjustments.json").write_text(json.dumps(drawn), encoding="utf-8")
+    (batch / "ocr-guess" / "p1.rows-adjusted.json").write_text(json.dumps(corrected), encoding="utf-8")
+
+    drafts = draft_payloads("adopt-0004", tmp_path)
+
+    assert drafts[0]["row_adjustments"]["p1.jpg"] == drawn
+    assert drafts[0]["adjusted_rows"]["p1.jpg"] == corrected

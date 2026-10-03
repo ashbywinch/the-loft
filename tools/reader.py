@@ -818,15 +818,34 @@ def read_page(page_path: Path, trace_dir: Path, split: bool = True) -> list[Box]
     return final
 
 
-def rows_for_page(page: Image.Image) -> tuple[list[dict[str, Any]], int, int]:
-    """The page's rows — the fitted writing lines, boxes in page pixels —
-    for the pipeline's reading stage (object-model Phase 1: rows replace
-    the strip stage's layout). The ink mask is measured at the reader's
-    SCALE resolution, so each line's box is scaled back to page pixels.
-    The lines arrive in reading order (top to bottom), text-less; the
-    caller maps the page transcription onto them."""
+@dataclass(frozen=True)
+class Reading:
+    """One page's automatic reading, in page pixels: the fitted writing LINES
+    (the row proposal the review shows) and the SPLIT WORDS those lines group,
+    each word carrying its own measured baseline and waistline. The
+    drawn-lines correction (`Rows.build`) groups the words, so the reading
+    carries them — the pipeline persists both side by side."""
+
+    lines: list[dict[str, Any]]
+    words: list[dict[str, Any]]
+    width: int
+    height: int
+
+
+def reading_for_page(page: Image.Image) -> Reading:
+    """The page's automatic reading: the fitted writing lines (the row
+    proposal for the pipeline's reading stage — object-model Phase 1: rows
+    replace the strip stage's layout) and the split words.
+
+    The ink mask is measured at the reader's SCALE resolution, so every box
+    is scaled back to page pixels. The lines arrive in reading order (top to
+    bottom), text-less; the caller maps the page transcription onto them.
+    The words are the splitter's own (`Writing.cut`) — the same words
+    ``read_page`` writes to words.json — so the reviewer's drawn row lines
+    can correct the rows in the app."""
     mask = ink_mask(page)
     writing = Writing.of(mask, [])
+    writing = writing.cut(writing.scale.unit)
     lines: list[dict[str, Any]] = []
     for index, line in enumerate(writing.lines):
         if not line.shapes:
@@ -848,7 +867,19 @@ def rows_for_page(page: Image.Image) -> tuple[list[dict[str, Any]], int, int]:
                 "words": [],
             }
         )
-    return lines, page.width, page.height
+    words = [
+        {
+            "x0": s.x0 * SCALE,
+            "y0": s.y0 * SCALE,
+            "x1": s.x1 * SCALE,
+            "y1": s.y1 * SCALE,
+            "line": s.line,
+            "baseline": s.baseline * SCALE,
+            "waistline": s.waistline * SCALE,
+        }
+        for s in writing.marks
+    ]
+    return Reading(lines=lines, words=words, width=page.width, height=page.height)
 
 
 def main(argv: list[str] | None = None) -> int:

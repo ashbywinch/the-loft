@@ -307,6 +307,42 @@ def test_draft_payloads_rejects_unsafe_page_names(tmp_path: Path) -> None:
         draft_payloads("adopt-0001", tmp_path)
 
 
+def test_rotate_page_remaps_the_words(tmp_path: Path) -> None:
+    """A rotation remaps the reading's words with the rows — the drawn-lines
+    correction groups those words on the rotated page, so a words file left
+    in the old frame would build the rows at the wrong angle."""
+    batch = tmp_path / "adopt-0002"
+    (batch / "oriented").mkdir(parents=True)
+    (batch / "ocr-guess").mkdir(parents=True)
+    Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
+    (batch / "ocr-guess" / "p1.rows.json").write_text(
+        json.dumps(
+            {
+                "page": "p1.jpg",
+                "width": 600,
+                "height": 1600,
+                "rotation": 0,
+                "revision": 1,
+                "lines": [{"index": 0, "text": "one", "box": [50, 400, 550, 500], "words": []}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (batch / "ocr-guess" / "p1.words.json").write_text(
+        json.dumps(
+            {"words": [{"x0": 60, "y0": 410, "x1": 200, "y1": 480, "line": 0, "baseline": 480, "waistline": 410}]}
+        ),
+        encoding="utf-8",
+    )
+
+    assert rotate_page("adopt-0002", "p1.jpg", 1, tmp_path) is True
+
+    words = json.loads((batch / "ocr-guess" / "p1.words.json").read_text(encoding="utf-8"))["words"]
+    # the same rigid remap as the rows: (x, y) -> (height - y, x)
+    assert [words[0][k] for k in ("x0", "y0", "x1", "y1")] == [1120, 60, 1190, 200]
+    assert (words[0]["waistline"], words[0]["baseline"]) == (60, 200)  # the rotated box's own edges
+
+
 def test_rotate_page_fixes_the_orientation(tmp_path: Path) -> None:
     """The reviewer's orientation fix (2026-08-16): rotate the page by
     quarter-turns CW and re-anchor the layout in place — the transcription

@@ -212,6 +212,39 @@ def test_stop_empty_without_reasoning_still_retries() -> None:
         client.chat("s", "u", thinking=True)
 
 
+def test_stop_empty_with_prose_reasoning_still_retries() -> None:
+    """A stop-empty whose reasoning is deliberation prose (no parseable
+    JSON) is a genuine failure — the recovery is gated on the reasoning
+    holding the structured answer, so the retry path still applies
+    (review-bot finding on PR #62)."""
+    prose: dict[str, object] = {
+        "choices": [
+            {
+                "message": {"content": "", "reasoning": "Let me weigh the evidence once more. The records are clear."},
+                "finish_reason": "stop",
+            }
+        ]
+    }
+    urlopen, _ = make_fake_urlopen([FakeResponse(prose)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
+    with pytest.raises(AIClientError, match="empty response from API"):
+        client.chat("s", "u", thinking=True)
+
+
+def test_stop_empty_recovery_is_thinking_only() -> None:
+    """The recovery is gated on thinking-enabled calls — a non-thinking
+    request's reasoning channel (a rare provider quirk) is not treated as
+    the answer."""
+    verdict = '{"ok": true}'
+    stop_empty: dict[str, object] = {
+        "choices": [{"message": {"content": "", "reasoning": verdict}, "finish_reason": "stop"}]
+    }
+    urlopen, _ = make_fake_urlopen([FakeResponse(stop_empty)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
+    with pytest.raises(AIClientError, match="empty response from API"):
+        client.chat("s", "u")
+
+
 def test_json_object_takes_the_last_of_multiple_objects() -> None:
     """A reasoning preamble followed by the verdict is the shape the model
     emits — a slice spanning both failed with "Extra data": the LAST

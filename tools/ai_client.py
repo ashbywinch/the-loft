@@ -236,14 +236,20 @@ class AIClient:
                 payload["temperature"] = 0.5
                 request.data = json.dumps(payload).encode("utf-8")
                 continue
-            if not content.strip() and finish_reason == "stop" and self.last_reasoning.strip():
+            if (
+                not content.strip()
+                and finish_reason == "stop"
+                and thinking_enabled
+                and self._reasoning_is_answer(self.last_reasoning)
+            ):
                 # the provider put the structured answer in the reasoning
                 # channel and produced zero content — the captured reasoning
                 # IS the completion (measured: deepseek-v4-flash via the CF
                 # gateway returns the verdict JSON in 'reasoning' with
-                # content=="" on some draws; the caller extracts the JSON).
-                # A stop-empty with reasoning is an ANSWER, not a stall —
-                # recovering it beats retrying the same lottery.
+                # content=="" on some draws; callers extract the JSON).
+                # Gated on a parseable answer: deliberation prose with no
+                # JSON is a genuine failure and must keep the retry path
+                # (review-bot finding on PR #62).
                 logger.warning(
                     "chat: empty content with finish_reason=stop — the reasoning holds the answer; "
                     "recovering it (reasoning_len=%d)",
@@ -265,6 +271,17 @@ class AIClient:
             self._sleep(delay)
             delay *= 2
             attempt += 1
+
+    def _reasoning_is_answer(self, reasoning: str) -> bool:
+        """True when the reasoning channel holds the structured answer — a
+        parseable JSON object — rather than deliberation prose. The
+        stop-empty recovery must not substitute prose for a failed
+        completion (review-bot finding on PR #62)."""
+        try:
+            json_object(reasoning)
+        except AIClientError:
+            return False
+        return True
 
 
 def find_api_key(_env: Mapping[str, str] | None = None, _home: Path | None = None) -> str:

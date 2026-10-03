@@ -1037,6 +1037,42 @@ export function boxToDisplay(frame, box) {
   return { x: Math.min(...xs), y: Math.min(...ys), width: Math.abs(xs[1] - xs[0]), height: Math.abs(ys[1] - ys[0]) };
 }
 
+/** A display-frame point → the original image point: the inverse of
+ *  `boxToDisplay`, so a stroke drawn on the rotated/scaled view lands on
+ *  the page's own coordinates (the space the row lines are stored in). */
+export function displayToOriginal(frame, x, y) {
+  const dx = x - frame.ox;
+  const dy = y - frame.oy;
+  const det = frame.a * frame.d - frame.b * frame.c;
+  return { x: (frame.d * dx - frame.c * dy) / det, y: (-frame.b * dx + frame.a * dy) / det };
+}
+
+/** A drawn stroke shorter than this (page px) is a tap, not a row line. */
+const ROW_STROKE_MIN = 24;
+
+/** One drawn stroke (original-px points) → the wire line the correction
+ *  takes: normalised [x, y] pairs clamped to the page. Null for a tap. */
+export function rowAdjustmentLine(points, size) {
+  if (!size || !points || points.length < 2) return null;
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  if (Math.max(...xs) - Math.min(...xs) + (Math.max(...ys) - Math.min(...ys)) < ROW_STROKE_MIN) return null;
+  const clamp = (v) => Math.max(0, Math.min(1, Number(v.toFixed(4))));
+  return points.map((p) => [clamp(p.x / size.w), clamp(p.y / size.h)]);
+}
+
+/** The drawn strokes → the correction request body. */
+export function rowAdjustmentBody(strokes, size) {
+  return { lines: (strokes || []).map((s) => rowAdjustmentLine(s, size)).filter(Boolean) };
+}
+
+/** The persisted drawn lines (normalised) → original-px strokes for drawing
+ *  back on a reopened page. */
+export function strokesFromAdjustments(adjustments, size) {
+  if (!size || !adjustments?.lines) return [];
+  return adjustments.lines.map((line) => line.map(([x, y]) => ({ x: x * size.w, y: y * size.h })));
+}
+
 /** The band's anchor: the writing's top in page px — the first line box,
  *  or (when the content association found no boxes — page-02's cursive
  *  defeats the rec model) the detector's first unmatched line: its
@@ -1114,12 +1150,87 @@ export function widthFitRect(paneW, paneH, rect) {
   };
 }
 
-/** The wheel's two behaviors: PAN when the view shows a
- *  slice of the writing (the transcript-follow works), ZOOM when the
- *  view shows ~all of the writing's vertical extent — the degenerate
- *  state where the pan can never change the visible line (the
- *  pinch-zoom-out can reach it; the fit's cap cannot). A pure
- *  classifier, testable without the DOM. */
+/** One SVG polyline per stroke, in page pixels (the layer's space). */
+function drawStrokeLayer(session, svg, strokes, live) {
+  svg.replaceChildren();
+  strokes.forEach((points) => {
+    if (points.length < 2) return;
+    const poly = el("polyline", {
+      class: "rv-stroke" + (live ? " rv-stroke--live" : ""),
+      points: points.map((p) => `${p.x},${p.y}`).join(" "),
+    });
+    svg.append(poly);
+  });
+}
+
+
+/** A client point → the page's own coordinates: through the view's scale
+ *  and the display rotation (the inverse of the on-screen transform, so a
+ *  drawn line lands where the reviewer's finger pointed). */
+function strokePoint(session, imgBox, clientX, clientY) {
+  const rect = imgBox.getBoundingClientRect();
+  const s = paneScale(session);
+  const x = session.view.x + (clientX - rect.left) / s;
+  const y = session.view.y + (clientY - rect.top) / s;
+  const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
+  return displayToOriginal(f, x, y);
+}
+
+
+/** The corrected rows as tinted bands with their numbers — the reviewer
+ *  sees what their lines made. Page-px, so the layer's transform places
+ *  them like the line boxes. */
+function renderRowBands(session) {
+  const layer = session.bandLayer;
+  if (!layer) return;
+  layer.replaceChildren();
+  (session.adjustedRows || []).forEach((row, i) => {
+    const band = row.band;
+    const box = el("div", { class: "rv-rowband" });
+    box.style.left = `${band.x0}px`;
+    box.style.top = `${band.y0}px`;
+    box.style.width = `${band.x1 - band.x0}px`;
+    box.style.height = `${band.y1 - band.y0}px`;
+    box.append(el("span", { class: "rv-rownum" }, [String(row.number ?? i + 1)]));
+    layer.append(box);
+  });
+  session.rowTools?.classList.toggle("is-set", (session.adjustedRows || []).length > 0);
+}
+
+/** The drawn lines -> the backend's correction (`Rows.build` over the
+ *  page's persisted words); the returned rows render as bands. A refusal
+ *  (no words persisted, a malformed body) is surfaced, never silent. */
+async function applyRowAdjustments(session) {
+  const size = session.imgSize;
+  // the page is the session's own position — never a stale local
+  const page = session.batch.documents[session.docIndex]?.pages[session.pageIndex];
+  const body = rowAdjustmentBody(session.strokes, size);
+  if (!body.lines.length) {
+    console.warn("review: no row lines drawn — nothing to apply");
+    return;
+  }
+  session.rowTools?.classList.add("is-busy");
+  try {
+    const res = await fetch(
+      `/api/sync/batch/${encodeURIComponent(session.batch.batchId)}/page/${encodeURIComponent(page)}/row-adjustments`,
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
+    );
+    const payload = await res.json();
+    if (!res.ok) throw new Error(payload?.error || `row adjustment rejected (${res.status})`);
+    session.adjustedRows = payload.rows;
+    renderRowBands(session);
+  } catch (error) {
+    console.error("review: the row correction failed — the page is unchanged", error);
+  } finally {
+    session.rowTools?.classList.remove("is-busy");
+  }
+}
+
+/** The wheel's two behaviors: PAN when the view shows a slice of the
+ *  writing (the transcript-follow works), ZOOM when the view shows ~all
+ *  of the writing's vertical extent — the degenerate state where the pan
+ *  can never change the visible line (the pinch-zoom-out can reach it;
+ *  the fit's cap cannot). A pure classifier, testable without the DOM. */
 export function wheelZoomOrPan(view, layout) {
   const lines = (layout?.lines || []).filter((l) => l.box);
   if (!lines.length) return "pan"; // the layout-less pages: the band fit always leaves the room
@@ -1238,6 +1349,40 @@ function openViewer(session, imgBox) {
       // the image "wouldn't let me scroll up at all" (user).
       session.contentTop = bandAnchor(layout) - bandMargin(layout);
     }
+    // The row tools + the stroke layer: the reviewer's drawn row lines (the
+    // correction's input — `Rows.build` groups the page's words by them)
+    // live in a page-px SVG above the image; the corrected rows tint the
+    // page beneath. The mode is explicit: panning and drawing never fight
+    // for the same finger.
+    session.drawRows = false;
+    session.strokes = [];
+    session.adjustedRows = doc.adjusted_rows?.[page]?.rows || null;
+    const imageSize = { w: img.naturalWidth, h: img.naturalHeight };
+    const drawLayer = el("svg", { class: "rv-draw", viewBox: `0 0 ${imageSize.w} ${imageSize.h}` });
+    layer.append(drawLayer);
+    session.drawLayer = drawLayer;
+    const bandLayer = el("div", { class: "rv-bands" });
+    layer.append(bandLayer);
+    session.bandLayer = bandLayer;
+    const toggleDraw = el("button", { class: "btn rv-rowtools__draw", type: "button" }, ["Draw rows"]);
+    toggleDraw.addEventListener("click", () => {
+      session.drawRows = !session.drawRows;
+      imgBox.classList.toggle("rv-drawing", session.drawRows);
+      toggleDraw.classList.toggle("is-on", session.drawRows);
+    });
+    const applyBtn = el("button", { class: "btn rv-rowtools__apply", type: "button" }, ["Apply"]);
+    applyBtn.addEventListener("click", () => applyRowAdjustments(session));
+    const clearBtn = el("button", { class: "btn rv-rowtools__clear", type: "button" }, ["Clear"]);
+    clearBtn.addEventListener("click", () => {
+      session.strokes = [];
+      drawStrokeLayer(session, session.drawLayer, [], false);
+      session.adjustedRows = null;
+      renderRowBands(session);
+    });
+    imgBox.append(el("div", { class: "rv-rowtools" }, [toggleDraw, applyBtn, clearBtn]));
+    // a reopened page shows what the reviewer drew and the rows it made
+    drawStrokeLayer(session, drawLayer, strokesFromAdjustments(doc.row_adjustments?.[page], imageSize), false);
+    renderRowBands(session);
     // Restore the resume position: the scroll, image view,
     // selected line, and read rotation from the last session on this page.
     const saved = loadResumePosition(batch.batchId, page);
@@ -1316,9 +1461,15 @@ function openViewer(session, imgBox) {
   const pointers = new Map();
   let dragStart = null;
   let pinchStart = null;
+  let drawing = null; // the stroke in progress (page-px points)
   const onMove = (e) => {
     if (!pointers.has(e.pointerId) || !session.view) return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (drawing && pointers.size === 1) {
+      drawing.push(strokePoint(session, imgBox, e.clientX, e.clientY));
+      drawStrokeLayer(session, session.drawLayer, [...session.strokes, drawing], true);
+      return;
+    }
     if (pointers.size === 1 && dragStart) {
       const s = paneScale(session);
       session.view.x = dragStart.view.x - (e.clientX - dragStart.x) / s;
@@ -1342,6 +1493,13 @@ function openViewer(session, imgBox) {
     }
   };
   const onUp = (e) => {
+    if (drawing && pointers.size === 1) {
+      // the stroke ends with this finger: keep it when it is a line (the
+      // build drops taps), and stop panning/drawing until the next down
+      if (rowAdjustmentLine(drawing, session.imgSize)) session.strokes.push(drawing);
+      drawing = null;
+      drawStrokeLayer(session, session.drawLayer, session.strokes, false);
+    }
     pointers.delete(e.pointerId);
     dragStart = null;
     pinchStart = null;
@@ -1354,12 +1512,18 @@ function openViewer(session, imgBox) {
   const onDown = (e) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.size === 1) {
+    if (session.drawRows && pointers.size === 1) {
+      // draw mode: one finger draws a row line; panning yields to it
+      drawing = [strokePoint(session, imgBox, e.clientX, e.clientY)];
+      dragStart = null;
+      pinchStart = null;
+    } else if (pointers.size === 1) {
       dragStart = { view: { ...session.view }, x: e.clientX, y: e.clientY };
       pinchStart = null;
     } else if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
       dragStart = null;
+      drawing = null; // a second finger is a pinch, never a stroke
       pinchStart = { dist: Math.hypot(a.x - b.x, a.y - b.y) };
     }
     window.addEventListener("pointermove", onMove);

@@ -13,6 +13,7 @@ inferred).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from tools.rows import Box, Rows
@@ -151,3 +152,24 @@ def test_an_annotation_poking_above_the_line_is_discounted() -> None:
     words = _words((100, 100, 500, 130), (200, 60, 230, 90))
     rows = Rows.build(words, [_line(100, 500, 115)], PAGE_SIZE)
     assert len(rows) == 1 and len(rows[0].word_boxes) == 1, "the annotation joined the line"
+
+
+def test_the_rows_round_trip_through_their_wire_format(tmp_path: Path) -> None:
+    """Rows.build's output serializes to the wire contract
+    (`tools.schemas.Rows`: id, kind, number, word_boxes, band — plain
+    x0..y1 records) and loads back equal. This is the file the review's
+    correction persists and the app reads, so the shape is pinned by the
+    schema's own strict loader — not by this test's opinion of it."""
+    words = load_words(FIXTURE / "words.json")["words"]
+    lines = load_user_row_adjustments(FIXTURE / "user-row-adjustments.json")["lines"]
+    page = load_boxes(Path("tests/fixtures/page01-wordseg/boxes.json"))["page"]
+    boxes = [Box(w["x0"], w["y0"], w["x1"], w["y1"]) for w in words]
+    built = Rows.build(boxes, lines, (page["width"], page["height"]), [w["baseline"] for w in words])
+
+    path = tmp_path / "p1.rows.json"
+    path.write_text(json.dumps(Rows.to_wire(built), indent=1), encoding="utf-8")
+
+    loaded = load_rows(path)  # the strict loader IS the contract check
+    assert Rows.from_wire(loaded) == built
+    assert loaded["rows"][0]["id"] == built[0].id and loaded["rows"][0]["number"] == 1
+    assert set(loaded["rows"][0]["band"]) == {"x0", "y0", "x1", "y1"}

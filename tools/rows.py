@@ -24,8 +24,10 @@ rows carry the confirmed kinds and numbers.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -183,6 +185,49 @@ class Rows:
                 band=row.band,
             )
         return numbered
+
+    @staticmethod
+    def to_wire(rows: Sequence[Row]) -> dict[str, Any]:
+        """The rows as the wire contract (`tools.schemas.Rows`: id, kind,
+        number, word_boxes, band — plain x0..y1 records). This is the shape
+        the review's correction persists and the app reads; the schema's
+        strict loader is the check."""
+        return {
+            "rows": [
+                {
+                    "id": row.id,
+                    "kind": row.kind,
+                    "number": row.number,
+                    "word_boxes": [_box_wire(box) for box in row.word_boxes],
+                    "band": _box_wire(row.band),
+                }
+                for row in rows
+            ]
+        }
+
+    @staticmethod
+    def from_wire(data: Mapping[str, Any]) -> list[Row]:
+        """The wire contract's rows as Row records (the inverse of
+        ``to_wire``) — the app's persisted correction read back."""
+        return [
+            Row(
+                id=str(record["id"]),
+                kind=str(record["kind"]),
+                number=int(record["number"]),
+                word_boxes=[_box_from_wire(box) for box in record["word_boxes"]],
+                band=_box_from_wire(record["band"]),
+            )
+            for record in data["rows"]
+        ]
+
+
+def _box_wire(box: Box) -> dict[str, float]:
+    """One box as the wire record (the four fields, and only those)."""
+    return {"x0": box.x0, "y0": box.y0, "x1": box.x1, "y1": box.y1}
+
+
+def _box_from_wire(record: Mapping[str, Any]) -> Box:
+    return Box(float(record["x0"]), float(record["y0"]), float(record["x1"]), float(record["y1"]))
 
 
 def _apportion_target(

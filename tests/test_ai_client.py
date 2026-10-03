@@ -245,6 +245,20 @@ def test_stop_empty_recovery_is_thinking_only() -> None:
         client.chat("s", "u")
 
 
+def test_stream_failed_empty_recovery_with_an_answer_is_recovered() -> None:
+    """A finish_reason=error completion (a stream failure) whose reasoning
+    holds the verdict JSON is recovered like the stop-empty — measured on
+    the CI gateway: 9,852 reasoning chars carrying the answer, empty
+    content, and a retry into the same provider hiccup (run 37121357929)."""
+    verdict = '{"relevant": true, "contradiction": {"found": false, "detail": ""}}'
+    errored: dict[str, object] = {
+        "choices": [{"message": {"content": "", "reasoning": "Let me weigh it…" + verdict}, "finish_reason": "error"}]
+    }
+    urlopen, _ = make_fake_urlopen([FakeResponse(errored)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
+    assert client.chat("s", "u", thinking=True) == "Let me weigh it…" + verdict
+
+
 def test_json_object_takes_the_last_of_multiple_objects() -> None:
     """A reasoning preamble followed by the verdict is the shape the model
     emits — a slice spanning both failed with "Extra data": the LAST

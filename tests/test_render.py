@@ -14,7 +14,6 @@ import pytest
 from PIL import Image
 
 from tools.mark import WordGeometry
-from tools.page import Page
 from tools.rectangle import Rectangle
 from tools.render import join_band, render_rows
 from tools.row import Row
@@ -223,13 +222,27 @@ def test_join_band_without_vertical_overlap_centres_on_the_midpoint() -> None:
     assert band.y1 == 65
 
 
+def _row(number: int, words: list[Word]) -> Row:
+    """One record row: its words' boxes and their exact union."""
+    xs0 = [w.rect.x0 for w in words]
+    ys0 = [w.rect.y0 for w in words]
+    xs1 = [w.rect.x1 for w in words]
+    ys1 = [w.rect.y1 for w in words]
+    return Row(
+        id=f"seg-{number}",
+        kind="body",
+        number=number,
+        word_boxes=list(words),
+        band=Rectangle(min(xs0), min(ys0), max(xs1), max(ys1)),
+    )
+
+
 def test_render_rows_tints_words_and_joins_without_an_outline() -> None:
     """Two words sharing a row: the render is the page plus the two word
     tints and the join band; no outline colour besides the page's own."""
     page = Image.new("RGB", (120, 60), (250, 250, 245))
-    page_model = Page([Word(10, 10, 40, 40), Word(60, 15, 100, 45)], SPACING)
-    rows = [Row(words=[0, 1])]
-    out = render_rows(page, page_model, rows)
+    rows = [_row(1, [Word(10, 10, 40, 40), Word(60, 15, 100, 45)])]
+    out = render_rows(page, rows)
     # the join band (x 40-60, centred on the overlap 15-40, height min(30,30))
     assert out.getpixel((50, 27)) != (250, 250, 245), "join band not tinted"
     # a word tint
@@ -240,8 +253,8 @@ def test_render_rows_tints_words_and_joins_without_an_outline() -> None:
 
 def test_render_rows_numbers_the_yellow_lines() -> None:
     page = Image.new("RGB", (300, 100), (250, 250, 245))
-    page_model = Page([Word(10, 10, 40, 40)], SPACING)
-    out = render_rows(page, page_model, [Row(words=[0])], strokes=[[(50, 50), (200, 50)]])
+    rows = [_row(1, [Word(10, 10, 40, 40)])]
+    out = render_rows(page, rows, strokes=[[(50, 50), (200, 50)]])
     # the stroke's own yellow shows through near its end
     assert out.getpixel((150, 50)) != (250, 250, 245)
 
@@ -250,20 +263,14 @@ def test_numbers_sit_in_the_gutter_never_over_the_writing() -> None:
     """The line numbers must be readable as each line's own, without covering
     a single word: every disc ends before its line's leftmost words begin."""
     page = Image.new("RGB", (800, 200), (250, 250, 245))
-    page_model = Page(
-        [
-            Word(300, 0, 350, 30),
-            Word(400, 2, 470, 32),
-            Word(300, 60, 340, 90),
-            Word(380, 62, 440, 92),
-        ],
-        SPACING,
-    )
-    rows = [Row(words=[0, 1]), Row(words=[2, 3])]
+    rows = [
+        _row(1, [Word(300, 0, 350, 30), Word(400, 2, 470, 32)]),
+        _row(2, [Word(300, 60, 340, 90), Word(380, 62, 440, 92)]),
+    ]
     strokes = [[(320, 15), (700, 15)], [(330, 75), (700, 75)]]
-    out = render_rows(page, page_model, rows, strokes)
+    out = render_rows(page, rows, strokes)
     for row_index, (row, stroke) in enumerate(zip(rows, strokes, strict=False)):
-        left = min(page_model.words[i].x0 for i in row.words)
+        left = min(w.rect.x0 for w in row.word_boxes)
         disc_left, disc_right = left - 96, left - 10
         assert disc_right < left, "the disc must not reach the line's words"
         mid = (min(py for _, py in stroke) + max(py for _, py in stroke)) / 2

@@ -17,7 +17,6 @@ from dataclasses import dataclass
 
 from PIL import Image, ImageDraw
 
-from tools.page import Page
 from tools.rectangle import Rectangle
 from tools.row import Row
 
@@ -73,7 +72,6 @@ def tint_row(
 
 def render_rows(
     page: Image.Image,
-    page_model: Page,
     rows: Sequence[Row],
     strokes: Sequence[Sequence[tuple[float, float]]] | None = None,
     style: RenderStyle = DEFAULT_STYLE,
@@ -91,7 +89,7 @@ def render_rows(
     draw = ImageDraw.Draw(overlay)
     for row_index, row in enumerate(rows):
         colour = style.colour(row_index)
-        rects = [page_model.words[i].rect for i in row.words]
+        rects = [word.rect for word in row.word_boxes]
         tint_row(draw, rects, list(range(len(rects))), colour)
     canvas = Image.alpha_composite(page_rgba, overlay)
     if strokes is not None:
@@ -117,15 +115,15 @@ def render_rows(
 
 def render_rows_with_line_boxes(
     page: Image.Image,
-    page_model: Page,
     rows: Sequence[Row],
     strokes: Sequence[Sequence[tuple[float, float]]] | None = None,
     style: RenderStyle = DEFAULT_STYLE,
 ) -> Image.Image:
     """Like render_rows, but each row's box is also outlined - the review
     surface's comparison view, where the outline is the point."""
-    canvas = render_rows(page, page_model, rows, strokes, style)
+    canvas = render_rows(page, rows, strokes, style)
     draw = ImageDraw.Draw(canvas)
-    for row_index, box in enumerate(page_model.row_boxes(rows)):
+    for row_index, row in enumerate(rows):
+        box = row.band
         draw.rectangle([box.x0, box.y0, box.x1, box.y1], outline=style.colour(row_index), width=3)
     return canvas

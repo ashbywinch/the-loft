@@ -20,9 +20,9 @@ from typing import Any
 
 from PIL import Image
 
-from tools.page import Page
 from tools.page_visuals import captioned_sheet, review_image, stack_sheets
 from tools.reader import reading_for_page
+from tools.rectangle import Rectangle
 from tools.render import render_rows
 from tools.row import Row
 from tools.rows import Rows
@@ -124,9 +124,24 @@ def _correction_assignment(
     return list(built), built_row
 
 
+def _row(number: int, words: Sequence[int], model_words: Sequence[Word]) -> Row:
+    """One record row from word indices: the words' boxes and their union."""
+    boxes = [model_words[i] for i in words]
+    xs0 = [w.rect.x0 for w in boxes]
+    ys0 = [w.rect.y0 for w in boxes]
+    xs1 = [w.rect.x1 for w in boxes]
+    ys1 = [w.rect.y1 for w in boxes]
+    return Row(
+        id=f"seg-{number}",
+        kind="body",
+        number=number,
+        word_boxes=list(boxes),
+        band=Rectangle(min(xs0), min(ys0), max(xs1), max(ys1)),
+    )
+
+
 def _panels(
     scan: Path,
-    model: Page,
     strokes: Sequence[Sequence[tuple[float, float]]],
     rowsets: Sequence[tuple[str, Sequence[Row]]],
 ) -> Image.Image:
@@ -137,7 +152,7 @@ def _panels(
     page = Image.open(scan).convert("RGB")
     panels = []
     for title, rows in rowsets:
-        drawn = render_rows(page, model, list(rows), strokes)
+        drawn = render_rows(page, list(rows), strokes)
         fitted = drawn.resize((1000, int(drawn.height * 1000 / drawn.width)), Image.Resampling.LANCZOS)
         sheet, _, _ = captioned_sheet(fitted, [title])
         panels.append(sheet)
@@ -165,20 +180,20 @@ def main() -> None:
     def built_words(r_i: int) -> list[int]:
         return sorted(i for i, r in built_row.items() if r == r_i)
 
-    model = Page(
-        [Word(w["x0"], w["y0"], w["x1"], w["y1"], font_size=w["baseline"] - w["waistline"]) for w in words], SPACING
-    )
+    model_words = [Word(w["x0"], w["y0"], w["x1"], w["y1"], font_size=w["baseline"] - w["waistline"]) for w in words]
     strokes = [[(x * width, y * height) for x, y in line] for line in lines]
     rowsets = [
         (
             f"THE ADJUDICATED ROWS (your rulings, rows.json)  |  {len(gold)} rows — the reference",
             [
-                Row(
-                    words=[
+                _row(
+                    r + 1,
+                    [
                         i
                         for i, wd in enumerate(words)
                         if gold[r]["band"]["y0"] <= (wd["y0"] + wd["y1"]) / 2 <= gold[r]["band"]["y1"]
-                    ]
+                    ],
+                    model_words,
                 )
                 for r in range(len(gold))
             ],
@@ -186,15 +201,18 @@ def main() -> None:
         (
             f"THE PROPOSAL — tools/reader.py reading_for_page (no lines drawn)  |  {len(proposal)} rows, "
             f"{p_right}/{p_judged} words in the correct row ({100 * p_right / p_judged:.1f}%)",
-            [Row(words=sorted(i for i, r in proposal_row.items() if r == k)) for k in range(len(proposal))],
+            [
+                _row(k + 1, sorted(i for i, r in proposal_row.items() if r == k), model_words)
+                for k in range(len(proposal))
+            ],
         ),
         (
             f"THE CORRECTION — tools/rows.py Rows.from_words (your {len(lines)} drawn lines)  |  {len(built)} rows, "
             f"{c_right}/{c_judged} words in the correct row ({100 * c_right / c_judged:.1f}%)",
-            [Row(words=built_words(k)) for k in range(len(built))],
+            [_row(k + 1, built_words(k), model_words) for k in range(len(built))],
         ),
     ]
-    contact = _panels(SCAN, model, strokes, rowsets)
+    contact = _panels(SCAN, strokes, rowsets)
     OUT.write_bytes(review_image(contact))
     print(f"wrote {OUT}: {OUT.stat().st_size // 1024} KB, {contact.width}x{contact.height}")
 

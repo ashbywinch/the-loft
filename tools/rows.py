@@ -31,35 +31,16 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-from tools.boxrows import Rectangle as InkRectangle
-from tools.boxrows_render import tint_row
 from tools.page_visuals import captioned_sheet, halo_text, review_image, scaled_crop
 from tools.rectangle import Rectangle
+from tools.render import tint_row
+from tools.row import Row
 from tools.word import Word
 
 TOUCH_FRACTION = 0.38  # x the writing height: how far a line's stroke claims a word
 SPACING_RATIO = 1.6  # x the writing height: where one row ends and the next begins
 RULE_ASPECT = 8.0  # x a box's height: this wide for its height is a rule, not writing
 BUTT_GAP_MIN = 4.0  # px floor for a butting adjacency — physical, never unit-dependent razor
-
-
-@dataclass(frozen=True)
-class Row:
-    """One row of writing: the words one drawn line (or one reading line)
-    claimed, and their union.
-
-    The id carries its kind, so the file format never loses the type:
-    `seg-6` is a body row, `int-41` an interjection row. The number is
-    the user-facing line number. The words are their bounding boxes —
-    never integer ids, which shift as the word set changes. The band is
-    the words' exact union.
-    """
-
-    id: str
-    kind: str  # "body" | "interjection"
-    number: int
-    word_boxes: list[Word]
-    band: Rectangle
 
 
 class Rows:
@@ -364,7 +345,7 @@ def render_map(
     overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     for index, row in enumerate(rows):
-        rects = [InkRectangle(word.x0, word.y0, word.x1, word.y1) for word in row.word_boxes]
+        rects = [Rectangle(word.x0, word.y0, word.x1, word.y1) for word in row.word_boxes]
         tint_row(draw, rects, list(range(len(rects))), style.colour(index))
     rendered = Image.alpha_composite(canvas, overlay).convert("RGB")
     crop = scaled_crop(rendered, window.x0, window.y0, window.x1, window.y1, scale)

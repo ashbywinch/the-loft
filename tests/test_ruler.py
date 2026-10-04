@@ -1,4 +1,4 @@
-"""Tests for the page's writing scale (tools/pagescale.py).
+"""Tests for the page's ruler (tools/ruler.py).
 
 Deterministic: synthetic pages whose scale is known by construction, plus the
 real letter's properties where the fixture exists in the checkout. No network,
@@ -11,15 +11,25 @@ import random
 
 import pytest
 
-from tools.pagescale import (
+from tools.mark import Mark
+from tools.ruler import (
     LINE_RATIO_BOUNDS,
     LINE_RATIO_DEFAULT,
+    Ruler,
     line_ratio,
-    line_spacing,
     traced_pitch,
     traced_spacings,
     writing_scale,
 )
+
+
+def _marks(heights: list[float]) -> list[Mark]:
+    """The ruler's input: one bare mark per height (its box's height is what
+    the writing scale measures)."""
+    return [
+        Mark(x0=0.0, y0=0.0, x1=10.0, y1=h, baseline=h, waistline=0.0, area=1.0, cx=5.0, pix=(None, None))  # type: ignore[arg-type]  # the ruler measures heights, never pix
+        for h in heights
+    ]
 
 
 def synthetic_page(
@@ -47,12 +57,12 @@ def test_spacing_follows_the_writing_height_and_the_traced_lines(height: float, 
     """The traced lines measure the ratio; the spacing is then the height × that ratio."""
     heights, baselines = synthetic_page(height, spacing)
     one_per_line = baselines[::8]  # a reviewer traces one line, not every word
-    assert line_spacing(heights, one_per_line) == pytest.approx(spacing, rel=0.15)
+    assert Ruler.from_marks(_marks(heights), one_per_line).pitch == pytest.approx(spacing, rel=0.15)
 
 
 def test_spacing_falls_back_to_the_typographic_default_without_traces() -> None:
     heights, _ = synthetic_page(38.0, 60.0)
-    assert line_spacing(heights) == pytest.approx(38.0 * LINE_RATIO_DEFAULT, rel=0.1)
+    assert Ruler.from_marks(_marks(heights)).pitch == pytest.approx(38.0 * LINE_RATIO_DEFAULT, rel=0.1)
 
 
 def test_traced_pitch_needs_enough_traces() -> None:

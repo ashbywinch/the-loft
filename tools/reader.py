@@ -25,7 +25,7 @@ from PIL import Image, ImageFilter
 
 from tools.line import Line
 from tools.mark import BAND_RUN, SCALE, SHAPE_MIN_AREA, Ink, Mark, find_marks
-from tools.pagescale import LINE_RATIO_DEFAULT, PageScale, line_ratio, traced_pitch, writing_scale
+from tools.ruler import LINE_RATIO_DEFAULT, Ruler
 from tools.trace import Box, Trace
 
 BATCH = Path(os.environ.get("LOFT_BATCH", "/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004"))
@@ -74,7 +74,7 @@ class LineFitter:
 
     ROUNDS = 8  # refit-merge-reassign-split passes: the fit settles well inside this
 
-    def __init__(self, scale: PageScale) -> None:
+    def __init__(self, scale: Ruler) -> None:
         self.scale = scale
 
     def fit(self, shapes: list[Mark]) -> list[Line]:
@@ -224,7 +224,7 @@ def split_shapes(shapes: list[Mark], lines: list[Line], unit: float) -> list[Mar
     return Writing(
         marks=shapes,
         lines=lines,
-        scale=PageScale(unit=unit, pitch=LINE_RATIO_DEFAULT * unit),
+        scale=Ruler(unit=unit, pitch=LINE_RATIO_DEFAULT * unit),
         stripped=0,
     )._words_of()
 
@@ -274,11 +274,10 @@ def _nearest_line(shape: Mark, lines: list[Line]) -> int:
     return min(range(len(lines)), key=lambda i: lines[i].distance(shape.cx, shape.baseline))
 
 
-def _page_scale(shapes: list[Mark], traced: list[float]) -> PageScale:
-    """The page's writing scale: the marks' own heights, against the line
+def _page_scale(shapes: list[Mark], traced: list[float]) -> Ruler:
+    """The page's ruler: the marks' own heights, the pitch refined by the line
     spacing the reviewer's traces measured."""
-    heights = [s.height for s in shapes]
-    return PageScale.of(heights, line_ratio(traced_pitch(traced), writing_scale(heights)))
+    return Ruler.from_marks(shapes, traced)
 
 
 @dataclass(frozen=True)
@@ -296,7 +295,7 @@ class Writing:
 
     marks: list[Mark]
     lines: list[Line]
-    scale: PageScale
+    scale: Ruler
     stripped: int
 
     @classmethod
@@ -639,7 +638,7 @@ class Strokes:
             [(min(max(x, 0.0), 1.0) * width, min(max(y, 0.0), 1.0) * height) for x, y in stroke] for stroke in raw
         ]
 
-    def traces(self, shapes: list[Mark], scale: PageScale) -> list[Trace]:
+    def traces(self, shapes: list[Mark], scale: Ruler) -> list[Trace]:
         """The page's traced lines, in the order their lines sit on it."""
         covered = self._covers(shapes, scale.touch)
         naming = self._line_of(covered)
@@ -723,7 +722,7 @@ class Strokes:
             parent[root_other] = root_one
 
 
-def compose_boxes(lines: list[Line], traced: list[tuple[int, Box]], scale: PageScale) -> list[Box]:
+def compose_boxes(lines: list[Line], traced: list[tuple[int, Box]], scale: Ruler) -> list[Box]:
     """The page's boxes: the detector boxes every line, and a trace replaces the
     span it defines (the boxes it covers are cut out of its line's)."""
     final: list[Box] = []
@@ -734,7 +733,7 @@ def compose_boxes(lines: list[Line], traced: list[tuple[int, Box]], scale: PageS
     return final + [box for _, box in traced]
 
 
-def _boxes_between(line: Line, poly: Box, traced: list[tuple[float, float]], scale: PageScale) -> list[Box]:
+def _boxes_between(line: Line, poly: Box, traced: list[tuple[float, float]], scale: Ruler) -> list[Box]:
     """The boxes one line's polygon gives, with the traced spans taken out."""
     x_ref, y_ref, ux, uy, nx, ny = line.frame(line.shapes)
     along = [(px / SCALE - x_ref) * ux + (py / SCALE - y_ref) * uy for px, py in poly]

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from tools.mark import SCALE, Mark
-from tools.pagescale import PageScale
+from tools.ruler import Ruler
 from tools.trace import Box
 
 
@@ -125,7 +125,7 @@ class Line:
         us = [((px / SCALE - x_ref) * ux + (py / SCALE - y_ref) * uy) for px, py in poly]
         return min(us), max(us)
 
-    def boxes(self, scale: PageScale) -> list[Box]:
+    def boxes(self, scale: Ruler) -> list[Box]:
         """The line's ink as one or more boxes, split at column-sized x gaps.
 
         Measured alternative (2026-09-10): splitting relative to the line's own

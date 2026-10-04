@@ -345,14 +345,14 @@ def page01_shapes() -> tuple:
     user-verified one-word cases below pin its outputs, so a change in
     find_marks or fit_lines that moves a case fails loudly here, not
     silently in a sheet."""
-    from tools.pagescale import PageScale, line_ratio, traced_pitch, writing_scale
     from tools.reader import LineFitter
+    from tools.ruler import Ruler, line_ratio, traced_pitch, writing_scale
 
     shapes = [m for m in _fixture_marks()]
     strokes = _fixture_strokes()
     traced = sorted(float(np.median([p[1] for p in s])) * PAGE_HEIGHT / 2 for s in strokes)
     ratio = line_ratio(traced_pitch(traced), writing_scale([s.height for s in shapes]))
-    scale = PageScale.of([s.height for s in shapes], ratio)
+    scale = Ruler.of([s.height for s in shapes], ratio)
     return {s.id: s for s in shapes}, LineFitter(scale).fit(shapes), scale
 
 

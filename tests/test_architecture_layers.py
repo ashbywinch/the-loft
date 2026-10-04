@@ -37,7 +37,7 @@ PIPELINE = (
     "mark",
     "ocr",
     "page",
-    "pagescale",
+    "ruler",
     "pipeline",
     "reader",
     "reading",

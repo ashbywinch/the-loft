@@ -3,15 +3,20 @@
 Every distance the detector compares is a multiple of the writing's height
 (the median height of its ink marks) or of the line spacing that height
 implies. A page at another resolution, in another hand, or in print needs no
-edits - the multiples are typography, the height is measured. When the
-reviewer has traced enough lines, their spacing sets the ratio; otherwise
-handwriting's typographic default stands.
+edits - the multiples are typography, the height is measured.
+
+The Ruler is made from the page's marks (`Ruler.from_marks`); where the CLI
+still has the reviewer's traced baselines, their spacing refines the pitch,
+and without them the default ratio stands.
 """
 
 from __future__ import annotations
 
 import statistics as st
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+
+from tools.mark import Mark
 
 SEED_FRACTION = 0.38  # × writing height: baselines this close start one line
 REFIT_FRACTION = 0.86  # × writing height: how far a shape may sit from a line
@@ -36,7 +41,7 @@ def traced_spacings(traced_baselines: list[float]) -> list[float]:
     """The spacings between the reviewer's traced lines, nearest pairs only."""
     ordered = sorted(traced_baselines)
     return [
-        b - a for a, b in zip(ordered, ordered[1:], strict=False) if TRACE_GAP_BOUNDS[0] < b - a < TRACE_GAP_BOUNDS[1]
+        b - a for a, b in zip(ordered, ordered[1:], strict=False) if TRACE_GAP_BOUNDS[0] <= b - a <= TRACE_GAP_BOUNDS[1]
     ]
 
 
@@ -50,21 +55,16 @@ def traced_pitch(traced_baselines: list[float]) -> float | None:
 
 def line_ratio(traced_pitch_px: float | None, unit: float) -> float:
     """Line spacing ÷ writing height: measured from the traces when possible."""
-    if traced_pitch_px and unit > 0:
-        ratio = traced_pitch_px / unit
-        if LINE_RATIO_BOUNDS[0] <= ratio <= LINE_RATIO_BOUNDS[1]:
-            return ratio
-    return LINE_RATIO_DEFAULT
-
-
-def line_spacing(heights: list[float], traced_baselines: list[float] | None = None) -> float:
-    """The page's line spacing in page pixels — the one scale the detector needs."""
-    unit = writing_scale(heights)
-    return unit * line_ratio(traced_pitch(traced_baselines or []), unit)
+    if traced_pitch_px is None or unit <= 0:
+        return LINE_RATIO_DEFAULT
+    ratio = traced_pitch_px / unit
+    if not LINE_RATIO_BOUNDS[0] <= ratio <= LINE_RATIO_BOUNDS[1]:
+        return LINE_RATIO_DEFAULT
+    return ratio
 
 
 @dataclass
-class PageScale:
+class Ruler:
     """The page's own ruler: what one length means here.
 
     Every distance the detector compares is a multiple of the writing's height
@@ -77,9 +77,18 @@ class PageScale:
     pitch: float  # the line spacing, in working pixels
 
     @classmethod
-    def of(cls, heights: list[float], ratio: float) -> PageScale:
+    def of(cls, heights: list[float], ratio: float) -> Ruler:
         unit = writing_scale(heights)
         return cls(unit=unit, pitch=unit * ratio)
+
+    @classmethod
+    def from_marks(cls, marks: Iterable[Mark], traced_baselines: Sequence[float] = ()) -> Ruler:
+        """The page's ruler from its marks: the unit is their median height,
+        the pitch the writing's own ratio — refined by the traced lines'
+        spacing where the reviewer's indications are known."""
+        heights = [mark.height for mark in marks]
+        unit = writing_scale(heights)
+        return cls(unit=unit, pitch=unit * line_ratio(traced_pitch(list(traced_baselines)), unit))
 
     @property
     def seed_gap(self) -> float:

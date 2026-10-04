@@ -21,8 +21,8 @@ from PIL import Image
 
 from tools.mark import SCALE, SHAPE_MIN_AREA, find_marks
 from tools.page_visuals import contiguous_runs, review_image, split_sheet, stack_sheets
-from tools.pagescale import PageScale, line_ratio, traced_pitch, writing_scale
 from tools.reader import LineFitter, artifacts, ink_mask, split_shapes
+from tools.ruler import Ruler, line_ratio, traced_pitch, writing_scale
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 TRACE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-wordseg"
@@ -95,7 +95,7 @@ def _main() -> int:
     shapes = find_marks(mask)
     traced_lines = sorted(float(np.median([p[1] for p in s])) * page.height / 2 for s in strokes_raw)
     ratio = line_ratio(traced_pitch(traced_lines), writing_scale([s.height for s in shapes]))
-    scale = PageScale.of([s.height for s in shapes], ratio)
+    scale = Ruler.of([s.height for s in shapes], ratio)
     lines = LineFitter(scale).fit(shapes)
     by_id = {s.id: s for s in shapes}
     OUTDIR.mkdir(parents=True, exist_ok=True)

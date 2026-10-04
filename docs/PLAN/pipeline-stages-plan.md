@@ -125,9 +125,13 @@ Two processes, clearly separated:
 - **The API server** (`tools/server.py`) — the front's only window: it
   reads the registry/archive (the portal items, the drafts) and accepts
   the user's writes (row adjustments, transcript confirmations,
-  identifications), recording them through the typed seams. User writes
-  mark their page/batch for re-processing; the worker picks that up on
-  its next pass (e.g. a row adjustment rebuilds that page's rows).
+  identifications), recording them through the typed seams. The row
+  corrections are APPLIED where they land — the server builds and
+  persists the corrected rows, and its response IS the apply (the live
+  merge cannot wait on anything else). A user write marks its page/batch
+  for re-processing, and the worker picks that up on its next pass to
+  run the stages that follow the correction. The server never contacts
+  the worker — only the worker proceeds on its own next pass.
 - **The front end** (the app) — reads the portal via the API and POSTs
   the user's decisions via the API; it holds no pipeline state.
 
@@ -146,8 +150,9 @@ sequenceDiagram
     S-->>F: "3 pages to check", "2 documents to review", ...
     U->>F: draws adjustments / confirms rows
     F->>S: POST row adjustment (a page)
+    S->>S: applies it: builds and persists the corrected rows (the response)
     S->>R: records adjustment; marks page for re-processing
-    W->>R: picks the page up, rebuilds its rows
+    W->>R: picks the page up on its next pass; runs the stages after the correction
     U->>F: reviews the transcript (stage 6→7)
     F->>S: POST confirmation (with the user's edits)
     S->>R: records the agreed Document

@@ -130,8 +130,10 @@ Two processes, clearly separated:
   persists the corrected rows, and its response IS the apply (the live
   merge cannot wait on anything else). A user write marks its page/batch
   for re-processing, and the worker picks that up on its next pass to
-  run the stages that follow the correction. The server never contacts
-  the worker — only the worker proceeds on its own next pass.
+  transcribe the corrected rows into the draft Document (the
+  proposed-transcripts stage — each row's text, kind and injection
+  target are read then, per the interjection ruling). The server never
+  contacts the worker — only the worker proceeds on its own next pass.
 - **The front end** (the app) — reads the portal via the API and POSTs
   the user's decisions via the API; it holds no pipeline state.
 
@@ -152,7 +154,7 @@ sequenceDiagram
     F->>S: POST row adjustment (a page)
     S->>S: applies it: builds and persists the corrected rows (the response)
     S->>R: records adjustment; marks page for re-processing
-    W->>R: picks the page up on its next pass; runs the stages after the correction
+    W->>R: picks the page up on its next pass; transcribes the corrected rows into the draft Document
     U->>F: reviews the transcript (stage 6→7)
     F->>S: POST confirmation (with the user's edits)
     S->>R: records the agreed Document

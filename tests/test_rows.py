@@ -232,3 +232,32 @@ def test_a_drawn_line_replaces_the_draft_row_it_covers() -> None:
     assert len(rows) == 1, f"the covered draft row survived beside the drawn row: {len(rows)} rows"
     assert [b.x0 for b in rows[0].word_boxes] == [100, 250]
     assert rows[0].id == "seg-1" and rows[0].kind == "body"
+
+
+def test_a_rows_text_and_trust_stage_travel_with_the_wire() -> None:
+    """Per-row text and its R7 trust stage are the row's own — carried in the
+    wire contract beside its words, so a confirmation survives beside its
+    neighbours' guesses. The schema is the check: a stage outside the
+    vocabulary is refused, and a row file from before a reading ran is read
+    as unread ("") rather than rejected."""
+    from tools.row import Row as RecordRow
+    from tools.schemas import ROW_STAGES
+
+    built = Rows.from_words(_words((100, 100, 200, 130), (300, 100, 400, 130), line=1), PAGE_SIZE).rows()
+    read = [
+        RecordRow(
+            id=row.id,
+            kind=row.kind,
+            number=row.number,
+            word_boxes=row.word_boxes,
+            band=row.band,
+            text="the machine's try",
+            stage="guess",
+        )
+        for row in built
+    ]
+    wire = Rows.to_wire(read)
+    assert wire["rows"][0]["text"] == "the machine's try"
+    assert wire["rows"][0]["stage"] == "guess"
+    assert Rows.from_wire(wire)[0].stage == "guess"
+    assert ROW_STAGES == ("", "raw", "guess", "confirmed")

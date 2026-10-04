@@ -92,9 +92,9 @@ class Rows:
     @staticmethod
     def to_wire(rows: Sequence[Row]) -> dict[str, Any]:
         """The rows as the wire contract (`tools.schemas.Rows`: id, kind,
-        number, word_boxes, band — plain x0..y1 records). This is the shape
-        the review's correction persists and the app reads; the schema's
-        strict loader is the check."""
+        number, word_boxes, band, text, stage — plain x0..y1 records). This
+        is the shape the review's correction persists and the app reads; the
+        schema's strict loader is the check."""
         return {
             "rows": [
                 {
@@ -103,6 +103,8 @@ class Rows:
                     "number": row.number,
                     "word_boxes": [_box_wire(box) for box in row.word_boxes],
                     "band": _box_wire(row.band),
+                    "text": row.text,
+                    "stage": row.stage,
                 }
                 for row in rows
             ]
@@ -119,6 +121,8 @@ class Rows:
                 number=int(record["number"]),
                 word_boxes=[_word_from_wire(box) for box in record["word_boxes"]],
                 band=_rect_from_wire(record["band"]),
+                text=str(record.get("text", "")),
+                stage=str(record.get("stage", "")),
             )
             for record in data["rows"]
         ]

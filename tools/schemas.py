@@ -79,14 +79,17 @@ class Traces(TypedDict):
 
 class Row(TypedDict):
     """One adjudicated row: its identity, kind, display number, the words
-    (boxes inline — a row never references another file's word ids), and
-    the band (the exact union of the words' boxes, page px)."""
+    (boxes inline — a row never references another file's word ids), the
+    band (the exact union of the words' boxes, page px), the row's own text,
+    and its R7 trust stage ("raw" | "guess" | "confirmed" | "" unread)."""
 
     id: str
     kind: str
     number: int
     word_boxes: list[Word]
     band: Word
+    text: str
+    stage: str
 
 
 class Rows(TypedDict):
@@ -130,6 +133,12 @@ def load_words(path: Path) -> Words:
     return data  # type: ignore[return-value]  # validated field-by-field above; the checker cannot narrow json.loads
 
 
+# the per-row trust stages, in trust order (MULTI-DOC-IMPORT-PRD R7): the
+# machine's raw attempt, the system's corrected guess, the user's confirmation
+# — plus "" for a row no reading has filled yet
+ROW_STAGES = ("", "raw", "guess", "confirmed")
+
+
 def load_rows(path: Path) -> Rows:
     """The adjudicated rows.json, validated as the rows stage."""
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -140,6 +149,12 @@ def load_rows(path: Path) -> Rows:
         missing = {"id", "kind", "number", "word_boxes", "band"} - set(record)
         if missing:
             raise ValueError(f"{path}: rows[{i}] missing {sorted(missing)}")
+        # text and stage are the row's reading and its trust; a row file from
+        # before a reading ran carries neither, which reads as unread ("")
+        if "stage" in record and record["stage"] not in ROW_STAGES:
+            raise ValueError(f"{path}: rows[{i}].stage {record['stage']!r} is not one of {sorted(ROW_STAGES)}")
+        if "text" in record and not isinstance(record["text"], str):
+            raise ValueError(f"{path}: rows[{i}].text is not a string")
         for j, box in enumerate(record["word_boxes"]):
             _expect_fields(box, path, f"rows[{i}].word_boxes[{j}]", {"x0", "y0", "x1", "y1"}, {"x0", "y0", "x1", "y1"})
         _expect_fields(record["band"], path, f"rows[{i}].band", {"x0", "y0", "x1", "y1"}, {"x0", "y0", "x1", "y1"})

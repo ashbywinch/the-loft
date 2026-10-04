@@ -16,11 +16,10 @@ neighbouring rows.
 
 A second line passing over words a first line already owns is the
 same row drawn twice, not a new row (a reviewer's double pass): its
-words join the first row. Whether a row is an *interjection* (the
-page's small marginal writing) rather than a body row is an adjudicated
-fact that lives in the page's row data, not something the geometry can
-decide — the builder marks every row `body`, and the page's committed
-rows carry the confirmed kinds and numbers.
+words join the first row. Every row this builder makes is `body`: whether
+a row is an *interjection* or marginalia is decided at the transcription
+phase (the VLM reads the page and rules on its kinds and injection
+points), never by the geometry that found the rows.
 """
 
 from __future__ import annotations

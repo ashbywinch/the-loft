@@ -1,5 +1,10 @@
 # Plan: user-lines → rows library, replacing the spike-gold system
 
+**Superseded (2026-10-04):** the typed-id scheme this plan records (`seg-6`,
+`int-41`, the kind in the id) is gone. Row ids are `seg-<number>` and carry
+no kind: kinds (body / marginalia / interjection) and injection points are
+decided at the transcription phase, never by the row geometry.
+
 Status: LANDED — the library, the fixtures, and the removals
 are on `main`; the snag settle ran as the spike-mapping commits (the six
 adjudicated corrections); `make test` is green with no known-red (the 4

@@ -125,7 +125,7 @@ def _both_proposals() -> _Comparison:
     a_right, a_judged = gold.score("A  reader.reading_for_page", proposal_row, len(proposal), word_adj)
 
     # B — the drawn-lines builder with no lines (the words' own reading lines)
-    b_rows = Rows.from_words(model_words, [], PAGE_SIZE)
+    b_rows = Rows.from_words(model_words, PAGE_SIZE).rows()
     b_row = {}
     for k, row in enumerate(b_rows):
         for i, w in enumerate(model_words):

@@ -201,7 +201,7 @@ def record_confirmation(
 # lucidlint: ignore latent-class the batch-path vocabulary is this module's shape; the restructure is Phase 6
 def apply_row_adjustments(batch_id: str, page: str, adjustments: Any, work_dir: Path) -> list[Any]:
     """The reviewer's drawn row lines -> the page's rows
-    (`Rows.from_words` over the words the read stage persisted, each with
+    (`rows.adjust` over the words the read stage persisted, each with
     its own reading line, so an incomplete set of lines merges with the
     draft rows), persisted beside the reading:
 
@@ -235,10 +235,8 @@ def apply_row_adjustments(batch_id: str, page: str, adjustments: Any, work_dir: 
         )
         for w in words
     ]
-    rows = Rows.from_words(
-        boxes,
-        [list(line) for line in adjustments["lines"]],
-        (int(reading["width"]), int(reading["height"])),
+    rows = Rows.from_words(boxes, (int(reading["width"]), int(reading["height"]))).adjust(
+        [list(line) for line in adjustments["lines"]]
     )
     atomic_write(readings.adjustments_path(page), json.dumps(adjustments, ensure_ascii=False, indent=1) + "\n")
     atomic_write(readings.adjusted_rows_path(page), json.dumps(Rows.to_wire(rows), ensure_ascii=False, indent=1) + "\n")
@@ -513,7 +511,7 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
                     word["x0"], word["y0"], word["x1"], word["y1"] = height - y1, x0, height - y0, x1
                     # the measured baseline/waistline are horizontals now
                     # vertical: the rotated box's own edges keep the reading
-                    # order rule (Rows.from_words's rule B) in the new frame
+                    # order rule (rows.adjust's rule B) in the new frame
                     word["waistline"], word["baseline"] = word["y0"], word["y1"]
             width, height = height, width
         reading["width"], reading["height"] = rotated.width, rotated.height

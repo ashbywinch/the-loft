@@ -76,7 +76,7 @@ def detected(request, tmp_path: Path) -> tuple:
 def test_reading_for_page_carries_the_words(tmp_path: Path) -> None:
     """The reading carries the words — the same split words the CLI reading
     writes to words.json, with their own baselines and waistlines. The
-    drawn-lines correction (`Rows.from_words`) groups those words, so the
+    drawn-lines correction (`rows.adjust`) groups those words, so the
     pipeline persists them beside the rows; a reading that discarded them
     left the correction unreachable outside the gold tooling."""
     page = tmp_path / "synthetic.png"

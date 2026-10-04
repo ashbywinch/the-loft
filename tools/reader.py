@@ -833,7 +833,7 @@ class Reading:
     """One page's automatic reading, in page pixels: the fitted writing LINES
     (the row proposal the review shows) and the SPLIT WORDS those lines group,
     each word carrying its own measured baseline and waistline. The
-    drawn-lines correction (`Rows.from_words`) groups the words, so the reading
+    drawn-lines correction (`rows.adjust`) groups the words, so the reading
     carries them — the pipeline persists both side by side."""
 
     lines: list[dict[str, Any]]

@@ -2,7 +2,7 @@
 
 - THE PROPOSAL — tools/reader.py rows_for_page (the ink/fitted-lines chain;
   what the pipeline writes before any user line exists).
-- THE CORRECTION — tools/rows.py Rows.from_words (the drawn lines decide).
+- THE CORRECTION — tools/rows.py rows.adjust (the drawn lines decide).
 
 Both are scored by the same rule: for every word with an adjudicated row
 (the gold's own boxes, IoU-matched to the re-parsed words), is the word in
@@ -111,10 +111,10 @@ def _word(record) -> Word:
 def _correction_assignment(
     words: Sequence[Mapping[str, Any]], lines: Sequence[Sequence[tuple[float, float]]], page_size: tuple[int, int]
 ) -> tuple[list[Any], dict[int, int]]:
-    """`Rows.from_words` on the page's words and the drawn lines -> the built
+    """`rows.adjust` on the page's words and the drawn lines -> the built
     rows and every word's built row."""
     boxes = [_word(w) for w in words]
-    built = Rows.from_words(boxes, [list(line) for line in lines], page_size)
+    built = Rows.from_words(boxes, page_size).adjust([list(line) for line in lines])
     box_index = {b: i for i, b in enumerate(boxes)}
     built_row: dict[int, int] = {}
     for r_i, row in enumerate(built):
@@ -175,7 +175,7 @@ def main() -> None:
 
     print(f"words: {len(words)} | adjudicated rows: {len(gold)}")
     p_right, p_judged = score("PROPOSAL  (reader.reading_for_page)", proposal_row, len(proposal), word_adj)
-    c_right, c_judged = score("CORRECTION (rows.py Rows.from_words)", built_row, len(built), word_adj)
+    c_right, c_judged = score("CORRECTION (rows.py rows.adjust)", built_row, len(built), word_adj)
 
     def built_words(r_i: int) -> list[int]:
         return sorted(i for i, r in built_row.items() if r == r_i)
@@ -207,7 +207,7 @@ def main() -> None:
             ],
         ),
         (
-            f"THE CORRECTION — tools/rows.py Rows.from_words (your {len(lines)} drawn lines)  |  {len(built)} rows, "
+            f"THE CORRECTION — tools/rows.py rows.adjust (your {len(lines)} drawn lines)  |  {len(built)} rows, "
             f"{c_right}/{c_judged} words in the correct row ({100 * c_right / c_judged:.1f}%)",
             [_row(k + 1, built_words(k), model_words) for k in range(len(built))],
         ),

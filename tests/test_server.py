@@ -1315,7 +1315,7 @@ def test_row_adjustments_rejects_a_malformed_body(server: ServerFixture) -> None
 
 
 def test_row_adjustments_builds_and_persists_the_correction(server: ServerFixture) -> None:
-    """The drawn line -> the page's rows (Rows.from_words over the persisted
+    """The drawn line -> the page's rows (rows.adjust over the persisted
     words), persisted as the wire contract beside the lines that made
     them; the response carries the same rows the file holds."""
     import json as _json

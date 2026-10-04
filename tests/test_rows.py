@@ -2,7 +2,7 @@
 
 Unit behaviour is tested on small synthetic pages — the fixture's own
 contents are committed data, not something a test re-checks. The one
-fixture test is the integration contract, region-based: `Rows.from_words` on
+fixture test is the integration contract, region-based: `rows.adjust` on
 page-01's words and user lines reproduces the adjudicated rows wherever
 the lines decide. Rows are regions (bands), so the contract survives any
 parse of the page's words: the build's bands match the adjudicated bands,
@@ -53,7 +53,7 @@ def test_the_double_pass_is_one_row() -> None:
     """A second line drawn over words a first line already owns is the
     same row drawn again, not a new row."""
     words = _words((100, 100, 200, 130), (300, 100, 400, 130))
-    rows = Rows.from_words(words, [_line(100, 400, 115), _line(100, 400, 120)], PAGE_SIZE)
+    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 400, 115), _line(100, 400, 120)])
     assert len(rows) == 1, f"the double pass made {len(rows)} rows"
     assert len(rows[0].word_boxes) == 2, "the double pass lost words"
 
@@ -61,7 +61,7 @@ def test_the_double_pass_is_one_row() -> None:
 def test_each_word_belongs_to_one_row() -> None:
     """Two distinct lines own disjoint words; no word appears in two rows."""
     words = _words((100, 100, 200, 130), (100, 300, 200, 330))
-    rows = Rows.from_words(words, [_line(100, 200, 115), _line(100, 200, 315)], PAGE_SIZE)
+    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 200, 115), _line(100, 200, 315)])
     seen: list[Word] = []
     for row in rows:
         for box in row.word_boxes:
@@ -74,7 +74,7 @@ def test_the_band_is_the_words_union() -> None:
     """A row's band is exactly the union of its words' boxes — the render
     tints the band, so anything wider or taller would paint neighbours."""
     words = _words((100, 100, 200, 130), (300, 105, 500, 140))
-    rows = Rows.from_words(words, [_line(100, 500, 118)], PAGE_SIZE)
+    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 500, 118)])
     band = rows[0].band
     assert (band.x0, band.y0, band.x1, band.y1) == (100, 100, 500, 140)
 
@@ -82,7 +82,7 @@ def test_the_band_is_the_words_union() -> None:
 def test_rules_are_not_claimed() -> None:
     """Long-flat ink with no writing above it is a rule, part of no row."""
     words = _words((100, 100, 200, 125), (100, 300, 600, 312))
-    rows = Rows.from_words(words, [_line(100, 600, 306)], PAGE_SIZE)
+    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 600, 306)])
     assert all(box.height < 20 for row in rows for box in row.word_boxes), "a rule was claimed as a word"
 
 
@@ -90,8 +90,8 @@ def test_the_rows_are_deterministic() -> None:
     """Two builds of the same inputs give identical rows."""
     words = _words((100, 100, 200, 130), (300, 100, 400, 130), (100, 300, 200, 330))
     lines = [_line(100, 400, 115), _line(100, 200, 315)]
-    first = Rows.from_words(words, lines, PAGE_SIZE)
-    second = Rows.from_words(words, lines, PAGE_SIZE)
+    first = Rows.from_words(words, PAGE_SIZE).adjust(lines)
+    second = Rows.from_words(words, PAGE_SIZE).adjust(lines)
     assert [(row.number, [(b.x0, b.y0, b.x1, b.y1) for b in row.word_boxes]) for row in first] == [
         (row.number, [(b.x0, b.y0, b.x1, b.y1) for b in row.word_boxes]) for row in second
     ]
@@ -101,7 +101,7 @@ def test_rows_are_numbered_in_reading_order() -> None:
     """The rows are numbered top first: the topmost row keeps the band of
     the topmost words."""
     words = _words((100, 300, 200, 330), (100, 100, 200, 130))
-    rows = Rows.from_words(words, [_line(100, 200, 315), _line(100, 200, 115)], PAGE_SIZE)
+    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 200, 315), _line(100, 200, 115)])
     assert [row.number for row in rows] == [1, 2]
     assert rows[0].word_boxes[0].y0 == 100, "reading order is not topmost-first"
 
@@ -110,7 +110,7 @@ def test_a_word_under_two_lines_joins_the_nearest() -> None:
     """A word lying under two lines goes to the line whose drawn height is
     nearest its centre — not the first line in order."""
     words = _words((100, 195, 250, 215), (300, 205, 450, 225))
-    rows = Rows.from_words(words, [_line(100, 400, 200), _line(100, 400, 220)], PAGE_SIZE)
+    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 400, 200), _line(100, 400, 220)])
     assert len(rows) == 2, f"the nearer line was not separated: {len(rows)} rows"
 
 
@@ -129,7 +129,7 @@ def test_the_adjudicated_rows_are_reproduced() -> None:
     page = load_boxes(Path("tests/fixtures/page01-wordseg/boxes.json"))["page"]
     boxes = [_word(w) for w in words]
     adjudicated = load_rows(FIXTURE / "rows.json")["rows"]
-    built = Rows.from_words(boxes, lines, (page["width"], page["height"]))
+    built = Rows.from_words(boxes, (page["width"], page["height"])).adjust(lines)
 
     def key(b: Word | Rectangle) -> tuple[int, int, int, int]:
         return (round(b.x0), round(b.y0), round(b.x1), round(b.y1))
@@ -168,12 +168,12 @@ def test_an_annotation_poking_above_the_line_is_discounted() -> None:
     (the asterisk, user); a word whose box starts at its own
     ascenders stays in the line."""
     words = _words((100, 100, 500, 130), (200, 60, 230, 90))
-    rows = Rows.from_words(words, [_line(100, 500, 115)], PAGE_SIZE)
+    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 500, 115)])
     assert len(rows) == 1 and len(rows[0].word_boxes) == 1, "the annotation joined the line"
 
 
 def test_the_rows_round_trip_through_their_wire_format(tmp_path: Path) -> None:
-    """Rows.from_words' output serializes to the wire contract
+    """The builder's output serializes to the wire contract
     (`tools.schemas.Rows`: id, kind, number, word_boxes, band — plain
     x0..y1 records) and reads back as the same rows. This is the file the
     review's correction persists and the app reads, so the shape is
@@ -184,7 +184,7 @@ def test_the_rows_round_trip_through_their_wire_format(tmp_path: Path) -> None:
     lines = load_user_row_adjustments(FIXTURE / "user-row-adjustments.json")["lines"]
     page = load_boxes(Path("tests/fixtures/page01-wordseg/boxes.json"))["page"]
     boxes = [_word(w) for w in words]
-    built = Rows.from_words(boxes, lines, (page["width"], page["height"]))
+    built = Rows.from_words(boxes, (page["width"], page["height"])).adjust(lines)
 
     path = tmp_path / "p1.rows.json"
     path.write_text(json.dumps(Rows.to_wire(built), indent=1), encoding="utf-8")
@@ -206,7 +206,7 @@ def test_with_no_lines_the_words_own_lines_are_the_rows() -> None:
     # the second reading line, below the first
     words[0].line = 2
     words[1].line = 2
-    rows = Rows.from_words(words, [], PAGE_SIZE)
+    rows = Rows.from_words(words, PAGE_SIZE).rows()
     assert [row.number for row in rows] == [1, 2]
     assert [[b.x0 for b in row.word_boxes] for row in rows] == [[100], [100, 300]]
 
@@ -217,7 +217,7 @@ def test_an_incomplete_set_of_lines_merges_with_the_draft_rows() -> None:
     its row — so a correct row never needs a line."""
     words = _words((100, 100, 200, 130), (300, 100, 400, 130), (100, 300, 200, 330), line=1)
     words[2].line = 2
-    rows = Rows.from_words(words, [_line(100, 400, 120)], PAGE_SIZE)
+    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 400, 120)])
     assert len(rows) == 2, f"the untouched draft row was lost: {len(rows)} rows"
     assert [b.x0 for b in rows[0].word_boxes] == [100, 300], "the drawn row lost its neighbours"
     assert [b.x0 for b in rows[1].word_boxes] == [100], "the draft row's words changed"
@@ -228,7 +228,7 @@ def test_a_drawn_line_replaces_the_draft_row_it_covers() -> None:
     """Once a drawn line claims a reading line's words, that draft row is
     gone: the drawn row is the row, and the two are the same type."""
     words = _words((100, 100, 200, 130), (250, 100, 350, 130), line=1)
-    rows = Rows.from_words(words, [_line(100, 350, 120)], PAGE_SIZE)
+    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 350, 120)])
     assert len(rows) == 1, f"the covered draft row survived beside the drawn row: {len(rows)} rows"
     assert [b.x0 for b in rows[0].word_boxes] == [100, 250]
     assert rows[0].id == "seg-1" and rows[0].kind == "body"

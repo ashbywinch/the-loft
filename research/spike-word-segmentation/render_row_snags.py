@@ -1,7 +1,7 @@
 """The row-snag windows, both assignments shown with the house renderer.
 
 Each question is two maps side by side — left: the user's confirmed rows;
-right: `Rows.from_words` — both drawn by `render_map` (the
+right: `rows.adjust` — both drawn by `render_map` (the
 library's generic renderer: `tint_row` over each row's words, the ink
 staying loudest). The words a question concerns carry their reading-order
 numbers; yellow strokes are the user's line indications.
@@ -55,9 +55,8 @@ def adjudicated_rows() -> list[Row]:
 def library_rows() -> list[Row]:
     return Rows.from_words(
         [Word(w["x0"], w["y0"], w["x1"], w["y1"], baseline=w.get("baseline"), line=w.get("line")) for w in WORDS],
-        LINES,
         (PAGE["width"], PAGE["height"]),
-    )
+    ).adjust(LINES)
 
 
 def numbers_of(word_ids: list[int]) -> dict[tuple[float, float, float, float], int]:
@@ -69,7 +68,7 @@ def pair(name: str, window: Rectangle, scale: float, word_ids: list[int]) -> Non
     user_map = render_map(page, adjudicated_rows(), OUT / (name + ".u.jpg"), window, scale, numbers_of(word_ids))
     lib_map = render_map(page, library_rows(), OUT / (name + ".l.jpg"), window, scale, numbers_of(word_ids))
     user_sheet, _, _ = captioned_sheet(user_map, ["your rows (confirmed 2026-09-12)"])
-    lib_sheet, _, _ = captioned_sheet(lib_map, ["the library's rows (Rows.from_words)"])
+    lib_sheet, _, _ = captioned_sheet(lib_map, ["the library's rows (`rows.adjust`)"])
     width = user_sheet.width + lib_sheet.width + 10
     height = max(user_sheet.height, lib_sheet.height)
     sheet = Image.new("RGB", (width, height), (255, 255, 255))

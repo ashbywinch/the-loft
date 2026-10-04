@@ -3,7 +3,8 @@
 A row of writing is found on the page by the user, not by the detector:
 the user draws a line along each row, the line is assigned the word
 boxes whose centres fall within its span, and the row is that line's
-words bounded by their exact union. `Rows.from_words` turns the page's word
+words bounded by their exact union. `Rows.from_words` groups the page's
+words; `rows.adjust` corrects them with the reviewer's drawn lines
 boxes and the user's line indications into those rows.
 
 The vocabulary is the page's own: the user's *lines* are the drawn row
@@ -18,7 +19,7 @@ same row drawn twice, not a new row (a reviewer's double pass): its
 words join the first row. Whether a row is an *interjection* (the
 page's small marginal writing) rather than a body row is an adjudicated
 fact that lives in the page's row data, not something the geometry can
-decide — `Rows.from_words` marks every row `body`, and the page's committed
+decide — the builder marks every row `body`, and the page's committed
 rows carry the confirmed kinds and numbers.
 """
 
@@ -59,20 +60,34 @@ class Rows:
     a corrected row and a proposed row are the same Row.
     """
 
-    @staticmethod
-    def from_words(
-        words: list[Word],
-        row_adjustments: list[list[tuple[float, float]]],
-        page_size: tuple[int, int],
-    ) -> list[Row]:
-        """The page's rows from `words` (the detected words, each carrying
-        its reading line), `row_adjustments` (the reviewer's drawn row
-        lines — the yellow lines — as normalised points), and `page_size`
-        (the page's pixel dimensions).
+    def __init__(self, words: list[Word], page_size: tuple[int, int]) -> None:
+        self.words = list(words)
+        self.page_size = page_size
 
-        With no drawn lines this is the words' own line structure: the
-        draft rows exist before the reviewer draws anything."""
-        return _Claims(words, row_adjustments, page_size).rows()
+    @classmethod
+    def from_words(cls, words: list[Word], page_size: tuple[int, int]) -> Rows:
+        """The page's grouping before any line is drawn: `words` (the
+        detected words, each carrying its reading line) and the page's pixel
+        dimensions. The words' own reading lines are the draft rows."""
+        return cls(words, page_size)
+
+    def rows(self) -> list[Row]:
+        """The draft rows: the words' own reading lines, nothing drawn."""
+        return self.adjust([])
+
+    def adjust(self, row_adjustments: list[list[tuple[float, float]]]) -> list[Row]:
+        """The reviewer's drawn lines applied to this page: the rows are
+        re-derived from them. A drawn line claims each word whose centre its
+        stroke covers (enlarged by the touch) and whose drawn height is
+        nearest the word — not the first line to cover it, so a word lying
+        under two lines goes to the row it most plausibly belongs to (a
+        reviewer's double pass is the same row twice, and its words all sit
+        nearest that one line). An incomplete set of lines MERGES with the
+        draft: a reading line no drawn line claimed keeps its row untouched,
+        so the reviewer never draws over a row that is already right. Rows
+        come out numbered in reading order (topmost band first), all one
+        type — a corrected row and a proposed row are the same Row."""
+        return _Claims(self.words, row_adjustments, self.page_size).rows()
 
     @staticmethod
     def to_wire(rows: Sequence[Row]) -> dict[str, Any]:
@@ -113,7 +128,7 @@ class _Claims:
     """The page's words and the drawn lines claiming them.
 
     The measures, the two discount patterns and the apportionment all read
-    the same words, so they live here once — `Rows.from_words` is the
+    the same words, so they live here once — `rows.adjust` is the
     library's face, this is the measurement behind it."""
 
     def __init__(

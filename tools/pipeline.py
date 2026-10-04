@@ -253,7 +253,7 @@ def _read_pages(
     """The reading stage: each text page's rows (line boxes from the
     fitted-lines chain) with the page's guess text mapped onto them in
     order, and the reading's WORDS beside them (``<page>.words.json``).
-    The drawn-lines correction (`Rows.from_words`) groups the words, so a page
+    The drawn-lines correction (`rows.adjust`) groups the words, so a page
     without them cannot be corrected — both files are written together.
     Written as ``<page>.rows.json`` beside the guess; the review's draft
     seam reads the rows, falling back to a strip-era ``layout.json`` for

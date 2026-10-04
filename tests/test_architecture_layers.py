@@ -26,6 +26,7 @@ PIPELINE = (
     "ai_client",
     "box",
     "boxjig",
+    "boxrows",
     "boxrows_render",
     "classify",
     "gates",

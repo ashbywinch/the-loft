@@ -1,27 +1,34 @@
-"""A page of writing: the words, the ruler, and the grouping itself.
+"""Grouping words into lines of writing.
 
-Input: WORD boxes in page pixels, each carrying its measured font size (its
+Input: WORD boxes in page pixels, each with its measured font size (its
 x-height: baseline to waistline - the size measure that ascenders and
 descenders cannot distort). No image, no strokes, no person's words. Output:
 the rows and their boxes.
 
-Everything relative lives here, measured against the page's own numbers: its
-font size (the median x-height of its words) decides smallness, its spacing
-decides rows and verticality.
+The classes own the domain:
+
+* `Word` - one word's bounds and ITS font size. What is NOT here is
+  smallness: a word is small only relative to the page it sits on, so that
+  judgement lives on `Page`, and `Word` never makes it;
+* `Page` - the words and the page's ruler (spacing, its own font size), and
+  the grouping itself: `rows()`, `row_boxes()`, `verdicts()`, and the
+  relative judgements `is_small()` and `is_vertical()`;
+* `Row` - one line of writing: its words and its kind ("writing" or
+  "interjection" - an aside written between the lines);
+* `Verdict` - how one yellow line agrees with the grouping.
 
 The rules, each a method tested on its own:
 
+* `Word.is_rule` - far wider than it is tall: an underline, not a word;
 * `Page.is_small` - a word whose FONT SIZE is well below the page's own is a
   smaller hand; chains of such words (`interjections`) are their own lines
   unless a row's words flank them on both sides at their level;
 * `Page.is_vertical` - taller than a row and a half, or exceedingly narrow:
   vertical ink that joins no row;
 * `Page.rows` - the words group by centre; a gap beyond half the spacing
-  starts a row; two rows whose fitted lines agree where they coexist are one
-  (a long sloped line cut in two); runs of small words absorb into a row only
-  when flanked, else stay their own interjection lines; within ANY row, words
-  whose font size sits well under the row's own median are another, smaller
-  hand and form their own row (smallness is local).
+  starts a row; two rows whose fitted lines agree at each other's centres are
+  one (a long sloped line cut in two); runs of small words absorb into a row
+  only when flanked, else stay their own interjection lines.
 
 The validator (`Page.verdicts`) checks a grouping against the yellow lines
 the reviewer drew. The detector itself never sees the lines.
@@ -30,13 +37,11 @@ the reviewer drew. The detector itself never sees the lines.
 from __future__ import annotations
 
 from collections.abc import Sequence
-
-from tools.rectangle import Rectangle, gap
-from tools.row import Row
-from tools.verdict import Verdict
-from tools.word import Word
+from dataclasses import dataclass, field
+from typing import NamedTuple
 
 # the page's own ruler, in the same units as the words (page pixels)
+RULE_ASPECT = 8.0  # x height: this wide for its height is a rule, not a word
 SMALL_FONT_FRACTION = 0.75  # x the page's font size: below this a word is a smaller hand
 SMALL_MIN_WIDTH = 18.0  # page px: below this it is a spot or a comma
 SMALL_MIN_HEIGHT = 14.0  # page px: below this it is a dot or a tick
@@ -53,12 +58,120 @@ VERTICAL_ASPECT = 0.35  # x height: narrower than this for its height is
 # (below 0.35) stay out.
 
 
+class Rectangle(NamedTuple):
+    """A rectangle in page pixels: the geometry every box shares."""
+
+    x0: float
+    y0: float
+    x1: float
+    y1: float
+
+    @property
+    def width(self) -> float:
+        return self.x1 - self.x0
+
+    @property
+    def height(self) -> float:
+        return self.y1 - self.y0
+
+    @property
+    def cx(self) -> float:
+        return (self.x0 + self.x1) / 2
+
+    @property
+    def cy(self) -> float:
+        return (self.y0 + self.y1) / 2
+
+
+class Word:
+    """One word on the page: its rectangle and ITS font size.
+
+    A word is not a kind of rectangle - it HAS one - so the geometry lives in
+    `Rectangle` once, and Word delegates through the four properties. The font
+    size is the word's own: measured (the x-height from the ink), never
+    inferred from the box's height, which ascenders and descenders distort.
+    Smallness is not here either: a word is small only relative to the page,
+    so `Page.is_small` owns that judgement.
+    """
+
+    def __init__(self, x0: float, y0: float, x1: float, y1: float, font_size: float = 0.0) -> None:
+        self.rect = Rectangle(x0, y0, x1, y1)
+        self.font_size = font_size  # 0 means unmeasured; Page drops it from its own size
+
+    @property
+    def x0(self) -> float:
+        return self.rect.x0
+
+    @property
+    def y0(self) -> float:
+        return self.rect.y0
+
+    @property
+    def x1(self) -> float:
+        return self.rect.x1
+
+    @property
+    def y1(self) -> float:
+        return self.rect.y1
+
+    @property
+    def width(self) -> float:
+        return self.rect.width
+
+    @property
+    def height(self) -> float:
+        return self.rect.height
+
+    @property
+    def cx(self) -> float:
+        return self.rect.cx
+
+    @property
+    def cy(self) -> float:
+        return self.rect.cy
+
+    def is_rule(self) -> bool:
+        """An underline or rule: far wider than it is tall, so not a word."""
+        return self.width >= RULE_ASPECT * self.height
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """How one yellow line agrees with the grouping."""
+
+    verdict: str  # "right" | "split" | "unboxed"
+    rows: tuple[int, ...]  # the row indices holding the line's own words
+    words: int  # all words the trace passed over
+    outside: tuple[int, ...]  # own words whose centre its row's box misses
+
+
+@dataclass
+class Row:
+    """One line of writing: its words (indices into the page's) and its kind."""
+
+    words: list[int] = field(default_factory=list)
+    kind: str = "writing"  # "writing" or "interjection"
+
+    _centres: float | None = field(default=None, init=False, repr=False)
+
+    @property
+    def centre(self) -> float:
+        if self._centres is None:
+            raise ValueError("Row has no centre until the page measures it")
+        return self._centres
+
+
 def _median(values: Sequence[float]) -> float:
     ordered = sorted(values)
     middle = len(ordered) // 2
     if len(ordered) % 2:
         return ordered[middle]
     return (ordered[middle - 1] + ordered[middle]) / 2
+
+
+def _gap(left: Rectangle, right: Rectangle) -> float:
+    """The whitespace between two rectangles, horizontally."""
+    return max(0.0, abs(left.cx - right.cx) - (left.width + right.width) / 2)
 
 
 def _fit(row: Sequence[int], words: Sequence[Rectangle]) -> tuple[float, float]:
@@ -77,8 +190,7 @@ class Page:
 
     Everything relative lives here, measured against the page's own numbers:
     its font size (the median x-height of its words) decides smallness, its
-    spacing decides rows and verticality.
-    """
+    spacing decides rows and verticality."""
 
     def __init__(self, words: Sequence[Word], spacing: float) -> None:
         self.words = tuple(words)
@@ -87,11 +199,8 @@ class Page:
 
     @property
     def font_size(self) -> float:
-        """The page's own x-height: the median of its WORDS' measured sizes.
-        A single letter's box ('I', a digit) measures a guess, not a word -
-        it is thrown away, exactly as the reviewer rules. Compute the page's
-        size from the words first, then judge the letters against it."""
-        sizes = [w.font_size for w in self.words if w.font_size > 0 and not w.is_letter()]
+        """The page's own x-height: the median of its words' measured sizes."""
+        sizes = [w.font_size for w in self.words if w.font_size > 0]
         return _median(sizes) if sizes else 0.0
 
     def is_small(self, word: Word) -> bool:
@@ -120,23 +229,14 @@ class Page:
         eligible = [i for i in range(len(words)) if not page_words[i].is_rule()]
         for index in sorted(eligible, key=lambda i: words[i].cy):
             joins = False
-            if grouped:
-                # anchored to the row's FIRST word: a moving median drifts and
-                # chains three distinct close lines into one (rows 4/5/6
-                # measured). A sloped line's halves are reunited by the merge.
-                anchor = words[grouped[-1].words[0]].cy
-                joins = abs(words[index].cy - anchor) <= self.spacing / 2 and not self._would_stack(grouped[-1], index)
+            if grouped and words[index].cy - _median([words[i].cy for i in grouped[-1].words]) <= self.spacing / 2:
+                joins = not self._would_stack(grouped[-1], index)
             if joins:
                 grouped[-1].words.append(index)
             else:
                 grouped.append(Row(words=[index]))
         grouped = self._merge_same_line(grouped)
         grouped = self._split_by_smallness(grouped)
-        for _ in range(4):  # a split row can still hide a stacked second hand
-            before = len(grouped)
-            grouped = self._split_by_size(grouped)
-            if len(grouped) == before:
-                break
         return [row for row in grouped if row.words]
 
     def _merge_same_line(self, rows: list[Row]) -> list[Row]:
@@ -147,10 +247,8 @@ class Page:
             merged = False
             for first in range(len(rows)):
                 for second in range(first + 1, len(rows)):
-                    if (
-                        self._same_line(rows[first], rows[second])
-                        and not self._rows_would_stack(rows[first], rows[second])
-                        and self._combined_span(rows[first], rows[second]) <= 1.3 * self.spacing
+                    if self._same_line(rows[first], rows[second]) and not self._rows_would_stack(
+                        rows[first], rows[second]
                     ):
                         rows[first].words = sorted(
                             rows[first].words + rows[second].words, key=lambda i: self.words[i].cx
@@ -162,70 +260,12 @@ class Page:
                     break
         return rows
 
-    def _split_by_size(self, rows: list[Row]) -> list[Row]:
-        """Smallness is LOCAL: within ANY row, words whose font size sits well
-        under the row's own median are another, smaller hand - lines 5/6 next
-        to line 4 - and they form their own row. Applies to every row, every
-        word: no candidate is special-cased."""
-        out: list[Row] = []
-        for row in rows:
-            ordered = sorted(
-                (i for i in row.words if self.words[i].font_size > 0),
-                key=lambda i: self.words[i].font_size,
-            )
-            if len(ordered) < 2:
-                out.append(row)
-                continue
-            fonts = [self.words[i].font_size for i in ordered]
-            # the largest gap in the row's sizes, split when it is at least
-            # half the lower cluster's median: 12/12/12/38/62 gaps at 26
-            # (2.2x the lower median) - an aside in a bigger row; a 10-to-14
-            # gap (0.4x) is ordinary within-line variation, no split
-            gap_at = max(range(len(fonts) - 1), key=lambda k: fonts[k + 1] - fonts[k])
-            gap = fonts[gap_at + 1] - fonts[gap_at]
-            lower = fonts[: gap_at + 1]
-            if gap < 0.8 * _median(lower):
-                out.append(row)
-                continue
-            smallies = [i for i in row.words if 0 < self.words[i].font_size <= fonts[gap_at]]
-            biggies = [i for i in row.words if i not in smallies]
-            flanked = False
-            for small in smallies:
-                word = self.words[small]
-                left = any(
-                    self.words[big].x1 <= word.x0 and self.words[big].y0 <= word.cy <= self.words[big].y1
-                    for big in biggies
-                )
-                right = any(
-                    self.words[big].x0 >= word.x1 and self.words[big].y0 <= word.cy <= self.words[big].y1
-                    for big in biggies
-                )
-                if left and right:
-                    flanked = True
-                    break
-            if flanked:
-                # the smalls are the MIDDLE of the row's sentence - line 1's
-                # sandwiched words - not an aside; no gap split
-                out.append(row)
-                continue
-            out.append(Row(words=biggies, kind=row.kind))
-            out.append(Row(words=smallies, kind="interjection"))
-        return out
-
     def _would_stack(self, row: Row, index: int) -> bool:
         """A word physically above (or below) a word of the row is IMPOSSIBLE
         - the row is really two lines. Tested at admission and at merge, not
         repaired after: smallness already marks these as not belonging."""
         word = self.words[index]
         return any(self._pair_v_stacked(word, self.words[other]) for other in row.words)
-
-    def _combined_span(self, here: Row, there: Row) -> float:
-        """The two rows' words together, top to bottom: two distinct lines
-        are a full spacing apart, a cut fragment of one line is not - a
-        sloped line's halves still fit inside a row and a bit."""
-        tops = [self.rects[i].y0 for i in here.words + there.words]
-        bottoms = [self.rects[i].y1 for i in here.words + there.words]
-        return max(bottoms) - min(tops)
 
     def _rows_would_stack(self, here: Row, there: Row) -> bool:
         return any(self._pair_v_stacked(self.words[a], self.words[b]) for a in here.words for b in there.words)
@@ -238,23 +278,17 @@ class Page:
         return overlap < 0.5 * min(a.height, b.height)
 
     def _same_line(self, here: Row, there: Row) -> bool:
-        """The fits, compared where the rows COEXIST in x: extrapolating a
-        fragment's noisy fit to the other's far centre is what broke the
-        slope-cut halves apart (line 5's, line 13's). Disjoint rows compare
-        at their closest approach. Bound 0.45 x the spacing so genuinely
-        adjacent rows sit clear."""
+        """The fits, compared at each other's centres: no x-overlap needed
+        (a gap cut divides the line's x-span), bound 0.45 x the spacing so
+        genuinely adjacent rows sit clear."""
         here_fit = _fit(here.words, self.rects)
         there_fit = _fit(there.words, self.rects)
-        xs_here = [self.rects[i].cx for i in here.words]
-        xs_there = [self.rects[i].cx for i in there.words]
-        low = max(min(xs_here), min(xs_there))
-        high = min(max(xs_here), max(xs_there))
-        if low <= high:
-            samples = [low, (low + high) / 2, high]
-        else:
-            samples = [min(xs_here), max(xs_here), min(xs_there), max(xs_there)]
+        centre_here = _median([self.rects[i].cx for i in here.words])
+        centre_there = _median([self.rects[i].cx for i in there.words])
         bound = 0.45 * self.spacing
-        return all(abs(here_fit[0] * x + here_fit[1] - (there_fit[0] * x + there_fit[1])) < bound for x in samples)
+        at_here = abs(here_fit[0] * centre_here + here_fit[1] - (there_fit[0] * centre_here + there_fit[1]))
+        at_there = abs(here_fit[0] * centre_there + here_fit[1] - (there_fit[0] * centre_there + there_fit[1]))
+        return at_here < bound and at_there < bound
 
     def _split_by_smallness(self, rows: list[Row]) -> list[Row]:
         """Runs of small words are interjections - their own lines - unless a
@@ -313,7 +347,7 @@ class Page:
                 run
                 for run in runs
                 if any(
-                    gap(self.rects[other], word.rect) < RUN_GAP and abs(self.rects[other].y0 - word.y0) < RUN_BAND
+                    _gap(self.rects[other], word.rect) < RUN_GAP and abs(self.rects[other].y0 - word.y0) < RUN_BAND
                     for other in run
                 )
             ]

@@ -54,6 +54,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 |UX loop working log (statuses, open items)|`docs/PLAN/ux-fixes-plan.md`|
 |Design decisions with rationale (the register)|`docs/PLAN/design-decisions.md`|
 | Precedent research | `docs/PRECEDENT.md` |
+| The object model — the classes and their names, the document chain, the rollout phases | `docs/object-model.md` |
 | Project plan, slices, urgency | `docs/PLAN/PLAN.md` |
 | The work remaining on the current subset (pipeline, ingest review, layout seams) | `docs/PLAN/WORK-PLAN.md` — the detailed designs are linked per item |
 | The plans folder's map (plan vs record) | `docs/PLAN/README.md` |

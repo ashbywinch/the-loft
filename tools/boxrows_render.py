@@ -17,7 +17,9 @@ from dataclasses import dataclass
 
 from PIL import Image, ImageDraw
 
-from tools.boxrows import Page, Rectangle, Row
+from tools.page import Page
+from tools.rectangle import Rectangle
+from tools.row import Row
 
 
 @dataclass(frozen=True)

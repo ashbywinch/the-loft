@@ -31,7 +31,6 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
-from tools.boxrows import Rectangle as InkRectangle
 from tools.boxrows_render import tint_row
 from tools.page_visuals import captioned_sheet, halo_text, review_image, scaled_crop
 from tools.rectangle import Rectangle
@@ -364,7 +363,7 @@ def render_map(
     overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     for index, row in enumerate(rows):
-        rects = [InkRectangle(word.x0, word.y0, word.x1, word.y1) for word in row.word_boxes]
+        rects = [Rectangle(word.x0, word.y0, word.x1, word.y1) for word in row.word_boxes]
         tint_row(draw, rects, list(range(len(rects))), style.colour(index))
     rendered = Image.alpha_composite(canvas, overlay).convert("RGB")
     crop = scaled_crop(rendered, window.x0, window.y0, window.x1, window.y1, scale)

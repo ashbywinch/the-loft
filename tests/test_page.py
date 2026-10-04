@@ -1,4 +1,4 @@
-"""Tests for the box-input page model (tools/boxrows.py).
+"""Tests for the box-input page model (tools/page.py).
 
 Each rule is tested on its own with words whose font sizes (x-heights) are
 known, and the whole grouping is validated against the yellow lines the
@@ -14,13 +14,10 @@ from pathlib import Path
 
 import pytest
 
-from tools.boxrows import (
-    RULE_ASPECT,
-    Page,
-    Rectangle,
-    Row,
-    Word,
-)
+from tools.page import Page
+from tools.rectangle import Rectangle
+from tools.row import Row
+from tools.word import RULE_ASPECT, Word
 
 FIXTURE = Path(__file__).parent / "fixtures" / "page01.json"
 SPACING = 67.6  # page px between the letter's lines

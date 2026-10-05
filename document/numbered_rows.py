@@ -28,6 +28,7 @@ PILL_PAD_Y = 4  # px: air above and below it
 PILL_INSET = 6  # px: how far the pill's right edge sits left of the band
 PILL_LIFT = 10  # px: how far its top sits above the band's top edge
 PILL_MIN_WIDTH = 30  # px: a one-digit pill is still a pill
+PILL_STEP = 6  # px: the gap between two pills that had to be stepped apart
 STRIPS = 3  # bands a tall page is cut into before the model reads it
 OVERLAP = 60  # px: how much neighbouring bands share, so no row is lost at a cut
 INK_MARGIN = 140  # px: air either side of the writing — the numbers sit in it
@@ -118,23 +119,28 @@ class NumberedRows:
         numbers = {row.id: row.number for row in rows}
         draw = ImageDraw.Draw(canvas)
         font = _font()
+        placed: list[tuple[float, float, float, float]] = []
         for row in rows:
-            pill_left = row.band.x0 - PILL_INSET
-            pill_top = row.band.y0 - offset_y - PILL_LIFT
             text = str(row.number)
-            width = draw.textbbox((0, 0), text, font=font)
-            pill_w = max(PILL_MIN_WIDTH, (width[2] - width[0]) + 2 * PILL_PAD_X)
-            pill_h = (width[3] - width[1]) + 2 * PILL_PAD_Y
-            draw.rounded_rectangle(
-                (pill_left - pill_w, pill_top, pill_left, pill_top + pill_h),
-                radius=PILL_RADIUS,
-                fill=(40, 110, 60),
-            )
+            box = draw.textbbox((0, 0), text, font=font)
+            pill_w = max(PILL_MIN_WIDTH, (box[2] - box[0]) + 2 * PILL_PAD_X)
+            pill_h = (box[3] - box[1]) + 2 * PILL_PAD_Y
+            top = row.band.y0 - offset_y - PILL_LIFT
+            right = row.band.x0 - PILL_INSET
+            left = right - pill_w
+            # a row's band can start where its neighbour's does (page-01's rows
+            # 6 and 7 sit inside row 5's), and two pills on one corner cover
+            # each other: the model then reports the page as having no row 6 at
+            # all. So a pill that would land on another is stepped OUTWARD —
+            # further into the margin, keeping its own row's height, so the
+            # pairing stays exact and no number is ever hidden.
+            while any(left < r and r0 < right + pill_w and top < b and t0 < top + pill_h for r0, t0, r, b in placed):
+                right += pill_w + PILL_STEP
+                left = right - pill_w
+            placed.append((left, top, right, top + pill_h))
+            draw.rounded_rectangle((left, top, right, top + pill_h), radius=PILL_RADIUS, fill=(40, 110, 60))
             draw.text(
-                (
-                    pill_left - pill_w + PILL_PAD_X - width[0],
-                    pill_top + PILL_PAD_Y - width[1],
-                ),
+                (left + PILL_PAD_X - box[0], top + PILL_PAD_Y - box[1]),
                 text,
                 fill=(255, 255, 255),
                 font=font,

@@ -27,6 +27,7 @@ import json
 import re
 import statistics
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -153,19 +154,26 @@ def run(
         f"The {len(numbered)} images are bands of one page, top to bottom, with its rows numbered 1..{drawn}. "
         "Return every row, once."
     )
+    started = time.monotonic()
+    options = (
+        VlmOptions(system=SYSTEM, user_text=user_text, model=model)
+        if model
+        else VlmOptions(system=SYSTEM, user_text=user_text)
+    )
     if call is None:
-        answer, usage = transcribe_images_vlm(
-            render_paths,
-            options=VlmOptions(system=SYSTEM, user_text=user_text, model=model)
-            if model
-            else VlmOptions(system=SYSTEM, user_text=user_text),
-        )
+        answer, usage = transcribe_images_vlm(render_paths, options=options)
     else:
         answer, usage = call(render_paths, system=SYSTEM, user_text=user_text)
+    seconds = time.monotonic() - started
     (out_dir / f"{stem}.answer.json").write_text(json.dumps({"answer": answer, "usage": usage}, indent=1))
 
     report: dict[str, Any] = {
         "page": image_path.name,
+        # the endpoint and the model the reading ACTUALLY used, and how long it
+        # took: a run that answers in under a second is not reading a page
+        "endpoint": options.base_url,
+        "model": options.model,
+        "seconds": round(seconds, 1),
         "rows": len(rows),
         "words": sum(len(row.word_boxes) for row in rows),
         "strips": len(numbered),

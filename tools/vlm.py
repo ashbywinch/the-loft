@@ -417,6 +417,14 @@ def _vision_post(
                         "Authorization": f"Bearer {key}",
                         # Cloudflare in front of the API rejects the urllib default UA
                         "User-Agent": "opencode/1.14.20",
+                        # A gateway in front of the model may cache completions,
+                        # and a measurement served from that cache is not a
+                        # measurement: a cached reply "answers" in 0.3s where the
+                        # real call takes minutes, with byte-identical tokens —
+                        # which hid several render fixes behind stale answers
+                        # before it was caught. The project caches its own
+                        # readings (the .vlm.json sidecars), so this is always on.
+                        "cf-aig-skip-cache": "true",
                     },
                     method="POST",
                 ),

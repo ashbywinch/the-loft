@@ -21,12 +21,15 @@ from PIL import Image, ImageDraw
 
 from tools.row import Row
 
-CHIP_FONT = 34  # px: the number's own size on the page, readable at page scale
-CHIP_LEFT = 96  # px: the gutter the disc occupies, immediately left of the row's words
-CHIP_RADIUS = 26  # px: the disc's half-height, so the number never touches the ink
+ROW_NUM_SIZE = 26  # px: the pill's number, the review surface's own type size
+PILL_RADIUS = 12  # px: the pill's corner (`.rv-rownum`'s 10px at page scale)
+PILL_PAD_X = 8  # px: air either side of the number
+PILL_PAD_Y = 4  # px: air above and below it
+PILL_INSET = 6  # px: how far the pill's right edge sits left of the band
+PILL_LIFT = 10  # px: how far its top sits above the band's top edge
+PILL_MIN_WIDTH = 30  # px: a one-digit pill is still a pill
 STRIPS = 3  # bands a tall page is cut into before the model reads it
 OVERLAP = 60  # px: how much neighbouring bands share, so no row is lost at a cut
-DISC_GAP = 4  # px: the least air between one row's number and the next
 
 
 class NumberedRows:
@@ -94,31 +97,36 @@ class NumberedRows:
 
     @classmethod
     def _draw(cls, canvas: Image.Image, rows: list[Row], *, offset_y: float) -> NumberedRows:
-        """One image with the numbers of `rows` drawn beside them, page
-        coordinates shifted into this image's own space.
+        """One image with the numbers of `rows` drawn on it, page coordinates
+        shifted into this image's own space.
 
-        A row's band can be a sliver inside its neighbours' (page-01's row 6 is
-        sixteen pixels tall), so two numbers placed naively at their rows'
-        centres cover each other and the model cannot read one of them at all.
-        The discs are therefore pushed apart in reading order — each keeps its
-        own row's height as its place, never another's."""
+        The number is the review surface's own: a green pill with white type
+        sitting on the row's top-left corner (`app/styles.css`, `.rv-rownum`).
+        It touches the row it labels, so a number can never be mistaken for
+        someone else's row — however close the rows sit, and even where a row's
+        band is a sliver inside its neighbours'."""
         numbers = {row.id: row.number for row in rows}
         draw = ImageDraw.Draw(canvas)
         font = _font()
-        centres = _spread([(row.band.y0 + row.band.y1) / 2 for row in rows], canvas.height)
-        for row, centre in zip(rows, centres, strict=False):
-            left = min(word.x0 for word in row.word_boxes) if row.word_boxes else row.band.x0
-            disc = (left - CHIP_LEFT, centre - CHIP_RADIUS, left - CHIP_LEFT + 2 * CHIP_RADIUS, centre + CHIP_RADIUS)
-            draw.ellipse(disc, fill=(255, 255, 255), outline=(20, 20, 20), width=3)
+        for row in rows:
+            pill_left = row.band.x0 - PILL_INSET
+            pill_top = row.band.y0 - offset_y - PILL_LIFT
             text = str(row.number)
-            tb = draw.textbbox((0, 0), text, font=font)
+            width = draw.textbbox((0, 0), text, font=font)
+            pill_w = max(PILL_MIN_WIDTH, (width[2] - width[0]) + 2 * PILL_PAD_X)
+            pill_h = (width[3] - width[1]) + 2 * PILL_PAD_Y
+            draw.rounded_rectangle(
+                (pill_left - pill_w, pill_top, pill_left, pill_top + pill_h),
+                radius=PILL_RADIUS,
+                fill=(40, 110, 60),
+            )
             draw.text(
                 (
-                    (disc[0] + disc[2]) / 2 - (tb[0] + tb[2]) / 2,
-                    (disc[1] + disc[3]) / 2 - (tb[1] + tb[3]) / 2,
+                    pill_left - pill_w + PILL_PAD_X - width[0],
+                    pill_top + PILL_PAD_Y - width[1],
                 ),
                 text,
-                fill=(15, 15, 15),
+                fill=(255, 255, 255),
                 font=font,
             )
         return cls(canvas, numbers)
@@ -127,28 +135,6 @@ class NumberedRows:
         """How many rows this image labels — the universe its reading must
         cover (one reading per number, none missing)."""
         return len(self.numbers)
-
-
-def _spread(desired: list[float], height: int) -> list[float]:
-    """Where the numbers sit: each at its own row's centre, clamped into the
-    image, moved only as far as the number above it forces.
-
-    A number that drifts away from its row is worse than two numbers that
-    touch: the reader can see which disc is whose from the line it sits beside,
-    but a disc parked next to some other row says something false. So there is
-    no redistribution — the drift is the minimum that avoids a full cover, and
-    the last rows are clamped into the image rather than pushed out of it."""
-    if not desired:
-        return []
-    gap = 2 * CHIP_RADIUS + DISC_GAP
-    top, bottom = CHIP_RADIUS + 2, height - CHIP_RADIUS - 2
-    out: list[float] = []
-    for value in desired:
-        y = min(max(value, top), bottom)
-        if out and y < out[-1] + gap:
-            y = min(out[-1] + gap, bottom)
-        out.append(y)
-    return out
 
 
 def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> list[float]:
@@ -172,6 +158,6 @@ def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> lis
 
 def _font() -> ImageDraw.ImageFont.ImageFont | ImageDraw.ImageFont.FreeTypeFont:
     try:
-        return ImageDraw.ImageFont.load_default(size=CHIP_FONT)
+        return ImageDraw.ImageFont.load_default(size=ROW_NUM_SIZE)
     except TypeError:  # Pillow older than the size-capable default font
         return ImageDraw.ImageFont.load_default()

@@ -98,3 +98,28 @@ def test_a_fenced_answer_is_read() -> None:
     tolerated, because the fence is formatting, not content."""
     fenced = "```json\n" + _answer({"rows": [1], "type": "body", "transcript": "one"}) + "\n```"
     assert Transcript.from_answer(fenced, rows=1).text_of(1) == "one"
+
+
+def test_the_rows_are_numbered_where_the_number_cannot_be_mistaken() -> None:
+    """The render the model reads: one chip per row, in the gutter left of the
+    row, carrying the row's own number — and the map from ids to numbers, so an
+    answer naming numbers 1..N needs no geometric reconciliation. A row whose
+    chip has no free spot refuses the render rather than going unnumbered."""
+    from PIL import Image
+
+    from document.numbered_rows import NumberedRows
+    from tools.rectangle import Rectangle
+    from tools.row import Row
+
+    page = Image.new("RGB", (400, 300), (250, 250, 245))
+    rows = [
+        Row(id="seg-1", kind="body", number=1, word_boxes=[], band=Rectangle(120, 40, 380, 70)),
+        Row(id="seg-2", kind="body", number=2, word_boxes=[], band=Rectangle(120, 140, 380, 170)),
+    ]
+    numbered = NumberedRows.render(page, rows)
+    assert numbered.rows_drawn() == 2
+    assert numbered.numbers == {"seg-1": 1, "seg-2": 2}
+    changed = sum(1 for x in range(400) for y in range(300) if numbered.image.getpixel((x, y)) != (250, 250, 245))
+    assert changed > 50, "no chip was drawn"
+    # nothing is painted over the rows' own writing
+    assert all(numbered.image.getpixel((250, 55)) == (250, 250, 245) for _ in [0])

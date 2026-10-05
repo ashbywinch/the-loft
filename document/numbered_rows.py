@@ -130,29 +130,25 @@ class NumberedRows:
 
 
 def _spread(desired: list[float], height: int) -> list[float]:
-    """Where the numbers actually sit: their rows' centres when those are far
-    enough apart, and an even run across the image when they are not.
+    """Where the numbers sit: each at its own row's centre, clamped into the
+    image, moved only as far as the number above it forces.
 
-    Pushing each colliding number further down accumulates: on page-01 the last
-    rows' numbers ended up below the band's own crop, so the model never saw
-    39-41 at all. An even run keeps every number inside the image, in reading
-    order, and each within reach of its own row — two numbers may sit closer to
-    each other than the discs' width would prefer, but none is ever hidden."""
+    A number that drifts away from its row is worse than two numbers that
+    touch: the reader can see which disc is whose from the line it sits beside,
+    but a disc parked next to some other row says something false. So there is
+    no redistribution — the drift is the minimum that avoids a full cover, and
+    the last rows are clamped into the image rather than pushed out of it."""
     if not desired:
         return []
     gap = 2 * CHIP_RADIUS + DISC_GAP
-    pushed: list[float] = []
-    for value in desired:
-        if pushed:
-            value = max(value, pushed[-1] + gap)
-        pushed.append(value)
     top, bottom = CHIP_RADIUS + 2, height - CHIP_RADIUS - 2
-    if pushed[-1] <= bottom and pushed[0] >= top:
-        return pushed
-    if len(desired) == 1:
-        return [min(max(desired[0], top), bottom)]
-    span = max(1.0, len(desired) - 1)
-    return [top + (bottom - top) * index / span for index in range(len(desired))]
+    out: list[float] = []
+    for value in desired:
+        y = min(max(value, top), bottom)
+        if out and y < out[-1] + gap:
+            y = min(out[-1] + gap, bottom)
+        out.append(y)
+    return out
 
 
 def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> list[float]:

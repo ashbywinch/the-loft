@@ -24,7 +24,6 @@ Usage: PYTHONPATH=. .venv/bin/python -m tools.eval_rows_transcript [page...]
 from __future__ import annotations
 
 import json
-import os
 import re
 import statistics
 import sys
@@ -121,11 +120,9 @@ def run(
     if call is None:
         answer, usage = transcribe_images_vlm(
             render_paths,
-            options=VlmOptions(
-                model=model or os.environ.get("EVAL_VLM_MODEL", "primary"),
-                system=SYSTEM,
-                user_text=user_text,
-            ),
+            options=VlmOptions(system=SYSTEM, user_text=user_text, model=model)
+            if model
+            else VlmOptions(system=SYSTEM, user_text=user_text),
         )
     else:
         answer, usage = call(render_paths, system=SYSTEM, user_text=user_text)

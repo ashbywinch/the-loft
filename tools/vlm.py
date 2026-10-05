@@ -22,6 +22,7 @@ import re
 import sys
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -264,6 +265,57 @@ def _drop_degenerate_boxes(boxes: dict[int, list[float]]) -> dict[int, list[floa
 
 
 # (model/system/user_text/base_url/api_key/timeout) — a parameter object would add a type for the one required argument
+@dataclass(frozen=True)
+class VlmOptions:
+    """The vision readings' constructor config: which model, at which base
+    URL, with which key and budgets (the object model's `VlmOptions`). One
+    value travels, so a call takes two arguments however many knobs it has."""
+
+    model: str = "dynamic/image"
+    system: str = VLM_SYSTEM
+    user_text: str | None = None
+    base_url: str = DEFAULT_BASE_URL
+    api_key: str | None = None
+    timeout: float = 900.0
+    max_tokens: int = 64000
+    urlopen: Callable[..., Any] | None = None
+
+
+def transcribe_images_vlm(images: list[Path], *, options: VlmOptions | None = None) -> tuple[str, dict[str, int]]:
+    """ONE multimodal call carrying several images — a page read in strips,
+    sent together so the model sees the whole page in one answer. The images
+    ride the user message in order, so a prompt can name them by position;
+    the payload, the seam and the thinking-disabled flag are the single-image
+    call's own."""
+    if not images:
+        raise VlmError("transcribe_images_vlm needs at least one image")
+    opts = options or VlmOptions()
+    user_content: list[dict[str, Any]] = []
+    for image in images:
+        mime = _MIME_BY_SUFFIX.get(image.suffix.lower(), "application/octet-stream")
+        data_url = f"data:{mime};base64," + base64.b64encode(image.read_bytes()).decode("ascii")
+        user_content.append({"type": "image_url", "image_url": {"url": data_url}})
+    if opts.user_text:
+        user_content.append({"type": "text", "text": opts.user_text})
+    body = _vision_post(
+        base_url=opts.base_url,
+        key=opts.api_key or find_api_key(),
+        payload={
+            "model": opts.model,
+            "messages": [
+                {"role": "system", "content": opts.system},
+                {"role": "user", "content": user_content},
+            ],
+            "temperature": 0,
+            "max_tokens": opts.max_tokens,
+            "thinking": {"type": "disabled"},
+        },
+        timeout=opts.timeout,
+        urlopen=opts.urlopen,
+    )
+    return _content_and_usage(body)
+
+
 # lucidlint: ignore long-param-list one required argument (image) plus defaulted call options
 def transcribe_image_vlm(
     image: Path,
@@ -309,6 +361,11 @@ def transcribe_image_vlm(
         timeout=timeout,
         urlopen=urlopen,
     )
+    return _content_and_usage(body)
+
+
+def _content_and_usage(body: dict[str, Any]) -> tuple[str, dict[str, int]]:
+    """The answer and its usage from one chat-completions body."""
     try:
         choice = body.get("choices", [{}])[0]
         message = choice.get("message") or {}

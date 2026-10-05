@@ -34,11 +34,11 @@ from typing import Any
 
 from PIL import Image
 
-from document.numbered_rows import NumberedRows
+from document.numbered_rows import STRIPS, NumberedRows
 from document.transcript import ReadingError, Transcript
 from tools.reader import reading_for_page
 from tools.rows import Rows
-from tools.vlm import transcribe_image_vlm
+from tools.vlm import VlmOptions, transcribe_images_vlm
 from tools.word import Word
 
 OUT_DIR = Path("work/eval-rows-transcript")
@@ -61,6 +61,9 @@ SYSTEM = (
     "- marginalia: a note in the margin, with NO injection_after\n\n"
     "Transcribe verbatim, reading the handwriting; a word the writer crossed out is "
     "~~word~~, an underlined word is ~word~. Never tidy the spelling, never drop words.\n\n"
+    "The page may arrive as several images: bands of the same page, top to "
+    "bottom, in order. They are ONE page — read the rows of every band and "
+    "answer once, covering every number from the first band to the last.\n\n"
     "Reply with JSON only:\n"
     '{"segments": [\n'
     '  {"rows": [1], "type": "body", "transcript": "London Opera Centre"},\n'
@@ -101,33 +104,43 @@ def run(
     image = Image.open(image_path)
     size = (image.width, image.height)
     rows = Rows.from_words(words_for(image_path, image), size).rows()
-    numbered = NumberedRows.render(image, rows)
+    numbered = NumberedRows.render_strips(image, rows, strips=STRIPS)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = image_path.stem
-    render_path = out_dir / f"{stem}.numbered.jpg"
-    numbered.image.save(render_path, quality=88)
+    render_paths = []
+    for index, strip in enumerate(numbered):
+        path = out_dir / f"{stem}.strip-{index + 1}.jpg"
+        strip.image.save(path, quality=88)
+        render_paths.append(path)
 
-    user_text = f"The image shows the page with its rows numbered 1..{numbered.rows_drawn()}. Return every row."
+    drawn = sum(strip.rows_drawn() for strip in numbered)
+    user_text = (
+        f"The {len(numbered)} images are bands of one page, top to bottom, with its rows numbered 1..{drawn}. "
+        "Return every row, once."
+    )
     if call is None:
-        answer, usage = transcribe_image_vlm(
-            render_path,
-            system=SYSTEM,
-            user_text=user_text,
-            model=model or os.environ.get("EVAL_VLM_MODEL", "primary"),
+        answer, usage = transcribe_images_vlm(
+            render_paths,
+            options=VlmOptions(
+                model=model or os.environ.get("EVAL_VLM_MODEL", "primary"),
+                system=SYSTEM,
+                user_text=user_text,
+            ),
         )
     else:
-        answer, usage = call(render_path, system=SYSTEM, user_text=user_text)
+        answer, usage = call(render_paths, system=SYSTEM, user_text=user_text)
     (out_dir / f"{stem}.answer.json").write_text(json.dumps({"answer": answer, "usage": usage}, indent=1))
 
     report: dict[str, Any] = {
         "page": image_path.name,
         "rows": len(rows),
         "words": sum(len(row.word_boxes) for row in rows),
+        "strips": len(numbered),
         "usage": usage,
-        "render": str(render_path),
+        "renders": [str(path) for path in render_paths],
     }
     try:
-        transcript = Transcript.from_answer(answer, rows=numbered.rows_drawn())
+        transcript = Transcript.from_answer(answer, rows=drawn)
     except ReadingError as exc:
         report["refused"] = str(exc)
         return report

@@ -34,9 +34,10 @@ help:
 	@echo "  ${GREEN}make test${NC}         Run tests (lint + typecheck gate; pytest + vitest)"
 	@echo "  ${GREEN}make format${NC}       Auto-fix formatting issues"
 	@echo "  ${GREEN}make coverage${NC}     Run tests with coverage report"
-	@echo "  ${GREEN}make evals${NC}        Run the real-model evals (pytest -m eval — needs the API key; select pieces with -k)"
+	@echo "  ${GREEN}make evals${NC}        Run the real-model evals (pytest -m eval; the gateway config comes from .env + CLOUDFLARE_AIGATEWAY_TOKEN via scripts/model-env.sh)"
 	@echo "  ${GREEN}make verify${NC}       Run the archive-quality data checks (pytest -m archive — the drift guard, completeness, no-PII)"
 	@echo "  ${GREEN}make eval-changed${NC} Run only the evals the current changes affect"
+	@echo "  ${GREEN}make eval${NC}         One eval flow: make eval ARGS=\"-k arc\" (see pyproject's eval markers)"
 	@echo "  ${GREEN}make scan-docs${NC}    Scan documents from the FF-680W into ~/loft/inbox (ARGS=\"--job …\")"
 	@echo "  ${GREEN}make scan-photos${NC}  Scan photos from the FF-680W into ~/loft/inbox (ARGS=\"--job …\")"
 	@echo "  ${GREEN}make adopt${NC}        Register a user scan folder in the registry in place (ARGS=\"<folder> --label …\")"
@@ -118,8 +119,12 @@ coverage: setup lint typecheck
 	@$(PYTHON) -m pytest --cov=tools --cov-report=term-missing --cov-report=xml
 	@$(NPM) run coverage
 
+# Anything that hits the model goes through scripts/model-env.sh: it loads the
+# project's gateway config from .env and refuses a base URL that is not the
+# Cloudflare gateway, so no run can silently use a local proxy (and PYTHONPATH
+# is set once, for every child). See the script's header.
 evals: setup
-	@$(PYTHON) -m pytest -m eval -q
+	@scripts/model-env.sh $(PYTHON) -m pytest -m eval -q
 
 # lucidlint (github.com/ashbywinch/lucidlint) — the deterministic code-health
 # gate, wired from its own repo per the project decision (2026-08-16, user):
@@ -189,7 +194,7 @@ eval-changed: setup
 		echo "no evals affected by the current changes"; \
 	else \
 		echo "running the affected evals ($$MARKERS)"; \
-		$(PYTHON) -m pytest -m "(eval or archive) and ($$MARKERS)" -q; \
+		scripts/model-env.sh $(PYTHON) -m pytest -m "(eval or archive) and ($$MARKERS)" -q; \
 	fi
 
 format: setup

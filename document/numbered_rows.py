@@ -25,6 +25,8 @@ CHIP_FONT = 34  # px: the number's own size on the page, readable at page scale
 CHIP_LEFT = 96  # px: the gutter the disc occupies, immediately left of the row's words
 CHIP_RADIUS = 26  # px: the disc's half-height, so the number never touches the ink
 STRIPS = 3  # bands a tall page is cut into before the model reads it
+OVERLAP = 60  # px: how much neighbouring bands share, so no row is lost at a cut
+DISC_GAP = 4  # px: the least air between one row's number and the next
 
 
 class NumberedRows:
@@ -52,46 +54,72 @@ class NumberedRows:
 
     @classmethod
     def render_strips(cls, page: Image.Image, rows: list[Row], *, strips: int = STRIPS) -> list[NumberedRows]:
-        """The page in `strips` big bands, top to bottom, numbered — one image
-        per band, all of them going to the model in ONE call.
+        """The page in `strips` bands, top to bottom, numbered — one image per
+        band, all of them going to the model in ONE call.
 
-        Each row is numbered in the band that holds its centre, once, with its
-        own number; the numbering the answer is read against does not change
-        because the page was cut."""
+        The bands cover the WRITING (a blank margin is not worth an image) and
+        the cuts fall in the gaps BETWEEN rows, never through one: a row cut in
+        half is a row whose number and its writing part company, which is how a
+        reading gets lost. Every row is numbered once, in the band holding it,
+        with its own number — an answer is read against that numbering however
+        the page was cut."""
         if strips < 1:
             raise ValueError(f"a page needs at least one strip, not {strips}")
         ordered = sorted(rows, key=lambda row: row.number)
-        band_height = page.height / strips
+        top = min(row.band.y0 for row in ordered)
+        bottom = max(row.band.y1 for row in ordered)
+        bounds = [top, *_cut_gaps(ordered, strips=strips, top=top, bottom=bottom), bottom]
         out: list[NumberedRows] = []
         for index in range(strips):
-            top, bottom = round(index * band_height), round((index + 1) * band_height)
+            band_top = int(bounds[index]) - (OVERLAP if index else 0)
+            band_bottom = int(bounds[index + 1]) + (OVERLAP if index + 1 < strips else 0)
+            band_top, band_bottom = max(0, band_top), min(page.height, band_bottom)
             inside = [
                 row
                 for row in ordered
-                if top <= (row.band.y0 + row.band.y1) / 2 < bottom
-                or (index == strips - 1 and (row.band.y0 + row.band.y1) / 2 >= bottom)
+                if band_top <= (row.band.y0 + row.band.y1) / 2 < band_bottom
+                or (index == strips - 1 and (row.band.y0 + row.band.y1) / 2 >= band_bottom)
             ]
-            out.append(cls._draw(page.convert("RGB").crop((0, top, page.width, bottom)), inside, offset_y=top))
+            crop = page.convert("RGB").crop((0, band_top, page.width, band_bottom))
+            out.append(cls._draw(crop, inside, offset_y=band_top))
         return out
+
+    @classmethod
+    def draw_numbers(cls, canvas: Image.Image, rows: list[Row], *, offset_y: float = 0) -> NumberedRows:
+        """`canvas` with the rows' numbers drawn in the gutter, as `render`
+        draws them — the one place row numbers are painted, so a caller that
+        already has a rendered page (a tinted comparison sheet, say) uses the
+        same convention rather than a second one."""
+        return cls._draw(canvas, sorted(rows, key=lambda row: row.number), offset_y=offset_y)
 
     @classmethod
     def _draw(cls, canvas: Image.Image, rows: list[Row], *, offset_y: float) -> NumberedRows:
         """One image with the numbers of `rows` drawn beside them, page
-        coordinates shifted into this image's own space."""
+        coordinates shifted into this image's own space.
+
+        A row's band can be a sliver inside its neighbours' (page-01's row 6 is
+        sixteen pixels tall), so two numbers placed naively at their rows'
+        centres cover each other and the model cannot read one of them at all.
+        The discs are therefore pushed apart in reading order — each keeps its
+        own row's height as its place, never another's."""
         numbers = {row.id: row.number for row in rows}
         draw = ImageDraw.Draw(canvas)
         font = _font()
+        placed: list[float] = []
         for row in rows:
             left = min(word.x0 for word in row.word_boxes) if row.word_boxes else row.band.x0
             centre = (row.band.y0 + row.band.y1) / 2 - offset_y
+            if placed:
+                centre = max(centre, placed[-1] + 2 * CHIP_RADIUS + DISC_GAP)
+            placed.append(centre)
             disc = (left - CHIP_LEFT, centre - CHIP_RADIUS, left - CHIP_LEFT + 2 * CHIP_RADIUS, centre + CHIP_RADIUS)
             draw.ellipse(disc, fill=(255, 255, 255), outline=(20, 20, 20), width=3)
             text = str(row.number)
             tb = draw.textbbox((0, 0), text, font=font)
             draw.text(
                 (
-                    (disc[0] + disc[2]) / 2 - (tb[2] - tb[0]) / 2,
-                    (disc[1] + disc[3]) / 2 - (tb[3] - tb[1]) / 2,
+                    (disc[0] + disc[2]) / 2 - (tb[0] + tb[2]) / 2,
+                    (disc[1] + disc[3]) / 2 - (tb[1] + tb[3]) / 2,
                 ),
                 text,
                 fill=(15, 15, 15),
@@ -103,6 +131,25 @@ class NumberedRows:
         """How many rows this image labels — the universe its reading must
         cover (one reading per number, none missing)."""
         return len(self.numbers)
+
+
+def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> list[float]:
+    """Where to cut `strips` bands of writing without cutting a row: the
+    largest gaps between consecutive bands, at the boundaries a naive equal
+    split would have chosen."""
+    gaps = sorted(
+        (
+            (rows[i + 1].band.y0 - rows[i].band.y1, (rows[i + 1].band.y0 + rows[i].band.y1) / 2)
+            for i in range(len(rows) - 1)
+        ),
+        reverse=True,
+    )
+    wanted = [top + (bottom - top) * index / strips for index in range(1, strips)]
+    chosen: list[float] = []
+    for target in wanted:
+        nearest = min(gaps, key=lambda gap: abs(gap[1] - target) + (0 if gap[0] >= 0 else 10_000))
+        chosen.append(nearest[1])
+    return sorted(chosen)
 
 
 def _font() -> ImageDraw.ImageFont.ImageFont | ImageDraw.ImageFont.FreeTypeFont:

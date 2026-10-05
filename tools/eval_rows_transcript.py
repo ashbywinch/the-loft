@@ -37,6 +37,7 @@ from document.numbered_rows import STRIPS, NumberedRows
 from document.transcript import ReadingError, Transcript
 from tools.reader import reading_for_page
 from tools.rows import Rows
+from tools.schemas import load_user_row_adjustments
 from tools.vlm import VlmOptions, transcribe_images_vlm
 from tools.word import Word
 
@@ -61,8 +62,10 @@ SYSTEM = (
     "Transcribe verbatim, reading the handwriting; a word the writer crossed out is "
     "~~word~~, an underlined word is ~word~. Never tidy the spelling, never drop words.\n\n"
     "The page may arrive as several images: bands of the same page, top to "
-    "bottom, in order. They are ONE page — read the rows of every band and "
-    "answer once, covering every number from the first band to the last.\n\n"
+    "bottom, in order, and neighbouring bands share a little of the page. They "
+    "are ONE page — read the rows of every band and answer once, covering "
+    "every number from the first band to the last. A row visible in two bands "
+    "is still ONE row: read it once, in the band that shows it whole.\n\n"
     "Reply with JSON only:\n"
     '{"segments": [\n'
     '  {"rows": [1], "type": "body", "transcript": "London Opera Centre"},\n'
@@ -72,6 +75,25 @@ SYSTEM = (
     "]}\n"
     "Every numbered row must appear exactly once. No prose before or after the JSON."
 )
+
+
+def words_from(path: Path) -> list[Word]:
+    """The words a rows file was adjudicated against: the committed parse, so
+    the numbering the reviewer's decision was made in is the numbering the
+    reader is shown."""
+    records = json.loads(path.read_text(encoding="utf-8"))["words"]
+    return [
+        Word(
+            r["x0"],
+            r["y0"],
+            r["x1"],
+            r["y1"],
+            baseline=r.get("baseline"),
+            waistline=r.get("waistline"),
+            line=r.get("line"),
+        )
+        for r in records
+    ]
 
 
 def words_for(image_path: Path, image: Image.Image) -> list[Word]:
@@ -95,6 +117,7 @@ def words_for(image_path: Path, image: Image.Image) -> list[Word]:
 def run(
     image_path: Path,
     *,
+    fixture: Path | None = None,
     call: Callable[..., tuple[str, dict[str, int]]] | None = None,
     model: str | None = None,
     out_dir: Path = OUT_DIR,
@@ -102,7 +125,18 @@ def run(
     """One page, one model call, and every checkable condition measured."""
     image = Image.open(image_path)
     size = (image.width, image.height)
-    rows = Rows.from_words(words_for(image_path, image), size).rows()
+    # the rows the reviewer's drawn lines make, when they exist: the reading
+    # happens against the CORRECT rows, never the draft the geometry proposed
+    # with a fixture directory the reader is shown the CORRECT rows — the words
+    # a reviewer's lines were adjudicated against, and those lines applied —
+    # rather than the draft the geometry proposed over a live parse
+    words = words_from(fixture / "words.json") if fixture else words_for(image_path, image)
+    builder = Rows.from_words(words, size)
+    rows = (
+        builder.adjust(load_user_row_adjustments(fixture / "user-row-adjustments.json")["lines"])
+        if fixture
+        else builder.rows()
+    )
     numbered = NumberedRows.render_strips(image, rows, strips=STRIPS)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = image_path.stem
@@ -169,13 +203,19 @@ def _measure(transcript: Transcript) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    pages = [Path(arg) for arg in (argv or sys.argv[1:])] or [DEFAULT_PAGE]
+    args = list(argv or sys.argv[1:])
+    fixture = None
+    if "--fixture" in args:
+        index = args.index("--fixture")
+        fixture = Path(args[index + 1])
+        del args[index : index + 2]
+    pages = [Path(arg) for arg in args] or [DEFAULT_PAGE]
     code = 0
     for page in pages:
         if not page.is_file():
             print(f"SKIP {page}: not on this box")
             continue
-        report = run(page)
+        report = run(page, fixture=fixture)
         print(json.dumps(report, indent=1))
         if "refused" in report:
             print(f"REFUSED: {report['refused']}")

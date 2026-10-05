@@ -30,6 +30,7 @@ PILL_LIFT = 10  # px: how far its top sits above the band's top edge
 PILL_MIN_WIDTH = 30  # px: a one-digit pill is still a pill
 STRIPS = 3  # bands a tall page is cut into before the model reads it
 OVERLAP = 60  # px: how much neighbouring bands share, so no row is lost at a cut
+INK_MARGIN = 140  # px: air either side of the writing — the numbers sit in it
 
 
 class NumberedRows:
@@ -72,6 +73,11 @@ class NumberedRows:
         top = min(row.band.y0 for row in ordered)
         bottom = max(row.band.y1 for row in ordered)
         bounds = [top, *_cut_gaps(ordered, strips=strips, top=top, bottom=bottom), bottom]
+        xs = [word.x0 for row in ordered for word in row.word_boxes] + [
+            word.x1 for row in ordered for word in row.word_boxes
+        ]
+        ink_left = max(0, int(min(xs) if xs else 0) - INK_MARGIN)
+        ink_right = min(page.width, int(max(xs) if xs else page.width) + INK_MARGIN)
         out: list[NumberedRows] = []
         for index in range(strips):
             band_top = int(bounds[index]) - (OVERLAP if index else 0)
@@ -83,7 +89,11 @@ class NumberedRows:
                 if band_top <= (row.band.y0 + row.band.y1) / 2 < band_bottom
                 or (index == strips - 1 and (row.band.y0 + row.band.y1) / 2 >= band_bottom)
             ]
-            crop = page.convert("RGB").crop((0, band_top, page.width, band_bottom))
+            # the page's own margins are not worth an image: the width sent is
+            # the writing's, plus the gutter the numbers sit in. Page-01's
+            # writing is 57% of the page's width — sending the paper too costs
+            # the model ~40% of the detail it could have had.
+            crop = page.convert("RGB").crop((ink_left, band_top, ink_right, band_bottom))
             out.append(cls._draw(crop, inside, offset_y=band_top))
         return out
 

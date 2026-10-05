@@ -74,6 +74,42 @@ class Rows:
         """The draft rows: the words' own reading lines, nothing drawn."""
         return self.adjust([])
 
+    def with_text(self, lines: Sequence[dict[str, Any]]) -> list[Row]:
+        """These rows carrying their own writing: each transcription line whose
+        box sits in a row's band becomes that row's text, in reading order —
+        the machine's first fill, so the stage is `raw` until the reviewer
+        confirms a row (R7). A row no line reached keeps an empty text and no
+        stage: unread, never a guess.
+
+        `lines` are the page's transcribed lines with geometry (the layout's
+        own records: `text` and `box`), not a page-level string — a page's text
+        with no boxes cannot be put on its rows."""
+        rows = self.adjust([])
+        filled: list[Row] = []
+        for row in rows:
+            band = row.band
+            inside = [
+                line
+                for line in lines
+                if isinstance(line.get("box"), list)
+                and band.x0 <= (line["box"][0] + line["box"][2]) / 2 <= band.x1
+                and band.y0 <= (line["box"][1] + line["box"][3]) / 2 <= band.y1
+            ]
+            inside.sort(key=lambda line: (line["box"][1], line["box"][0]))
+            text = " ".join(str(line.get("text", "")).strip() for line in inside).strip()
+            filled.append(
+                Row(
+                    id=row.id,
+                    kind=row.kind,
+                    number=row.number,
+                    word_boxes=row.word_boxes,
+                    band=row.band,
+                    text=text,
+                    stage="raw" if text else "",
+                )
+            )
+        return filled
+
     def adjust(self, row_adjustments: list[list[tuple[float, float]]]) -> list[Row]:
         """The reviewer's drawn lines applied to this page: the rows are
         re-derived from them. A drawn line claims each word whose centre its

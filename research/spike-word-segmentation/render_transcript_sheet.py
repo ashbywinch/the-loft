@@ -14,6 +14,7 @@ Writes: research/spike-word-segmentation/rows-transcript-sheet.jpg
 from __future__ import annotations
 
 import json
+import textwrap
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -32,6 +33,8 @@ WORDS = FIXTURE / "words.json"
 OUT = Path("research/spike-word-segmentation/rows-transcript-sheet.jpg")
 
 MARGIN = 18  # px: air around the reading's column
+COLUMN = 1400  # px: the reading's column — wide enough for most lines, and lines
+# that do not fit wrap UNDER their own entry, never clipped and never overlapping
 TEXT_SIZE = 36  # px: the reading's own size, level with its row
 NUMBER_SIZE = 40  # px: the row number in the gutter
 
@@ -96,18 +99,25 @@ def main() -> None:
     # package's own drawing — no second convention lives in this script
     highlighted = NumberedRows.draw_numbers(render_rows(page, rows), rows)
     text_font = _font(TEXT_SIZE)
-    lines = [f"{row.number}   {texts.get(row.number) or '(no reading)'}" for row in rows]
-    column = max(_width(text_font, line) for line in lines) + 2 * MARGIN
-    sheet = Image.new("RGB", (page.width + column, max(page.height, len(lines) * (TEXT_SIZE + 8))), (255, 255, 255))
+    height = TEXT_SIZE + 8
+    entries: list[list[str]] = []
+    for row in rows:
+        text = texts.get(row.number) or "(no reading)"
+        prefix = f"{row.number}   "
+        wrapped = textwrap.wrap(text, max(1, (COLUMN - 2 * MARGIN - _width(text_font, prefix)) // (TEXT_SIZE // 2)))
+        entries.append([prefix + (wrapped[0] if wrapped else "")] + [" " * 6 + line for line in wrapped[1:]])
+    sheet = Image.new(
+        "RGB",
+        (page.width + COLUMN, max(page.height, sum(len(e) for e in entries) * height + 2 * MARGIN)),
+        (255, 255, 255),
+    )
     sheet.paste(highlighted.image, (0, 0))
     draw = ImageDraw.Draw(sheet)
-    for index, line in enumerate(lines):
-        draw.text(
-            (page.width + MARGIN, MARGIN + index * (TEXT_SIZE + 8)),
-            line,
-            fill=(20, 20, 20),
-            font=text_font,
-        )
+    y = MARGIN
+    for entry in entries:
+        for line in entry:
+            draw.text((page.width + MARGIN, y), line, fill=(20, 20, 20), font=text_font)
+            y += height
 
     sheet.save(OUT, quality=84)
     print(f"wrote {OUT}: {sheet.width}x{sheet.height}, {len(rows)} rows highlighted and numbered")

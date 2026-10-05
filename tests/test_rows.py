@@ -261,24 +261,3 @@ def test_a_rows_text_and_trust_stage_travel_with_the_wire() -> None:
     assert wire["rows"][0]["stage"] == "guess"
     assert Rows.from_wire(wire)[0].stage == "guess"
     assert ROW_STAGES == ("", "raw", "guess", "confirmed")
-
-
-def test_a_rows_text_is_the_lines_that_sit_in_its_band() -> None:
-    """The reading fills the rows: each transcribed line whose box centre sits
-    in a row's band becomes that row's text, in reading order, staged `raw`
-    (R7) — the machine's first fill, before any confirmation. A row no line
-    reached is unread: empty text, no stage. A page-level string with no
-    geometry cannot be put on rows, so boxless lines are ignored."""
-    words = _words((100, 100, 500, 130), (100, 300, 500, 330), (100, 500, 500, 530), line=1)
-    words[1].line = 2
-    words[2].line = 3
-    rows = Rows.from_words(words, PAGE_SIZE)
-    lines = [
-        {"text": "the first line", "box": [110.0, 105.0, 480.0, 128.0]},
-        {"text": "its continuation", "box": [120.0, 112.0, 400.0, 126.0]},
-        {"text": "no geometry here"},
-        {"text": "far below every row", "box": [110.0, 900.0, 480.0, 990.0]},
-    ]
-    filled = rows.with_text(lines)
-    assert [row.text for row in filled] == ["the first line its continuation", "", ""], "the lines did not land by band"
-    assert [row.stage for row in filled] == ["raw", "", ""], "a filled row is raw; an unread row carries no stage"

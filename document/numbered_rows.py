@@ -105,13 +105,9 @@ class NumberedRows:
         numbers = {row.id: row.number for row in rows}
         draw = ImageDraw.Draw(canvas)
         font = _font()
-        placed: list[float] = []
-        for row in rows:
+        centres = _spread([(row.band.y0 + row.band.y1) / 2 for row in rows], canvas.height)
+        for row, centre in zip(rows, centres, strict=False):
             left = min(word.x0 for word in row.word_boxes) if row.word_boxes else row.band.x0
-            centre = (row.band.y0 + row.band.y1) / 2 - offset_y
-            if placed:
-                centre = max(centre, placed[-1] + 2 * CHIP_RADIUS + DISC_GAP)
-            placed.append(centre)
             disc = (left - CHIP_LEFT, centre - CHIP_RADIUS, left - CHIP_LEFT + 2 * CHIP_RADIUS, centre + CHIP_RADIUS)
             draw.ellipse(disc, fill=(255, 255, 255), outline=(20, 20, 20), width=3)
             text = str(row.number)
@@ -131,6 +127,32 @@ class NumberedRows:
         """How many rows this image labels — the universe its reading must
         cover (one reading per number, none missing)."""
         return len(self.numbers)
+
+
+def _spread(desired: list[float], height: int) -> list[float]:
+    """Where the numbers actually sit: their rows' centres when those are far
+    enough apart, and an even run across the image when they are not.
+
+    Pushing each colliding number further down accumulates: on page-01 the last
+    rows' numbers ended up below the band's own crop, so the model never saw
+    39-41 at all. An even run keeps every number inside the image, in reading
+    order, and each within reach of its own row — two numbers may sit closer to
+    each other than the discs' width would prefer, but none is ever hidden."""
+    if not desired:
+        return []
+    gap = 2 * CHIP_RADIUS + DISC_GAP
+    pushed: list[float] = []
+    for value in desired:
+        if pushed:
+            value = max(value, pushed[-1] + gap)
+        pushed.append(value)
+    top, bottom = CHIP_RADIUS + 2, height - CHIP_RADIUS - 2
+    if pushed[-1] <= bottom and pushed[0] >= top:
+        return pushed
+    if len(desired) == 1:
+        return [min(max(desired[0], top), bottom)]
+    span = max(1.0, len(desired) - 1)
+    return [top + (bottom - top) * index / span for index in range(len(desired))]
 
 
 def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> list[float]:

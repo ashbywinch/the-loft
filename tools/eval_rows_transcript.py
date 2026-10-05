@@ -146,7 +146,9 @@ def run(
         strip.image.save(path, quality=88)
         render_paths.append(path)
 
-    drawn = sum(strip.rows_drawn() for strip in numbered)
+    # the universe is the rows NUMBERED, each once: neighbouring bands overlap,
+    # so a row can appear in two of them with its own single number
+    drawn = len({number for strip in numbered for number in strip.numbers.values()})
     user_text = (
         f"The {len(numbered)} images are bands of one page, top to bottom, with its rows numbered 1..{drawn}. "
         "Return every row, once."

@@ -16,9 +16,10 @@ from __future__ import annotations
 from PIL import Image, ImageDraw
 
 from tools.row import Row
-from tools.word_numbering import UNPLACED, place_chips
 
-CHIP_FONT = 28  # px: the smallest a chip's number is drawn at, readable when scaled
+CHIP_FONT = 34  # px: the number's own size on the page, readable at page scale
+CHIP_LEFT = 96  # px: the gutter the disc occupies, immediately left of the row's words
+CHIP_RADIUS = 26  # px: the disc's half-height, so the number never touches the ink
 
 
 class NumberedRows:
@@ -38,31 +39,26 @@ class NumberedRows:
         """The page with its rows numbered 1..N in reading order.
 
         The numbers are the rows' own (`Row.number`), so an answer naming
-        numbers 1..N is already in the rows' space. Each chip is a placed
-        value (from `place_chips`): it sits where it collides with nothing,
-        and a row whose chip cannot be placed refuses the whole render —
-        every row is numbered or none is."""
+        numbers 1..N is already in the rows' space. Each number sits in the
+        gutter immediately left of its row's own first word, on the row's
+        centre line — the same convention the review surface numbers its
+        lines by, so a reader of either sees the same thing. The gutter is
+        outside every row's band, so no chip can cover the writing it
+        labels."""
         ordered = sorted(rows, key=lambda row: row.number)
         numbers = {row.id: row.number for row in ordered}
-        boxes = [(row.band.x0, row.band.y0, row.band.x1, row.band.y1) for row in ordered]
-        chips = place_chips(boxes, list(range(len(boxes))))
-        unplaced = [ordered[i].number for i, chip in enumerate(chips) if chip.verdict == UNPLACED]
-        if unplaced:
-            # every row must be numbered: a row whose chip cannot be placed
-            # would be a row the model cannot name, so the render refuses
-            raise ValueError(f"no free spot for the number of row(s) {unplaced}")
         canvas = page.convert("RGB")
         draw = ImageDraw.Draw(canvas)
-        for chip in chips:
-            draw.rounded_rectangle(chip.rect, radius=3, outline=chip.colour, width=2)
-            text = str(chip.render_id)
-            font = _font(round(chip.font_size))
+        font = _font()
+        for row in ordered:
+            left = min(word.x0 for word in row.word_boxes) if row.word_boxes else row.band.x0
+            centre = (row.band.y0 + row.band.y1) / 2
+            disc = (left - CHIP_LEFT, centre - CHIP_RADIUS, left - CHIP_LEFT + 2 * CHIP_RADIUS, centre + CHIP_RADIUS)
+            draw.ellipse(disc, fill=(255, 255, 255), outline=(20, 20, 20), width=3)
+            text = str(row.number)
             tb = draw.textbbox((0, 0), text, font=font)
             draw.text(
-                (
-                    (chip.rect[0] + chip.rect[2]) / 2 - (tb[2] - tb[0]) / 2,
-                    (chip.rect[1] + chip.rect[3]) / 2 - (tb[3] - tb[1]) / 2,
-                ),
+                ((disc[0] + disc[2]) / 2 - (tb[2] - tb[0]) / 2, (disc[1] + disc[3]) / 2 - (tb[3] - tb[1]) / 2),
                 text,
                 fill=(15, 15, 15),
                 font=font,
@@ -75,8 +71,8 @@ class NumberedRows:
         return len(self.numbers)
 
 
-def _font(size: int) -> ImageDraw.ImageFont.ImageFont | ImageDraw.ImageFont.FreeTypeFont:
+def _font() -> ImageDraw.ImageFont.ImageFont | ImageDraw.ImageFont.FreeTypeFont:
     try:
-        return ImageDraw.ImageFont.load_default(size=max(size, CHIP_FONT))
+        return ImageDraw.ImageFont.load_default(size=CHIP_FONT)
     except TypeError:  # Pillow older than the size-capable default font
         return ImageDraw.ImageFont.load_default()

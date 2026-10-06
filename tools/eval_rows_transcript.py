@@ -45,6 +45,7 @@ from tools.vlm import VlmOptions, transcribe_images_vlm
 from tools.word import Word
 
 OUT_DIR = Path("work/eval-rows-transcript")
+ALONE_MARGIN = 24  # px: air around a row read on its own
 
 # the page the other real-model evals already use (a cursive letter, our best
 # case); a page with no confirmed transcript is still readable
@@ -162,18 +163,27 @@ def run(
     # resolution (one band, not three) and asks for a smaller answer, so no
     # completion is cut off mid-JSON.
     started = time.monotonic()
-    band_read = _read_bands(
-        _Bands(
-            numbered=numbered,
-            render_paths=render_paths,
-            stem=stem,
-            out_dir=out_dir,
-            model=model,
-            call=call,
-        )
-    )
+    band_read = _Bands(
+        numbered=numbered,
+        render_paths=render_paths,
+        stem=stem,
+        out_dir=out_dir,
+        model=model,
+        call=call,
+    ).read()
+    every = sorted({number for strip in numbered for number in strip.numbers.values()})
+    needing = _rows_needing_a_second_look(band_read.readings, every)
+    alone: dict[int, str] = {}
+    if needing:
+        # the bands settle most rows; the ones they leave blank or doubled are
+        # shown ALONE — a crop of the row's own words, no neighbours' ink — with
+        # the reading so far as the thread
+        print(f"  {len(needing)} row(s) the bands could not settle: {needing} — reading them alone")
+        for number, text in read_rows_alone(image_path, numbers=needing, fixture=fixture, call=call, out_dir=out_dir):
+            alone[number] = text
+    answer = _combined_answer(rows, band_read.readings, alone)
     seconds = time.monotonic() - started
-    refusals, usage, answer = band_read.refusals, band_read.usage, band_read.answer
+    refusals, usage = band_read.refusals, band_read.usage
 
     report: dict[str, Any] = {
         "page": image_path.name,
@@ -188,17 +198,140 @@ def run(
         "usage": usage,
         "renders": [str(path) for path in render_paths],
     }
-    if refusals:
-        report["refused"] = "; ".join(refusals)
-        return report
+    # the verdict is the COMBINED reading's: a band's refusal is a working
+    # note (those rows were shown alone and may well have been read there)
     try:
         transcript = Transcript.from_answer(answer, rows=drawn)
     except ReadingError as exc:
         report["refused"] = str(exc)
+        report["band_notes"] = refusals
         return report
+    report["band_notes"] = refusals
 
     report.update(_measure(transcript))
     return report
+
+
+def read_rows_alone(
+    image_path: Path,
+    *,
+    numbers: list[int],
+    fixture: Path | None = None,
+    call: Callable[..., tuple[str, dict[str, int]]] | None = None,
+    out_dir: Path = OUT_DIR,
+) -> list[tuple[int, str]]:
+    """Read named rows ONE AT A TIME, each from a crop of its own words only.
+
+    A row is a piece of writing that the reviewer's lines separated, and in the
+    tight stacks its band overlaps its neighbours' — a crop of the band shows
+    three rows' ink, so the reader sees the same writing three times. Cropped to
+    the row's own words, the piece is alone; the running transcript gives it the
+    thread of the letter.
+    """
+    image = Image.open(image_path)
+    words = words_from(fixture / "words.json") if fixture else words_for(image_path, image)
+    builder = Rows.from_words(words, (image.width, image.height))
+    rows = (
+        builder.adjust(load_user_row_adjustments(fixture / "user-row-adjustments.json")["lines"])
+        if fixture
+        else builder.rows()
+    )
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = image_path.stem
+    alone = _AloneReader(image=image, out_dir=out_dir, stem=stem, call=call)
+    read: list[tuple[int, str]] = []
+    for row in rows:
+        if row.number in numbers and row.word_boxes:
+            read.append((row.number, alone.text_of(row, read)))
+    # persisted like every other reading: a row read once is never paid for
+    # twice, and the assembly below reads the file rather than re-asking
+    (out_dir / f"{stem}.alone.json").write_text(
+        json.dumps({"rows": {str(number): text for number, text in read}}, indent=1)
+    )
+    return read
+
+
+@dataclass(frozen=True)
+class _AloneReader:
+    """Reading rows one at a time: the page they are cropped from, where the
+    crops and readings are kept, and what does the reading."""
+
+    image: Image.Image
+    out_dir: Path
+    stem: str
+    call: Callable[..., tuple[str, dict[str, int]]] | None
+
+    def text_of(self, row: Any, above: list[tuple[int, str]]) -> str:
+        """One row transcribed from a crop of its own words only — no
+        neighbour's ink, nothing else in the image to confuse it with."""
+        left = max(0, int(min(word.x0 for word in row.word_boxes)) - ALONE_MARGIN)
+        right = min(self.image.width, int(max(word.x1 for word in row.word_boxes)) + ALONE_MARGIN)
+        top = max(0, int(min(word.y0 for word in row.word_boxes)) - ALONE_MARGIN)
+        bottom = min(self.image.height, int(max(word.y1 for word in row.word_boxes)) + ALONE_MARGIN)
+        path = self.out_dir / f"{self.stem}.row-{row.number}.jpg"
+        self.image.crop((left, top, right, bottom)).save(path, quality=90)
+        read_above = "\n".join(f"row {number}: {text}" for number, text in above[-6:])
+        prompt = (
+            f"This is ONE row of a handwritten letter: row {row.number}, alone. Transcribe exactly what it says, "
+            "word for word, keeping any crossing-out as ~~word~~ and any underline as ~word~. If the piece begins or "
+            "ends mid-sentence, transcribe just what is here"
+            + (f". The rows immediately above it read:\n{read_above}" if read_above else ".")
+        )
+        answer, _usage = (
+            self.call([path], system=SYSTEM, user_text=prompt)
+            if self.call is not None
+            else transcribe_images_vlm([path], options=VlmOptions(system=SYSTEM, user_text=prompt))
+        )
+        readings = Transcript.from_answer(answer, rows=[row.number]).readings
+        text = readings[0].text if readings else ""
+        print(f"  row {row.number}: {text!r}")
+        return text
+
+
+def _combined_answer(rows: list[Any], readings: list[Any], alone: dict[int, str]) -> str:
+    """The page's reading: every row, the bands' reading where it settled a row
+    and the row-alone reading where it did not."""
+    segments = []
+    for row in sorted(rows, key=lambda r: r.number):
+        text = alone.get(row.number)
+        kind = "body"
+        after = None
+        if text is None:
+            for reading in readings:
+                if row.number in reading.rows:
+                    text, kind, after = reading.text, reading.kind, reading.injection_after
+                    break
+        entry: dict[str, Any] = {"rows": [row.number], "type": kind, "transcript": text or ""}
+        if after is not None:
+            entry["injection_after"] = after
+        segments.append(entry)
+    return json.dumps({"segments": segments})
+
+
+def _rows_needing_a_second_look(readings: list[Any], numbers: list[int]) -> list[int]:
+    """The rows a band reading left blank or doubled.
+
+    A band's image carries its rows' ink plus their neighbours', so a row in a
+    tight stack comes back empty (the model read the line once) or doubled (it
+    read the same line twice). Those are exactly the rows to show alone."""
+    unread = [number for number in numbers if not _text_of(readings, number).strip()]
+    seen: dict[str, int] = {}
+    doubled: list[int] = []
+    for number in numbers:
+        text = " ".join(_text_of(readings, number).lower().split())
+        if len(text.split()) < 4:
+            continue
+        if text in seen:
+            doubled.append(number)
+        seen[text] = number
+    return sorted(set(unread) | set(doubled))
+
+
+def _text_of(readings: list[Any], number: int) -> str:
+    for reading in readings:
+        if number in reading.rows:
+            return str(reading.text)
+    return ""
 
 
 def _endpoint() -> str:
@@ -219,6 +352,70 @@ class _Bands:
     model: str | None
     call: Callable[..., tuple[str, dict[str, int]]] | None
 
+    def read(self) -> _ReadBands:
+        """Every band read in its own call, with the running transcript as
+        context."""
+        transcripts: list[str] = []
+        usage_total: dict[str, Any] = {}
+        readings: list[Any] = []
+        refusals: list[str] = []
+        for index in range(len(self.numbered)):
+            read = self._one(index, transcripts)
+            _absorb(usage_total, read.usage)
+            if read.refusal:
+                refusals.append(read.refusal)
+                continue
+            readings.extend(read.readings)
+            transcripts.extend(read.context)
+        combined = json.dumps(
+            {
+                "segments": [
+                    {
+                        "rows": list(reading.rows),
+                        "type": reading.kind,
+                        "transcript": reading.text,
+                        **({"injection_after": reading.injection_after} if reading.injection_after is not None else {}),
+                    }
+                    for reading in readings
+                ]
+            }
+        )
+        return _ReadBands(readings=readings, refusals=refusals, usage=usage_total, answer=combined)
+
+    def _one(self, index: int, so_far: list[str]) -> _BandReading:
+        """One band read, parsed, and turned into the context it contributes."""
+        strip = self.numbered[index]
+        numbers = sorted(strip.numbers.values())
+        band_text = _band_prompt(index, len(self.numbered), numbers, so_far)
+        options = (
+            VlmOptions(system=SYSTEM, user_text=band_text, model=self.model)
+            if self.model
+            else VlmOptions(system=SYSTEM, user_text=band_text)
+        )
+        answer, usage = self._call(index, band_text, options)
+        try:
+            band = Transcript.from_answer(answer, rows=numbers)
+        except ReadingError as exc:
+            return _BandReading(readings=[], usage=usage, context=[], refusal=f"band {index + 1}: {exc}")
+        return _BandReading(
+            readings=list(band.readings),
+            usage=usage,
+            context=[f"row {number}: {band.text_of(number)}" for number in numbers],
+            refusal="",
+        )
+
+    def _call(self, index: int, band_text: str, options: VlmOptions) -> tuple[str, dict[str, int]]:
+        """One band's call, and its answer written beside the run."""
+        path = self.render_paths[index]
+        if self.call is not None:
+            answer, usage = self.call([path], system=SYSTEM, user_text=band_text)
+        else:
+            answer, usage = transcribe_images_vlm([path], options=options)
+        (self.out_dir / f"{self.stem}.band-{index + 1}.answer.json").write_text(
+            json.dumps({"answer": answer, "usage": usage}, indent=1)
+        )
+        return answer, usage
+
 
 @dataclass(frozen=True)
 class _ReadBands:
@@ -231,62 +428,35 @@ class _ReadBands:
     answer: str
 
 
-def _read_bands(bands: _Bands) -> _ReadBands:
-    """Every band read in its own call, with the running transcript as
-    context."""
-    numbered, render_paths = bands.numbered, bands.render_paths
-    stem, out_dir, model, call = bands.stem, bands.out_dir, bands.model, bands.call
-    transcripts: list[str] = []
-    usage_total: dict[str, Any] = {}
-    readings: list[Any] = []
-    refusals: list[str] = []
-    for index, strip in enumerate(numbered):
-        numbers = sorted(strip.numbers.values())
-        carried = ", ".join(f"row {number}" for number in numbers)
-        so_far = "\n".join(transcripts)
-        band_text = (
-            f"This image is band {index + 1} of {len(numbered)} of one page, and it carries exactly {carried} "
-            "— no others. Return a reading for each of those rows and nothing else"
-            + (f". The writing above it, already read, is:\n{so_far}" if so_far else ".")
-        )
-        options = (
-            VlmOptions(system=SYSTEM, user_text=band_text, model=model)
-            if model
-            else VlmOptions(system=SYSTEM, user_text=band_text)
-        )
-        band_answer, usage = (
-            call([render_paths[index]], system=SYSTEM, user_text=band_text)
-            if call is not None
-            else transcribe_images_vlm([render_paths[index]], options=options)
-        )
-        (out_dir / f"{stem}.band-{index + 1}.answer.json").write_text(
-            json.dumps({"answer": band_answer, "usage": usage}, indent=1)
-        )
-        for key, value in usage.items():
-            if isinstance(value, int):
-                usage_total[key] = usage_total.get(key, 0) + value
-        usage_total["reasoning"] = str(usage_total.get("reasoning", "")) + str(usage.get("reasoning", ""))
-        try:
-            band = Transcript.from_answer(band_answer, rows=numbers)
-        except ReadingError as exc:
-            refusals.append(f"band {index + 1}: {exc}")
-            continue
-        readings.extend(band.readings)
-        transcripts.extend(f"row {number}: {band.text_of(number)}" for number in numbers)
-    combined = json.dumps(
-        {
-            "segments": [
-                {
-                    "rows": list(reading.rows),
-                    "type": reading.kind,
-                    "transcript": reading.text,
-                    **({"injection_after": reading.injection_after} if reading.injection_after is not None else {}),
-                }
-                for reading in readings
-            ]
-        }
+@dataclass(frozen=True)
+class _BandReading:
+    """What one band's call produced: its readings, the usage it cost, the line
+    of context it adds for the bands below, or the refusal that stopped it."""
+
+    readings: list[Any]
+    usage: dict[str, int]
+    context: list[str]
+    refusal: str
+
+
+def _absorb(total: dict[str, Any], usage: dict[str, int]) -> None:
+    """Add one call's usage to the run's, reasoning text included."""
+    for key, value in usage.items():
+        if isinstance(value, int):
+            total[key] = total.get(key, 0) + value
+    total["reasoning"] = str(total.get("reasoning", "")) + str(usage.get("reasoning", ""))
+
+
+def _band_prompt(index: int, of: int, numbers: list[int], so_far: list[str]) -> str:
+    """What each band is told: exactly which rows it carries, and the reading of
+    the bands above it for the thread of the letter."""
+    carried = ", ".join(f"row {number}" for number in numbers)
+    above = "\n".join(so_far)
+    prompt = (
+        f"This image is band {index + 1} of {of} of one page, and it carries exactly {carried} — no others. "
+        "Return a reading for each of those rows and nothing else"
     )
-    return _ReadBands(readings=readings, refusals=refusals, usage=usage_total, answer=combined)
+    return prompt + (f". The writing above it, already read, is:\n{above}" if above else ".")
 
 
 def _measure(transcript: Transcript) -> dict[str, Any]:
@@ -313,6 +483,11 @@ def _measure(transcript: Transcript) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     args = list(argv or sys.argv[1:])
+    alone: list[int] = []
+    if "--alone" in args:
+        index = args.index("--alone")
+        alone = [int(n) for n in args[index + 1].split(",")]
+        del args[index : index + 2]
     fixture = None
     if "--fixture" in args:
         index = args.index("--fixture")
@@ -323,6 +498,10 @@ def main(argv: list[str] | None = None) -> int:
     for page in pages:
         if not page.is_file():
             print(f"SKIP {page}: not on this box")
+            continue
+        if alone:
+            print(f"reading rows {alone} one at a time, each from its own crop")
+            read_rows_alone(page, numbers=alone, fixture=fixture)
             continue
         report = run(page, fixture=fixture)
         print(json.dumps(report, indent=1))

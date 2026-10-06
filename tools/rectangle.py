@@ -30,6 +30,12 @@ class Rectangle(NamedTuple):
         return (self.y0 + self.y1) / 2
 
 
+def overlaps(left: Rectangle, right: Rectangle) -> bool:
+    """Whether two rectangles share any area — the test every box layout needs
+    (a label that covers ink, two labels on one another)."""
+    return left.x0 < right.x1 and right.x0 < left.x1 and left.y0 < right.y1 and right.y0 < left.y1
+
+
 def gap(left: Rectangle, right: Rectangle) -> float:
     """The whitespace between two rectangles, horizontally."""
     return max(0.0, abs(left.cx - right.cx) - (left.width + right.width) / 2)

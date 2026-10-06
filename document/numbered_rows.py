@@ -226,6 +226,10 @@ def _column_left(rows: list[Row]) -> float:
     numbers out in the ragged margin, where the model could not find them: told
     "exactly rows 16..27", it found five of them and reported the rest empty."""
     widest = max((word.x1 for row in rows for word in row.word_boxes), default=0.0)
+    if widest <= 0.0:
+        # rows with no words (a bare record): the band is the only edge there
+        # is, and falling back to zero put the column over the writing
+        widest = max((row.band.x1 for row in rows), default=0.0)
     return widest + COLUMN_GAP
 
 

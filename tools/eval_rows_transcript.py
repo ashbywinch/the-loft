@@ -29,6 +29,7 @@ import statistics
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -155,37 +156,31 @@ def run(
     # the universe is the rows NUMBERED, each once: neighbouring bands overlap,
     # so a row can appear in two of them with its own single number
     drawn = len({number for strip in numbered for number in strip.numbers.values()})
-    # the manifest: which numbers each image carries. Without it the model
-    # guesses the extents ("Wait, no, the first image's last row is 10?"), and
-    # every guess it gets wrong costs rows.
-    manifest = "; ".join(
-        f"image {index + 1}: rows {min(strip.numbers.values())}-{max(strip.numbers.values())}"
-        for index, strip in enumerate(numbered)
-    )
-    user_text = (
-        f"The {len(numbered)} images are bands of one page, top to bottom, and they carry rows numbered 1..{drawn} "
-        f"between them. What each image carries ({manifest}). Read every row it carries, once — the rows in one "
-        "image are separate rows of writing, however close together they sit."
-    )
+    # ONE BAND PER CALL, each told exactly which rows it carries, and each
+    # given what the earlier bands read — the same continuity the pipeline's
+    # transcription prompt uses. A call per band also keeps every image at full
+    # resolution (one band, not three) and asks for a smaller answer, so no
+    # completion is cut off mid-JSON.
     started = time.monotonic()
-    options = (
-        VlmOptions(system=SYSTEM, user_text=user_text, model=model)
-        if model
-        else VlmOptions(system=SYSTEM, user_text=user_text)
+    band_read = _read_bands(
+        _Bands(
+            numbered=numbered,
+            render_paths=render_paths,
+            stem=stem,
+            out_dir=out_dir,
+            model=model,
+            call=call,
+        )
     )
-    if call is None:
-        answer, usage = transcribe_images_vlm(render_paths, options=options)
-    else:
-        answer, usage = call(render_paths, system=SYSTEM, user_text=user_text)
     seconds = time.monotonic() - started
-    (out_dir / f"{stem}.answer.json").write_text(json.dumps({"answer": answer, "usage": usage}, indent=1))
+    refusals, usage, answer = band_read.refusals, band_read.usage, band_read.answer
 
     report: dict[str, Any] = {
         "page": image_path.name,
         # the endpoint and the model the reading ACTUALLY used, and how long it
         # took: a run that answers in under a second is not reading a page
-        "endpoint": options.base_url,
-        "model": options.model,
+        "endpoint": _endpoint(),
+        "model": model or "dynamic/image",
         "seconds": round(seconds, 1),
         "rows": len(rows),
         "words": sum(len(row.word_boxes) for row in rows),
@@ -193,6 +188,9 @@ def run(
         "usage": usage,
         "renders": [str(path) for path in render_paths],
     }
+    if refusals:
+        report["refused"] = "; ".join(refusals)
+        return report
     try:
         transcript = Transcript.from_answer(answer, rows=drawn)
     except ReadingError as exc:
@@ -201,6 +199,94 @@ def run(
 
     report.update(_measure(transcript))
     return report
+
+
+def _endpoint() -> str:
+    """The endpoint the calls go to — as the client resolves it, so the report
+    cannot describe a different one than was used."""
+    return VlmOptions().base_url
+
+
+@dataclass(frozen=True)
+class _Bands:
+    """The bands of one page, ready to read: their renders on disk and what
+    reads them."""
+
+    numbered: list[NumberedRows]
+    render_paths: list[Path]
+    stem: str
+    out_dir: Path
+    model: str | None
+    call: Callable[..., tuple[str, dict[str, int]]] | None
+
+
+@dataclass(frozen=True)
+class _ReadBands:
+    """What reading the bands produced: the readings, the refusals that
+    happened, the total usage, and the combined answer."""
+
+    readings: list[Any]
+    refusals: list[str]
+    usage: dict[str, Any]
+    answer: str
+
+
+def _read_bands(bands: _Bands) -> _ReadBands:
+    """Every band read in its own call, with the running transcript as
+    context."""
+    numbered, render_paths = bands.numbered, bands.render_paths
+    stem, out_dir, model, call = bands.stem, bands.out_dir, bands.model, bands.call
+    transcripts: list[str] = []
+    usage_total: dict[str, Any] = {}
+    readings: list[Any] = []
+    refusals: list[str] = []
+    for index, strip in enumerate(numbered):
+        numbers = sorted(strip.numbers.values())
+        carried = ", ".join(f"row {number}" for number in numbers)
+        so_far = "\n".join(transcripts)
+        band_text = (
+            f"This image is band {index + 1} of {len(numbered)} of one page, and it carries exactly {carried} "
+            "— no others. Return a reading for each of those rows and nothing else"
+            + (f". The writing above it, already read, is:\n{so_far}" if so_far else ".")
+        )
+        options = (
+            VlmOptions(system=SYSTEM, user_text=band_text, model=model)
+            if model
+            else VlmOptions(system=SYSTEM, user_text=band_text)
+        )
+        band_answer, usage = (
+            call([render_paths[index]], system=SYSTEM, user_text=band_text)
+            if call is not None
+            else transcribe_images_vlm([render_paths[index]], options=options)
+        )
+        (out_dir / f"{stem}.band-{index + 1}.answer.json").write_text(
+            json.dumps({"answer": band_answer, "usage": usage}, indent=1)
+        )
+        for key, value in usage.items():
+            if isinstance(value, int):
+                usage_total[key] = usage_total.get(key, 0) + value
+        usage_total["reasoning"] = str(usage_total.get("reasoning", "")) + str(usage.get("reasoning", ""))
+        try:
+            band = Transcript.from_answer(band_answer, rows=numbers)
+        except ReadingError as exc:
+            refusals.append(f"band {index + 1}: {exc}")
+            continue
+        readings.extend(band.readings)
+        transcripts.extend(f"row {number}: {band.text_of(number)}" for number in numbers)
+    combined = json.dumps(
+        {
+            "segments": [
+                {
+                    "rows": list(reading.rows),
+                    "type": reading.kind,
+                    "transcript": reading.text,
+                    **({"injection_after": reading.injection_after} if reading.injection_after is not None else {}),
+                }
+                for reading in readings
+            ]
+        }
+    )
+    return _ReadBands(readings=readings, refusals=refusals, usage=usage_total, answer=combined)
 
 
 def _measure(transcript: Transcript) -> dict[str, Any]:

@@ -16,6 +16,7 @@ words, and the machine's own answer is the raw stage, not the truth).
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -58,13 +59,19 @@ class Transcript:
         self.readings = readings
 
     @classmethod
-    def from_answer(cls, answer: str, rows: int) -> Transcript:
-        """The model's answer for a page of `rows` numbered rows."""
+    def from_answer(cls, answer: str, rows: int | Sequence[int]) -> Transcript:
+        """The model's answer for the rows that were numbered.
+
+        `rows` is how many were numbered (1..N, a whole page) or the numbers
+        themselves — a band carries a run of a page's rows, and its answer must
+        cover exactly those."""
+        wanted = tuple(range(1, rows + 1)) if isinstance(rows, int) else tuple(sorted(rows))
+        highest = max(wanted, default=0)
         segments = _parse(answer)
         readings: list[RowReading] = []
         claimed: dict[int, int] = {}  # row number -> the reading that claimed it
         for index, segment in enumerate(segments):
-            reading = _reading(segment, index=index, rows=rows)
+            reading = _reading(segment, index=index, rows=highest)
             readings.append(reading)
             for number in reading.rows:
                 if number in claimed:
@@ -72,7 +79,7 @@ class Transcript:
                         f"row {number} is claimed twice: by reading {claimed[number]} and reading {index}"
                     )
                 claimed[number] = index
-        missing = sorted(set(range(1, rows + 1)) - set(claimed))
+        missing = sorted(set(wanted) - set(claimed))
         if missing:
             raise ReadingError(f"the answer leaves {len(missing)} row(s) unread: {missing[:20]}")
         cls._refuse_repeats(readings)

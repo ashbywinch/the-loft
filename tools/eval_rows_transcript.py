@@ -198,6 +198,11 @@ def run(
         "usage": usage,
         "renders": [str(path) for path in render_paths],
     }
+    # the reading is written where the page's other artifacts live. It was
+    # computed and dropped before this (the reviewer's copy came from a step
+    # run by hand), and an assembled reading nobody can read back is not a
+    # reading the pipeline can serve.
+    (out_dir / f"{image_path.stem}.answer.json").write_text(json.dumps({"answer": answer, "usage": usage}, indent=1))
     # the verdict is the COMBINED reading's: a band's refusal is a working
     # note (those rows were shown alone and may well have been read there)
     try:

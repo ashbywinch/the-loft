@@ -84,13 +84,29 @@ def test_an_injection_needs_its_target_and_writing_does_not_want_one() -> None:
 
 def test_only_writing_kinds_are_read() -> None:
     """A rule is a detector artefact, not writing: its kind is not in the
-    vocabulary, and a segment with no transcript is refused."""
+    vocabulary, and a segment with no transcript field at all is refused."""
     with pytest.raises(ReadingError, match="unknown type 'rule'"):
         Transcript.from_answer(_answer({"rows": [1], "type": "rule", "transcript": "—"}), rows=1)
     with pytest.raises(ReadingError, match="has no transcript"):
         Transcript.from_answer(_answer({"rows": [1], "type": "body"}), rows=1)
     with pytest.raises(ReadingError, match="names a row outside 1..1"):
         Transcript.from_answer(_answer({"rows": [4], "type": "body", "transcript": "gone"}), rows=1)
+
+
+def test_an_empty_transcript_is_an_unread_row_not_a_refusal() -> None:
+    """A row the model looked at and could not read comes back with an empty
+    transcript. The page is still read — the row is recorded as unread, so
+    nothing unconfirmed becomes the document's words and the reviewer is shown
+    it — where a row ABSENT from the answer is a refusal."""
+    transcript = Transcript.from_answer(
+        _answer(
+            {"rows": [1], "type": "body", "transcript": "read this one"},
+            {"rows": [2], "type": "body", "transcript": ""},
+        ),
+        rows=2,
+    )
+    assert transcript.text_of(1) == "read this one"
+    assert transcript.text_of(2) == "", "an unread row carries no text"
 
 
 def test_a_fenced_answer_is_read() -> None:

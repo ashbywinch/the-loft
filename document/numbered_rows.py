@@ -19,14 +19,19 @@ from __future__ import annotations
 
 from PIL import Image, ImageDraw
 
+from tools.render import RenderStyle
 from tools.row import Row
 
 ROW_NUM_SIZE = 26  # px: the pill's number, the review surface's own type size
+PILL_POINTER = 14  # px: how far the pill's pointer reaches back toward its row
 PILL_RADIUS = 12  # px: the pill's corner (`.rv-rownum`'s 10px at page scale)
 PILL_PAD_X = 8  # px: air either side of the number
 PILL_PAD_Y = 4  # px: air above and below it
 PILL_INSET = 6  # px: how far the pill's right edge sits left of the band
-PILL_LIFT = 10  # px: how far its top sits above the band's top edge
+PILL_LIFT = 0  # px: the pill is centred on its row's own line, not lifted above
+# it. Lifted, every number reads as belonging to the line above — "all the
+# numbers seem to be a bit high" (user, on the sheet) — and a row whose band
+# starts high is lifted furthest, which is how row 7's number came adrift.
 PILL_MIN_WIDTH = 30  # px: a one-digit pill is still a pill
 PILL_STEP = 6  # px: the gap between two pills that had to be stepped apart
 # Bands are cut SHORT on purpose. The vision API downsamples an image by its
@@ -90,8 +95,8 @@ class NumberedRows:
         ]
         ink_left = max(0, int(min(xs) if xs else 0) - INK_MARGIN)
         ink_right = min(page.width, int(max(xs) if xs else page.width) + INK_MARGIN)
-        number_left, _number_right = cls.numbers_extent(ordered)
-        ink_left = max(0, int(min(float(ink_left), float(number_left))) - INK_MARGIN)
+        _number_left, number_right = cls.numbers_extent(ordered)
+        ink_right = min(page.width, int(max(float(ink_right), float(number_right))) + INK_MARGIN)
         out: list[NumberedRows] = []
         for index in range(strips):
             band_top = int(bounds[index]) - (BAND_OVERLAP if index else 0)
@@ -123,7 +128,7 @@ class NumberedRows:
 
     @classmethod
     def numbers_extent(cls, rows: list[Row], *, offset_y: float = 0) -> tuple[float, float]:
-        """The left and right edges the numbers reach, page px.
+        """The left and right edges the numbers reach, page px (right margin).
 
         A number that shares its corner with another's steps outward, so the
         numbers can reach further left than the writing does. A caller that
@@ -151,13 +156,28 @@ class NumberedRows:
             measured = draw.textbbox((0, 0), text, font=font)
             width = max(PILL_MIN_WIDTH, (measured[2] - measured[0]) + 2 * PILL_PAD_X)
             height = (measured[3] - measured[1]) + 2 * PILL_PAD_Y
-            top = row.band.y0 - PILL_LIFT
-            right = row.band.x0 - PILL_INSET
-            left = right - width
-            while any(left < r and r0 < right + width and top < b and t0 < top + height for r0, t0, r, b in boxes):
-                right -= width + PILL_STEP  # outward, into the margin
-                left = right - width
-            boxes.append((left, top, right, top + height))
+            # centred on the row's own line and in the RIGHT margin, which is
+            # empty (the writing runs to x2006 of a 2544px page) — the left
+            # margin is where the crowded rows pushed each other's numbers
+            # around. The pill is the row's own hue and points back at it, so
+            # the pairing never depends on the number's exact position.
+            centre = (row.band.y0 + row.band.y1) / 2
+            top = centre - height / 2 - PILL_LIFT
+            bottom = top + height
+            # clear of EVERY line the pill's own height spans, not just its own:
+            # rows sit ~20px apart and a pill is ~34px tall, so ten of page-01's
+            # pills lay over a neighbour's writing (row 6's covered row 7, and
+            # the tail stack's covered each other) — ink under a label is ink
+            # the reader cannot see, and the repeats followed exactly that.
+            own = max(word.x1 for word in row.word_boxes) if row.word_boxes else row.band.x1
+            covered = [
+                word.rect.x1
+                for other in rows
+                for word in other.word_boxes
+                if word.rect.y0 < bottom and top < word.rect.y1
+            ]
+            left = max([own, *covered]) + PILL_INSET
+            boxes.append((left, top, left + width, bottom))
         return boxes
 
     @classmethod
@@ -167,16 +187,33 @@ class NumberedRows:
         numbers = {row.id: row.number for row in rows}
         draw = ImageDraw.Draw(canvas)
         font = _font()
-        for row, (left, top, right, bottom) in zip(rows, cls._pill_boxes(rows), strict=False):
+        style = RenderStyle()
+        for index, (row, (left, top, right, bottom)) in enumerate(zip(rows, cls._pill_boxes(rows), strict=False)):
             top -= offset_y
             bottom -= offset_y
             measured = draw.textbbox((0, 0), str(row.number), font=font)
-            draw.rounded_rectangle((left, top, right, bottom), radius=PILL_RADIUS, fill=(40, 110, 60))
+            # the row's OWN hue at full strength (the band is the same colour
+            # washed out): the pill and its band are one colour, so a number
+            # can be matched to its line by colour alone
+            red, green, blue, _alpha = style.colour(index)
+            fill = (red, green, blue)
+            draw.polygon(
+                [
+                    (left - PILL_POINTER, (top + bottom) / 2),
+                    (left, top + (bottom - top) / 4),
+                    (left, bottom - (bottom - top) / 4),
+                ],
+                fill=fill,
+                outline=(30, 30, 30),
+            )
+            draw.rounded_rectangle((left, top, right, bottom), radius=PILL_RADIUS, fill=fill, outline=(30, 30, 30))
             draw.text(
                 (left + PILL_PAD_X - measured[0], top + PILL_PAD_Y - measured[1]),
                 str(row.number),
                 fill=(255, 255, 255),
                 font=font,
+                stroke_width=2,
+                stroke_fill=(30, 30, 30),
             )
         return cls(canvas, numbers)
 

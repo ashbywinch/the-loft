@@ -41,7 +41,7 @@ class RowReading:
     """
 
     rows: tuple[int, ...]
-    text: str
+    text: str  # "" when the model could not read the row: unread, never text
     kind: str
     injection_after: int | None
 
@@ -95,7 +95,7 @@ class Transcript:
         its tail stack repeated one line across 37, 39 and 41. Two rows may
         share a short word; a whole line twice means one row was read twice,
         so the answer is refused rather than half-believed."""
-        long_enough = [reading for reading in readings if len(reading.text.split()) >= 4]
+        long_enough = [reading for reading in readings if len(reading.text.split()) >= 4]  # unread rows excluded
         seen: dict[str, int] = {}
         for index, reading in enumerate(long_enough):
             key = " ".join(reading.text.lower().split())
@@ -168,8 +168,13 @@ def _reading(segment: Any, *, index: int, rows: int) -> RowReading:
     if kind not in KINDS:
         raise ReadingError(f"reading {index}: unknown type {kind!r} (not {KINDS})")
     text = segment.get("transcript")
-    if not isinstance(text, str) or not text.strip():
+    if not isinstance(text, str):
         raise ReadingError(f"reading {index} has no transcript: {segment!r}")
+    # an EMPTY transcript is the model saying it cannot read that row. That is
+    # a fact about the page, not a malformed answer: it is recorded as unread
+    # (no text, and nothing unconfirmed is treated as the document's words) and
+    # the reviewer is shown the row. A row ABSENT from the answer is still a
+    # refusal — that is a partial read pretending to be a whole one.
     return RowReading(
         rows=numbers,
         text=text.strip(),

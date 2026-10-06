@@ -29,9 +29,20 @@ PILL_INSET = 6  # px: how far the pill's right edge sits left of the band
 PILL_LIFT = 10  # px: how far its top sits above the band's top edge
 PILL_MIN_WIDTH = 30  # px: a one-digit pill is still a pill
 PILL_STEP = 6  # px: the gap between two pills that had to be stepped apart
-STRIPS = 3  # bands a tall page is cut into before the model reads it
-OVERLAP = 60  # px: how much neighbouring bands share, so no row is lost at a cut
-INK_MARGIN = 140  # px: air either side of the writing — the numbers sit in it
+# Bands are cut SHORT on purpose. The vision API downsamples an image by its
+# long edge, so a tall band returns the writing at less than half the page's
+# resolution — and rows whose bands overlap (page-01's tail stack, 38/39/40/41
+# within 20px) become one blur the model reads twice. A short band stays under
+# the API's pixel budget and arrives at the page's own resolution.
+STRIPS = 3
+# Neighbouring bands do NOT overlap. They did (60px), to be safe against a cut
+# through a row — but the cuts are placed in the gaps BETWEEN rows, so there is
+# nothing to be safe about, and the overlap made the model read the shared
+# writing twice: page-01's rows 15, 16 and 27 appeared in two bands, and the
+# model returned band 2's top lines as rows 17-20 — the same text as 13-16.
+BAND_OVERLAP = 0  # px: bands are exclusive; a row is numbered in exactly one
+INK_MARGIN = 40  # px: air either side of the writing — the numbers reach into it,
+# and `numbers_extent` widens this left edge when a stepped pill needs more
 
 
 class NumberedRows:
@@ -83,8 +94,8 @@ class NumberedRows:
         ink_left = max(0, int(min(float(ink_left), float(number_left))) - INK_MARGIN)
         out: list[NumberedRows] = []
         for index in range(strips):
-            band_top = int(bounds[index]) - (OVERLAP if index else 0)
-            band_bottom = int(bounds[index + 1]) + (OVERLAP if index + 1 < strips else 0)
+            band_top = int(bounds[index]) - (BAND_OVERLAP if index else 0)
+            band_bottom = int(bounds[index + 1]) + (BAND_OVERLAP if index + 1 < strips else 0)
             band_top, band_bottom = max(0, band_top), min(page.height, band_bottom)
             inside = [
                 row
@@ -96,6 +107,8 @@ class NumberedRows:
             # the writing's, plus the gutter the numbers sit in. Page-01's
             # writing is 57% of the page's width — sending the paper too costs
             # the model ~40% of the detail it could have had.
+            if not inside:
+                continue  # a band with no rows is an image of a margin
             crop = page.convert("RGB").crop((ink_left, band_top, ink_right, band_bottom))
             out.append(cls._draw(crop, inside, offset_y=band_top))
         return out
@@ -187,8 +200,13 @@ def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> lis
     wanted = [top + (bottom - top) * index / strips for index in range(1, strips)]
     chosen: list[float] = []
     for target in wanted:
-        nearest = min(gaps, key=lambda gap: abs(gap[1] - target) + (0 if gap[0] >= 0 else 10_000))
-        chosen.append(nearest[1])
+        # one gap per cut: two cuts in the same gap make a band with no rows,
+        # which is an image of a margin and a wasted look (a 6-band page has
+        # fewer distinct gaps than that on its thin stretches)
+        free = [gap for gap in gaps if gap[1] not in chosen]
+        if not free:
+            break
+        chosen.append(min(free, key=lambda gap: abs(gap[1] - target) + (0 if gap[0] >= 0 else 10_000))[1])
     return sorted(chosen)
 
 

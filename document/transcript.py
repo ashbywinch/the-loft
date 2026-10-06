@@ -75,7 +75,28 @@ class Transcript:
         missing = sorted(set(range(1, rows + 1)) - set(claimed))
         if missing:
             raise ReadingError(f"the answer leaves {len(missing)} row(s) unread: {missing[:20]}")
+        cls._refuse_repeats(readings)
         return cls(tuple(readings))
+
+    @staticmethod
+    def _refuse_repeats(readings: list[RowReading]) -> None:
+        """One line of writing read twice is a duplicated transcript.
+
+        Rows in a tight stack have bands that overlap, and a model shown them
+        can return the same writing under two numbers — page-01's rows 13-16
+        came back again as 17-20, word for word (a band overlap did it), and
+        its tail stack repeated one line across 37, 39 and 41. Two rows may
+        share a short word; a whole line twice means one row was read twice,
+        so the answer is refused rather than half-believed."""
+        long_enough = [reading for reading in readings if len(reading.text.split()) >= 4]
+        seen: dict[str, int] = {}
+        for index, reading in enumerate(long_enough):
+            key = " ".join(reading.text.lower().split())
+            if key in seen:
+                raise ReadingError(
+                    f"readings {seen[key]} and {index} return the same line twice: {reading.text[:60]!r}"
+                )
+            seen[key] = index
 
     def text_of(self, row: int) -> str:
         """What row `row` says — the readings that cover it, in order."""

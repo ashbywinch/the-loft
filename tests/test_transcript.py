@@ -123,3 +123,26 @@ def test_the_rows_are_numbered_where_the_number_cannot_be_mistaken() -> None:
     assert changed > 50, "no chip was drawn"
     # nothing is painted over the rows' own writing
     assert all(numbered.image.getpixel((250, 55)) == (250, 250, 245) for _ in [0])
+
+
+def test_a_line_read_twice_is_refused() -> None:
+    """A tight stack's overlapping bands make a model return the same writing
+    under two numbers (page-01: rows 13-16 came back again as 17-20). Two rows
+    may share a short word; a whole line twice means one row was read twice."""
+    with pytest.raises(ReadingError, match="return the same line twice"):
+        Transcript.from_answer(
+            _answer(
+                {"rows": [1], "type": "body", "transcript": "the same line of writing here"},
+                {"rows": [2], "type": "body", "transcript": "The same line of writing here"},
+            ),
+            rows=2,
+        )
+    # short repeats are ordinary writing, not a double read
+    ok = Transcript.from_answer(
+        _answer(
+            {"rows": [1], "type": "body", "transcript": "—"},
+            {"rows": [2], "type": "body", "transcript": "—"},
+        ),
+        rows=2,
+    )
+    assert len(ok.readings) == 2

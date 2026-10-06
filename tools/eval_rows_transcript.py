@@ -155,9 +155,17 @@ def run(
     # the universe is the rows NUMBERED, each once: neighbouring bands overlap,
     # so a row can appear in two of them with its own single number
     drawn = len({number for strip in numbered for number in strip.numbers.values()})
+    # the manifest: which numbers each image carries. Without it the model
+    # guesses the extents ("Wait, no, the first image's last row is 10?"), and
+    # every guess it gets wrong costs rows.
+    manifest = "; ".join(
+        f"image {index + 1}: rows {min(strip.numbers.values())}-{max(strip.numbers.values())}"
+        for index, strip in enumerate(numbered)
+    )
     user_text = (
-        f"The {len(numbered)} images are bands of one page, top to bottom, with its rows numbered 1..{drawn}. "
-        "Return every row, once."
+        f"The {len(numbered)} images are bands of one page, top to bottom, and they carry rows numbered 1..{drawn} "
+        f"between them. What each image carries ({manifest}). Read every row it carries, once — the rows in one "
+        "image are separate rows of writing, however close together they sit."
     )
     started = time.monotonic()
     options = (

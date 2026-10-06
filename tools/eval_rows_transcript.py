@@ -53,8 +53,14 @@ DEFAULT_PAGE = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/
 
 SYSTEM = (
     "You read a scanned page of handwriting. The image shows the page with its rows "
-    "numbered: one circled number per row of writing, in reading order, sitting in the "
-    "left margin beside the row it labels. The number IS the row's number.\n\n"
+    "numbered: one numbered chip per row of writing, in reading order, sitting beside "
+    "the row it labels. The number IS the row's number.\n\n"
+    "Each chip is drawn in the colour of the line it belongs to, and every line of "
+    "writing is tinted that same colour: the chip and its row are one colour. When it "
+    "is unclear which line a number belongs to — the writing is crowded, the chip sits "
+    "between two lines, or two chips are close together — match the chip to the line "
+    "whose tint is the SAME colour as the chip, and read that line as that number's "
+    "row. The colour decides it; position alone may not.\n\n"
     "For every numbered row, return its writing. A number may cover several rows when "
     "the writing is one continuous piece (a sentence broken across rows); never give a "
     "row two readings.\n\n"
@@ -459,7 +465,9 @@ def _band_prompt(index: int, of: int, numbers: list[int], so_far: list[str]) -> 
     above = "\n".join(so_far)
     prompt = (
         f"This image is band {index + 1} of {of} of one page, and it carries exactly {carried} — no others. "
-        "Return a reading for each of those rows and nothing else"
+        "Return a reading for each of those rows and nothing else. Each chip carries the colour of the line it "
+        "belongs to and that line is tinted the same colour: if it is not clear which line a number goes with, "
+        "follow the colour"
     )
     return prompt + (f". The writing above it, already read, is:\n{above}" if above else ".")
 

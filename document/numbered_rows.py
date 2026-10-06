@@ -168,6 +168,21 @@ class NumberedRows:
         return min(b.x0 for b in boxes), max(b.x1 for b in boxes)
 
     @classmethod
+    def end_centre(cls, row: Row, *, left_end: bool) -> float:
+        """The vertical centre of the end of the row's line the number stands
+        beside: the leftmost word's centre for a number to the left, the
+        rightmost word's for one to the right.
+
+        Not the whole line's centre: a line of handwriting rises and falls, and
+        the band's middle can be a full word's height away from the end the
+        pointer actually touches — the number then reads as belonging to the
+        line above or below it at exactly the point where that matters."""
+        if not row.word_boxes:
+            return (row.band.y0 + row.band.y1) / 2
+        end = min(row.word_boxes, key=lambda w: w.rect.x0) if left_end else max(row.word_boxes, key=lambda w: w.rect.x1)
+        return (end.rect.y0 + end.rect.y1) / 2
+
+    @classmethod
     def _pill_boxes(cls, rows: list[Row]) -> list[Rectangle]:
         """Where every number's pill lands — the placement, without painting.
 
@@ -185,22 +200,27 @@ class NumberedRows:
             measured = draw.textbbox((0, 0), str(row.number), font=font)
             width = max(PILL_MIN_WIDTH, (measured[2] - measured[0]) + 2 * PILL_PAD_X)
             height = (measured[3] - measured[1]) + 2 * PILL_PAD_Y
-            centre = (row.band.y0 + row.band.y1) / 2
-            top = centre - height / 2 - PILL_LIFT
             left_edge = min((w.rect.x0 for w in row.word_boxes), default=row.band.x0)
             right_edge = max((w.rect.x1 for w in row.word_boxes), default=row.band.x1)
-            beside = next(
-                (
-                    Rectangle(candidate, top, candidate + width, top + height)
-                    for candidate in (left_edge - PILL_INSET - width, right_edge + PILL_INSET)
-                    if _fits(Rectangle(candidate, top, candidate + width, top + height), ink, boxes)
-                ),
-                None,
+            # each candidate sits level with the END of the line it stands
+            # beside, not with the line's middle
+            beside = (
+                (left_edge - PILL_INSET - width, cls.end_centre(row, left_end=True)),
+                (right_edge + PILL_INSET, cls.end_centre(row, left_end=False)),
             )
-            if beside is not None:
-                boxes.append(beside)
-                continue
-            boxes.append(_in_lane(Rectangle(margin, top, margin + width, top + height), ink, boxes))
+            for candidate, centre in beside:
+                top = centre - height / 2 - PILL_LIFT
+                box = Rectangle(candidate, top, candidate + width, top + height)
+                if _fits(box, ink, boxes):
+                    boxes.append(box)
+                    break
+            else:
+                # the margin is the fallback that always takes the number: the
+                # page's left margin is wide, and a number further out is still
+                # unmistakably its row's
+                centre = cls.end_centre(row, left_end=True)
+                top = centre - height / 2 - PILL_LIFT
+                boxes.append(_in_lane(Rectangle(margin, top, margin + width, top + height), ink, boxes))
         return boxes
 
     @classmethod

@@ -137,18 +137,51 @@ def test_the_bands_hold_every_number_and_all_the_writing() -> None:
     assert sum(len(strip.numbers) for strip in strips) >= len(rows)
 
 
-def test_no_number_leaves_its_own_rows_height() -> None:
+def test_no_number_leaves_the_end_of_the_line_it_stands_beside() -> None:
     """A number level with the wrong row points at the wrong row: the user saw
-    38 sitting beside 39. A number that cannot fit beside its row steps OUT
-    into the margin, never up or down."""
+    38 sitting beside 39. It is now level with the END of its own line that it
+    stands beside — the leftmost word's centre for a number on the left, the
+    rightmost word's for one on the right — because a line of handwriting rises
+    and falls and the band's middle can be a word's height from the end the
+    pointer touches."""
     rows = _page01_rows()
     boxes = NumberedRows._pill_boxes(rows)
     for row, box in zip(rows, boxes, strict=False):
-        centre = (row.band.y0 + row.band.y1) / 2
+        # "right" means the number's pointer faces right, i.e. the row is to the
+        # RIGHT of it: the number stands beside the row's LEFT end
+        stands_beside_left_end = NumberedRows.pointer_side(box, row) == "right"
+        end = NumberedRows.end_centre(row, left_end=stands_beside_left_end)
         pill_centre = (box.y0 + box.y1) / 2
-        assert abs(pill_centre - centre) <= 20, (
-            f"number {row.number} sits {pill_centre - centre:.0f}px off its row's height"
+        assert abs(pill_centre - end) <= 2, (
+            f"number {row.number} sits {pill_centre - end:.0f}px off the end of its line"
         )
+
+
+def test_a_line_that_rises_and_falls_puts_its_number_at_the_end() -> None:
+    """The whole point of standing level with the end: on a ragged line, the
+    band's centre is between the two ends and belongs to neither, so a number
+    there reads as the row above or below at the one place that matters."""
+    ragged = Row(
+        id="seg-1",
+        kind="body",
+        number=1,
+        word_boxes=[_word(200, 100, 300, 140), _word(600, 260, 700, 300)],
+        band=Rectangle(200, 100, 700, 300),
+    )
+    # a neighbour's writing fills the gap on the left, so the number must go right
+    blocker = Row(
+        id="seg-2",
+        kind="body",
+        number=2,
+        word_boxes=[_word(100, 100, 190, 140)],
+        band=Rectangle(100, 100, 190, 140),
+    )
+    boxes = NumberedRows._pill_boxes([ragged, blocker])
+    chip = (boxes[0].y0 + boxes[0].y1) / 2
+    right_end = NumberedRows.end_centre(ragged, left_end=False)
+    middle = (ragged.band.y0 + ragged.band.y1) / 2
+    assert abs(chip - right_end) <= 2, f"the number sits at {chip:.0f}, not at its line's right end {right_end:.0f}"
+    assert abs(chip - middle) > 20, "the number is at the middle of the line, which is neither end"
 
 
 def test_the_number_points_at_its_own_row() -> None:

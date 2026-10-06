@@ -179,6 +179,35 @@ def test_a_number_carries_its_own_rows_hue() -> None:
         assert turn < 0.02, f"row {row.number}: the number's hue is {turn:.3f} of a turn from its band's"
 
 
+def test_the_chip_paints_the_colour_its_rows_band_shows() -> None:
+    """The number and its row have to read as ONE colour, and matching the hue
+    is not enough: on the rendered sheet the bands sit at saturation 0.06-0.19 /
+    value 0.90-0.98, and a chip at full saturation and half brightness is 4-10x
+    away — "they don't actually match" (user). The paper here is cream, not
+    white: a chip that recomputes the wash instead of sampling the band comes
+    out ~20 units off on paper, and this is the check that catches it."""
+    from tools.render import render_rows
+
+    paper = (247, 243, 232)
+    rows = [
+        Row(
+            id="seg-1",
+            kind="body",
+            number=1,
+            word_boxes=[_word(100, 100, 400, 140)],
+            band=Rectangle(100, 100, 400, 140),
+        )
+    ]
+    tinted = render_rows(Image.new("RGB", (600, 200), paper), rows)
+    box = NumberedRows._pill_boxes(rows)[0]
+    chip_xy = (int(box.y0) + 4, int(box.x0) + 4)
+    band_px = np.asarray(tinted)[120, 250].astype(int)
+    chip_px = np.asarray(NumberedRows.draw_numbers(tinted, rows).image)[chip_xy].astype(int)
+    assert np.abs(band_px - chip_px).max() <= 4, (
+        f"the number is painted {tuple(chip_px)} where its row's band is {tuple(band_px)} on paper {paper}"
+    )
+
+
 def test_a_number_lands_beside_its_row_inside_a_cut_band() -> None:
     """A band is a crop, so it has an x origin as well as a y one. Taking off
     only the y painted every number ~450px right of its row — over the middle

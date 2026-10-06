@@ -54,13 +54,16 @@ BAND_OVERLAP = 0  # px: bands are exclusive; a row is numbered in exactly one
 INK_MARGIN = 40  # px: air either side of the writing — the numbers reach into it,
 # and `numbers_extent` widens this left edge when a stepped pill needs more
 
-# The pill is the row's OWN colour at full strength, not a darkened copy of it:
-# clamping the channels (what this used to do) shrinks the dominant channel
-# first, so a yellow pill came out brown and stopped matching its band. The hue
-# is kept and only the value moves, which is what "the same colour, darker"
-# means. White digits read at this value on every hue the palette holds.
-PILL_SATURATION = 0.80
-PILL_VALUE = 0.52
+# The chip is the colour its row's BAND is, drawn opaque instead of translucent:
+# the same mix of the row's hue into the paper that the band shows, so a number
+# and its row are visibly one colour. Two earlier attempts got this wrong in the
+# same way — matching the hue and calling it a match. Measured on the rendered
+# sheet, the band washes sit at saturation 0.06-0.19 / value 0.90-0.98, and a
+# chip at 0.80 / 0.52 is 4-10x more saturated and half as bright: a dark blob
+# that belongs to no row. The digit is that same hue taken dark, which reads on
+# the wash and introduces no colour of its own.
+DIGIT_SATURATION = 0.75
+DIGIT_VALUE = 0.42
 # A number that cannot sit beside its row steps OUT into the margin, lane by
 # lane, and never up or down: a number level with the wrong row points at the
 # wrong row (the user saw 38 beside 39). The lanes run out at the page's edge.
@@ -209,9 +212,20 @@ class NumberedRows:
 
     @classmethod
     def pill_colour(cls, index: int) -> tuple[int, int, int]:
-        """The row's hue at full strength: white digits read on it and it is
-        still the row's colour, which a channel-clamped darkening is not."""
-        red, green, blue = colorsys.hsv_to_rgb(cls.hue_of(index), PILL_SATURATION, PILL_VALUE)
+        """The colour the row's BAND shows: the row's hue mixed into the paper
+        at the palette's tint. Drawn opaque it is the band's colour exactly, so
+        the number and its row read as one colour rather than two."""
+        red, green, blue, alpha = RenderStyle().colour(index)
+        share = alpha / 255
+        washed = (int(channel * share + 255 * (1 - share)) for channel in (red, green, blue))
+        first, second, third = washed
+        return first, second, third
+
+    @classmethod
+    def digit_colour(cls, index: int) -> tuple[int, int, int]:
+        """The same hue taken dark: it reads on the row's own wash and adds no
+        colour that is not the row's."""
+        red, green, blue = colorsys.hsv_to_rgb(cls.hue_of(index), DIGIT_SATURATION, DIGIT_VALUE)
         return int(red * 255), int(green * 255), int(blue * 255)
 
     @classmethod
@@ -221,6 +235,35 @@ class NumberedRows:
         right, one right of it points left; pointed the other way it aims at
         nothing, which is what the user saw on every number on the page."""
         return "right" if (box.x0 + box.x1) / 2 < (row.band.x0 + row.band.x1) / 2 else "left"
+
+    @classmethod
+    def _band_colour(cls, canvas: Image.Image, row: Row, *, offset_x: float, offset_y: float) -> tuple[int, int, int]:
+        """The colour the row's band shows on this canvas.
+
+        Sampled along the band's top edge and taken lightest, which is the tint
+        itself rather than a stroke of the writing under it. A canvas with no
+        band (a bare page) falls back to the palette's wash, which is that
+        colour on white paper."""
+        band = row.band
+        wash = cls.pill_colour(row.number - 1)
+        # inside the row's own word boxes, where the tint is painted: along the
+        # band's edge the lightest pixel is the paper BETWEEN the words, and a
+        # chip that colour is a chip nobody can see. Inside a word's box the
+        # only thing darker than the tint is the writing itself, so the lightest
+        # sample there is the tint.
+        points = [
+            (
+                min(max(int((word.x0 + word.x1) / 2 - offset_x), 0), canvas.width - 1),
+                min(max(int((word.y0 + word.y1) / 2 - offset_y), 0), canvas.height - 1),
+            )
+            for word in row.word_boxes[:8]
+        ]
+        if not points:
+            y = min(max(int(band.y0 - offset_y) + 2, 0), canvas.height - 1)
+            left = min(max(int(band.x0 - offset_x) + 2, 0), canvas.width - 1)
+            points = [(left, y)]
+        lightest = max((_rgb(canvas.getpixel(point)) for point in points), key=sum)
+        return wash if sum(lightest) >= 3 * 250 else lightest
 
     @classmethod
     def _draw(cls, canvas: Image.Image, rows: list[Row], *, offset_x: float = 0, offset_y: float = 0) -> NumberedRows:
@@ -234,12 +277,16 @@ class NumberedRows:
             left, top = box.x0 - offset_x, box.y0 - offset_y
             right, bottom = box.x1 - offset_x, box.y1 - offset_y
             measured = draw.textbbox((0, 0), str(row.number), font=font)
-            # the row's own hue at full strength: the pill and its band are one
-            # colour, so a number can be matched to its line by colour alone.
+            # The chip is the colour its row's BAND actually shows, sampled off
+            # this canvas: the palette wash mixed into white is not that colour,
+            # because the paper is not white (measured 16-28 units apart on the
+            # scanned sheet), and a number that is nearly its row's colour still
+            # reads as a different one. The digit is the same hue taken dark.
             # The palette index is the row's NUMBER, not its place in this
             # image: in a band the two differ, and the colour stopped matching
             # the band it came from.
-            fill = cls.pill_colour(row.number - 1)
+            fill = cls._band_colour(canvas, row, offset_x=offset_x, offset_y=offset_y)
+            ink = cls.digit_colour(row.number - 1)
             edge_left = min((word.x0 for word in row.word_boxes), default=row.band.x0) - offset_x
             edge_right = max((word.x1 for word in row.word_boxes), default=row.band.x1) - offset_x
             centre_y = (top + bottom) / 2
@@ -250,7 +297,7 @@ class NumberedRows:
                 tip, root, row_edge = left - PILL_POINTER, left, edge_right
             else:
                 tip, root, row_edge = right + PILL_POINTER, right, edge_left
-            draw.line([(row_edge, centre_y), (root, centre_y)], fill=fill, width=3)
+            draw.line([(row_edge, centre_y), (root, centre_y)], fill=ink, width=3)
             draw.polygon(
                 [
                     (tip, centre_y),
@@ -258,13 +305,13 @@ class NumberedRows:
                     (root, bottom - (bottom - top) / 4),
                 ],
                 fill=fill,
-                outline=(30, 30, 30),
+                outline=ink,
             )
-            draw.rounded_rectangle((left, top, right, bottom), radius=PILL_RADIUS, fill=fill, outline=(30, 30, 30))
+            draw.rounded_rectangle((left, top, right, bottom), radius=PILL_RADIUS, fill=fill, outline=ink)
             draw.text(
                 (left + PILL_PAD_X - measured[0], top + PILL_PAD_Y - measured[1]),
                 str(row.number),
-                fill=(255, 255, 255),
+                fill=ink,
                 font=font,
             )
         return cls(canvas, numbers)
@@ -311,6 +358,15 @@ def _margin_column(rows: list[Row], *, width: float = 0.0) -> float:
     other."""
     edges = [w.rect.x0 for row in rows for w in row.word_boxes] or [row.band.x0 for row in rows]
     return max(0.0, min(edges) - COLUMN_GAP - width)
+
+
+def _rgb(pixel: object) -> tuple[int, int, int]:
+    """A pixel as three channels — PIL hands back a tuple on an RGB image, and
+    on an RGB image only, which is what every canvas here is."""
+    # every canvas here is RGB, so getpixel returns channels, never a float
+    channels: tuple[int, ...] = tuple(pixel)  # type: ignore[arg-type]  # RGB canvas, so channels not a float
+    first, second, third = channels[:3]
+    return first, second, third
 
 
 def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> list[float]:

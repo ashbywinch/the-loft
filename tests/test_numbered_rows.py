@@ -15,10 +15,11 @@ from __future__ import annotations
 import colorsys
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 
 from document.numbered_rows import PILL_INSET as PILL_GAP
-from document.numbered_rows import NumberedRows
+from document.numbered_rows import PILL_POINTER, NumberedRows
 from tools.eval_rows_transcript import words_from
 from tools.rectangle import Rectangle, overlaps
 from tools.row import Row
@@ -176,3 +177,55 @@ def test_a_number_carries_its_own_rows_hue() -> None:
         pill_hue = colorsys.rgb_to_hsv(red / 255, green / 255, blue / 255)[0]
         turn = abs(((band_hue - pill_hue) + 0.5) % 1.0 - 0.5)
         assert turn < 0.02, f"row {row.number}: the number's hue is {turn:.3f} of a turn from its band's"
+
+
+def test_a_number_lands_beside_its_row_inside_a_cut_band() -> None:
+    """A band is a crop, so it has an x origin as well as a y one. Taking off
+    only the y painted every number ~450px right of its row — over the middle
+    of the writing, beside a neighbouring line — which is what made the model
+    merge rows 6, 7 and 10 into their neighbours and refuse every band."""
+    page = Image.new("RGB", (2544, 4642), (250, 250, 250))
+    rows = _page01_rows()
+    strips = NumberedRows.render_strips(page, rows, strips=3)
+    assert strips, "no strips were rendered"
+    seen: set[int] = set()
+    for strip in strips:
+        for row in rows:
+            number = strip.numbers.get(row.id)
+            if number is None:
+                continue
+            seen.add(number)
+            assert number == row.number, f"{row.id} is numbered {number}, not {row.number}"
+    assert seen == {row.number for row in rows}, "a row is missing from every strip"
+
+
+def test_a_number_is_painted_at_the_crops_origin_in_its_own_colour() -> None:
+    """Two ways to get a number wrong in a band, in one check: painted in page
+    coordinates on a cropped canvas (it lands beside another row), and coloured
+    by its place in the image rather than its own number (the band it matches
+    is the wrong one). Row 28 is wanted because it is neither the first row nor
+    in the first band."""
+    rows = [
+        Row(
+            id="seg-28",
+            kind="body",
+            number=28,
+            word_boxes=[_word(600, 100, 900, 140)],
+            band=Rectangle(600, 100, 900, 140),
+        )
+    ]
+    canvas = Image.new("RGB", (500, 200), (250, 250, 250))
+    drawn = NumberedRows.draw_numbers(canvas, rows, offset_x=200)
+    assert drawn.numbers == {"seg-28": 28}
+    expected = NumberedRows.pill_colour(27)
+    painted = np.nonzero(np.all(np.asarray(canvas) == expected, axis=2))[1]
+    assert len(painted), "the number was not painted in its own row's colour"
+    box = NumberedRows._pill_boxes(rows)[0]
+    gutter_x, pill_right = box.x0 - 200, box.x1 - 200
+    assert abs(int(painted.min()) - gutter_x) <= 2, (
+        f"the pill starts at x{painted.min()}; its row's gutter in the crop is x{gutter_x}"
+    )
+    # the pointer reaches PILL_POINTER px further out, toward its row
+    assert int(painted.max()) <= pill_right + PILL_POINTER + 2, (
+        f"the number reaches x{painted.max()}, past its row's pill at x{pill_right}"
+    )

@@ -132,16 +132,23 @@ class NumberedRows:
             if not inside:
                 continue  # a band with no rows is an image of a margin
             crop = page.convert("RGB").crop((ink_left, band_top, ink_right, band_bottom))
-            out.append(cls._draw(crop, inside, offset_y=band_top))
+            # BOTH origins are taken off the numbers. With only the y taken off,
+            # every number was painted `ink_left` px right of its row — on the
+            # middle of the writing, in the middle of a neighbouring row — which
+            # is what made the bands unreadable and sent every row to the
+            # read-alone path.
+            out.append(cls._draw(crop, inside, offset_x=ink_left, offset_y=band_top))
         return out
 
     @classmethod
-    def draw_numbers(cls, canvas: Image.Image, rows: list[Row], *, offset_y: float = 0) -> NumberedRows:
+    def draw_numbers(
+        cls, canvas: Image.Image, rows: list[Row], *, offset_x: float = 0, offset_y: float = 0
+    ) -> NumberedRows:
         """`canvas` with the rows' numbers drawn in the gutter, as `render`
         draws them — the one place row numbers are painted, so a caller that
         already has a rendered page (a tinted comparison sheet, say) uses the
         same convention rather than a second one."""
-        return cls._draw(canvas, sorted(rows, key=lambda row: row.number), offset_y=offset_y)
+        return cls._draw(canvas, sorted(rows, key=lambda row: row.number), offset_x=offset_x, offset_y=offset_y)
 
     @classmethod
     def numbers_extent(cls, rows: list[Row], *, offset_y: float = 0) -> tuple[float, float]:
@@ -216,20 +223,25 @@ class NumberedRows:
         return "right" if (box.x0 + box.x1) / 2 < (row.band.x0 + row.band.x1) / 2 else "left"
 
     @classmethod
-    def _draw(cls, canvas: Image.Image, rows: list[Row], *, offset_y: float) -> NumberedRows:
+    def _draw(cls, canvas: Image.Image, rows: list[Row], *, offset_x: float = 0, offset_y: float = 0) -> NumberedRows:
         """One image with the numbers of `rows` drawn on it, page coordinates
-        shifted into this image's own space."""
+        shifted into this image's own space — BOTH axes: a cut-out band has an
+        x origin as much as a y one."""
         numbers = {row.id: row.number for row in rows}
         draw = ImageDraw.Draw(canvas)
         font = _font()
-        for index, (row, box) in enumerate(zip(rows, cls._pill_boxes(rows), strict=False)):
-            left, top, right, bottom = box.x0, box.y0 - offset_y, box.x1, box.y1 - offset_y
+        for row, box in zip(rows, cls._pill_boxes(rows), strict=False):
+            left, top = box.x0 - offset_x, box.y0 - offset_y
+            right, bottom = box.x1 - offset_x, box.y1 - offset_y
             measured = draw.textbbox((0, 0), str(row.number), font=font)
             # the row's own hue at full strength: the pill and its band are one
-            # colour, so a number can be matched to its line by colour alone
-            fill = cls.pill_colour(index)
-            edge_left = min((word.x0 for word in row.word_boxes), default=row.band.x0)
-            edge_right = max((word.x1 for word in row.word_boxes), default=row.band.x1)
+            # colour, so a number can be matched to its line by colour alone.
+            # The palette index is the row's NUMBER, not its place in this
+            # image: in a band the two differ, and the colour stopped matching
+            # the band it came from.
+            fill = cls.pill_colour(row.number - 1)
+            edge_left = min((word.x0 for word in row.word_boxes), default=row.band.x0) - offset_x
+            edge_right = max((word.x1 for word in row.word_boxes), default=row.band.x1) - offset_x
             centre_y = (top + bottom) / 2
             # the pointer and the leader both sit on the side the row lies
             # beyond, and the leader stops at the row's NEAREST edge — drawn to

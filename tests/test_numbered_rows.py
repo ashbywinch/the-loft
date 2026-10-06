@@ -12,6 +12,7 @@ small synthetic rows pin the placement order itself.
 
 from __future__ import annotations
 
+import colorsys
 from pathlib import Path
 
 from PIL import Image
@@ -133,3 +134,45 @@ def test_the_bands_hold_every_number_and_all_the_writing() -> None:
         assert strip.numbers, "a band with no numbers is a wasted look"
     assert spread[0] < min(word.x0 for word in ink), "the numbers must reach left of all the writing"
     assert sum(len(strip.numbers) for strip in strips) >= len(rows)
+
+
+def test_no_number_leaves_its_own_rows_height() -> None:
+    """A number level with the wrong row points at the wrong row: the user saw
+    38 sitting beside 39. A number that cannot fit beside its row steps OUT
+    into the margin, never up or down."""
+    rows = _page01_rows()
+    boxes = NumberedRows._pill_boxes(rows)
+    for row, box in zip(rows, boxes, strict=False):
+        centre = (row.band.y0 + row.band.y1) / 2
+        pill_centre = (box.y0 + box.y1) / 2
+        assert abs(pill_centre - centre) <= 20, (
+            f"number {row.number} sits {pill_centre - centre:.0f}px off its row's height"
+        )
+
+
+def test_the_number_points_at_its_own_row() -> None:
+    """The pointer is what says which row a number belongs to, so it is drawn on
+    the edge the row lies beyond — pointing left at a row on the right is a
+    number pointing at nothing."""
+    rows = _page01_rows()
+    boxes = NumberedRows._pill_boxes(rows)
+    for row, box in zip(rows, boxes, strict=False):
+        row_centre = (row.band.x0 + row.band.x1) / 2
+        pill_centre = (box.x0 + box.x1) / 2
+        expected = "right" if pill_centre < row_centre else "left"
+        assert NumberedRows.pointer_side(box, row) == expected, (
+            f"number {row.number} at x{pill_centre:.0f} points the wrong way at its row (x{row_centre:.0f})"
+        )
+
+
+def test_a_number_carries_its_own_rows_hue() -> None:
+    """The pill and the band are the same colour so the pairing can be read by
+    colour alone. Darkening by clamping channels shifts the hue and the pair
+    stops matching; the hue must survive."""
+    rows = _page01_rows()
+    for index, row in enumerate(rows):
+        band_hue = NumberedRows.hue_of(index)
+        red, green, blue = NumberedRows.pill_colour(index)
+        pill_hue = colorsys.rgb_to_hsv(red / 255, green / 255, blue / 255)[0]
+        turn = abs(((band_hue - pill_hue) + 0.5) % 1.0 - 0.5)
+        assert turn < 0.02, f"row {row.number}: the number's hue is {turn:.3f} of a turn from its band's"

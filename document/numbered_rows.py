@@ -17,6 +17,8 @@ app writes them where the front end needs them).
 
 from __future__ import annotations
 
+import colorsys
+
 from PIL import Image, ImageDraw
 
 from tools.rectangle import Rectangle, overlaps
@@ -51,6 +53,18 @@ STRIPS = 3
 BAND_OVERLAP = 0  # px: bands are exclusive; a row is numbered in exactly one
 INK_MARGIN = 40  # px: air either side of the writing — the numbers reach into it,
 # and `numbers_extent` widens this left edge when a stepped pill needs more
+
+# The pill is the row's OWN colour at full strength, not a darkened copy of it:
+# clamping the channels (what this used to do) shrinks the dominant channel
+# first, so a yellow pill came out brown and stopped matching its band. The hue
+# is kept and only the value moves, which is what "the same colour, darker"
+# means. White digits read at this value on every hue the palette holds.
+PILL_SATURATION = 0.80
+PILL_VALUE = 0.52
+# A number that cannot sit beside its row steps OUT into the margin, lane by
+# lane, and never up or down: a number level with the wrong row points at the
+# wrong row (the user saw 38 beside 39). The lanes run out at the page's edge.
+MARGIN_LANES = 16
 
 
 class NumberedRows:
@@ -147,29 +161,24 @@ class NumberedRows:
     def _pill_boxes(cls, rows: list[Row]) -> list[Rectangle]:
         """Where every number's pill lands — the placement, without painting.
 
-        Each pill sits on its own row's top-left corner (the review surface's
-        `.rv-rownum`); one that would land on another steps OUTWARD into the
-        margin, keeping its own row's height, so the pairing stays exact and no
-        number is ever hidden or cut."""
+        The order is the review surface's own: 1. directly LEFT of the row it
+        labels; 2. directly RIGHT of it when the left is taken (a line's ink
+        reaches into the gap either side); 3. the page's LEFT margin, lane by
+        lane outward. A number never moves up or down to find room: level with
+        the wrong row, it points at the wrong row."""
         draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
         font = _font()
         boxes: list[Rectangle] = []
         ink = [w.rect for r in rows for w in r.word_boxes]
         margin = _margin_column(rows, width=PILL_MIN_WIDTH + 2 * PILL_PAD_X + 12)
         for row in rows:
-            text = str(row.number)
-            measured = draw.textbbox((0, 0), text, font=font)
+            measured = draw.textbbox((0, 0), str(row.number), font=font)
             width = max(PILL_MIN_WIDTH, (measured[2] - measured[0]) + 2 * PILL_PAD_X)
             height = (measured[3] - measured[1]) + 2 * PILL_PAD_Y
             centre = (row.band.y0 + row.band.y1) / 2
             top = centre - height / 2 - PILL_LIFT
             left_edge = min((w.rect.x0 for w in row.word_boxes), default=row.band.x0)
             right_edge = max((w.rect.x1 for w in row.word_boxes), default=row.band.x1)
-            # 1. directly LEFT of the row it labels (the review surface's own
-            # side); 2. directly RIGHT of it when the left is taken — a line's
-            # ink reaches into the gap either side; 3. the page's left margin,
-            # which no number can cover. Never on top of another number: the
-            # pairing is carried by the leader line, not by position alone.
             beside = next(
                 (
                     Rectangle(candidate, top, candidate + width, top + height)
@@ -181,9 +190,30 @@ class NumberedRows:
             if beside is not None:
                 boxes.append(beside)
                 continue
-            at_margin = Rectangle(margin, top, margin + width, top + height)
-            boxes.append(_nudged(at_margin, ink, boxes) or _pushed_down(at_margin, ink, boxes))
+            boxes.append(_in_lane(Rectangle(margin, top, margin + width, top + height), ink, boxes))
         return boxes
+
+    @classmethod
+    def hue_of(cls, index: int) -> float:
+        """The hue of the row at this index — the palette band's own, so a
+        number and its band are one colour."""
+        red, green, blue, _alpha = RenderStyle().colour(index)
+        return colorsys.rgb_to_hsv(red / 255, green / 255, blue / 255)[0]
+
+    @classmethod
+    def pill_colour(cls, index: int) -> tuple[int, int, int]:
+        """The row's hue at full strength: white digits read on it and it is
+        still the row's colour, which a channel-clamped darkening is not."""
+        red, green, blue = colorsys.hsv_to_rgb(cls.hue_of(index), PILL_SATURATION, PILL_VALUE)
+        return int(red * 255), int(green * 255), int(blue * 255)
+
+    @classmethod
+    def pointer_side(cls, box: Rectangle, row: Row) -> str:
+        """Which edge of the number faces its row — the edge the pointer is
+        drawn on and the leader leaves from. A number left of its row points
+        right, one right of it points left; pointed the other way it aims at
+        nothing, which is what the user saw on every number on the page."""
+        return "right" if (box.x0 + box.x1) / 2 < (row.band.x0 + row.band.x1) / 2 else "left"
 
     @classmethod
     def _draw(cls, canvas: Image.Image, rows: list[Row], *, offset_y: float) -> NumberedRows:
@@ -192,31 +222,28 @@ class NumberedRows:
         numbers = {row.id: row.number for row in rows}
         draw = ImageDraw.Draw(canvas)
         font = _font()
-        style = RenderStyle()
         for index, (row, box) in enumerate(zip(rows, cls._pill_boxes(rows), strict=False)):
             left, top, right, bottom = box.x0, box.y0 - offset_y, box.x1, box.y1 - offset_y
             measured = draw.textbbox((0, 0), str(row.number), font=font)
-            # the row's OWN hue at full strength (the band is the same colour
-            # washed out): the pill and its band are one colour, so a number
-            # can be matched to its line by colour alone
-            red, green, blue, _alpha = style.colour(index)
-            # the row's hue, taken down until white type reads on it: the
-            # palette has light hues (a yellow) where white on the raw colour
-            # is unreadable, and an outline round the digits was worse still
-            shade = min(0.72, 200 / max(red, green, blue, 1))
-            fill = (int(red * shade), int(green * shade), int(blue * shade))
-            # the leader reaches the NEAREST edge of its row: drawn to the far
-            # one it crossed the writing it is meant to point at
+            # the row's own hue at full strength: the pill and its band are one
+            # colour, so a number can be matched to its line by colour alone
+            fill = cls.pill_colour(index)
             edge_left = min((word.x0 for word in row.word_boxes), default=row.band.x0)
             edge_right = max((word.x1 for word in row.word_boxes), default=row.band.x1)
-            row_edge = edge_left if left < edge_left else edge_right
             centre_y = (top + bottom) / 2
-            draw.line([(row_edge, centre_y), (left, centre_y)], fill=fill, width=3)
+            # the pointer and the leader both sit on the side the row lies
+            # beyond, and the leader stops at the row's NEAREST edge — drawn to
+            # the far one it crossed the writing it is meant to point at
+            if cls.pointer_side(box, row) == "left":
+                tip, root, row_edge = left - PILL_POINTER, left, edge_right
+            else:
+                tip, root, row_edge = right + PILL_POINTER, right, edge_left
+            draw.line([(row_edge, centre_y), (root, centre_y)], fill=fill, width=3)
             draw.polygon(
                 [
-                    (left - PILL_POINTER, centre_y),
-                    (left, top + (bottom - top) / 4),
-                    (left, bottom - (bottom - top) / 4),
+                    (tip, centre_y),
+                    (root, top + (bottom - top) / 4),
+                    (root, bottom - (bottom - top) / 4),
                 ],
                 fill=fill,
                 outline=(30, 30, 30),
@@ -239,30 +266,25 @@ class NumberedRows:
 # a number's box, the ink on the page, and the numbers already placed are three
 # things, not one clump: the box is a `Rectangle` (the geometry the model
 # already has) and the other two are the lists it must stay clear of
-# lucidlint: ignore latent-class a box and the two things it must avoid are the signature
 def _fits(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> bool:
     """Whether a number's box would cover ink or another number."""
     return not any(overlaps(box, other) for other in [*ink, *placed])
 
 
-def _nudged(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> Rectangle | None:
-    """The box moved down to the nearest height where it meets nothing — it
-    steps by its own height, so its row is still the closest one and the leader
-    line says which."""
-    for step in range(0, 40):
-        move = step * (box.height + 2)
-        candidate = Rectangle(box.x0, box.y0 + move, box.x1, box.y1 + move)
+def _in_lane(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> Rectangle:
+    """The box in the first free lane of the margin, at its own height.
+
+    Lanes run outward from the writing's widest line; the page's left margin is
+    wide, and a number further out is still unmistakably its row's. Stepping up
+    or down instead is what put 38's number beside 39.
+    """
+    for lane in range(MARGIN_LANES):
+        left = box.x0 - lane * (box.width + COLUMN_GAP)
+        if left < 0:
+            break
+        candidate = Rectangle(left, box.y0, left + box.width, box.y1)
         if _fits(candidate, ink, placed):
             return candidate
-    return None
-
-
-def _pushed_down(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> Rectangle:
-    """The box moved down until it meets nothing: the least movement that keeps
-    every number readable. Two numbers on top of each other are two numbers
-    nobody can read, which is how rows 6 and 7 went missing."""
-    while not _fits(box, ink, placed):
-        box = Rectangle(box.x0, box.y0 + box.height + 2, box.x1, box.y1 + box.height + 2)
     return box
 
 

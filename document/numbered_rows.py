@@ -79,6 +79,8 @@ class NumberedRows:
         ]
         ink_left = max(0, int(min(xs) if xs else 0) - INK_MARGIN)
         ink_right = min(page.width, int(max(xs) if xs else page.width) + INK_MARGIN)
+        number_left, _number_right = cls.numbers_extent(ordered)
+        ink_left = max(0, int(min(float(ink_left), float(number_left))) - INK_MARGIN)
         out: list[NumberedRows] = []
         for index in range(strips):
             band_top = int(bounds[index]) - (OVERLAP if index else 0)
@@ -107,41 +109,59 @@ class NumberedRows:
         return cls._draw(canvas, sorted(rows, key=lambda row: row.number), offset_y=offset_y)
 
     @classmethod
+    def numbers_extent(cls, rows: list[Row], *, offset_y: float = 0) -> tuple[float, float]:
+        """The left and right edges the numbers reach, page px.
+
+        A number that shares its corner with another's steps outward, so the
+        numbers can reach further left than the writing does. A caller that
+        crops an image around the writing must crop around THIS too, or the
+        stepped numbers are cut away and the model reports the page as having
+        no such row (page-01's rows 6 and 7, twice)."""
+        boxes = cls._pill_boxes(rows)
+        if not boxes:
+            return 0.0, 0.0
+        return min(b[0] for b in boxes), max(b[2] for b in boxes)
+
+    @classmethod
+    def _pill_boxes(cls, rows: list[Row]) -> list[tuple[float, float, float, float]]:
+        """Where every number's pill lands — the placement, without painting.
+
+        Each pill sits on its own row's top-left corner (the review surface's
+        `.rv-rownum`); one that would land on another steps OUTWARD into the
+        margin, keeping its own row's height, so the pairing stays exact and no
+        number is ever hidden or cut."""
+        draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+        font = _font()
+        boxes: list[tuple[float, float, float, float]] = []
+        for row in rows:
+            text = str(row.number)
+            measured = draw.textbbox((0, 0), text, font=font)
+            width = max(PILL_MIN_WIDTH, (measured[2] - measured[0]) + 2 * PILL_PAD_X)
+            height = (measured[3] - measured[1]) + 2 * PILL_PAD_Y
+            top = row.band.y0 - PILL_LIFT
+            right = row.band.x0 - PILL_INSET
+            left = right - width
+            while any(left < r and r0 < right + width and top < b and t0 < top + height for r0, t0, r, b in boxes):
+                right -= width + PILL_STEP  # outward, into the margin
+                left = right - width
+            boxes.append((left, top, right, top + height))
+        return boxes
+
+    @classmethod
     def _draw(cls, canvas: Image.Image, rows: list[Row], *, offset_y: float) -> NumberedRows:
         """One image with the numbers of `rows` drawn on it, page coordinates
-        shifted into this image's own space.
-
-        The number is the review surface's own: a green pill with white type
-        sitting on the row's top-left corner (`app/styles.css`, `.rv-rownum`).
-        It touches the row it labels, so a number can never be mistaken for
-        someone else's row — however close the rows sit, and even where a row's
-        band is a sliver inside its neighbours'."""
+        shifted into this image's own space."""
         numbers = {row.id: row.number for row in rows}
         draw = ImageDraw.Draw(canvas)
         font = _font()
-        placed: list[tuple[float, float, float, float]] = []
-        for row in rows:
-            text = str(row.number)
-            box = draw.textbbox((0, 0), text, font=font)
-            pill_w = max(PILL_MIN_WIDTH, (box[2] - box[0]) + 2 * PILL_PAD_X)
-            pill_h = (box[3] - box[1]) + 2 * PILL_PAD_Y
-            top = row.band.y0 - offset_y - PILL_LIFT
-            right = row.band.x0 - PILL_INSET
-            left = right - pill_w
-            # a row's band can start where its neighbour's does (page-01's rows
-            # 6 and 7 sit inside row 5's), and two pills on one corner cover
-            # each other: the model then reports the page as having no row 6 at
-            # all. So a pill that would land on another is stepped OUTWARD —
-            # further into the margin, keeping its own row's height, so the
-            # pairing stays exact and no number is ever hidden.
-            while any(left < r and r0 < right + pill_w and top < b and t0 < top + pill_h for r0, t0, r, b in placed):
-                right += pill_w + PILL_STEP
-                left = right - pill_w
-            placed.append((left, top, right, top + pill_h))
-            draw.rounded_rectangle((left, top, right, top + pill_h), radius=PILL_RADIUS, fill=(40, 110, 60))
+        for row, (left, top, right, bottom) in zip(rows, cls._pill_boxes(rows), strict=False):
+            top -= offset_y
+            bottom -= offset_y
+            measured = draw.textbbox((0, 0), str(row.number), font=font)
+            draw.rounded_rectangle((left, top, right, bottom), radius=PILL_RADIUS, fill=(40, 110, 60))
             draw.text(
-                (left + PILL_PAD_X - box[0], top + PILL_PAD_Y - box[1]),
-                text,
+                (left + PILL_PAD_X - measured[0], top + PILL_PAD_Y - measured[1]),
+                str(row.number),
                 fill=(255, 255, 255),
                 font=font,
             )

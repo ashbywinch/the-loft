@@ -37,6 +37,7 @@ from PIL import Image
 from document.numbered_rows import STRIPS, NumberedRows
 from document.transcript import ReadingError, Transcript
 from tools.reader import reading_for_page
+from tools.render import render_rows
 from tools.rows import Rows
 from tools.schemas import load_user_row_adjustments
 from tools.vlm import VlmOptions, transcribe_images_vlm
@@ -138,7 +139,11 @@ def run(
         if fixture
         else builder.rows()
     )
-    numbered = NumberedRows.render_strips(image, rows, strips=STRIPS)
+    # the strips are cut from the REVIEW SURFACE'S OWN rendering — the rows
+    # tinted in their per-row hues by `render_rows` (the same function the
+    # review surface and the reading sheet use), then numbered with the same
+    # `.rv-rownum` pill. The model sees what the reviewer sees.
+    numbered = NumberedRows.render_strips(render_rows(image, rows), rows, strips=STRIPS)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = image_path.stem
     render_paths = []

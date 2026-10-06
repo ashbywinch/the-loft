@@ -69,6 +69,11 @@ DIGIT_VALUE = 0.42
 # wrong row (the user saw 38 beside 39). The lanes run out at the page's edge.
 MARGIN_LANES = 16
 
+# px the pointer and the leader stop SHORT of a row's writing. Zero was tried:
+# a tip exactly on the word's edge paints its outer pixel inside the box — the
+# drawing is a few px wide — which is the overlap the user saw.
+PILL_TOUCH = 2
+
 
 class NumberedRows:
     """An image with one number per row drawn on it, and the numbers it drew.
@@ -311,12 +316,18 @@ class NumberedRows:
             edge_right = max((word.x1 for word in row.word_boxes), default=row.band.x1) - offset_x
             centre_y = (top + bottom) / 2
             # the pointer and the leader both sit on the side the row lies
-            # beyond, and the leader stops at the row's NEAREST edge — drawn to
-            # the far one it crossed the writing it is meant to point at
+            # beyond, and BOTH stop SHORT of the row's nearest edge — short even
+            # of touching it, because the line is drawn 3px wide and a tip on
+            # the edge paints its outer pixel onto the first letter. The pointer
+            # used to reach a fixed 14px whatever the drawing was doing: beside
+            # the end of its line that overshot the 6px inset by 8px and landed
+            # on the writing.
             if cls.pointer_side(box, row) == "left":
-                tip, root, row_edge = left - PILL_POINTER, left, edge_right
+                touch = edge_right + PILL_TOUCH
+                tip, root, row_edge = max(left - PILL_POINTER, touch), left, touch
             else:
-                tip, root, row_edge = right + PILL_POINTER, right, edge_left
+                touch = edge_left - PILL_TOUCH
+                tip, root, row_edge = min(right + PILL_POINTER, touch), right, touch
             draw.line([(row_edge, centre_y), (root, centre_y)], fill=ink, width=3)
             draw.polygon(
                 [

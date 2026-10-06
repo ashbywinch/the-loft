@@ -241,6 +241,40 @@ def test_the_chip_paints_the_colour_its_rows_band_shows() -> None:
     )
 
 
+def test_no_part_of_a_number_is_painted_inside_a_word_box() -> None:
+    """The chip, its pointer and its leader are one drawn thing, and none of it
+    may land on the writing. The pointer reached a fixed 14px whatever the
+    drawing was doing, so with the number beside the END of its line it painted
+    8px past the 6px inset — onto the first letters of the row ("very slightly
+    overlapping the writing sometimes", user).
+
+    Pixels, not arithmetic: the words here carry ink of a colour no chip uses,
+    so any chip-coloured pixel inside a word box is the chip's own."""
+    paper = (247, 243, 232)
+    rows = [
+        Row(
+            id="seg-1",
+            kind="body",
+            number=1,
+            word_boxes=[_word(120, 100, 400, 140), _word(420, 100, 700, 140)],
+            band=Rectangle(120, 100, 700, 140),
+        )
+    ]
+    page = Image.new("RGB", (800, 240), paper)
+    for word in rows[0].word_boxes:
+        ImageDraw.Draw(page).rectangle((int(word.x0), int(word.y0), int(word.x1), int(word.y1)), fill=(60, 60, 60))
+    drawn = np.asarray(NumberedRows.draw_numbers(page, rows).image).astype(int)
+    for number_index in (0,):
+        chip_ink = np.array(NumberedRows.digit_colour(number_index))
+        hits = np.nonzero(np.abs(drawn - chip_ink).max(axis=2) <= 20)
+        inside = [
+            (int(y), int(x))
+            for y, x in zip(*hits, strict=True)
+            if any(w.x0 <= x <= w.x1 and w.y0 <= y <= w.y1 for w in rows[0].word_boxes)
+        ]
+        assert not inside, f"the number is painted on the writing at {inside[:5]}"
+
+
 def test_the_chip_ignores_ink_under_the_row() -> None:
     """The background is sampled where NO writing is, so what the row's own box
     contains cannot reach the chip.

@@ -24,6 +24,8 @@ from tools.row import Row
 
 ROW_NUM_SIZE = 26  # px: the pill's number, the review surface's own type size
 PILL_POINTER = 14  # px: how far the pill's pointer reaches back toward its row
+COLUMN_WIDTH = 120  # px: the numbered column added to the page's right side
+COLUMN_GAP = 24  # px: air between the writing's widest line and the column
 PILL_RADIUS = 12  # px: the pill's corner (`.rv-rownum`'s 10px at page scale)
 PILL_PAD_X = 8  # px: air either side of the number
 PILL_PAD_Y = 4  # px: air above and below it
@@ -94,9 +96,8 @@ class NumberedRows:
             word.x1 for row in ordered for word in row.word_boxes
         ]
         ink_left = max(0, int(min(xs) if xs else 0) - INK_MARGIN)
-        ink_right = min(page.width, int(max(xs) if xs else page.width) + INK_MARGIN)
         _number_left, number_right = cls.numbers_extent(ordered)
-        ink_right = min(page.width, int(max(float(ink_right), float(number_right))) + INK_MARGIN)
+        ink_right = int(number_right) + INK_MARGIN
         out: list[NumberedRows] = []
         for index in range(strips):
             band_top = int(bounds[index]) - (BAND_OVERLAP if index else 0)
@@ -169,15 +170,7 @@ class NumberedRows:
             # pills lay over a neighbour's writing (row 6's covered row 7, and
             # the tail stack's covered each other) — ink under a label is ink
             # the reader cannot see, and the repeats followed exactly that.
-            own = max(word.x1 for word in row.word_boxes) if row.word_boxes else row.band.x1
-            covered = [
-                word.rect.x1
-                for other in rows
-                for word in other.word_boxes
-                if word.rect.y0 < bottom and top < word.rect.y1
-            ]
-            left = max([own, *covered]) + PILL_INSET
-            boxes.append((left, top, left + width, bottom))
+            boxes.append((_column_left(rows), top, _column_left(rows) + width, bottom))
         return boxes
 
     @classmethod
@@ -197,9 +190,12 @@ class NumberedRows:
             # can be matched to its line by colour alone
             red, green, blue, _alpha = style.colour(index)
             fill = (red, green, blue)
+            row_edge = max((word.x1 for word in row.word_boxes), default=row.band.x1)
+            centre_y = (top + bottom) / 2
+            draw.line([(row_edge, centre_y), (left, centre_y)], fill=fill, width=3)
             draw.polygon(
                 [
-                    (left - PILL_POINTER, (top + bottom) / 2),
+                    (left - PILL_POINTER, centre_y),
                     (left, top + (bottom - top) / 4),
                     (left, bottom - (bottom - top) / 4),
                 ],
@@ -221,6 +217,16 @@ class NumberedRows:
         """How many rows this image labels — the universe its reading must
         cover (one reading per number, none missing)."""
         return len(self.numbers)
+
+
+def _column_left(rows: list[Row]) -> float:
+    """The numbered column's left edge: clear of the writing's widest line, so
+    every number sits in one reserved strip with its own pointer back to its
+    row. Placing each pill just right of its own line put thirteen of page-01's
+    numbers out in the ragged margin, where the model could not find them: told
+    "exactly rows 16..27", it found five of them and reported the rest empty."""
+    widest = max((word.x1 for row in rows for word in row.word_boxes), default=0.0)
+    return widest + COLUMN_GAP
 
 
 def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> list[float]:

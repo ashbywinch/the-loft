@@ -211,15 +211,44 @@ class NumberedRows:
         return colorsys.rgb_to_hsv(red / 255, green / 255, blue / 255)[0]
 
     @classmethod
-    def pill_colour(cls, index: int) -> tuple[int, int, int]:
-        """The colour the row's BAND shows: the row's hue mixed into the paper
-        at the palette's tint. Drawn opaque it is the band's colour exactly, so
-        the number and its row read as one colour rather than two."""
+    def pill_colour(cls, index: int, background: tuple[int, int, int] = (255, 255, 255)) -> tuple[int, int, int]:
+        """The colour the row's band shows: the row's hue laid over the
+        background at the palette's tint — the same translucent wash
+        `render_rows` composites, which is what makes the chip and its band one
+        colour instead of two nearly-matching ones."""
         red, green, blue, alpha = RenderStyle().colour(index)
         share = alpha / 255
-        washed = (int(channel * share + 255 * (1 - share)) for channel in (red, green, blue))
-        first, second, third = washed
+        layers = zip((red, green, blue), background, strict=True)
+        mixed = [int(channel * share + paper * (1 - share)) for channel, paper in layers]
+        first, second, third = mixed
         return first, second, third
+
+    @classmethod
+    def background_of(
+        cls, canvas: Image.Image, rows: list[Row], *, offset_x: float = 0, offset_y: float = 0
+    ) -> tuple[int, int, int]:
+        """The colour the bands are washed into: ONE sample, taken where no
+        writing is — in the writing's own left margin, level with the gap
+        BETWEEN two rows, where the tint of neither reaches.
+
+        Sampling a row's own box for its tint was the wrong aim twice over: 31
+        of page-01's 41 rows have ink under some point inside the box, and row
+        11 has a single word box whose centre is a stroke, so its chip came out
+        ink-coloured. The background has no ink in it by construction."""
+        ordered = sorted(rows, key=lambda row: row.band.y0)
+        if not ordered:
+            return 255, 255, 255
+        gap_y = (ordered[0].band.y1 + ordered[1].band.y0) / 2 if len(ordered) > 1 else ordered[0].band.y0 - COLUMN_GAP
+        ink_left = min(
+            (word.x0 - offset_x for row in ordered for word in row.word_boxes),
+            default=ordered[0].band.x0 - offset_x,
+        )
+        x = min(max(int(ink_left) - COLUMN_GAP, 0), canvas.width - 1)
+        y = min(max(int(gap_y - offset_y), 0), canvas.height - 1)
+        sample = _rgb(canvas.convert("RGB").getpixel((x, y)))
+        # a cropped canvas can carry the page's dark edge where the margin
+        # should be, which is no background to wash a hue into
+        return sample if sum(sample) > 450 else (255, 255, 255)
 
     @classmethod
     def digit_colour(cls, index: int) -> tuple[int, int, int]:
@@ -237,55 +266,26 @@ class NumberedRows:
         return "right" if (box.x0 + box.x1) / 2 < (row.band.x0 + row.band.x1) / 2 else "left"
 
     @classmethod
-    def _band_colour(cls, canvas: Image.Image, row: Row, *, offset_x: float, offset_y: float) -> tuple[int, int, int]:
-        """The colour the row's band shows on this canvas.
-
-        Sampled along the band's top edge and taken lightest, which is the tint
-        itself rather than a stroke of the writing under it. A canvas with no
-        band (a bare page) falls back to the palette's wash, which is that
-        colour on white paper."""
-        band = row.band
-        wash = cls.pill_colour(row.number - 1)
-        # inside the row's own word boxes, where the tint is painted: along the
-        # band's edge the lightest pixel is the paper BETWEEN the words, and a
-        # chip that colour is a chip nobody can see. Inside a word's box the
-        # only thing darker than the tint is the writing itself, so the lightest
-        # sample there is the tint.
-        points = [
-            (
-                min(max(int((word.x0 + word.x1) / 2 - offset_x), 0), canvas.width - 1),
-                min(max(int((word.y0 + word.y1) / 2 - offset_y), 0), canvas.height - 1),
-            )
-            for word in row.word_boxes[:8]
-        ]
-        if not points:
-            y = min(max(int(band.y0 - offset_y) + 2, 0), canvas.height - 1)
-            left = min(max(int(band.x0 - offset_x) + 2, 0), canvas.width - 1)
-            points = [(left, y)]
-        lightest = max((_rgb(canvas.getpixel(point)) for point in points), key=sum)
-        return wash if sum(lightest) >= 3 * 250 else lightest
-
-    @classmethod
     def _draw(cls, canvas: Image.Image, rows: list[Row], *, offset_x: float = 0, offset_y: float = 0) -> NumberedRows:
         """One image with the numbers of `rows` drawn on it, page coordinates
         shifted into this image's own space — BOTH axes: a cut-out band has an
         x origin as much as a y one."""
         numbers = {row.id: row.number for row in rows}
+        background = cls.background_of(canvas, rows, offset_x=offset_x, offset_y=offset_y)
         draw = ImageDraw.Draw(canvas)
         font = _font()
         for row, box in zip(rows, cls._pill_boxes(rows), strict=False):
             left, top = box.x0 - offset_x, box.y0 - offset_y
             right, bottom = box.x1 - offset_x, box.y1 - offset_y
             measured = draw.textbbox((0, 0), str(row.number), font=font)
-            # The chip is the colour its row's BAND actually shows, sampled off
-            # this canvas: the palette wash mixed into white is not that colour,
-            # because the paper is not white (measured 16-28 units apart on the
-            # scanned sheet), and a number that is nearly its row's colour still
-            # reads as a different one. The digit is the same hue taken dark.
-            # The palette index is the row's NUMBER, not its place in this
-            # image: in a band the two differ, and the colour stopped matching
-            # the band it came from.
-            fill = cls._band_colour(canvas, row, offset_x=offset_x, offset_y=offset_y)
+            # The chip is its row's hue washed onto the background the bands are
+            # washed onto — that background sampled once, where no writing is —
+            # so the number and its row are one colour rather than two that
+            # nearly match. The digit is the same hue taken dark. The palette
+            # index is the row's NUMBER, not its place in this image: in a band
+            # the two differ, and the colour stopped matching the band it came
+            # from.
+            fill = cls.pill_colour(row.number - 1, background)
             ink = cls.digit_colour(row.number - 1)
             edge_left = min((word.x0 for word in row.word_boxes), default=row.band.x0) - offset_x
             edge_right = max((word.x1 for word in row.word_boxes), default=row.band.x1) - offset_x
@@ -380,6 +380,7 @@ def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> lis
         ),
         reverse=True,
     )
+
     wanted = [top + (bottom - top) * index / strips for index in range(1, strips)]
     chosen: list[float] = []
     for target in wanted:

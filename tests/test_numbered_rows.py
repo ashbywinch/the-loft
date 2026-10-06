@@ -16,7 +16,7 @@ import colorsys
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from document.numbered_rows import PILL_INSET as PILL_GAP
 from document.numbered_rows import PILL_POINTER, NumberedRows
@@ -208,6 +208,33 @@ def test_the_chip_paints_the_colour_its_rows_band_shows() -> None:
     )
 
 
+def test_the_chip_ignores_ink_under_the_row() -> None:
+    """The background is sampled where NO writing is, so what the row's own box
+    contains cannot reach the chip.
+
+    Sampling the row's box was the earlier rule and it did catch ink: on
+    page-01, 31 of 41 rows have an ink-dark pixel at a sampled point, and row 11
+    — one word box, its centre on a stroke — had its chip painted ink. This
+    draws the writing SOLID BLACK and demands the same chip either way."""
+    from tools.render import render_rows
+
+    paper = (247, 243, 232)
+    boxes = [_word(100, 100, 400, 140)]
+    quiet = Row(id="seg-1", kind="body", number=1, word_boxes=boxes, band=Rectangle(100, 100, 400, 140))
+    inked_page = Image.new("RGB", (600, 200), paper)
+    ImageDraw.Draw(inked_page).rectangle((100, 100, 400, 140), fill=(20, 18, 16))
+    inked = Row(id="seg-1", kind="body", number=1, word_boxes=boxes, band=Rectangle(100, 100, 400, 140))
+    plain_chip = np.asarray(
+        NumberedRows.draw_numbers(render_rows(Image.new("RGB", (600, 200), paper), [quiet]), [quiet]).image
+    )
+    inked_chip = np.asarray(NumberedRows.draw_numbers(render_rows(inked_page, [inked]), [inked]).image)
+    box = NumberedRows._pill_boxes([quiet])[0]
+    xy = (int(box.y0) + 4, int(box.x0) + 4)
+    assert (plain_chip[xy] == inked_chip[xy]).all(), (
+        f"the chip changed with ink under the row: {tuple(plain_chip[xy])} quiet vs {tuple(inked_chip[xy])} inked"
+    )
+
+
 def test_a_number_lands_beside_its_row_inside_a_cut_band() -> None:
     """A band is a crop, so it has an x origin as well as a y one. Taking off
     only the y painted every number ~450px right of its row — over the middle
@@ -243,10 +270,11 @@ def test_a_number_is_painted_at_the_crops_origin_in_its_own_colour() -> None:
             band=Rectangle(600, 100, 900, 140),
         )
     ]
-    canvas = Image.new("RGB", (500, 200), (250, 250, 250))
+    paper = (250, 250, 250)
+    canvas = Image.new("RGB", (500, 200), paper)
     drawn = NumberedRows.draw_numbers(canvas, rows, offset_x=200)
     assert drawn.numbers == {"seg-28": 28}
-    expected = NumberedRows.pill_colour(27)
+    expected = NumberedRows.pill_colour(27, paper)
     painted = np.nonzero(np.all(np.asarray(canvas) == expected, axis=2))[1]
     assert len(painted), "the number was not painted in its own row's colour"
     box = NumberedRows._pill_boxes(rows)[0]

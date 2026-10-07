@@ -1,4 +1,4 @@
-"""The page's transcript: the row-by-row reading contract.
+"""The page's transcript: the row-by-row contract.
 
 The contract's whole point is that a half-read page is refused rather than
 presented as read, so the cases below are the refusals as much as the
@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from document.transcript import ReadingError, Transcript
+from document.transcript import Transcript, TranscriptError
 
 
 def _answer(*segments: dict) -> str:
@@ -32,7 +32,7 @@ def test_the_rows_are_read_one_by_one() -> None:
     )
     assert transcript.text_of(1) == "London Opera Centre"
     assert transcript.kind_of(3) == "marginalia"
-    assert [reading.rows for reading in transcript.readings] == [(1,), (2,), (3,)]
+    assert [one.rows for one in transcript.row_transcripts] == [(1,), (2,), (3,)]
 
 
 def test_an_injection_names_the_row_it_follows() -> None:
@@ -45,13 +45,13 @@ def test_an_injection_names_the_row_it_follows() -> None:
         ),
         rows=2,
     )
-    assert transcript.readings[1].injection_after == 1
+    assert transcript.row_transcripts[1].injection_after == 1
 
 
 def test_a_page_read_in_part_is_refused() -> None:
     """Three rows numbered, two read: the answer is refused, naming the rows
     it left — never a page presented as read when it was not."""
-    with pytest.raises(ReadingError, match=r"leaves 1 row\(s\) unread: \[3\]"):
+    with pytest.raises(TranscriptError, match=r"leaves 1 row\(s\) unread: \[3\]"):
         Transcript.from_answer(
             _answer(
                 {"rows": [1], "type": "body", "transcript": "one"},
@@ -62,7 +62,7 @@ def test_a_page_read_in_part_is_refused() -> None:
 
 
 def test_a_row_claimed_twice_is_refused() -> None:
-    with pytest.raises(ReadingError, match="row 1 is claimed twice"):
+    with pytest.raises(TranscriptError, match="row 1 is claimed twice"):
         Transcript.from_answer(
             _answer(
                 {"rows": [1], "type": "body", "transcript": "one"},
@@ -74,9 +74,9 @@ def test_a_row_claimed_twice_is_refused() -> None:
 
 
 def test_an_injection_needs_its_target_and_writing_does_not_want_one() -> None:
-    with pytest.raises(ReadingError, match="injection without a row to inject after"):
+    with pytest.raises(TranscriptError, match="injection without a row to inject after"):
         Transcript.from_answer(_answer({"rows": [1], "type": "injection", "transcript": "aside"}), rows=1)
-    with pytest.raises(ReadingError, match="must carry no injection point"):
+    with pytest.raises(TranscriptError, match="must carry no injection point"):
         Transcript.from_answer(
             _answer({"rows": [1], "type": "body", "transcript": "one", "injection_after": 1}), rows=1
         )
@@ -85,11 +85,11 @@ def test_an_injection_needs_its_target_and_writing_does_not_want_one() -> None:
 def test_only_writing_kinds_are_read() -> None:
     """A rule is a detector artefact, not writing: its kind is not in the
     vocabulary, and a segment with no transcript field at all is refused."""
-    with pytest.raises(ReadingError, match="unknown type 'rule'"):
+    with pytest.raises(TranscriptError, match="unknown type 'rule'"):
         Transcript.from_answer(_answer({"rows": [1], "type": "rule", "transcript": "—"}), rows=1)
-    with pytest.raises(ReadingError, match="has no transcript"):
+    with pytest.raises(TranscriptError, match="has no transcript"):
         Transcript.from_answer(_answer({"rows": [1], "type": "body"}), rows=1)
-    with pytest.raises(ReadingError, match="names a row outside 1..1"):
+    with pytest.raises(TranscriptError, match="names a row outside 1..1"):
         Transcript.from_answer(_answer({"rows": [4], "type": "body", "transcript": "gone"}), rows=1)
 
 
@@ -145,7 +145,7 @@ def test_a_line_read_twice_is_refused() -> None:
     """A tight stack's overlapping bands make a model return the same writing
     under two numbers (page-01: rows 13-16 came back again as 17-20). Two rows
     may share a short word; a whole line twice means one row was read twice."""
-    with pytest.raises(ReadingError, match="return the same line twice"):
+    with pytest.raises(TranscriptError, match="return the same line twice"):
         Transcript.from_answer(
             _answer(
                 {"rows": [1], "type": "body", "transcript": "the same line of writing here"},
@@ -161,4 +161,4 @@ def test_a_line_read_twice_is_refused() -> None:
         ),
         rows=2,
     )
-    assert len(ok.readings) == 2
+    assert len(ok.row_transcripts) == 2

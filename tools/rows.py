@@ -142,7 +142,10 @@ class _Claims:
     ) -> None:
         width, height = page_size
         self.words = words
-        self.unit = self._writing_height()
+        # a page the reader found no writing on has no rows — there is no
+        # writing height to measure, and every caller downstream (the reading,
+        # the review) is about rows that exist
+        self.unit = self._writing_height() if words else 0.0
         self.spacing = SPACING_RATIO * self.unit
         self.spans = _line_spans([[(x * width, y * height) for x, y in line] for line in row_adjustments])
 

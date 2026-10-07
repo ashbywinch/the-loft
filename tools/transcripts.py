@@ -1,24 +1,31 @@
-"""The rows-transcript eval: one real call, and everything checkable without
-a gold transcript.
+"""Transcribing a page's rows: the machine's per-row text.
 
-A page is read by numbering its ROWS (one number per row) and asking for the
-writing of each numbered row. There is no confirmed transcript for the pages
-this is tried on yet — the proposal to confirm is what this produces — so the
-eval verifies what does not need one:
+A TRANSCRIPT is one page's texts, each a `RowTranscript` (document/transcript.py); the
+DETECTOR's reading (`tools/reader.py`'s `Reading`) is a different thing — the
+fitted lines and split words `words.json` holds. This module turns the former out
+of the latter.
 
-- the contract holds: the answer parses, and every numbered row appears in
-  exactly one reading (a refusal is reported as a refusal, never as wrong
-  text);
-- the kinds: how many readings are body / injection / marginalia, and that an
-  injection points at a row that exists;
-- the reading is not degenerate: no row left without words, the words per row
-  in a plausible band for handwriting, and the transcripts distinct (a
-  model repeating one line down the page is a failure with no gold needed).
+A page is read by NUMBERING ITS ROWS — one numbered chip per row, drawn at the
+end of the line it belongs to and in that row's own colour, over the row's
+tinted band — and asking the model for the writing of each numbered row. The
+page arrives as short bands (bands reach the model at the page's own
+resolution; one tall image does not), each band carrying exactly the rows it
+holds. A row the bands leave blank or doubled is then shown ALONE: a crop of
+its own words with everything else painted over in the paper's colour, so a
+neighbour's writing cannot be read as this row's.
 
-The raw answer and the numbered render are written beside the run, so a
+This is the pipeline's read stage (`tools/pipeline.py`'s `_read_pages`) and it
+is also its own eval: there is no confirmed transcript for these pages yet, so
+the run checks what needs none — the contract holds (every numbered row
+appears in exactly one transcript, none missing, none twice), the kinds are
+counted, and the transcript is not degenerate (no row without words, plausible
+words per row, transcripts distinct — a model repeating one line down the page
+is a failure with no gold needed).
+
+The raw answer and the numbered renders are written beside the run, so a
 failure is diagnosed from the artifact rather than re-billed.
 
-Usage: PYTHONPATH=. .venv/bin/python -m tools.eval_rows_transcript [page...]
+Usage: PYTHONPATH=. .venv/bin/python -m tools.transcripts [page...]
 """
 
 from __future__ import annotations
@@ -36,8 +43,8 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from document.numbered_rows import STRIPS, NumberedRows
-from document.transcript import ReadingError, Transcript
+from document.numbered_rows import NumberedRows
+from document.transcript import Transcript, TranscriptError
 from tools.reader import reading_for_page
 from tools.rectangle import Rectangle
 from tools.render import render_rows
@@ -65,7 +72,7 @@ SYSTEM = (
     "row. The colour decides it; position alone may not.\n\n"
     "For every numbered row, return its writing. A number may cover several rows when "
     "the writing is one continuous piece (a sentence broken across rows); never give a "
-    "row two readings.\n\n"
+    "row two transcripts.\n\n"
     "Types:\n"
     "- body: the running text\n"
     "- injection: writing squeezed above/between rows, meant to be inserted into other "
@@ -126,7 +133,159 @@ def words_for(image_path: Path, image: Image.Image) -> list[Word]:
     ]
 
 
-def run(
+@dataclass(frozen=True)
+class Transcriber:
+    """One page being read: its rows, where its artifacts go, and what reads it.
+
+    The transcription is ONE pass over this — the bands, the rows they leave, the
+    answer, the verdict — so the pass travels as this record rather than as five
+    arguments threaded through four functions.
+    """
+
+    image_path: Path
+    rows: list[Any]
+    fixture: Path | None = None
+    call: Callable[..., tuple[str, dict[str, int]]] | None = None
+    model: str | None = None
+    out_dir: Path = OUT_DIR
+
+    def transcribe(self) -> dict[str, Any]:
+        """One page, one model call, and every checkable condition measured."""
+        image = Image.open(self.image_path)
+        size = (image.width, image.height)
+        # the rows the reviewer's drawn lines make, when they exist: the reading
+        # happens against the CORRECT rows, never the draft the geometry proposed
+        # with a fixture directory the reader is shown the CORRECT rows — the words
+        # a reviewer's lines were adjudicated against, and those lines applied —
+        # rather than the draft the geometry proposed over a live parse
+        words = words_from(self.fixture / "words.json") if self.fixture else words_for(self.image_path, image)
+        builder = Rows.from_words(words, size)
+        rows = (
+            builder.adjust(load_user_row_adjustments(self.fixture / "user-row-adjustments.json")["lines"])
+            if self.fixture
+            else builder.rows()
+        )
+        if not rows:
+            # a page the reader found no writing on: no strips to cut, no call to
+            # pay for, and nothing to record — the stage leaves its marker unwritten
+            return {
+                "page": self.image_path.name,
+                "rows": 0,
+                "transcripts": {},
+                "band_notes": ["no rows on the page"],
+            }
+        # the strips are cut from the REVIEW SURFACE'S OWN rendering — the rows
+        # tinted in their per-row hues by `render_rows` (the same function the
+        # review surface and the reading sheet use), then numbered with the same
+        # `.rv-rownum` pill. The model sees what the reviewer sees.
+        self.out_dir.mkdir(parents=True, exist_ok=True)
+        numbered, render_paths = _cut_and_save_strips(image, rows, self.out_dir, self.image_path.stem)
+
+        # the universe is the rows NUMBERED, each once: neighbouring bands overlap,
+        # so a row can appear in two of them with its own single number
+        drawn = len({number for strip in numbered for number in strip.numbers.values()})
+
+        # ONE BAND PER CALL, each told exactly which rows it carries, and each
+        # given what the earlier bands read — the same continuity the pipeline's
+        # transcription prompt uses. A call per band also keeps every image at full
+        # resolution (one band, not three) and asks for a smaller answer, so no
+        # completion is cut off mid-JSON.
+        started = time.monotonic()
+        band_transcripts = _Bands(
+            numbered=numbered,
+            render_paths=render_paths,
+            stem=self.image_path.stem,
+            out_dir=self.out_dir,
+            model=self.model,
+            call=self.call,
+        ).read()
+        every = sorted({number for strip in numbered for number in strip.numbers.values()})
+        needing = _rows_needing_a_second_look(band_transcripts.transcripts, every)
+        alone = self.unsettled(needing)
+        answer = self.answer(band_transcripts.transcripts, alone)
+        seconds = time.monotonic() - started
+        refusals, usage = band_transcripts.refusals, band_transcripts.usage
+
+        report: dict[str, Any] = {
+            "page": self.image_path.name,
+            # the endpoint and the model the transcript ACTUALLY used, and how long it
+            # took: a run that answers in under a second is not reading a page
+            "endpoint": _endpoint(),
+            "model": self.model or "dynamic/image",
+            "seconds": round(seconds, 1),
+            "rows": len(rows),
+            "words": sum(len(row.word_boxes) for row in rows),
+            "strips": len(numbered),
+            "usage": usage,
+            "renders": [str(path) for path in render_paths],
+        }
+        # the per-row text, whether or not the WHOLE page passes the contract: the
+        # reviewer sees the machine's attempt (stage raw) and corrects it, and a
+        # refusal is the eval's verdict on the page — not a reason to serve no
+        # transcript at all. The pipeline's read stage reads this; the eval reports the
+        # refusal beside it.
+        report["transcripts"] = {
+            str(number): str(segment.get("transcript", ""))
+            for segment in json.loads(answer).get("segments", [])
+            for number in segment.get("rows", [])
+        }
+        # the transcript is written where the page's other artifacts live. It was
+        # computed and dropped before this (the reviewer's copy came from a step
+        # run by hand), and an assembled transcript nobody can read back is not a
+        # transcript the pipeline can serve.
+        (self.out_dir / f"{self.image_path.stem}.answer.json").write_text(
+            json.dumps({"answer": answer, "usage": usage}, indent=1)
+        )
+        # the verdict is the COMBINED transcript's: a band's refusal is a working
+        # note (those rows were shown alone and may well have been read there)
+        try:
+            transcript = Transcript.from_answer(answer, rows=drawn)
+        except TranscriptError as exc:
+            report["refused"] = str(exc)
+            report["band_notes"] = refusals
+            return report
+        report["band_notes"] = refusals
+
+        report.update(_measure(transcript))
+        return report
+
+    def unsettled(self, needing: list[int]) -> dict[int, str]:
+        """The rows the bands could not settle, read one at a time from masked
+        crops — each crop keeps ONLY the row's own words, everything else painted
+        over in the paper's colour, so no neighbour's ink can be read as this row's
+        (a crop rectangle was not enough: rows 36/37 interleave vertically and no
+        rectangle holds one without the other)."""
+        if not needing:
+            return {}
+        print(f"  {len(needing)} row(s) the bands could not settle: {needing} — reading them alone")
+        alone: dict[int, str] = {}
+        for number, text in transcribe_rows_alone(
+            self.image_path, numbers=needing, fixture=self.fixture, call=self.call, out_dir=self.out_dir
+        ):
+            alone[number] = text
+        return alone
+
+    def answer(self, band_transcripts: list[Any], alone: dict[int, str]) -> str:
+        """The page's transcript: every row, the bands' text where it settled a row
+        and the row-alone text where it did not."""
+        segments = []
+        for row in sorted(self.rows, key=lambda r: r.number):
+            text = alone.get(row.number)
+            kind = "body"
+            after = None
+            if text is None:
+                for one in band_transcripts:
+                    if row.number in one.rows:
+                        text, kind, after = one.text, one.kind, one.injection_after
+                        break
+            entry: dict[str, Any] = {"rows": [row.number], "type": kind, "transcript": text or ""}
+            if after is not None:
+                entry["injection_after"] = after
+            segments.append(entry)
+        return json.dumps({"segments": segments})
+
+
+def transcribe(
     image_path: Path,
     *,
     fixture: Path | None = None,
@@ -134,112 +293,58 @@ def run(
     model: str | None = None,
     out_dir: Path = OUT_DIR,
 ) -> dict[str, Any]:
-    """One page, one model call, and every checkable condition measured."""
+    """One page transcribed: its rows, its bands, its transcript, its verdict.
+
+    The rows are the reviewer's drawn lines when a fixture carries them, the
+    detector's own otherwise — the pass itself is `Transcriber.transcribe`.
+    """
     image = Image.open(image_path)
-    size = (image.width, image.height)
-    # the rows the reviewer's drawn lines make, when they exist: the reading
-    # happens against the CORRECT rows, never the draft the geometry proposed
-    # with a fixture directory the reader is shown the CORRECT rows — the words
-    # a reviewer's lines were adjudicated against, and those lines applied —
-    # rather than the draft the geometry proposed over a live parse
     words = words_from(fixture / "words.json") if fixture else words_for(image_path, image)
-    builder = Rows.from_words(words, size)
+    builder = Rows.from_words(words, (image.width, image.height))
     rows = (
         builder.adjust(load_user_row_adjustments(fixture / "user-row-adjustments.json")["lines"])
         if fixture
         else builder.rows()
     )
-    # the strips are cut from the REVIEW SURFACE'S OWN rendering — the rows
-    # tinted in their per-row hues by `render_rows` (the same function the
-    # review surface and the reading sheet use), then numbered with the same
-    # `.rv-rownum` pill. The model sees what the reviewer sees.
-    numbered = NumberedRows.render_strips(render_rows(image, rows), rows, strips=STRIPS)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stem = image_path.stem
-    render_paths = []
+    return Transcriber(
+        image_path=image_path, rows=rows, fixture=fixture, call=call, model=model, out_dir=out_dir
+    ).transcribe()
+
+
+def _cut_and_save_strips(
+    image: Image.Image, rows: list[Any], out_dir: Path, stem: str
+) -> tuple[list[NumberedRows], list[Path]]:
+    """The page's bands, numbered, written beside the run — and their paths, for
+    the answer beside them."""
+    # the band count comes from the writing's height and the measured
+    # readable band height — not from a fixed number of strips
+    numbered = NumberedRows.render_strips(render_rows(image, rows), rows)
+    paths = []
     for index, strip in enumerate(numbered):
         path = out_dir / f"{stem}.strip-{index + 1}.jpg"
         strip.image.save(path, quality=88)
-        render_paths.append(path)
-
-    # the universe is the rows NUMBERED, each once: neighbouring bands overlap,
-    # so a row can appear in two of them with its own single number
-    drawn = len({number for strip in numbered for number in strip.numbers.values()})
-    # ONE BAND PER CALL, each told exactly which rows it carries, and each
-    # given what the earlier bands read — the same continuity the pipeline's
-    # transcription prompt uses. A call per band also keeps every image at full
-    # resolution (one band, not three) and asks for a smaller answer, so no
-    # completion is cut off mid-JSON.
-    started = time.monotonic()
-    band_read = _Bands(
-        numbered=numbered,
-        render_paths=render_paths,
-        stem=stem,
-        out_dir=out_dir,
-        model=model,
-        call=call,
-    ).read()
-    every = sorted({number for strip in numbered for number in strip.numbers.values()})
-    needing = _rows_needing_a_second_look(band_read.readings, every)
-    alone = _read_the_unsettled(needing, image_path, fixture, call, out_dir)
-    answer = _combined_answer(rows, band_read.readings, alone)
-    seconds = time.monotonic() - started
-    refusals, usage = band_read.refusals, band_read.usage
-
-    report: dict[str, Any] = {
-        "page": image_path.name,
-        # the endpoint and the model the reading ACTUALLY used, and how long it
-        # took: a run that answers in under a second is not reading a page
-        "endpoint": _endpoint(),
-        "model": model or "dynamic/image",
-        "seconds": round(seconds, 1),
-        "rows": len(rows),
-        "words": sum(len(row.word_boxes) for row in rows),
-        "strips": len(numbered),
-        "usage": usage,
-        "renders": [str(path) for path in render_paths],
-    }
-    # the reading is written where the page's other artifacts live. It was
-    # computed and dropped before this (the reviewer's copy came from a step
-    # run by hand), and an assembled reading nobody can read back is not a
-    # reading the pipeline can serve.
-    (out_dir / f"{image_path.stem}.answer.json").write_text(json.dumps({"answer": answer, "usage": usage}, indent=1))
-    # the verdict is the COMBINED reading's: a band's refusal is a working
-    # note (those rows were shown alone and may well have been read there)
-    try:
-        transcript = Transcript.from_answer(answer, rows=drawn)
-    except ReadingError as exc:
-        report["refused"] = str(exc)
-        report["band_notes"] = refusals
-        return report
-    report["band_notes"] = refusals
-
-    report.update(_measure(transcript))
-    return report
+        paths.append(path)
+    return numbered, paths
 
 
-def _read_the_unsettled(
-    needing: list[int],
+def row_transcripts(
     image_path: Path,
-    fixture: Path | None,
-    call: Callable[..., tuple[str, dict[str, int]]] | None,
     out_dir: Path,
+    *,
+    model: str | None = None,
+    call: Callable[..., tuple[str, dict[str, int]]] | None = None,
 ) -> dict[int, str]:
-    """The rows the bands could not settle, read one at a time from masked
-    crops — each crop keeps ONLY the row's own words, everything else painted
-    over in the paper's colour, so no neighbour's ink can be read as this row's
-    (a crop rectangle was not enough: rows 36/37 interleave vertically and no
-    rectangle holds one without the other)."""
-    if not needing:
-        return {}
-    print(f"  {len(needing)} row(s) the bands could not settle: {needing} — reading them alone")
-    alone: dict[int, str] = {}
-    for number, text in read_rows_alone(image_path, numbers=needing, fixture=fixture, call=call, out_dir=out_dir):
-        alone[number] = text
-    return alone
+    """The page's rows read: each row's number and the writing read for it.
+
+    This is what the pipeline's read stage consumes. A page whose transcript
+    returns nothing answers with an empty mapping — the caller must leave its
+    marker unwritten, not record an empty transcript as done.
+    """
+    report = transcribe(image_path, model=model, call=call, out_dir=out_dir)
+    return {int(number): text for number, text in report.get("transcripts", {}).items()}
 
 
-def read_rows_alone(
+def transcribe_rows_alone(
     image_path: Path,
     *,
     numbers: list[int],
@@ -273,7 +378,7 @@ def read_rows_alone(
     for row in ordered:
         if row.number in numbers and row.word_boxes:
             read.append((row.number, alone.text_of(row, read)))
-    # persisted like every other reading: a row read once is never paid for
+    # persisted like every other transcript: a row read once is never paid for
     # twice, and the assembly below reads the file rather than re-asking
     (out_dir / f"{stem}.alone.json").write_text(
         json.dumps({"rows": {str(number): text for number, text in read}}, indent=1)
@@ -321,7 +426,7 @@ def row_crop(row: Any, size: tuple[int, int]) -> Rectangle:
 @dataclass(frozen=True)
 class _AloneReader:
     """Reading rows one at a time: the page they are cropped from, where the
-    crops and readings are kept, and what does the reading."""
+    crops and transcripts are kept, and what writes the transcripts."""
 
     image: Image.Image
     out_dir: Path
@@ -347,43 +452,23 @@ class _AloneReader:
             if self.call is not None
             else transcribe_images_vlm([path], options=options)
         )
-        readings = Transcript.from_answer(answer, rows=[row.number]).readings
-        text = readings[0].text if readings else ""
+        row_transcripts = Transcript.from_answer(answer, rows=[row.number]).row_transcripts
+        text = row_transcripts[0].text if row_transcripts else ""
         print(f"  row {row.number}: {text!r}")
         return text
 
 
-def _combined_answer(rows: list[Any], readings: list[Any], alone: dict[int, str]) -> str:
-    """The page's reading: every row, the bands' reading where it settled a row
-    and the row-alone reading where it did not."""
-    segments = []
-    for row in sorted(rows, key=lambda r: r.number):
-        text = alone.get(row.number)
-        kind = "body"
-        after = None
-        if text is None:
-            for reading in readings:
-                if row.number in reading.rows:
-                    text, kind, after = reading.text, reading.kind, reading.injection_after
-                    break
-        entry: dict[str, Any] = {"rows": [row.number], "type": kind, "transcript": text or ""}
-        if after is not None:
-            entry["injection_after"] = after
-        segments.append(entry)
-    return json.dumps({"segments": segments})
-
-
-def _rows_needing_a_second_look(readings: list[Any], numbers: list[int]) -> list[int]:
+def _rows_needing_a_second_look(transcripts: list[Any], numbers: list[int]) -> list[int]:
     """The rows a band reading left blank or doubled.
 
     A band's image carries its rows' ink plus their neighbours', so a row in a
     tight stack comes back empty (the model read the line once) or doubled (it
     read the same line twice). Those are exactly the rows to show alone."""
-    unread = [number for number in numbers if not _text_of(readings, number).strip()]
+    unread = [number for number in numbers if not _text_of(transcripts, number).strip()]
     seen: dict[str, int] = {}
     doubled: list[int] = []
     for number in numbers:
-        text = " ".join(_text_of(readings, number).lower().split())
+        text = " ".join(_text_of(transcripts, number).lower().split())
         if len(text.split()) < 4:
             continue
         if text in seen:
@@ -392,10 +477,10 @@ def _rows_needing_a_second_look(readings: list[Any], numbers: list[int]) -> list
     return sorted(set(unread) | set(doubled))
 
 
-def _text_of(readings: list[Any], number: int) -> str:
-    for reading in readings:
-        if number in reading.rows:
-            return str(reading.text)
+def _text_of(transcripts: list[Any], number: int) -> str:
+    for one in transcripts:
+        if number in one.rows:
+            return str(one.text)
     return ""
 
 
@@ -417,12 +502,12 @@ class _Bands:
     model: str | None
     call: Callable[..., tuple[str, dict[str, int]]] | None
 
-    def read(self) -> _ReadBands:
+    def read(self) -> _BandTranscripts:
         """Every band read in its own call, with the running transcript as
         context."""
         transcripts: list[str] = []
         usage_total: dict[str, Any] = {}
-        readings: list[Any] = []
+        one: list[Any] = []
         refusals: list[str] = []
         for index in range(len(self.numbered)):
             read = self._one(index, transcripts)
@@ -430,28 +515,28 @@ class _Bands:
             if read.refusal:
                 refusals.append(read.refusal)
                 continue
-            readings.extend(read.readings)
+            one.extend(read.transcripts)
             transcripts.extend(read.context)
         combined = json.dumps(
             {
                 "segments": [
                     {
-                        "rows": list(reading.rows),
-                        "type": reading.kind,
-                        "transcript": reading.text,
-                        **({"injection_after": reading.injection_after} if reading.injection_after is not None else {}),
+                        "rows": list(one.rows),
+                        "type": one.kind,
+                        "transcript": one.text,
+                        **({"injection_after": one.injection_after} if one.injection_after is not None else {}),
                     }
-                    for reading in readings
+                    for one in one
                 ]
             }
         )
-        return _ReadBands(readings=readings, refusals=refusals, usage=usage_total, answer=combined)
+        return _BandTranscripts(transcripts=one, refusals=refusals, usage=usage_total, answer=combined)
 
-    def _one(self, index: int, so_far: list[str]) -> _BandReading:
+    def _one(self, index: int, so_far: list[str]) -> _BandTranscript:
         """One band read, parsed, and turned into the context it contributes."""
         strip = self.numbered[index]
         numbers = sorted(strip.numbers.values())
-        band_text = _band_prompt(index, len(self.numbered), numbers, so_far)
+        band_text = band_prompt(index, len(self.numbered), numbers, so_far)
         options = (
             VlmOptions(system=SYSTEM, user_text=band_text, model=self.model)
             if self.model
@@ -460,10 +545,10 @@ class _Bands:
         answer, usage = self._call(index, band_text, options)
         try:
             band = Transcript.from_answer(answer, rows=numbers)
-        except ReadingError as exc:
-            return _BandReading(readings=[], usage=usage, context=[], refusal=f"band {index + 1}: {exc}")
-        return _BandReading(
-            readings=list(band.readings),
+        except TranscriptError as exc:
+            return _BandTranscript(transcripts=[], usage=usage, context=[], refusal=f"band {index + 1}: {exc}")
+        return _BandTranscript(
+            transcripts=list(band.row_transcripts),
             usage=usage,
             context=[f"row {number}: {band.text_of(number)}" for number in numbers],
             refusal="",
@@ -483,22 +568,22 @@ class _Bands:
 
 
 @dataclass(frozen=True)
-class _ReadBands:
-    """What reading the bands produced: the readings, the refusals that
-    happened, the total usage, and the combined answer."""
+class _BandTranscripts:
+    """What the bands produced: the row transcripts, the refusals that happened,
+    the total usage, and the combined answer."""
 
-    readings: list[Any]
+    transcripts: list[Any]
     refusals: list[str]
     usage: dict[str, Any]
     answer: str
 
 
 @dataclass(frozen=True)
-class _BandReading:
-    """What one band's call produced: its readings, the usage it cost, the line
-    of context it adds for the bands below, or the refusal that stopped it."""
+class _BandTranscript:
+    """What one band's call produced: its row transcripts, the usage it cost, the
+    line of context it adds for the bands below, or the refusal that stopped it."""
 
-    readings: list[Any]
+    transcripts: list[Any]
     usage: dict[str, int]
     context: list[str]
     refusal: str
@@ -512,7 +597,7 @@ def _absorb(total: dict[str, Any], usage: dict[str, int]) -> None:
     total["reasoning"] = str(total.get("reasoning", "")) + str(usage.get("reasoning", ""))
 
 
-def _band_prompt(index: int, of: int, numbers: list[int], so_far: list[str]) -> str:
+def band_prompt(index: int, of: int, numbers: list[int], so_far: list[str]) -> str:
     """What each band is told: exactly which rows it carries, and the reading of
     the bands above it for the thread of the letter."""
     carried = ", ".join(f"row {number}" for number in numbers)
@@ -532,19 +617,19 @@ def _measure(transcript: Transcript) -> dict[str, Any]:
     row band, and transcripts that differ from one another."""
     kinds: dict[str, int] = {}
     words_per_row: list[int] = []
-    for reading in transcript.readings:
-        kinds[reading.kind] = kinds.get(reading.kind, 0) + 1
-        words_per_row.append(len(re.findall(r"[\w'’~-]+", reading.text)))
+    for one in transcript.row_transcripts:
+        kinds[one.kind] = kinds.get(one.kind, 0) + 1
+        words_per_row.append(len(re.findall(r"[\w'’~-]+", one.text)))
     return {
-        "readings": len(transcript.readings),
+        "row_transcripts": len(transcript.row_transcripts),
         "kinds": kinds,
         "injections_point_at_a_row": all(
-            reading.kind != "injection" or reading.injection_after is not None for reading in transcript.readings
+            one.kind != "injection" or one.injection_after is not None for one in transcript.row_transcripts
         ),
         "words_per_row_median": statistics.median(words_per_row),
         "words_per_row_min": min(words_per_row),
-        "distinct_transcripts": len({reading.text.strip().lower() for reading in transcript.readings}),
-        "longest_transcript": max(len(reading.text) for reading in transcript.readings),
+        "distinct_transcripts": len({one.text.strip().lower() for one in transcript.row_transcripts}),
+        "longest_transcript": max(len(one.text) for one in transcript.row_transcripts),
     }
 
 
@@ -568,9 +653,9 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if alone:
             print(f"reading rows {alone} one at a time, each from its own crop")
-            read_rows_alone(page, numbers=alone, fixture=fixture)
+            transcribe_rows_alone(page, numbers=alone, fixture=fixture)
             continue
-        report = run(page, fixture=fixture)
+        report = transcribe(page, fixture=fixture)
         print(json.dumps(report, indent=1))
         if "refused" in report:
             print(f"REFUSED: {report['refused']}")

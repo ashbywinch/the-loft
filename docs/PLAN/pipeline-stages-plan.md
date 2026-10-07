@@ -130,12 +130,45 @@ Two processes, clearly separated:
   persists the corrected rows, and its response IS the apply (the live
   merge cannot wait on anything else). A user write marks its page/batch
   for re-processing, and the worker picks that up on its next pass to
-  transcribe the corrected rows into the draft Document (the
+  transform the corrected rows into the draft Document (the
   proposed-transcripts stage — each row's text, kind and injection
   target are read then, per the interjection ruling). The server never
   contacts the worker — only the worker proceeds on its own next pass.
 - **The front end** (the app) — reads the portal via the API and POSTs
   the user's decisions via the API; it holds no pipeline state.
+
+**The read stage transcribes the rows** (2026-10-07). `tools/pipeline.py`'s
+`_read_pages` used to fill each row's text from the page guess's `.txt`, split
+into lines and indexed onto the rows in order — which put a sentence one row out
+wherever the rows and the text's lines ran differently. The rows' text now comes
+from `tools/transcripts.py` (`Transcriber.transcribe`): the page's rows are
+numbered (one chip per row, at the end of the line it belongs to, in that row's
+own colour over its tinted band), the page goes to the model as short bands that
+each carry exactly their own rows, and any row the bands leave blank or doubled
+is transcribed from a MASKED crop — the row's own words, everything else painted
+over in the paper's colour, so a neighbour's writing cannot be read as this
+row's. The guess stage keeps its role (the page's running text, the document
+boundaries); it is no longer the rows' text source. A page whose transcription
+returns nothing writes no `rows.json` at all: the marker rule, an artifact that
+looks done but is empty being worse than a page to re-run.
+
+Vocabulary, because two things are easy to confuse here: the DETECTOR reads a
+page — `tools/reader.py`'s `Reading` is the fitted lines and split words that
+`words.json` holds. A TRANSCRIPT is what a model says the writing says: one
+page's `Transcript` (`document/transcript.py`), each of its rows a
+`RowTranscript` (the rows it covers, its text, its kind, its injection target).
+
+**The bands are sized by height, and the height is measured** (2026-10-07).
+`NumberedRows.render_strips` used to cut every page into a fixed three bands; the
+count now comes from the writing's own height and the tallest band the model
+reads at full resolution (`MAX_BAND_HEIGHT` = 856px) — the fewest bands that
+leave none taller than that, with a cut only where the rows leave a gap. The
+measurement (`tools/eval_band_size.py`, one production call per band) found two
+separate effects: the whole writing on one image (2360px) lost the **bottom
+eight** row numbers — resolution, which is what bands are for — while a band's
+call can also come back **empty** at any size (the same 1286px bands read 41/41
+twice and named nothing once). Height is not the cure for the second; the masked
+alone path is, and it is already the repair.
 
 ```mermaid
 sequenceDiagram

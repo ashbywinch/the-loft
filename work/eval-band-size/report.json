@@ -1,0 +1,90 @@
+[
+ {
+  "max_height": 2000,
+  "bands": 2,
+  "band_height": 1286,
+  "band_width": 1702,
+  "rows": 41,
+  "numbers_read": 21,
+  "numbers_missed": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15,
+   16,
+   17,
+   18,
+   19,
+   20
+  ],
+  "bands_with_no_number": 1,
+  "seconds": 292.4
+ },
+ {
+  "max_height": 1700,
+  "bands": 2,
+  "band_height": 1286,
+  "band_width": 1702,
+  "rows": 41,
+  "numbers_read": 41,
+  "numbers_missed": [],
+  "bands_with_no_number": 0,
+  "seconds": 469.8
+ },
+ {
+  "max_height": 1500,
+  "bands": 2,
+  "band_height": 1286,
+  "band_width": 1702,
+  "rows": 41,
+  "numbers_read": 21,
+  "numbers_missed": [
+   1,
+   2,
+   3,
+   4,
+   5,
+   6,
+   7,
+   8,
+   9,
+   10,
+   11,
+   12,
+   13,
+   14,
+   15,
+   16,
+   17,
+   18,
+   19,
+   20
+  ],
+  "bands_with_no_number": 1,
+  "seconds": 347.4
+ },
+ {
+  "max_height": 1300,
+  "bands": 2,
+  "band_height": 1286,
+  "band_width": 1702,
+  "rows": 41,
+  "numbers_read": 40,
+  "numbers_missed": [
+   11
+  ],
+  "bands_with_no_number": 0,
+  "seconds": 266.5
+ }
+]

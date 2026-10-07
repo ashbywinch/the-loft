@@ -40,9 +40,13 @@ from tools.pipeline_store import PipelineStore, text_sha256
 from tools.reader import Reading, reading_for_page
 from tools.registry import RegistryError as PipelineError
 from tools.registry import load_batch, record_path
+from tools.row import Row
+from tools.rows import Rows
 from tools.store import DiskStore, StoreError  # noqa: F401
 from tools.sync import record_confirmation
+from tools.transcripts import row_transcripts
 from tools.vlm import VlmError, line_orientation_degrees
+from tools.word import Word
 
 PAGE_LIMIT = 30  # one guess call per batch; beyond this the context is too big — chunking is future work
 GUESS_PAGE_CHUNK = 5  # the guess re-emits each page's corrected text; the OUTPUT size binds — 5 pages of
@@ -249,15 +253,24 @@ def _read_pages(
     work_dir: Path,
     batch_id: str,
     _reading: Callable[[Image.Image], Reading] = reading_for_page,
+    _rows_text: Callable[[Path, Path], dict[int, str]] = row_transcripts,
 ) -> None:
     """The reading stage: each text page's rows (line boxes from the
-    fitted-lines chain) with the page's guess text mapped onto them in
-    order, and the reading's WORDS beside them (``<page>.words.json``).
+    fitted-lines chain), each row's writing READ from the model, and the
+    reading's WORDS beside them (``<page>.words.json``).
+
+    The row's text is its own reading — the row is numbered and the model
+    answers for that number — not the page guess's text indexed onto the rows
+    in order, which put a sentence one row out wherever the page's rows and its
+    text lines ran differently.
+
     The drawn-lines correction (`rows.adjust`) groups the words, so a page
-    without them cannot be corrected — both files are written together.
-    Written as ``<page>.rows.json`` beside the guess; the review's draft
-    seam reads the rows, falling back to a strip-era ``layout.json`` for
-    batches read before this change."""
+    without them cannot be corrected — both files are written together. Written
+    as ``<page>.rows.json`` beside the guess; the review's draft seam reads the
+    rows, falling back to a strip-era ``layout.json`` for batches read before
+    this change. A page the reading returns NOTHING for is left unwritten (its
+    marker absent) and named on stderr: the marker rule — an artifact that
+    looks done but is empty is worse than a page to re-run."""
     store = PipelineStore(work_dir)
     for page in text_pages:
         rows_path = guess_dir / f"{Path(page).stem}.rows.json"
@@ -267,13 +280,17 @@ def _read_pages(
         if not image_path.is_file():
             continue
         reading = _reading(Image.open(image_path))
-        text_path = guess_dir / Path(page).with_suffix(".txt")
-        if text_path.is_file():
-            text_lines = [ln for ln in text_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
-        else:
-            text_lines = []
-        for i, line in enumerate(reading.lines):
-            line["text"] = text_lines[i] if i < len(text_lines) else ""
+        words = [Word(**record) for record in reading.words]
+        rows = Rows.from_words(words, (reading.width, reading.height)).rows()
+        transcripts = _rows_text(image_path, guess_dir) if rows else {}
+        if rows and not transcripts:
+            print(f"read: {page} SKIPPED — the reading returned nothing (re-run to retry)")
+            continue
+        # each reader line carries the reading of the row that owns its words
+        for row in rows:
+            index = _reader_line(row)
+            if index is not None and 0 <= index < len(reading.lines):
+                reading.lines[index]["text"] = transcripts.get(row.number, "")
         store.write(
             f"{batch_id}/ocr-guess/{Path(page).stem}.rows.json",
             json.dumps(
@@ -294,7 +311,15 @@ def _read_pages(
             f"{batch_id}/ocr-guess/{Path(page).stem}.words.json",
             json.dumps({"words": reading.words}, indent=1, ensure_ascii=False) + "\n",
         )
-        print(f"read: {page} -> {len(reading.lines)} rows, {len(reading.words)} words")
+        print(f"read: {page} -> {len(reading.lines)} rows, {len(reading.words)} words, {len(transcripts)} read")
+
+
+def _reader_line(row: Row) -> int | None:
+    """The fitted line a row's words came from — the row builder groups by it,
+    so a row of one line names it exactly; a row spanning several is ambiguous
+    and names none (its reading has nowhere to land in the draft)."""
+    lines = {word.line for word in row.word_boxes if word.line is not None}
+    return lines.pop() if len(lines) == 1 else None
 
 
 def process(

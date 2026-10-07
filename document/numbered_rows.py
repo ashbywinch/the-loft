@@ -18,6 +18,7 @@ app writes them where the front end needs them).
 from __future__ import annotations
 
 import colorsys
+import math
 
 from PIL import Image, ImageDraw
 
@@ -39,12 +40,22 @@ PILL_LIFT = 0  # px: the pill is centred on its row's own line, not lifted above
 # starts high is lifted furthest, which is how row 7's number came adrift.
 PILL_MIN_WIDTH = 30  # px: a one-digit pill is still a pill
 PILL_STEP = 6  # px: the gap between two pills that had to be stepped apart
-# Bands are cut SHORT on purpose. The vision API downsamples an image by its
-# long edge, so a tall band returns the writing at less than half the page's
-# resolution — and rows whose bands overlap (page-01's tail stack, 38/39/40/41
-# within 20px) become one blur the model reads twice. A short band stays under
-# the API's pixel budget and arrives at the page's own resolution.
-STRIPS = 3
+# Bands are cut SHORT on purpose, and by HEIGHT. The vision model resizes an
+# image by its long edge, so a tall band comes back with the writing at less
+# than half the page's resolution — page-01's numbers at the foot arrive
+# unreadably small and the reading stops where it can still see them.
+#
+# Measured (tools/eval_band_size.py, 2026-10-07). Two separate effects:
+#   * the whole writing on one image (2360px) lost the BOTTOM EIGHT row numbers
+#     — 33 of 41 read — which is resolution, and is what bands are for;
+#   * a band's call can come back EMPTY: the same 1286px bands that read 41/41
+#     twice named nothing at all once, its neighbour band's 20 rows then missing
+#     from the page. That is the model, not the size, and the masked alone path
+#     is what repairs it.
+# This height read 41/41 in four separate passes, so it sits at the measured-safe
+# end of the range rather than at its boundary.
+MAX_BAND_HEIGHT = 856  # px: the tallest band measured read in full
+STRIPS_MAX = 8  # bands beyond this are cuts without rows to hold
 # Neighbouring bands do NOT overlap. They did (60px), to be safe against a cut
 # through a row — but the cuts are placed in the gaps BETWEEN rows, so there is
 # nothing to be safe about, and the overlap made the model read the shared
@@ -99,22 +110,46 @@ class NumberedRows:
         return cls._draw(page.convert("RGB"), sorted(rows, key=lambda row: row.number), offset_y=0)
 
     @classmethod
-    def render_strips(cls, page: Image.Image, rows: list[Row], *, strips: int = STRIPS) -> list[NumberedRows]:
-        """The page in `strips` bands, top to bottom, numbered — one image per
-        band, all of them going to the model in ONE call.
+    def render_strips(
+        cls, page: Image.Image, rows: list[Row], *, max_band_height: float = MAX_BAND_HEIGHT
+    ) -> list[NumberedRows]:
+        """The page in bands, top to bottom, numbered — one image per band, one
+        call per band.
 
         The bands cover the WRITING (a blank margin is not worth an image) and
         the cuts fall in the gaps BETWEEN rows, never through one: a row cut in
         half is a row whose number and its writing part company, which is how a
         reading gets lost. Every row is numbered once, in the band holding it,
         with its own number — an answer is read against that numbering however
-        the page was cut."""
-        if strips < 1:
-            raise ValueError(f"a page needs at least one strip, not {strips}")
+        the page was cut.
+
+        The COUNT is the fewest bands that keep every band under the height the
+        model reads at full resolution (`MAX_BAND_HEIGHT`, measured) — a short
+        page gets one band, a fragment or a postcard is never cut up to fit a
+        fixed three, and a tall page gets as many as its writing needs. A cut may
+        only fall in a gap between rows, so where rows sit far apart the count
+        climbs until each band fits, and a page of very few rows simply cannot be
+        cut at all."""
+        if max_band_height < 1:
+            raise ValueError(f"a band needs a height, not {max_band_height}")
         ordered = sorted(rows, key=lambda row: row.number)
+        if not ordered:
+            return []
         top = min(row.band.y0 for row in ordered)
         bottom = max(row.band.y1 for row in ordered)
-        bounds = [top, *_cut_gaps(ordered, strips=strips, top=top, bottom=bottom), bottom]
+        # the fewest bands that hold every band under the readable height: a cut
+        # can only fall in a gap between rows, so the first count the height asks
+        # for may leave a band too tall (rows far apart make wide gaps), and the
+        # count then climbs until each band fits — a fragment or a postcard
+        # never gets cut at all
+        most_bands = max(1, min(len(ordered), STRIPS_MAX))
+        bands = max(1, min(math.ceil((bottom - top) / max_band_height), most_bands))
+        while True:
+            bounds = [top, *_cut_gaps(ordered, strips=bands, top=top, bottom=bottom), bottom]
+            tallest = max(high - low for low, high in zip(bounds[:-1], bounds[1:], strict=True))
+            if bands >= most_bands or tallest <= max_band_height:
+                break
+            bands += 1
         xs = [word.x0 for row in ordered for word in row.word_boxes] + [
             word.x1 for row in ordered for word in row.word_boxes
         ]
@@ -123,15 +158,15 @@ class NumberedRows:
         ink_left = max(0, int(min(float(min(xs) if xs else 0), float(number_left))) - INK_MARGIN)
         ink_right = min(page.width, int(max(xs) if xs else page.width) + INK_MARGIN)
         out: list[NumberedRows] = []
-        for index in range(strips):
+        for index in range(bands):
             band_top = int(bounds[index]) - (BAND_OVERLAP if index else 0)
-            band_bottom = int(bounds[index + 1]) + (BAND_OVERLAP if index + 1 < strips else 0)
+            band_bottom = int(bounds[index + 1]) + (BAND_OVERLAP if index + 1 < bands else 0)
             band_top, band_bottom = max(0, band_top), min(page.height, band_bottom)
             inside = [
                 row
                 for row in ordered
                 if band_top <= (row.band.y0 + row.band.y1) / 2 < band_bottom
-                or (index == strips - 1 and (row.band.y0 + row.band.y1) / 2 >= band_bottom)
+                or (index == bands - 1 and (row.band.y0 + row.band.y1) / 2 >= band_bottom)
             ]
             # the page's own margins are not worth an image: the width sent is
             # the writing's, plus the gutter the numbers sit in. Page-01's

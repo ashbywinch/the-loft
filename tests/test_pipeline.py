@@ -17,29 +17,79 @@ from tools.reader import Reading
 from tools.registry import RegistryError
 
 
-def test_read_pages_writes_the_rows_and_the_words(tmp_path: Path) -> None:
-    """The read stage persists both halves of the reading: the row boxes
-    (with the guess text mapped onto them) and the words the drawn-lines
-    correction groups — a page persisted without its words cannot be
-    corrected in the review."""
-    batch = tmp_path / "adopt-0003"
-    guess, oriented = batch / "ocr-guess", batch / "oriented"
-    guess.mkdir(parents=True)
-    oriented.mkdir(parents=True)
-    Image.new("L", (40, 40), 255).save(oriented / "p1.jpg")
-    (guess / "p1.txt").write_text("line one\n", encoding="utf-8")
-    reading = Reading(
-        lines=[{"index": 0, "text": "", "box": [0, 0, 40, 10], "orientation": 0, "box_source": "reader", "words": []}],
+def _reading() -> Reading:
+    """A one-line, one-word page as the reader hands it over."""
+    return Reading(
+        lines=[
+            {
+                "index": 0,
+                "text": "",
+                "box": [0, 0, 40, 10],
+                "orientation": 0,
+                "box_source": "reader",
+                "words": [0],
+            }
+        ],
         words=[{"x0": 1.0, "y0": 1.0, "x1": 9.0, "y1": 9.0, "line": 0, "baseline": 9.0, "waistline": 1.0}],
         width=40,
         height=40,
     )
 
-    _read_pages(["p1.jpg"], guess, oriented, tmp_path, "adopt-0003", _reading=lambda _image: reading)
+
+def _page(tmp_path: Path) -> tuple[Path, Path]:
+    batch = tmp_path / "adopt-0003"
+    guess, oriented = batch / "ocr-guess", batch / "oriented"
+    guess.mkdir(parents=True)
+    oriented.mkdir(parents=True)
+    Image.new("L", (40, 40), 255).save(oriented / "p1.jpg")
+    return guess, oriented
+
+
+def test_read_pages_writes_the_rows_the_model_read_and_the_words(tmp_path: Path) -> None:
+    """The read stage persists both halves of the reading: the row boxes, each
+    carrying the writing the model READ for that row, and the words the
+    drawn-lines correction groups — a page persisted without its words cannot
+    be corrected in the review.
+
+    The row's text is its own reading, not the page guess's text indexed onto
+    the rows in order: indexing put a sentence one row out wherever the page's
+    rows and its text lines ran differently."""
+    guess, oriented = _page(tmp_path)
+    reading = _reading()
+
+    _read_pages(
+        ["p1.jpg"],
+        guess,
+        oriented,
+        tmp_path,
+        "adopt-0003",
+        _reading=lambda _image: reading,
+        _rows_text=lambda _image, _out: {1: "the model read this row"},
+    )
 
     rows = json.loads((guess / "p1.rows.json").read_text(encoding="utf-8"))
-    assert rows["lines"][0]["text"] == "line one"  # the guess text mapped onto the row
+    assert rows["lines"][0]["text"] == "the model read this row"
     assert json.loads((guess / "p1.words.json").read_text(encoding="utf-8")) == {"words": reading.words}
+
+
+def test_a_page_the_reading_returns_nothing_for_is_left_unwritten(tmp_path: Path) -> None:
+    """The marker rule: an artifact that looks done but is empty is worse than
+    a page to re-run. A reading that answers nothing writes NO rows.json, so
+    the page stays to-do instead of looking read."""
+    guess, oriented = _page(tmp_path)
+
+    _read_pages(
+        ["p1.jpg"],
+        guess,
+        oriented,
+        tmp_path,
+        "adopt-0003",
+        _reading=lambda _image: _reading(),
+        _rows_text=lambda _image, _out: {},
+    )
+
+    assert not (guess / "p1.rows.json").exists(), "an empty reading was recorded as done"
+    assert not (guess / "p1.words.json").exists(), "the words were written without a reading"
 
 
 def _flag(page: str, starts: bool = False, ends: bool = False, **extra: object) -> dict[str, object]:

@@ -20,11 +20,11 @@ from PIL import Image, ImageDraw
 
 from document.numbered_rows import PILL_INSET as PILL_GAP
 from document.numbered_rows import PILL_POINTER, NumberedRows
-from tools.eval_rows_transcript import words_from
 from tools.rectangle import Rectangle, overlaps
 from tools.row import Row
 from tools.rows import Rows
 from tools.schemas import load_user_row_adjustments
+from tools.transcripts import words_from
 
 FIXTURE = Path(__file__).parent / "fixtures" / "page01-rows-gold"
 
@@ -127,7 +127,7 @@ def test_the_bands_hold_every_number_and_all_the_writing() -> None:
     the crop is a number the model never sees, which is how thirteen of them
     went missing."""
     rows = _page01_rows()
-    strips = NumberedRows.render_strips(Image.new("RGB", (2544, 4642)), rows, strips=3)
+    strips = NumberedRows.render_strips(Image.new("RGB", (2544, 4642)), rows, max_band_height=800)
     spread = NumberedRows.numbers_extent(rows)
     ink = _ink(rows)
     for strip in strips:
@@ -309,7 +309,7 @@ def test_a_number_lands_beside_its_row_inside_a_cut_band() -> None:
     merge rows 6, 7 and 10 into their neighbours and refuse every band."""
     page = Image.new("RGB", (2544, 4642), (250, 250, 250))
     rows = _page01_rows()
-    strips = NumberedRows.render_strips(page, rows, strips=3)
+    strips = NumberedRows.render_strips(page, rows, max_band_height=800)
     assert strips, "no strips were rendered"
     seen: set[int] = set()
     for strip in strips:
@@ -353,3 +353,59 @@ def test_a_number_is_painted_at_the_crops_origin_in_its_own_colour() -> None:
     assert int(painted.max()) <= pill_right + PILL_POINTER + 2, (
         f"the number reaches x{painted.max()}, past its row's pill at x{pill_right}"
     )
+
+
+def test_a_page_of_two_rows_gets_one_band_holding_both() -> None:
+    """A page has one fewer gap than it has rows, so the default three bands
+    over a two-row page indexed past its cuts — an IndexError the read stage
+    would meet on a postcard or a fragment. The bands are the gaps that exist,
+    and every row is numbered exactly once."""
+    rows = [
+        Row(
+            id="seg-1",
+            kind="body",
+            number=1,
+            word_boxes=[_word(100, 100, 300, 140)],
+            band=Rectangle(100, 100, 300, 140),
+        ),
+        Row(
+            id="seg-2",
+            kind="body",
+            number=2,
+            word_boxes=[_word(100, 400, 300, 440)],
+            band=Rectangle(100, 400, 300, 440),
+        ),
+    ]
+    strips = NumberedRows.render_strips(Image.new("RGB", (600, 600), (255, 255, 255)), rows)
+    assert len(strips) == 1, f"a two-row page was cut into {len(strips)} bands"
+    assert sorted(n for strip in strips for n in strip.numbers.values()) == [1, 2]
+
+
+def test_the_band_count_follows_the_writings_height() -> None:
+    """Bands are sized by the tallest band the model reads at full resolution,
+    not by a fixed count: a postcard gets one band, a tall page as many as its
+    writing needs. Measured — the whole writing on one image (2360px) lost the
+    bottom eight row numbers; at the safe height every number was read."""
+    page = Image.new("RGB", (600, 4000), (255, 255, 255))
+
+    def rows_over(height: float, count: int) -> list[Row]:
+        step = height / count
+        return [
+            Row(
+                id=f"seg-{i}",
+                kind="body",
+                number=i,
+                word_boxes=[_word(100, 100 + (i - 1) * step, 300, 140 + (i - 1) * step)],
+                band=Rectangle(100, 100 + (i - 1) * step, 300, 140 + (i - 1) * step),
+            )
+            for i in range(1, count + 1)
+        ]
+
+    short = NumberedRows.render_strips(page, rows_over(500, 2), max_band_height=856)
+    assert len(short) == 1, "a page shorter than one band was cut up anyway"
+
+    # 3400px wants 4 bands by height, but 4 of them leave one at 1360px — cuts
+    # can only fall in the rows' gaps — so the count climbs to 5, one per gap
+    tall = NumberedRows.render_strips(page, rows_over(3400, 5), max_band_height=856)
+    assert len(tall) == 5, f"the fewest bands that all fit is 5, got {len(tall)}"
+    assert max(band.image.height for band in tall) <= 856 + 60, "a band came out taller than the readable height"

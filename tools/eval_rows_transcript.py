@@ -33,11 +33,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from document.numbered_rows import STRIPS, NumberedRows
 from document.transcript import ReadingError, Transcript
 from tools.reader import reading_for_page
+from tools.rectangle import Rectangle
 from tools.render import render_rows
 from tools.rows import Rows
 from tools.schemas import load_user_row_adjustments
@@ -150,8 +151,15 @@ def run(
     # the strips are cut from the REVIEW SURFACE'S OWN rendering — the rows
     # tinted in their per-row hues by `render_rows` (the same function the
     # review surface and the reading sheet use), then numbered with the same
-    # `.rv-rownum` pill. The model sees what the reviewer sees.
-    numbered = NumberedRows.render_strips(render_rows(image, rows), rows, strips=STRIPS)
+    # `.rv-rownum` pill. The model sees what the reviewer sees — WHICH INCLUDES
+    # THE ROWS THEMSELVES: the user's drawn lines are the region boundaries,
+    # and without them a side-by-side pair (page-01's 12/13) or a multi-line
+    # region (its 25) has no visible edge, so the model reads every word right
+    # and assigns whole sentences to whichever chip's leader is nearest.
+    highlighted = render_rows(image, rows)
+    if fixture:
+        draw_user_rows(highlighted, load_user_row_adjustments(fixture / "user-row-adjustments.json")["lines"])
+    numbered = NumberedRows.render_strips(highlighted, rows, strips=STRIPS)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = image_path.stem
     render_paths = []
@@ -179,14 +187,7 @@ def run(
     ).read()
     every = sorted({number for strip in numbered for number in strip.numbers.values()})
     needing = _rows_needing_a_second_look(band_read.readings, every)
-    alone: dict[int, str] = {}
-    if needing:
-        # the bands settle most rows; the ones they leave blank or doubled are
-        # shown ALONE — a crop of the row's own words, no neighbours' ink — with
-        # the reading so far as the thread
-        print(f"  {len(needing)} row(s) the bands could not settle: {needing} — reading them alone")
-        for number, text in read_rows_alone(image_path, numbers=needing, fixture=fixture, call=call, out_dir=out_dir):
-            alone[number] = text
+    alone = _read_the_unsettled(needing, image_path, fixture, call, out_dir)
     answer = _combined_answer(rows, band_read.readings, alone)
     seconds = time.monotonic() - started
     refusals, usage = band_read.refusals, band_read.usage
@@ -223,6 +224,40 @@ def run(
     return report
 
 
+def draw_user_rows(canvas: Image.Image, lines: list[list[tuple[float, float]]]) -> None:
+    """The reviewer's drawn row lines, as the review surface draws them —
+    yellow, over the paper. The lines are the row boundaries the model must
+    see; the numbered chips already say which row is which.
+
+    The lines are NORMALISED to the page (0..1), the form the fixture keeps and
+    `Rows.adjust` consumes — drawn raw they were 44 specks in the top-left
+    corner, which is not what the reviewer drew."""
+    draw = ImageDraw.Draw(canvas)
+    for line in lines:
+        points = [(x * canvas.width, y * canvas.height) for x, y in line]
+        draw.line(points, fill=(250, 210, 30), width=7)
+
+
+def _read_the_unsettled(
+    needing: list[int],
+    image_path: Path,
+    fixture: Path | None,
+    call: Callable[..., tuple[str, dict[str, int]]] | None,
+    out_dir: Path,
+) -> dict[int, str]:
+    """The rows the bands could not settle, read one at a time from their own
+    crops — a crop that shows a neighbour's ink as well is why a row came back
+    reading like its neighbour, so `alone_crop` clips each crop at the rows
+    around it."""
+    if not needing:
+        return {}
+    print(f"  {len(needing)} row(s) the bands could not settle: {needing} — reading them alone")
+    alone: dict[int, str] = {}
+    for number, text in read_rows_alone(image_path, numbers=needing, fixture=fixture, call=call, out_dir=out_dir):
+        alone[number] = text
+    return alone
+
+
 def read_rows_alone(
     image_path: Path,
     *,
@@ -247,11 +282,12 @@ def read_rows_alone(
         if fixture
         else builder.rows()
     )
+    ordered = sorted(rows, key=lambda row: row.number)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = image_path.stem
-    alone = _AloneReader(image=image, out_dir=out_dir, stem=stem, call=call)
+    alone = _AloneReader(image=image, out_dir=out_dir, stem=stem, call=call, ordered=ordered)
     read: list[tuple[int, str]] = []
-    for row in rows:
+    for row in ordered:
         if row.number in numbers and row.word_boxes:
             read.append((row.number, alone.text_of(row, read)))
     # persisted like every other reading: a row read once is never paid for
@@ -260,6 +296,32 @@ def read_rows_alone(
         json.dumps({"rows": {str(number): text for number, text in read}}, indent=1)
     )
     return read
+
+
+def alone_crop(row: Any, ordered: list[Any], size: tuple[int, int]) -> Rectangle:
+    """The rectangle that contains one row's words and almost nothing else.
+
+    The words get the usual margin, EXCEPT vertically, where no margin may
+    cross the midpoint of the gap to the neighbouring rows' bands. In the tight
+    stacks the ±24px margin alone reached the neighbour line — page-01's 26 and
+    27 both cropped to the same "year we performed the Mahler 8th" — and the row
+    is the region the reviewer drew, so its own band is the unit that may not be
+    entered."""
+    place = next(index for index, other in enumerate(ordered) if other.number == row.number)
+    above = ordered[place - 1].band.y1 if place else None
+    below = ordered[place + 1].band.y0 if place + 1 < len(ordered) else None
+    gap_top = (row.band.y0 - above) / 2 if above is not None else ALONE_MARGIN
+    gap_bottom = (below - row.band.y1) / 2 if below is not None else ALONE_MARGIN
+    # an overlapping neighbour leaves no gap: a negative margin would push the
+    # crop INSIDE the row's own words, so zero is the floor
+    margin_top = min(ALONE_MARGIN, max(0.0, gap_top))
+    margin_bottom = min(ALONE_MARGIN, max(0.0, gap_bottom))
+    width, height = size
+    left = max(0, int(min(word.x0 for word in row.word_boxes)) - ALONE_MARGIN)
+    right = min(width, int(max(word.x1 for word in row.word_boxes)) + ALONE_MARGIN)
+    top = max(0, int(min(word.y0 for word in row.word_boxes) - margin_top))
+    bottom = min(height, int(max(word.y1 for word in row.word_boxes) + margin_bottom))
+    return Rectangle(left, top, right, bottom)
 
 
 @dataclass(frozen=True)
@@ -271,16 +333,13 @@ class _AloneReader:
     out_dir: Path
     stem: str
     call: Callable[..., tuple[str, dict[str, int]]] | None
+    ordered: list[Any]
 
     def text_of(self, row: Any, above: list[tuple[int, str]]) -> str:
         """One row transcribed from a crop of its own words only — no
         neighbour's ink, nothing else in the image to confuse it with."""
-        left = max(0, int(min(word.x0 for word in row.word_boxes)) - ALONE_MARGIN)
-        right = min(self.image.width, int(max(word.x1 for word in row.word_boxes)) + ALONE_MARGIN)
-        top = max(0, int(min(word.y0 for word in row.word_boxes)) - ALONE_MARGIN)
-        bottom = min(self.image.height, int(max(word.y1 for word in row.word_boxes)) + ALONE_MARGIN)
         path = self.out_dir / f"{self.stem}.row-{row.number}.jpg"
-        self.image.crop((left, top, right, bottom)).save(path, quality=90)
+        self.image.crop(alone_crop(row, self.ordered, self.image.size)).save(path, quality=90)
         read_above = "\n".join(f"row {number}: {text}" for number, text in above[-6:])
         prompt = (
             f"This is ONE row of a handwritten letter: row {row.number}, alone. Transcribe exactly what it says, "
@@ -288,10 +347,11 @@ class _AloneReader:
             "ends mid-sentence, transcribe just what is here"
             + (f". The rows immediately above it read:\n{read_above}" if read_above else ".")
         )
+        options = VlmOptions(system=SYSTEM, user_text=prompt)
         answer, _usage = (
             self.call([path], system=SYSTEM, user_text=prompt)
             if self.call is not None
-            else transcribe_images_vlm([path], options=VlmOptions(system=SYSTEM, user_text=prompt))
+            else transcribe_images_vlm([path], options=options)
         )
         readings = Transcript.from_answer(answer, rows=[row.number]).readings
         text = readings[0].text if readings else ""

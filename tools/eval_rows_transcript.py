@@ -33,7 +33,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw
+import numpy as np
+from PIL import Image
 
 from document.numbered_rows import STRIPS, NumberedRows
 from document.transcript import ReadingError, Transcript
@@ -151,15 +152,8 @@ def run(
     # the strips are cut from the REVIEW SURFACE'S OWN rendering — the rows
     # tinted in their per-row hues by `render_rows` (the same function the
     # review surface and the reading sheet use), then numbered with the same
-    # `.rv-rownum` pill. The model sees what the reviewer sees — WHICH INCLUDES
-    # THE ROWS THEMSELVES: the user's drawn lines are the region boundaries,
-    # and without them a side-by-side pair (page-01's 12/13) or a multi-line
-    # region (its 25) has no visible edge, so the model reads every word right
-    # and assigns whole sentences to whichever chip's leader is nearest.
-    highlighted = render_rows(image, rows)
-    if fixture:
-        draw_user_rows(highlighted, load_user_row_adjustments(fixture / "user-row-adjustments.json")["lines"])
-    numbered = NumberedRows.render_strips(highlighted, rows, strips=STRIPS)
+    # `.rv-rownum` pill. The model sees what the reviewer sees.
+    numbered = NumberedRows.render_strips(render_rows(image, rows), rows, strips=STRIPS)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = image_path.stem
     render_paths = []
@@ -224,20 +218,6 @@ def run(
     return report
 
 
-def draw_user_rows(canvas: Image.Image, lines: list[list[tuple[float, float]]]) -> None:
-    """The reviewer's drawn row lines, as the review surface draws them —
-    yellow, over the paper. The lines are the row boundaries the model must
-    see; the numbered chips already say which row is which.
-
-    The lines are NORMALISED to the page (0..1), the form the fixture keeps and
-    `Rows.adjust` consumes — drawn raw they were 44 specks in the top-left
-    corner, which is not what the reviewer drew."""
-    draw = ImageDraw.Draw(canvas)
-    for line in lines:
-        points = [(x * canvas.width, y * canvas.height) for x, y in line]
-        draw.line(points, fill=(250, 210, 30), width=7)
-
-
 def _read_the_unsettled(
     needing: list[int],
     image_path: Path,
@@ -245,10 +225,11 @@ def _read_the_unsettled(
     call: Callable[..., tuple[str, dict[str, int]]] | None,
     out_dir: Path,
 ) -> dict[int, str]:
-    """The rows the bands could not settle, read one at a time from their own
-    crops — a crop that shows a neighbour's ink as well is why a row came back
-    reading like its neighbour, so `alone_crop` clips each crop at the rows
-    around it."""
+    """The rows the bands could not settle, read one at a time from masked
+    crops — each crop keeps ONLY the row's own words, everything else painted
+    over in the paper's colour, so no neighbour's ink can be read as this row's
+    (a crop rectangle was not enough: rows 36/37 interleave vertically and no
+    rectangle holds one without the other)."""
     if not needing:
         return {}
     print(f"  {len(needing)} row(s) the bands could not settle: {needing} — reading them alone")
@@ -266,13 +247,15 @@ def read_rows_alone(
     call: Callable[..., tuple[str, dict[str, int]]] | None = None,
     out_dir: Path = OUT_DIR,
 ) -> list[tuple[int, str]]:
-    """Read named rows ONE AT A TIME, each from a crop of its own words only.
+    """Read named rows ONE AT A TIME, each from a MASKED crop of its own words
+    only.
 
     A row is a piece of writing that the reviewer's lines separated, and in the
     tight stacks its band overlaps its neighbours' — a crop of the band shows
-    three rows' ink, so the reader sees the same writing three times. Cropped to
-    the row's own words, the piece is alone; the running transcript gives it the
-    thread of the letter.
+    three rows' ink, so the reader sees the same writing three times. Each crop
+    keeps only the row's own words, everything else painted over in the paper's
+    colour, and the piece is alone; the running transcript gives it the thread
+    of the letter.
     """
     image = Image.open(image_path)
     words = words_from(fixture / "words.json") if fixture else words_for(image_path, image)
@@ -298,29 +281,40 @@ def read_rows_alone(
     return read
 
 
-def alone_crop(row: Any, ordered: list[Any], size: tuple[int, int]) -> Rectangle:
-    """The rectangle that contains one row's words and almost nothing else.
+def masked_row(row: Any, page: Image.Image, ordered: list[Any]) -> Image.Image:
+    """The page's region for this row with EVERYTHING but the row's own words
+    painted over in the paper's colour.
 
-    The words get the usual margin, EXCEPT vertically, where no margin may
-    cross the midpoint of the gap to the neighbouring rows' bands. In the tight
-    stacks the ±24px margin alone reached the neighbour line — page-01's 26 and
-    27 both cropped to the same "year we performed the Mahler 8th" — and the row
-    is the region the reviewer drew, so its own band is the unit that may not be
-    entered."""
-    place = next(index for index, other in enumerate(ordered) if other.number == row.number)
-    above = ordered[place - 1].band.y1 if place else None
-    below = ordered[place + 1].band.y0 if place + 1 < len(ordered) else None
-    gap_top = (row.band.y0 - above) / 2 if above is not None else ALONE_MARGIN
-    gap_bottom = (below - row.band.y1) / 2 if below is not None else ALONE_MARGIN
-    # an overlapping neighbour leaves no gap: a negative margin would push the
-    # crop INSIDE the row's own words, so zero is the floor
-    margin_top = min(ALONE_MARGIN, max(0.0, gap_top))
-    margin_bottom = min(ALONE_MARGIN, max(0.0, gap_bottom))
+    The crop rectangle holds the row's words plus a little air; the mask then
+    erases whatever else that rectangle contains. A rectangle alone cannot
+    isolate a row whose region interleaves a neighbour's (page-01's 36/37, 76px
+    of vertical overlap): there is no rectangle holding one without the other.
+    Painting the neighbour over leaves only this row's writing to be read, and
+    it is exactly what "read this row alone" means."""
+    rect = row_crop(row, page.size)
+    # PIL's crop wants its own 4-tuple; the record is the Rectangle above it
+    region = np.asarray(page.convert("RGB").crop((int(rect.x0), int(rect.y0), int(rect.x1), int(rect.y1)))).copy()
+    paper = np.array(NumberedRows.background_of(page, ordered))
+    mask = np.zeros((region.shape[0], region.shape[1]), dtype=bool)
+    pad = 2  # word boxes hug the ink; a couple of px so the strokes are never shaved
+    for word in row.word_boxes:
+        x0 = max(0, int(word.x0) - rect.x0 - pad)
+        y0 = max(0, int(word.y0) - rect.y0 - pad)
+        x1 = min(region.shape[1], int(word.x1) - rect.x0 + pad)
+        y1 = min(region.shape[0], int(word.y1) - rect.y0 + pad)
+        mask[y0:y1, x0:x1] = True
+    region[~mask] = paper
+    return Image.fromarray(region.astype("uint8"), "RGB")
+
+
+def row_crop(row: Any, size: tuple[int, int]) -> Rectangle:
+    """The rectangle holding one row's words plus a little air — neighbours may
+    be inside it, which the mask removes."""
     width, height = size
     left = max(0, int(min(word.x0 for word in row.word_boxes)) - ALONE_MARGIN)
     right = min(width, int(max(word.x1 for word in row.word_boxes)) + ALONE_MARGIN)
-    top = max(0, int(min(word.y0 for word in row.word_boxes) - margin_top))
-    bottom = min(height, int(max(word.y1 for word in row.word_boxes) + margin_bottom))
+    top = max(0, int(min(word.y0 for word in row.word_boxes)) - ALONE_MARGIN)
+    bottom = min(height, int(max(word.y1 for word in row.word_boxes)) + ALONE_MARGIN)
     return Rectangle(left, top, right, bottom)
 
 
@@ -336,10 +330,10 @@ class _AloneReader:
     ordered: list[Any]
 
     def text_of(self, row: Any, above: list[tuple[int, str]]) -> str:
-        """One row transcribed from a crop of its own words only — no
+        """One row transcribed from a masked crop of its own words only — no
         neighbour's ink, nothing else in the image to confuse it with."""
         path = self.out_dir / f"{self.stem}.row-{row.number}.jpg"
-        self.image.crop(alone_crop(row, self.ordered, self.image.size)).save(path, quality=90)
+        masked_row(row, self.image, self.ordered).save(path, quality=90)
         read_above = "\n".join(f"row {number}: {text}" for number, text in above[-6:])
         prompt = (
             f"This is ONE row of a handwritten letter: row {row.number}, alone. Transcribe exactly what it says, "

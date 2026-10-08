@@ -15,11 +15,11 @@ from __future__ import annotations
 import colorsys
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import NamedTuple
 
 import PIL
 from PIL import Image, ImageDraw, ImageFont
 
+from document.colour import Colour
 from document.rectangle import Rectangle
 from document.row import Row
 
@@ -27,15 +27,6 @@ from document.row import Row
 # Pillows take no size. A version capability, checked once - never an
 # exception-based fallback (the try/except was an invisible swallow).
 _PILLOW_HAS_SIZEABLE_DEFAULT_FONT = tuple(int(part) for part in PIL.__version__.split(".")) >= (9, 2)
-
-
-class Colour(NamedTuple):
-    """A row's tint colour - RGBA, and PIL-ready: a tuple of its channels."""
-
-    r: int
-    g: int
-    b: int
-    a: int
 
 
 @dataclass(frozen=True)

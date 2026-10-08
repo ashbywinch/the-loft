@@ -208,6 +208,7 @@ def transcribe_with_fallbacks(
     for attempt, spec in enumerate(variants, start=1):
         try:
             text, usage = call(image, **spec)
+        # lucidlint: ignore broad-except the variant retry: every failure surfaces as VlmError
         except Exception as exc:
             last_error = exc
             print(f"vlm {name} attempt {attempt}/{len(variants)}: {exc}", file=sys.stderr)

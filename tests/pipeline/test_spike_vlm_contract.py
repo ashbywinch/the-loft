@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from document.transcript import TranscriptError
 from pipeline.evals.spike_vlm_contract import (
     SYSTEM_PROMPT,
     ContractError,
@@ -50,9 +51,11 @@ def test_the_fence_wrap_is_tolerated() -> None:
 
 
 def test_garbage_is_a_loud_failure() -> None:
-    with pytest.raises(ContractError):
+    # the parser delegate raises the transcript contract's error; the
+    # spike's own contract errors cover the segment validation below
+    with pytest.raises(TranscriptError):
         parse_answer("Lorem ipsum dolor sit amet")
-    with pytest.raises(ContractError):
+    with pytest.raises(TranscriptError):
         parse_answer('{"lines": []}')
 
 

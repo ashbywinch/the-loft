@@ -67,7 +67,7 @@ class Transcript:
         cover exactly those."""
         wanted = tuple(range(1, rows + 1)) if isinstance(rows, int) else tuple(sorted(rows))
         highest = max(wanted, default=0)
-        segments = _parse(answer)
+        segments = parse_segments(answer)
         row_transcripts: list[RowTranscript] = []
         claimed: dict[int, int] = {}  # row number -> the transcript that claimed it
         for index, segment in enumerate(segments):
@@ -117,7 +117,7 @@ class Transcript:
         raise TranscriptError(f"row {row} was never read")
 
 
-def _parse(answer: str) -> list[dict[str, Any]]:
+def parse_segments(answer: str) -> list[dict[str, Any]]:
     """The model's JSON answer (fence-tolerant) as the segments list."""
     stripped = answer.strip()
     if stripped.startswith(_FENCE):

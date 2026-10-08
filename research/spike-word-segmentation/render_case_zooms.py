@@ -96,9 +96,9 @@ def _main() -> int:
         whole = number_words(boxes)
         inside = [entry["box"] for entry in whole if entry["render_id"] in wanted]
         image, chips = render_numbered(page, (x0, y0, x1, y1), inside, scale)
-        sheet, _handle, _bar = captioned_sheet(image, caption)
+        sheet = captioned_sheet(image, caption)
         out = OUT / f"{name}.jpg"
-        out.write_bytes(review_image(sheet, width=1400, quality=76))
+        out.write_bytes(review_image(sheet.sheet, width=1400, quality=76))
         print(f"{name}: {len(inside)} boxes in the window, {len(unplaced(chips))} chips unplaced -> {out.name}")
     return 0
 

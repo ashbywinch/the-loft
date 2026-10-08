@@ -371,6 +371,17 @@ def _associations(edges: list[dict[str, Any]], archive: Archive | None) -> dict[
     return associations
 
 
+def _event_date_lines(lines: list[str], person: dict[str, Any], key: str, tag: str) -> None:
+    """The BIRT/DEAT DATE line for a life-event date — the event record
+    plus its DATE payload, emitted only when the date exists."""
+    value = person.get(key)
+    if value:
+        lines += [
+            f"1 {tag}",
+            f"2 DATE {gedcom_date(value['date'], value.get('precision', 'exact'), value.get('date2'))}",
+        ]
+
+
 # a type for one use
 # lucidlint: ignore long-param-list a single call site (export_gedcom's per-person loop) — a parameter object would add
 def _person_lines(
@@ -387,12 +398,8 @@ def _person_lines(
     lines.append(f"1 REFN {pid}")  # the archive id — the round-trip seam for the importer
     lines.append(f"1 NAME {person['name']}")
     lines += [f"1 NAME {alias}" for alias in person.get("aliases") or []]
-    if person.get("dob"):
-        dob = person["dob"]
-        lines += ["1 BIRT", f"2 DATE {gedcom_date(dob['date'], dob.get('precision', 'exact'), dob.get('date2'))}"]
-    if person.get("dod"):
-        dod = person["dod"]
-        lines += ["1 DEAT", f"2 DATE {gedcom_date(dod['date'], dod.get('precision', 'exact'), dod.get('date2'))}"]
+    _event_date_lines(lines, person, key="dob", tag="BIRT")
+    _event_date_lines(lines, person, key="dod", tag="DEAT")
     lines += [f"1 OCCU {occupation}" for occupation in person.get("occupations") or []]
     lines += _residence_lines(person, place_names)
     for note in sorted(set(notes)):
@@ -465,6 +472,15 @@ _PERIOD = re.compile(r"^FROM\s+(.+)\s+TO\s+(.+)$")
 _INTERPRETED = re.compile(r"^INT\s+(.+?)\s*\((.+)\)$")
 
 
+def _between_dates(pattern: re.Pattern[str], payload: str) -> dict[str, str] | None:
+    """A BETWEEN/PERIOD payload -> the two-date between shape (the two
+    callers differ only in the keyword)."""
+    m = pattern.match(payload)
+    if m:
+        return {"date": _iso(m.group(1)), "date2": _iso(m.group(2)), "precision": "between"}
+    return None
+
+
 def parse_gedcom_date(payload: str) -> dict[str, str]:
     """A GEDCOM 7 DATE payload -> our {date, date2?, precision} shape."""
     payload = payload.strip()
@@ -473,12 +489,10 @@ def parse_gedcom_date(payload: str) -> dict[str, str]:
         qualifier, rest = m.group(1), m.group(2)
         precision = {"ABT": "approx", "EST": "approx", "CAL": "approx", "BEF": "before", "AFT": "after"}[qualifier]
         return {"date": _iso(rest), "precision": precision}
-    m = _BETWEEN.match(payload)
-    if m:
-        return {"date": _iso(m.group(1)), "date2": _iso(m.group(2)), "precision": "between"}
-    m = _PERIOD.match(payload)
-    if m:
-        return {"date": _iso(m.group(1)), "date2": _iso(m.group(2)), "precision": "between"}
+    for pattern in (_BETWEEN, _PERIOD):
+        m = _between_dates(pattern, payload)
+        if m:
+            return m
     m = _INTERPRETED.match(payload)
     if m:
         return {"date": _iso(m.group(1)), "precision": "approx"}
@@ -519,9 +533,8 @@ def _collect_place_payloads(node: Any, names: set[str]) -> None:
     """Every PLAC payload below ``node`` lands in ``names`` — a payload
     can sit under RESI, DEAT, MARR, SLGS, SOUR DATA, nested past the
     record's own children."""
+    names.update(child.text.strip() for child in node.children if child.tag == "PLAC" and child.text.strip())
     for child in node.children:
-        if child.tag == "PLAC" and child.text.strip():
-            names.add(child.text.strip())
         _collect_place_payloads(child, names)
 
 
@@ -571,6 +584,25 @@ def _place_id(name: str, taken: set[str]) -> str:
         pid = f"{base}-{n}"
         n += 1
     return pid
+
+
+def _append_edge(
+    edges: list[dict[str, Any]],
+    a: str,
+    b: str,
+    kind: str,
+    pending: bool,
+    *,
+    date: dict[str, str] | None = None,
+) -> None:
+    """One relationship edge — a pending flag rides it, and a spouse
+    edge's dated marriage does too."""
+    edge: dict[str, Any] = {"a": a, "b": b, "kind": kind}
+    if date:
+        edge["date"] = date
+    if pending:
+        edge["pending"] = "true"
+    edges.append(edge)
 
 
 @final
@@ -683,7 +715,8 @@ class GedcomDocument:
             person["status"] = "pending"
         return person, assoc_edges
 
-    def _parse_identity(self, person: dict[str, Any], record: Any) -> None:
+    @staticmethod
+    def _parse_identity(person: dict[str, Any], record: Any) -> None:
         """The REFN id and NAME (primary + aliases) — what a person is
         named by (the split keeps _parse_person under the gate)."""
         refn_seen = False
@@ -698,7 +731,8 @@ class GedcomDocument:
                 elif text_value and text_value not in person["aliases"]:
                     person["aliases"].append(text_value)
 
-    def _parse_facts(self, person: dict[str, Any], assoc_edges: list[tuple[str, str]], record: Any) -> None:
+    @staticmethod
+    def _parse_facts(person: dict[str, Any], assoc_edges: list[tuple[str, str]], record: Any) -> None:
         """The life facts the export re-emits: BIRT/DEAT dates,
         occupations, residences, ASSO edges (the split keeps
         _parse_person under the gate)."""
@@ -731,8 +765,9 @@ class GedcomDocument:
             families.append({**members, "children": children, "marriage": marriage, "xref": record.xref})
         return families
 
+    @staticmethod
     def _build_edges(
-        self, families: list[dict[str, Any]], associations: dict[str, list[tuple[str, str]]], pending_fams: set[str]
+        families: list[dict[str, Any]], associations: dict[str, list[tuple[str, str]]], pending_fams: set[str]
     ) -> list[dict[str, str]]:
         """The FAM and ASSO records -> archive relationship edges: a
         two-parent FAM is a spouse edge (a dated marriage rides it,
@@ -743,20 +778,12 @@ class GedcomDocument:
         for fam in families:
             pending = fam.get("xref") in pending_fams
             if "HUSB" in fam and "WIFE" in fam:
-                edge: dict[str, str] = {"a": fam["HUSB"], "b": fam["WIFE"], "kind": "spouse"}
-                if fam.get("marriage"):
-                    edge["date"] = fam["marriage"]
-                if pending:
-                    edge["pending"] = "true"
-                edges.append(edge)
+                _append_edge(edges, fam["HUSB"], fam["WIFE"], "spouse", pending, date=fam.get("marriage"))
             parents = [fam.get("HUSB"), fam.get("WIFE")]
             parents = [p for p in parents if p]
             for child in fam["children"]:
                 for parent in parents:
-                    edge = {"a": parent, "b": child, "kind": "parent"}
-                    if pending:
-                        edge["pending"] = "true"
-                    edges.append(edge)
+                    _append_edge(edges, parent, child, "parent", pending)
         edges.extend(
             {"a": xref, "b": other, "kind": kind} for xref, rels in associations.items() for other, kind in rels
         )

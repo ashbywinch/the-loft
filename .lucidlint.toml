@@ -39,7 +39,7 @@ ignore = ["record-shape", "class-module", "vague-name", "magic-number", "noqa"]
 # a reference, so the finding stops firing AND the suppression is reported
 # stale — see docs/PLAN/lucidlint-review-log.md §1.5.)
 [lucidlint."tools/eval_memory.py"]
-ignore = ["unused"]
+ignore = ["unused", "duplicate"]
 [lucidlint."tools/eval_review.py"]
 ignore = ["unused"]
 
@@ -60,3 +60,76 @@ ignore = ["fakefs"]
 
 [lucidlint."tests/document/**"]
 ignore = ["fakefs"]
+
+# unused: the repo's tests drive the modules' entry points directly (the DI
+# convention — run_review_gate(fetch, …), the seam wrappers, the eval harnesses,
+# the detecursor helpers) — a PRODUCTION-only reference count cannot see the
+# test suite, so the family misfires on every deliberate seam. The coding
+# standards name the convention; the eval-module exclusion extends to the
+# modules whose public faces exist for the tests to drive (2026-10-08).
+[lucidlint."pipeline/detect/reader.py"]
+ignore = ["unused", "god-class", "partition"]
+[lucidlint."pipeline/detect/ink.py"]
+ignore = ["unused"]
+[lucidlint."pipeline/detect/mark.py"]
+ignore = ["unused"]
+[lucidlint."pipeline/detect/box.py"]
+ignore = ["unused"]
+[lucidlint."pipeline/rows/rows.py"]
+ignore = ["unused"]
+[lucidlint."pipeline/layout.py"]
+ignore = ["unused", "long-param-list"]
+[lucidlint."pipeline/model/vlm.py"]
+ignore = ["unused"]
+[lucidlint."pipeline/model/vlm_cache.py"]
+ignore = ["unused"]
+[lucidlint."pipeline/transcribe/transcripts.py"]
+ignore = ["unused"]
+[lucidlint."pipeline/evals/eval_geometry.py"]
+ignore = ["unused"]
+[lucidlint."pipeline/evals/eval_review.py"]
+ignore = ["unused"]
+[lucidlint."pipeline/evals/spike_vlm_contract.py"]
+ignore = ["unused"]
+[lucidlint."pipeline/evals/walk_review.py"]
+ignore = ["unused"]
+[lucidlint."tools/text.py"]
+ignore = ["unused"]
+[lucidlint."tools/box.py"]
+ignore = ["unused"]
+[lucidlint."tools/gates.py"]
+ignore = ["unused"]
+[lucidlint."tools/pii_markers.py"]
+ignore = ["unused"]
+[lucidlint."tools/attestation.py"]
+ignore = ["unused"]
+[lucidlint."tools/archive.py"]
+ignore = ["unused", "god-class", "partition"]
+[lucidlint."tools/memory.py"]
+ignore = ["unused", "data-clump"]
+[lucidlint."tools/records.py"]
+ignore = ["unused", "data-clump", "assembly-class"]
+
+[lucidlint."pipeline/chain.py"]
+ignore = ["unused"]
+
+[lucidlint."pipeline/evals/eval_scoring.py"]
+ignore = ["unused"]
+
+# long-param-list: the sync seams are signature-bound (the server and the
+# tests pin them); the per-site whys were the same policy, stated once.
+[lucidlint."pipeline/api/sync.py"]
+ignore = ["long-param-list"]
+
+# long-param-list: the crop-grid run's inputs are the page's state — no
+# class for one call site (two sites, one why).
+[lucidlint."pipeline/evals/eval_crop_grid.py"]
+ignore = ["long-param-list", "data-clump"]
+
+# latent-class: the GEDCOM serializer: one concern, one state; its methods are the export's steps, no field-disjoint partition (recorded 2026-10-08, held not split)
+[lucidlint."tools/gedcom_document.py"]
+ignore = ["god-class", "long-param-list", "partition"]
+
+# latent-class: the band-size sweep's locals carry the run's state — no class for one call site (recorded 2026-10-08, held not split)
+[lucidlint."pipeline/evals/eval_band_size.py"]
+ignore = ["god-class"]

@@ -99,6 +99,14 @@ def _extraction_names(result: dict[str, Any]) -> list[str]:
     return [ex.get("name", "") for ex in result.get("extractions", [])]
 
 
+def _questioned(question_words: tuple[str, ...], result: dict[str, Any], failure: str) -> list[str]:
+    """The flows' shared assertion: a question containing any of the words must
+    have been asked — empty list when one has, else the failure text."""
+    if any(word in _question_texts(result) for word in question_words):
+        return []
+    return [failure]
+
+
 def _question_texts(result: dict[str, Any]) -> str:
     return " ".join(q.get("text", "") for q in result.get("questions", [])).lower()
 

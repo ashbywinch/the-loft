@@ -319,7 +319,6 @@ class Layout:
 
     # the single-path build's inputs mirror build_layout's — a parameter object would obscure the pure pass
     @classmethod
-    # lucidlint: ignore long-param-list the single-path build's inputs mirror build_layout's — no param object
     def single(
         cls,
         page: str,
@@ -338,7 +337,6 @@ class Layout:
 
     # the multi-path build's inputs mirror multi_layout's — a parameter object would obscure the combined pass
     @classmethod
-    # lucidlint: ignore long-param-list the multi-path build's inputs mirror multi_layout's — no param object
     def multi(
         cls,
         page: str,
@@ -399,7 +397,6 @@ class Layout:
 
 
 # detections, self-report, VLM boxes — each consumed once by the pure pass; no second function shares the group
-# lucidlint: ignore long-param-list the layout pass's heterogeneous inputs — page identity, geometry, transcription,
 def build_layout(
     page: str,
     width: int,
@@ -786,7 +783,6 @@ class Anchor:
 
     # the geometry resolution's six inputs — the report line, the match, the text, the page geometry, the trust
     # flag; a parameter object would obscure the pure decision (the same why as multi_layout's)
-    # lucidlint: ignore long-param-list a parameter object would obscure the pure decision
     def __init__(
         self,
         report_line: dict[str, Any] | None,
@@ -1187,7 +1183,6 @@ class MultiAssembly:
 
 
 # the combined layout's heterogeneous inputs — the page identity, geometry, the passes, the report, the text
-# lucidlint: ignore long-param-list a parameter object would obscure the pure function
 def multi_layout(
     page: str,
     width: int,

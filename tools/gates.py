@@ -172,15 +172,12 @@ class RegionGate(Gate):
     @override
     def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
         boxed = [(ln, ln["box"]) for ln in layout.get("lines", []) if _boxed(ln)]
-        findings: list[str] = []
-        for i, (a, ab) in enumerate(boxed):
-            for b, bb in boxed[i + 1 :]:
-                if overlap(ab, bb) >= 0.5 and normalize(a.get("text", "")) != normalize(b.get("text", "")):
-                    findings.append(
-                        f"{a.get('text', '')[:20]!r} and {b.get('text', '')[:20]!r}: "
-                        "same region claimed by different text"
-                    )
-        return findings
+        return [
+            f"{a.get('text', '')[:20]!r} and {b.get('text', '')[:20]!r}: same region claimed by different text"
+            for i, (a, ab) in enumerate(boxed)
+            for b, bb in boxed[i + 1 :]
+            if overlap(ab, bb) >= 0.5 and normalize(a.get("text", "")) != normalize(b.get("text", ""))
+        ]
 
 
 class BoxlessGate(Gate):
@@ -212,7 +209,4 @@ def validate_layout(layout: dict[str, Any], tolerance: float = 4.0) -> list[str]
     """The fail-fast guard: a layout whose lines fail any
     gate must NEVER reach the front end — the reviewer must never see
     wrong boxes. Returns the violations; [] = clean."""
-    findings: list[str] = []
-    for gate in GATES:
-        findings.extend(gate.violations(layout, tolerance))
-    return findings
+    return [violation for gate in GATES for violation in gate.violations(layout, tolerance)]

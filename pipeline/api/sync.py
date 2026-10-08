@@ -212,7 +212,6 @@ class Outbox:
 
 
 # The sync write seam's identity + optional dirs — a single call site,
-# lucidlint: ignore long-param-list no repeated group
 def record_confirmation(
     batch_id: str,
     doc_index: int,
@@ -412,7 +411,6 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
     return drafts
 
 
-# lucidlint: ignore long-param-list a single crash-recovery call site — the paths are the caller's locals
 def _recover_crashed_layout(
     journal_path: Path,
     layout: dict[str, Any],
@@ -694,7 +692,6 @@ def _write_multi_sidecar(
         )
 
 
-# lucidlint: ignore long-param-list the reprocess gate's identity + injectable seams — a single call site
 def reprocess_page_transcription(
     batch_id: str,
     page: str,

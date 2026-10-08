@@ -24,9 +24,10 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
+from functools import partial
 from typing import Any, Literal, Protocol, cast
 
 import dateparser
@@ -431,21 +432,9 @@ def _demote_precision(phrase: str, parsed: datetime, precision: Any) -> tuple[st
         # fabricate a date part)
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", phrase):
             return f"{year:04d}-{parsed.month:02d}-{parsed.day:02d}", "exact"
-        if re.fullmatch(r"\d{4}-\d{2}", phrase):
-            return f"{year:04d}-{parsed.month:02d}", "month"
-        if re.fullmatch(r"\d{4}", phrase):
-            return f"{year:04d}", "year"  # a bare year is a year — the stdlib's Jan-1 is not a real date
-        if _stable_parse(phrase, parsed):
-            return f"{year:04d}-{parsed.month:02d}", "month"
-        return f"{year:04d}", "year"
+        return _year_or_month(phrase, parsed, year)
     if precision == "month":
-        if re.fullmatch(r"\d{4}-\d{2}", phrase):
-            return f"{year:04d}-{parsed.month:02d}", "month"
-        if re.fullmatch(r"\d{4}", phrase):
-            return f"{year:04d}", "year"
-        if _stable_parse(phrase, parsed):
-            return f"{year:04d}-{parsed.month:02d}", "month"
-        return f"{year:04d}", "year"
+        return _year_or_month(phrase, parsed, year)
     return f"{year:04d}", precision or "year"
 
 
@@ -468,6 +457,21 @@ def _stable_parse(phrase: str, parsed: datetime) -> bool:
         },
     )
     return probe is not None and (probe.year, probe.month, probe.day) == (parsed.year, parsed.month, parsed.day)
+
+
+def _year_or_month(phrase: str, parsed: datetime, year: int) -> tuple[str, str]:
+    """The precision a phrase can prove beyond a bare year: an ISO
+    YYYY-MM names its own month; a bare year is a year — the stdlib's
+    Jan-1 is not a real date; a non-ISO phrase is probed against a
+    far-off base — a stable parse means it names its own month, an
+    unstable one demotes to the year the parse proved."""
+    if re.fullmatch(r"\d{4}-\d{2}", phrase):
+        return f"{year:04d}-{parsed.month:02d}", "month"
+    if re.fullmatch(r"\d{4}", phrase):
+        return f"{year:04d}", "year"
+    if _stable_parse(phrase, parsed):
+        return f"{year:04d}-{parsed.month:02d}", "month"
+    return f"{year:04d}", "year"
 
 
 def _normalize_age_fact(value: Any, precision: Any) -> tuple[int | None, str | None]:
@@ -978,18 +982,23 @@ def assess(
     return _strip_kinship_matches(_filter_implausible_suggestions(assessment, who, knowledge))
 
 
+def _assessment_list(parsed: Any, key: str, what: str) -> list[Any]:
+    """The assessment field must be a list — a malformed shape fails
+    loudly with a named error, never a confusing downstream crash."""
+    value = parsed.get(key, [])
+    if not isinstance(value, list):
+        raise ElicitationError(f"assessment {what} are not a list")
+    return value
+
+
 def _validate_assessment(parsed: Any) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise ElicitationError(f"assessment is not an object: {parsed!r}")
     title = parsed.get("title")
     if not isinstance(title, str) or not title.strip():
         raise ElicitationError("assessment missing a title")
-    extractions = parsed.get("extractions", [])
-    if not isinstance(extractions, list):
-        raise ElicitationError("assessment extractions are not a list")
-    questions = parsed.get("questions", [])
-    if not isinstance(questions, list):
-        raise ElicitationError("assessment questions are not a list")
+    extractions = _assessment_list(parsed, key="extractions", what="extractions")
+    questions = _assessment_list(parsed, key="questions", what="questions")
     return {
         "title": title.strip(),
         "extractions": _clean_extractions(extractions),
@@ -1077,6 +1086,28 @@ def _dedupe_refs(refs: list[Ref]) -> list[Ref]:
         seen.add(ref.id)
         out.append(ref)
     return out
+
+
+def _link_or_mint(
+    outputs: tuple[list[Ref], list[dict[str, Any]]],
+    existing: Person | Place | None,
+    all_ids: set[str],
+    ref_status: Literal["confirmed", "proposed"],
+    mint: Callable[[], dict[str, Any]],
+) -> None:
+    """Link a story mention to its standing record, or mint a proposed
+    record when none matches — one ref per mention either way, and a
+    minted record joins its refs' new-record list (a fresh id per story
+    mention fragments the cast). ``outputs`` is the (refs, new_records)
+    pair for the entity kind; the mint is a closure over the name."""
+    refs, new_records = outputs
+    if existing is not None:
+        refs.append(Ref(existing.id, ref_status))
+    else:
+        record = mint()
+        all_ids.add(record["id"])
+        new_records.append(record)
+        refs.append(Ref(record["id"], ref_status))
 
 
 @dataclass(frozen=True)
@@ -1180,7 +1211,7 @@ class Story:
         artifacts — a link to a still-draft artifact stays proposed until
         the artifact is catalogued, so confirming a story never leaves a
         dangling object."""
-        ref_status = "confirmed" if verified else "proposed"
+        ref_status: Literal["confirmed", "proposed"] = "confirmed" if verified else "proposed"
         people_refs: list[Ref] = []
         places_refs: list[Ref] = []
         themes_refs: list[Ref] = []
@@ -1232,13 +1263,13 @@ class Story:
                         existing = next(
                             (p for p in knowledge.people if p.status == "proposed" and p.matches(name)), None
                         )
-                    if existing is not None:
-                        people_refs.append(Ref(existing.id, ref_status))
-                    else:
-                        person = Person.proposed(name, all_ids)
-                        all_ids.add(person["id"])
-                        new_people.append(person)
-                        people_refs.append(Ref(person["id"], ref_status))
+                    _link_or_mint(
+                        (people_refs, new_people),
+                        existing,
+                        all_ids,
+                        ref_status,
+                        partial(Person.proposed, name, all_ids),
+                    )
             elif ex_kind == "place":
                 if match and match in place_ids:
                     places_refs.append(Ref(match, ref_status))
@@ -1250,13 +1281,9 @@ class Story:
                         (pl for pl in knowledge.places if pl.name.strip().lower() == name.lower()),
                         None,
                     )
-                    if existing is not None:
-                        places_refs.append(Ref(existing.id, ref_status))
-                    else:
-                        place = Place.proposed(name, all_ids)
-                        all_ids.add(place["id"])
-                        new_places.append(place)
-                        places_refs.append(Ref(place["id"], ref_status))
+                    _link_or_mint(
+                        (places_refs, new_places), existing, all_ids, ref_status, partial(Place.proposed, name, all_ids)
+                    )
             elif ex_kind == "theme" and match and match in theme_ids:
                 # themes are curated arrangements — proposed only, never auto-created
                 themes_refs.append(Ref(match, ref_status))
@@ -1368,14 +1395,25 @@ class StoryRequest:
     chat: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class BuiltStory:
+    """A completed story draft and the identity records it proposes: the way
+    `build_story`'s answer travels (three lists in one hand are a silent swap
+    away from three wrong ones)."""
+
+    story: dict[str, Any]
+    new_people: list[dict[str, Any]]
+    new_places: list[dict[str, Any]]
+
+
 def build_story(
     *,
     request: StoryRequest,
     knowledge: Knowledge,
     existing_ids: set[str],
     recorded: str | None = None,
-) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
-    """Turn the narrator-approved draft into (story, new_people, new_places).
+) -> BuiltStory:
+    """Turn the narrator-approved draft into the story and its proposed records.
 
     Pure: the caller writes the sidecar and the proposed records through the
     append-only store. The operator verifies the AI's guesses in the same
@@ -1439,7 +1477,7 @@ def build_story(
         facts=tuple(collected.story_facts),
         status=request.status,
     )
-    return story.to_sidecar(), links.new_people, links.new_places
+    return BuiltStory(story.to_sidecar(), links.new_people, links.new_places)
 
 
 def _collect_story_facts(facts: list[dict[str, Any]], speaker_id: str | None) -> StoryFacts:
@@ -1549,7 +1587,7 @@ class Memory:
         request: StoryRequest,
         existing_ids: set[str],
         recorded: str | None = None,
-    ) -> tuple[dict[str, Any], list[dict[str, Any]], list[dict[str, Any]]]:
+    ) -> BuiltStory:
         """Turn the narrator-approved draft into (story, new_people, new_places)."""
         return build_story(
             request=request,

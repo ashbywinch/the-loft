@@ -194,10 +194,3 @@ def load_boxes(path: Path) -> Boxes:
         ):
             raise ValueError(f"{path}: boxes[{i}] — expected a polygon of [x, y] points")
     return data  # type: ignore[return-value]  # validated page-and-polygons above; the checker cannot narrow json.loads
-
-
-def load_traces(path: Path) -> Traces:
-    """The reviewer's traces, validated."""
-    data = json.loads(path.read_text(encoding="utf-8"))
-    _validate(path=path, data=data, key="strokes", expect="Strokes")
-    return data  # type: ignore[return-value]  # the top-level shape is checked above; the checker cannot narrow json.loads

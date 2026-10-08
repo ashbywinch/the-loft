@@ -52,9 +52,9 @@ def _draw(path: Path, title: str, boxes: list[tuple[float, float, float, float]]
     page = Image.open(SCAN).convert("RGB")
     section = (0.0, 0.0, float(page.width), float(page.height))
     image, chips = render_numbered(page, section, boxes, 1.0)
-    sheet, _draw_handle, _bar = captioned_sheet(image, [title, f"{len(boxes)} boxes, numbered in reading order"])
-    sheet.save(path.with_suffix(".png"))
-    path.write_bytes(review_image(sheet, width=1400, quality=74))
+    sheet = captioned_sheet(image, [title, f"{len(boxes)} boxes, numbered in reading order"])
+    sheet.sheet.save(path.with_suffix(".png"))
+    path.write_bytes(review_image(sheet.sheet, width=1400, quality=74))
     missing = unplaced(chips)
     print(f"{path.name} -> {path} ({path.stat().st_size // 1024}KB); {len(boxes)} boxes, {len(missing)} chips unplaced")
 
@@ -81,9 +81,9 @@ def _draw_half(path: Path, boxes: list, half: _Half) -> None:
     section = (0.0, y0, float(page.width), y1)
     inside = [b for b in boxes if b[3] >= y0 and b[1] <= y1]
     image, chips = render_numbered(page, section, inside, half.scale)
-    sheet, _handle, _bar = captioned_sheet(image, [half.title, f"{len(inside)} boxes, numbered in reading order"])
-    sheet.save(path.with_suffix(".png"))
-    path.write_bytes(review_image(sheet, width=1400, quality=74))
+    sheet = captioned_sheet(image, [half.title, f"{len(inside)} boxes, numbered in reading order"])
+    sheet.sheet.save(path.with_suffix(".png"))
+    path.write_bytes(review_image(sheet.sheet, width=1400, quality=74))
     print(f"{path.name} -> {path.stat().st_size // 1024}KB; {len(inside)} boxes, {len(unplaced(chips))} chips unplaced")
 
 
@@ -93,8 +93,8 @@ def _main() -> int:
         ("page-rows", "the whole page — every ROW boxed, numbered", _rows()),
     ):
         _draw(OUT / f"{name}.jpg", title, boxes)
-        _draw_half(OUT / f"{name}-top.jpg", boxes, _Half(f"{title} (top half)", 0.0, 0.5))
-        _draw_half(OUT / f"{name}-bottom.jpg", boxes, _Half(f"{title} (bottom half)", 0.5, 1.0))
+        _draw_half(OUT / f"{name}-top.jpg", boxes, _Half(title=f"{title} (top half)", fy0=0.0, fy1=0.5))
+        _draw_half(OUT / f"{name}-bottom.jpg", boxes, _Half(title=f"{title} (bottom half)", fy0=0.5, fy1=1.0))
     return 0
 
 

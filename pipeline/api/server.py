@@ -257,7 +257,7 @@ def build_app(
         # null) — the model asserts their value/precision, the library
         # validates; offline, the pending fact stays for a person to resolve
         facts = memory.resolve_pending_facts(client, body.get("facts", []))
-        story, new_people, new_places = memory.build_story(
+        built = memory.build_story(
             request=memory.StoryRequest(
                 anchor=body.get("anchor", {}),
                 who=mine["who"],  # the verified session, never the client
@@ -278,14 +278,20 @@ def build_app(
         # writes go through the archive library (docs/CONTRIBUTIONS.md). The
         # story text is primary content: it becomes a content file the
         # sidecar references, never a sidecar JSON field (TECHSPEC §3).
-        sidecar, content = split_content(story)
+        sidecar, content = split_content(built.story)
         archive.save_item(sidecar, content=content)
-        for person in new_people:
+        for person in built.new_people:
             archive.propose_person(person)
-        for place in new_places:
+        for place in built.new_places:
             archive.propose_place(place)
-        _refresh_projection(story, new_people, new_places)
-        return {"ok": True, "id": story["id"], "story": story, "people": new_people, "places": new_places}
+        _refresh_projection(built.story, built.new_people, built.new_places)
+        return {
+            "ok": True,
+            "id": built.story["id"],
+            "story": built.story,
+            "people": built.new_people,
+            "places": built.new_places,
+        }
 
     @app.post("/api/delete", response_model=None)
     def delete(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
@@ -381,7 +387,7 @@ def build_app(
         pre_person = next((p for p in people_table["people"] if p["id"] == person_id), None)
         person_name = (pre_person or {}).get("name", person_id)
         try:
-            person, changed, was_proposed = archive.resolve_person(person_id, decision, basis)
+            resolution = archive.resolve_person(person_id, decision, basis)
         except (KeyError, ValueError) as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
         # a stale decision on an already-resolved person is a state, not an
@@ -393,9 +399,9 @@ def build_app(
         # lock was taken) — the pre-read status is gone entirely.
         # A keep on a genuinely PROPOSED person is the
         # deliberate "leave for later" and is recorded.
-        if not changed and (decision != "pending" or not was_proposed):
+        if not resolution.changed and (decision != "pending" or not resolution.attested):
             message = f"{person_name} was already resolved — nothing changed."
-            return {"ok": True, "person": person, "message": message}
+            return {"ok": True, "person": resolution.person, "message": message}
         # the review record — the decision and the confirmation message the
         # family saw, both persisted (the transcript is the messages)
         when = datetime.now(UTC).date().isoformat()
@@ -417,7 +423,7 @@ def build_app(
         # the accurate remaining count — the server's post-decision truth
         # (the client's projection is stale until reload; the count must
         # always be right, user)
-        return {"ok": True, "person": person, "message": message, "pending": len(queue.pending)}
+        return {"ok": True, "person": resolution.person, "message": message, "pending": len(queue.pending)}
 
     @app.post("/api/review/text", response_model=None)
     def review_text(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:

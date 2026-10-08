@@ -257,7 +257,7 @@ def _crop_readings(truth_lines: list[TruthLine]) -> list[CropReading]:
     xs = [t.box[0] for t in truth_lines] + [t.box[2] for t in truth_lines]
     ys = [t.box[1] for t in truth_lines] + [t.box[3] for t in truth_lines]
     bx0, by0 = min(xs), min(ys)
-    crops = grid_crops(PageSize(max(xs) - bx0, max(ys) - by0), 2, 3)
+    crops = grid_crops(PageSize(max(xs) - bx0, max(ys) - by0), cols=2, rows=3)
     for crop in crops:
         crop.x += bx0
         crop.y += by0
@@ -380,8 +380,8 @@ def duplicate_region_fixture() -> Fixture:
     RegionGate must fire — the experiment's detection axis."""
     width, height = 1000, 1500
     truth = [
-        TruthLine("We are from", [150, 200, 220, 700], 90, 0),
-        TruthLine("beauford & Mrs", [240, 200, 310, 700], 90, 1),
+        TruthLine("We are from", [150, 200, 220, 700], orientation=90, position=0),
+        TruthLine("beauford & Mrs", [240, 200, 310, 700], orientation=90, position=1),
     ]
     detections = cast(
         "list[Detection]",
@@ -398,7 +398,7 @@ def loose_box_fixture() -> Fixture:
     the box — the line stays flagged, never anchoring a box that refuses
     the page."""
     width, height = 1000, 1500
-    truth = [TruthLine("POSTAGE", [820, 300, 880, 320], 0, 0)]
+    truth = [TruthLine("POSTAGE", [820, 300, 880, 320], orientation=0, position=0)]
     detections = cast(
         "list[Detection]",
         [{"box": [820, 300, 880, 320], "text": "POSTAGE", "score": 0.95, "words": []}],
@@ -464,7 +464,8 @@ class ClipLocation:
     def __init__(self, batch_size: int) -> None:
         self.batch_size = batch_size
 
-    def __call__(self, fixture: Fixture) -> dict[str, Any]:
+    @staticmethod
+    def __call__(fixture: Fixture) -> dict[str, Any]:
         report_lines = []
         for i, t in enumerate(fixture.truth):
             marker = fixture.marker_boxes.get(i) if fixture.marker_boxes else None

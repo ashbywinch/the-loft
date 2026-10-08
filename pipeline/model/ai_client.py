@@ -42,6 +42,12 @@ class AIClientError(RuntimeError):
     """Raised when the configured model endpoint cannot be used."""
 
 
+def _sleep_and_backoff(sleep: Callable[[float], None], delay: float, attempt: int) -> tuple[float, int]:
+    """Sleep one backoff interval and advance the retry budget."""
+    sleep(delay)
+    return delay * 2, attempt + 1
+
+
 @final
 class AIClient:
     """Chat completions against an OpenAI-compatible endpoint (JSON out)."""
@@ -185,9 +191,7 @@ class AIClient:
                         raise AIClientError(
                             f"model API error {e.code}: {e.read().decode('utf-8', 'replace')[:200]}"
                         ) from e
-                    self._sleep(delay)
-                    delay *= 2
-                    attempt += 1
+                    delay, attempt = _sleep_and_backoff(self._sleep, delay, attempt)
                     continue
                 if e.code in (400, 422) and (payload.get("thinking") or payload.get("reasoning")):
                     # model/endpoint doesn't understand the reasoning params —
@@ -273,11 +277,10 @@ class AIClient:
             )
             if attempt >= self.max_retries:
                 raise AIClientError(f"empty response from API (finish_reason={finish_reason or 'n/a'})")
-            self._sleep(delay)
-            delay *= 2
-            attempt += 1
+            delay, attempt = _sleep_and_backoff(self._sleep, delay, attempt)
 
-    def _reasoning_is_answer(self, reasoning: str) -> bool:
+    @staticmethod
+    def _reasoning_is_answer(reasoning: str) -> bool:
         """True when the reasoning channel holds the structured answer — a
         parseable JSON object — rather than deliberation prose. The
         stop-empty recovery must not substitute prose for a failed

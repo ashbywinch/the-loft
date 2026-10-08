@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from PIL import Image
 
+from document.colour import Colour
 from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
@@ -38,7 +39,9 @@ def _main() -> int:
         "welded blob, so the splitter's pieces are horizontal bands, not words",
         "red = the two slivers it cut off (2px wide, 60px tall)",
     ]
-    sheet, draw, bar_h = captioned_sheet(crop, caption)
+    caption_sheet = captioned_sheet(crop, caption)
+    sheet, draw = caption_sheet.sheet, caption_sheet.draw
+    bar_h = caption_sheet.bar_height
 
     def px(v: float) -> float:
         return (v - X0) * SCALE_OUT
@@ -53,7 +56,9 @@ def _main() -> int:
         draw.rectangle([px(word["x0"]), py(wy0), px(word["x1"]), py(wy1)], outline=(200, 160, 0, 255), width=1)
     for sx0, sy0, sx1, sy1 in SLIVERS:
         draw.rectangle([px(sx0), py(sy0), px(sx1), py(sy1)], outline=(200, 0, 0, 255), width=2)
-    halo_text(draw, (px(SLIVERS[0][0]) - 130, py(SLIVERS[0][1]) + 10), "the slivers", fill=(200, 0, 0))
+    halo_text(
+        draw, (px(SLIVERS[0][0]) - 130, py(SLIVERS[0][1]) + 10), "the slivers", fill=Colour(red=200, green=0, blue=0)
+    )
     OUT.write_bytes(review_image(sheet))
     print(f"sliver words -> {OUT} ({OUT.stat().st_size // 1024}KB)")
     return 0

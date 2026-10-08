@@ -14,32 +14,23 @@ from __future__ import annotations
 import io
 from collections.abc import Sequence
 from dataclasses import dataclass
+from itertools import groupby
 from typing import NamedTuple
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from document.colour import Colour
 from document.rectangle import Rectangle
 from pipeline.detect.mark import Ink, WordGeometry
 from pipeline.rows.render import RenderStyle
 
-
-class Colour(NamedTuple):
-    """An RGBA drawing colour: named fields at a call site, a plain tuple at
-    the PIL seam."""
-
-    r: int
-    g: int
-    b: int
-    a: int = 255
-
-
 # the drawing style, consistent across every experiment page
-BOX_FILL = Colour(r=0, g=200, b=255, a=25)  # word boxes: faint cyan fill with a thin edge
-BOX_EDGE = Colour(r=0, g=200, b=255, a=160)
-WAISTLINE = Colour(r=0, g=255, b=80, a=255)  # the top of the letter bodies: green
-BASELINE = Colour(r=255, g=60, b=60, a=255)  # the bottom contour: red
-STROKE = Colour(r=255, g=230, b=0, a=255)  # the reviewer's yellow lines
+BOX_FILL = Colour(red=0, green=200, blue=255, alpha=25)  # word boxes: faint cyan fill with a thin edge
+BOX_EDGE = Colour(red=0, green=200, blue=255, alpha=160)
+WAISTLINE = Colour(red=0, green=255, blue=80, alpha=255)  # the top of the letter bodies: green
+BASELINE = Colour(red=255, green=60, blue=60, alpha=255)  # the bottom contour: red
+STROKE = Colour(red=255, green=230, blue=0, alpha=255)  # the reviewer's yellow lines
 
 
 class _MissingOverride:
@@ -238,17 +229,18 @@ def _line_spans(arr: np.ndarray, colour: Colour) -> dict[int, tuple[int, int]]:
     drawn extent. A word's line spans its box's width, so the span identifies
     its owner where boxes sit cheek by jowl."""
     mask = (
-        (abs(arr[:, :, 0] - colour.r) <= 60)
-        & (abs(arr[:, :, 1] - colour.g) <= 60)
-        & (abs(arr[:, :, 2] - colour.b) <= 60)
+        (abs(arr[:, :, 0] - colour.red) <= 60)
+        & (abs(arr[:, :, 1] - colour.green) <= 60)
+        & (abs(arr[:, :, 2] - colour.blue) <= 60)
     )
     ys, xs = np.nonzero(mask)
-    spans: dict[int, list[int]] = {}
-    for y, x in zip(ys, xs, strict=False):
-        spans.setdefault(int(y), []).append(int(x))
+    spans: dict[int, list[int]] = {
+        int(y): [int(x) for _, x in group] for y, group in groupby(zip(ys, xs, strict=False), key=lambda yx: int(yx[0]))
+    }
     return {y: (min(cols), max(cols)) for y, cols in spans.items()}
 
 
+# lucidlint: ignore unused a test seam: the drawing tests drive the audit directly (DI convention)
 def audit_geometry(
     image: Image.Image,
     boxes: Sequence[Sequence[float]],
@@ -262,8 +254,8 @@ def audit_geometry(
     box). One coordinate space: image rows + origin y = page rows."""
     ox, oy = origin
     arr = np.asarray(image.convert("RGB")).astype(int)
-    greens = _line_spans(arr, Colour(r=0, g=255, b=80))
-    reds = _line_spans(arr, Colour(r=255, g=60, b=60))
+    greens = _line_spans(arr, Colour(red=0, green=255, blue=80))
+    reds = _line_spans(arr, Colour(red=255, green=60, blue=60))
 
     def owned(spans: dict[int, tuple[int, int]], box: Sequence[float]) -> int | None:
         """The row of the word's own drawn line: the span that CONTAINS the
@@ -300,8 +292,8 @@ def audit_geometry(
 
 CAPTION_LINE_H = 26  # sheet px per caption line
 CAPTION_PAD = 12  # sheet px around the caption block
-CUT_RED = Colour(r=255, g=0, b=0, a=255)  # cut rows read as warnings, never as ink
-DROP_FILL = Colour(r=255, g=0, b=0, a=60)  # dropped ink: translucent red over the band
+CUT_RED = Colour(red=255, green=0, blue=0, alpha=255)  # cut rows read as warnings, never as ink
+DROP_FILL = Colour(red=255, green=0, blue=0, alpha=60)  # dropped ink: translucent red over the band
 
 
 class Crop(NamedTuple):
@@ -320,15 +312,18 @@ def scaled_crop(page: Image.Image, crop: Crop) -> Image.Image:
     return window.resize((int(window.width * crop.scale), int(window.height * crop.scale)), Image.Resampling.LANCZOS)
 
 
-def captioned_sheet(
-    crop: Image.Image, caption: Sequence[str], size: int = 22
-) -> tuple[Image.Image, ImageDraw.ImageDraw, int]:
-    """The crop under a white caption bar, one fact per line.
+@dataclass(frozen=True)
+class CaptionSheet:
+    """The crop under a white caption bar: the sheet, its draw handle and the
+    bar height the crop starts at."""
 
-    Returns the sheet, its RGBA draw handle, and the bar height — the y
-    offset the crop starts at. The caller maps its own coordinates to sheet
-    pixels, so no closures cross this seam.
-    """
+    sheet: Image.Image
+    draw: ImageDraw.ImageDraw
+    bar_height: int
+
+
+def captioned_sheet(crop: Image.Image, caption: Sequence[str], size: int = 22) -> CaptionSheet:
+    """The crop under a white caption bar, one fact per line."""
     bar_h = CAPTION_PAD + CAPTION_LINE_H * len(caption)
     sheet = Image.new("RGB", (crop.width, crop.height + bar_h), (255, 255, 255))
     sheet.paste(crop, (0, bar_h))
@@ -336,18 +331,25 @@ def captioned_sheet(
     font = ImageFont.load_default(size=size)
     for i, line in enumerate(caption):
         draw.text((10, 6 + CAPTION_LINE_H * i), line, fill=(20, 20, 20), font=font)
-    return sheet, draw, bar_h
+    return CaptionSheet(sheet, draw, bar_h)
 
 
 def halo_text(
     draw: ImageDraw.ImageDraw,
     xy: tuple[float, float],
     text: str,
-    fill: tuple[int, int, int] = (15, 15, 15),
+    fill: Colour | None = None,
     size: int = 24,
 ) -> None:
     """A label readable over ink: dark text with a white stroke halo."""
-    draw.text(xy, text, fill=fill, stroke_width=2, stroke_fill=(255, 255, 255), font=ImageFont.load_default(size=size))
+    draw.text(
+        xy,
+        text,
+        fill=fill or Colour(red=15, green=15, blue=15),
+        stroke_width=2,
+        stroke_fill=(255, 255, 255),
+        font=ImageFont.load_default(size=size),
+    )
 
 
 @dataclass(frozen=True)
@@ -374,12 +376,9 @@ def dashed_hline(draw: ImageDraw.ImageDraw, rule: DashRule) -> None:
 def contiguous_runs(values: Sequence[int]) -> list[list[int]]:
     """Sorted ints grouped into contiguous runs: dropped rows become bands."""
     ordered = sorted(values)
-    runs: list[list[int]] = [[ordered[0]]] if ordered else []
-    for value in ordered[1:]:
-        if value == runs[-1][-1] + 1:
-            runs[-1].append(value)
-        else:
-            runs.append([value])
+    runs: list[list[int]] = [
+        [value for _, value in group] for _, group in groupby(enumerate(ordered), key=lambda iv: iv[1] - iv[0])
+    ]
     return runs
 
 
@@ -473,7 +472,8 @@ def split_sheet(case: SplitCase) -> Image.Image:
     x0, y0, x1, y1, scale = case.crop
     crop_img = scaled_crop(case.page, case.crop)
     caption = [case.title, case.summary, *(f"cut y{cy:.0f} -> [{prof}]" for cy, prof in case.cuts)]
-    sheet, draw, bar_h = captioned_sheet(crop_img, caption)
+    caption_sheet = captioned_sheet(crop_img, caption)
+    sheet, draw, bar_h = caption_sheet.sheet, caption_sheet.draw, caption_sheet.bar_height
 
     def px(v: float) -> float:
         return (v - x0) * scale
@@ -493,18 +493,20 @@ def split_sheet(case: SplitCase) -> Image.Image:
             if style is not None
             else case.colours[i]
             if case.colours is not None
-            else Colour(r=200, g=0, b=0)
+            else Colour(red=200, green=0, blue=0)
         )
         labeled_box(draw, LabeledBox(Rectangle(px(box.x0), py(box.y0), px(box.x1), py(box.y1)), colour, label))
     for cy, _prof in case.cuts:
         if y0 < cy < y1:
             left, right = px(max(x0, case.raw_box.x0)), px(min(x1, case.raw_box.x1))
             dashed_hline(draw, DashRule(left, right, py(cy)))
-            halo_text(draw, (right - 150, py(cy) - 28), f"cut y{cy:.0f}", fill=(200, 0, 0))
+            halo_text(draw, (right - 150, py(cy) - 28), f"cut y{cy:.0f}", fill=Colour(red=200, green=0, blue=0))
     for lo, hi in case.drops:
         draw.rectangle([px(case.raw_box.x0), py(lo), px(case.raw_box.x1), py(hi)], fill=DROP_FILL)
     if case.drops:
         biggest = max(case.drops, key=lambda run: run[1] - run[0])
         label_y = max(biggest[1], max(box.y1 for box, _label in case.pieces) + 2)
-        halo_text(draw, (px(case.raw_box.x0) + 4, py(label_y) + 2), case.drop_label, fill=(200, 0, 0))
+        halo_text(
+            draw, (px(case.raw_box.x0) + 4, py(label_y) + 2), case.drop_label, fill=Colour(red=200, green=0, blue=0)
+        )
     return sheet

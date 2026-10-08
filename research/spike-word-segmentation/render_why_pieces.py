@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import numpy as np
 from PIL import Image
 
+from document.colour import Colour
 from pipeline.detect.mark import (
     SCALE,
     WORD_MIN_HEIGHT,
@@ -75,7 +76,9 @@ def _main() -> int:
             f" y{mark.y0 * SCALE:.0f}-{mark.y1 * SCALE:.0f}",
             f"the cut proposes {len(segments)} piece(s) — each boxed and labelled",
         ]
-        sheet, draw, bar_h = captioned_sheet(crop, caption)
+        sheet = captioned_sheet(crop, caption)
+        draw = sheet.draw
+        bar_h = sheet.bar_height
 
         def bx(value: float, _x0: float = x0, _zoom: float = zoom) -> float:
             return (value * SCALE - _x0) * _zoom
@@ -88,17 +91,17 @@ def _main() -> int:
             colour = COLOURS[index % len(COLOURS)]
             draw.rectangle([bx(piece.x0), by(piece.y0), bx(piece.x1), by(piece.y1)], outline=colour + (255,), width=3)
             label = f"P{index + 1} {_size(piece)} {_verdict(piece, unit)}"
-            halo_text(draw, (bx(piece.x0) + 4, by(piece.y0) - 26), label, fill=colour)
+            halo_text(draw, (bx(piece.x0) + 4, by(piece.y0) - 26), label, fill=Colour(*colour))
             print(f"  {name} P{index + 1}: {_size(piece)} {_verdict(piece, unit)}")
 
         for above, below in zip(segments, segments[1:], strict=False):
             waist = is_waist(per_row, runs, above[2], below[1])
             note = "waist: cut" if waist else f"no waist (runs {runs.get(above[2], 0)}/{runs.get(below[1], 0)}): merged"
-            halo_text(draw, (bx(mark.x0) + 4, by(below[1]) - 26), note, fill=(120, 60, 0))
+            halo_text(draw, (bx(mark.x0) + 4, by(below[1]) - 26), note, fill=Colour(red=120, green=60, blue=0))
             print(f"  {name} boundary y{above[2] * SCALE:.0f}->{below[1] * SCALE:.0f}: {note}")
 
         out = OUT / f"{name}.jpg"
-        out.write_bytes(review_image(sheet, width=1300, quality=78))
+        out.write_bytes(review_image(sheet.sheet, width=1300, quality=78))
         print(f"{name} -> {out.name}")
     return 0
 

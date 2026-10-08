@@ -22,6 +22,7 @@ import math
 
 from PIL import Image, ImageDraw
 
+from document.colour import Colour
 from document.rectangle import Rectangle, overlaps
 from document.row import Row
 from pipeline.rows.render import RenderStyle
@@ -38,6 +39,8 @@ PILL_LIFT = 0  # px: the pill is centred on its row's own line, not lifted above
 # it. Lifted, every number reads as belonging to the line above — "all the
 # numbers seem to be a bit high" (user, on the sheet) — and a row whose band
 # starts high is lifted furthest, which is how row 7's number came adrift.
+PAPER: Colour = Colour(red=255, green=255, blue=255)
+# the colour the bands are washed into when the page's own paper cannot be sampled
 PILL_MIN_WIDTH = 30  # px: a one-digit pill is still a pill
 PILL_STEP = 6  # px: the gap between two pills that had to be stepped apart
 # Bands are cut SHORT on purpose, and by HEIGHT. The vision model resizes an
@@ -86,6 +89,8 @@ MARGIN_LANES = 16
 PILL_TOUCH = 2
 
 
+# lucidlint: ignore latent-class one rendered document: placement, drawing,
+# measures share one state; no field-disjoint partition to split along
 class NumberedRows:
     """An image with one number per row drawn on it, and the numbers it drew.
 
@@ -271,22 +276,20 @@ class NumberedRows:
         return colorsys.rgb_to_hsv(red / 255, green / 255, blue / 255)[0]
 
     @classmethod
-    def pill_colour(cls, index: int, background: tuple[int, int, int] = (255, 255, 255)) -> tuple[int, int, int]:
+    def pill_colour(cls, index: int, background: Colour | None = None) -> Colour:
         """The colour the row's band shows: the row's hue laid over the
         background at the palette's tint — the same translucent wash
         `render_rows` composites, which is what makes the chip and its band one
         colour instead of two nearly-matching ones."""
         red, green, blue, alpha = RenderStyle().colour(index)
         share = alpha / 255
-        layers = zip((red, green, blue), background, strict=True)
+        layers = zip((red, green, blue), (background or PAPER)[:3], strict=True)
         mixed = [int(channel * share + paper * (1 - share)) for channel, paper in layers]
         first, second, third = mixed
-        return first, second, third
+        return Colour(first, second, third)
 
     @classmethod
-    def background_of(
-        cls, canvas: Image.Image, rows: list[Row], *, offset_x: float = 0, offset_y: float = 0
-    ) -> tuple[int, int, int]:
+    def background_of(cls, canvas: Image.Image, rows: list[Row], *, offset_x: float = 0, offset_y: float = 0) -> Colour:
         """The colour the bands are washed into: ONE sample, taken where no
         writing is — in the writing's own left margin, level with the gap
         BETWEEN two rows, where the tint of neither reaches.
@@ -297,7 +300,7 @@ class NumberedRows:
         ink-coloured. The background has no ink in it by construction."""
         ordered = sorted(rows, key=lambda row: row.band.y0)
         if not ordered:
-            return 255, 255, 255
+            return Colour(red=255, green=255, blue=255)
         gap_y = (ordered[0].band.y1 + ordered[1].band.y0) / 2 if len(ordered) > 1 else ordered[0].band.y0 - COLUMN_GAP
         ink_left = min(
             (word.x0 - offset_x for row in ordered for word in row.word_boxes),
@@ -308,14 +311,14 @@ class NumberedRows:
         sample = _rgb(canvas.convert("RGB").getpixel((x, y)))
         # a cropped canvas can carry the page's dark edge where the margin
         # should be, which is no background to wash a hue into
-        return sample if sum(sample) > 450 else (255, 255, 255)
+        return sample if sum(sample) > 450 else Colour(red=255, green=255, blue=255)
 
     @classmethod
-    def digit_colour(cls, index: int) -> tuple[int, int, int]:
+    def digit_colour(cls, index: int) -> Colour:
         """The same hue taken dark: it reads on the row's own wash and adds no
         colour that is not the row's."""
         red, green, blue = colorsys.hsv_to_rgb(cls.hue_of(index), DIGIT_SATURATION, DIGIT_VALUE)
-        return int(red * 255), int(green * 255), int(blue * 255)
+        return Colour(int(red * 255), int(green * 255), int(blue * 255))
 
     @classmethod
     def pointer_side(cls, box: Rectangle, row: Row) -> str:
@@ -426,13 +429,13 @@ def _margin_column(rows: list[Row], *, width: float = 0.0) -> float:
     return max(0.0, min(edges) - COLUMN_GAP - width)
 
 
-def _rgb(pixel: object) -> tuple[int, int, int]:
+def _rgb(pixel: object) -> Colour:
     """A pixel as three channels — PIL hands back a tuple on an RGB image, and
     on an RGB image only, which is what every canvas here is."""
     # every canvas here is RGB, so getpixel returns channels, never a float
     channels: tuple[int, ...] = tuple(pixel)  # type: ignore[arg-type]  # RGB canvas, so channels not a float
     first, second, third = channels[:3]
-    return first, second, third
+    return Colour(first, second, third)
 
 
 def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> list[float]:

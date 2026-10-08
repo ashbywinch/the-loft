@@ -18,7 +18,7 @@ import sys
 import tempfile
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import Any, NamedTuple
 
 from PIL import Image
 
@@ -38,23 +38,59 @@ from tools.loft_paths import WORK_DIR
 from tools.text import normalize
 
 
+def _accumulate_bounds(xs: list[float], ys: list[float], item: dict[str, Any]) -> None:
+    """One boxed record's ink extent joins the bounds accumulators."""
+    if item.get("box"):
+        xs += [item["box"][0], item["box"][2]]
+        ys += [item["box"][1], item["box"][3]]
+
+
 def _content_bounds(layout: dict[str, Any]) -> Rectangle:
     """The ink extent: the layout's boxed lines + the unmatched
     detections — the crops cover the letter, never the blank margins."""
     xs: list[float] = []
     ys: list[float] = []
     for line in layout.get("lines", []):
-        if line.get("box"):
-            xs += [line["box"][0], line["box"][2]]
-            ys += [line["box"][1], line["box"][3]]
+        _accumulate_bounds(xs, ys, line)
     for u in layout.get("unmatched", []):
-        if u.get("box"):
-            xs += [u["box"][0], u["box"][2]]
-            ys += [u["box"][1], u["box"][3]]
+        _accumulate_bounds(xs, ys, u)
     return Rectangle(min(xs), min(ys), max(xs), max(ys))
 
 
-# lucidlint: ignore long-param-list the crop read's inputs are the run's locals — no class for one call site
+class _TranscriptionRead(NamedTuple):
+    """One crop's transcription: the plain text, the parsed boxes, and the
+    usage the read cost — the three values a crop read returns together."""
+
+    plain: str
+    boxes: dict[int, list[float]] | None
+    usage: dict[str, int]
+
+
+def _read_transcription(path: Path, model: str, base_url: str, api_key: str | None) -> _TranscriptionRead:
+    """The VLM read + parse: transcribe one crop image (upright or
+    rotated) and parse the transcription response."""
+    text, usage = transcribe_image_vlm(
+        path,
+        model=model,
+        system=transcription_system_with_context(),
+        base_url=base_url,
+        api_key=api_key,
+        # the crop read's completion is ~1-4k tokens; 64000 (the
+        # full-page location budget) EXCEEDS the glm-4.5v's 65536
+        # context once the image is in.
+        max_tokens=8000,
+    )
+    plain, boxes = parse_transcription_response(text)
+    return _TranscriptionRead(plain=plain, boxes=boxes, usage=usage)
+
+
+def _fail_crop_read(index: int, reason: str) -> None:
+    """A crop that cannot yield lines: log why and end the read — the
+    returned None is the caller's failed value."""
+    print(f"crop {index}: {reason}", file=sys.stderr)
+    return None
+
+
 def read_crop(
     crop: CropReading,
     image_path: Path,
@@ -76,25 +112,13 @@ def read_crop(
         im.crop(box).save(crop_path)
     t0 = monotonic()
     try:
-        text, usage = transcribe_image_vlm(
-            crop_path,
-            model=model,
-            system=transcription_system_with_context(),
-            base_url=base_url,
-            api_key=api_key,
-            # the crop read's completion is ~1-4k tokens; 64000 (the
-            # full-page location budget) EXCEEDS the glm-4.5v's 65536
-            # context once the image is in.
-            max_tokens=8000,
-        )
-        plain, boxes = parse_transcription_response(text)
+        plain, boxes, usage = _read_transcription(crop_path, model, base_url, api_key)
     except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
         print(f"crop {index} FAILED: {str(exc)[:120]}", file=sys.stderr)
         return None
     tokens = int(usage.get("total_tokens", 0) or 0)
     if boxes is None:
-        print(f"crop {index}: no geometry from the model", file=sys.stderr)
-        return None
+        return _fail_crop_read(index, "no geometry from the model")
     rotated_ok = False
     if _vertical_boxes(boxes):
         rotated = tmp / f"crop-{index}-rot.png"
@@ -102,15 +126,7 @@ def read_crop(
             im.rotate(90, expand=True).save(rotated)
         usage2: dict[str, int] = {}
         try:
-            text2, usage2 = transcribe_image_vlm(
-                rotated,
-                model=model,
-                system=transcription_system_with_context(),
-                base_url=base_url,
-                api_key=api_key,
-                max_tokens=8000,
-            )
-            plain2, boxes2 = parse_transcription_response(text2)
+            plain2, boxes2, usage2 = _read_transcription(rotated, model, base_url, api_key)
         # lucidlint: ignore swallow a failed re-read keeps the upright read (the fallback)
         except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
             print(f"crop {index} rotated read FAILED: {str(exc)[:120]}", file=sys.stderr)
@@ -124,8 +140,7 @@ def read_crop(
             rotated_ok = True
             print(f"crop {index}: vertical text — rotated +90 and re-read", file=sys.stderr)
     if plain is None:
-        print(f"crop {index}: no readable text", file=sys.stderr)
-        return None
+        return _fail_crop_read(index, "no readable text")
     # the rotated re-read's lines carry the crop's text orientation: the
     # +90 rotation makes them horizontal for the read, and the page-frame
     # consumer needs to know they are vertical on the page
@@ -180,7 +195,6 @@ def _anchor_agreement(assembled: dict[str, Any], layout: dict[str, Any]) -> tupl
     return ious, matched
 
 
-# lucidlint: ignore long-param-list the crop-grid run's inputs are the page's state — no class for one call site
 def run(
     batch_id: str,
     page: str,

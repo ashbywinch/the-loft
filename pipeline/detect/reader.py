@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -92,13 +93,19 @@ class LineFitter:
         baseline is within the seed gap, else it starts a new line."""
         lines: list[Line] = []
         for shape in sorted(shapes, key=lambda s: s.baseline):
-            if lines and shape.baseline - lines[-1].shapes[-1].baseline <= self.scale.seed_gap:
-                lines[-1].shapes.append(shape)
-            else:
-                lines.append(Line(shapes=[shape]))
+            self._join_or_start(lines, shape)
         return lines
 
-    def _refit_all(self, lines: list[Line]) -> None:
+    def _join_or_start(self, lines: list[Line], shape: Mark) -> None:
+        """The shape joins the line whose last member's baseline is within the
+        seed gap, else it starts a new line."""
+        if lines and shape.baseline - lines[-1].shapes[-1].baseline <= self.scale.seed_gap:
+            lines[-1].shapes.append(shape)
+        else:
+            lines.append(Line(shapes=[shape]))
+
+    @staticmethod
+    def _refit_all(lines: list[Line]) -> None:
         for line in lines:
             line.refit()
 
@@ -130,8 +137,7 @@ class LineFitter:
             (target[nearest] if near else orphans).append(shape)
         lines = [Line(shapes=members) for members in target if members]
         self._refit_all(lines)
-        for shape in orphans:
-            lines.append(Line(shapes=[shape], a=0.0, b=float(shape.baseline)))
+        lines += [Line(shapes=[shape], a=0.0, b=float(shape.baseline)) for shape in orphans]
         return lines
 
     def _split_broad(self, lines: list[Line]) -> list[Line]:
@@ -237,9 +243,10 @@ def line_pieces(pieces: list[Mark], unit: float) -> list[Mark]:
     welded to. THE ONE PLACE the line rule is applied to ink: every line found
     here has its ink taken out of the raster, whether it stood alone or was
     welded to the words it runs under."""
-    by_parent: dict[str, list[Mark]] = {}
-    for piece in pieces:
-        by_parent.setdefault(piece.id.split("_")[0], []).append(piece)
+    by_parent: dict[str, list[Mark]] = {
+        parent: [piece for piece in pieces if piece.id.split("_")[0] == parent]
+        for parent in {piece.id.split("_")[0] for piece in pieces}
+    }
     carved: list[Mark] = []
     for piece in list(pieces):
         band = piece.line_band()
@@ -354,7 +361,8 @@ class Writing:
             out.extend(self._word_pieces(shape, groups, continuations))
         return out
 
-    def _word_pieces(self, shape: Mark, groups: list[list[int]], continuations: dict[int, Mark]) -> list[Mark]:
+    @staticmethod
+    def _word_pieces(shape: Mark, groups: list[list[int]], continuations: dict[int, Mark]) -> list[Mark]:
         """The pieces the groups become, each continuation's ink joined to its
         group and the line pieces left for the strip."""
         pieces: list[Mark] = []
@@ -433,12 +441,14 @@ class Writing:
             return None
         return split_y
 
-    def _row_runs(self, shape: Mark) -> tuple[list[int], dict[int, int]]:
+    @staticmethod
+    def _row_runs(shape: Mark) -> tuple[list[int], dict[int, int]]:
         """The shape's rows and each row's longest run."""
         runs = Ink(np.asarray(shape.pix[0]).astype(int), np.asarray(shape.pix[1]).astype(int)).longest_runs()
         return sorted(runs), runs
 
-    def _deepest_gap(self, rows: list[int], runs: dict[int, int]) -> tuple[float, int]:
+    @staticmethod
+    def _deepest_gap(rows: list[int], runs: dict[int, int]) -> tuple[float, int]:
         """The deepest local ink minimum among the rows, away from the mark's
         edges, with both flanks substantial."""
         best: tuple[float, int] = (1.0, rows[0])
@@ -540,7 +550,8 @@ class Writing:
                 segments.append([nearest, y, y])
         return self._band_cut(segments, shape, runs)
 
-    def _band_cut(self, segments: list[list[int]], shape: Mark, runs: dict[int, int]) -> list[list[int]]:
+    @staticmethod
+    def _band_cut(segments: list[list[int]], shape: Mark, runs: dict[int, int]) -> list[list[int]]:
         """The underline's band of rows, cut into its own segment so the
         strip can classify and remove it."""
         ys, xs = shape.pix
@@ -660,26 +671,25 @@ class Strokes:
         """The words each stroke passes over — how a stroke names its line."""
         return [covered_by(stroke, shapes, touch) for stroke in self.points]
 
-    def _line_of(self, covered: list[list[Mark]]) -> list[int | None]:
+    @staticmethod
+    def _line_of(covered: list[list[Mark]]) -> list[int | None]:
         """The line each stroke names: the one holding most of the words it
         covers. That count measured better here than the fitted-baseline
         distance, which fixed a stroke drawn between two lines but cost three
         more A1 failures."""
         naming: list[int | None] = []
         for words in covered:
-            counts: dict[int, int] = {}
-            for shape in words:
-                counts[shape.line] = counts.get(shape.line, 0) + 1
+            counts = Counter(shape.line for shape in words)
             naming.append(max(counts, key=lambda key: counts[key]) if counts else None)
         return naming
 
     def _groups(self, naming: list[int | None]) -> list[list[int]]:
         """The strokes grouped: the ones naming one line and overlapping along it."""
         parent = list(range(len(self.points)))
-        by_line: dict[int, list[int]] = {}
-        for index, line_index in enumerate(naming):
-            if line_index is not None:
-                by_line.setdefault(line_index, []).append(index)
+        by_line: dict[int, list[int]] = {
+            line_index: [index for index, li in enumerate(naming) if li == line_index]
+            for line_index in {li for li in naming if li is not None}
+        }
         for members in by_line.values():
             for left in range(len(members)):
                 for right in range(left + 1, len(members)):
@@ -687,8 +697,13 @@ class Strokes:
                         self._unite(parent, members[left], members[right])
         grouped: dict[int, list[int]] = {}
         for index in range(len(self.points)):
-            grouped.setdefault(self._root(parent, index), []).append(index)
+            self._group_index(grouped, parent, index)
         return list(grouped.values())
+
+    @staticmethod
+    def _group_index(grouped: dict[int, list[int]], parent: list[int], index: int) -> None:
+        """The index into its root's group."""
+        grouped.setdefault(Strokes._root(parent, index), []).append(index)
 
     def _overlap(self, one: int, other: int) -> bool:
         """Whether two strokes share enough of their run along the line."""
@@ -699,7 +714,8 @@ class Strokes:
         xs = [point[0] for point in self.points[index]]
         return min(xs), max(xs)
 
-    def _first_line(self, naming: list[int | None], group: list[int]) -> int:
+    @staticmethod
+    def _first_line(naming: list[int | None], group: list[int]) -> int:
         """The first line a group names: its place in the page's order."""
         named: list[int] = []
         for index in group:
@@ -738,10 +754,11 @@ def _boxes_between(line: Line, poly: Box, traced: list[tuple[float, float]], sca
     x_ref, y_ref, ux, uy, nx, ny = line.frame(line.shapes)
     along = [(px / SCALE - x_ref) * ux + (py / SCALE - y_ref) * uy for px, py in poly]
     across = [(px / SCALE - x_ref) * nx + (py / SCALE - y_ref) * ny for px, py in poly]
-    boxes: list[Box] = []
-    for start, end in _spans_after([(min(along), max(along))], traced):
-        if (end - start) * SCALE > MIN_BOX_PX:
-            boxes.append(line.box(line.shapes, start, end, min(across), max(across)))
+    boxes = [
+        line.box(line.shapes, start, end, min(across), max(across))
+        for start, end in _spans_after([(min(along), max(along))], traced)
+        if (end - start) * SCALE > MIN_BOX_PX
+    ]
     return boxes
 
 

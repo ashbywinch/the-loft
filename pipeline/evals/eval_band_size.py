@@ -31,7 +31,7 @@ from document.word import Word
 from pipeline.model.vlm import VlmOptions, transcribe_images_vlm
 from pipeline.rows.render import render_rows
 from pipeline.rows.rows import Rows
-from pipeline.transcribe.transcripts import SYSTEM, band_prompt
+from pipeline.transcribe.transcripts import SYSTEM, band_prompt, words_from
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 FIXTURE = Path("tests/fixtures/page01-rows-gold")
@@ -117,19 +117,9 @@ def _numbers_named(answer: str, wanted: list[int]) -> list[int]:
 
 
 def _words(fixture: Path) -> list[Word]:
-    records = json.loads((fixture / "words.json").read_text(encoding="utf-8"))["words"]
-    return [
-        Word(
-            record["x0"],
-            record["y0"],
-            record["x1"],
-            record["y1"],
-            baseline=record.get("baseline"),
-            waistline=record.get("waistline"),
-            line=record.get("line"),
-        )
-        for record in records
-    ]
+    """The fixture's words — the canonical loader in `transcripts` owns the
+    shape; this is its fixture-path wrapper (kept for the eval's call sites)."""
+    return words_from(fixture / "words.json")
 
 
 def main(argv: list[str] | None = None) -> int:

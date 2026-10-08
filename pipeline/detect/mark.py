@@ -10,8 +10,11 @@ measures from them.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import groupby
 
 import numpy as np
+
+from document.unionfind import UnionFind
 
 
 @dataclass(frozen=True)
@@ -107,11 +110,7 @@ class Mark:
 
     def rows(self) -> dict[int, list[int]]:
         """The shape's ink by row — how a straddling shape is cut between lines."""
-        ys, xs = self.pix
-        per_row: dict[int, list[int]] = {}
-        for y, x in zip(ys.astype(int), xs.astype(int), strict=False):
-            per_row.setdefault(int(y), []).append(int(x))
-        return per_row
+        return _columns_by_row(*self.pix)
 
     def piece(self, ink: list[tuple[int, int]], line: int, suffix: int) -> Mark:
         """The part of this shape on the given rows, as its own shape on one line."""
@@ -294,9 +293,7 @@ class Ink:
     def longest_runs(self) -> dict[int, int]:
         """Per-row longest continuous ink run, in columns."""
         ys, xs = self.ys, self.xs
-        rows: dict[int, set[int]] = {}
-        for y, x in zip(ys.astype(int), xs.astype(int), strict=False):
-            rows.setdefault(int(y), set()).add(int(x))
+        rows = _columns_by_row(ys, xs)
         runs: dict[int, int] = {}
         for y, cols in rows.items():
             ordered = sorted(cols)
@@ -315,10 +312,7 @@ class Ink:
         writing's feet."""
         runs = self.longest_runs()
         broad = {y for y, run in runs.items() if run >= BROAD_FRACTION * span}
-        thick: set[int] = set()
-        for y in broad:
-            if any(near in broad for near in (y - 1, y + 1)):
-                thick.add(y)
+        thick: set[int] = {y for y in broad if any(near in broad for near in (y - 1, y + 1))}
         return set(range(min(thick) - 2, max(thick) + 3)) if thick else set()
 
     def baseline_row(self) -> int:
@@ -344,12 +338,7 @@ class Ink:
         top, bottom = int(ys.min()), int(ys.max())
         row_runs = self.longest_runs()
         broad = {y for y, run in row_runs.items() if run >= max(0.15 * span, UNDERLINE_RUN)}
-        bands: list[list[int]] = []
-        for y in sorted(broad):
-            if bands and y - bands[-1][-1] <= 1:
-                bands[-1].append(y)
-            else:
-                bands.append([y])
+        bands = _consecutive_bands(broad)
         band_at_foot = bool(
             bands
             and (bottom - max(bands[-1])) <= 0.25 * (bottom - top)
@@ -369,7 +358,8 @@ class Ink:
             kept = list(bottoms.values())  # an all-band word (a solid glyph): measure as-is
         return _modal_bottom(kept)
 
-    def _letters_on_top_of(self, band: list[int], intensities: np.ndarray, peak_row: int, top: int) -> int | None:
+    @staticmethod
+    def _letters_on_top_of(band: list[int], intensities: np.ndarray, peak_row: int, top: int) -> int | None:
         """Where the letters end when an UNDERLINE owns the word's foot.
 
         The last broad band touches the foot, so the letters end at the last
@@ -397,9 +387,7 @@ class Ink:
         narrow strokes; a big loop's crown ('group' - the reviewer's g-word) is
         broad, so it lands the line where the old profile walk stopped short."""
         ys, xs = self.ys, self.xs
-        rows: dict[int, list[int]] = {}
-        for y, x in zip(ys.astype(int), xs.astype(int), strict=False):
-            rows.setdefault(int(y), []).append(int(x))
+        rows = _columns_by_row(ys, xs)
         threshold = BROAD_FRACTION * width
         for y in sorted(rows):
             ordered = sorted(set(rows[y]))
@@ -430,12 +418,7 @@ class Ink:
         forbidden = set()
         row_runs = self.longest_runs()
         broad = {y for y, run in row_runs.items() if run >= max(0.15 * span, UNDERLINE_RUN)}
-        bands2: list[list[int]] = []
-        for y in sorted(broad):
-            if bands2 and y - bands2[-1][-1] <= 1:
-                bands2[-1].append(y)
-            else:
-                bands2.append([y])
+        bands2 = _consecutive_bands(broad)
         top, bottom = int(ys.min()), int(ys.max())
         if bands2 and (bottom - max(bands2[-1])) <= 0.25 * (bottom - top):
             # only the foot band (a welded underline) leaves the crown profile;
@@ -456,6 +439,21 @@ class Ink:
         while waistline > 0 and counts[waistline - 1] > counts[peak] * 0.5:
             waistline -= 1
         return waistline
+
+
+def _columns_by_row(ys: np.ndarray, xs: np.ndarray) -> dict[int, list[int]]:
+    """The ink's columns grouped by its rows, both ascending — the row→column
+    table rows(), the longest runs and the broad bands all start from."""
+    return {
+        int(y): [int(x) for _, x in group]
+        for y, group in groupby(sorted(zip(ys.astype(int), xs.astype(int), strict=False)), key=lambda p: p[0])
+    }
+
+
+def _consecutive_bands(rows: set[int]) -> list[list[int]]:
+    """The rows in bands a gap no wider than one keeps apart — the thick
+    band's rows and the foot's, as the measurements group them."""
+    return [[y for _, y in group] for _, group in groupby(enumerate(sorted(rows)), key=lambda iy: iy[0] - iy[1])]
 
 
 def _modal_bottom(bottoms: list[int]) -> int:
@@ -479,7 +477,7 @@ class Components:
     `labels`, the per-pixel component ids."""
 
     def __init__(self) -> None:
-        self.parent: list[int] = []
+        self._components = UnionFind()
         self.rows: list[list[tuple[int, int, int]]] = []
         self._previous: list[tuple[int, int, int]] = []
 
@@ -489,8 +487,9 @@ class Components:
         if row.any():
             edges = np.diff(np.concatenate(([0], row.view(np.int8), [0])))
             for start, end in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1), strict=False):
-                self.parent.append(len(self.parent))
-                current.append((int(start), int(end) - 1, len(self.parent) - 1))
+                rid = self._components.size
+                self._components.ensure(rid + 1)
+                current.append((int(start), int(end) - 1, rid))
             self._join_overlapping(current)
         self.rows.append(current)
         self._previous = current
@@ -506,7 +505,7 @@ class Components:
             elif prev_end < start:
                 j += 1
             else:
-                self._union(current[i][2], self._previous[j][2])
+                self._components.union(current[i][2], self._previous[j][2])
                 i, j = (i + 1, j) if end < prev_end else (i, j + 1)
 
     def labels(self, shape: tuple[int, int]) -> np.ndarray:
@@ -514,20 +513,8 @@ class Components:
         labels = np.zeros(shape, dtype=np.int32)
         for y, current in enumerate(self.rows):
             for start, end, rid in current:
-                labels[y, start : end + 1] = self._find(rid) + 1
+                labels[y, start : end + 1] = self._components.find(rid) + 1
         return labels
-
-    def _find(self, run: int) -> int:
-        """The root of a run's component, with the path halved on the way."""
-        while self.parent[run] != run:
-            self.parent[run] = self.parent[self.parent[run]]
-            run = self.parent[run]
-        return run
-
-    def _union(self, one: int, other: int) -> None:
-        root_one, root_other = self._find(one), self._find(other)
-        if root_one != root_other:
-            self.parent[root_other] = root_one
 
 
 def find_marks(mask: np.ndarray, min_area: int = SHAPE_MIN_AREA) -> list[Mark]:

@@ -19,6 +19,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from document.colour import Colour
 from document.numbered_rows import NumberedRows
 from document.schemas import load_user_row_adjustments
 from document.word import Word
@@ -116,7 +117,7 @@ def main() -> None:
     y = MARGIN
     for entry in entries:
         for line in entry:
-            draw.text((page.width + MARGIN, y), line, fill=(20, 20, 20), font=text_font)
+            draw.text((page.width + MARGIN, y), line, fill=Colour(red=20, green=20, blue=20), font=text_font)
             y += height
 
     sheet.save(OUT, quality=84)

@@ -292,9 +292,10 @@ def test_captioned_sheet_offsets_the_crop_by_the_bar() -> None:
     from pipeline.rows.page_visuals import CAPTION_LINE_H, CAPTION_PAD, captioned_sheet
 
     crop = Image.new("RGB", (100, 60), (250, 250, 245))
-    sheet, _draw, bar_h = captioned_sheet(crop, ["one", "two", "three"])
-    assert bar_h == CAPTION_PAD + 3 * CAPTION_LINE_H
-    assert sheet.size == (100, 60 + bar_h)
+    caption = captioned_sheet(crop, ["one", "two", "three"])
+    sheet = caption.sheet
+    assert caption.bar_height == CAPTION_PAD + 3 * CAPTION_LINE_H
+    assert sheet.size == (100, 60 + caption.bar_height)
     assert sheet.getpixel((50, 6)) == (255, 255, 255)
 
 

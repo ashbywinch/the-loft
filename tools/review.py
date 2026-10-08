@@ -157,21 +157,17 @@ class _ReviewTools:
     used to thread. The model can look things up but never change them
     (2026-08-09, user)."""
 
+    # the read-only tools the model may call — method names, dispatched by
+    # lookup (a chain of five identical-shaped branches is duplication)
+    _TOOLS = ("search_people", "person", "relationships", "attested", "search_items")
+
     def __init__(self, facts: ReviewContext) -> None:
         self._facts = facts
 
     def run(self, tool: str, args: dict[str, Any]) -> Any:
-        if tool == "search_people":
-            return self.search_people(args)
-        if tool == "person":
-            return self.person(args)
-        if tool == "relationships":
-            return self.relationships(args)
-        if tool == "attested":
-            return self.attested(args)
-        if tool == "search_items":
-            return self.search_items(args)
-        return {"error": f"unknown tool {tool}"}
+        if tool not in self._TOOLS:
+            return {"error": f"unknown tool {tool}"}
+        return getattr(self, tool)(args)
 
     def search_people(self, args: dict[str, Any]) -> Any:
         """People whose name or recorded relation contains the query."""

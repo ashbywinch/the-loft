@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from PIL import Image
 
+from document.colour import Colour
 from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
@@ -36,7 +37,9 @@ def _main() -> int:
         "red box: the stroke, as dark as the letters themselves",
         "without it, two separate words; with it, the detector sees one",
     ]
-    sheet, draw, bar_h = captioned_sheet(crop, caption)
+    sheet = captioned_sheet(crop, caption)
+    draw = sheet.draw
+    bar_h = sheet.bar_height
 
     def px(v: float) -> float:
         return (v - X0) * SCALE_OUT
@@ -49,8 +52,8 @@ def _main() -> int:
         outline=(200, 0, 0, 255),
         width=3,
     )
-    halo_text(draw, (px(STROKE[2]) + 8, py(STROKE[1]) - 12), "this stroke", fill=(200, 0, 0))
-    OUT.write_bytes(review_image(sheet))
+    halo_text(draw, (px(STROKE[2]) + 8, py(STROKE[1]) - 12), "this stroke", fill=Colour(red=200, green=0, blue=0))
+    OUT.write_bytes(review_image(sheet.sheet))
     print(f"bridge -> {OUT} ({OUT.stat().st_size // 1024}KB)")
     return 0
 

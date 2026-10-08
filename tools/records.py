@@ -91,11 +91,32 @@ def _viable_date(value: str) -> bool:
     return True
 
 
+def _required_value(raw: dict[str, Any], key: str, vocab: frozenset[str], label: str) -> str:
+    """A required field whose value must be one of the closed vocabulary —
+    the standard 'unknown {label}' error names the field."""
+    value = _require(raw, key)
+    if value not in vocab:
+        raise ValueError(f"unknown {label}: {value!r}")
+    return value
+
+
 def _require(raw: dict[str, Any], key: str) -> str:
     value = str(raw.get(key, "")).strip()
     if not value:
         raise ValueError(f"missing required field {key!r}")
     return value
+
+
+def _date_field_value(value: Any, key: str, field: str, missing: str) -> str:
+    """One required date field of a dated fact: present, non-empty, and a
+    real calendar date. ``missing`` is the absent-field clause of the error
+    (everything after ``{key} ``)."""
+    parsed = str(value.get(field, "")).strip()
+    if not parsed:
+        raise ValueError(f"{key} {missing}")
+    if not _viable_date(parsed):
+        raise ValueError(f"{key} has an impossible date {parsed!r}")
+    return parsed
 
 
 def _parse_dated(value: Any, key: str) -> dict[str, str] | None:
@@ -104,21 +125,13 @@ def _parse_dated(value: Any, key: str) -> dict[str, str] | None:
     None when the field is absent; raises on a malformed one."""
     if not value:
         return None
-    date_str = str(value.get("date", "")).strip()
-    if not date_str:
-        raise ValueError(f"{key} needs a date")
-    if not _viable_date(date_str):
-        raise ValueError(f"{key} has an impossible date {date_str!r}")  # 2026-99-99 is not a date
+    date_str = _date_field_value(value, key, field="date", missing="needs a date")
     precision = str(value.get("precision", "exact"))
     if precision not in PRECISIONS:
         raise ValueError(f"{key} has unknown precision {precision!r}")
     out = {"date": date_str, "precision": precision}
     if precision == "between":
-        date2 = str(value.get("date2", "")).strip()
-        if not date2:
-            raise ValueError(f"{key} with precision 'between' needs date2")
-        if not _viable_date(date2):
-            raise ValueError(f"{key} has an impossible date {date2!r}")
+        date2 = _date_field_value(value, key, field="date2", missing="with precision 'between' needs date2")
         out["date2"] = date2
     return out
 
@@ -160,6 +173,13 @@ def _unique_records(  # noqa: UP047  # pyrefly cannot infer PEP-695 T from the C
         dupes = sorted({i for i in ids if ids.count(i) > 1})
         raise ValueError(f"duplicate {label} ids: {dupes}")
     return records
+
+
+def _put_optional(out: dict[str, Any], key: str, value: Any) -> None:
+    """Add an optional field to a record's serialized dict — an absent
+    value stays absent (the projection drops nulls)."""
+    if value is not None:
+        out[key] = value
 
 
 @dataclass(frozen=True)
@@ -259,10 +279,8 @@ class Person:
         out["bio"] = self.bio
         if self.hue is not None:
             out["hue"] = self.hue
-        if self.dob is not None:
-            out["dob"] = self.dob
-        if self.dod is not None:
-            out["dod"] = self.dod
+        _put_optional(out, "dob", self.dob)
+        _put_optional(out, "dod", self.dod)
         if self.occupations:
             out["occupations"] = list(self.occupations)
         if self.residence:
@@ -328,10 +346,7 @@ class Place:
             out["aliases"] = list(self.aliases)
         out["note"] = self.note
         out["precision"] = self.precision
-        out["lat"] = self.lat
-        out["lng"] = self.lng
-        out["x"] = self.x
-        out["y"] = self.y
+        out.update(lat=self.lat, lng=self.lng, x=self.x, y=self.y)
         if self.address:
             out["address"] = self.address
         if self.status != "confirmed":
@@ -720,6 +735,14 @@ CONTENT_FILES: dict[str, str] = {"story": "story.txt", "transcription": "transcr
 CONTENT_CAPTIONS: dict[str, str] = {"story": "The story, verbatim", "transcription": "The transcription"}
 
 
+def _capture_transcription(sidecar: dict[str, Any], content: dict[str, str]) -> None:
+    """Move the transcription out of the sidecar — it is primary content,
+    not metadata — and, when present, keep it as a content file."""
+    transcription = sidecar.pop("transcription", "") or ""
+    if transcription:
+        content["transcription"] = transcription
+
+
 def split_content(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
     """Separate primary content from metadata at the write seam (capture,
     import): the story text (story-type items) and the transcription
@@ -732,18 +755,28 @@ def split_content(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]
     item_type = sidecar["type"]
     if item_type == "story":
         story = sidecar.pop("story", "") or ""
-        transcription = sidecar.pop("transcription", "") or ""
         if story:
             content["story"] = story
-        if transcription:  # a recorded testimony with a transcription keeps it
-            content["transcription"] = transcription
+        _capture_transcription(sidecar, content)  # a recorded testimony with a transcription keeps it
     elif item_type in ("letter", "document"):
-        transcription = sidecar.pop("transcription", "") or ""
-        if transcription:
-            content["transcription"] = transcription
+        _capture_transcription(sidecar, content)
     else:  # photo, object — the story field is a description, keep it
         sidecar.pop("transcription", None)
     return sidecar, content
+
+
+def _story_flag(raw: dict[str, Any], item_type: str, key: str, story_message: str, allow_story: bool) -> Any:
+    """One story flag (clarification, reflection, evidence): absent or a
+    boolean, and the flag's own story rule must hold — the write seam
+    fails loudly on anything else."""
+    value = raw.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise ValueError(f"{key} must be a boolean")
+    if (item_type == "story") != allow_story:
+        raise ValueError(story_message)
+    return value
 
 
 @dataclass(frozen=True)
@@ -829,12 +862,8 @@ class Item:
         record_id = _require(raw, "id")
         if not is_valid_record_id(record_id):
             raise ValueError(f"invalid record id: {record_id!r}")
-        item_type = _require(raw, "type")
-        if item_type not in ITEM_TYPES:
-            raise ValueError(f"unknown item type: {item_type!r}")
-        status = _require(raw, "status")
-        if status not in ITEM_STATUSES:
-            raise ValueError(f"unknown item status: {status!r}")
+        item_type = _required_value(raw, key="type", vocab=ITEM_TYPES, label="item type")
+        status = _required_value(raw, key="status", vocab=ITEM_STATUSES, label="item status")
         if status == "deleted":  # the tombstone shape — nothing else required
             return item
         if item_type == "event":
@@ -845,9 +874,7 @@ class Item:
                 raise ValueError(f"unknown event kind: {kind!r}")
         _require(raw, "title")
         _require(raw, "date")
-        precision = _require(raw, "date_precision")
-        if precision not in PRECISIONS:
-            raise ValueError(f"unknown date precision: {precision!r}")
+        precision = _required_value(raw, key="date_precision", vocab=PRECISIONS, label="date precision")
         if not _viable_date(str(raw.get("date", ""))):
             # fail loudly at the write seam — an item with no viable date is
             # invisible or misdated everywhere; the whole form
@@ -874,32 +901,32 @@ class Item:
         sensitive = raw.get("sensitive")
         if sensitive is not None and not isinstance(sensitive, bool):
             raise ValueError("sensitive must be a boolean")
-        clarification = raw.get("clarification")
-        if clarification is not None:
-            if not isinstance(clarification, bool):
-                raise ValueError("clarification must be a boolean")
-            if item_type != "story":
-                raise ValueError("only a story can be a clarification fragment")
-            if not (raw.get("people") or raw.get("items")):
-                raise ValueError("a clarification fragment must name what it attests (people or items)")
-        reflection = raw.get("reflection")
+        clarification = _story_flag(
+            raw,
+            item_type,
+            key="clarification",
+            story_message="only a story can be a clarification fragment",
+            allow_story=True,
+        )
+        if clarification is not None and not (raw.get("people") or raw.get("items")):
+            raise ValueError("a clarification fragment must name what it attests (people or items)")
+        reflection = _story_flag(
+            raw, item_type, key="reflection", story_message="only a story can be a reflection", allow_story=True
+        )
         if reflection is not None:
-            if not isinstance(reflection, bool):
-                raise ValueError("reflection must be a boolean")
-            if item_type != "story":
-                raise ValueError("only a story can be a reflection")
             if clarification:
                 raise ValueError("a story is a clarification or a reflection, not both")
             if not (raw.get("people") or raw.get("places")):
                 raise ValueError("a reflection must mention someone or somewhere (people or places)")
-        evidence = raw.get("evidence")
-        if evidence is not None:
-            if not isinstance(evidence, bool):
-                raise ValueError("evidence must be a boolean")
-            if item_type == "story":
-                raise ValueError("a story is never evidence — accounts, fragments and reflections are")
-            if not (raw.get("people") or raw.get("places") or raw.get("items")):
-                raise ValueError("an evidence record must attest someone or somewhere (people, places or items)")
+        evidence = _story_flag(
+            raw,
+            item_type,
+            key="evidence",
+            story_message="a story is never evidence — accounts, fragments and reflections are",
+            allow_story=False,
+        )
+        if evidence is not None and not (raw.get("people") or raw.get("places") or raw.get("items")):
+            raise ValueError("an evidence record must attest someone or somewhere (people, places or items)")
         return item
 
     def to_dict(self) -> dict[str, Any]:

@@ -391,6 +391,13 @@ def _atomic_write(path: Path, content: str) -> None:
     tmp.replace(path)
 
 
+def _remove_dir(path: Path) -> None:
+    """A re-publish replaces the previous output wholesale — drop *path*
+    when an earlier copy is already there."""
+    if path.exists():
+        shutil.rmtree(path)
+
+
 class Projection:
     """The derived app-facing surface (app/data) — the noun behind
     ``Archive.publish()``. The projection is a cache: never hand-edited; a
@@ -416,8 +423,7 @@ class Projection:
         # images until the next publish). The swap itself is a millisecond
         # window; re-running publish always repairs (2026-08-05 bot review).
         staged = out / "assets.tmp"
-        if staged.exists():
-            shutil.rmtree(staged)
+        _remove_dir(staged)
         staged.mkdir(parents=True)
 
         items = resolved_items(archive=archive)
@@ -436,8 +442,7 @@ class Projection:
             (staged / filename).write_text(content, encoding="utf-8")
 
         assets_dir = out / "assets"
-        if assets_dir.exists():
-            shutil.rmtree(assets_dir)
+        _remove_dir(assets_dir)
         staged.rename(assets_dir)
 
         for filename, content in files.items():

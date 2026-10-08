@@ -377,13 +377,19 @@ def transcribe_rows_alone(
     read: list[tuple[int, str]] = []
     for row in ordered:
         if row.number in numbers and row.word_boxes:
-            read.append((row.number, alone.text_of(row, read)))
+            _record_read(alone, row, read)
     # persisted like every other transcript: a row read once is never paid for
     # twice, and the assembly below reads the file rather than re-asking
     (out_dir / f"{stem}.alone.json").write_text(
         json.dumps({"rows": {str(number): text for number, text in read}}, indent=1)
     )
     return read
+
+
+def _record_read(alone: _AloneReader, row: Any, read: list[tuple[int, str]]) -> None:
+    """One row's read alone — the running transcript threads it with the
+    rows read so far — recorded in the read list."""
+    read.append((row.number, alone.text_of(row, read)))
 
 
 def masked_row(row: Any, page: Image.Image, ordered: list[Any]) -> Image.Image:
@@ -408,7 +414,7 @@ def masked_row(row: Any, page: Image.Image, ordered: list[Any]) -> Image.Image:
         x1 = min(region.shape[1], int(word.x1) - rect.x0 + pad)
         y1 = min(region.shape[0], int(word.y1) - rect.y0 + pad)
         mask[y0:y1, x0:x1] = True
-    region[~mask] = paper
+    region[~mask] = paper[:3]
     return Image.fromarray(region.astype("uint8"), "RGB")
 
 

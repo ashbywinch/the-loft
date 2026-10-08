@@ -60,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             try:
                 layout = load_layout_store(store, str(layout_path.relative_to(WORK_DIR)))
+            # lucidlint: ignore broad-except the per-page boundary: one unloadable layout is reported and skipped
             except Exception as exc:
                 print(f"{batch}/{page}: UNLOADABLE ({exc})")
                 continue

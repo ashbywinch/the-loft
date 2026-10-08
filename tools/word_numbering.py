@@ -33,6 +33,7 @@ from functools import lru_cache
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+from document.colour import Colour
 from document.rectangle import Rectangle
 
 Box = tuple[float, float, float, float]  # x0, y0, x1, y1, page px
@@ -115,7 +116,7 @@ class Chip:
 
     render_id: int  # 1-based, the number drawn on the chip
     rect: Box  # section px: the text bbox + CHIP_PAD, clamped to MAX_CHIP
-    colour: tuple[int, int, int]
+    colour: Colour
     verdict: str  # "corner" | "above" | "below" | "left" | "right" | perimeter | UNPLACED
     font_size: float  # section px: the size the number is drawn at
 
@@ -217,7 +218,7 @@ def place_chips(boxes: list[Box], order: list[int]) -> list[Chip]:
             Chip(
                 render_id=render_id,
                 rect=rect,
-                colour=PALETTE[word_index % len(PALETTE)],
+                colour=Colour(*PALETTE[word_index % len(PALETTE)]),
                 verdict=verdict,
                 font_size=font_size,
             )
@@ -319,6 +320,7 @@ def unplaced(chips: list[Chip]) -> list[int]:
     return [chip.render_id for chip in chips if chip.verdict == UNPLACED]
 
 
+# lucidlint: ignore unused a test seam: the numbering tests check the palette directly (DI convention)
 def palette_luminances() -> np.ndarray:
     """The palette's grayscale values — distinct under the model's downscale."""
     return np.asarray([0.299 * r + 0.587 * g + 0.114 * b for r, g, b in PALETTE])

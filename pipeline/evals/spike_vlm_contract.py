@@ -14,9 +14,10 @@ caller's; here live the words of the contract.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any
+
+from document.transcript import parse_segments
 
 VALID_TYPES = ("body", "injection", "marginalia", "rule")
 
@@ -39,20 +40,9 @@ class SegmentAnswer:
     injection_after: int | None
 
 
-def parse_answer(text: str) -> list[dict[str, Any]]:
-    """The model's JSON answer (fence-tolerant) as the segments list."""
-    stripped = text.strip()
-    if stripped.startswith(_FENCE):
-        lines = stripped.splitlines()
-        lines = lines[1:] if lines[0].strip().startswith(_FENCE) else lines
-        stripped = "\n".join(line for line in lines if not line.strip().startswith(_FENCE)).strip()
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError as exc:
-        raise ContractError(f"the answer is not JSON: {text[:200]!r}") from exc
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("segments"), list):
-        raise ContractError(f"the answer has no segments list: {text[:200]!r}")
-    return parsed["segments"]
+def parse_answer(answer: str) -> list[dict[str, Any]]:
+    """The contract's parser — one implementation (document.transcript)."""
+    return parse_segments(answer)
 
 
 class _RawSegment:
@@ -137,10 +127,7 @@ def validate_segments(raw_segments: list[dict[str, Any]], universe: int) -> list
     if not raw_segments:
         raise ContractError("no segments in the answer")
     seen_ids: set[str] = set()
-    answers: list[SegmentAnswer] = []
-    for entry in raw_segments:
-        answers.append(_RawSegment(entry, universe).answer(seen_ids))
-    return answers
+    return [_RawSegment(entry, universe).answer(seen_ids) for entry in raw_segments]
 
 
 def reconcile(answers: list[SegmentAnswer], universe: int) -> tuple[dict[int, str], list[str]]:

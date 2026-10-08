@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import numpy as np
 from PIL import Image
 
+from document.colour import Colour
 from pipeline.detect.mark import SCALE, find_marks
 from pipeline.detect.reader import LineFitter, artifacts, ink_mask, split_shapes
 from pipeline.detect.ruler import Ruler, line_ratio, traced_pitch, writing_scale
@@ -85,7 +86,9 @@ def _main() -> int:
     for mark_id, ((x0, y0, x1, y1, zoom), boxes, caption) in PANELS.items():
         pieces = split_shapes([by_id[mark_id]], lines, scale.unit)
         crop = scaled_crop(page, Crop(x0, y0, x1, y1, zoom))
-        sheet, draw, bar_h = captioned_sheet(crop, caption)
+        sheet = captioned_sheet(crop, caption)
+        draw = sheet.draw
+        bar_h = sheet.bar_height
         for index, label in boxes:
             piece = pieces[index]
             colour = (200, 0, 0) if index == boxes[0][0] else (0, 120, 200)
@@ -96,10 +99,10 @@ def _main() -> int:
                 (piece.y1 * SCALE - y0) * zoom + bar_h,
             ]
             draw.rectangle(rect, outline=colour + (255,), width=2)
-            halo_text(draw, (rect[0] + 2, rect[1] - 26), label, fill=colour)
+            halo_text(draw, (rect[0] + 2, rect[1] - 26), label, fill=Colour(*colour))
         sheets.append(sheet)
         print(f"{mark_id}: {len(pieces)} pieces, boxed {[b[0] for b in boxes]}")
-    OUT.write_bytes(review_image(stack_sheets(sheets)))
+    OUT.write_bytes(review_image(stack_sheets([x.sheet for x in sheets])))
     print(f"piece boxes -> {OUT} ({OUT.stat().st_size // 1024}KB)")
     return 0
 

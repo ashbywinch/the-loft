@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +56,21 @@ def _capture_client() -> AIClient | None:
     except AIClientError as e:
         print(f"serve: no capture client ({e}) — serving the app only")
         return None
+
+
+def _command(
+    sub: Any,
+    name: str,
+    help_text: str,
+    fn: Callable[[argparse.Namespace], int],
+    **defaults: Any,
+) -> argparse.ArgumentParser:
+    """A subcommand that dispatches straight to one handler — every loft
+    command follows the same registration shape: a parser on *sub*, wired
+    to *fn* as the dispatcher, then the command's own arguments."""
+    p = sub.add_parser(name, help=help_text)
+    p.set_defaults(fn=fn, **defaults)
+    return p
 
 
 def serve_app(_env: Mapping[str, str] | None = None) -> Any:
@@ -175,6 +190,13 @@ def cmd_gedcom(args: argparse.Namespace) -> int:
     return 0
 
 
+def _refuse(message: str) -> int:
+    """Refuse the command: the reason on stderr, exit code 1 — every
+    import/export refusal ends the same way, only the reason differs."""
+    print(f"refusing: {message}", file=sys.stderr)
+    return 1
+
+
 def _gedcom_export(folder_arg: str, path_arg: str) -> int:
     """The island export — re-emit an import folder's confirmed subset as
     GEDCOM 7.0. The four swap-refusals run BEFORE anything is written: a
@@ -184,31 +206,23 @@ def _gedcom_export(folder_arg: str, path_arg: str) -> int:
     # 1. the first argument must BE an import folder: not a bare file, not
     #    a folder without the imported structure
     if not folder.is_dir() or not (folder / "people.json").is_file() or not (folder / "places.json").is_file():
-        print(
-            f"refusing: {folder_arg} is not an import folder (needs people.json + places.json)",
-            file=sys.stderr,
-        )
-        return 1
+        return _refuse(f"{folder_arg} is not an import folder (needs people.json + places.json)")
     # 2. the destination must not be the import folder or any path inside
     #    it — the source island stays untouched
     dest_resolved = dest.resolve()
     folder_resolved = folder.resolve()
     if dest_resolved == folder_resolved or folder_resolved in dest_resolved.parents:
-        print(f"refusing: {path_arg} is the import folder or a path inside it", file=sys.stderr)
-        return 1
+        return _refuse(f"{path_arg} is the import folder or a path inside it")
     # 3. an existing directory, 4. an existing file — no silent overwrite
     if dest.is_dir():
-        print(f"refusing: {path_arg} is an existing directory", file=sys.stderr)
-        return 1
+        return _refuse(f"{path_arg} is an existing directory")
     if dest.exists():
-        print(f"refusing: {path_arg} exists — no silent overwrite", file=sys.stderr)
-        return 1
+        return _refuse(f"{path_arg} exists — no silent overwrite")
     # 5. the destination's parent must exist — a swapped/mistyped path
     #    with a missing parent would crash with FileNotFoundError, never
     #    a clean refusal (review-bot finding)
     if not dest.parent.is_dir():
-        print(f"refusing: {path_arg}'s parent directory does not exist", file=sys.stderr)
-        return 1
+        return _refuse(f"{path_arg}'s parent directory does not exist")
     people_table = json.loads((folder / "people.json").read_text(encoding="utf-8"))
     places_table = json.loads((folder / "places.json").read_text(encoding="utf-8"))
     shapes = {
@@ -225,37 +239,44 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="loft", description="The Loft archive tools — one surface.")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("publish", help="regenerate the projection (app/data) from the archive")
+    p = _command(sub, name="publish", help_text="regenerate the projection (app/data) from the archive", fn=cmd_publish)
     p.add_argument("--archive", default=str(ARCHIVE_DIR))
     p.add_argument("--data", default="app/data")
-    p.set_defaults(fn=cmd_publish)
 
-    p = sub.add_parser("serve", help="serve the app (no-cache) with the memory-capture API")
+    p = _command(sub, name="serve", help_text="serve the app (no-cache) with the memory-capture API", fn=cmd_serve)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8124)
     p.add_argument("--archive", default=str(ARCHIVE_DIR))
     p.add_argument("--data", default="app/data")
     p.add_argument("--app", default=str(ROOT / "app"))
     p.add_argument("--reload", action="store_true", help="auto-reload the backend on source changes (make serve)")
-    p.set_defaults(fn=cmd_serve)
 
-    p = sub.add_parser("capture-memory", help="capture a narrator's memory from an account (file or -)")
+    p = _command(
+        sub,
+        name="capture-memory",
+        help_text="capture a narrator's memory from an account (file or -)",
+        fn=cmd_capture_memory,
+    )
     p.add_argument("account", help="the narrator's account text, or - for stdin")
     p.add_argument("--who", default="")
     p.add_argument("--anchor", default="", help="JSON anchor context (item/person/theme)")
     p.add_argument("--status", default="draft", choices=["draft", "catalogued"])
     p.add_argument("--archive", default=str(ARCHIVE_DIR))
-    p.set_defaults(fn=cmd_capture_memory)
 
     p = sub.add_parser(
         "gedcom",
         help="GEDCOM 7.0 interchange — import a file into a folder (the island), or export its confirmed subset",
     )
     g = p.add_subparsers(dest="gedcom_action", required=True)
-    pi = g.add_parser("import", help="parse a GEDCOM 7 file into a self-contained folder of record files")
+    pi = _command(
+        g,
+        name="import",
+        help_text="parse a GEDCOM 7 file into a self-contained folder of record files",
+        fn=cmd_gedcom,
+        action="import",
+    )
     pi.add_argument("file", help="the GEDCOM file to read")
     pi.add_argument("folder", help="the import folder to write (refused when it exists and is not empty)")
-    pi.set_defaults(fn=cmd_gedcom, action="import")
     pe = g.add_parser("export", help="re-emit an import folder's confirmed subset as GEDCOM 7.0")
     pe.add_argument("folder", help="the import folder to read")
     pe.add_argument("path", help="the GEDCOM file to write (must not exist)")

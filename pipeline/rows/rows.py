@@ -187,10 +187,11 @@ class _Claims:
         for i, word in enumerate(self.words):
             if self._is_rule(word):
                 continue
-            candidates: list[tuple[float, int]] = []
-            for line_index, (x_lo, x_hi, y_lo, y_hi, mean_y) in enumerate(self.spans):
-                if x_lo <= word.cx <= x_hi and y_lo - self.unit <= word.cy <= y_hi + self.unit:
-                    candidates.append((abs(mean_y - word.cy), line_index))
+            candidates: list[tuple[float, int]] = [
+                (abs(mean_y - word.cy), line_index)
+                for line_index, (x_lo, x_hi, y_lo, y_hi, mean_y) in enumerate(self.spans)
+                if x_lo <= word.cx <= x_hi and y_lo - self.unit <= word.cy <= y_hi + self.unit
+            ]
             if candidates:
                 owner_of[i] = min(candidates)[1]
         self._discount_annotations(owner_of)
@@ -346,14 +347,14 @@ class _MapStyle:
 
     def colour(self, index: int) -> Colour:
         palette = [
-            Colour(200, 40, 40, self.tint),
-            Colour(40, 160, 40, self.tint),
-            Colour(40, 40, 200, self.tint),
-            Colour(160, 40, 180, self.tint),
-            Colour(40, 160, 160, self.tint),
-            Colour(180, 140, 20, self.tint),
-            Colour(90, 90, 200, self.tint),
-            Colour(200, 100, 20, self.tint),
+            Colour(red=200, green=40, blue=40, alpha=self.tint),
+            Colour(red=40, green=160, blue=40, alpha=self.tint),
+            Colour(red=40, green=40, blue=200, alpha=self.tint),
+            Colour(red=160, green=40, blue=180, alpha=self.tint),
+            Colour(red=40, green=160, blue=160, alpha=self.tint),
+            Colour(red=180, green=140, blue=20, alpha=self.tint),
+            Colour(red=90, green=90, blue=200, alpha=self.tint),
+            Colour(red=200, green=100, blue=20, alpha=self.tint),
         ]
         return palette[index % len(palette)]
 
@@ -415,6 +416,6 @@ def render_map(page: Image.Image, rows: list[Row], path: Path, view: MapView) ->
                 for px, py in line
             ]
             label_layer.line(points, fill=line_colour, width=4)
-    sheet, _handle, _bar = captioned_sheet(crop, [f"{len(rows)} rows, tinted by their words' union"])
-    path.write_bytes(review_image(sheet))
+    sheet = captioned_sheet(crop, [f"{len(rows)} rows, tinted by their words' union"])
+    path.write_bytes(review_image(sheet.sheet))
     return crop

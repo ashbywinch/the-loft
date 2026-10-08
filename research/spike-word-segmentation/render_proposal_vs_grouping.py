@@ -56,8 +56,8 @@ def _zoom_panels(
         top, bottom = max(0, int(window[0])), min(drawn.height, int(window[1]))
         crop = drawn.crop((0, top, drawn.width, bottom))
         fitted = crop.resize((width, int(crop.height * width / crop.width)), Image.Resampling.LANCZOS)
-        sheet, _, _ = captioned_sheet(fitted, [title])
-        panels.append(sheet)
+        sheet = captioned_sheet(fitted, [title])
+        panels.append(sheet.sheet)
     return stack_sheets(panels, max_width=width)
 
 

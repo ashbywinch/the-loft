@@ -154,8 +154,8 @@ def _panels(
     for title, rows in rowsets:
         drawn = render_rows(page, list(rows), strokes)
         fitted = drawn.resize((1000, int(drawn.height * 1000 / drawn.width)), Image.Resampling.LANCZOS)
-        sheet, _, _ = captioned_sheet(fitted, [title])
-        panels.append(sheet)
+        sheet = captioned_sheet(fitted, [title])
+        panels.append(sheet.sheet)
     return stack_sheets(panels, max_width=1000)
 
 

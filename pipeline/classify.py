@@ -21,6 +21,7 @@ import json
 import os
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +49,18 @@ def route(density: int, threshold: int = DENSITY_THRESHOLD) -> str:
     return "print" if density >= threshold else "cursive"
 
 
-def _load_clip() -> tuple[Any, Any, Any]:
+@dataclass(frozen=True)
+class _Clip:
+    """The loaded CLIP model: the model, its preprocessing pipeline and the
+    tokenizer — open_clip's stubs mis-type the transforms, so the boundary is
+    a named record rather than three untyped returns."""
+
+    model: Any
+    preprocess: Any
+    tokenizer: Any
+
+
+def _load_clip() -> _Clip:
     """open_clip's stubs mis-type create_model_and_transforms, and its third
     return is NOT the tokenizer for MobileCLIP (a second Compose); the
     tokenizer comes from get_tokenizer. The boundary is treated as untyped —
@@ -58,7 +70,7 @@ def _load_clip() -> tuple[Any, Any, Any]:
     torch.set_num_threads(max(1, (os.cpu_count() or 2) - 1))
     model, preprocess, _ = open_clip.create_model_and_transforms("MobileCLIP-S2", pretrained="datacompdr")
     tokenizer = open_clip.get_tokenizer("MobileCLIP-S2")
-    return model, preprocess, tokenizer
+    return _Clip(model, preprocess, tokenizer)
 
 
 def classify_pages(
@@ -77,18 +89,18 @@ def classify_pages(
 
 def zero_shot_classifier() -> Callable[[Path], tuple[str, dict[str, float]]]:
     """The CLIP zero-shot classifier bound to CONTENT_PROMPTS (local, CPU)."""
-    model, preprocess, tokenizer = _load_clip()
-    model.eval()
+    clip = _load_clip()
+    clip.model.eval()
     labels = sorted(CONTENT_PROMPTS)
-    texts = tokenizer([CONTENT_PROMPTS[label] for label in labels])
+    texts = clip.tokenizer([CONTENT_PROMPTS[label] for label in labels])
     with torch.no_grad():
-        text_features = model.encode_text(texts)
+        text_features = clip.model.encode_text(texts)
         text_features /= text_features.norm(dim=-1, keepdim=True)
 
     def classify(image_path: Path) -> tuple[str, dict[str, float]]:
         with torch.no_grad():
-            image = preprocess(Image.open(image_path).convert("RGB")).unsqueeze(0)
-            image_features = model.encode_image(image)
+            image = clip.preprocess(Image.open(image_path).convert("RGB")).unsqueeze(0)
+            image_features = clip.model.encode_image(image)
             image_features /= image_features.norm(dim=-1, keepdim=True)
             probs = (image_features @ text_features.T).softmax(dim=-1)[0]
         confidences = {label: float(probs[i]) for i, label in enumerate(labels)}

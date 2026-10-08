@@ -18,6 +18,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from document.colour import Colour
 from document.numbered_rows import PILL_INSET as PILL_GAP
 from document.numbered_rows import PILL_POINTER, NumberedRows
 from document.rectangle import Rectangle, overlaps
@@ -206,7 +207,7 @@ def test_a_number_carries_its_own_rows_hue() -> None:
     rows = _page01_rows()
     for index, row in enumerate(rows):
         band_hue = NumberedRows.hue_of(index)
-        red, green, blue = NumberedRows.pill_colour(index)
+        red, green, blue, _alpha = NumberedRows.pill_colour(index)
         pill_hue = colorsys.rgb_to_hsv(red / 255, green / 255, blue / 255)[0]
         turn = abs(((band_hue - pill_hue) + 0.5) % 1.0 - 0.5)
         assert turn < 0.02, f"row {row.number}: the number's hue is {turn:.3f} of a turn from its band's"
@@ -265,7 +266,7 @@ def test_no_part_of_a_number_is_painted_inside_a_word_box() -> None:
         ImageDraw.Draw(page).rectangle((int(word.x0), int(word.y0), int(word.x1), int(word.y1)), fill=(60, 60, 60))
     drawn = np.asarray(NumberedRows.draw_numbers(page, rows).image).astype(int)
     for number_index in (0,):
-        chip_ink = np.array(NumberedRows.digit_colour(number_index))
+        chip_ink = np.array(NumberedRows.digit_colour(number_index)[:3])
         hits = np.nonzero(np.abs(drawn - chip_ink).max(axis=2) <= 20)
         inside = [
             (int(y), int(x))
@@ -341,7 +342,7 @@ def test_a_number_is_painted_at_the_crops_origin_in_its_own_colour() -> None:
     canvas = Image.new("RGB", (500, 200), paper)
     drawn = NumberedRows.draw_numbers(canvas, rows, offset_x=200)
     assert drawn.numbers == {"seg-28": 28}
-    expected = NumberedRows.pill_colour(27, paper)
+    expected = NumberedRows.pill_colour(27, Colour(*paper))[:3]
     painted = np.nonzero(np.all(np.asarray(canvas) == expected, axis=2))[1]
     assert len(painted), "the number was not painted in its own row's colour"
     box = NumberedRows._pill_boxes(rows)[0]

@@ -86,7 +86,7 @@ setup: install-tools
 	@uv sync --locked
 	@if [ ! -d node_modules ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then $(NPM) ci --no-audit --no-fund; fi  # ci stays reproducible; skipped when the lock is unchanged (2026-08-13: a full reinstall on every make call was the suite's fixed 3 s tax)
 	@uv run pre-commit install
-	@[ -f .env ] || cp .env.example .env
+	@[ -n "$$CI" ] || { [ -f .env ] || cp .env.example .env; }  # CI carries its own gateway env (ci.yml); the copy is for local shells only — .env.example's blank values would wipe it
 
 
 serve: setup

@@ -27,7 +27,7 @@ from tools.records import Message, Person, ReviewContext
 from tools.review import assistant_message, investigate
 
 PEOPLE: list[dict[str, Any]] = [
-    {"id": "p-quentin", "name": "Quentin Whitlock", "relation": "brother of Pearl Whitlock"},
+    {"id": "p-quentin", "name": "Quentin Whitlock"},
     {"id": "p-pearl", "name": "Pearl Whitlock"},
     {"id": "p-nora", "name": "Nora Whitlock"},
     {"id": "p-walter", "name": "Walter Whitlock", "dod": {"date": "1916-09-15", "precision": "exact"}},
@@ -51,9 +51,7 @@ ITEMS: list[dict[str, Any]] = [
     },
 ]
 
-PERSON: Person = Person.from_dict(
-    {"id": "p-quentin", "name": "Quentin Whitlock", "relation": "brother of Pearl Whitlock"}
-)
+PERSON: Person = Person.from_dict({"id": "p-quentin", "name": "Quentin Whitlock"})
 
 
 class ReviewFlow:
@@ -74,21 +72,24 @@ class ReviewFlow:
     confidence: tuple[str, ...] = ()  # the accepted confidence values
     findings_mention: str | None = None
     findings_quote: str | None = None
-    no_findings = False
+    no_claim_assertion: str = ""  # a finding must never quote this claim phrase — R2's robot-note rule
     no_term = False
     question_concludes = False
     has_question = False
 
 
 class OnTopicFlow(ReviewFlow):
-    """A positive recollection with no documents: relevant, and no
-    fabricated attestation (R2 — a robot's note is never evidence). One
-    run, two conditions — the merge of the old on-topic + R2 cases
-    (2026-08-10, user: never two evals covering the same thing)."""
+    """A recollection the archive does not attest: relevant, and no
+    fabricated attestation (R2 — a robot's note is never evidence). The
+    people list names Quentin but carries NO relation — the record does not
+    contain the claim, so a finding quoting the relation would be invented
+    attestation (2026-10-08: the fixture used to pre-attest the claim, so
+    the model's correct report of the record was punished as fabrication —
+    the case is unambiguous now)."""
 
     name = "on-topic is relevant, and no fabricated attestation (R2)"
     text = "Grandma used to say that Quentin was Pearl's brother."
-    no_findings = True
+    no_claim_assertion = "brother of Pearl Whitlock"
 
 
 class OffTopicFlow(ReviewFlow):
@@ -274,13 +275,22 @@ class ReviewRun:
         flow, result = self.flow, self.result
         findings = result.get("findings", [])
         texts = [f.get("text", "") if isinstance(f, dict) else str(f) for f in findings]
-        if flow.no_findings and findings:
+        if flow.no_claim_assertion and any(flow.no_claim_assertion in t for t in texts):
+            # the R2 robot-note rule: a person-record relation line is not
+            # attestation — quoting it as a finding asserts the claim without a
+            # document's support. Context findings about other people/records
+            # are allowed; the claim itself never is.
+            return f"a finding asserts the claim without a document's attestation (R2): {findings}"
+        # the response may name the lead in findings OR the question — the
+        # genealogist's move either way, the same contract the arc condition
+        # declares (2026-10-08: findings-only punished the model for asking
+        # about the lead it had found; sampling decided the verdict)
+        response_texts = texts + [str(result.get("question", ""))]
+        if flow.findings_mention and not any(flow.findings_mention in t for t in response_texts):
             return (
-                "no evidence surfaced, but a finding was offered anyway — a robot's note is "
-                f"never attestation (R2): {findings}"
+                f"the lead ({flow.findings_mention}) went unanswered — neither findings nor "
+                f"the question name it: {findings}"
             )
-        if flow.findings_mention and not any(flow.findings_mention in t for t in texts):
-            return f"findings should mention {flow.findings_mention}: {findings}"
         if flow.findings_quote and not any(flow.findings_quote in t for t in texts):
             return (
                 f"findings should QUOTE the relevant sentence verbatim ({flow.findings_quote!r} — "

@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass
 from itsdangerous import URLSafeTimedSerializer
 
 sys.path.insert(0, ".")
-from tools.auth import session_secret  # noqa: E402  (sys.path bootstrap must precede the import)
+from pipeline.api.auth import session_secret  # noqa: E402  (sys.path bootstrap must precede the import)
 
 
 @dataclass

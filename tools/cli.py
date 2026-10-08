@@ -22,11 +22,11 @@ from typing import Any
 
 import uvicorn
 
-from tools.ai_client import AIClient, AIClientError
+from pipeline.api.server import Server, ServerConfig, build_app, lan_addresses
+from pipeline.model.ai_client import AIClient, AIClientError
 from tools.archive import Archive
 from tools.gedcom_document import GedcomDocument
 from tools.loft_paths import ARCHIVE_DIR
-from tools.server import Server, ServerConfig, build_app, lan_urls
 from tools.store import DiskStore
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -85,8 +85,8 @@ def cmd_serve(args: argparse.Namespace) -> int:
         os.environ["LOFT_DATA"] = str(args.data)
         os.environ["LOFT_APP"] = str(args.app)
         if args.host == "0.0.0.0":
-            for url in lan_urls(args.port):
-                print(f"Serving {args.app} at {url} (no-cache, reload on)")
+            for addr in lan_addresses():
+                print(f"Serving {args.app} at http://{addr}:{args.port} (no-cache, reload on)")
         else:
             print(f"Serving {args.app} on {args.host}:{args.port} (no-cache, reload on)")
         uvicorn.run(

@@ -3,7 +3,7 @@
 For the block-sized welded marks (4847), the splitter's pieces are horizontal
 bands and say nothing about the words; this draws the word boxes instead.
 Domain content only (which window, which word file); drawing is
-tools.page_visuals primitives.
+pipeline.rows.page_visuals primitives.
 Usage: .venv/bin/python research/spike-word-segmentation/render_sliver_words.py
 """
 
@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from PIL import Image
 
-from tools.page_visuals import captioned_sheet, halo_text, review_image, scaled_crop
+from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 WORDS = Path("/tmp/reparse-sept14/words.json")
@@ -32,7 +32,7 @@ SLIVERS = [(2006.0, 2554.0, 2008.0, 2614.0), (2008.0, 2616.0, 2010.0, 2672.0)]
 def _main() -> int:
     page = Image.open(SCAN).convert("RGB")
     words = json.loads(WORDS.read_text())["words"]
-    crop = scaled_crop(page, X0, Y0, X1, Y1, SCALE_OUT)
+    crop = scaled_crop(page, Crop(X0, Y0, X1, Y1, SCALE_OUT))
     caption = [
         "4847's window: every detected word boxed (yellow) — the mark is one",
         "welded blob, so the splitter's pieces are horizontal bands, not words",

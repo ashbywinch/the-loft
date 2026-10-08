@@ -5,7 +5,7 @@ tombstones, and the proposed-record queue — all through the append-only store
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -326,6 +326,7 @@ def test_save_recovers_after_a_crash_mid_save() -> None:
             super().__init__()
             self.calls = 0
 
+        @override
         def write_new(self, path: str, content: str | bytes) -> None:
             self.calls += 1
             if self.calls == 2:

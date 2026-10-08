@@ -30,9 +30,9 @@ from typing import Any
 
 import pytest
 
+import pipeline.evals.eval_review as review_evals
 import tools.eval_memory as memory_evals
-import tools.eval_review as review_evals
-from tools.ai_client import AIClient, AIClientError
+from pipeline.model.ai_client import AIClient, AIClientError
 
 
 @pytest.fixture(scope="session")
@@ -70,7 +70,8 @@ def test_review_condition(
     condition: tuple[str, Any],
 ) -> None:
     name, check = condition
-    error = check(flow, review_outputs[flow.name])
+    run = review_evals.ReviewRun(flow, review_outputs[flow.name])
+    error = check(run)
     assert error is None, f"[{name}] {error}"
 
 

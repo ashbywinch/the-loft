@@ -153,9 +153,22 @@ def _estimate_note(basis: dict[str, str] | None, level: int = 1) -> list[str]:
     return _lines("Estimated — the family's recollection; the basis is not recorded", level)
 
 
-def _export_set(
-    people: dict[str, Any], places: dict[str, Any]
-) -> tuple[set[str], list[dict[str, Any]], dict[str, str], dict[str, dict[str, Any]], dict[str, str]]:
+@dataclass(frozen=True)
+class _ExportSet:
+    """What leaves the archive — the confirmed/estimated people and edges,
+    plus the lookup maps the export renders them with: exported ids, edges,
+    place names, people by id, and the deterministic xref ids (sorted order,
+    documented mapping). Named fields instead of the positional 5-tuple the
+    call site could not read."""
+
+    exported_ids: set[str]
+    edges: list[dict[str, Any]]
+    place_names: dict[str, str]
+    by_id: dict[str, dict[str, Any]]
+    xref: dict[str, str]
+
+
+def _export_set(people: dict[str, Any], places: dict[str, Any]) -> _ExportSet:
     """The confirmed/estimated people and edges that leave the archive —
     proposed records stay out (2026-08-09 review) — plus the lookup maps:
     exported ids, edges, place names, people by id, and the deterministic
@@ -172,156 +185,135 @@ def _export_set(
     place_names = {p["id"]: p.get("name", p["id"]) for p in places["places"]}
     by_id = {p["id"]: p for p in exported}
     xref = {pid: f"P{i}" for i, pid in enumerate(sorted(exported_ids), start=1)}
-    return exported_ids, edges, place_names, by_id, xref
+    return _ExportSet(exported_ids, edges, place_names, by_id, xref)
 
 
-def _family_units(
-    edges: list[dict[str, Any]], archive: Archive | None
-) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
-    """The FAM records: spouse pairs + their children, then single-parent
-    FAMS. Returns (families, fam_notes) — an estimated edge's evidence
-    rides on the FAM it created."""
-    pairs, marriage_dates, pair_notes = _spouse_pairs(edges, archive)
-    families, fam_of_pair, fam_notes, counter = _pair_families(pairs, marriage_dates, pair_notes)
-    parent_of, estimated_parent_edges = _parent_edges(edges)
-    children_of, single_parent, fam_notes, counter = _route_children(
-        parent_of, fam_of_pair, families, fam_notes, counter, estimated_parent_edges, archive
-    )
-    for fam in families:
-        fam["children"] = sorted(set(children_of.get(fam["id"], [])))
-    families, fam_notes, _ = _single_parent_families(
-        single_parent, estimated_parent_edges, families, fam_notes, counter, archive
-    )
-    return families, fam_notes
+class _FamilyUnits:
+    """The FAM record builder — the routing state the spouse-pair and
+    single-parent passes thread through (families, fam_notes, the id
+    counter, the pair lookup) is one object's state, the passes are its
+    methods. The five module functions that used to thread 12 structures
+    through 'archive' are this class's machinery."""
 
+    def __init__(self, edges: list[dict[str, Any]], archive: Archive | None) -> None:
+        self._edges = edges
+        self._archive = archive
+        self._pairs: set[tuple[str, str]] = set()
+        self._marriage_dates: dict[tuple[str, str], dict[str, str]] = {}
+        self._pair_notes: dict[tuple[str, str], list[str]] = {}
+        self.families: list[dict[str, Any]] = []
+        self.fam_notes: dict[str, list[str]] = {}
+        self._fam_of_pair: dict[tuple[str, str], str] = {}
+        self._parent_of: dict[str, list[str]] = {}
+        self._estimated_parent_edges: set[tuple[str, str]] = set()
+        self._children_of: dict[str, list[str]] = {}
+        self._single_parent: dict[str, list[str]] = {}
+        self._counter = 0
 
-def _spouse_pairs(
-    edges: list[dict[str, Any]], archive: Archive | None
-) -> tuple[set[tuple[str, str]], dict[tuple[str, str], dict[str, str]], dict[tuple[str, str], list[str]]]:
-    """The spouse edges -> the sorted pairs, their marriage dates, and the
-    evidence notes for estimated pairs."""
-    marriage_dates: dict[tuple[str, str], dict[str, str]] = {}
-    pair_notes: dict[tuple[str, str], list[str]] = {}
-    pairs: set[tuple[str, str]] = set()
-    for edge in edges:
-        if edge["kind"] == "spouse":
-            a, b = edge["a"], edge["b"]
-            pair = (a, b) if a < b else (b, a)
-            pairs.add(pair)
-            if edge.get("date"):
-                marriage_dates[pair] = edge["date"]  # a dated marriage exports as 1 MARR (2026-08-06)
-            if edge.get("status") == "estimated":
-                pair_notes[pair] = _estimate_note(_estimate_basis(archive, b) or _estimate_basis(archive, a))
-    return pairs, marriage_dates, pair_notes
+    def build(self) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
+        """The FAM records: spouse pairs + their children, then single-parent
+        FAMS. Returns (families, fam_notes) — an estimated edge's evidence
+        rides on the FAM it created."""
+        self._spouse_pairs()
+        self._pair_families()
+        self._parent_edges()
+        self._route_children()
+        for fam in self.families:
+            fam["children"] = sorted(set(self._children_of.get(fam["id"], [])))
+        self._single_parent_families()
+        return self.families, self.fam_notes
 
-
-def _pair_families(
-    pairs: set[tuple[str, str]],
-    marriage_dates: dict[tuple[str, str], dict[str, str]],
-    pair_notes: dict[tuple[str, str], list[str]],
-) -> tuple[list[dict[str, Any]], dict[tuple[str, str], str], dict[str, list[str]], int]:
-    """The spouse-pair FAM records, in sorted-pair order: one FAM per pair,
-    keyed by pair for the child routing. Returns (families, fam_of_pair,
-    fam_notes, counter) — the FAM counter is shared with the later
-    single-parent records so ids stay assignment-ordered."""
-    fam_of_pair: dict[tuple[str, str], str] = {}
-    fam_notes: dict[str, list[str]] = {}  # an estimated edge's evidence rides the FAM it created
-    families: list[dict[str, Any]] = []  # {id, spouse_a, spouse_b, children, marriage?}
-    counter = 0
-    for pair in sorted(pairs):
-        counter += 1
-        fid = f"F{counter}"
-        fam_of_pair[pair] = fid
-        families.append({"id": fid, "a": pair[0], "b": pair[1], "children": [], "marriage": marriage_dates.get(pair)})
-        if pair in pair_notes:
-            fam_notes.setdefault(fid, []).extend(pair_notes[pair])
-    return families, fam_of_pair, fam_notes, counter
-
-
-def _parent_edges(
-    edges: list[dict[str, Any]],
-) -> tuple[dict[str, list[str]], set[tuple[str, str]]]:
-    """The parent edges -> child -> parents, and the estimated
-    (parent, child) pairs whose evidence rides the FAM."""
-    parent_of: dict[str, list[str]] = {}
-    estimated_parent_edges: set[tuple[str, str]] = set()  # (parent, child) — the evidence rides the FAM
-    for edge in edges:
-        if edge["kind"] == "parent":
-            parent_of.setdefault(edge["b"], []).append(edge["a"])
-            if edge.get("status") == "estimated":
-                estimated_parent_edges.add((edge["a"], edge["b"]))
-    return parent_of, estimated_parent_edges
-
-
-# through; a state object would add a type for one use
-# lucidlint: ignore long-param-list a single call site — the routing state (families/fam_notes/counter) is threaded
-def _route_children(
-    parent_of: dict[str, list[str]],
-    fam_of_pair: dict[tuple[str, str], str],
-    families: list[dict[str, Any]],
-    fam_notes: dict[str, list[str]],
-    counter: int,
-    estimated_parent_edges: set[tuple[str, str]],
-    archive: Archive | None,
-) -> tuple[dict[str, list[str]], dict[str, list[str]], dict[str, list[str]], int]:
-    """Route each child to its attested co-parents' FAM: children by their
-    attested co-parent edge — never by a parent's current spouse: a
-    multi-married parent's earlier marriage's children would be silently
-    misattributed to the last spouse (2026-08-06 review). A child with two
-    attested parents goes to their FAM (creating it when the parents have
-    no spouse edge); one parent edge falls back to a single-parent FAM.
-    Returns (children_of, single_parent, fam_notes, counter)."""
-    children_of: dict[str, list[str]] = {}
-    single_parent: dict[str, list[str]] = {}
-    for child, parents in sorted(parent_of.items()):
-        uniq = sorted(set(parents))
-        if len(uniq) == 2:
-            pair = (uniq[0], uniq[1])
-            if pair in fam_of_pair:
-                children_of.setdefault(fam_of_pair[pair], []).append(child)
-            else:
-                counter += 1
-                fid = f"F{counter}"
-                fam_of_pair[pair] = fid
-                families.append({"id": fid, "a": pair[0], "b": pair[1], "children": [child]})
-                # the child that created this FAM is also routed via
-                # children_of — the final reset below must not clobber it
-                # (2026-08-06 review: a child of an unmarried pair vanished)
-                children_of.setdefault(fid, []).append(child)
-                if any((parent, child) in estimated_parent_edges for parent in uniq):
-                    # concatenate — a spouse estimate's evidence must not be
-                    # overwritten by the parent edge's (R9; 2026-08-11 review)
-                    fam_notes.setdefault(fid, []).extend(
-                        _estimate_note(_estimate_basis(archive, child) or _estimate_basis(archive, uniq[0]))
+    def _spouse_pairs(self) -> None:
+        """The spouse edges -> the sorted pairs, their marriage dates, and
+        the evidence notes for estimated pairs."""
+        for edge in self._edges:
+            if edge["kind"] == "spouse":
+                a, b = edge["a"], edge["b"]
+                pair = (a, b) if a < b else (b, a)
+                self._pairs.add(pair)
+                if edge.get("date"):
+                    self._marriage_dates[pair] = edge["date"]  # a dated marriage exports as 1 MARR (2026-08-06)
+                if edge.get("status") == "estimated":
+                    self._pair_notes[pair] = _estimate_note(
+                        _estimate_basis(self._archive, b) or _estimate_basis(self._archive, a)
                     )
-        else:
-            single_parent.setdefault(uniq[0], []).append(child)
-    return children_of, single_parent, fam_notes, counter
 
-
-# a state object would add a type for one use
-# lucidlint: ignore long-param-list a single call site — the FAM state (families/fam_notes/counter) is threaded through;
-def _single_parent_families(
-    single_parent: dict[str, list[str]],
-    estimated_parent_edges: set[tuple[str, str]],
-    families: list[dict[str, Any]],
-    fam_notes: dict[str, list[str]],
-    counter: int,
-    archive: Archive | None,
-) -> tuple[list[dict[str, Any]], dict[str, list[str]], int]:
-    """The single-parent FAM records — the children whose other parent is
-    unconfirmed — with the estimated edges' evidence notes appended
-    (concatenate — never overwrite a spouse estimate's evidence, R9;
-    2026-08-11 review)."""
-    for parent in sorted(single_parent):
-        counter += 1
-        fid = f"F{counter}"
-        families.append({"id": fid, "a": parent, "b": None, "children": sorted(set(single_parent[parent]))})
-        if any((parent, child) in estimated_parent_edges for child in single_parent[parent]):
-            fam_notes.setdefault(fid, []).extend(
-                _estimate_note(_estimate_basis(archive, single_parent[parent][0]) or _estimate_basis(archive, parent))
+    def _pair_families(self) -> None:
+        """The spouse-pair FAM records, in sorted-pair order: one FAM per
+        pair, keyed by pair for the child routing. The FAM counter is shared
+        with the later single-parent records so ids stay assignment-ordered."""
+        for pair in sorted(self._pairs):
+            self._counter += 1
+            fid = f"F{self._counter}"
+            self._fam_of_pair[pair] = fid
+            self.families.append(
+                {"id": fid, "a": pair[0], "b": pair[1], "children": [], "marriage": self._marriage_dates.get(pair)}
             )
-    return families, fam_notes, counter
+            if pair in self._pair_notes:
+                self.fam_notes.setdefault(fid, []).extend(self._pair_notes[pair])
+
+    def _parent_edges(self) -> None:
+        """The parent edges -> child -> parents, and the estimated
+        (parent, child) pairs whose evidence rides the FAM."""
+        for edge in self._edges:
+            if edge["kind"] == "parent":
+                self._parent_of.setdefault(edge["b"], []).append(edge["a"])
+                if edge.get("status") == "estimated":
+                    # (parent, child) — the evidence rides the FAM
+                    self._estimated_parent_edges.add((edge["a"], edge["b"]))
+
+    def _route_children(self) -> None:
+        """Route each child to its attested co-parents' FAM: children by
+        their attested co-parent edge — never by a parent's current spouse:
+        a multi-married parent's earlier marriage's children would be
+        silently misattributed to the last spouse (2026-08-06 review). A
+        child with two attested parents goes to their FAM (creating it when
+        the parents have no spouse edge); one parent edge falls back to a
+        single-parent FAM."""
+        for child, parents in sorted(self._parent_of.items()):
+            uniq = sorted(set(parents))
+            if len(uniq) == 2:
+                pair = (uniq[0], uniq[1])
+                if pair in self._fam_of_pair:
+                    self._children_of.setdefault(self._fam_of_pair[pair], []).append(child)
+                else:
+                    self._counter += 1
+                    fid = f"F{self._counter}"
+                    self._fam_of_pair[pair] = fid
+                    self.families.append({"id": fid, "a": pair[0], "b": pair[1], "children": [child]})
+                    # the child that created this FAM is also routed via
+                    # children_of — the final reset below must not clobber it
+                    # (2026-08-06 review: a child of an unmarried pair vanished)
+                    self._children_of.setdefault(fid, []).append(child)
+                    if any((parent, child) in self._estimated_parent_edges for parent in uniq):
+                        # concatenate — a spouse estimate's evidence must not be
+                        # overwritten by the parent edge's (R9; 2026-08-11 review)
+                        self.fam_notes.setdefault(fid, []).extend(
+                            _estimate_note(
+                                _estimate_basis(self._archive, child) or _estimate_basis(self._archive, uniq[0])
+                            )
+                        )
+            else:
+                self._single_parent.setdefault(uniq[0], []).append(child)
+
+    def _single_parent_families(self) -> None:
+        """The single-parent FAM records — the children whose other parent
+        is unconfirmed — with the estimated edges' evidence notes appended
+        (concatenate — never overwrite a spouse estimate's evidence, R9;
+        2026-08-11 review)."""
+        for parent in sorted(self._single_parent):
+            self._counter += 1
+            fid = f"F{self._counter}"
+            self.families.append(
+                {"id": fid, "a": parent, "b": None, "children": sorted(set(self._single_parent[parent]))}
+            )
+            if any((parent, child) in self._estimated_parent_edges for child in self._single_parent[parent]):
+                self.fam_notes.setdefault(fid, []).extend(
+                    _estimate_note(
+                        _estimate_basis(self._archive, self._single_parent[parent][0])
+                        or _estimate_basis(self._archive, parent)
+                    )
+                )
 
 
 def _family_lines(
@@ -839,12 +831,10 @@ class GedcomDocument:
         carrying the evidence that produced it (the review conversation's
         recorded basis); PENDING records — the island's _LOFT_STATUS, the
         archive's proposed — stay out (2026-08-09, user)."""
-        exported_ids, edges, place_names, by_id, xref = _export_set(
-            {"people": self._people, "relationships": self._relationships}, {"places": self._places}
-        )
-        families, fam_notes = _family_units(edges, self._archive)
-        notes_by_person = _story_notes(self._archive, exported_ids) if self._archive is not None else {}
-        associations = _associations(edges, self._archive)
+        export = _export_set({"people": self._people, "relationships": self._relationships}, {"places": self._places})
+        families, fam_notes = _FamilyUnits(export.edges, self._archive).build()
+        notes_by_person = _story_notes(self._archive, export.exported_ids) if self._archive is not None else {}
+        associations = _associations(export.edges, self._archive)
 
         lines: list[str] = [
             "0 HEAD",
@@ -862,14 +852,14 @@ class GedcomDocument:
             lines += [f"0 @PL{i}@ PLAC", f"1 REFN {place['id']}", f"1 NAME {place['name']}"]
 
         for fam in families:
-            lines += _family_lines(fam, by_id, xref, fam_notes)
+            lines += _family_lines(fam, export.by_id, export.xref, fam_notes)
 
-        for pid in sorted(exported_ids):
+        for pid in sorted(export.exported_ids):
             lines += _person_lines(
-                person=by_id[pid],
+                person=export.by_id[pid],
                 pid=pid,
-                xref=xref,
-                place_names=place_names,
+                xref=export.xref,
+                place_names=export.place_names,
                 notes=notes_by_person.get(pid, []),
                 associations=associations.get(pid, []),
                 archive=self._archive,

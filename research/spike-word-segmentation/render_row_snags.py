@@ -14,10 +14,10 @@ from pathlib import Path
 
 from PIL import Image
 
-from tools.page_visuals import captioned_sheet, review_image
-from tools.rectangle import Rectangle
-from tools.rows import Row, Rows, render_map
-from tools.word import Word
+from document.rectangle import Rectangle
+from document.word import Word
+from pipeline.rows.page_visuals import captioned_sheet, review_image
+from pipeline.rows.rows import MapView, Row, Rows, render_map
 from tools.word_numbering import numbered_order
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
@@ -65,8 +65,9 @@ def numbers_of(word_ids: list[int]) -> dict[tuple[float, float, float, float], i
 
 def pair(name: str, window: Rectangle, scale: float, word_ids: list[int]) -> None:
     page = Image.open(SCAN).convert("RGB")
-    user_map = render_map(page, adjudicated_rows(), OUT / (name + ".u.jpg"), window, scale, numbers_of(word_ids))
-    lib_map = render_map(page, library_rows(), OUT / (name + ".l.jpg"), window, scale, numbers_of(word_ids))
+    view = MapView(window, scale, word_numbers=numbers_of(word_ids))
+    user_map = render_map(page, adjudicated_rows(), OUT / (name + ".u.jpg"), view)
+    lib_map = render_map(page, library_rows(), OUT / (name + ".l.jpg"), view)
     user_sheet, _, _ = captioned_sheet(user_map, ["your rows (confirmed 2026-09-12)"])
     lib_sheet, _, _ = captioned_sheet(lib_map, ["the library's rows (`rows.adjust`)"])
     width = user_sheet.width + lib_sheet.width + 10

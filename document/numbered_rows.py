@@ -22,9 +22,9 @@ import math
 
 from PIL import Image, ImageDraw
 
-from tools.rectangle import Rectangle, overlaps
-from tools.render import RenderStyle
-from tools.row import Row
+from document.rectangle import Rectangle, overlaps
+from document.row import Row
+from pipeline.rows.render import RenderStyle
 
 ROW_NUM_SIZE = 26  # px: the pill's number, the review surface's own type size
 PILL_POINTER = 14  # px: how far the pill's pointer reaches back toward its row

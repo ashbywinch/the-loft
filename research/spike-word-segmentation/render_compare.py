@@ -1,7 +1,7 @@
 """Comparison sheets: the blocked cases stacked side by side for the user.
 
 Domain content only (which rendered cases in which group); composition is
-tools.page_visuals.stack_sheets + review_image. The case sheets themselves
+pipeline.rows.page_visuals.stack_sheets + review_image. The case sheets themselves
 come from render_split_cases.py — this script only stacks them.
 Usage: .venv/bin/python research/spike-word-segmentation/render_compare.py
 """
@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from PIL import Image
 
-from tools.page_visuals import review_image, stack_sheets
+from pipeline.rows.page_visuals import review_image, stack_sheets
 
 CASES = Path(__file__).resolve().parent / "split-cases"
 OUT = Path(__file__).resolve().parent / "evidence"

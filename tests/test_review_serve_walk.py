@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from tools.layout import validate_layout
+from pipeline.layout import validate_layout
 from tools.loft_paths import WORK_DIR
 
 

@@ -11,13 +11,14 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from PIL import Image
 
-from tools.page_visuals import captioned_sheet, review_image
+from pipeline.rows.page_visuals import captioned_sheet, review_image
 from tools.word_numbering import render_numbered, unplaced
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
@@ -58,18 +59,29 @@ def _draw(path: Path, title: str, boxes: list[tuple[float, float, float, float]]
     print(f"{path.name} -> {path} ({path.stat().st_size // 1024}KB); {len(boxes)} boxes, {len(missing)} chips unplaced")
 
 
-def _draw_half(path: Path, title: str, boxes: list, fy0: float, fy1: float, scale: float = 2.0) -> None:
+@dataclass(frozen=True)
+class _Half:
+    """One half of the page in its own file: its title, the vertical band of
+    the page it covers, and the scale the boxes are drawn at."""
+
+    title: str
+    fy0: float
+    fy1: float
+    scale: float = 2.0
+
+
+def _draw_half(path: Path, boxes: list, half: _Half) -> None:
     """One half of the page as its own file, boxes numbered within the half.
 
     Separate files, never a stack: a stacked panel's caption bar and gap land
     inside the writing. Halving the page also gives the numbering room — at
     whole-page density the chip placer runs out of free space."""
     page = Image.open(SCAN).convert("RGB")
-    y0, y1 = fy0 * page.height, fy1 * page.height
+    y0, y1 = half.fy0 * page.height, half.fy1 * page.height
     section = (0.0, y0, float(page.width), y1)
     inside = [b for b in boxes if b[3] >= y0 and b[1] <= y1]
-    image, chips = render_numbered(page, section, inside, scale)
-    sheet, _handle, _bar = captioned_sheet(image, [title, f"{len(inside)} boxes, numbered in reading order"])
+    image, chips = render_numbered(page, section, inside, half.scale)
+    sheet, _handle, _bar = captioned_sheet(image, [half.title, f"{len(inside)} boxes, numbered in reading order"])
     sheet.save(path.with_suffix(".png"))
     path.write_bytes(review_image(sheet, width=1400, quality=74))
     print(f"{path.name} -> {path.stat().st_size // 1024}KB; {len(inside)} boxes, {len(unplaced(chips))} chips unplaced")
@@ -81,8 +93,8 @@ def _main() -> int:
         ("page-rows", "the whole page — every ROW boxed, numbered", _rows()),
     ):
         _draw(OUT / f"{name}.jpg", title, boxes)
-        _draw_half(OUT / f"{name}-top.jpg", f"{title} (top half)", boxes, 0.0, 0.5)
-        _draw_half(OUT / f"{name}-bottom.jpg", f"{title} (bottom half)", boxes, 0.5, 1.0)
+        _draw_half(OUT / f"{name}-top.jpg", boxes, _Half(f"{title} (top half)", 0.0, 0.5))
+        _draw_half(OUT / f"{name}-bottom.jpg", boxes, _Half(f"{title} (bottom half)", 0.5, 1.0))
     return 0
 
 

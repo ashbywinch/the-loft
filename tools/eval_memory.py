@@ -16,9 +16,9 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, override
 
-from tools.ai_client import AIClient
+from pipeline.model.ai_client import AIClient
 from tools.memory import BUCKETS, KINDS, MAX_QUESTIONS, MAX_SUGGESTIONS, Knowledge, assess
 
 REPO = Path(__file__).resolve().parent.parent
@@ -184,6 +184,7 @@ class RealBoatsLinksFlow(MemoryFlow):
     who = "Alex"
     account = "The boats were built on Iron Wharf — Sunlight first in 1980. The yard had a slipway into the creek."
 
+    @override
     @staticmethod
     def assert_(result: dict[str, Any]) -> list[str]:
         return _expect_linked(
@@ -202,6 +203,7 @@ class RealSheppeyFlow(MemoryFlow):
         "Dad built the boats on Iron Wharf and Mum came along sometimes."
     )
 
+    @override
     @staticmethod
     def assert_(result: dict[str, Any]) -> list[str]:
         return _expect_linked(
@@ -229,6 +231,7 @@ class FictionalNoOvermatchFlow(MemoryFlow):
         "always gave us fresh poppy-seed cake. Janek helped behind the counter."
     )
 
+    @override
     @staticmethod
     def assert_(result: dict[str, Any]) -> list[str]:
         names = _extraction_names(result)
@@ -248,6 +251,7 @@ class FictionalMentionNotLinkFlow(MemoryFlow):
         "nobody minded, and Dad played the accordion all evening."
     )
 
+    @override
     @staticmethod
     def assert_(result: dict[str, Any]) -> list[str]:
         return _expect_not_linked(
@@ -272,6 +276,7 @@ class KinshipTermNotAliasFlow(MemoryFlow):
     who = "Marek"
     account = "Dad came with me to see the house we wanted to buy. He said nothing, which is his way."
 
+    @override
     @staticmethod
     def assert_(result: dict[str, Any]) -> list[str]:
         return _expect_not_linked(
@@ -291,6 +296,7 @@ class AgeWithKnownDobNotAskedFlow(MemoryFlow):
     who = "Marek"
     account = "I was eight when we moved to the new house."
 
+    @override
     @staticmethod
     def assert_(result: dict[str, Any]) -> list[str]:
         if not any(w in _question_texts(result) for w in _DATE_ASK):
@@ -310,6 +316,7 @@ class AgeWithoutDobAsksFlow(MemoryFlow):
     who = "Marek"
     account = "I was eight when we moved to the new house."
 
+    @override
     @staticmethod
     def assert_(result: dict[str, Any]) -> list[str]:
         if any(w in _question_texts(result) for w in _DATE_ASK):
@@ -329,6 +336,7 @@ class DobStatedAssertedFlow(MemoryFlow):
     who = "Marek"
     account = "I was eight when we moved. My DOB is 15/09/1981."
 
+    @override
     @staticmethod
     def assert_(result: dict[str, Any]) -> list[str]:
         if _facts_of_kind(result, "dob") and not any(w in _question_texts(result) for w in _DATE_ASK):
@@ -348,6 +356,7 @@ class NewNarratorConnectionFlow(MemoryFlow):
     who = "Zofia Kowalski"
     account = "The wedding was lovely, the cake was poppy seed."
 
+    @override
     @staticmethod
     def assert_(result: dict[str, Any]) -> list[str]:
         if any(w in _question_texts(result) for w in ("connect", "related", "relationship", "family")):
@@ -367,6 +376,7 @@ class NewArtifactAskedFlow(MemoryFlow):
     who = "Marek"
     account = "We sailed on the Kasia, a little yacht Dad rebuilt in the garden."
 
+    @override
     @staticmethod
     def assert_(result: dict[str, Any]) -> list[str]:
         if "kasia" in _question_texts(result):

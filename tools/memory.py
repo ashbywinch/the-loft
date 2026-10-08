@@ -31,7 +31,7 @@ from typing import Any, Literal, Protocol, cast
 
 import dateparser
 
-from tools.ai_client import AIClientError, json_object
+from pipeline.model.ai_client import AIClientError, json_object
 
 KINDS = ("person", "place", "theme", "item")
 BUCKETS = ("proposed", "question", "unresolved")
@@ -164,41 +164,6 @@ specific description of what to fix."""
 
 class ElicitationError(RuntimeError):
     """Raised when the assessment cannot be produced or is malformed."""
-
-
-# DI, not a data group — the client is the injected dependency; single
-# lucidlint: ignore long-param-list,strewing call site (assess)
-def _review(
-    client: ChatClient,
-    anchor: dict[str, str],
-    who: str,
-    account: str,
-    knowledge: Knowledge,
-    assessment: dict[str, Any],
-) -> list[str]:
-    """A second, cheap model pass reviews the assessment for rule violations
-    (mentions linked, impossible matches, redundant questions). Returns the
-    violations to feed back — empty means the assessment stands."""
-    user = "\n\n".join(
-        [
-            _anchor_line(anchor),
-            f"Contributor: {who or 'unknown'}",
-            f"The story (verbatim):\n{account}",
-            "Standing knowledge:\n" + knowledge.render(),
-            "The assessor's output to review:\n" + json.dumps(assessment, ensure_ascii=False),
-        ]
-    )
-    try:
-        raw = client.chat(_REVIEWER_SYSTEM_PROMPT, user)
-        parsed = json_object(raw)
-        violations = parsed.get("violations", [])
-        if not isinstance(violations, list):
-            return []
-        return [str(v).strip()[:200] for v in violations if isinstance(v, str) and v.strip()]
-    except AIClientError:
-        # a failed review pass never blocks the capture — the narrator's own
-        # review is the final gate
-        return []
 
 
 @dataclass(frozen=True)
@@ -587,41 +552,221 @@ def _suggestion_year(s: str) -> int | None:
     return parsed.year if parsed else None
 
 
+class _AssessmentReview:
+    """The code-checkable review of one assessment — owns the assessment and
+    its context (the narrator and the standing knowledge), the data clump
+    the deterministic guards, the plausibility filter and the model review
+    pass all read (docs/coding-standards.md: deterministic checks beat
+    model judgment)."""
+
+    def __init__(self, assessment: dict[str, Any], who: str, knowledge: Knowledge) -> None:
+        self.assessment = assessment
+        self.who = who
+        self.knowledge = knowledge
+
+    def narrator_dob(self) -> str | None:
+        """The narrator's date of birth for the plausibility guard — the
+        assessment's own dob fact first (the one being established), then
+        the standing knowledge's."""
+        speaker_id = self.knowledge.speaker_for(self.who)
+        dob_value: str | None = None
+        for fact in self.assessment.get("facts", []):
+            if fact.get("kind") != "dob" or not fact.get("value"):
+                continue
+            entity = fact.get("entity")
+            if entity in (None, speaker_id):
+                dob_value = fact["value"]
+                break
+        return dob_value or self.knowledge.narrator_dob(speaker_id)
+
+    def filter_implausible_suggestions(self) -> dict[str, Any]:
+        """Deterministic guard on date-question suggestions (docs/coding-
+        standards.md: deterministic checks beat model judgment): never offer
+        a year before the narrator was born — their dob is in the
+        assessment's facts or the standing knowledge. Suggestions the parser
+        cannot date are kept; dob questions (the date is being asked) are
+        never filtered."""
+        questions = self.assessment.get("questions", [])
+        if not questions:
+            return self.assessment
+        dob_value = self.narrator_dob()
+        if not dob_value:
+            return self.assessment
+        try:
+            dob_year = int(str(dob_value)[:4])
+        except (TypeError, ValueError):
+            return self.assessment
+        return {**self.assessment, "questions": _filter_date_suggestions(questions, dob_year)}
+
+    def violations(self) -> list[str]:
+        """Rule violations checkable in code — no model judgment needed.
+        These feed the same redo-with-feedback loop as the reviewer's
+        findings."""
+        violations: list[str] = []
+        facts = self.assessment.get("facts", [])
+        ages = [f for f in facts if f.get("kind") == "age" and isinstance(f.get("value"), int)]
+        violations += self._check_narrator_unknown()
+        violations += self._check_age_without_dob(ages)
+        violations += self._check_event_date_rules(ages)
+        violations += self._check_new_item_question()
+        return violations
+
+    def model_violations(self, client: ChatClient, anchor: dict[str, str], account: str) -> list[str]:
+        """A second, cheap model pass reviews the assessment for rule
+        violations (mentions linked, impossible matches, redundant
+        questions). Returns the violations to feed back — empty means the
+        assessment stands."""
+        user = "\n\n".join(
+            [
+                _anchor_line(anchor),
+                f"Contributor: {self.who or 'unknown'}",
+                f"The story (verbatim):\n{account}",
+                "Standing knowledge:\n" + self.knowledge.render(),
+                "The assessor's output to review:\n" + json.dumps(self.assessment, ensure_ascii=False),
+            ]
+        )
+        try:
+            raw = client.chat(_REVIEWER_SYSTEM_PROMPT, user)
+            parsed = json_object(raw)
+            violations = parsed.get("violations", [])
+            if not isinstance(violations, list):
+                return []
+            return [str(v).strip()[:200] for v in violations if isinstance(v, str) and v.strip()]
+        except AIClientError:
+            # a failed review pass never blocks the capture — the narrator's own
+            # review is the final gate
+            return []
+
+    def _check_narrator_unknown(self) -> list[str]:
+        """A narrator outside the standing knowledge must be asked how they
+        connect — the account cannot be placed otherwise."""
+        violations: list[str] = []
+        if self.who.strip() and self.knowledge.speaker_for(self.who) is None:
+            questions = " ".join(q.get("text", "") for q in self.assessment.get("questions", [])).lower()
+            if not any(w in questions for w in ("connect", "related", "relationship", "family")):
+                violations.append(
+                    "the narrator is not in the standing knowledge and no question asks "
+                    "how they are connected to the family"
+                )
+        return violations
+
+    def _check_age_without_dob(self, ages: list[int]) -> list[str]:
+        """An age in the account must pair with a date of birth — the age is
+        anchored to the narrator's birth year, so the flow must establish the
+        dob or ask for it."""
+        violations: list[str] = []
+        if ages:
+            known_dob = self.knowledge.narrator_dob(self.knowledge.speaker_for(self.who))
+            dob_in_facts = any(f.get("kind") == "dob" and f.get("value") for f in self.assessment.get("facts", []))
+            if known_dob or dob_in_facts:
+                if self._date_question_asked():
+                    violations.append(
+                        "a date question is asked although the year is computable from the "
+                        "narrator's date of birth and age"
+                    )
+            elif not self._date_question_asked():
+                violations.append(
+                    "the account gave an age and no date of birth is known or stated — ask "
+                    "politely for the date of birth or the year"
+                )
+        return violations
+
+    def _check_event_date_rules(self, ages: list[int]) -> list[str]:
+        """The events-date rules — a date equal to the telling day is only
+        legitimate when the narrator's own words stated it; and when no events
+        date exists and nothing derives one, the (skippable) date question
+        must stay in the flow, never dropped."""
+        violations: list[str] = []
+        facts = self.assessment.get("facts", [])
+        event_dates = [f for f in facts if f.get("kind") == "event_date" and f.get("value")]
+        known_dob = self.knowledge.narrator_dob(self.knowledge.speaker_for(self.who))
+        dob_in_facts = any(f.get("kind") == "dob" and f.get("value") for f in facts)
+        if event_dates:
+            violations += self._fabricated_today_violations(event_dates)
+        elif not (ages and (known_dob or dob_in_facts)):
+            violations += self._missing_event_date_violations()
+        return violations
+
+    def _check_new_item_question(self) -> list[str]:
+        """A specific new artifact the story names deserves a "tell me more"
+        question — checkable in code from the extractions (item, no match)."""
+        violations: list[str] = []
+        new_items = [
+            ex for ex in self.assessment.get("extractions", []) if ex.get("kind") == "item" and not ex.get("match")
+        ]
+        if new_items:
+            questions = " ".join(q.get("text", "") for q in self.assessment.get("questions", [])).lower()
+            if not any(
+                ex.get("name", "").strip().lower() and ex["name"].strip().lower() in questions for ex in new_items
+            ):
+                violations.append(
+                    "a specific new artifact is named in the story and no question asks about it "
+                    '("tell me more" — that is how its archive page gets built)'
+                )
+        return violations
+
+    def _date_question_asked(self) -> bool:
+        for q in self.assessment.get("questions", []):
+            if q.get("type") == "date":
+                return True
+            text = str(q.get("text", "")).lower()
+            if any(w in text for w in _DATE_ASK_WORDS):
+                return True
+        return False
+
+    def _missing_event_date_violations(self) -> list[str]:
+        """No events date and nothing to derive one from — the issue must stay
+        pursued, never forced and never dropped (user: every question is
+        skippable, but the flow keeps narrowing the issue until the narrator
+        answers — even with a "leave it for now"; a story without a date
+        would otherwise slip through). The question is skippable: the
+        narrator answers in their own words or declines, and the item stays
+        undated until a later pass."""
+        violations: list[str] = []
+        if not any(
+            q.get("type") == "date" and q.get("date_kind") == "event" for q in self.assessment.get("questions", [])
+        ):
+            violations.append(
+                "no events date is established — keep the (skippable) date question for when "
+                "the events happened in the questions; the narrator answers in their own "
+                "words, and declining is allowed, but the issue is not dropped"
+            )
+        return violations
+
+    @staticmethod
+    def _fabricated_today_violations(event_dates: list[dict[str, Any]]) -> list[str]:
+        """A date equal to the telling day is only legitimate when the
+        narrator's own words stated it — a diary-style entry that really
+        happened that day. The verbatim is the discriminator: "Today" / the
+        date itself in the answer, never a fabricated value with no such
+        words. The events date must be the narrator's, never the telling day —
+        the model fabricating today as the event date is exactly how the
+        moment card came to serve "0 years ago this week" (2026-08-05)."""
+        violations: list[str] = []
+        today = date.today().isoformat()
+        todayish = ("today", "tonight", "this morning", "this evening", "this week", "just now", "now", "earlier today")
+        for f in event_dates:
+            value = str(f.get("value"))
+            if value in (today, today[:7], today[:4]):
+                verbatim = str(f.get("text") or "").strip().lower()
+                if value.lower() not in verbatim and not any(w in verbatim for w in todayish):
+                    violations.append(
+                        "the events date is the telling day and the narrator never stated it — a "
+                        "fabrication; quote the date from the account itself or keep the events "
+                        "date question (skippable — the narrator answers in their own words, and "
+                        "'I don't remember' is a legitimate answer) in the questions"
+                    )
+                    break
+        return violations
+
+
 def _filter_implausible_suggestions(assessment: dict[str, Any], who: str, knowledge: Knowledge) -> dict[str, Any]:
     """Deterministic guard on date-question suggestions (docs/coding-
     standards.md: deterministic checks beat model judgment): never offer a
     year before the narrator was born — their dob is in the assessment's
     facts or the standing knowledge. Suggestions the parser cannot date are
     kept; dob questions (the date is being asked) are never filtered."""
-    questions = assessment.get("questions", [])
-    if not questions:
-        return assessment
-    speaker_id = knowledge.speaker_for(who)
-    dob_value = _assessment_dob(assessment, speaker_id, knowledge)
-    if not dob_value:
-        return assessment
-    try:
-        dob_year = int(str(dob_value)[:4])
-    except (TypeError, ValueError):
-        return assessment
-    return {**assessment, "questions": _filter_date_suggestions(questions, dob_year)}
-
-
-def _assessment_dob(assessment: dict[str, Any], speaker_id: str | None, knowledge: Knowledge) -> str | None:
-    """The narrator's date of birth for the plausibility guard — the
-    assessment's own dob fact first (the one being established), then the
-    standing knowledge's."""
-    dob_value: str | None = None
-    for fact in assessment.get("facts", []):
-        if fact.get("kind") != "dob" or not fact.get("value"):
-            continue
-        entity = fact.get("entity")
-        if entity in (None, speaker_id):
-            dob_value = fact["value"]
-            break
-    if not dob_value:
-        dob_value = knowledge.narrator_dob(speaker_id)
-    return dob_value
+    return _AssessmentReview(assessment, who, knowledge).filter_implausible_suggestions()
 
 
 def _filter_date_suggestions(questions: list[dict[str, Any]], dob_year: int) -> list[dict[str, Any]]:
@@ -736,141 +881,6 @@ def _merge_pending_answers(
     return out
 
 
-def _date_question_asked(assessment: dict[str, Any]) -> bool:
-    for q in assessment.get("questions", []):
-        if q.get("type") == "date":
-            return True
-        text = str(q.get("text", "")).lower()
-        if any(w in text for w in _DATE_ASK_WORDS):
-            return True
-    return False
-
-
-def _deterministic_violations(assessment: dict[str, Any], who: str, knowledge: Knowledge) -> list[str]:
-    """Rule violations checkable in code — no model judgment needed. These
-    feed the same redo-with-feedback loop as the reviewer's findings."""
-    violations: list[str] = []
-    facts = assessment.get("facts", [])
-    ages = [f for f in facts if f.get("kind") == "age" and isinstance(f.get("value"), int)]
-    violations += _check_narrator_unknown(assessment, who, knowledge)
-    violations += _check_age_without_dob(assessment, who, knowledge, ages)
-    violations += _check_event_date_rules(assessment, who, knowledge, ages)
-    violations += _check_new_item_question(assessment)
-    return violations
-
-
-def _check_narrator_unknown(assessment: dict[str, Any], who: str, knowledge: Knowledge) -> list[str]:
-    """A narrator outside the standing knowledge must be asked how they
-    connect — the account cannot be placed otherwise."""
-    violations: list[str] = []
-    if who.strip() and knowledge.speaker_for(who) is None:
-        questions = " ".join(q.get("text", "") for q in assessment.get("questions", [])).lower()
-        if not any(w in questions for w in ("connect", "related", "relationship", "family")):
-            violations.append(
-                "the narrator is not in the standing knowledge and no question asks "
-                "how they are connected to the family"
-            )
-    return violations
-
-
-def _check_age_without_dob(assessment: dict[str, Any], who: str, knowledge: Knowledge, ages: list[int]) -> list[str]:
-    """An age in the account must pair with a date of birth — the age is
-    anchored to the narrator's birth year, so the flow must establish the
-    dob or ask for it."""
-    violations: list[str] = []
-    if ages:
-        speaker_id = knowledge.speaker_for(who)
-        known_dob = knowledge.narrator_dob(speaker_id)
-        dob_in_facts = any(f.get("kind") == "dob" and f.get("value") for f in assessment.get("facts", []))
-        if known_dob or dob_in_facts:
-            if _date_question_asked(assessment):
-                violations.append(
-                    "a date question is asked although the year is computable from the narrator's date of birth and age"
-                )
-        elif not _date_question_asked(assessment):
-            violations.append(
-                "the account gave an age and no date of birth is known or stated — ask "
-                "politely for the date of birth or the year"
-            )
-    return violations
-
-
-def _check_event_date_rules(assessment: dict[str, Any], who: str, knowledge: Knowledge, ages: list[int]) -> list[str]:
-    """The events-date rules — a date equal to the telling day is only
-    legitimate when the narrator's own words stated it; and when no events
-    date exists and nothing derives one, the (skippable) date question
-    must stay in the flow, never dropped."""
-    violations: list[str] = []
-    facts = assessment.get("facts", [])
-    event_dates = [f for f in facts if f.get("kind") == "event_date" and f.get("value")]
-    known_dob = knowledge.narrator_dob(knowledge.speaker_for(who))
-    dob_in_facts = any(f.get("kind") == "dob" and f.get("value") for f in facts)
-    if event_dates:
-        violations += _fabricated_today_violations(event_dates)
-    elif not (ages and (known_dob or dob_in_facts)):
-        violations += _missing_event_date_violations(assessment)
-    return violations
-
-
-def _fabricated_today_violations(event_dates: list[dict[str, Any]]) -> list[str]:
-    """A date equal to the telling day is only legitimate when the
-    narrator's own words stated it — a diary-style entry that really
-    happened that day. The verbatim is the discriminator: "Today" / the
-    date itself in the answer, never a fabricated value with no such
-    words. The events date must be the narrator's, never the telling day —
-    the model fabricating today as the event date is exactly how the
-    moment card came to serve "0 years ago this week" (2026-08-05)."""
-    violations: list[str] = []
-    today = date.today().isoformat()
-    todayish = ("today", "tonight", "this morning", "this evening", "this week", "just now", "now", "earlier today")
-    for f in event_dates:
-        value = str(f.get("value"))
-        if value in (today, today[:7], today[:4]):
-            verbatim = str(f.get("text") or "").strip().lower()
-            if value.lower() not in verbatim and not any(w in verbatim for w in todayish):
-                violations.append(
-                    "the events date is the telling day and the narrator never stated it — a "
-                    "fabrication; quote the date from the account itself or keep the events "
-                    "date question (skippable — the narrator answers in their own words, and "
-                    "'I don't remember' is a legitimate answer) in the questions"
-                )
-                break
-    return violations
-
-
-def _missing_event_date_violations(assessment: dict[str, Any]) -> list[str]:
-    """No events date and nothing to derive one from — the issue must stay
-    pursued, never forced and never dropped (user: every question is
-    skippable, but the flow keeps narrowing the issue until the narrator
-    answers — even with a "leave it for now"; a story without a date
-    would otherwise slip through). The question is skippable: the
-    narrator answers in their own words or declines, and the item stays
-    undated until a later pass."""
-    violations: list[str] = []
-    if not any(q.get("type") == "date" and q.get("date_kind") == "event" for q in assessment.get("questions", [])):
-        violations.append(
-            "no events date is established — keep the (skippable) date question for when "
-            "the events happened in the questions; the narrator answers in their own "
-            "words, and declining is allowed, but the issue is not dropped"
-        )
-    return violations
-
-
-def _check_new_item_question(assessment: dict[str, Any]) -> list[str]:
-    """A specific new artifact the story names deserves a "tell me more"
-    question — checkable in code from the extractions (item, no match)."""
-    violations: list[str] = []
-    new_items = [ex for ex in assessment.get("extractions", []) if ex.get("kind") == "item" and not ex.get("match")]
-    if new_items:
-        questions = " ".join(q.get("text", "") for q in assessment.get("questions", [])).lower()
-        if not any(ex.get("name", "").strip().lower() and ex["name"].strip().lower() in questions for ex in new_items):
-            violations.append(
-                "a specific new artifact is named in the story and no question asks about it "
-                '("tell me more" — that is how its archive page gets built)'
-            )
-    return violations
-
-
 # A bare kinship term names the writer's own relative — never a match to a
 # person record merely because that record carries the alias. The code
 # strips the match deterministically: writer-relative resolution is a later
@@ -954,8 +964,9 @@ def assess(
         assessment = _validate_assessment(parsed)
         if attempt >= MAX_ASSESS_ATTEMPTS - 1:
             break  # last attempt: accept the best effort
-        violations = _deterministic_violations(assessment, who, knowledge)
-        violations += _review(client, anchor, who, account, knowledge, assessment)
+        review = _AssessmentReview(assessment, who, knowledge)
+        violations = review.violations()
+        violations += review.model_violations(client, anchor, account)
         if not violations:
             break
         user = (
@@ -1161,7 +1172,7 @@ class Story:
         knowledge: Knowledge,
         verified: bool,
         all_ids: set[str],
-    ) -> tuple[list[Ref], list[Ref], list[Ref], list[Ref], list[dict[str, Any]], list[dict[str, Any]]]:
+    ) -> StoryLinks:
         """The story's links from the narrator-approved assessment: the
         anchor and the kept extractions become refs (one per entity), and
         newly introduced people/places mint proposed records. A verified
@@ -1261,13 +1272,13 @@ class Story:
                 items_refs.append(Ref(match, status))
 
         # one ref per entity — the anchor and an extraction may name the same one
-        return (
-            _dedupe_refs(people_refs),
-            _dedupe_refs(places_refs),
-            _dedupe_refs(themes_refs),
-            _dedupe_refs(items_refs),
-            new_people,
-            new_places,
+        return StoryLinks(
+            people=_dedupe_refs(people_refs),
+            places=_dedupe_refs(places_refs),
+            themes=_dedupe_refs(themes_refs),
+            items=_dedupe_refs(items_refs),
+            new_people=new_people,
+            new_places=new_places,
         )
 
     def to_sidecar(self) -> dict[str, Any]:
@@ -1299,6 +1310,35 @@ class Story:
             "created": self.recorded,
             "created_at": datetime.now().isoformat(timespec="seconds"),  # the recent feed's tie-break
         }
+
+
+@dataclass(frozen=True)
+class StoryLinks:
+    """The story's links from the narrator-approved assessment — the refs by
+    kind and the minted proposed records. One record instead of the
+    positional 6-tuple the builder used to return (docs/coding-standards.md:
+    a group that travels together is a type)."""
+
+    people: list[Ref]
+    places: list[Ref]
+    themes: list[Ref]
+    items: list[Ref]
+    new_people: list[dict[str, Any]]
+    new_places: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class StoryFacts:
+    """The assessed facts sorted into the story's date inputs: the facts
+    recorded verbatim for the keeper, the asserted events date, and the dob
+    and ages that derive the events year when no date is stated. One record
+    instead of the positional 5-tuple the collector used to return."""
+
+    story_facts: list[Fact]
+    event_date: str | None
+    event_precision: str | None
+    dob: str | None
+    ages: list[int]
 
 
 def _next_story_id(recorded: str, existing: set[str]) -> str:
@@ -1357,8 +1397,10 @@ def build_story(
     speaker_id = knowledge.speaker_for(request.who)
 
     # facts decide the story's date and the dob proposals
-    story_facts, event_date, event_precision, dob, ages = _collect_story_facts(request.facts, speaker_id)
-    event_year, event_precision = _derive_event_year(event_date, event_precision, dob, ages)
+    collected = _collect_story_facts(request.facts, speaker_id)
+    event_year, event_precision = _derive_event_year(
+        collected.event_date, collected.event_precision, collected.dob, collected.ages
+    )
 
     # the links: built by the Story domain object, which enforces the
     # invariant that a catalogued story never confirms a link to an
@@ -1367,7 +1409,7 @@ def build_story(
     anchor_id = request.anchor.get("id")
     all_ids = set(existing_ids) | {p.id for p in knowledge.people}
     all_ids |= {pl.id for pl in knowledge.places} | {t.id for t in knowledge.themes}
-    people_refs, places_refs, themes_refs, items_refs, new_people, new_places = Story.refs_from_assessment(
+    links = Story.refs_from_assessment(
         anchor=request.anchor,
         extractions=request.extractions,
         knowledge=knowledge,
@@ -1375,7 +1417,7 @@ def build_story(
         all_ids=all_ids,
     )
 
-    speaker = _ensure_speaker(speaker_id, request.who, dob, all_ids, new_people)
+    speaker = _ensure_speaker(speaker_id, request.who, collected.dob, all_ids, links.new_people)
 
     story = Story(
         story_id=story_id,
@@ -1390,19 +1432,17 @@ def build_story(
         comment_on=anchor_id if anchor_kind == "item" else None,
         chat=request.chat,
         source=f"Site contribution, {recorded}",
-        people=tuple(people_refs),
-        places=tuple(places_refs),
-        themes=tuple(themes_refs),
-        items=tuple(items_refs),
-        facts=tuple(story_facts),
+        people=tuple(links.people),
+        places=tuple(links.places),
+        themes=tuple(links.themes),
+        items=tuple(links.items),
+        facts=tuple(collected.story_facts),
         status=request.status,
     )
-    return story.to_sidecar(), new_people, new_places
+    return story.to_sidecar(), links.new_people, links.new_places
 
 
-def _collect_story_facts(
-    facts: list[dict[str, Any]], speaker_id: str | None
-) -> tuple[list[Fact], str | None, str | None, str | None, list[int]]:
+def _collect_story_facts(facts: list[dict[str, Any]], speaker_id: str | None) -> StoryFacts:
     """Sort the assessed facts into the story's date inputs and dob
     proposals: the asserted events date wins; the dob is recorded whether
     or not it could be parsed — a phrase the parser rejected still needs a
@@ -1436,7 +1476,7 @@ def _collect_story_facts(
             )
         elif kind == "age" and isinstance(fact.get("value"), int):
             ages.append(fact["value"])
-    return story_facts, event_date, event_precision, dob, ages
+    return StoryFacts(story_facts, event_date, event_precision, dob, ages)
 
 
 def _derive_event_year(

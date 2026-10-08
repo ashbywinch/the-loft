@@ -6,12 +6,61 @@ scaffold, the missing surfaces, and the sequencing.
 
 **Status:** the rows foundation landed — the
 row library (`tools/rows.py`), the per-stage typed schema loaders
-(`tools/schemas.py`), the fixture (`tests/fixtures/page01-rows-gold/`).
+(`pipeline/schemas.py`), the fixture (`tests/fixtures/page01-rows-gold/`).
 Of the sequencing: step 1's rows-adjacent schemas exist, but the `Stage`
 enum (`tools/stages.py`), the Document and identity artefacts' schemas,
 and step 2's `Rows.from_words` rename have not landed; steps 3–6 (the
 UR3 scan pickup, the stage-4 drawing UI, the portal, the stage-8
 identification flow) are unbuilt.
+
+## The layout (agreed 2026-10-08)
+
+The object model names the objects; this names where the code lives.
+
+**Agreed placement, three homes:**
+
+1. **The document model lives in `document/`.** The records themselves —
+   `Word`, `Row`, `Trace`, `Mark`, the geometry (`Rectangle`), `Transcript`,
+   `RowTranscript` — each owning its invariants, with the typed loaders of
+   their wire shapes (`document/schemas.py`) beside them. A developer reads
+   the model from the folder's listing alone.
+2. **The pipeline functionality lives in `pipeline/`** — particularly as it
+   is surfaced to the app. The chain driver, the store, the stage machinery
+   (detection, rows, rendering, transcription), the model client, and the
+   API the app talks to (`pipeline/server.py`, `pipeline/sync.py`). The
+   pipeline is not a `tools/` item.
+3. **`tools/` is only for separate small command-line utilities.** The
+   TECHSPEC-§12 list: thumbnails, index/archive rebuilds, archive checks,
+   export, fake-data generation. Nothing that belongs to the model or the
+   chain lives there.
+
+**Folder size rule:** a folder that has grown too big for a human to read its
+list of files is split further — the pipeline splits into stage-group
+subpackages (`pipeline/detect/`, `pipeline/rows/`, `pipeline/transcribe/`,
+`pipeline/model/`, `pipeline/api/`, `pipeline/evals/`, and the chain driver +
+store at the `pipeline/` top), and its evals live under `pipeline/evals/`
+because evaluation is the chain's, not the tools drawer's.
+
+### The move (mechanical, seams unchanged)
+
+| today | goes to |
+|---|---|
+| `tools/row.py` `tools/word.py` `tools/rectangle.py` `tools/trace.py` `tools/schemas.py` | `document/` — the model and its typed loaders |
+| `tools/pipeline.py` `tools/pipeline_store.py` `tools/registry.py` | `pipeline/` — the chain, its store, its registry |
+| `tools/reader.py` `tools/mark.py` `tools/ink.py` `tools/line.py` `tools/ruler.py` | `pipeline/detect/` |
+| `tools/rows.py` `tools/render.py` `tools/boxjig.py` `tools/page_visuals.py` | `pipeline/rows/` (boxjig folds into the traces validation as planned) |
+| `tools/transcripts.py` | `pipeline/transcribe/` |
+| `tools/vlm.py` `tools/vlm_cache.py` `tools/ai_client.py` | `pipeline/model/` |
+| `tools/ocr.py` `tools/classify.py` `tools/grouping.py` `tools/htr.py` `tools/layout*.py` | `pipeline/` — the per-stage model steps |
+| `tools/server.py` `tools/sync.py` `tools/auth.py` | `pipeline/api/` — the app's window |
+| `tools/eval_*.py` (the chain's) | `pipeline/evals/` |
+
+`tools/` keeps only the small CLI utilities (archive stores, projection,
+`atomic`, `attestation`, `gates`, `loft_paths`, `pii_markers`, the
+memory/capture flow, the export and demo-data generators, `cli.py`).
+
+`app/`, `tests/`, `research/`, `docs/`, `scripts/` are unchanged in kind;
+`tests/` mirrors the packages (`tests/document/`, `tests/pipeline/`).
 
 ## The object model (agreed 2026-09-19)
 
@@ -31,7 +80,7 @@ object:
 
 Actors (reader, pipeline, server, page_visuals) are tools over these
 objects. The drawn-lines invariants (the A1–A7 checks that the traces
-and the boxes agree — currently `tools/boxjig.py`) are an ACTION of the
+and the boxes agree — currently `pipeline/boxjig.py`) are an ACTION of the
 row layer, not a noun: the plan folds them into the row object's
 validation (`Rows.validate(traces)`) and renames the file away; a "jig"
 is not domain vocabulary and appears nowhere in the model.
@@ -107,7 +156,7 @@ adjustments needed) → **`rows_pending`** — the page is now in the
 portal's "Check the rows" queue.
 
 - The machine stages are run by the WORKER (a separate process — the
-  batch processor built on `tools/pipeline.py`), not by the web server.
+  batch processor built on `pipeline/chain.py`), not by the web server.
 - The worker advances each page through the stages, writing each stage's
   artifact through its typed schema (atomic write-then-rename per the
   atomic-write rule), and stops at `rows_pending` — nothing human-looping
@@ -122,7 +171,7 @@ Two processes, clearly separated:
 
 - **The worker** — the batch processor (stages 1–6 machine steps). It
   never serves HTTP and never reads the user's input directly.
-- **The API server** (`tools/server.py`) — the front's only window: it
+- **The API server** (`pipeline/server.py`) — the front's only window: it
   reads the registry/archive (the portal items, the drafts) and accepts
   the user's writes (row adjustments, transcript confirmations,
   identifications), recording them through the typed seams. The row
@@ -137,11 +186,11 @@ Two processes, clearly separated:
 - **The front end** (the app) — reads the portal via the API and POSTs
   the user's decisions via the API; it holds no pipeline state.
 
-**The read stage transcribes the rows** (2026-10-07). `tools/pipeline.py`'s
+**The read stage transcribes the rows** (2026-10-07). `pipeline/chain.py`'s
 `_read_pages` used to fill each row's text from the page guess's `.txt`, split
 into lines and indexed onto the rows in order — which put a sentence one row out
 wherever the rows and the text's lines ran differently. The rows' text now comes
-from `tools/transcripts.py` (`Transcriber.transcribe`): the page's rows are
+from `pipeline/transcribe/transcripts.py` (`Transcriber.transcribe`): the page's rows are
 numbered (one chip per row, at the end of the line it belongs to, in that row's
 own colour over its tinted band), the page goes to the model as short bands that
 each carry exactly their own rows, and any row the bands leave blank or doubled
@@ -153,7 +202,7 @@ returns nothing writes no `rows.json` at all: the marker rule, an artifact that
 looks done but is empty being worse than a page to re-run.
 
 Vocabulary, because two things are easy to confuse here: the DETECTOR reads a
-page — `tools/reader.py`'s `Reading` is the fitted lines and split words that
+page — `pipeline/detect/reader.py`'s `Reading` is the fitted lines and split words that
 `words.json` holds. A TRANSCRIPT is what a model says the writing says: one
 page's `Transcript` (`document/transcript.py`), each of its rows a
 `RowTranscript` (the rows it covers, its text, its kind, its injection target).
@@ -163,7 +212,7 @@ page's `Transcript` (`document/transcript.py`), each of its rows a
 count now comes from the writing's own height and the tallest band the model
 reads at full resolution (`MAX_BAND_HEIGHT` = 856px) — the fewest bands that
 leave none taller than that, with a cut only where the rows leave a gap. The
-measurement (`tools/eval_band_size.py`, one production call per band) found two
+measurement (`pipeline/eval_band_size.py`, one production call per band) found two
 separate effects: the whole writing on one image (2360px) lost the **bottom
 eight** row numbers — resolution, which is what bands are for — while a band's
 call can also come back **empty** at any size (the same 1286px bands read 41/41

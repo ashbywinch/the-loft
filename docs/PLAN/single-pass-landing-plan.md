@@ -36,9 +36,9 @@ content. They must be **closed, not merged**.
   `run_batch`/`_process_page`/`_layout_one`. The detector engine and every
   old-path function are deleted.
 - The review surface v2 (dual-pane, per-line boxes, the persona-guard fix in
-  `tools/eval_review.py`), the scoring modules, and `tools/pipeline_store.py`
+  `pipeline/eval_review.py`), the scoring modules, and `pipeline/pipeline_store.py`
   — landed via PR #31.
-- The review-posted gate rewrite (`tools/check_review_posted.py`): polls the
+- The review-posted gate rewrite (`pipeline/check_review_posted.py`): polls the
   comments list (4×8 s, injectable delay — the never-sleep rule in
   `docs/testing-standards.md`), accepts the bot's logged "PR output" as
   coverage, reports the bot's own error on genuine death.
@@ -61,7 +61,7 @@ surface, the gate rewrite, or the old-path deletion.
 | PR | Branch | Why superseded |
 |---|---|---|
 | #32 | `pr/torch-pin` | Still carries `tools/eval_batch.py`, `eval_columns.py`, and the pre-conversion `layout_detect.py` that `main` deleted. The CPU-index pin itself is stale — `main`'s CI resolves torch green without it. |
-| #36 | `pr/ink-2` | Review-surface files are older than #31's landed versions; `tools/layout.py`/gate deltas are pre-rewrite. |
+| #36 | `pr/ink-2` | Review-surface files are older than #31's landed versions; `pipeline/layout.py`/gate deltas are pre-rewrite. |
 | #37 | `pr/ink-3` | Same, plus `eval_crop_grid.py`/`box.py` deltas that would remove `main`'s lucidlint-ignore annotations and refinements. |
 | #38 | `pr/ink-pipeline` | Its one unique contribution (the conversion) is on `main`; the remaining 9-file diff would revert the review surface and scoring tests. |
 
@@ -71,7 +71,7 @@ four are CLOSED on GitHub.
 
 ### 2. Audit the confirm flow for old-path references — DONE
 
-Grep of `tools/pipeline.py`, `tools/sync.py` and `tools/server.py`:
+Grep of `tools/pipeline.py`, `pipeline/sync.py` and `pipeline/server.py`:
 no `ENGINE`/`region` references remain; the surviving
 `detect` mentions are prose (boundary detection, a historical
 `layout_detect` comment). The single-pass Layout (per-line `words_out`,
@@ -96,7 +96,7 @@ is pinned in `tests/test_eval_postcard.py` (in the passing suite).
   squash). A blocked `gh pr merge --rebase` means the branch needs rebasing
   onto `main` first, not `--auto` and not a base switch.
 - **Gateway (Cloudflare AI Gateway):** unknown User-Agents from datacenter
-  ranges get WAF error 1010. `tools/ai_client.py` and the pr-agent config both
+  ranges get WAF error 1010. `pipeline/ai_client.py` and the pr-agent config both
   set `opencode/1.14.20`. The intermittent 401s were transient gateway bursts,
   not key rotation — the repo secret and the local key are identical (verified:
   both 53 chars, suffix `1c60`). Never chase phantom auth bugs before
@@ -104,4 +104,4 @@ is pinned in `tests/test_eval_postcard.py` (in the passing suite).
 - **Tests never sleep.** Injectable delays via DI seams only
   (`docs/testing-standards.md`).
 - The `428 "Precondition Required"` strings in old logs are
-  `tools/auth.py`'s Google device-flow comment, not gateway responses.
+  `pipeline/auth.py`'s Google device-flow comment, not gateway responses.

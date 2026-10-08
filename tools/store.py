@@ -97,6 +97,7 @@ class DiskStore(FileStore):
     def read(self, path: str) -> str:
         return self._resolve(path).read_text(encoding="utf-8")
 
+    @override
     def read_bytes(self, path: str) -> bytes:
         """Raw bytes — for scans and page images (never decode them as text)."""
         return self._resolve(path).read_bytes()

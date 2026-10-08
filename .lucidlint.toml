@@ -31,8 +31,6 @@ ignore = ["record-shape", "class-module", "vague-name", "magic-number", "noqa"]
 # sqlite semantics that pyfakefs cannot fake faithfully; the private
 # dataset checks must read the real repo tree. Suppressed at the tests
 # scope with the standards' citation.
-[lucidlint."tests/**"]
-ignore = ["fakefs"]
 
 # unused in the eval modules: their entry points (run_flow, condition_*,
 # load_projection) exist to be driven by tests/test_evals.py — the module
@@ -54,3 +52,11 @@ ignore = ["unused"]
 ignore = ["standard"]  # the acknowledged-debt list is data the gate feeds on, not source
 
 
+[lucidlint."tests/**"]
+ignore = ["fakefs"]
+
+[lucidlint."tests/pipeline/**"]
+ignore = ["fakefs"]
+
+[lucidlint."tests/document/**"]
+ignore = ["fakefs"]

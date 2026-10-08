@@ -20,14 +20,14 @@ from typing import Any
 
 from PIL import Image
 
-from tools.page_visuals import captioned_sheet, review_image, stack_sheets
-from tools.reader import reading_for_page
-from tools.rectangle import Rectangle
-from tools.render import render_rows
-from tools.row import Row
-from tools.rows import Rows
-from tools.schemas import load_boxes, load_rows, load_user_row_adjustments, load_words
-from tools.word import Word
+from document.rectangle import Rectangle
+from document.row import Row
+from document.schemas import load_boxes, load_rows, load_user_row_adjustments, load_words
+from document.word import Word
+from pipeline.detect.reader import reading_for_page
+from pipeline.rows.page_visuals import captioned_sheet, review_image, stack_sheets
+from pipeline.rows.render import render_rows
+from pipeline.rows.rows import Rows
 
 FIXTURE = Path("tests/fixtures/page01-rows-gold")
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")

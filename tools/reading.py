@@ -38,19 +38,7 @@ class Block:
     def cluster(cls, lines: list[dict[str, Any]]) -> list[Block]:
         """The connected components of the box-overlap graph — lines
         sharing any ink form one block. Boxless lines are singletons."""
-        parent = list(range(len(lines)))
-
-        def find(i: int) -> int:
-            while parent[i] != i:
-                parent[i] = parent[parent[i]]
-                i = parent[i]
-            return i
-
-        def union(a: int, b: int) -> None:
-            ra, rb = find(a), find(b)
-            if ra != rb:
-                parent[rb] = ra
-
+        components = _UnionFind(len(lines))
         for i in range(len(lines)):
             a = lines[i].get("box")
             if not a:
@@ -58,11 +46,31 @@ class Block:
             for j in range(i + 1, len(lines)):
                 b = lines[j].get("box")
                 if b and overlap(a, b) > 0:
-                    union(i, j)
+                    components.union(i, j)
         members: dict[int, list[dict[str, Any]]] = {}
         for i in range(len(lines)):
-            members.setdefault(find(i), []).append(lines[i])
+            members.setdefault(components.find(i), []).append(lines[i])
         return [cls(m) for m in members.values()]
+
+
+class _UnionFind:
+    """Union-find over the line indices — the connected-components machinery
+    of the box-overlap graph (the closures the cluster method used to
+    capture are this object's methods, its state the parent array)."""
+
+    def __init__(self, size: int) -> None:
+        self._parent = list(range(size))
+
+    def find(self, i: int) -> int:
+        while self._parent[i] != i:
+            self._parent[i] = self._parent[self._parent[i]]
+            i = self._parent[i]
+        return i
+
+    def union(self, a: int, b: int) -> None:
+        ra, rb = self.find(a), self.find(b)
+        if ra != rb:
+            self._parent[rb] = ra
 
 
 def order_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:

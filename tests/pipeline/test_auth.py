@@ -1,0 +1,151 @@
+"""The identity seam: the Google session cookie round-trips,
+the archive's email mapping resolves the narrator, and the login endpoint
+fails honestly when the OAuth client isn't configured."""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from pipeline.api import auth
+from tools.archive import Archive
+from tools.store import MemoryStore
+
+
+@pytest.fixture(autouse=True)
+def secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    # lucidlint: ignore monkeypatch the session-secret config seam — every auth path needs a signing key
+    monkeypatch.setenv("THE_LOFT_SESSION_SECRET", "test-secret")
+
+
+def test_session_cookie_round_trips() -> None:
+    cookie = auth._make_session_cookie("alex@example.com", "Alex Hale", "pic")
+    session = auth.session_user_from_cookie(f"session={cookie}; other=1")
+    assert session == {"email": "alex@example.com", "name": "Alex Hale", "picture": "pic"}
+
+
+def test_session_cookie_rejects_tampering() -> None:
+    cookie = auth._make_session_cookie("alex@example.com", "Alex Hale", "")
+    tampered = cookie[:-4] + ("AAAA" if cookie[-4:] != "AAAA" else "BBBB")
+    assert auth.session_user_from_cookie(tampered) is None
+    assert auth.session_user_from_cookie(None) is None
+
+
+def test_person_for_email_maps_from_the_archive() -> None:
+    archive = Archive(MemoryStore())
+    archive.save_identity(
+        "people",
+        {"people": [{"id": "p-alex", "name": "Alex Hale", "email": "Alex.Hale@Example.com"}], "relationships": []},
+    )
+    assert auth.person_for_email(archive, "alex.hale@example.com") == "p-alex"
+    assert auth.person_for_email(archive, "nobody@example.com") is None
+    assert auth.person_for_email(archive, None) is None
+
+
+def test_login_fails_honestly_without_a_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    # lucidlint: ignore monkeypatch the test's subject is the env seam — missing config must fail honestly
+    monkeypatch.delenv("THE_LOFT_GOOGLE_WEB_CLIENT_ID", raising=False)
+    # lucidlint: ignore monkeypatch same env seam — the pair must both be absent
+    monkeypatch.delenv("THE_LOFT_GOOGLE_WEB_CLIENT_SECRET", raising=False)
+    result = auth.login_url()
+    assert result["status"] == "error"
+    assert "not configured" in result["detail"]
+
+
+def test_me_payload_uses_the_archive_person(monkeypatch: pytest.MonkeyPatch) -> None:
+    # lucidlint: ignore monkeypatch the test's subject is the env seam — the client config drives the flow
+    monkeypatch.setenv("THE_LOFT_GOOGLE_WEB_CLIENT_ID", "client")
+    # lucidlint: ignore monkeypatch same env seam — the pair configures the client
+    monkeypatch.setenv("THE_LOFT_GOOGLE_WEB_CLIENT_SECRET", "secret")
+    archive = Archive(MemoryStore())
+    archive.save_identity(
+        "people",
+        {"people": [{"id": "p-alex", "name": "Alex Hale", "email": "alex@example.com"}], "relationships": []},
+    )
+    cookie = f"{auth.COOKIE_NAME}={auth._make_session_cookie('alex@example.com', 'A', '')}"
+    session = auth.session_user_from_cookie(cookie)
+    assert session is not None
+    assert auth.me_payload(archive, session)["person"] == "p-alex"
+    assert auth.me_payload(archive, None) == {"authenticated": False}
+
+
+def test_device_grant_unconfigured_fails_honestly(monkeypatch: pytest.MonkeyPatch) -> None:
+    # lucidlint: ignore monkeypatch the test's subject is the env seam — missing device config must fail honestly
+    monkeypatch.delenv("THE_LOFT_GOOGLE_DEVICE_CLIENT_ID", raising=False)
+    result = auth.start_device_grant()
+    assert result["status"] == "error"
+    assert "not configured" in result["detail"]
+    assert auth.poll_device_grant("no-such-state")["status"] == "error"
+
+
+def test_device_grant_round_trip_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With the device client configured, start records a grant and poll
+    reports pending until Google approves (the token endpoint is Google's —
+    a real approval is an end-to-end manual step; the state machinery and
+    the id_token binding are what the server owns)."""
+    # lucidlint: ignore monkeypatch the device client config is the env seam the flow reads
+    monkeypatch.setenv("THE_LOFT_GOOGLE_DEVICE_CLIENT_ID", "device-client")
+    # lucidlint: ignore monkeypatch same env seam — the pair configures the device client
+    monkeypatch.setenv("THE_LOFT_GOOGLE_DEVICE_CLIENT_SECRET", "device-secret")
+
+    def _pending_post(url: str, data: dict[str, str]) -> dict[str, Any]:
+        # the scripted Google seam: start succeeds, the token poll pends
+        if "device/code" in url:
+            return {"device_code": "dc-1", "user_code": "ABCD-EFGH", "interval": "5"}
+        return {"error": "authorization_pending"}
+
+    def _fake_verify(token: str) -> dict[str, Any] | None:
+        if token != "jwt":
+            return None
+        return {"email": "alex.hale@example.com", "email_verified": True}
+
+    started = auth.start_device_grant(_post=_pending_post)
+    assert started["status"] == "ok"
+    assert started["user_code"] == "ABCD-EFGH"
+    pending = auth.poll_device_grant(started["state"], _post=_pending_post)
+    assert pending["status"] == "pending"
+    # the grant is consumed after a successful token exchange
+    ok = auth.poll_device_grant(
+        started["state"],
+        _post=lambda url, data: {"id_token": "jwt"},
+        _verify=_fake_verify,
+    )
+    assert ok["status"] == "ok"
+    assert ok["id_info"]["email"] == "alex.hale@example.com"
+    # the grace window: a lost poll response (the phone's network) must be
+    # able to re-issue the minted session — then it expires
+    again = auth.poll_device_grant(
+        started["state"],
+        _post=lambda url, data: {"id_token": "jwt"},
+        _verify=_fake_verify,
+    )
+    assert again["status"] == "ok" and again["id_info"]["email"] == "alex.hale@example.com"
+    auth._auth_state.recent_sessions[started["state"]]["_minted_at"] -= auth.AuthState.SESSION_GRACE_SECONDS + 1
+    assert auth.poll_device_grant(started["state"])["status"] == "error"  # grace expired
+
+
+def test_minted_session_grace_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The complete endpoint's source: the minted session, while the grace
+    holds — then gone."""
+    # lucidlint: ignore monkeypatch the device client config is the env seam the flow reads
+    monkeypatch.setenv("THE_LOFT_GOOGLE_DEVICE_CLIENT_ID", "device-client")
+    # lucidlint: ignore monkeypatch same env seam — the pair configures the device client
+    monkeypatch.setenv("THE_LOFT_GOOGLE_DEVICE_CLIENT_SECRET", "device-secret")
+
+    def _fake_post(url: str, data: dict[str, str]) -> dict[str, Any]:
+        if "device/code" in url:
+            return {"device_code": "dc-1", "user_code": "ABCD-EFGH", "interval": "5"}
+        return {"id_token": "jwt"}
+
+    def _fake_verify(token: str) -> dict[str, Any] | None:
+        return {"email": "alex.hale@example.com", "email_verified": True} if token == "jwt" else None
+
+    started = auth.start_device_grant(_post=_fake_post)
+    ok = auth.poll_device_grant(started["state"], _post=_fake_post, _verify=_fake_verify)
+    assert ok["status"] == "ok"
+    minted = auth.minted_session(started["state"])
+    assert minted is not None and minted["email"] == "alex.hale@example.com"
+    auth._auth_state.recent_sessions[started["state"]]["_minted_at"] -= auth.AuthState.SESSION_GRACE_SECONDS + 1
+    assert auth.minted_session(started["state"]) is None
+    assert auth.minted_session("no-such-state") is None

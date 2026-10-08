@@ -21,11 +21,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
-TOOLS = Path(__file__).resolve().parent.parent / "tools"
+ROOT = Path(__file__).resolve().parent.parent
+PIPELINE = ROOT / "pipeline"
+TOOLS = ROOT / "tools"
 
 
 def _source(name: str) -> str:
-    return (TOOLS / name).read_text(encoding="utf-8")
+    """A pipeline module by its basename, wherever it lives under pipeline/."""
+    for package in (PIPELINE, TOOLS):
+        for path in package.rglob(f"{name}"):
+            return path.read_text(encoding="utf-8") if path.is_file() else ""
+        for path in package.rglob("*.py"):
+            if path.name == name:
+                return path.read_text(encoding="utf-8")
+    return ""
 
 
 def test_the_http_layer_routes_data_through_the_archive_api() -> None:
@@ -84,7 +93,7 @@ def test_the_pipeline_layer_routes_data_through_the_store() -> None:
     declaration, even before the full migration.
     """
     pipeline_tools = (
-        "pipeline.py",
+        "chain.py",
         "layout.py",
         "layout_apply_selfreport.py",
         "sync.py",
@@ -95,7 +104,11 @@ def test_the_pipeline_layer_routes_data_through_the_store() -> None:
     )
     for name in pipeline_tools:
         source = _source(name)
-        assert "from tools.store import" in source or "from tools.archive import" in source, (
+        assert (
+            "from tools.store import" in source
+            or "from pipeline.store import" in source
+            or "from tools.archive import" in source
+        ), (
             f"{name} must import from the store layer (tools.store or tools.archive) "
             f"to route data persistence through the append-only archive API"
         )
@@ -104,4 +117,4 @@ def test_the_pipeline_layer_routes_data_through_the_store() -> None:
     # that adopt.py wrote directly (a known violation). Once adopt.py uses
     # the store, registry.py reads through the store too.
     registry = _source("registry.py")
-    assert "from tools.store import" in registry, "registry.py must read through the store, not via Path.read_text"
+    assert "from pipeline.store import" in registry, "registry.py must read through the store, not via Path.read_text"

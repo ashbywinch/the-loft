@@ -1,7 +1,7 @@
 """Myra-Hess darkness evidence: the joining stroke at reading size.
 
 Domain content only (which window, which boxes); drawing is
-tools.page_visuals primitives, except outlines: labeled_box pins its label
+pipeline.rows.page_visuals primitives, except outlines: labeled_box pins its label
 inside the box top-left, which would cover thin evidence rows, so outlines
 are plain rectangles with labels placed beside them.
 Usage: .venv/bin/python research/spike-word-segmentation/render_myra_bridge.py
@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from PIL import Image
 
-from tools.page_visuals import captioned_sheet, halo_text, review_image, scaled_crop
+from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 if not SCAN.exists():
@@ -30,7 +30,7 @@ STROKE = (1918.0, 2550.0, 1934.0, 2556.0)
 
 def _main() -> int:
     page = Image.open(SCAN).convert("RGB")
-    crop = scaled_crop(page, X0, Y0, X1, Y1, SCALE_OUT)
+    crop = scaled_crop(page, Crop(X0, Y0, X1, Y1, SCALE_OUT))
     caption = [
         "Myra Hess: one ink stroke joins the two words",
         "red box: the stroke, as dark as the letters themselves",

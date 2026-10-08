@@ -38,8 +38,8 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The layout stage's strip path — its plan, postmortem and reopened seams (ink-projection line bands; the grouping read) | `docs/PLAN/strip-grouping-plan.md` |
 | Acting on lucidlint findings (fix-engine workflow, baseline, per-file checks) | `skill://lucidlint-workflow`; the repo's findings log at `docs/PLAN/lucidlint-review-log.md` |
 | Layout redesign requirements (the adjudication draft — layout-requirements-draft) | `docs/PLAN/layout-requirements-draft.md` |
-| The reader — how a page's writing is found and boxed, and its acceptance check | `docs/box-detection.md`; `tools/reader.py`, `tools/boxjig.py` |
-| The per-word detection internals (ink → connected marks, baseline/waistline measurement, the streak-rule drop) | `tools/mark.py` (`find_marks`, `baseline_row`, `waistline_row`); the page ruler `tools/pagescale.py`; pinned by `tests/test_reader.py` |
+| The reader — how a page's writing is found and boxed, and its acceptance check | `docs/box-detection.md`; `pipeline/detect/reader.py`, `pipeline/rows/boxjig.py` |
+| The per-word detection internals (ink → connected marks, baseline/waistline measurement, the streak-rule drop) | `pipeline/detect/mark.py` (`find_marks`, `baseline_row`, `waistline_row`); the page ruler `pipeline/detect/ruler.py`; pinned by `tests/pipeline/test_reader.py` |
 | Showing the user a visual artifact (renders, maps, zooms, case sheets) | `.omp/skills/show-the-user/SKILL.md` — existing tooling only, LAN URL, self-check before presenting |
 | The segment/box review & edit UX (user stories, the box-issue taxonomy, the corner rulings) | `docs/PLAN/segment-review-stories.md` |
 |Interview/observation instruments|`docs/DISCOVERY.md`, private session records|

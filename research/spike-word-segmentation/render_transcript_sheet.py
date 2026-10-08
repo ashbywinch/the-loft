@@ -20,10 +20,10 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from document.numbered_rows import NumberedRows
-from tools.render import render_rows
-from tools.rows import Rows
-from tools.schemas import load_user_row_adjustments
-from tools.word import Word
+from document.schemas import load_user_row_adjustments
+from document.word import Word
+from pipeline.rows.render import render_rows
+from pipeline.rows.rows import Rows
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 ANSWER = Path("work/eval-rows-transcript/page-01.answer.json")

@@ -3,7 +3,7 @@
 For each flagged mark: the pieces the cut proposes at each assignment flip,
 outlined in different colours and labelled with their measured size and the
 bar they fail. Domain content only (which marks, which windows); drawing is
-tools.page_visuals primitives.
+pipeline.rows.page_visuals primitives.
 Usage: .venv/bin/python research/spike-word-segmentation/render_why_pieces.py
 """
 
@@ -18,14 +18,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import numpy as np
 from PIL import Image
 
-from tools.mark import (
+from pipeline.detect.mark import (
     SCALE,
     WORD_MIN_HEIGHT,
     WORD_MIN_WIDTH,
     Ink,
 )
-from tools.page_visuals import captioned_sheet, halo_text, review_image, scaled_crop
-from tools.reader import Writing, _is_waist, _piece_between, artifacts, ink_mask
+from pipeline.detect.reader import Writing, artifacts, ink_mask, is_waist, piece_between
+from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-wordseg"
@@ -67,9 +67,9 @@ def _main() -> int:
         per_row = mark.rows()
         runs = Ink(np.asarray(mark.pix[0]), np.asarray(mark.pix[1])).longest_runs()
         segments = writing._candidate_segments(mark)
-        pieces = [_piece_between(mark, segment) for segment in segments]
+        pieces = [piece_between(mark, segment) for segment in segments]
 
-        crop = scaled_crop(page, x0, y0, x1, y1, zoom)
+        crop = scaled_crop(page, Crop(x0, y0, x1, y1, zoom))
         caption = [
             f"mark {mark.id}: x{mark.x0 * SCALE:.0f}-{mark.x1 * SCALE:.0f}"
             f" y{mark.y0 * SCALE:.0f}-{mark.y1 * SCALE:.0f}",
@@ -92,7 +92,7 @@ def _main() -> int:
             print(f"  {name} P{index + 1}: {_size(piece)} {_verdict(piece, unit)}")
 
         for above, below in zip(segments, segments[1:], strict=False):
-            waist = _is_waist(per_row, runs, above[2], below[1])
+            waist = is_waist(per_row, runs, above[2], below[1])
             note = "waist: cut" if waist else f"no waist (runs {runs.get(above[2], 0)}/{runs.get(below[1], 0)}): merged"
             halo_text(draw, (bx(mark.x0) + 4, by(below[1]) - 26), note, fill=(120, 60, 0))
             print(f"  {name} boundary y{above[2] * SCALE:.0f}->{below[1] * SCALE:.0f}: {note}")

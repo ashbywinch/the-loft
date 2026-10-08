@@ -14,10 +14,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Sequence
 from typing import Any, Protocol
 
-from tools.ai_client import AIClientError, json_object
+from pipeline.model.ai_client import AIClientError, json_object
 from tools.memory import ElicitationError
 from tools.records import Message, Person, ReviewContext
 
@@ -152,104 +151,114 @@ def _facts_ledger(trace: list[dict[str, Any]], limit: int = 400) -> str:
     return "\n".join(lines.values())
 
 
+class _ReviewTools:
+    """The review's read-only tool harness — owns the ReviewContext (the
+    facts) every tool reads, the (args, facts) data clump the tool functions
+    used to thread. The model can look things up but never change them
+    (2026-08-09, user)."""
+
+    def __init__(self, facts: ReviewContext) -> None:
+        self._facts = facts
+
+    def run(self, tool: str, args: dict[str, Any]) -> Any:
+        if tool == "search_people":
+            return self.search_people(args)
+        if tool == "person":
+            return self.person(args)
+        if tool == "relationships":
+            return self.relationships(args)
+        if tool == "attested":
+            return self.attested(args)
+        if tool == "search_items":
+            return self.search_items(args)
+        return {"error": f"unknown tool {tool}"}
+
+    def search_people(self, args: dict[str, Any]) -> Any:
+        """People whose name or recorded relation contains the query."""
+        q = str(args.get("query", "")).strip().lower()
+        if not q:
+            return {"error": "query required"}
+        hits = [
+            {"id": p.id, "name": p.name, "relation": p.relation}
+            for p in self._facts.people
+            if q in p.name.lower() or q in (p.relation or "").lower()
+        ]
+        return hits[:10] or {"note": "no matches"}
+
+    def person(self, args: dict[str, Any]) -> Any:
+        """One person's record — dates, relation, status."""
+        pid = str(args.get("id", ""))
+        p = next((x for x in self._facts.people if x.id == pid), None)
+        return (
+            {"id": p.id, "name": p.name, "relation": p.relation, "status": p.status}
+            if p
+            else {"error": f"no person {pid}"}
+        )
+
+    def relationships(self, args: dict[str, Any]) -> Any:
+        """The recorded family edges touching that person."""
+        pid = str(args.get("id", ""))
+        return [r for r in self._facts.relationships if r.get("a") == pid or r.get("b") == pid] or {
+            "note": "no recorded relationships"
+        }
+
+    def attested(self, args: dict[str, Any]) -> Any:
+        """The recorded items that mention the person — their attested facts.
+        The sentences that MENTION the person are the part that attests the
+        fact, quotable verbatim (2026-08-09, user) — with the person's name
+        and first name as the needles. The item's structured involvement (its
+        people ids) or the prose naming the person both count — real
+        transcriptions mention names, never ids. Case-insensitive (2026-08-11
+        review): OCR and captured text frequently differ in case, and the
+        quote extractor matches case-insensitively — an item whose only
+        mention is lowercased must not be silently dropped at the door."""
+        pid = str(args.get("id", ""))
+        p = next((x for x in self._facts.people if x.id == pid), None)
+        needles = (p.name, p.name.split()[0]) if p else (pid,)
+        lowered = [n.lower() for n in needles]
+        results = []
+        for it in self._facts.items:
+            text = it.get("story") or it.get("transcription") or ""
+            involved = pid in it.get("people", [])
+            if involved or any(n in text.lower() for n in lowered):
+                results.append(
+                    {
+                        "id": it["id"],
+                        "title": it["title"],
+                        "draft": it.get("transcription_status") == "draft",
+                        "quotes": _relevant_sentences(text, needles),
+                    }
+                )
+        return results or {"note": "no recorded items mention this person"}
+
+    def search_items(self, args: dict[str, Any]) -> Any:
+        """The recorded items whose text mentions the query — follow a place
+        or an event the reviewer brings up (a visit, a town, a death)."""
+        q = str(args.get("query", "")).strip().lower()
+        if not q:
+            return {"error": "query required"}
+        hits = []
+        for it in self._facts.items:
+            text = it.get("story") or it.get("transcription") or ""
+            if q in text.lower():
+                hits.append(
+                    {
+                        "id": it["id"],
+                        "title": it["title"],
+                        "draft": it.get("transcription_status") == "draft",
+                        "quotes": _relevant_sentences(text, (q,)),
+                    }
+                )
+        return hits[:5] or {"note": f"no recorded items mention {q!r}"}
+
+
 def run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:
     """The read-only tool harness — the model can look things up but never
     change them (2026-08-09, user: give the AI the API so it can find out
     the existing situation — the ad-hoc digging conversation). Public and
     documented so the tests exercise the real harness, never a private
     symbol (2026-08-11 review: the imports rule)."""
-    if tool == "search_people":
-        return _tool_search_people(args, facts.people)
-    if tool == "person":
-        return _tool_person(args, facts.people)
-    if tool == "relationships":
-        return _tool_relationships(args, facts)
-    if tool == "attested":
-        return _tool_attested(args, facts)
-    if tool == "search_items":
-        return _tool_search_items(args, facts)
-    return {"error": f"unknown tool {tool}"}
-
-
-def _tool_search_people(args: dict[str, Any], people: Sequence[Person]) -> Any:
-    """People whose name or recorded relation contains the query."""
-    q = str(args.get("query", "")).strip().lower()
-    if not q:
-        return {"error": "query required"}
-    hits = [
-        {"id": p.id, "name": p.name, "relation": p.relation}
-        for p in people
-        if q in p.name.lower() or q in (p.relation or "").lower()
-    ]
-    return hits[:10] or {"note": "no matches"}
-
-
-def _tool_person(args: dict[str, Any], people: Sequence[Person]) -> Any:
-    """One person's record — dates, relation, status."""
-    pid = str(args.get("id", ""))
-    p = next((x for x in people if x.id == pid), None)
-    return (
-        {"id": p.id, "name": p.name, "relation": p.relation, "status": p.status} if p else {"error": f"no person {pid}"}
-    )
-
-
-def _tool_relationships(args: dict[str, Any], facts: ReviewContext) -> Any:
-    """The recorded family edges touching that person."""
-    pid = str(args.get("id", ""))
-    return [r for r in facts.relationships if r.get("a") == pid or r.get("b") == pid] or {
-        "note": "no recorded relationships"
-    }
-
-
-def _tool_attested(args: dict[str, Any], facts: ReviewContext) -> Any:
-    """The recorded items that mention the person — their attested facts.
-    The sentences that MENTION the person are the part that attests the
-    fact, quotable verbatim (2026-08-09, user) — with the person's name
-    and first name as the needles. The item's structured involvement (its
-    people ids) or the prose naming the person both count — real
-    transcriptions mention names, never ids. Case-insensitive (2026-08-11
-    review): OCR and captured text frequently differ in case, and the
-    quote extractor matches case-insensitively — an item whose only
-    mention is lowercased must not be silently dropped at the door."""
-    pid = str(args.get("id", ""))
-    p = next((x for x in facts.people if x.id == pid), None)
-    needles = (p.name, p.name.split()[0]) if p else (pid,)
-    lowered = [n.lower() for n in needles]
-    results = []
-    for it in facts.items:
-        text = it.get("story") or it.get("transcription") or ""
-        involved = pid in it.get("people", [])
-        if involved or any(n in text.lower() for n in lowered):
-            results.append(
-                {
-                    "id": it["id"],
-                    "title": it["title"],
-                    "draft": it.get("transcription_status") == "draft",
-                    "quotes": _relevant_sentences(text, needles),
-                }
-            )
-    return results or {"note": "no recorded items mention this person"}
-
-
-def _tool_search_items(args: dict[str, Any], facts: ReviewContext) -> Any:
-    """The recorded items whose text mentions the query — follow a place
-    or an event the reviewer brings up (a visit, a town, a death)."""
-    q = str(args.get("query", "")).strip().lower()
-    if not q:
-        return {"error": "query required"}
-    hits = []
-    for it in facts.items:
-        text = it.get("story") or it.get("transcription") or ""
-        if q in text.lower():
-            hits.append(
-                {
-                    "id": it["id"],
-                    "title": it["title"],
-                    "draft": it.get("transcription_status") == "draft",
-                    "quotes": _relevant_sentences(text, (q,)),
-                }
-            )
-    return hits[:5] or {"note": f"no recorded items mention {q!r}"}
+    return _ReviewTools(facts).run(tool, args)
 
 
 def assistant_message(result: dict[str, Any], person: Person) -> str:

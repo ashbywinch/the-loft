@@ -134,7 +134,7 @@ evals: setup
 # CI == developer on the same compiled binary.
 #
 # The pin is authoritative (2026-09-16: back to 0.5.0 — 0.6.1 was used to find and fix the
-# pipeline's latent classes (tools/reader.py, tools/mark.py now pass it with no
+# pipeline's latent classes (pipeline/detect/reader.py, pipeline/detect/mark.py now pass it with no
 # suppressions); the rest of the repo's findings under 0.6.1 are another session's work.
 # Was 0.5.0 from 2026-09-11, 0.1.0 to 2026-08-29): install-lucidlint verifies the
 # installed bundle's version marker against LUCIDLINT_VERSION and re-downloads
@@ -212,13 +212,13 @@ adopt: setup
 	@$(PYTHON) tools/adopt.py $(ARGS)
 
 ingest: setup
-	@$(PYTHON) tools/pipeline.py process $(ARGS)
+	@$(PYTHON) -m pipeline.chain process $(ARGS)
 
 confirm: setup
-	@$(PYTHON) tools/pipeline.py review $(ARGS)
+	@$(PYTHON) -m pipeline.chain review $(ARGS)
 
 pipeline: setup
-	@$(PYTHON) tools/pipeline.py $(ARGS)
+	@$(PYTHON) -m pipeline.chain $(ARGS)
 clean:
 	@rm -rf .venv node_modules htmlcov/ app/coverage/
 	@rm -f .coverage coverage.xml

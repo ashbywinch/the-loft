@@ -243,91 +243,100 @@ def _validate_refs(
     for item in items:
         if item.get("status") != "catalogued":
             continue
-        _check_kind_refs(item, known, by_id)
-        _check_comment(item, by_id, item_ids)
-        _check_extractions(item, known, by_id)
+        _RefChecker(known, by_id).check(item)
     _check_theme_items(themes, by_id)
 
 
-def _check_kind_refs(item: dict[str, Any], known: dict[str, set[str]], by_id: dict[str, dict[str, Any]]) -> None:
-    """The item's people/places/themes/orgs/items refs — each must resolve
-    in the published projection. A confirmed ref to a draft (or missing)
-    target is dangling even though the item exists (2026-08-05:
-    story-2026-08-03-05 confirmed a draft object-sb-mirosa)."""
-    for kind in ("people", "places", "themes", "orgs", "items"):
-        for ref in item.get(kind) or []:
-            rid = ref.get("id")
-            if not rid:
-                continue
-            if rid not in known[kind]:
-                raise DeriveError(f"{item['id']} links {rid}, which is not in the published projection")
-            if kind == "items" and ref.get("status") == "confirmed":
-                _require_catalogued(
-                    rid,
-                    by_id,
+class _RefChecker:
+    """The dangling-link checks for the published projection — owns the
+    resolution maps (the known id sets and by_id) the three per-item checks
+    all read, with one check per catalogued item as its entry point. The
+    (by_id, item) clump the checks used to thread is this object's state."""
+
+    def __init__(self, known: dict[str, set[str]], by_id: dict[str, dict[str, Any]]) -> None:
+        self._known = known
+        self._by_id = by_id
+
+    def check(self, item: dict[str, Any]) -> None:
+        """Every link a catalogued item carries must resolve in the
+        published projection — a ref to an entity the reader cannot see is
+        dangling."""
+        self._check_kind_refs(item)
+        self._check_comment(item)
+        self._check_extractions(item)
+
+    def _check_kind_refs(self, item: dict[str, Any]) -> None:
+        """The item's people/places/themes/orgs/items refs — each must resolve
+        in the published projection. A confirmed ref to a draft (or missing)
+        target is dangling even though the item exists (2026-08-05:
+        story-2026-08-03-05 confirmed a draft object-sb-mirosa)."""
+        for kind in ("people", "places", "themes", "orgs", "items"):
+            for ref in item.get(kind) or []:
+                rid = ref.get("id")
+                if not rid:
+                    continue
+                if rid not in self._known[kind]:
+                    raise DeriveError(f"{item['id']} links {rid}, which is not in the published projection")
+                if kind == "items" and ref.get("status") == "confirmed":
+                    self._require_catalogued(
+                        rid,
+                        subject=item["id"],
+                        action="confirms a link to",
+                        remedy="catalogue the artifact or downgrade the link to proposed",
+                    )
+
+    def _check_comment(self, item: dict[str, Any]) -> None:
+        """The anchor a story comments on is a link too — a draft or
+        tombstoned target is invisible to every visitor but the owner
+        (2026-08-05 bot review, importance 7)."""
+        comment_on = item.get("comment_on")
+        if comment_on:
+            if comment_on not in self._known["items"]:
+                raise DeriveError(f"{item['id']} comments on {comment_on}, which is not in the published projection")
+            self._require_catalogued(
+                comment_on,
+                subject=item["id"],
+                action="comments on",
+                remedy="catalogue the artifact or remove the comment link",
+            )
+
+    def _check_extractions(self, item: dict[str, Any]) -> None:
+        """The item's extraction matches — same promise as a link, so each
+        must resolve in the same projection sets; an item match is the same
+        dangling class as a confirmed ref (2026-08-05 review). Extraction
+        kinds use the singular; "org" joined with the story-flow parity
+        (2026-08-05)."""
+        extraction_kinds = {"person": "people", "place": "places", "theme": "themes", "item": "items", "org": "orgs"}
+        for extraction in (item.get("chat") or {}).get("extractions") or []:
+            if extraction.get("on") is False:
+                continue  # the reviewer unticked it — excluded content is not a link
+            match = extraction.get("match")
+            if not match:
+                continue  # an unresolved extraction (kinship filter) is honest output
+            table_name = extraction_kinds.get(str(extraction.get("kind") or ""), "")
+            known_ids = self._known.get(table_name, set())
+            if match not in known_ids:
+                raise DeriveError(
+                    f"{item['id']} extraction {extraction.get('name')!r} matches {match}, "
+                    "which is not in the published projection"
+                )
+            if extraction.get("kind") == "item":
+                self._require_catalogued(
+                    match,
                     subject=item["id"],
-                    action="confirms a link to",
-                    remedy="catalogue the artifact or downgrade the link to proposed",
+                    action=f"extraction {extraction.get('name')!r} matches",
+                    remedy="catalogue the artifact or clear the match",
                 )
 
-
-def _check_comment(item: dict[str, Any], by_id: dict[str, dict[str, Any]], item_ids: set[str]) -> None:
-    """The anchor a story comments on is a link too — a draft or tombstoned
-    target is invisible to every visitor but the owner (2026-08-05 bot
-    review, importance 7)."""
-    comment_on = item.get("comment_on")
-    if comment_on:
-        if comment_on not in item_ids:
-            raise DeriveError(f"{item['id']} comments on {comment_on}, which is not in the published projection")
-        _require_catalogued(
-            comment_on,
-            by_id,
-            subject=item["id"],
-            action="comments on",
-            remedy="catalogue the artifact or remove the comment link",
-        )
-
-
-def _check_extractions(item: dict[str, Any], known: dict[str, set[str]], by_id: dict[str, dict[str, Any]]) -> None:
-    """The item's extraction matches — same promise as a link, so each must
-    resolve in the same projection sets; an item match is the same dangling
-    class as a confirmed ref (2026-08-05 review). Extraction kinds use the
-    singular; "org" joined with the story-flow parity (2026-08-05)."""
-    extraction_kinds = {"person": "people", "place": "places", "theme": "themes", "item": "items", "org": "orgs"}
-    for extraction in (item.get("chat") or {}).get("extractions") or []:
-        if extraction.get("on") is False:
-            continue  # the reviewer unticked it — excluded content is not a link
-        match = extraction.get("match")
-        if not match:
-            continue  # an unresolved extraction (kinship filter) is honest output
-        table_name = extraction_kinds.get(str(extraction.get("kind") or ""), "")
-        known_ids = known.get(table_name, set())
-        if match not in known_ids:
-            raise DeriveError(
-                f"{item['id']} extraction {extraction.get('name')!r} matches {match}, "
-                "which is not in the published projection"
-            )
-        if extraction.get("kind") == "item":
-            _require_catalogued(
-                match,
-                by_id,
-                subject=item["id"],
-                action=f"extraction {extraction.get('name')!r} matches",
-                remedy="catalogue the artifact or clear the match",
-            )
-
-
-def _require_catalogued(
-    target_id: str, by_id: dict[str, dict[str, Any]], subject: str, action: str, remedy: str
-) -> None:
-    """A link's target must be a catalogued item — a draft artifact is
-    hidden from everyone but its owner, so a confirmed link to a draft (or
-    missing) target is dangling even though the item exists."""
-    target = by_id.get(target_id)
-    if target is not None and target.get("status") == "catalogued":
-        return
-    state = "missing from the archive" if target is None else "still a draft"
-    raise DeriveError(f"{subject} {action} {target_id}, which is {state} — {remedy}")
+    def _require_catalogued(self, target_id: str, subject: str, action: str, remedy: str) -> None:
+        """A link's target must be a catalogued item — a draft artifact is
+        hidden from everyone but its owner, so a confirmed link to a draft
+        (or missing) target is dangling even though the item exists."""
+        target = self._by_id.get(target_id)
+        if target is not None and target.get("status") == "catalogued":
+            return
+        state = "missing from the archive" if target is None else "still a draft"
+        raise DeriveError(f"{subject} {action} {target_id}, which is {state} — {remedy}")
 
 
 def _check_theme_items(themes: dict[str, Any], by_id: dict[str, dict[str, Any]]) -> None:
@@ -382,45 +391,6 @@ def _atomic_write(path: Path, content: str) -> None:
     tmp.replace(path)
 
 
-def publish(archive: Archive, out: Path) -> None:
-    """Regenerate the projection at *out* from *archive* — derived, so the
-    write path may replace freely (the archive is the store, not this)."""
-    out.mkdir(parents=True, exist_ok=True)
-
-    # the assets are the long tail of a publish (scan copies) — swap them
-    # FIRST, then the JSONs atomically last: a failure mid-copy leaves the
-    # old JSONs serving the old assets, a consistent projection (the
-    # alternative — fresh JSONs over a half-written assets/ — serves broken
-    # images until the next publish). The swap itself is a millisecond
-    # window; re-running publish always repairs (2026-08-05 bot review).
-    staged = out / "assets.tmp"
-    if staged.exists():
-        shutil.rmtree(staged)
-    staged.mkdir(parents=True)
-
-    items = resolved_items(archive)
-    for item_id, files in asset_contents(archive, items).items():
-        folder = staged / item_id
-        folder.mkdir(parents=True)
-        for filename, content in files.items():
-            if isinstance(content, bytes):
-                (folder / filename).write_bytes(content)
-            else:
-                (folder / filename).write_text(content, encoding="utf-8")
-
-    people = json.loads(projection_json(archive)["people.json"]).get("people", [])
-    for filename, content in avatar_files(people).items():
-        (staged / filename).write_text(content, encoding="utf-8")
-
-    assets_dir = out / "assets"
-    if assets_dir.exists():
-        shutil.rmtree(assets_dir)
-    staged.rename(assets_dir)
-
-    for filename, content in projection_json(archive).items():
-        _atomic_write(out / filename, content)
-
-
 class Projection:
     """The derived app-facing surface (app/data) — the noun behind
     ``Archive.publish()``. The projection is a cache: never hand-edited; a
@@ -432,5 +402,43 @@ class Projection:
         self.out = Path(out)
 
     def build(self) -> None:
-        """Regenerate the projection at *out* from the archive."""
-        publish(self.archive, self.out)
+        """Regenerate the projection at *out* from the archive — derived, so
+        the write path may replace freely (the archive is the store, not
+        this)."""
+        out = self.out
+        archive = self.archive
+        out.mkdir(parents=True, exist_ok=True)
+
+        # the assets are the long tail of a publish (scan copies) — swap them
+        # FIRST, then the JSONs atomically last: a failure mid-copy leaves the
+        # old JSONs serving the old assets, a consistent projection (the
+        # alternative — fresh JSONs over a half-written assets/ — serves broken
+        # images until the next publish). The swap itself is a millisecond
+        # window; re-running publish always repairs (2026-08-05 bot review).
+        staged = out / "assets.tmp"
+        if staged.exists():
+            shutil.rmtree(staged)
+        staged.mkdir(parents=True)
+
+        items = resolved_items(archive=archive)
+        for item_id, files in asset_contents(archive, items).items():
+            folder = staged / item_id
+            folder.mkdir(parents=True)
+            for filename, content in files.items():
+                if isinstance(content, bytes):
+                    (folder / filename).write_bytes(content)
+                else:
+                    (folder / filename).write_text(content, encoding="utf-8")
+
+        files = projection_json(archive=archive)
+        people = json.loads(files["people.json"]).get("people", [])
+        for filename, content in avatar_files(people).items():
+            (staged / filename).write_text(content, encoding="utf-8")
+
+        assets_dir = out / "assets"
+        if assets_dir.exists():
+            shutil.rmtree(assets_dir)
+        staged.rename(assets_dir)
+
+        for filename, content in files.items():
+            _atomic_write(out / filename, content)

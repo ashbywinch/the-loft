@@ -2,7 +2,7 @@
 
 Each panel: a zoom of one mark with chosen split pieces outlined and labelled
 (size + why it is boxed). Domain content only (which marks, which pieces);
-drawing is tools.page_visuals primitives.
+drawing is pipeline.rows.page_visuals primitives.
 Usage: .venv/bin/python research/spike-word-segmentation/render_piece_boxes.py
 """
 
@@ -17,10 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import numpy as np
 from PIL import Image
 
-from tools.mark import SCALE, find_marks
-from tools.page_visuals import captioned_sheet, halo_text, review_image, scaled_crop, stack_sheets
-from tools.reader import LineFitter, artifacts, ink_mask, split_shapes
-from tools.ruler import Ruler, line_ratio, traced_pitch, writing_scale
+from pipeline.detect.mark import SCALE, find_marks
+from pipeline.detect.reader import LineFitter, artifacts, ink_mask, split_shapes
+from pipeline.detect.ruler import Ruler, line_ratio, traced_pitch, writing_scale
+from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop, stack_sheets
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 if not SCAN.exists():
@@ -84,7 +84,7 @@ def _main() -> int:
     sheets = []
     for mark_id, ((x0, y0, x1, y1, zoom), boxes, caption) in PANELS.items():
         pieces = split_shapes([by_id[mark_id]], lines, scale.unit)
-        crop = scaled_crop(page, x0, y0, x1, y1, zoom)
+        crop = scaled_crop(page, Crop(x0, y0, x1, y1, zoom))
         sheet, draw, bar_h = captioned_sheet(crop, caption)
         for index, label in boxes:
             piece = pieces[index]

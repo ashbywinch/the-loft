@@ -1,7 +1,7 @@
 """Welded-word cases: one sheet each — scan words, render id, raw mark ids.
 
 Domain content only (which render id, which window, which caption); drawing
-is tools.page_visuals primitives, except outlines: labeled_box pins its
+is pipeline.rows.page_visuals primitives, except outlines: labeled_box pins its
 label inside the box top-left, which would cover thin evidence rows, so
 outlines are plain rectangles with labels placed beside them.
 Usage: .venv/bin/python research/spike-word-segmentation/render_newcases.py
@@ -17,9 +17,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from PIL import Image
 
-from tools.mark import SCALE, find_marks
-from tools.page_visuals import captioned_sheet, halo_text, review_image, scaled_crop
-from tools.reader import artifacts, ink_mask
+from pipeline.detect.mark import SCALE, find_marks
+from pipeline.detect.reader import artifacts, ink_mask
+from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 OUTDIR = Path(__file__).resolve().parent / "evidence"
@@ -47,7 +47,7 @@ def _main() -> int:
         band = [
             s for s in shapes if not (s.x1 * SCALE < x0 or s.x0 * SCALE > x1 or s.y1 * SCALE < y0 or s.y0 * SCALE > y1)
         ]
-        crop = scaled_crop(page, x0, y0, x1, y1, scale)
+        crop = scaled_crop(page, Crop(x0, y0, x1, y1, scale))
         caption = [
             f"render {render_id} (red) lives in raw mark {mark_id} (green)",
             "read the words: how many share that green mark?",

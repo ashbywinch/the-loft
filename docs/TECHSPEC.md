@@ -643,7 +643,7 @@ the naive approach and is not used. The pipeline order becomes:
     **The transcription backend decision (user: "let's stop
     there, this is good enough").** After an evidence comparison on the
     family's own pages, the default transcription backend for cursive/mixed
-    pages is the **vision-language model** (`tools/vlm.py`, the opencode-go
+    pages is the **vision-language model** (`pipeline/vlm.py`, the opencode-go
     vision role mimo-v2.5) — not a specialist OCR API. The evidence on real
     pages: near-perfect pure-cursive and mixed-layout transcription
     (page-03's callout box, postmark, address and salutation all read
@@ -697,7 +697,7 @@ flowchart TB
 | route | print vs cursive from strong-word density | `classify.json` |
 | transcribe | the vision model reads cursive pages | `ocr-raw/*.vlm.json` |
 | guess | corrected transcription per page (the vision model) | `ocr-guess/*.txt` |
-| **group** | **full-sequence grouping by physical evidence: duplex sides, paper size, page numbers, the model's flags (tools/grouping.py)** | **`boundaries.json` — the grouping scorer supersedes the model's text-only grouping** |
+| **group** | **full-sequence grouping by physical evidence: duplex sides, paper size, page numbers, the model's flags (pipeline/grouping.py)** | **`boundaries.json` — the grouping scorer supersedes the model's text-only grouping** |
 | **layout** | **the §16.17 single pass — every segment's text, box, and orientation in one VLM call + build_layout** | **`ocr-guess/*.layout.json`** |
 | review | the reviewer verifies/corrects the draft | confirmed text |
 
@@ -713,7 +713,7 @@ now, never something the review works around by hand.
 two-sided item).** The guess stage's model groups TEXT pages only by
 greeting/sign-off boundaries, so a photo page (the picture side of a
 postcard) can never join its document. The grouping scorer
-(`tools/grouping.py`) replaces the model's text-only
+(`pipeline/grouping.py`) replaces the model's text-only
 grouping with a full-sequence pass over ALL pages (photos included), in
 scan order. The evidence hierarchy, priority-ordered:
 
@@ -730,7 +730,7 @@ scan order. The evidence hierarchy, priority-ordered:
    "1" starts one.
 4. **The model's greeting/sign-off flags:** the fallback for text pages.
 
-The transcription review's drafts route (`tools/server.py`) filters out
+The transcription review's drafts route (`pipeline/server.py`) filters out
 photo-only documents and shows only the TEXT pages of each document
 (the picture side stays in the structure for the future people/places
 identification flow, but the review never pages through a photo).
@@ -815,7 +815,7 @@ raised as actionable `VlmError`s. See the `cloudflare-ai-gateway` skill
 for the route-side configuration.
 
 **Versioned persistence.** All pipeline artifact writes go through
-`PipelineStore` (`tools/pipeline_store.py`), which preserves the previous
+`PipelineStore` (`pipeline/pipeline_store.py`), which preserves the previous
 version at `-2.ext` before overwriting the base path — an overwrite is
 always recoverable, and the append-only invariant is enforced at the write
 seam rather than hoped for.
@@ -879,7 +879,7 @@ their page set; ocr-confirmed/<doc>.txt is an atomic overwrite). A
 duplicate POST produces the same final registry state.
 
 *R5 — Long-outage resilience.* The frontend (cloud) also maintains a
-**server-side Outbox** (`tools/sync.py` `Outbox`) backed by the filesystem
+**server-side Outbox** (`pipeline/sync.py` `Outbox`) backed by the filesystem
 — atomic per entry, survives process restarts. When the home backend is
 off (laptop shut, home server offline), cloud-hosted confirmations land
 in this server-side Outbox. The home backend pulls them when it comes
@@ -923,7 +923,7 @@ the work dir's ocr-confirmed + registry (status `confirmed`), the
 projection re-published. **The catch-up (user: "a sync
 endpoint on the website for mopups"):** if the real-time push fails (the
 laptop is off), the confirmation stays in the frontend's outbox
-(`tools/sync.py` `Outbox` — atomic, append-only); the backend pulls
+(`pipeline/sync.py` `Outbox` — atomic, append-only); the backend pulls
 (`GET /api/sync/pending` on the website), appends what it receives, and
 the website marks them received. Nothing confirmed is ever lost to a
 failed push. The transcription-verification UI itself is a separate

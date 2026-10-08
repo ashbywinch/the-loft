@@ -19,10 +19,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import numpy as np
 from PIL import Image
 
-from tools.mark import SCALE, SHAPE_MIN_AREA, find_marks
-from tools.page_visuals import contiguous_runs, review_image, split_sheet, stack_sheets
-from tools.reader import LineFitter, artifacts, ink_mask, split_shapes
-from tools.ruler import Ruler, line_ratio, traced_pitch, writing_scale
+from document.rectangle import Rectangle
+from pipeline.detect.mark import SCALE, SHAPE_MIN_AREA, find_marks
+from pipeline.detect.reader import LineFitter, artifacts, ink_mask, split_shapes
+from pipeline.detect.ruler import Ruler, line_ratio, traced_pitch, writing_scale
+from pipeline.rows.page_visuals import Crop, SplitCase, contiguous_runs, review_image, split_sheet, stack_sheets
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 TRACE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-wordseg"
@@ -71,7 +72,7 @@ def _case_geometry(shape, per_row, pieces):
 
     pieces_arg = [
         (
-            (p.x0 * SCALE, p.y0 * SCALE, p.x1 * SCALE, p.y1 * SCALE),
+            Rectangle(p.x0 * SCALE, p.y0 * SCALE, p.x1 * SCALE, p.y1 * SCALE),
             f"P{i + 1} n={int(p.area)} L{p.line}",
         )
         for i, p in enumerate(pieces)
@@ -108,15 +109,17 @@ def _main() -> int:
         # split_sheet takes one profile string per cut; join the rows here.
         cuts_flat = [(cy, " ".join(prof)) for cy, prof in cuts_arg]
         sheet = split_sheet(
-            page,
-            (shape.x0 * SCALE, shape.y0 * SCALE, shape.x1 * SCALE, shape.y1 * SCALE),
-            pieces_arg,
-            cuts_flat,
-            drops_arg,
-            drop_label,
-            title,
-            summary,
-            crop,
+            SplitCase(
+                page,
+                Rectangle(shape.x0 * SCALE, shape.y0 * SCALE, shape.x1 * SCALE, shape.y1 * SCALE),
+                pieces_arg,
+                cuts_flat,
+                drops_arg,
+                drop_label,
+                title,
+                summary,
+                Crop(*crop),
+            )
         )
         out = OUTDIR / f"{name}.png"
         sheet.save(out)

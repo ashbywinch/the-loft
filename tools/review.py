@@ -400,6 +400,12 @@ def investigate(
             "again what you already asked, in substance or in reworded "
             "form, and do NOT mimic your own prior verdict's question — the "
             "reviewer's new line is the matter to answer now. ",
+            "5. CONCLUDE WHEN THE REVIEWER IS EXHAUSTED. When the reviewer has said "
+            "they don't know and cannot recall (no memory, never met the person), "
+            "do NOT ask them to remember again in any form: state what you will do "
+            "with the claim instead — keep the guess as it stands, or record what "
+            "they remember — then end (2026-10-08: a re-ask to an exhausted "
+            "reviewer failed the eval; the conclusion is the required move). ",
             "Then answer.",
             _TOOLS_DESC,
             # the conversation — the growing part — sits LAST so the

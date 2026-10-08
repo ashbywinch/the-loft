@@ -317,11 +317,18 @@ class ReviewRun:
                 # emits the schema; it is NOT given another chance (user).
                 return f"the verdict JSON lacks the 'question' key — the output was: {raw}"
             return f"the genealogist should ask a follow-up question: {question!r}"
-        if flow.question_concludes and not any(word in question for word in ("leave", "guess", "record", "unless")):
-            return (
-                "the exhausted 'I don't know' must offer the conclusion (keep the guess / "
-                f"record what they remember), not ask again: {question!r}"
-            )
+        if flow.question_concludes:
+            # the exhausted 'I don't know' answers by stating what happens next —
+            # never by asking again (2026-10-08: a four-word vocabulary check
+            # failed a correctly-worded conclusion and would pass a re-ask that
+            # contained "guess"; the structural contract is unambiguous: a
+            # question IS the stall). Any '?' is a re-ask, fail it.
+            if "?" in question:
+                return (
+                    "the exhausted 'I don't know' must conclude (keep the guess / record what "
+                    f"they remember), never ask again: {question!r}"
+                )
+            return None
         return None
 
     def persona(self) -> str | None:

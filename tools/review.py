@@ -441,7 +441,14 @@ def investigate(
         "\"<definitely|think_so|dont_know|think_not|definitely_not|unclear> — the REVIEWER's "
         'own certainty, never your assessment: a hedged "I think" is think_so, never '
         'definitely (2026-08-15: the model upgraded "He was her brother, I think" to '
-        'definitely)", '
+        'definitely). The reviewer\'s words map: "fairly sure", "pretty sure", "I think", '
+        '"probably" → think_so; "I know", "confident", "positive", "sure", "certain" → '
+        'definitely; "maybe", '
+        '"not sure" → unclear; ONLY a bare "I don\'t know" / "no idea" / "can\'t recall" '
+        '→ dont_know (2026-10-08: "fairly sure the import has it right" was filed as '
+        "dont_know). The reviewer's words ALWAYS decide — a reviewer sure of something "
+        'the archive cannot attest is still "sure", never dont_know (2026-10-08: the '
+        "record's silence was read as the reviewer's uncertainty)\", "
         '"note": "<when relevant, one short sentence — the reason the answer seems right, in '
         'the family\'s own terms (e.g. "Grandma always said so"). When NOT relevant, the note '
         "is ONLY the topic the answer was about — a short phrase ('the house on Victoria "

@@ -124,7 +124,7 @@ class PlaceLeadFlow(ReviewFlow):
 
 class ImportGuessNotContradictionFlow(ReviewFlow):
     name = "the model never treats an unverified import guess as a contradiction"
-    text = "I'm fairly sure the import has it right — he was Pearl's brother, that fits."
+    text = "I'm sure the import has it right — he was Pearl's brother, that fits."
     confidence = ("think_so", "definitely")
 
 

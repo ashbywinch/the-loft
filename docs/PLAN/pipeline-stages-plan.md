@@ -5,13 +5,13 @@ This is the plan only: the object model agreed first, then the typed
 scaffold, the missing surfaces, and the sequencing.
 
 **Status:** the rows foundation landed — the
-row library (`tools/rows.py`), the per-stage typed schema loaders
-(`pipeline/schemas.py`), the fixture (`tests/fixtures/page01-rows-gold/`).
-Of the sequencing: step 1's rows-adjacent schemas exist, but the `Stage`
-enum (`tools/stages.py`), the Document and identity artefacts' schemas,
-and step 2's `Rows.from_words` rename have not landed; steps 3–6 (the
-UR3 scan pickup, the stage-4 drawing UI, the portal, the stage-8
-identification flow) are unbuilt.
+row library (`pipeline/rows/rows.py`), the per-stage typed schema loaders
+(`document/schemas.py`), the fixture (`tests/fixtures/page01-rows-gold/`),
+and step 2's `Rows.from_words` (PR #64). Still unbuilt: step 1's `Stage`
+enum (`document/stages.py` — the model's home per the layout below) and
+the Document and identity artefacts' schemas. Of the rest, step 4's
+drawing UI is mostly landed (PR #64); steps 3, 5 and 6 (the UR3 scan
+pickup, the portal, the stage-8 identification flow) are unbuilt.
 
 ## The layout (agreed 2026-10-08)
 
@@ -27,7 +27,7 @@ The object model names the objects; this names where the code lives.
 2. **The pipeline functionality lives in `pipeline/`** — particularly as it
    is surfaced to the app. The chain driver, the store, the stage machinery
    (detection, rows, rendering, transcription), the model client, and the
-   API the app talks to (`pipeline/server.py`, `pipeline/sync.py`). The
+   API the app talks to (`pipeline/api/server.py`, `pipeline/api/sync.py`). The
    pipeline is not a `tools/` item.
 3. **`tools/` is only for separate small command-line utilities.** The
    TECHSPEC-§12 list: thumbnails, index/archive rebuilds, archive checks,
@@ -171,7 +171,7 @@ Two processes, clearly separated:
 
 - **The worker** — the batch processor (stages 1–6 machine steps). It
   never serves HTTP and never reads the user's input directly.
-- **The API server** (`pipeline/server.py`) — the front's only window: it
+- **The API server** (`pipeline/api/server.py`) — the front's only window: it
   reads the registry/archive (the portal items, the drafts) and accepts
   the user's writes (row adjustments, transcript confirmations,
   identifications), recording them through the typed seams. The row
@@ -245,7 +245,7 @@ sequenceDiagram
 
 ## Sequencing
 
-1. `tools/stages.py` — the stage enum (object, artefact, human flag) +
+1. `document/stages.py` — the stage enum (object, artefact, human flag) +
    the schemas extended to the Document and identity artefacts (one
    schema per artefact) + the pipeline statuses aligned to the
    vocabulary. No behaviour change — the typed scaffold.
@@ -273,7 +273,7 @@ technology out of that folder).
 A developer opening the repo without context must be able to name the
 stages, their objects, and their artefacts:
 
-- One stage vocabulary in code (`tools/stages.py`) naming the eight
+- One stage vocabulary in code (`document/stages.py`) naming the eight
   stages, each with its object, its artefact, and whether it needs human
   input.
 - The object model is authoritative: Mark, Word, Row, Trace, Document,

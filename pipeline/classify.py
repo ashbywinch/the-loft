@@ -32,7 +32,7 @@ from PIL import Image
 from pipeline.registry import RegistryError, load_batch
 from pipeline.store import PipelineStore
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
-from tools.store import DiskStore  # noqa: F401
+from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 # CLIP zero-shot labels — image content only; print-vs-cursive is the
 # density signal's job, not CLIP's

@@ -47,7 +47,7 @@ from pipeline.rows.rows import Rows
 from pipeline.store import PipelineStore, text_sha256
 from pipeline.transcribe.transcripts import row_transcripts
 from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR
-from tools.store import DiskStore, StoreError  # noqa: F401
+from tools.store import DiskStore, StoreError  # noqa: F401 — the architecture test's store-layer marker
 
 PAGE_LIMIT = 30  # one guess call per batch; beyond this the context is too big — chunking is future work
 GUESS_PAGE_CHUNK = 5  # the guess re-emits each page's corrected text; the OUTPUT size binds — 5 pages of

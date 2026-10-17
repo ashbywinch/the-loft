@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from tools.atomic import atomic_write
-from tools.store import DiskStore  # noqa: F401
+from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 TESSERACT = "tesseract"
 MAGICK = "magick"

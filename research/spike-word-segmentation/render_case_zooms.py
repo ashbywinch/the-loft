@@ -33,7 +33,7 @@ CASES: dict[str, tuple[tuple[float, float, float, float], float, list[int], list
         [5555],
         [
             'mark 5528 = the word "5555" on the tests (page x1082-1118, y2770-2842)',
-            'lowering the width bar to admit "of" would split it into 3 boxes',  # noqa: E501
+            'lowering the width bar to admit "of" would split it into 3 boxes',
         ],
     ),
     "case-342": (
@@ -41,7 +41,7 @@ CASES: dict[str, tuple[tuple[float, float, float, float], float, list[int], list
         4.0,
         [323, 336, 344],
         [
-            "336: the box above 342 holding two words (323 above it, 344 below)",  # noqa: E501
+            "336: the box above 342 holding two words (323 above it, 344 below)",
             "numbers as the current whole-page render numbers them",
         ],
     ),
@@ -56,8 +56,8 @@ CASES: dict[str, tuple[tuple[float, float, float, float], float, list[int], list
         3.0,
         [217, 212, 213, 215],
         [
-            "217: one box containing words 212, 213, 215",  # noqa: E501
-            "the failing nested-pair case; numbers as the whole-page render numbers them",  # noqa: E501
+            "217: one box containing words 212, 213, 215",
+            "the failing nested-pair case; numbers as the whole-page render numbers them",
         ],
     ),
     "case-3456": (
@@ -75,7 +75,7 @@ CASES: dict[str, tuple[tuple[float, float, float, float], float, list[int], list
         [213, 212],
         [
             "213: the last nested pair — still two fused words, with 212 inside it",
-            "the y3640 weld's remainder after the underline strip",  # noqa: E501
+            "the y3640 weld's remainder after the underline strip",
         ],
     ),
     "case-1838": (

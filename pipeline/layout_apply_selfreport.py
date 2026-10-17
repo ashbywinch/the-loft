@@ -17,7 +17,7 @@ from pipeline.layout import is_struck, normalize, write_layout_store
 from pipeline.store import PipelineStore
 from tools.loft_paths import WORK_DIR
 from tools.selfreport_driver import run_cli
-from tools.store import DiskStore  # noqa: F401
+from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 REPORT_NAME = "selfreport.json"
 

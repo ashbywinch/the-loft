@@ -454,7 +454,7 @@ class _AloneReader:
         )
         options = VlmOptions(system=SYSTEM, user_text=prompt)
         answer, _usage = (
-            self.call([path], system=SYSTEM, user_text=prompt)
+            self.call([path], options=options)
             if self.call is not None
             else transcribe_images_vlm([path], options=options)
         )
@@ -548,7 +548,7 @@ class _Bands:
             if self.model
             else VlmOptions(system=SYSTEM, user_text=band_text)
         )
-        answer, usage = self._call(index, band_text, options)
+        answer, usage = self._call(index, options)
         try:
             band = Transcript.from_answer(answer, rows=numbers)
         except TranscriptError as exc:
@@ -560,11 +560,11 @@ class _Bands:
             refusal="",
         )
 
-    def _call(self, index: int, band_text: str, options: VlmOptions) -> tuple[str, dict[str, int]]:
+    def _call(self, index: int, options: VlmOptions) -> tuple[str, dict[str, int]]:
         """One band's call, and its answer written beside the run."""
         path = self.render_paths[index]
         if self.call is not None:
-            answer, usage = self.call([path], system=SYSTEM, user_text=band_text)
+            answer, usage = self.call([path], options=options)
         else:
             answer, usage = transcribe_images_vlm([path], options=options)
         (self.out_dir / f"{self.stem}.band-{index + 1}.answer.json").write_text(

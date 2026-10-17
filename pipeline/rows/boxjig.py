@@ -199,7 +199,9 @@ class BoxJig:
         two boxes: only the allowed ascender/descender overlap across
         lines."""
         print("A6  every word of writing in exactly one box (else: trace it or box it)")
-        close = 12.0  # a word edge this close to a box counts as inside it (5px rounding)
+        # a word edge this close to a box counts as inside it — the measured
+        # baseline's tolerance (1dc5933), sized to absorb the 5px rounding
+        close = 12.0
         failures = 0
         leftover = 0
         overlapped = 0

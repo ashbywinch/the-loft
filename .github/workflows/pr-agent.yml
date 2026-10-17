@@ -48,4 +48,4 @@ jobs:
           SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 tools/check_review_posted.py
+        run: python3 pipeline/evals/check_review_posted.py

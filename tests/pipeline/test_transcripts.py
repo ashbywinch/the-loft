@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw
 from document.rectangle import Rectangle
 from document.row import Row
 from document.word import Word
+from pipeline.model.vlm import VlmOptions
 from pipeline.transcribe.transcripts import masked_row, row_crop, row_transcripts, transcribe
 
 PAGE = (2544, 4642)
@@ -99,9 +100,9 @@ def test_the_engine_reads_a_page_of_rows(tmp_path: Path) -> None:
     Image.new("RGB", (900, 1400), PAPER).save(page_path)
     asked: list[int] = []
 
-    def stub_call(paths: list[Path], *, system: str, user_text: str) -> tuple[str, dict[str, int]]:
+    def stub_call(paths: list[Path], *, options: VlmOptions) -> tuple[str, dict[str, int]]:
         """Answer for exactly the rows the prompt names, as the model must."""
-        numbers = sorted({int(n) for n in re.findall(r"row (\d+)", user_text)})
+        numbers = sorted({int(n) for n in re.findall(r"row (\d+)", options.user_text or "")})
         asked.extend(n for n in numbers if n not in asked)
         segments = [{"rows": [n], "type": "body", "transcript": f"writing of row {n}"} for n in numbers]
         return json.dumps({"segments": segments}), {"total_tokens": 1}

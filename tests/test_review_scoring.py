@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from tools.eval_scoring import score_page
+from pipeline.evals.eval_scoring import score_page
 from tools.loft_paths import WORK_DIR
 
 REFS = WORK_DIR / "eval-htr" / "reference-lines.json"

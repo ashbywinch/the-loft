@@ -19,6 +19,7 @@ import json
 import re
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast, final
 
@@ -66,6 +67,19 @@ def _dismiss_apply(person_id: str, table: dict[str, Any] | None) -> dict[str, An
     table["relationships"] = [
         r for r in table.get("relationships", []) if r.get("a") != person_id and r.get("b") != person_id
     ]
+    return table
+
+
+def _record_resolution(
+    result: dict[str, Any], person: dict[str, Any] | None, table: dict[str, Any], changed: bool
+) -> dict[str, Any]:
+    """Record one resolution outcome: the person record as it now stands
+    (None when the record is already gone — the already-resolved state,
+    never an error), whether the disposition altered anything, and the
+    resulting table (returned so a no-change path writes nothing)."""
+    result["person"] = person
+    result["changed"] = changed
+    result["was_proposed"] = changed
     return table
 
 
@@ -123,7 +137,18 @@ class ArchiveError(RuntimeError):
 
 
 # The _save_lock write-seam is thread-safety, not a second domain
-@final  # lucidlint: ignore partition Archive stays one noun
+@final
+@dataclass(frozen=True)
+class Resolution:
+    """The review's verdict on one proposed person: the record (or None when
+    a duplicate delete leaves nothing), and the two booleans that describe
+    what happened — attested, and whether the table changed."""
+
+    person: dict[str, Any] | None
+    changed: bool
+    attested: bool
+
+
 class Archive:
     """Domain access to the archive: resolution, supersession, tombstones."""
 
@@ -453,9 +478,7 @@ class Archive:
 
         self._mutate_identity("people", apply)
 
-    def resolve_person(
-        self, person_id: str, decision: str, basis: dict[str, str] | None = None
-    ) -> tuple[dict[str, Any] | None, bool, bool]:
+    def resolve_person(self, person_id: str, decision: str, basis: dict[str, str] | None = None) -> Resolution:
         """The review's four dispositions for a proposed person (user):
         the decision vocabulary is NOT the status vocabulary —
         "confirm" is a status, never an action. ``attested`` -> confirmed
@@ -480,31 +503,23 @@ class Archive:
                 # a duplicate delete (double-tap, two devices) finds the
                 # person already removed — that is the already-resolved
                 # state, never an error
-                result["person"] = None
-                result["changed"] = False
-                result["was_proposed"] = False
-                return current
+                return _record_resolution(result, person=None, table=current, changed=False)
             if person.get("status") != "proposed":
                 # the queue never holds resolved people — a stale decision is a
                 # state, not an error: the person stays as they are
-                result["person"] = person
-                result["changed"] = False
-                result["was_proposed"] = False
-                return current
+                return _record_resolution(result, person=person, table=current, changed=False)
             if decision == "pending":
                 result["person"] = person
                 result["changed"] = False
                 result["was_proposed"] = True
                 return current
             if decision == "delete":
-                current["people"] = [p for p in current["people"] if p["id"] != person_id]
-                current["relationships"] = [
-                    r for r in current.get("relationships", []) if r.get("a") != person_id and r.get("b") != person_id
-                ]
-                result["person"] = {"id": person_id, "gone": True}
-                result["changed"] = True
-                result["was_proposed"] = True
-                return current
+                return _record_resolution(
+                    result,
+                    person={"id": person_id, "gone": True},
+                    table=_dismiss_apply(person_id, current),
+                    changed=True,
+                )
             updated = dict(person)
             if decision == "estimated":
                 if basis is None or not str(basis.get("text", "")).strip():
@@ -516,13 +531,10 @@ class Archive:
             else:
                 raise ValueError(f"unknown decision: {decision!r}")
             current["people"] = [updated if p["id"] == person_id else p for p in current["people"]]
-            result["person"] = updated
-            result["changed"] = True
-            result["was_proposed"] = True
-            return current
+            return _record_resolution(result, person=updated, table=current, changed=True)
 
         self._mutate_identity("people", apply)
-        return result["person"], result["changed"], result["was_proposed"]
+        return Resolution(result["person"], result["changed"], result["was_proposed"])
 
     def _proposed(
         self, directory: str, record_type: Callable[[dict[str, Any]], ProposedRecord]
@@ -791,7 +803,7 @@ class Archive:
         )
         flow = Memory(client, knowledge)
         assessment = flow.assess(anchor=anchor, who=who, account=account)
-        story, new_people, new_places = flow.build_story(
+        built_story = flow.build_story(
             request=StoryRequest(
                 anchor=anchor,
                 who=who,
@@ -803,11 +815,11 @@ class Archive:
             ),
             existing_ids=set(self.item_ids()) | self.proposed_ids(),
         )
-        sidecar, content = split_content(story)
+        sidecar, content = split_content(built_story.story)
         self.save_item(sidecar, content=content)
-        for person in new_people:
+        for person in built_story.new_people:
             self.propose_person(person)
-        for place in new_places:
+        for place in built_story.new_places:
             self.propose_place(place)
         self.publish()
-        return story
+        return built_story.story

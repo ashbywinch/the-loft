@@ -481,7 +481,7 @@ def test_standing_knowledge_includes_dob_and_items() -> None:
 
 def test_build_story_dates_events_from_dob_and_age_facts() -> None:
     with_ashby = PEOPLE + [{"id": "p-alex", "name": "Alex Hale", "aliases": ["Alex"]}]
-    story, _, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
@@ -497,16 +497,16 @@ def test_build_story_dates_events_from_dob_and_age_facts() -> None:
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert story["date"] == "1984" and story["date_precision"] == "approx"  # 1981 + 3, arithmetic only
-    assert story["facts"][0]["status"] == "proposed"  # stated in prose, not via the picker
-    assert story["facts"][0]["value"] == "1981-09-15"
+    assert built.story["date"] == "1984" and built.story["date_precision"] == "approx"  # 1981 + 3, arithmetic only
+    assert built.story["facts"][0]["status"] == "proposed"  # stated in prose, not via the picker
+    assert built.story["facts"][0]["value"] == "1981-09-15"
 
 
 def test_build_story_answered_dob_is_confirmed() -> None:
     """A dob the narrator asserts in answer to a direct question is
     confirmed, not proposed — the answer IS the assertion."""
     with_ashby = PEOPLE + [{"id": "p-alex", "name": "Alex Hale", "aliases": ["Alex"]}]
-    story, _, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
@@ -529,13 +529,13 @@ def test_build_story_answered_dob_is_confirmed() -> None:
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    fact = story["facts"][0]
+    fact = built.story["facts"][0]
     assert fact["status"] == "confirmed"
     assert fact["source"] == "the narrator's own answer"
 
 
 def test_build_story_event_date_fact_wins() -> None:
-    story, _, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
@@ -548,13 +548,13 @@ def test_build_story_event_date_fact_wins() -> None:
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert story["date"] == "1963-05" and story["date_precision"] == "month"
+    assert built.story["date"] == "1963-05" and built.story["date_precision"] == "month"
 
 
 def test_build_story_unparseable_dob_stays_verbatim_for_the_keeper() -> None:
     """An unparseable dob phrase is recorded verbatim for a person to
     resolve — and the story still needs its events date."""
-    story, _, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
@@ -570,14 +570,14 @@ def test_build_story_unparseable_dob_stays_verbatim_for_the_keeper() -> None:
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    fact = story["facts"][0]
+    fact = built.story["facts"][0]
     assert fact["value"] is None and fact["precision"] is None
     assert fact["status"] == "proposed"  # the keeper resolves the phrase
-    assert story["date"] == "1963"  # the events date, not the recorded day
+    assert built.story["date"] == "1963"  # the events date, not the recorded day
 
 
 def test_build_story_new_narrator_record_carries_the_stated_dob() -> None:
-    story, new_people, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Zofia",
@@ -593,13 +593,13 @@ def test_build_story_new_narrator_record_carries_the_stated_dob() -> None:
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert story["date"] == "1992" and story["date_precision"] == "approx"
-    narrator = [p for p in new_people if p["id"] == story["told_by"]][0]
+    assert built.story["date"] == "1992" and built.story["date_precision"] == "approx"
+    narrator = [p for p in built.new_people if p["id"] == built.story["told_by"]][0]
     assert narrator["dob"] == "1984-09-15"
 
 
 def test_build_story_links_artifacts_and_leaves_unknowns_unresolved() -> None:
-    story, _, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
@@ -614,14 +614,14 @@ def test_build_story_links_artifacts_and_leaves_unknowns_unresolved() -> None:
         knowledge=make_knowledge(),
         existing_ids=set(),
     )
-    assert {"id": "object-sunlight", "status": "proposed"} in story["items"]
-    assert len(story["items"]) == 1  # an artifact without a match stays unresolved
+    assert {"id": "object-sunlight", "status": "proposed"} in built.story["items"]
+    assert len(built.story["items"]) == 1  # an artifact without a match stays unresolved
 
 
 def test_build_story_catalogued_item_link_to_draft_artifact_is_proposed() -> None:
     """A catalogued story never confirms a link the reader cannot see: an
     item ref whose artifact is still a draft is downgraded to proposed."""
-    story, _, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
@@ -639,13 +639,13 @@ def test_build_story_catalogued_item_link_to_draft_artifact_is_proposed() -> Non
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert {"id": "object-sb-mirosa", "status": "proposed"} in story["items"]
+    assert {"id": "object-sb-mirosa", "status": "proposed"} in built.story["items"]
 
 
 def test_build_story_catalogued_item_link_to_catalogued_artifact_is_confirmed() -> None:
     """A catalogued artifact is a fair target for a confirmed link — the
     downgrade applies to drafts only."""
-    story, _, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
@@ -663,7 +663,7 @@ def test_build_story_catalogued_item_link_to_catalogued_artifact_is_confirmed() 
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert {"id": "object-sunlight", "status": "confirmed"} in story["items"]
+    assert {"id": "object-sunlight", "status": "confirmed"} in built.story["items"]
 
 
 def test_story_sidecar_serializes_typed_refs() -> None:
@@ -745,7 +745,7 @@ def test_build_story_reuses_an_existing_place_by_name() -> None:
     knowledge reuses that id — it never mints a duplicate entity (the
     moored-barges ×3 came from minting one id per story mention,
     2026-08-05)."""
-    story, _, new_places = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
@@ -761,15 +761,15 @@ def test_build_story_reuses_an_existing_place_by_name() -> None:
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert {"id": "pl-the-moored-barges", "status": "confirmed"} in story["places"]
-    assert new_places == []  # no duplicate record minted
+    assert {"id": "pl-the-moored-barges", "status": "confirmed"} in built.story["places"]
+    assert built.new_places == []  # no duplicate record minted
 
 
 def test_build_story_reuses_an_existing_person_by_name() -> None:
     """A story naming a cast member who is not model-matched reuses their
     id — never mints a duplicate (the person analog of the place name-dedup,
     2026-08-05 bot review)."""
-    story, new_people, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
@@ -785,8 +785,8 @@ def test_build_story_reuses_an_existing_person_by_name() -> None:
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert {"id": "p-nora", "status": "confirmed"} in story["people"]
-    assert new_people == []  # no duplicate record minted
+    assert {"id": "p-nora", "status": "confirmed"} in built.story["people"]
+    assert built.new_people == []  # no duplicate record minted
 
 
 def test_build_story_kinship_term_reuses_an_existing_proposed_record() -> None:
@@ -796,7 +796,7 @@ def test_build_story_kinship_term_reuses_an_existing_proposed_record() -> None:
     then dangles at publish (2026-08-05 bot review). A CONFIRMED person is
     still never reused for a kinship term — fail closed; only another
     proposed record is."""
-    first, new_people, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
@@ -812,14 +812,14 @@ def test_build_story_kinship_term_reuses_an_existing_proposed_record() -> None:
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert len(new_people) == 1 and new_people[0]["name"] == "Grandma"
-    grandma_id = new_people[0]["id"]
+    assert len(built.new_people) == 1 and built.new_people[0]["name"] == "Grandma"
+    grandma_id = built.new_people[0]["id"]
 
     # the second story's standing knowledge includes the queued proposal as
     # the projection carries it (status proposed — the archive propose seam
     # marks it when the first story saves)
-    queued = [{**new_people[0], "status": "proposed"}]
-    second, new_people2, _ = build_story(
+    queued = [{**built.new_people[0], "status": "proposed"}]
+    built_second = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Eli",
@@ -835,10 +835,10 @@ def test_build_story_kinship_term_reuses_an_existing_proposed_record() -> None:
         existing_ids={grandma_id},
         recorded="2026-08-03",
     )
-    assert grandma_id in {r["id"] for r in second["people"]}
+    assert grandma_id in {r["id"] for r in built_second.story["people"]}
     # no duplicate Grandma mint — the only new record is the narrator Eli
-    assert all(p["name"] != "Grandma" for p in new_people2)
-    assert [p["name"] for p in new_people2] == ["Eli"]
+    assert all(p["name"] != "Grandma" for p in built_second.new_people)
+    assert [p["name"] for p in built_second.new_people] == ["Eli"]
 
 
 def test_build_story_kinship_term_stays_proposed_not_reused() -> None:
@@ -846,7 +846,7 @@ def test_build_story_kinship_term_stays_proposed_not_reused() -> None:
     even when a standing person carries that exact alias, the term is minted
     proposed for the writer to identify (the kinship filter's strip stays
     effective, 2026-08-05)."""
-    story, new_people, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
@@ -862,8 +862,8 @@ def test_build_story_kinship_term_stays_proposed_not_reused() -> None:
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert {"id": "p-x", "status": "confirmed"} not in story["people"]
-    assert len(new_people) == 1 and new_people[0]["name"] == "Grandma"
+    assert {"id": "p-x", "status": "confirmed"} not in built.story["people"]
+    assert len(built.new_people) == 1 and built.new_people[0]["name"] == "Grandma"
 
 
 def test_fact_round_trip_and_validation() -> None:
@@ -889,7 +889,7 @@ def test_fact_round_trip_and_validation() -> None:
 
 def test_build_story_dedupes_anchor_and_extraction_refs() -> None:
     """The starting page and an extraction may name the same entity — one ref."""
-    story, _, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor={"kind": "place", "id": "pl-seagate", "name": "Seagate"},
             who="Alex",
@@ -904,14 +904,14 @@ def test_build_story_dedupes_anchor_and_extraction_refs() -> None:
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert story["places"].count({"id": "pl-seagate", "status": "proposed"}) == 1
+    assert built.story["places"].count({"id": "pl-seagate", "status": "proposed"}) == 1
 
 
 def test_build_story_verified_save_is_catalogued_with_confirmed_refs() -> None:
     """The operator verifies the AI's guesses in the same flow: a completed,
     reviewed save is catalogued and its kept links are confirmed; an
     abandoned one stays draft with proposed links (docs/CONTRIBUTIONS.md)."""
-    verified, _, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor={"kind": "place", "id": "pl-seagate", "name": "Seagate"},
             who="Alex",
@@ -927,10 +927,10 @@ def test_build_story_verified_save_is_catalogued_with_confirmed_refs() -> None:
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert verified["status"] == "catalogued"
-    assert verified["places"] == [{"id": "pl-seagate", "status": "confirmed"}]
+    assert built.story["status"] == "catalogued"
+    assert built.story["places"] == [{"id": "pl-seagate", "status": "confirmed"}]
 
-    abandoned, _, _ = build_story(
+    built_abandoned = build_story(
         request=StoryRequest(
             anchor={},
             who="Alex",
@@ -946,13 +946,13 @@ def test_build_story_verified_save_is_catalogued_with_confirmed_refs() -> None:
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert abandoned["status"] == "draft"
-    assert abandoned["places"] == [{"id": "pl-seagate", "status": "proposed"}]
+    assert built_abandoned.story["status"] == "draft"
+    assert built_abandoned.story["places"] == [{"id": "pl-seagate", "status": "proposed"}]
 
 
 def test_build_story_ids_are_unique() -> None:
     existing = {"story-2026-08-03-01"}
-    story, _, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
@@ -965,7 +965,7 @@ def test_build_story_ids_are_unique() -> None:
         existing_ids=existing,
         recorded="2026-08-03",
     )
-    assert story["id"] == "story-2026-08-03-02"
+    assert built.story["id"] == "story-2026-08-03-02"
 
 
 def test_resolve_pending_facts_asks_the_model_and_validates_with_the_parser() -> None:
@@ -1150,7 +1150,7 @@ def test_exact_precision_is_demoted_to_what_the_value_supports() -> None:
 def test_build_story_emits_kind_text_for_testimony() -> None:
     """PRD §19.2: every testimony carries kind (audio|text) alongside speaker
     and recorded date — a capture story is typed, so it is text."""
-    story, _, _ = build_story(
+    built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
@@ -1163,7 +1163,7 @@ def test_build_story_emits_kind_text_for_testimony() -> None:
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert story["kind"] == "text"
+    assert built.story["kind"] == "text"
 
 
 def test_build_story_requires_an_event_date() -> None:

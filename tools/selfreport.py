@@ -20,9 +20,9 @@ import json
 import sys
 from pathlib import Path
 
+from pipeline.model.vlm import selfreport_words
 from tools.atomic import atomic_write
 from tools.selfreport_driver import run_cli
-from tools.vlm import selfreport_words
 
 REPORT_NAME = "selfreport.json"
 _MAX_WORKERS = 6  # the VLM calls are IO-bound — no shared state between pages

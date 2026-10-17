@@ -12,6 +12,7 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
+from document.colour import Colour
 from tools.word_numbering import (
     CHIP_GAP,
     EDGE_PAD,
@@ -45,7 +46,7 @@ def test_an_isolated_word_gets_the_top_left_corner() -> None:
     assert chip.verdict == "corner"
     assert chip.rect == _expected(A, "1")
     assert chip.render_id == 1
-    assert chip.colour == PALETTE[0]
+    assert chip.colour == Colour(*PALETTE[0])
 
 
 def test_a_blocked_corner_moves_the_chip_above() -> None:
@@ -170,7 +171,9 @@ def test_the_palette_is_distinct_in_colour_and_grayscale() -> None:
 
 def test_unplaced_reports_the_ids() -> None:
     assert unplaced([]) == []
-    chips = [Chip(render_id=3, rect=(0, 0, 1, 1), colour=(0, 0, 0), verdict=UNPLACED, font_size=8.0)]
+    chips = [
+        Chip(render_id=3, rect=(0, 0, 1, 1), colour=Colour(red=0, green=0, blue=0), verdict=UNPLACED, font_size=8.0)
+    ]
     assert unplaced(chips) == [3]
 
 

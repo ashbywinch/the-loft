@@ -2902,8 +2902,8 @@
    }
   },
   {
-   "id": "int-41",
-   "kind": "interjection",
+   "id": "seg-41",
+   "kind": "body",
    "number": 41,
    "word_boxes": [
     {
@@ -2927,8 +2927,8 @@
    }
   },
   {
-   "id": "int-42",
-   "kind": "interjection",
+   "id": "seg-42",
+   "kind": "body",
    "number": 42,
    "word_boxes": [
     {

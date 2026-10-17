@@ -6,7 +6,7 @@ normalized tokens still penalizes reordering and captures write-skip."""
 
 from __future__ import annotations
 
-from tools.eval_scoring import score_page
+from pipeline.evals.eval_scoring import score_page
 
 
 def test_perfect_match_scores_full() -> None:

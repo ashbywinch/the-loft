@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-import tools.vlm as vlm
-from tools.vlm import VlmError, _extract_json, selfreport_words, transcription_system_with_context
+import pipeline.model.vlm as vlm
+from pipeline.model.vlm import VlmError, _extract_json, selfreport_words, transcription_system_with_context
 
 
 class TestTranscriptionSystemWithContext:
@@ -79,7 +79,7 @@ class TestSelfreportWords:
 
 class TestParseTranscriptionResponse:
     def test_json_with_boxes(self) -> None:
-        from tools.vlm import parse_transcription_response
+        from pipeline.model.vlm import parse_transcription_response
 
         text = json.dumps(
             {
@@ -94,7 +94,7 @@ class TestParseTranscriptionResponse:
         assert boxes == {0: [219.0, 496.0, 760.0, 526.0], 1: [234.0, 513.0, 733.0, 543.0]}
 
     def test_fence_and_prose_tolerated(self) -> None:
-        from tools.vlm import parse_transcription_response
+        from pipeline.model.vlm import parse_transcription_response
 
         text = '```json\n{"lines": [{"text": "line one", "box": [1, 2, 3, 4]}]}\n```\nHope that helps'
         plain, boxes = parse_transcription_response(text)
@@ -102,14 +102,14 @@ class TestParseTranscriptionResponse:
         assert boxes == {0: [1.0, 2.0, 3.0, 4.0]}
 
     def test_plain_text_falls_back(self) -> None:
-        from tools.vlm import parse_transcription_response
+        from pipeline.model.vlm import parse_transcription_response
 
         plain, boxes = parse_transcription_response("Chère Maman.\nline two")
         assert plain == "Chère Maman.\nline two"
         assert boxes is None  # no geometry — the detector association fills it
 
     def test_blank_lines_skipped_keep_indexes_aligned(self) -> None:
-        from tools.vlm import parse_transcription_response
+        from pipeline.model.vlm import parse_transcription_response
 
         text = json.dumps(
             {
@@ -125,7 +125,7 @@ class TestParseTranscriptionResponse:
         assert boxes == {0: [0.0, 0.0, 10.0, 10.0], 1: [20.0, 20.0, 30.0, 30.0]}
 
     def test_missing_or_bad_boxes_dropped_geometry(self) -> None:
-        from tools.vlm import parse_transcription_response
+        from pipeline.model.vlm import parse_transcription_response
 
         text = json.dumps({"lines": [{"text": "no box"}, {"text": "bad box", "box": "x"}]})
         plain, boxes = parse_transcription_response(text)
@@ -133,14 +133,14 @@ class TestParseTranscriptionResponse:
         assert boxes is None
 
     def test_garbage_is_plain_text(self) -> None:
-        from tools.vlm import parse_transcription_response
+        from pipeline.model.vlm import parse_transcription_response
 
         plain, boxes = parse_transcription_response("I could not read the page")
         assert plain == "I could not read the page"
         assert boxes is None
 
     def test_collapsed_bottom_boxes_dropped(self) -> None:
-        from tools.vlm import parse_transcription_response
+        from pipeline.model.vlm import parse_transcription_response
 
         text = json.dumps(
             {
@@ -164,18 +164,18 @@ class TestTranscriptionProblem:
     both the reasoning budget eating the completion."""
 
     def test_plain_text_has_no_problem(self) -> None:
-        from tools.vlm import transcription_problem
+        from pipeline.model.vlm import transcription_problem
 
         assert transcription_problem("Dear Mum,\nI hope you are well.") is None
 
     def test_blank_is_a_problem(self) -> None:
-        from tools.vlm import transcription_problem
+        from pipeline.model.vlm import transcription_problem
 
         assert transcription_problem("") is not None
         assert transcription_problem("   \n  ") is not None
 
     def test_json_in_the_requested_structure_is_fine(self) -> None:
-        from tools.vlm import transcription_problem
+        from pipeline.model.vlm import transcription_problem
 
         text = '{"lines": [{"text": "line one", "box": [0, 0, 1000, 100]}]}'
         assert transcription_problem(text) is None
@@ -183,12 +183,12 @@ class TestTranscriptionProblem:
     def test_unparseable_json_echo_is_a_problem(self) -> None:
         # the observed refusal: '{"lines": [{"text": ' as the whole first
         # line — the model wrote the format instead of transcribing
-        from tools.vlm import transcription_problem
+        from pipeline.model.vlm import transcription_problem
 
         assert transcription_problem('{"lines": [{"text": "unterminated') is not None
 
     def test_json_without_the_lines_structure_is_a_problem(self) -> None:
-        from tools.vlm import transcription_problem
+        from pipeline.model.vlm import transcription_problem
 
         assert transcription_problem('{"error": "cannot read"}') is not None
 
@@ -200,7 +200,7 @@ class TestPlainTranscriptionFormat:
     it a structure to fail mid-echoing."""
 
     def test_plain_variant_requests_plain_text(self) -> None:
-        from tools.vlm import transcription_system_with_context
+        from pipeline.model.vlm import transcription_system_with_context
 
         system = transcription_system_with_context(request_boxes=False)
         assert "plain text" in system
@@ -208,7 +208,7 @@ class TestPlainTranscriptionFormat:
         assert "NORMALIZED" not in system
 
     def test_plain_variant_keeps_the_reading_discipline(self) -> None:
-        from tools.vlm import transcription_system_with_context
+        from pipeline.model.vlm import transcription_system_with_context
 
         system = transcription_system_with_context(request_boxes=False, people=["Alex Hale"], label="First pile")
         assert "verbatim" in system
@@ -216,7 +216,7 @@ class TestPlainTranscriptionFormat:
         assert "Alex Hale" in system  # context still rides along
 
     def test_default_still_requests_boxes(self) -> None:
-        from tools.vlm import VLM_SYSTEM, transcription_system_with_context
+        from pipeline.model.vlm import VLM_SYSTEM, transcription_system_with_context
 
         # every existing caller keeps today's behaviour
         assert '"lines"' in VLM_SYSTEM
@@ -230,7 +230,7 @@ class TestTranscribeWithFallbacks:
     while an all-error run re-raises."""
 
     def test_first_usable_response_wins(self, monkeypatch) -> None:
-        from tools.vlm import transcribe_with_fallbacks
+        from pipeline.model.vlm import transcribe_with_fallbacks
 
         responses = [("good text", {"total_tokens": 10}), ("never reached", {"total_tokens": 99})]
         calls: list[dict] = []
@@ -245,7 +245,7 @@ class TestTranscribeWithFallbacks:
         assert len(calls) == 1
 
     def test_unusable_response_falls_through_to_the_next_variant(self, monkeypatch) -> None:
-        from tools.vlm import transcribe_with_fallbacks
+        from pipeline.model.vlm import transcribe_with_fallbacks
 
         responses = [('{"lines": [{"text": "unterminated', {"total_tokens": 10}), ("good text", {"total_tokens": 20})]
         calls: list[dict] = []
@@ -259,7 +259,7 @@ class TestTranscribeWithFallbacks:
         assert len(calls) == 2
 
     def test_call_error_falls_through_to_the_next_variant(self, monkeypatch) -> None:
-        from tools.vlm import transcribe_with_fallbacks
+        from pipeline.model.vlm import transcribe_with_fallbacks
 
         calls: list[dict] = []
 
@@ -273,7 +273,7 @@ class TestTranscribeWithFallbacks:
         assert text == "recovered"
 
     def test_all_attempts_error_reraises_the_last(self) -> None:
-        from tools.vlm import transcribe_with_fallbacks
+        from pipeline.model.vlm import transcribe_with_fallbacks
 
         def fake(image, **kwargs):
             raise RuntimeError("timeout")
@@ -282,7 +282,7 @@ class TestTranscribeWithFallbacks:
             transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "b"}], transcribe=fake)
 
     def test_all_unusable_returns_the_last_response_for_the_gates(self, monkeypatch) -> None:
-        from tools.vlm import transcribe_with_fallbacks
+        from pipeline.model.vlm import transcribe_with_fallbacks
 
         blob = '{"lines": [{"text": "unterminated'
         responses = [(blob, {"total_tokens": 10}), (blob, {"total_tokens": 20})]
@@ -297,7 +297,7 @@ class TestTranscribeWithFallbacks:
         assert usage["total_tokens"] == 30  # honest cost: both attempts
 
     def test_each_attempt_reason_is_logged(self, monkeypatch, capsys) -> None:
-        from tools.vlm import transcribe_with_fallbacks
+        from pipeline.model.vlm import transcribe_with_fallbacks
 
         responses = [("", {"total_tokens": 1}), ("good", {"total_tokens": 2})]
         calls: list[dict] = []

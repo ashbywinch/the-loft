@@ -34,9 +34,10 @@ help:
 	@echo "  ${GREEN}make test${NC}         Run tests (lint + typecheck gate; pytest + vitest)"
 	@echo "  ${GREEN}make format${NC}       Auto-fix formatting issues"
 	@echo "  ${GREEN}make coverage${NC}     Run tests with coverage report"
-	@echo "  ${GREEN}make evals${NC}        Run the real-model evals (pytest -m eval — needs the API key; select pieces with -k)"
+	@echo "  ${GREEN}make evals${NC}        Run the real-model evals (pytest -m eval; the gateway config comes from .env + CLOUDFLARE_AIGATEWAY_TOKEN via scripts/model-env.sh)"
 	@echo "  ${GREEN}make verify${NC}       Run the archive-quality data checks (pytest -m archive — the drift guard, completeness, no-PII)"
 	@echo "  ${GREEN}make eval-changed${NC} Run only the evals the current changes affect"
+	@echo "  ${GREEN}make eval${NC}         One eval flow: make eval ARGS=\"-k arc\" (see pyproject's eval markers)"
 	@echo "  ${GREEN}make scan-docs${NC}    Scan documents from the FF-680W into ~/loft/inbox (ARGS=\"--job …\")"
 	@echo "  ${GREEN}make scan-photos${NC}  Scan photos from the FF-680W into ~/loft/inbox (ARGS=\"--job …\")"
 	@echo "  ${GREEN}make adopt${NC}        Register a user scan folder in the registry in place (ARGS=\"<folder> --label …\")"
@@ -85,7 +86,7 @@ setup: install-tools
 	@uv sync --locked
 	@if [ ! -d node_modules ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then $(NPM) ci --no-audit --no-fund; fi  # ci stays reproducible; skipped when the lock is unchanged (2026-08-13: a full reinstall on every make call was the suite's fixed 3 s tax)
 	@uv run pre-commit install
-	@[ -f .env ] || cp .env.example .env
+	@[ -n "$$CI" ] || { [ -f .env ] || cp .env.example .env; }  # CI carries its own gateway env (ci.yml); the copy is for local shells only — .env.example's blank values would wipe it
 
 
 serve: setup
@@ -118,8 +119,12 @@ coverage: setup lint typecheck
 	@$(PYTHON) -m pytest --cov=tools --cov-report=term-missing --cov-report=xml
 	@$(NPM) run coverage
 
+# Anything that hits the model goes through scripts/model-env.sh: it loads the
+# project's gateway config from .env and refuses a base URL that is not the
+# Cloudflare gateway, so no run can silently use a local proxy (and PYTHONPATH
+# is set once, for every child). See the script's header.
 evals: setup
-	@$(PYTHON) -m pytest -m eval -q
+	@scripts/model-env.sh $(PYTHON) -m pytest -m eval -q
 
 # lucidlint (github.com/ashbywinch/lucidlint) — the deterministic code-health
 # gate, wired from its own repo per the project decision (2026-08-16, user):
@@ -129,7 +134,7 @@ evals: setup
 # CI == developer on the same compiled binary.
 #
 # The pin is authoritative (2026-09-16: back to 0.5.0 — 0.6.1 was used to find and fix the
-# pipeline's latent classes (tools/reader.py, tools/mark.py now pass it with no
+# pipeline's latent classes (pipeline/detect/reader.py, pipeline/detect/mark.py now pass it with no
 # suppressions); the rest of the repo's findings under 0.6.1 are another session's work.
 # Was 0.5.0 from 2026-09-11, 0.1.0 to 2026-08-29): install-lucidlint verifies the
 # installed bundle's version marker against LUCIDLINT_VERSION and re-downloads
@@ -189,7 +194,7 @@ eval-changed: setup
 		echo "no evals affected by the current changes"; \
 	else \
 		echo "running the affected evals ($$MARKERS)"; \
-		$(PYTHON) -m pytest -m "(eval or archive) and ($$MARKERS)" -q; \
+		scripts/model-env.sh $(PYTHON) -m pytest -m "(eval or archive) and ($$MARKERS)" -q; \
 	fi
 
 format: setup
@@ -207,13 +212,13 @@ adopt: setup
 	@$(PYTHON) tools/adopt.py $(ARGS)
 
 ingest: setup
-	@$(PYTHON) tools/pipeline.py process $(ARGS)
+	@$(PYTHON) -m pipeline.chain process $(ARGS)
 
 confirm: setup
-	@$(PYTHON) tools/pipeline.py review $(ARGS)
+	@$(PYTHON) -m pipeline.chain review $(ARGS)
 
 pipeline: setup
-	@$(PYTHON) tools/pipeline.py $(ARGS)
+	@$(PYTHON) -m pipeline.chain $(ARGS)
 clean:
 	@rm -rf .venv node_modules htmlcov/ app/coverage/
 	@rm -f .coverage coverage.xml

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from document.unionfind import UnionFind
 from tools.box import overlap
 
 
@@ -38,19 +39,7 @@ class Block:
     def cluster(cls, lines: list[dict[str, Any]]) -> list[Block]:
         """The connected components of the box-overlap graph — lines
         sharing any ink form one block. Boxless lines are singletons."""
-        parent = list(range(len(lines)))
-
-        def find(i: int) -> int:
-            while parent[i] != i:
-                parent[i] = parent[parent[i]]
-                i = parent[i]
-            return i
-
-        def union(a: int, b: int) -> None:
-            ra, rb = find(a), find(b)
-            if ra != rb:
-                parent[rb] = ra
-
+        components = UnionFind(len(lines))
         for i in range(len(lines)):
             a = lines[i].get("box")
             if not a:
@@ -58,10 +47,11 @@ class Block:
             for j in range(i + 1, len(lines)):
                 b = lines[j].get("box")
                 if b and overlap(a, b) > 0:
-                    union(i, j)
-        members: dict[int, list[dict[str, Any]]] = {}
-        for i in range(len(lines)):
-            members.setdefault(find(i), []).append(lines[i])
+                    components.union(i, j)
+        members: dict[int, list[dict[str, Any]]] = {
+            root: [line for j, line in enumerate(lines) if components.find(j) == root]
+            for root in dict.fromkeys(components.find(i) for i in range(len(lines)))
+        }
         return [cls(m) for m in members.values()]
 
 

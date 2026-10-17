@@ -24,9 +24,9 @@ from pathlib import Path
 
 import pytest
 
+from pipeline.api.sync import draft_payloads
+from pipeline.registry import load_batch
 from tools.loft_paths import ARCHIVE_DIR  # the eval's media gate — the pipeline reads the archive's batch
-from tools.registry import load_batch
-from tools.sync import draft_payloads
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 BACK = FIXTURES / "godolphin-1906-back.jpg"
@@ -104,7 +104,7 @@ def _assert_contracts(registry: Path, work: Path) -> None:
     # no fragment extras: a short line whose tokens are a strict subset of
     # another line's is the same text read as a fragment (the mirror
     # passes' rec) — dropped by the dedupe (the real postcard's 'HOUSE,')
-    from tools.layout import words
+    from pipeline.layout import words
 
     token_sets = {t: set(words(t)) for t in texts}
     for a in texts:
@@ -129,7 +129,7 @@ def test_postcard_groups_two_sides_and_boxes_the_transcription(tmp_path: Path) -
     # the pipeline imports torch (classify) — kept inside the eval so make
     # test's collection never loads the heavy stack
     # lucidlint: ignore inline-import the eval runs the real pipeline — torch loads only here
-    from tools.pipeline import process
+    from pipeline.chain import process
 
     process(BATCH, registry_dir=registry, work_dir=work)
     _assert_contracts(registry, work)

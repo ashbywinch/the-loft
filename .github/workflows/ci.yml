@@ -14,9 +14,13 @@ jobs:
       # the eval key: the current convention (OPENAI_API_KEY = the Cloudflare
       # gateway token, OPENAI_BASE_URL = the gateway endpoint) — the legacy
       # LOFT_AI_KEY secret left the repo (2026-09-05), leaving the eval step's
-      # presence guard permanently false (evals silently never ran)
+      # presence guard permanently false (evals silently never ran). model-env.sh
+      # reads the token under its own name (CLOUDFLARE_AIGATEWAY_TOKEN) and the
+      # URL from .env loaded last — both are provided here so a fresh CI
+      # checkout (setup's .env.example copy) cannot wipe them.
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_BASE_URL: https://gateway.ai.cloudflare.com/v1/e21a5be58ac1e8f7d5619539feb2dc3d/default/compat
+      CLOUDFLARE_AIGATEWAY_TOKEN: ${{ secrets.OPENAI_API_KEY }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

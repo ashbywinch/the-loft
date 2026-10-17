@@ -62,7 +62,9 @@ launch spec.
 ## Layout
 
 - `app/` — the web app (vanilla ES modules; screens land with the prototype)
-- `tools/` — Python: the archive object model (`archive`, `store`, `records`,
+- `document/` — the document model (the records and their typed loaders);
+- `pipeline/` — the ingest chain, its detect/rows/transcribe/model/api stage groups, and its evals;
+- `tools/` — small command-line utilities: the archive object model (`archive`, `store`, `records`,
   `derive`), the publish pipeline (`publish`), the story assessor
   (`elicitation`), the import scripts (`import_*`), GEDCOM export/import
   (`export_gedcom`, `import_gedcom`), the LAN dev server (`serve`),

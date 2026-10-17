@@ -50,10 +50,7 @@ def flag_line_words(line: str, flagged: set[str]) -> list[dict[str, Any]]:
     uses normalize() on BOTH sides — the report cites display words,
     case-insensitively."""
     normalized = {normalize(f) for f in flagged}
-    out: list[dict[str, Any]] = []
-    for w in vlm_line_words(line):
-        out.append({"word": w, "conf": 0.0 if normalize(w) in normalized else 1.0})
-    return out
+    return [{"word": w, "conf": 0.0 if normalize(w) in normalized else 1.0} for w in vlm_line_words(line)]
 
 
 def selfreport_words_by_line(lines: list[str], report: list[dict[str, Any]] | None) -> dict[int, set[str]]:
@@ -62,14 +59,13 @@ def selfreport_words_by_line(lines: list[str], report: list[dict[str, Any]] | No
     layout's line indices come from proportional matching — the numbers
     drift when the raw text has empty lines, so the word is the reliable
     key. Every line containing the word is flagged."""
+    line_words = [{normalize(w) for w in vlm_line_words(line)} for line in lines]
     flagged: dict[int, set[str]] = {}
     for entry in report or []:
         word = normalize(str(entry.get("word", "")))
         if not word:
             continue
-        for i, line in enumerate(lines):
-            if word in {normalize(w) for w in vlm_line_words(line)}:
-                flagged.setdefault(i, set()).add(word)
+        flagged.update({i: flagged.get(i, set()) | {word} for i, words in enumerate(line_words) if word in words})
     return flagged
 
 

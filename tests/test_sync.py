@@ -10,10 +10,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
-from tools.atomic import atomic_write
-from tools.layout import Detection, build_layout, write_layout
-from tools.registry import RegistryError
-from tools.sync import (
+from pipeline.api.sync import (
     Outbox,
     demote_stale_jobs,
     draft_payloads,
@@ -24,6 +21,9 @@ from tools.sync import (
     set_page_job,
     validate_confirmation,
 )
+from pipeline.layout import Detection, build_layout, write_layout
+from pipeline.registry import RegistryError
+from tools.atomic import atomic_write
 
 
 def _confirmation(**overrides: object) -> dict[str, object]:
@@ -177,8 +177,8 @@ def test_draft_payloads_carries_the_layout_revision(tmp_path: Path) -> None:
     at write) so the review surface can DETECT a stale layout — a rebuild
     bumps the revision, and the client refreshes when the payload's
     revision differs from the one it rendered."""
-    from tools.layout import write_layout_store
-    from tools.pipeline_store import PipelineStore
+    from pipeline.layout import write_layout_store
+    from pipeline.store import PipelineStore
 
     guess = tmp_path / "adopt-0001" / "ocr-guess"
     guess.mkdir(parents=True)
@@ -286,7 +286,7 @@ def test_record_confirmation_rejects_unknown_batch_without_writing(tmp_path: Pat
 def test_safe_page_name_allows_phone_duplicate_suffixes(tmp_path: Path) -> None:
     """Phone export duplicates arrive as "name~2.jpg" — the guard must not
     reject real scans. Traversal stays blocked."""
-    from tools.sync import safe_page_name
+    from pipeline.api.sync import safe_page_name
 
     assert safe_page_name("1782635795946-5f7905a9~2.jpg")
     assert safe_page_name("plain-name.jpg")

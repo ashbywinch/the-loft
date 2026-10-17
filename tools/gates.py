@@ -8,7 +8,7 @@ inkless estimates, the duplicated regions).
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, override
 
 from tools.box import aspect_consistent, overlap, reading_axis
 from tools.text import normalize
@@ -36,6 +36,7 @@ class IntegrityGate(Gate):
     A ``None`` box passes — the line is flagged, the review shows it
     without a box; the tolerance covers the model's estimate slop."""
 
+    @override
     def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
         width = int(layout.get("width", 0))
         height = int(layout.get("height", 0))
@@ -60,6 +61,7 @@ class AspectGate(Gate):
     line is vertical-axis and must have a tall box. Lenient: a 45°
     diagonal and a near-square box never flag."""
 
+    @override
     def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
         findings: list[str] = []
         for line in layout.get("lines", []):
@@ -146,6 +148,7 @@ class TextExtentGate(Gate):
     never false-positives; an empty text with a box fails ("nothing
     there")."""
 
+    @override
     def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
         findings: list[str] = []
         for line in layout.get("lines", []):
@@ -166,17 +169,15 @@ class RegionGate(Gate):
     must see. The anchored lines' loose boxes may legitimately overlap
     slightly, so the bar is half the smaller box."""
 
+    @override
     def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
         boxed = [(ln, ln["box"]) for ln in layout.get("lines", []) if _boxed(ln)]
-        findings: list[str] = []
-        for i, (a, ab) in enumerate(boxed):
-            for b, bb in boxed[i + 1 :]:
-                if overlap(ab, bb) >= 0.5 and normalize(a.get("text", "")) != normalize(b.get("text", "")):
-                    findings.append(
-                        f"{a.get('text', '')[:20]!r} and {b.get('text', '')[:20]!r}: "
-                        "same region claimed by different text"
-                    )
-        return findings
+        return [
+            f"{a.get('text', '')[:20]!r} and {b.get('text', '')[:20]!r}: same region claimed by different text"
+            for i, (a, ab) in enumerate(boxed)
+            for b, bb in boxed[i + 1 :]
+            if overlap(ab, bb) >= 0.5 and normalize(a.get("text", "")) != normalize(b.get("text", ""))
+        ]
 
 
 class BoxlessGate(Gate):
@@ -189,6 +190,7 @@ class BoxlessGate(Gate):
     (The older ``None``-box-passes rule is superseded by the user's
     explicit choice.)"""
 
+    @override
     def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
         return [
             f"line {line.get('index', i)} is boxless — the pipeline must fix its geometry"
@@ -207,7 +209,4 @@ def validate_layout(layout: dict[str, Any], tolerance: float = 4.0) -> list[str]
     """The fail-fast guard: a layout whose lines fail any
     gate must NEVER reach the front end — the reviewer must never see
     wrong boxes. Returns the violations; [] = clean."""
-    findings: list[str] = []
-    for gate in GATES:
-        findings.extend(gate.violations(layout, tolerance))
-    return findings
+    return [violation for gate in GATES for violation in gate.violations(layout, tolerance)]

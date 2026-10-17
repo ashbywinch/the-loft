@@ -15,8 +15,10 @@ What each file is:
   canonical scan (the detector's marks — not a curated words-only list).
 - `rows.json` — the **adjudicated rows**: the user's row rulings, each
   row's words' boxes inline (self-contained, no ids into any words file)
-  plus the row's band (the exact union of its words' boxes). Row ids
-  carry their kind (`seg-6` = a body row, `int-41` = an interjection).
+  plus the row's band (the exact union of its words' boxes). Row ids are
+  `seg-<number>` and carry no kind: whether a row is an interjection or
+  marginalia is decided at the transcription phase, never by the row
+  geometry.
   The rulings were confirmed by the user (2026-09-12, rows; the
   47-stack and bottom rulings 2026-09-18). This file is the contract:
   `tools/rows.py` must reproduce it and `tests/test_rows.py` checks that.

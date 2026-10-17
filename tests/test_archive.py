@@ -5,7 +5,7 @@ tombstones, and the proposed-record queue — all through the append-only store
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, override
 
 import pytest
 
@@ -326,6 +326,7 @@ def test_save_recovers_after_a_crash_mid_save() -> None:
             super().__init__()
             self.calls = 0
 
+        @override
         def write_new(self, path: str, content: str | bytes) -> None:
             self.calls += 1
             if self.calls == 2:
@@ -679,9 +680,9 @@ def test_noop_resolve_writes_no_new_version() -> None:
     archive = Archive(store)
     archive.save_identity("people", {"people": [{"id": "p-x", "name": "X"}], "relationships": []})
     assert len(archive._identity_versions("people")) == 1
-    _, changed, was_proposed = archive.resolve_person("p-x", "attested", None)  # stale — p-x is not proposed
-    assert changed is False  # the authoritative in-lock flag reports the no-op
-    assert was_proposed is False  # and the person was not proposed at lock time
+    resolution = archive.resolve_person("p-x", "attested", None)  # stale — p-x is not proposed
+    assert resolution.changed is False  # the authoritative in-lock flag reports the no-op
+    assert resolution.attested is False  # and the person was not proposed at lock time
     assert len(archive._identity_versions("people")) == 1  # nothing written
     archive.resolve_person("p-x", "pending", None)
     assert len(archive._identity_versions("people")) == 1  # pending writes nothing

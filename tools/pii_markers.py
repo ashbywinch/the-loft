@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -152,21 +153,24 @@ def _geo_markers(record: dict[str, Any]) -> set[str]:
     return markers
 
 
+def _archive_markers(paths: list[Path], key: str, extra: Callable[[dict[str, Any]], set[str]]) -> set[str]:
+    """Names, aliases, emails and ids from one identity table plus the
+    per-record identifying extras — dates for people, coordinates for
+    places."""
+    markers: set[str] = set()
+    if paths:
+        table = json.loads(_latest(paths).read_text(encoding="utf-8"))
+        for record in table.get(key, []):
+            markers |= _table_tokens([record]) | extra(record)
+    return markers
+
+
 def family_markers() -> set[str]:
     """Every identifying name, alias, email, place, id, date and coordinate
     from the live dataset."""
-    markers: set[str] = set()
-    people_paths = sorted(ARCHIVE_DIR.glob("people*.json"))
-    places_paths = sorted(ARCHIVE_DIR.glob("places*.json"))
-    if people_paths:
-        people = json.loads(_latest(people_paths).read_text(encoding="utf-8"))
-        for record in people.get("people", []):
-            markers |= _table_tokens([record]) | _date_markers(record)
-    if places_paths:
-        places = json.loads(_latest(places_paths).read_text(encoding="utf-8"))
-        for record in places.get("places", []):
-            markers |= _table_tokens([record]) | _geo_markers(record)
-    return markers
+    people = _archive_markers(sorted(ARCHIVE_DIR.glob("people*.json")), "people", _date_markers)
+    places = _archive_markers(sorted(ARCHIVE_DIR.glob("places*.json")), "places", _geo_markers)
+    return people | places
 
 
 def file_offenders(text: str, markers: set[str]) -> list[str]:

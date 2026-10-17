@@ -193,10 +193,10 @@ def test_a_typoed_question_key_fails_loudly_never_silently() -> None:
     question: ''"). The condition now reports the missing key WITH the
     whole output — and the eval stays red; the model is NOT given a
     second chance (user: fix the actual thing, never retry)."""
-    from tools.eval_review import PlaceLeadFlow, condition_question
+    from pipeline.evals.eval_review import PlaceLeadFlow, ReviewRun
 
     raw = '{"relevant": true, "findings": [], "quetion": "Did you ever meet him?"}'
-    error = condition_question(PlaceLeadFlow(), {"question": "", "raw": raw})
+    error = ReviewRun(PlaceLeadFlow(), {"question": "", "raw": raw}).question()
     assert error is not None
     assert "lacks the 'question' key" in error
     assert raw in error, "the guard must carry the FULL output (2026-09-23)"
@@ -571,7 +571,7 @@ def test_persona_guard_allows_reviewer_introduced_vocabulary() -> None:
     # the family never meets the process vocabulary UNLESS they introduced it
     # themselves — echoing the reviewer's own word aids understanding
     # (user; PRD R1)
-    from tools.eval_review import persona_errors
+    from pipeline.evals.eval_review import persona_errors
 
     result = {"relevant": "true", "question": "Where did the import get that idea — did Pearl ever mention a brother?"}
     assert persona_errors(result, reviewer_text="I'm fairly sure the import has it right") == []
@@ -583,7 +583,7 @@ def test_persona_guard_error_carries_the_full_text() -> None:
     # a failed evaluation must show the WHOLE model output, never a
     # truncated slice — the 80-char cut hides the offending words and
     # makes the diagnosis a gateway-log archaeology hunt
-    from tools.eval_review import persona_errors
+    from pipeline.evals.eval_review import persona_errors
 
     question = (
         "She mentioned several people, but I wanted to be sure about Walter's name "

@@ -2,7 +2,7 @@
 
 - THE PROPOSAL — tools/reader.py rows_for_page (the ink/fitted-lines chain;
   what the pipeline writes before any user line exists).
-- THE CORRECTION — tools/rows.py Rows.from_words (the drawn lines decide).
+- THE CORRECTION — tools/rows.py rows.adjust (the drawn lines decide).
 
 Both are scored by the same rule: for every word with an adjudicated row
 (the gold's own boxes, IoU-matched to the re-parsed words), is the word in
@@ -20,14 +20,14 @@ from typing import Any
 
 from PIL import Image
 
-from tools.page import Page
-from tools.page_visuals import captioned_sheet, review_image, stack_sheets
-from tools.reader import reading_for_page
-from tools.render import render_rows
-from tools.row import Row
-from tools.rows import Rows
-from tools.schemas import load_boxes, load_rows, load_user_row_adjustments, load_words
-from tools.word import Word
+from document.rectangle import Rectangle
+from document.row import Row
+from document.schemas import load_boxes, load_rows, load_user_row_adjustments, load_words
+from document.word import Word
+from pipeline.detect.reader import reading_for_page
+from pipeline.rows.page_visuals import captioned_sheet, review_image, stack_sheets
+from pipeline.rows.render import render_rows
+from pipeline.rows.rows import Rows
 
 FIXTURE = Path("tests/fixtures/page01-rows-gold")
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
@@ -111,10 +111,10 @@ def _word(record) -> Word:
 def _correction_assignment(
     words: Sequence[Mapping[str, Any]], lines: Sequence[Sequence[tuple[float, float]]], page_size: tuple[int, int]
 ) -> tuple[list[Any], dict[int, int]]:
-    """`Rows.from_words` on the page's words and the drawn lines -> the built
+    """`rows.adjust` on the page's words and the drawn lines -> the built
     rows and every word's built row."""
     boxes = [_word(w) for w in words]
-    built = Rows.from_words(boxes, [list(line) for line in lines], page_size)
+    built = Rows.from_words(boxes, page_size).adjust([list(line) for line in lines])
     box_index = {b: i for i, b in enumerate(boxes)}
     built_row: dict[int, int] = {}
     for r_i, row in enumerate(built):
@@ -124,9 +124,24 @@ def _correction_assignment(
     return list(built), built_row
 
 
+def _row(number: int, words: Sequence[int], model_words: Sequence[Word]) -> Row:
+    """One record row from word indices: the words' boxes and their union."""
+    boxes = [model_words[i] for i in words]
+    xs0 = [w.rect.x0 for w in boxes]
+    ys0 = [w.rect.y0 for w in boxes]
+    xs1 = [w.rect.x1 for w in boxes]
+    ys1 = [w.rect.y1 for w in boxes]
+    return Row(
+        id=f"seg-{number}",
+        kind="body",
+        number=number,
+        word_boxes=list(boxes),
+        band=Rectangle(min(xs0), min(ys0), max(xs1), max(ys1)),
+    )
+
+
 def _panels(
     scan: Path,
-    model: Page,
     strokes: Sequence[Sequence[tuple[float, float]]],
     rowsets: Sequence[tuple[str, Sequence[Row]]],
 ) -> Image.Image:
@@ -137,10 +152,10 @@ def _panels(
     page = Image.open(scan).convert("RGB")
     panels = []
     for title, rows in rowsets:
-        drawn = render_rows(page, model, list(rows), strokes)
+        drawn = render_rows(page, list(rows), strokes)
         fitted = drawn.resize((1000, int(drawn.height * 1000 / drawn.width)), Image.Resampling.LANCZOS)
-        sheet, _, _ = captioned_sheet(fitted, [title])
-        panels.append(sheet)
+        sheet = captioned_sheet(fitted, [title])
+        panels.append(sheet.sheet)
     return stack_sheets(panels, max_width=1000)
 
 
@@ -160,25 +175,25 @@ def main() -> None:
 
     print(f"words: {len(words)} | adjudicated rows: {len(gold)}")
     p_right, p_judged = score("PROPOSAL  (reader.reading_for_page)", proposal_row, len(proposal), word_adj)
-    c_right, c_judged = score("CORRECTION (rows.py Rows.from_words)", built_row, len(built), word_adj)
+    c_right, c_judged = score("CORRECTION (rows.py rows.adjust)", built_row, len(built), word_adj)
 
     def built_words(r_i: int) -> list[int]:
         return sorted(i for i, r in built_row.items() if r == r_i)
 
-    model = Page(
-        [Word(w["x0"], w["y0"], w["x1"], w["y1"], font_size=w["baseline"] - w["waistline"]) for w in words], SPACING
-    )
+    model_words = [Word(w["x0"], w["y0"], w["x1"], w["y1"], font_size=w["baseline"] - w["waistline"]) for w in words]
     strokes = [[(x * width, y * height) for x, y in line] for line in lines]
     rowsets = [
         (
             f"THE ADJUDICATED ROWS (your rulings, rows.json)  |  {len(gold)} rows — the reference",
             [
-                Row(
-                    words=[
+                _row(
+                    r + 1,
+                    [
                         i
                         for i, wd in enumerate(words)
                         if gold[r]["band"]["y0"] <= (wd["y0"] + wd["y1"]) / 2 <= gold[r]["band"]["y1"]
-                    ]
+                    ],
+                    model_words,
                 )
                 for r in range(len(gold))
             ],
@@ -186,15 +201,18 @@ def main() -> None:
         (
             f"THE PROPOSAL — tools/reader.py reading_for_page (no lines drawn)  |  {len(proposal)} rows, "
             f"{p_right}/{p_judged} words in the correct row ({100 * p_right / p_judged:.1f}%)",
-            [Row(words=sorted(i for i, r in proposal_row.items() if r == k)) for k in range(len(proposal))],
+            [
+                _row(k + 1, sorted(i for i, r in proposal_row.items() if r == k), model_words)
+                for k in range(len(proposal))
+            ],
         ),
         (
-            f"THE CORRECTION — tools/rows.py Rows.from_words (your {len(lines)} drawn lines)  |  {len(built)} rows, "
+            f"THE CORRECTION — tools/rows.py rows.adjust (your {len(lines)} drawn lines)  |  {len(built)} rows, "
             f"{c_right}/{c_judged} words in the correct row ({100 * c_right / c_judged:.1f}%)",
-            [Row(words=built_words(k)) for k in range(len(built))],
+            [_row(k + 1, built_words(k), model_words) for k in range(len(built))],
         ),
     ]
-    contact = _panels(SCAN, model, strokes, rowsets)
+    contact = _panels(SCAN, strokes, rowsets)
     OUT.write_bytes(review_image(contact))
     print(f"wrote {OUT}: {OUT.stat().st_size // 1024} KB, {contact.width}x{contact.height}")
 

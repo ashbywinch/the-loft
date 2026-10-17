@@ -20,13 +20,20 @@ Stages, in order:
   Stage: rows.
 - `UserRowAdjustments` — the reviewer's drawn row adjustments, normalised.
   Stage: rows input.
+- `Document` — the document artefact: its pages, its writing line by line,
+  and its state (the draft the pipeline proposed, or the record the review
+  gate agreed). Stages: proposed transcripts, agreed transcripts.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, NotRequired, TypedDict
+
+from document.transcript import KINDS
 
 
 class PageSize(TypedDict):
@@ -96,6 +103,56 @@ class Rows(TypedDict):
     """Rows stage: the adjudicated rows.json, the row contract."""
 
     rows: list[Row]
+
+
+# the Document's states: the draft the pipeline proposed and the review gate
+# has not agreed ("review" — the pipeline's word for the plan's draft state),
+# the reviewer's agreement, and the reviewer's rejection of the grouping
+DOCUMENT_STATUSES = ("review", "confirmed", "rejected")
+
+
+class DocumentLine(TypedDict):
+    """One line of a Document's writing, in reading order: what it says, where
+    it sits on its page, and what it is — body writing, an injection (naming
+    the line it follows, `KINDS`), or marginalia.
+
+    `box` is the line's box on its page, page pixels ([x0, y0, x1, y1]), or
+    None when no geometry anchors it; `box_source` says how the box was
+    found ("reader" for a reading's own line). `words` are the line's word
+    boxes, inline like a row's (a line never references another file's word
+    ids). `conf` is the anchor's confidence where a reading scored one.
+    """
+
+    index: int
+    page: str
+    text: str
+    box: list[float] | None
+    orientation: int
+    box_source: str
+    words: list[Word]
+    kind: str
+    conf: NotRequired[float]
+    injection_after: NotRequired[int]
+
+
+class Document(TypedDict):
+    """The Document artefact (stages 5 and 6): the document's pages, its
+    writing line by line, and its state — the draft the pipeline proposes and
+    the record the review gate agreed are ONE type; the status is the state
+    (docs/PLAN/pipeline-stages-plan.md: draft is a state, not a second type).
+
+    `pages` and the boundary evidence the grouping scored (`greeting`,
+    `signoff`) are what opened the document; `lines` is its writing, empty
+    until the transcription stage fills it; `status` is absent on a draft
+    entry (the pipeline's `boundaries.json`), "review" once served, and the
+    reviewer's decision once the gate has run.
+    """
+
+    pages: list[str]
+    greeting: str | None
+    signoff: str | None
+    status: NotRequired[str]
+    lines: NotRequired[list[DocumentLine]]
 
 
 def _validate(path: Path, data: Any, key: str, expect: str) -> None:
@@ -194,3 +251,94 @@ def load_boxes(path: Path) -> Boxes:
         ):
             raise ValueError(f"{path}: boxes[{i}] — expected a polygon of [x, y] points")
     return data  # type: ignore[return-value]  # validated page-and-polygons above; the checker cannot narrow json.loads
+
+
+def validate_document(record: Any, *, path: Path | None = None) -> Document:
+    """One document record, validated — ONE rule for the file loader, the
+    registry's boundaries and the served payloads (the write seam validates
+    its own input)."""
+    label = f"{path}: " if path is not None else ""
+    _expect_fields(
+        record, path or Path("<document>"), "document", {"pages", "greeting", "signoff"}, set(Document.__annotations__)
+    )
+    _validate_pages(record["pages"], label)
+    for field in ("greeting", "signoff"):
+        if record[field] is not None and not isinstance(record[field], str):
+            raise ValueError(f"{label}{field} — expected a string or None")
+    if "status" in record and record["status"] not in DOCUMENT_STATUSES:
+        raise ValueError(f"{label}status {record['status']!r} is not one of {list(DOCUMENT_STATUSES)}")
+    for i, line in enumerate(record.get("lines") or []):
+        _validate_document_line(line, f"{label}lines[{i}]")
+    return record  # type: ignore[return-value]  # validated field-by-field above; the checker cannot narrow json.loads
+
+
+def _validate_pages(pages: Any, label: str) -> None:
+    """The document's pages: a non-empty list of page names (they become path
+    segments in every reader, so a nameless or non-string page is refused)."""
+    if not isinstance(pages, list) or not pages:
+        raise ValueError(f"{label}pages — expected a non-empty list of page names")
+    if not all(isinstance(page, str) and page for page in pages):
+        raise ValueError(f"{label}pages — every page must be a name")
+
+
+# the document line's typed fields — the required set is derived from this
+# table plus the fields with their own checks below, so the two cannot drift
+_LINE_FIELD_TYPES: Mapping[str, type] = MappingProxyType(
+    {"index": int, "page": str, "text": str, "orientation": int, "box_source": str}
+)
+_LINE_OTHER_FIELDS = ("box", "words", "kind")  # checked by their own rules, never by bare type
+
+
+def _validate_document_line(line: Any, label: str) -> None:
+    """One document line: its fields' types, its box, its words, and its kind
+    with the injection point that kind requires."""
+    required = set(_LINE_FIELD_TYPES) | set(_LINE_OTHER_FIELDS)
+    if not isinstance(line, dict) or required - set(line):
+        raise ValueError(f"{label} — expected a document line with {sorted(required)}")
+    for field, expected in _LINE_FIELD_TYPES.items():
+        if not isinstance(line[field], expected):
+            raise ValueError(f"{label}.{field} — expected {expected.__name__}")
+    if not line["page"]:
+        raise ValueError(f"{label}.page — expected a page name")
+    _validate_line_box(line["box"], label)
+    _validate_line_words(line["words"], label)
+    _validate_line_kind(line, label)
+
+
+def _validate_line_box(box: Any, label: str) -> None:
+    """The line's box: [x0, y0, x1, y1] in page pixels, or None when no
+    geometry anchors the line."""
+    if box is None:
+        return
+    if not isinstance(box, list) or len(box) != 4 or not all(isinstance(c, (int, float)) for c in box):
+        raise ValueError(f"{label}.box — expected [x0, y0, x1, y1] or None")
+
+
+def _validate_line_words(words: Any, label: str) -> None:
+    """The line's word boxes, inline — each a word box, never another file's
+    word ids."""
+    if not isinstance(words, list):
+        raise ValueError(f"{label}.words — expected a list of word boxes")
+    for j, word in enumerate(words):
+        _expect_fields(word, Path(label), f"{label}.words[{j}]", {"x0", "y0", "x1", "y1"}, {"x0", "y0", "x1", "y1"})
+
+
+def _validate_line_kind(line: dict[str, Any], label: str) -> None:
+    """The line's kind, and the injection point that kind requires — an
+    injection names the line it follows, and nothing else carries a point."""
+    kind = line["kind"]
+    if kind not in KINDS:
+        raise ValueError(f"{label}.kind {kind!r} is not one of {list(KINDS)}")
+    if (kind == "injection") != ("injection_after" in line):
+        raise ValueError(
+            f"{label} — an injection names the line it follows (injection_after), and nothing else carries one"
+        )
+
+
+def load_documents(path: Path) -> list[Document]:
+    """The batch's documents (the boundaries artefact), validated as the
+    Document stage — the artefact is the list itself."""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError(f"{path}: not a Document list — the boundaries artefact is a list of documents")
+    return [validate_document(record, path=path) for record in data]

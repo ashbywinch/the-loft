@@ -184,3 +184,21 @@ def test_no_artifact_and_no_comment_fails_loud(capsys) -> None:
     )
     assert code == 1
     assert "AI review did not post" in capsys.readouterr().out
+
+
+def test_the_real_client_honours_the_fetch_seam() -> None:
+    """``run_review_gate`` calls ``fetch(url, token)`` and ``main`` passes
+    the real client's bound method: the client must accept that shape. It
+    took one argument, so the gate crashed with TypeError before its first
+    API call — every pr-review run failed at the checker step, and the
+    injected-fetch tests could not see it (2026-10-17)."""
+    seen: list[str] = []
+
+    def open_url(req) -> bytes:
+        seen.append(req.headers["Authorization"])
+        return b'{"ok": true}'
+
+    client = gate._GitHub("instance-token", open_url=open_url)
+    assert client.get_json("https://example.invalid/x", "caller-token") == {"ok": True}
+    assert client.get_json("https://example.invalid/x") == {"ok": True}
+    assert seen == ["Bearer caller-token", "Bearer instance-token"]

@@ -36,6 +36,7 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
 from typing import override
 from urllib.error import HTTPError
 
@@ -59,20 +60,27 @@ _TRACEBACK_TAIL = 12  # lines after a traceback/marker worth reporting
 
 class _GitHub:
     """The API client this check speaks: every call carries the same token and
-    asks for the same JSON accept header, so they travel as this class's state."""
+    asks for the same JSON accept header, so they travel as this class's state.
+    The transport is injected (the repo's DI convention) — the tests drive the
+    real client through a fake opener, never a patched global."""
 
-    def __init__(self, token: str) -> None:
+    def __init__(self, token: str, open_url: Callable[[urllib.request.Request], bytes] | None = None) -> None:
         self.token = token
+        self._open = open_url or (lambda req: urllib.request.urlopen(req).read())
 
-    def get(self, url: str, accept: str = "application/vnd.github+json") -> bytes:
+    def get(self, url: str, accept: str = "application/vnd.github+json", token: str = "") -> bytes:
         req = urllib.request.Request(
             url,
-            headers={"Authorization": f"Bearer {self.token}", "Accept": accept},
+            headers={"Authorization": f"Bearer {token or self.token}", "Accept": accept},
         )
-        return urllib.request.urlopen(req).read()
+        return self._open(req)
 
-    def get_json(self, url: str):
-        return json.loads(self.get(url))
+    def get_json(self, url: str, token: str = ""):
+        """The gate's fetch seam is ``fetch(url, token)`` (the tests inject
+        exactly that): the argument is honoured, the instance's token is the
+        default — passing the bound method straight to ``run_review_gate``
+        used to raise TypeError before the first API call (2026-10-17)."""
+        return json.loads(self.get(url, token=token))
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

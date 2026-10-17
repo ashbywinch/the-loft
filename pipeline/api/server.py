@@ -32,7 +32,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from document.schemas import validate_user_row_adjustments
+from document.schemas import DOCUMENT_DRAFT, validate_user_row_adjustments
 from pipeline.api import auth
 from pipeline.api.sync import (
     BATCH_ID,
@@ -677,7 +677,9 @@ def build_app(
             return JSONResponse({"ok": False, "error": "sign in to read the drafts"}, status_code=401)
         try:
             record = load_batch(batch_id, registry_dir)
-            by_pages = {tuple(b.get("pages", [])): b.get("status", "review") for b in (record.get("boundaries") or [])}
+            by_pages = {
+                tuple(b.get("pages", [])): b.get("status", DOCUMENT_DRAFT) for b in (record.get("boundaries") or [])
+            }
             # The transcription review shows only documents with a text
             # page, and only their TEXT pages (2026-08-17, user: "we just
             # don't need to show users any of the photos when they're
@@ -696,7 +698,7 @@ def build_app(
                     {
                         **document,
                         "pages": [p for p in document.get("pages", []) if p in texts],
-                        "status": by_pages.get(tuple(document.get("pages", [])), "review"),
+                        "status": by_pages.get(tuple(document.get("pages", [])), DOCUMENT_DRAFT),
                     }
                 )
             return {

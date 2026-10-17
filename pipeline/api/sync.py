@@ -23,6 +23,7 @@ from typing import Any
 
 from PIL import Image, ImageOps
 
+from document.schemas import DOCUMENT_AGREED, DOCUMENT_REJECTED, Document
 from document.word import Word
 from pipeline.detect.reader import reading_for_page
 from pipeline.htr import htr_pages_vlm
@@ -40,7 +41,7 @@ from pipeline.rows.rows import Rows
 from pipeline.store import PipelineStore
 from tools.atomic import atomic_write
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
-from tools.store import DiskStore  # noqa: F401
+from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 ROWS_JSON = "rows.json"  # the reading's rows file beside the guess (object-model Phase 1)
 WORDS_JSON = "words.json"  # the reading's words, written beside the rows
@@ -238,9 +239,9 @@ def record_confirmation(
         confirmed_dir = work_dir / batch_id / "ocr-confirmed"
         confirmed_dir.mkdir(parents=True, exist_ok=True)
         atomic_write(confirmed_dir / f"doc-{doc_index:02d}.txt", text)
-        entry: dict[str, Any] = {**document, "status": "confirmed"}
+        entry: dict[str, Any] = {**document, "status": DOCUMENT_AGREED}
     else:
-        entry = {**document, "status": "rejected"}
+        entry = {**document, "status": DOCUMENT_REJECTED}
     boundaries = [b for b in record.get("boundaries") or [] if b.get("pages") != document.get("pages")]
     boundaries.append(entry)
     record["boundaries"] = boundaries
@@ -371,7 +372,7 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
     boundaries_path = guess_dir / "boundaries.json"
     if not boundaries_path.exists():
         return []
-    boundaries = json.loads(boundaries_path.read_text(encoding="utf-8"))
+    boundaries: list[Document] = json.loads(boundaries_path.read_text(encoding="utf-8"))
     drafts: list[dict[str, Any]] = []
     for document in boundaries:
         pages = document.get("pages", [])

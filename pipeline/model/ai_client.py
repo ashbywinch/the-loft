@@ -206,6 +206,13 @@ class AIClient:
                     payload = replace(payload, temperature=0.0)
                     request.data = json.dumps(payload.to_dict()).encode("utf-8")
                     continue
+                # any other status is a HARD client error — a bad model name,
+                # an expired key, a wrong endpoint. Report it with the body,
+                # once. Letting it fall through to the empty-completion path
+                # read a 400 "Invalid model name" as "empty response from API
+                # (finish_reason=n/a)" and retried it as if transient: the real
+                # failure stayed invisible for a whole session (2026-10-19).
+                raise AIClientError(f"model API error {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from e
             if content and content.strip():
                 return content
             thinking_enabled = payload.thinking is True

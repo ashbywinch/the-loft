@@ -56,8 +56,8 @@ def make_fake_urlopen(responses: list[object]) -> tuple[Urlopen, list[dict[str, 
     return urlopen, calls
 
 
-def http_error(code: int) -> urllib.error.HTTPError:
-    return urllib.error.HTTPError("http://fake", code, f"err {code}", HTTPMessage(), io.BytesIO(b"nope"))
+def http_error(code: int, body: bytes = b"nope") -> urllib.error.HTTPError:
+    return urllib.error.HTTPError("http://fake", code, f"err {code}", HTTPMessage(), io.BytesIO(body))
 
 
 def test_chat_sends_system_user_and_returns_content() -> None:
@@ -113,6 +113,37 @@ def test_chat_retries_without_reasoning_params_on_400() -> None:
     retry = calls[1]["body"]
     assert "thinking" not in retry and "reasoning" not in retry  # both params dropped; retry budget untouched
     assert retry["temperature"] == 0.0  # the deterministic non-thinking path
+
+
+def test_chat_reports_a_hard_client_error_with_its_body() -> None:
+    """A 4xx that is not the reasoning-param case is a HARD error: report the
+    status and the body, then stop. It used to fall through to the
+    empty-completion path, so a 400 "Invalid model name" (the eval pointed at
+    the wrong gateway) read as "empty response from API (finish_reason=n/a)"
+    and was retried as if transient — the real failure stayed invisible for a
+    whole session (2026-10-19).
+
+    A non-thinking call still carries `thinking: false`, so the FIRST 400 is
+    the documented param-rejection fallback (one retry without the params);
+    the second is the hard error. The point is that the loop then STOPS, with
+    the body in the message, instead of burning the empty-completion retries.
+    """
+    body = b'{"error":{"message":"Invalid model name passed in model=dynamic/fallback2"}}'
+    urlopen, calls = make_fake_urlopen([http_error(400, body), http_error(400, body)])
+    client = AIClient(api_key="k", urlopen=urlopen, max_retries=2, _sleep=lambda _s: None)
+    with pytest.raises(AIClientError, match="model API error 400.*Invalid model name"):
+        client.chat("s", "u")
+    assert len(calls) == 2, "the param fallback, then the hard error — never the empty-completion retries"
+
+
+def test_chat_reports_an_expired_key_as_itself() -> None:
+    """A 401 is a hard error too: an expired or rotated key must say so — it
+    must never masquerade as an empty completion."""
+    urlopen, calls = make_fake_urlopen([http_error(401, b'{"error":{"message":"This API key has expired"}}')])
+    client = AIClient(api_key="k", urlopen=urlopen, max_retries=2, _sleep=lambda _s: None)
+    with pytest.raises(AIClientError, match="model API error 401.*expired"):
+        client.chat("s", "u")
+    assert len(calls) == 1
 
 
 def test_chat_rejects_malformed_response() -> None:

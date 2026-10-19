@@ -561,9 +561,7 @@ def band_prompt(index: int, of: int, numbers: list[int], so_far: list[str]) -> s
     above = "\n".join(so_far)
     prompt = (
         f"This image is band {index + 1} of {of} of one page, and it carries exactly {carried} — no others. "
-        "Return a reading for each of those rows and nothing else. Each chip carries the colour of the line it "
-        "belongs to and that line is tinted the same colour: if it is not clear which line a number goes with, "
-        "follow the colour"
+        "Return a reading for each of those rows and nothing else"
     )
     return prompt + (f". The writing above it, already read, is:\n{above}" if above else ".")
 

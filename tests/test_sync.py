@@ -21,7 +21,9 @@ from pipeline.api.sync import (
     set_page_job,
     validate_confirmation,
 )
-from pipeline.layout import Detection, build_layout, write_layout
+from pipeline.boundary import Boundary
+from pipeline.detection import Detection
+from pipeline.layout import Layout, build_layout
 from pipeline.registry import RegistryError
 from tools.atomic import atomic_write
 
@@ -177,7 +179,6 @@ def test_draft_payloads_carries_the_layout_revision(tmp_path: Path) -> None:
     at write) so the review surface can DETECT a stale layout — a rebuild
     bumps the revision, and the client refreshes when the payload's
     revision differs from the one it rendered."""
-    from pipeline.layout import write_layout_store
     from pipeline.store import PipelineStore
 
     guess = tmp_path / "adopt-0001" / "ocr-guess"
@@ -190,7 +191,7 @@ def test_draft_payloads_carries_the_layout_revision(tmp_path: Path) -> None:
     store = PipelineStore(tmp_path)
     layout = {"page": "p1.jpg", "width": 100, "height": 100, "lines": [], "unmatched": []}
     path = "adopt-0001/ocr-guess/p1.layout.json"
-    write_layout_store(layout, store, path)
+    Layout.from_dict(layout).write_store(store, path)
     drafts = draft_payloads("adopt-0001", tmp_path)
     assert drafts[0]["layouts"]["p1.jpg"]["revision"] == 1
 
@@ -250,15 +251,15 @@ def _registered_batch(tmp_path: Path, registry: Path) -> None:
 def test_record_confirmation_writes_and_updates_the_registry(tmp_path: Path) -> None:
     registry = tmp_path / "registry"
     _registered_batch(tmp_path, registry)
-    document = {"pages": ["p1.jpg"]}
+    document = Boundary(pages=["p1.jpg"])
 
     record_confirmation("adopt-0001", 1, document, "Chère Maman.", work_dir=tmp_path, registry_dir=registry)
-    record_confirmation("adopt-0001", 2, {"pages": ["p2.jpg"]}, None, work_dir=tmp_path, registry_dir=registry)
+    record_confirmation("adopt-0001", 2, Boundary(pages=["p2.jpg"]), None, work_dir=tmp_path, registry_dir=registry)
 
     record = json.loads((registry / "adopt-0001.json").read_text(encoding="utf-8"))
     assert record["boundaries"] == [
-        {"pages": ["p1.jpg"], "status": "confirmed"},
-        {"pages": ["p2.jpg"], "status": "rejected"},
+        {"pages": ["p1.jpg"], "greeting": None, "signoff": None, "status": "confirmed"},
+        {"pages": ["p2.jpg"], "greeting": None, "signoff": None, "status": "rejected"},
     ]
     assert (tmp_path / "adopt-0001" / "ocr-confirmed" / "doc-01.txt").read_text(encoding="utf-8") == "Chère Maman."
     assert not (tmp_path / "adopt-0001" / "ocr-confirmed" / "doc-02.txt").exists()  # rejected leaves no text
@@ -267,8 +268,8 @@ def test_record_confirmation_writes_and_updates_the_registry(tmp_path: Path) -> 
 def test_record_confirmation_replaces_by_pages(tmp_path: Path) -> None:
     registry = tmp_path / "registry"
     _registered_batch(tmp_path, registry)
-    record_confirmation("adopt-0001", 1, {"pages": ["p1.jpg"]}, "v1", work_dir=tmp_path, registry_dir=registry)
-    record_confirmation("adopt-0001", 1, {"pages": ["p1.jpg"]}, "v2", work_dir=tmp_path, registry_dir=registry)
+    record_confirmation("adopt-0001", 1, Boundary(pages=["p1.jpg"]), "v1", work_dir=tmp_path, registry_dir=registry)
+    record_confirmation("adopt-0001", 1, Boundary(pages=["p1.jpg"]), "v2", work_dir=tmp_path, registry_dir=registry)
     record = json.loads((registry / "adopt-0001.json").read_text(encoding="utf-8"))
     assert len(record["boundaries"]) == 1  # same pages → replaced, not duplicated
 
@@ -279,7 +280,9 @@ def test_record_confirmation_rejects_unknown_batch_without_writing(tmp_path: Pat
     registry = tmp_path / "registry"
     registry.mkdir()
     with pytest.raises(RegistryError):
-        record_confirmation("adopt-9999", 1, {"pages": ["p1.jpg"]}, "text", work_dir=tmp_path, registry_dir=registry)
+        record_confirmation(
+            "adopt-9999", 1, Boundary(pages=["p1.jpg"]), "text", work_dir=tmp_path, registry_dir=registry
+        )
     assert not (tmp_path / "adopt-9999" / "ocr-confirmed").exists()  # nothing written for the unknown batch
 
 
@@ -366,7 +369,7 @@ def test_rotate_page_fixes_the_orientation(tmp_path: Path) -> None:
             Detection(box=[50, 1000, 550, 1500], text="noise", score=0.5, words=[]),
         ],
     )
-    write_layout(layout, batch / "ocr-guess" / "p1.layout.json")
+    layout.write(batch / "ocr-guess" / "p1.layout.json")
     (batch / "ocr-guess" / "p1.selfreport.json").write_text(json.dumps([{"line": 1, "word": "one"}]), encoding="utf-8")
 
     rotate_page("adopt-0001", "p1.jpg", 1, tmp_path)
@@ -425,7 +428,7 @@ def test_rotate_page_preserves_the_per_line_orientations(tmp_path: Path) -> None
         ],
         "unmatched": [],
     }
-    write_layout(layout, batch / "ocr-guess" / "p1.layout.json")
+    Layout.from_dict(layout).write(batch / "ocr-guess" / "p1.layout.json")
 
     rotate_page("adopt-0001", "p1.jpg", 1, tmp_path)
 
@@ -443,16 +446,13 @@ def test_rotate_page_is_idempotent_and_cumulative(tmp_path: Path) -> None:
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
-    write_layout(
-        build_layout(
-            "p1.jpg",
-            600,
-            1600,
-            "line one",
-            [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
-        ),
-        batch / "ocr-guess" / "p1.layout.json",
-    )
+    build_layout(
+        "p1.jpg",
+        600,
+        1600,
+        "line one",
+        [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
+    ).write(batch / "ocr-guess" / "p1.layout.json")
 
     rotate_page("adopt-0001", "p1.jpg", 2, tmp_path)  # the reviewer pressed twice
     layout_after = json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
@@ -485,16 +485,13 @@ def test_reprocess_failure_marks_the_page(tmp_path: Path) -> None:
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
-    write_layout(
-        build_layout(
-            "p1.jpg",
-            600,
-            1600,
-            "old text",
-            [Detection(box=[50, 400, 550, 900], text="noise", score=0.4, words=[])],
-        ),
-        batch / "ocr-guess" / "p1.layout.json",
-    )
+    build_layout(
+        "p1.jpg",
+        600,
+        1600,
+        "old text",
+        [Detection(box=[50, 400, 550, 900], text="noise", score=0.4, words=[])],
+    ).write(batch / "ocr-guess" / "p1.layout.json")
     set_page_job("adopt-0001", "p1.jpg", "transcribing", tmp_path)
 
     def boom(image, **kw):
@@ -531,16 +528,13 @@ def test_rotate_page_accepts_desired_zero_rotate_back(tmp_path: Path) -> None:
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
-    write_layout(
-        build_layout(
-            "p1.jpg",
-            600,
-            1600,
-            "line one",
-            [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
-        ),
-        batch / "ocr-guess" / "p1.layout.json",
-    )
+    build_layout(
+        "p1.jpg",
+        600,
+        1600,
+        "line one",
+        [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
+    ).write(batch / "ocr-guess" / "p1.layout.json")
     assert rotate_page("adopt-0001", "p1.jpg", 1, tmp_path) is True  # rotated 90
     assert rotate_page("adopt-0001", "p1.jpg", 0, tmp_path) is True  # back to the original
     layout = json.loads((batch / "ocr-guess" / "p1.layout.json").read_text(encoding="utf-8"))
@@ -559,16 +553,13 @@ def test_rotate_page_recovers_a_half_rotated_crash(tmp_path: Path) -> None:
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
-    write_layout(
-        build_layout(
-            "p1.jpg",
-            600,
-            1600,
-            "line one",
-            [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
-        ),
-        batch / "ocr-guess" / "p1.layout.json",
-    )
+    build_layout(
+        "p1.jpg",
+        600,
+        1600,
+        "line one",
+        [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
+    ).write(batch / "ocr-guess" / "p1.layout.json")
     assert rotate_page("adopt-0001", "p1.jpg", 1, tmp_path) is True  # 90
     # simulate the crash: the image is swapped (rotated), the layout is
     # stale (the OLD dims and rotation), and the journal records the intent
@@ -577,7 +568,7 @@ def test_rotate_page_recovers_a_half_rotated_crash(tmp_path: Path) -> None:
     layout["width"] = 600
     layout["height"] = 1600
     layout["rotation"] = 0
-    write_layout(layout, batch / "ocr-guess" / "p1.layout.json")
+    Layout.from_dict(layout).write(batch / "ocr-guess" / "p1.layout.json")
     atomic_write(
         batch / "oriented" / "p1.rotate.json",
         '{"from": 0, "rotation": 90}\n',
@@ -600,16 +591,13 @@ def test_rotate_page_discards_a_premature_journal(tmp_path: Path) -> None:
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
-    write_layout(
-        build_layout(
-            "p1.jpg",
-            600,
-            1600,
-            "line one",
-            [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
-        ),
-        batch / "ocr-guess" / "p1.layout.json",
-    )
+    build_layout(
+        "p1.jpg",
+        600,
+        1600,
+        "line one",
+        [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
+    ).write(batch / "ocr-guess" / "p1.layout.json")
     # the premature journal: the intent never reached the image
     atomic_write(batch / "oriented" / "p1.rotate.json", '{"from": 0, "rotation": 90}\n')
     assert rotate_page("adopt-0001", "p1.jpg", 1, tmp_path) is True  # the normal rotate proceeds

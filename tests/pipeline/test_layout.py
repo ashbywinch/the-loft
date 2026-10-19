@@ -13,23 +13,43 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from document.page_size import PageSize
+from pipeline.detection import Detection
+from pipeline.detection_pass import DetectionPass
+from pipeline.detection_word import DetectionWord
 from pipeline.layout import (
     MATCH_THRESHOLD,
-    Detection,
+    Layout,
     associate_lines,
     build_layout,
-    layout_detections,
     load_layout,
     normalize,
     rotate_detections,
     word_conf,
     words,
-    write_layout,
 )
+from pipeline.layout_line import BOX_SOURCE_MULTI, BOX_SOURCE_REPORT_UNCONFIRMED, LayoutLine
+from pipeline.layout_word import LayoutWord
+from pipeline.line_match import LineMatch
+from pipeline.model.orientation_line import OrientationLine
+from pipeline.model.unsure_word import UnsureWord
+from pipeline.unmatched_line import UnmatchedLine
 
 
 def _det(box: list[float], text: str, score: float = 0.9) -> Detection:
     return Detection(box=box, text=text, score=score, words=[])
+
+
+def _box(record: LineMatch | LayoutLine) -> list[float]:
+    """A record's box — a test asserting on one asserts the record is located."""
+    assert record.box is not None, f"{record} carries no box"
+    return record.box
+
+
+def _words(line: LayoutLine) -> list[LayoutWord]:
+    """A line's words — a test asserting on them asserts the line carries them."""
+    assert line.words is not None, f"line {line.index} carries no words"
+    return line.words
 
 
 class TestNormalize:
@@ -74,23 +94,23 @@ class TestAssociateLines:
             _det([0, 200, 100, 220], "Chère Maman"),
             _det([0, 300, 100, 320], "The body of the letter follows"),
         ]
-        matches, unmatched = associate_lines(vlm, dets)
-        assert unmatched == []
-        by_index = {m["vlm_index"]: m for m in matches}
-        assert by_index[0]["rec_text"] == "Chère Maman"
-        assert by_index[2]["rec_text"] == "Postmark 27.9.63"
+        association = associate_lines(vlm, dets)
+        assert association.unmatched == []
+        by_index = {m.vlm_index: m for m in association.matches}
+        assert by_index[0].rec_text == "Chère Maman"
+        assert by_index[2].rec_text == "Postmark 27.9.63"
         # matches come back in VLM line order
-        assert [m["vlm_index"] for m in matches] == [0, 1, 2]
+        assert [m.vlm_index for m in association.matches] == [0, 1, 2]
 
     def test_noisy_rec_text_tolerated(self) -> None:
         # the rec text noise is the confidence signal — the matcher must
         # still anchor lines whose overlap clears the threshold
         vlm = ["my fiist theory besson today", "a completely different line"]
         dets = [_det([0, 0, 10, 10], "my fiist theory besson today.")]
-        matches, unmatched = associate_lines(vlm, dets)
-        assert len(matches) == 1
-        assert matches[0]["vlm_index"] == 0
-        assert unmatched == []
+        association = associate_lines(vlm, dets)
+        assert len(association.matches) == 1
+        assert association.matches[0].vlm_index == 0
+        assert association.unmatched == []
 
     def test_below_threshold_fills_positionally(self) -> None:
         # the rec text never matched — the fallback still anchors the line
@@ -98,11 +118,11 @@ class TestAssociateLines:
         # the box is real, the text anchor is not)
         vlm = ["the quick brown fox"]
         dets = [_det([0, 0, 200, 20], "zzz qqq wwww eeee rrrr")]
-        matches, unmatched = associate_lines(vlm, dets)
-        assert len(matches) == 1
-        assert matches[0]["box_source"] == "positional"
-        assert matches[0]["box"] == [0, 0, 200, 20]
-        assert unmatched == []
+        association = associate_lines(vlm, dets)
+        assert len(association.matches) == 1
+        assert association.matches[0].box_source == "positional"
+        assert association.matches[0].box == [0, 0, 200, 20]
+        assert association.unmatched == []
 
     def test_one_to_one_each_direction(self) -> None:
         # one VLM line may not claim two detector lines — the second
@@ -112,11 +132,11 @@ class TestAssociateLines:
             _det([0, 0, 10, 10], "line alpha"),
             _det([0, 20, 10, 30], "line alpha"),
         ]
-        matches, unmatched = associate_lines(vlm, dets)
-        assert len(matches) == 2
-        sources = sorted(m["box_source"] for m in matches)
+        association = associate_lines(vlm, dets)
+        assert len(association.matches) == 2
+        sources = sorted(m.box_source for m in association.matches)
         assert sources == ["content", "positional"]
-        assert unmatched == []
+        assert association.unmatched == []
 
     def test_positional_fill_is_reading_order(self) -> None:
         # the k-th boxless VLM line takes the k-th unmatched detection by
@@ -127,12 +147,12 @@ class TestAssociateLines:
             _det([0, 0, 100, 20], "noise yyy"),
             _det([0, 100, 100, 120], "noise xxx"),
         ]
-        matches, unmatched = associate_lines(vlm, dets)
-        by_index = {m["vlm_index"]: m for m in matches}
-        assert by_index[0]["box"][1] == 0
-        assert by_index[1]["box"][1] == 100
-        assert by_index[2]["box"][1] == 200
-        assert unmatched == []
+        association = associate_lines(vlm, dets)
+        by_index = {m.vlm_index: m for m in association.matches}
+        assert _box(by_index[0])[1] == 0
+        assert _box(by_index[1])[1] == 100
+        assert _box(by_index[2])[1] == 200
+        assert association.unmatched == []
 
     def test_extra_detections_stay_unmatched(self) -> None:
         vlm = ["only line"]
@@ -141,9 +161,9 @@ class TestAssociateLines:
             _det([0, 100, 10, 110], "extra region"),
             _det([0, 200, 10, 210], "another extra"),
         ]
-        matches, unmatched = associate_lines(vlm, dets)
-        assert len(matches) == 1
-        assert len(unmatched) == 2
+        association = associate_lines(vlm, dets)
+        assert len(association.matches) == 1
+        assert len(association.unmatched) == 2
 
     def test_content_match_never_overridden(self) -> None:
         # the fallback fills only BOXLESS lines — a content anchor always
@@ -154,11 +174,11 @@ class TestAssociateLines:
             _det([0, 50, 10, 60], "line beta"),
             _det([0, 200, 10, 210], "stray mark"),
         ]
-        matches, unmatched = associate_lines(vlm, dets)
-        by_index = {m["vlm_index"]: m for m in matches}
-        assert by_index[0]["box_source"] == "content"
-        assert by_index[1]["box_source"] == "content"
-        assert unmatched == [dets[2]]
+        association = associate_lines(vlm, dets)
+        by_index = {m.vlm_index: m for m in association.matches}
+        assert by_index[0].box_source == "content"
+        assert by_index[1].box_source == "content"
+        assert association.unmatched == [dets[2]]
 
 
 class TestWordConf:
@@ -189,32 +209,32 @@ class TestBuildLayout:
             _det([300, 400, 400, 420], "orphan detection line"),
         ]
         layout = build_layout("page-03.jpg", 1000, 500, vlm, dets)
-        assert layout["page"] == "page-03.jpg"
-        assert layout["width"] == 1000
-        assert layout["height"] == 500
-        assert [line["text"] for line in layout["lines"]] == [
+        assert layout.page == "page-03.jpg"
+        assert layout.width == 1000
+        assert layout.height == 500
+        assert [line.text for line in layout.lines] == [
             "Chère Maman,",
             "Nous t'écrivons pour te dire que tout va bien",
         ]
         # the first line matched the detector's box
-        assert layout["lines"][0]["box"] == [0, 50, 100, 70]
-        assert layout["lines"][0]["words"][0] == {"word": "Chère", "box": None, "conf": 1.0}
+        assert layout.lines[0].box == [0, 50, 100, 70]
+        assert _words(layout.lines[0])[0] == LayoutWord(word="Chère", box=None, conf=1.0)
         # the unmatched detector line rides along with conf 0
-        assert layout["unmatched"] == [{"box": [300, 400, 400, 420], "text": "orphan detection line", "conf": 0.0}]
+        assert layout.unmatched == [UnmatchedLine(box=[300, 400, 400, 420], text="orphan detection line", conf=0.0)]
 
     def test_unmatched_vlm_line_has_no_box(self) -> None:
         vlm = "line one\nline two that no detector line claims"
         dets = [_det([0, 0, 10, 10], "line one")]
         layout = build_layout("p.jpg", 100, 100, vlm, dets)
-        assert layout["lines"][1]["box"] is None
-        assert layout["lines"][1]["conf"] == 0.0
-        assert all(w["conf"] == 0.0 for w in layout["lines"][1]["words"])
+        assert layout.lines[1].box is None
+        assert layout.lines[1].conf == 0.0
+        assert all(w.conf == 0.0 for w in _words(layout.lines[1]))
 
     def test_blank_lines_skipped(self) -> None:
         vlm = "\nline one\n\nline two\n"
         dets = [_det([0, 0, 10, 10], "line one"), _det([0, 20, 10, 30], "line two")]
         layout = build_layout("p.jpg", 100, 100, vlm, dets)
-        assert len(layout["lines"]) == 2
+        assert len(layout.lines) == 2
 
 
 class TestSelfReportFlags:
@@ -225,22 +245,22 @@ class TestSelfReportFlags:
 
     def test_selfreport_drives_the_flags(self) -> None:
         dets = [_det([0, 0, 10, 10], "line one here"), _det([0, 20, 10, 30], "second line with a doubtful word")]
-        report = [{"line": 1, "word": "one"}, {"line": 2, "word": "doubtful"}]
+        report = [UnsureWord(line=1, word="one"), UnsureWord(line=2, word="doubtful")]
         layout = build_layout("p.jpg", 100, 100, self.VLM, dets, selfreport=report)
-        confs = [w["conf"] for line in layout["lines"] for w in line["words"]]
+        confs = [w.conf for line in layout.lines for w in _words(line)]
         # "one" and "doubtful" flag; the rest are the model's confident words
-        assert layout["lines"][0]["words"][1] == {"word": "one", "box": None, "conf": 0.0}
-        assert layout["lines"][1]["words"][-2] == {"word": "doubtful", "box": None, "conf": 0.0}
+        assert _words(layout.lines[0])[1] == LayoutWord(word="one", box=None, conf=0.0)
+        assert _words(layout.lines[1])[-2] == LayoutWord(word="doubtful", box=None, conf=0.0)
         assert sum(1 for c in confs if c == 0.0) == 2
 
     def test_struck_words_always_flag(self) -> None:
         vlm = "a ~~reading~~ lamp"
         dets = [_det([0, 0, 10, 10], "a reading lamp")]
         layout = build_layout("p.jpg", 100, 100, vlm, dets, selfreport=[])
-        struck = next(w for w in layout["lines"][0]["words"] if "reading" in w["word"])
-        assert struck["conf"] == 0.0
+        struck = next(w for w in _words(layout.lines[0]) if "reading" in w.word)
+        assert struck.conf == 0.0
         # a clear word does not flag under an empty self-report
-        assert layout["lines"][0]["words"][0]["conf"] == 1.0
+        assert _words(layout.lines[0])[0].conf == 1.0
 
     def test_no_selfreport_falls_back_to_cross_reader(self) -> None:
         # backward compatible: without a self-report the cross-reader
@@ -248,49 +268,58 @@ class TestSelfReportFlags:
         vlm = "the quick brown fiist theory"
         dets = [_det([0, 0, 10, 10], "the quick brown first theory")]
         layout = build_layout("p.jpg", 100, 100, vlm, dets)
-        confs = [w["conf"] for w in layout["lines"][0]["words"]]
+        confs = [w.conf for w in _words(layout.lines[0])]
         assert confs == [1.0, 1.0, 1.0, 0.0, 1.0]  # fiist disagrees, the rest agree
 
     def test_selfreport_line_numbers_are_one_based(self) -> None:
         # the model cites 1-based lines; the layout lines are 0-based
         dets = [_det([0, 0, 10, 10], "line one here"), _det([0, 20, 10, 30], "second line")]
-        report = [{"line": 2, "word": "second"}]
+        report = [UnsureWord(line=2, word="second")]
         layout = build_layout("p.jpg", 100, 100, self.VLM, dets, selfreport=report)
-        assert layout["lines"][1]["words"][0]["conf"] == 0.0
-        assert layout["lines"][0]["words"][0]["conf"] == 1.0
+        assert _words(layout.lines[1])[0].conf == 0.0
+        assert _words(layout.lines[0])[0].conf == 1.0
 
     def test_out_of_range_and_junk_entries_ignored(self) -> None:
         dets = [_det([0, 0, 10, 10], "line one here")]
-        report = [{"line": 99, "word": "nope"}, {"line": "x", "word": "y"}, {"word": "no-line"}]
+        report = [
+            UnsureWord(line=99, word="nope"),
+            UnsureWord(line=0, word="y"),
+            UnsureWord(line=1, word="no-line"),
+        ]
         layout = build_layout("p.jpg", 100, 100, "line one here", dets, selfreport=report)
-        assert all(w["conf"] == 1.0 for w in layout["lines"][0]["words"])
+        assert all(w.conf == 1.0 for w in _words(layout.lines[0]))
+        # a junk self-report record never becomes an UnsureWord — the parse seam refuses it
+        with pytest.raises(ValueError, match="invalid literal"):
+            UnsureWord.from_dict({"line": "x", "word": "y"})
+        with pytest.raises(KeyError):
+            UnsureWord.from_dict({"word": "no-line"})
 
 
 class TestWriteLoadLayout:
     def test_atomic_round_trip(self, tmp_path) -> None:
         layout = build_layout("p.jpg", 100, 100, "one line", [_det([0, 0, 100, 20], "one line")])
         path = tmp_path / "p.layout.json"
-        write_layout(layout, path)
-        assert json.loads(path.read_text(encoding="utf-8")) == layout
+        layout.write(path)
+        assert json.loads(path.read_text(encoding="utf-8")) == layout.to_dict()
         assert load_layout(path) == layout
 
-    def test_write_layout_store_stamps_the_store_version(self, tmp_path) -> None:
+    def test_write_store_stamps_the_store_version(self, tmp_path) -> None:
         """The layout's revision (2026-08-22): every store write stamps
         the version — a rebuild creates a NEW revision, and the drafts
         payload carries it so the review surface can DETECT a stale
         layout instead of rendering yesterday's boxes (the architectural
         gap: five copies of a layout, no way to tell which is newest).
         The same path re-run: 1, then 2."""
-        from pipeline.layout import load_layout_store, write_layout_store
+        from pipeline.layout import load_layout_store
         from pipeline.store import PipelineStore
 
         store = PipelineStore(tmp_path)
-        layout = {"page": "p1.jpg", "width": 100, "height": 100, "lines": [], "unmatched": []}
+        layout = Layout("p1.jpg", 100, 100, [], [])
         path = "b/ocr-guess/p1.layout.json"
-        write_layout_store(layout, store, path)
-        assert load_layout_store(store, path)["revision"] == 1
-        write_layout_store(layout, store, path)
-        assert load_layout_store(store, path)["revision"] == 2
+        layout.write_store(store, path)
+        assert load_layout_store(store, path).to_dict()["revision"] == 1
+        layout.write_store(store, path)
+        assert load_layout_store(store, path).to_dict()["revision"] == 2
 
     def test_every_line_carries_its_index(self, tmp_path) -> None:
         """(user: "the transcript on screen is just 'A picture
@@ -299,7 +328,7 @@ class TestWriteLoadLayout:
         dual-pane links on ``line.index`` — and the pipeline's writers did
         not all emit it. The writer stamps the
         position; the reader assigns it for the files already on disk."""
-        layout = {
+        wire = {
             "page": "p.jpg",
             "width": 100,
             "height": 100,
@@ -310,7 +339,7 @@ class TestWriteLoadLayout:
             "unmatched": [],
         }
         path = tmp_path / "p.layout.json"
-        write_layout(layout, path)
+        Layout.from_dict(wire).write(path)
         # the WRITE stamped the position into the file
         on_disk = json.loads(path.read_text(encoding="utf-8"))
         assert [ln["index"] for ln in on_disk["lines"]] == [0, 1]
@@ -325,18 +354,18 @@ class TestWriteLoadLayout:
         q = tmp_path / "q.layout.json"
         q.write_text(json.dumps(bare), encoding="utf-8")
         loaded = load_layout(q)
-        assert [ln["index"] for ln in loaded["lines"]] == [0, 1]
+        assert [ln.index for ln in loaded.lines] == [0, 1]
         # the store path too — the drafts payload's actual consumer
         # (review finding, PR 30: the plain-file assertions left the
         # versioned store's index assignment untested)
-        from pipeline.layout import load_layout_store, write_layout_store
+        from pipeline.layout import load_layout_store
         from pipeline.store import PipelineStore
 
         store = PipelineStore(tmp_path)
         spath = "b/ocr-guess/p.layout.json"
-        write_layout_store(bare, store, spath)
+        Layout.from_dict(bare).write_store(store, spath)
         on_store = load_layout_store(store, spath)
-        assert [ln["index"] for ln in on_store["lines"]] == [0, 1]
+        assert [ln.index for ln in on_store.lines] == [0, 1]
 
 
 def test_layout_payload_declares_the_box_frame() -> None:
@@ -344,9 +373,8 @@ def test_layout_payload_declares_the_box_frame() -> None:
     ORIGINAL image's pixels, the same space as width/height — so a reader
     can check, never assume: a box in the wrong frame looks valid (right
     size, right proportions, gates pass)."""
-    from pipeline.layout import Layout
 
-    layout = Layout("p.jpg", 100, 200, [], [])
+    layout = Layout.single("p.jpg", 100, 200, "", [])
     assert layout.to_dict()["box_space"] == "original-image"
 
 
@@ -357,36 +385,39 @@ def test_validate_layout_rejects_a_boxless_line() -> None:
     the write, never reach the review as a flag-riddled layout."""
     from tools.gates import validate_layout
 
-    layout = {
-        "page": "p1.jpg",
-        "width": 100,
-        "height": 100,
-        "lines": [
-            {"index": 0, "text": "boxed line", "box": [0, 0, 50, 10], "conf": 1.0, "words": []},
-            {"index": 1, "text": "boxless line", "box": None, "conf": 0.0, "words": []},
-        ],
-        "unmatched": [],
-    }
+    layout = Layout.from_dict(
+        {
+            "page": "p1.jpg",
+            "width": 100,
+            "height": 100,
+            "lines": [
+                {"index": 0, "text": "boxed line", "box": [0, 0, 50, 10], "conf": 1.0, "words": []},
+                {"index": 1, "text": "boxless line", "box": None, "conf": 0.0, "words": []},
+            ],
+            "unmatched": [],
+        }
+    )
     assert validate_layout(layout)
 
 
-def test_write_layout_store_refuses_a_boxless_line(tmp_path: Path) -> None:
+def test_write_store_refuses_a_boxless_line(tmp_path: Path) -> None:
     """The write gate: a layout with a boxless line is
     refused — the pipeline run fails loudly for that page, and the
     reviewer never sees a half-anchored layout."""
-    from pipeline.layout import write_layout_store
     from pipeline.store import PipelineStore
 
     store = PipelineStore(tmp_path)
-    layout = {
-        "page": "p1.jpg",
-        "width": 100,
-        "height": 100,
-        "lines": [{"index": 0, "text": "boxless line", "box": None, "conf": 0.0, "words": []}],
-        "unmatched": [],
-    }
+    layout = Layout.from_dict(
+        {
+            "page": "p1.jpg",
+            "width": 100,
+            "height": 100,
+            "lines": [{"index": 0, "text": "boxless line", "box": None, "conf": 0.0, "words": []}],
+            "unmatched": [],
+        }
+    )
     with pytest.raises(ValueError, match="boxless"):
-        write_layout_store(layout, store, "b/ocr-guess/p1.layout.json")
+        layout.write_store(store, "b/ocr-guess/p1.layout.json")
 
 
 class TestRotateDetections:
@@ -424,7 +455,7 @@ class TestRotateDetections:
         assert out[0]["text"] == "first"
 
 
-class TestLayoutDetections:
+class TestDetections:
     def test_reconstruction_round_trip(self) -> None:
         layout = build_layout(
             "p.jpg",
@@ -433,15 +464,15 @@ class TestLayoutDetections:
             "line one\nline two",
             [_det([0, 0, 100, 20], "line one"), _det([0, 50, 120, 70], "noise")],
         )
-        dets = layout_detections(layout)
+        dets = layout.detections()
         assert len(dets) == 2
         by_box = {tuple(d["box"]): d for d in dets}
         assert by_box[(0, 0, 100, 20)]["text"] == "line one"
         assert by_box[(0, 50, 120, 70)]["text"] == "noise"
         # re-running the association on the reconstruction reproduces the layout
         rebuilt = build_layout("p.jpg", 100, 100, "line one\nline two", dets)
-        assert rebuilt["lines"][0]["box"] == layout["lines"][0]["box"]
-        assert rebuilt["lines"][0]["box_source"] == layout["lines"][0]["box_source"]
+        assert rebuilt.lines[0].box == layout.lines[0].box
+        assert rebuilt.lines[0].box_source == layout.lines[0].box_source
 
 
 def test_threshold_is_named() -> None:
@@ -466,11 +497,11 @@ def test_build_layout_uses_the_vlm_boxes_when_present(tmp_path: Path) -> None:
         [],  # no detections at all — the VLM geometry stands alone
         vlm_boxes={0: [219, 496, 760, 526], 1: [234, 513, 733, 543]},
     )
-    assert layout["lines"][0]["box"] == [219.0, 992.0, 760.0, 1052.0]  # x*1000/1000, y*2000/1000
-    assert layout["lines"][0]["box_source"] == "report"
-    assert layout["lines"][1]["box_source"] == "report"
+    assert layout.lines[0].box == [219.0, 992.0, 760.0, 1052.0]  # x*1000/1000, y*2000/1000
+    assert layout.lines[0].box_source == "report"
+    assert layout.lines[1].box_source == "report"
     # a line the VLM gave no box for falls back to the old association
-    assert layout["lines"][0]["text"] == "piano-practising facilities. At the"
+    assert layout.lines[0].text == "piano-practising facilities. At the"
 
 
 def test_build_layout_without_vlm_boxes_keeps_the_association(tmp_path: Path) -> None:
@@ -478,8 +509,8 @@ def test_build_layout_without_vlm_boxes_keeps_the_association(tmp_path: Path) ->
 
     vlm_text = "line one\nline two"
     layout = build_layout("p1.jpg", 100, 200, vlm_text, [])
-    assert layout["lines"][0]["box"] is None  # no detections, no geometry — boxless
-    assert layout["lines"][0].get("box_source") is None  # no anchor, no source label
+    assert layout.lines[0].box is None  # no detections, no geometry — boxless
+    assert layout.lines[0].box_source is None  # no anchor, no source label
 
 
 def test_load_vlm_boxes_reads_the_sidecar(tmp_path: Path) -> None:
@@ -500,10 +531,9 @@ def test_load_vlm_boxes_reads_the_sidecar(tmp_path: Path) -> None:
     assert load_vlm_boxes(nolines) is None
 
 
-def test_layout_detections_keeps_the_vlm_text_as_the_anchor(tmp_path: Path) -> None:
+def test_detections_keeps_the_vlm_text_as_the_anchor(tmp_path: Path) -> None:
     """The rotation's rebuild re-associates VLM-anchored lines exactly —
     their OWN text is the content anchor (no rec text exists for them)."""
-    from pipeline.layout import build_layout, layout_detections
 
     layout = build_layout(
         "p1.jpg",
@@ -513,9 +543,9 @@ def test_layout_detections_keeps_the_vlm_text_as_the_anchor(tmp_path: Path) -> N
         [],
         vlm_boxes={0: [0, 0, 100, 100]},
     )
-    dets = layout_detections(layout)
+    dets = layout.detections()
     assert dets[0]["text"] == "line one"
-    assert dets[0]["box"] == layout["lines"][0]["box"]
+    assert dets[0]["box"] == layout.lines[0].box
 
 
 def test_admission_gate_requires_real_text_at_the_orientation() -> None:
@@ -537,12 +567,12 @@ def test_remap_box_maps_back_to_the_original_frame() -> None:
     # 200x100 original; rotated -90° (clockwise, expand) the frame is
     # 100x200. A box at the top of the rotated frame (y=0-20) maps back
     # to the original's LEFT edge, vertically centered.
-    box = remap_box([40, 0, 60, 20], 90, (200, 100), (100, 200))
+    box = remap_box([40, 0, 60, 20], 90, PageSize(200, 100), PageSize(100, 200))
     assert box[0] < 5  # the far edge touches the left side (0)
     assert 30 < box[1] < 70 and 30 < box[3] < 70  # y near the center (50)
     # 270° (CCW): the top of the rotated frame maps back to the original's
     # right edge — the mirror of the 90° case.
-    box270 = remap_box([40, 0, 60, 20], 270, (200, 100), (100, 200))
+    box270 = remap_box([40, 0, 60, 20], 270, PageSize(200, 100), PageSize(100, 200))
     assert box270[2] > 195  # the far edge touches the right side (200)
     assert 30 < box270[1] < 70 and 30 < box270[3] < 70
 
@@ -554,16 +584,16 @@ def test_admit_and_remap_keeps_only_real_text() -> None:
     from pipeline.layout import admit_and_remap
 
     dets: list[Detection] = [
-        {"box": [40, 0, 60, 20], "text": "HERNSPETH HOUSE", "score": 0.93, "words": []},
-        {"box": [0, 0, 10, 10], "text": "mo", "score": 0.5, "words": []},
-        {"box": [5, 5, 15, 15], "text": "HERNSPETH HOUSE", "score": 0.5, "words": []},
-        {"box": [10, 10, 20, 20], "text": "m", "score": 0.99, "words": []},
+        Detection(box=[40, 0, 60, 20], text="HERNSPETH HOUSE", score=0.93, words=[]),
+        Detection(box=[0, 0, 10, 10], text="mo", score=0.5, words=[]),
+        Detection(box=[5, 5, 15, 15], text="HERNSPETH HOUSE", score=0.5, words=[]),
+        Detection(box=[10, 10, 20, 20], text="m", score=0.99, words=[]),
     ]
-    kept, rejected = admit_and_remap(dets, 90, (200, 100), (100, 200))
-    assert len(kept) == 1
-    assert kept[0]["text"] == "HERNSPETH HOUSE"
-    assert kept[0]["box"][0] < 5  # remapped to the original frame (left edge — 2026-08-20 fix)
-    assert len(rejected) == 3
+    admission = admit_and_remap(dets, 90, PageSize(200, 100), PageSize(100, 200))
+    assert len(admission.kept) == 1
+    assert admission.kept[0]["text"] == "HERNSPETH HOUSE"
+    assert admission.kept[0]["box"][0] < 5  # remapped to the original frame (left edge — 2026-08-20 fix)
+    assert len(admission.rejected) == 3
 
 
 def test_multi_layout_words_carry_text_and_flag_weak_lines() -> None:
@@ -580,29 +610,36 @@ def test_multi_layout_words_carry_text_and_flag_weak_lines() -> None:
         200,
         100,
         [
-            (
-                0,
-                [
-                    {
-                        "text": "weak line",
-                        "box": [1, 1, 5, 5],
-                        "score": 0.9,
-                        "words": [{"box": [1, 1, 2, 2]}, {"box": [3, 1, 5, 2]}],
-                    }
+            DetectionPass(
+                degrees=0,
+                lines=[
+                    Detection(
+                        box=[1, 1, 5, 5],
+                        text="weak line",
+                        score=0.9,
+                        words=[DetectionWord(box=[1, 1, 2, 2]), DetectionWord(box=[3, 1, 5, 2])],
+                    )
                 ],
             ),
-            (
-                270,
-                [{"text": "clean", "box": [10, 10, 20, 20], "score": 1.0, "words": [{"box": [10, 10, 20, 20]}]}],
+            DetectionPass(
+                degrees=270,
+                lines=[
+                    Detection(
+                        box=[10, 10, 20, 20],
+                        text="clean",
+                        score=1.0,
+                        words=[DetectionWord(box=[10, 10, 20, 20])],
+                    )
+                ],
             ),
         ],
     )
-    weak = layout["lines"][0]
-    assert [w["word"] for w in weak["words"]] == ["weak", "line"]
-    assert all(w["conf"] == 0.0 for w in weak["words"])  # the doubt + the check button
-    clean = layout["lines"][1]
-    assert clean["words"][0]["word"] == "clean"
-    assert clean["words"][0]["conf"] == 1.0  # a confident read stays clean
+    weak = layout.lines[0]
+    assert [w.word for w in _words(weak)] == ["weak", "line"]
+    assert all(w.conf == 0.0 for w in _words(weak))  # the doubt + the check button
+    clean = layout.lines[1]
+    assert _words(clean)[0].word == "clean"
+    assert _words(clean)[0].conf == 1.0  # a confident read stays clean
 
 
 def test_multi_layout_orientation_comes_from_the_pass_not_the_report() -> None:
@@ -619,19 +656,25 @@ def test_multi_layout_orientation_comes_from_the_pass_not_the_report() -> None:
         1000,
         1000,
         [
-            (0, [{"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []}]),
-            (270, [{"text": "onorrow", "box": [501, 201, 899, 399], "score": 0.9, "words": []}]),
+            DetectionPass(
+                degrees=0,
+                lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
+            ),
+            DetectionPass(
+                degrees=270,
+                lines=[Detection(box=[501, 201, 899, 399], text="onorrow", score=0.9, words=[])],
+            ),
         ],
         report_lines=[
-            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
-            {"index": 1, "box": [500, 200, 900, 400], "degrees": 90},  # the report says 90°
+            OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
+            OrientationLine(index=1, box=[500, 200, 900, 400], degrees=90),  # the report says 90°
         ],
         vlm_text="POST CARD\nWe are from beauford",
     )
-    message = [ln for ln in layout["lines"] if "beauford" in ln["text"]]
+    message = [ln for ln in layout.lines if "beauford" in ln.text]
     assert message, "the message line must be present"
-    assert message[0]["orientation"] == 270, (
-        f"the orientation must be 270 (the pass that read it), was {message[0]['orientation']}"
+    assert message[0].orientation == 270, (
+        f"the orientation must be 270 (the pass that read it), was {message[0].orientation}"
     )
 
 
@@ -646,51 +689,46 @@ def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
     from pipeline.layout import multi_layout
 
     report_lines = [
-        {"text": "POST CARD", "box": [100, 50, 300, 100], "degrees": 0},
-        {"text": "Printed in Great Britain", "box": [100, 110, 400, 140], "degrees": 0},
-        {"text": "We are from beauford", "box": [500, 200, 900, 400], "degrees": 270},
+        OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0, text="POST CARD"),
+        OrientationLine(index=1, box=[100, 110, 400, 140], degrees=0, text="Printed in Great Britain"),
+        OrientationLine(index=2, box=[500, 200, 900, 400], degrees=270, text="We are from beauford"),
     ]
     passes = [
-        (
-            0,
-            [
-                {"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []},
-                {"text": "Printed in Great Britain", "box": [101, 111, 399, 139], "score": 0.98, "words": []},
-                {"text": "HERNSPETH", "box": [150, 500, 200, 900], "score": 0.95, "words": []},  # the model missed this
+        DetectionPass(
+            degrees=0,
+            lines=[
+                Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[]),
+                Detection(box=[101, 111, 399, 139], text="Printed in Great Britain", score=0.98, words=[]),
+                # the model missed this
+                Detection(box=[150, 500, 200, 900], text="HERNSPETH", score=0.95, words=[]),
             ],
         ),
-        (
-            270,
-            [
-                {  # the rec's fragment of the message
-                    "text": "onorrow",
-                    "box": [501, 201, 899, 399],
-                    "score": 0.9,
-                    "words": [],
-                },
-            ],
+        DetectionPass(
+            degrees=270,
+            # the rec's fragment of the message
+            lines=[Detection(box=[501, 201, 899, 399], text="onorrow", score=0.9, words=[])],
         ),
     ]
     layout = multi_layout("p1.jpg", 1000, 1000, passes, report_lines=report_lines)
-    texts = [ln["text"] for ln in layout["lines"]]
+    texts = [ln.text for ln in layout.lines]
     # physical reading order (2026-08-20): the reading-start corner sorts
     # top-to-bottom — POST CARD (y50), Printed (y110), the 270° message
     # (start y400), then the extra HERNSPETH (y500). The fragment duplicate
     # of the anchored message line drops.
     assert texts == ["POST CARD", "Printed in Great Britain", "We are from beauford", "HERNSPETH"]
-    by_text = {ln["text"]: ln for ln in layout["lines"]}
+    by_text = {ln.text: ln for ln in layout.lines}
     # every line has a box; the anchored lines carry the MODEL's box (scaled
     # from the normalized 0-1000 frame) — the box holds the words it claims
-    assert by_text["POST CARD"]["box"] == [100.0, 50.0, 300.0, 100.0]
-    assert all(ln["box"] for ln in layout["lines"])
+    assert by_text["POST CARD"].box == [100.0, 50.0, 300.0, 100.0]
+    assert all(ln.box for ln in layout.lines)
     # the rec agreed on the header -> confident; the message -> the rec's
     # fragment did not agree -> flagged (the honest doubt)
-    assert all(w["conf"] == 1.0 for w in by_text["POST CARD"]["words"])
-    assert all(w["conf"] == 0.0 for w in by_text["We are from beauford"]["words"])
-    assert by_text["We are from beauford"]["orientation"] == 270
+    assert all(w.conf == 1.0 for w in _words(by_text["POST CARD"]))
+    assert all(w.conf == 0.0 for w in _words(by_text["We are from beauford"]))
+    assert by_text["We are from beauford"].orientation == 270
     # the model-missed rec line stays, flagged, at its pass orientation
-    assert by_text["HERNSPETH"]["orientation"] == 0
-    assert all(w["conf"] == 0.0 for w in by_text["HERNSPETH"]["words"])
+    assert by_text["HERNSPETH"].orientation == 0
+    assert all(w.conf == 0.0 for w in _words(by_text["HERNSPETH"]))
 
 
 def test_anchor_prefers_the_disjoint_positional_ink_when_the_rec_read_the_line() -> None:
@@ -706,15 +744,23 @@ def test_anchor_prefers_the_disjoint_positional_ink_when_the_rec_read_the_line()
     from pipeline.layout import Anchor
 
     anchor = Anchor(
-        report_line={"text": "Last term I was called upon to play in t", "box": [220, 481, 790, 494], "degrees": 0},
-        match={
-            "vlm": "Last term I was called upon to play in t",
-            "vlm_index": 10,
-            "box": [560, 2600, 2010, 2660],  # the rec's ink — the REAL region
-            "box_source": "positional",
-            "orientation": 0,
-            "rec_words": ["last", "term", "i", "was", "called", "upon", "to", "play", "in", "the", "college", "opera"],
-        },
+        report_line=OrientationLine(
+            index=10,
+            box=[220, 481, 790, 494],
+            degrees=0,
+            text="Last term I was called upon to play in t",
+        ),
+        match=LineMatch(
+            vlm="Last term I was called upon to play in t",
+            vlm_index=10,
+            box=[560, 2600, 2010, 2660],  # the rec's ink — the REAL region
+            rec_text="",
+            rec_score=0.0,
+            rec_words=["last", "term", "i", "was", "called", "upon", "to", "play", "in", "the", "college", "opera"],
+            det_words=[],
+            box_source="positional",
+            orientation=0,
+        ),
         text="Last term I was called upon to play in the Orchestra",
         width=2544,
         height=4642,
@@ -735,15 +781,23 @@ def test_anchor_disjoint_positional_with_unrelated_reading_keeps_the_report_box(
     from pipeline.layout import Anchor
 
     anchor = Anchor(
-        report_line={"text": "Last term I was called upon to play in t", "box": [220, 481, 790, 494], "degrees": 0},
-        match={
-            "vlm": "Last term I was called upon to play in t",
-            "vlm_index": 10,
-            "box": [560, 2600, 2010, 2660],
-            "box_source": "positional",
-            "orientation": 0,
-            "rec_words": ["ortra", "for", "3", "eope"],  # the rec read a DIFFERENT line there
-        },
+        report_line=OrientationLine(
+            index=10,
+            box=[220, 481, 790, 494],
+            degrees=0,
+            text="Last term I was called upon to play in t",
+        ),
+        match=LineMatch(
+            vlm="Last term I was called upon to play in t",
+            vlm_index=10,
+            box=[560, 2600, 2010, 2660],
+            rec_text="",
+            rec_score=0.0,
+            rec_words=["ortra", "for", "3", "eope"],  # the rec read a DIFFERENT line there
+            det_words=[],
+            box_source="positional",
+            orientation=0,
+        ),
         text="Last term I was called upon to play in the Orchestra",
         width=2544,
         height=4642,
@@ -760,15 +814,23 @@ def test_anchor_report_box_still_refines_an_agreeing_positional_box() -> None:
     from pipeline.layout import Anchor
 
     anchor = Anchor(
-        report_line={"text": "Last term I was called upon to play in t", "box": [220, 481, 790, 494], "degrees": 0},
-        match={
-            "vlm": "Last term I was called upon to play in t",
-            "vlm_index": 10,
-            "box": [560, 2230, 2010, 2300],  # overlaps the report's scaled box
-            "box_source": "positional",
-            "orientation": 0,
-            "rec_words": ["last", "term", "i", "was", "called"],
-        },
+        report_line=OrientationLine(
+            index=10,
+            box=[220, 481, 790, 494],
+            degrees=0,
+            text="Last term I was called upon to play in t",
+        ),
+        match=LineMatch(
+            vlm="Last term I was called upon to play in t",
+            vlm_index=10,
+            box=[560, 2230, 2010, 2300],  # overlaps the report's scaled box
+            rec_text="",
+            rec_score=0.0,
+            rec_words=["last", "term", "i", "was", "called"],
+            det_words=[],
+            box_source="positional",
+            orientation=0,
+        ),
         text="Last term I was called upon to play in the Orchestra",
         width=2544,
         height=4642,
@@ -791,28 +853,24 @@ def test_dedupe_drops_fragment_duplicates_by_content() -> None:
         1000,
         1000,
         [
-            (
-                0,
-                [
-                    {"text": "Printed in Great Britain", "box": [100, 100, 500, 140], "score": 0.98, "words": []},
-                    {
-                        "text": "Printed",
-                        "box": [600, 300, 700, 340],
-                        "score": 0.97,
-                        "words": [],
-                    },  # the fragment, far away
+            DetectionPass(
+                degrees=0,
+                lines=[
+                    Detection(box=[100, 100, 500, 140], text="Printed in Great Britain", score=0.98, words=[]),
+                    # the fragment, far away
+                    Detection(box=[600, 300, 700, 340], text="Printed", score=0.97, words=[]),
                 ],
             ),
-            (
-                270,
-                [
-                    {"text": "HERNSPETH HOUSE,", "box": [100, 500, 200, 900], "score": 0.99, "words": []},
-                    {"text": "HOUSE,", "box": [400, 500, 500, 900], "score": 0.95, "words": []},  # the fragment
+            DetectionPass(
+                degrees=270,
+                lines=[
+                    Detection(box=[100, 500, 200, 900], text="HERNSPETH HOUSE,", score=0.99, words=[]),
+                    Detection(box=[400, 500, 500, 900], text="HOUSE,", score=0.95, words=[]),  # the fragment
                 ],
             ),
         ],
     )
-    texts = [ln["text"] for ln in layout["lines"]]
+    texts = [ln.text for ln in layout.lines]
     assert "Printed" not in texts
     assert "HOUSE," not in texts
     assert "Printed in Great Britain" in texts
@@ -833,11 +891,11 @@ def test_dedupe_never_drops_the_anchored_report_lines() -> None:
         1000,
         [],
         report_lines=[
-            {"text": "POST CARD.", "box": [100, 100, 900, 140], "degrees": 0},
-            {"text": "ONLY THE ADDRESS TO BE WRITTEN HERE.", "box": [100, 101, 900, 160], "degrees": 0},
+            OrientationLine(index=0, box=[100, 100, 900, 140], degrees=0, text="POST CARD."),
+            OrientationLine(index=1, box=[100, 101, 900, 160], degrees=0, text="ONLY THE ADDRESS TO BE WRITTEN HERE."),
         ],
     )
-    texts = [ln["text"] for ln in layout["lines"]]
+    texts = [ln.text for ln in layout.lines]
     assert "POST CARD." in texts  # a real line survives even when its box overlaps
     assert "ONLY THE ADDRESS TO BE WRITTEN HERE." in texts
 
@@ -855,26 +913,32 @@ def test_multi_layout_uses_the_guess_text_located_by_the_report() -> None:
         1000,
         1000,
         [
-            (0, [{"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []}]),
-            (270, [{"text": "onorrow", "box": [501, 201, 899, 399], "score": 0.9, "words": []}]),
+            DetectionPass(
+                degrees=0,
+                lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
+            ),
+            DetectionPass(
+                degrees=270,
+                lines=[Detection(box=[501, 201, 899, 399], text="onorrow", score=0.9, words=[])],
+            ),
         ],
         report_lines=[
-            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
-            {"index": 1, "box": [500, 200, 900, 400], "degrees": 270},
-            {"index": 2, "box": [0, 0, 0, 0], "degrees": 0},  # not located
+            OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
+            OrientationLine(index=1, box=[500, 200, 900, 400], degrees=270),
+            OrientationLine(index=2, box=[0, 0, 0, 0], degrees=0),  # not located
         ],
         vlm_text="POST CARD\nWe are from beauford\na line the report could not locate",
     )
-    texts = [ln["text"] for ln in layout["lines"]]
+    texts = [ln.text for ln in layout.lines]
     assert texts[0] == "POST CARD"
     assert "We are from beauford" in texts
     assert "a line the report could not locate" in texts  # the text survives a missing box
-    by_text = {ln["text"]: ln for ln in layout["lines"]}
-    assert by_text["POST CARD"]["box"] == [100.0, 50.0, 300.0, 100.0]  # the report's located box
-    assert by_text["POST CARD"]["conf"] == 1.0  # the rec content-agreed
-    assert by_text["We are from beauford"]["box"] == [500.0, 200.0, 900.0, 400.0]
-    assert all(w["conf"] == 0.0 for w in by_text["We are from beauford"]["words"])  # the rec didn't agree
-    assert by_text["a line the report could not locate"]["box"] is None  # flagged, boxless
+    by_text = {ln.text: ln for ln in layout.lines}
+    assert by_text["POST CARD"].box == [100.0, 50.0, 300.0, 100.0]  # the report's located box
+    assert by_text["POST CARD"].conf == 1.0  # the rec content-agreed
+    assert by_text["We are from beauford"].box == [500.0, 200.0, 900.0, 400.0]
+    assert all(w.conf == 0.0 for w in _words(by_text["We are from beauford"]))  # the rec didn't agree
+    assert by_text["a line the report could not locate"].box is None  # flagged, boxless
 
 
 def test_validate_layout_rejects_bad_boxes() -> None:
@@ -884,20 +948,24 @@ def test_validate_layout_rejects_bad_boxes() -> None:
     violations; a clean layout passes."""
     from pipeline.layout import validate_layout
 
-    good = {
-        "width": 1000,
-        "height": 2000,
-        "lines": [
-            {"text": "post card", "box": [100, 100, 300, 140]},
-            {"text": "message", "box": [50, 500, 250, 540]},
-        ],
-    }
+    good = Layout.from_dict(
+        {
+            "width": 1000,
+            "height": 2000,
+            "lines": [
+                {"text": "post card", "box": [100, 100, 300, 140]},
+                {"text": "message", "box": [50, 500, 250, 540]},
+            ],
+        }
+    )
     assert validate_layout(good) == []
-    bad_out = {"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [100, 100, 1500, 140]}]}
+    bad_out = Layout.from_dict({"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [100, 100, 1500, 140]}]})
     assert validate_layout(bad_out), "a box outside the image must fail"
-    bad_degenerate = {"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [100, 100, 100, 200]}]}
+    bad_degenerate = Layout.from_dict(
+        {"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [100, 100, 100, 200]}]}
+    )
     assert validate_layout(bad_degenerate), "a degenerate box must fail"
-    bad_neg = {"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [-50, 100, 300, 140]}]}
+    bad_neg = Layout.from_dict({"width": 1000, "height": 2000, "lines": [{"text": "x", "box": [-50, 100, 300, 140]}]})
     assert validate_layout(bad_neg), "a negative coordinate must fail"
 
 
@@ -960,10 +1028,15 @@ def test_ink_match_labels_assigns_by_order() -> None:
     """The order-based label matching (user's item 2):
     each row's y-center, as a fraction of the content's span, picks the
     transcription line at the same fraction — the 1:1 case."""
+    from document.rectangle import Rectangle
     from pipeline.detect.ink import match_labels
 
     # three rows evenly spaced down a 900px span
-    rows = [[0.0, 0.0, 100.0, 100.0], [0.0, 300.0, 100.0, 400.0], [0.0, 600.0, 100.0, 700.0]]
+    rows = [
+        Rectangle(0.0, 0.0, 100.0, 100.0),
+        Rectangle(0.0, 300.0, 100.0, 400.0),
+        Rectangle(0.0, 600.0, 100.0, 700.0),
+    ]
     lines = ["first line", "second line", "third line"]
     assert match_labels(rows, lines) == lines
 
@@ -972,14 +1045,15 @@ def test_ink_match_labels_handles_merged_rows() -> None:
     """The rec's rows can merge two lines (its det is coarse on
     cursive) — a merged row gets the line at its center, and the
     assignment never collapses to one band."""
+    from document.rectangle import Rectangle
     from pipeline.detect.ink import match_labels
 
     rows = [
-        [0.0, 0.0, 100.0, 100.0],
-        [0.0, 180.0, 100.0, 280.0],
-        [0.0, 360.0, 100.0, 460.0],
-        [0.0, 540.0, 100.0, 640.0],
-        [0.0, 720.0, 100.0, 820.0],
+        Rectangle(0.0, 0.0, 100.0, 100.0),
+        Rectangle(0.0, 180.0, 100.0, 280.0),
+        Rectangle(0.0, 360.0, 100.0, 460.0),
+        Rectangle(0.0, 540.0, 100.0, 640.0),
+        Rectangle(0.0, 720.0, 100.0, 820.0),
     ]
     lines = ["one", "two", "three", "four", "five"]
     labels = match_labels(rows, lines)
@@ -990,22 +1064,42 @@ def test_ink_match_labels_falls_back_when_the_overlap_is_degenerate() -> None:
     """The schematic full-page boxes (every row matches the same band —
     the letter's read) must fall back to the proportional assignment,
     not label every row with the first line."""
+    from document.rectangle import Rectangle
     from pipeline.detect.ink import match_labels
+    from pipeline.detect.model_band import ModelBand
 
-    rows = [[0.0, 0.0, 100.0, 100.0], [0.0, 300.0, 100.0, 400.0], [0.0, 600.0, 100.0, 700.0]]
+    rows = [
+        Rectangle(0.0, 0.0, 100.0, 100.0),
+        Rectangle(0.0, 300.0, 100.0, 400.0),
+        Rectangle(0.0, 600.0, 100.0, 700.0),
+    ]
     lines = ["first line", "second line", "third line"]
-    bands = [(0.0, 50.0, lines[0]), (0.0, 50.0, lines[0]), (0.0, 50.0, lines[0])]
+    bands = [
+        ModelBand(0.0, 50.0, lines[0]),
+        ModelBand(0.0, 50.0, lines[0]),
+        ModelBand(0.0, 50.0, lines[0]),
+    ]
     assert match_labels(rows, lines, bands) == lines
 
 
 def test_ink_match_labels_keeps_the_overlap_when_it_is_not_degenerate() -> None:
     """The rotated panel's trustworthy bands (the postcard) keep the
     y-overlap refinement — the proportional is the fallback."""
+    from document.rectangle import Rectangle
     from pipeline.detect.ink import match_labels
+    from pipeline.detect.model_band import ModelBand
 
-    rows = [[0.0, 0.0, 100.0, 100.0], [0.0, 300.0, 100.0, 400.0], [0.0, 600.0, 100.0, 700.0]]
+    rows = [
+        Rectangle(0.0, 0.0, 100.0, 100.0),
+        Rectangle(0.0, 300.0, 100.0, 400.0),
+        Rectangle(0.0, 600.0, 100.0, 700.0),
+    ]
     lines = ["first line", "second line", "third line"]
-    bands = [(0.0, 150.0, "first line"), (250.0, 450.0, "second line"), (550.0, 750.0, "third line")]
+    bands = [
+        ModelBand(0.0, 150.0, "first line"),
+        ModelBand(250.0, 450.0, "second line"),
+        ModelBand(550.0, 750.0, "third line"),
+    ]
     assert match_labels(rows, lines, bands) == lines
 
 
@@ -1015,27 +1109,33 @@ def test_ink_cluster_rows_splits_side_by_side_pieces() -> None:
     a band - and the union would span the blank middle, tripping the
     text-extent gates. The split at wide x-gaps gives each side its own
     row with a tighter box."""
-    from pipeline.detect.ink import cluster_rows, union
+    from document.rectangle import Rectangle
+    from pipeline.detect.ink import cluster_rows
 
     pieces = [
-        [208.0, 188.0, 241.0, 206.0],
-        [1206.0, 147.0, 1589.0, 216.0],
-        [1604.0, 147.0, 1900.0, 214.0],
+        Rectangle(208.0, 188.0, 241.0, 206.0),
+        Rectangle(1206.0, 147.0, 1589.0, 216.0),
+        Rectangle(1604.0, 147.0, 1900.0, 214.0),
     ]
     rows = cluster_rows(pieces)
     assert len(rows) == 2
-    left = union(rows[0])
-    right = union(rows[1])
-    assert left[2] - left[0] < 100
-    assert right[0] > 1100
+    left = rows[0].union()
+    right = rows[1].union()
+    assert left.x1 - left.x0 < 100
+    assert right.x0 > 1100
 
 
 def test_ink_cluster_rows_keeps_a_lines_words_together() -> None:
     """The split must NOT break a single line whose words sit close
     together (the normal case) - only the wide gaps split."""
+    from document.rectangle import Rectangle
     from pipeline.detect.ink import cluster_rows
 
-    pieces = [[0.0, 0.0, 100.0, 20.0], [110.0, 0.0, 220.0, 20.0], [240.0, 0.0, 350.0, 20.0]]
+    pieces = [
+        Rectangle(0.0, 0.0, 100.0, 20.0),
+        Rectangle(110.0, 0.0, 220.0, 20.0),
+        Rectangle(240.0, 0.0, 350.0, 20.0),
+    ]
     rows = cluster_rows(pieces)
     assert len(rows) == 1
 
@@ -1045,15 +1145,16 @@ def test_ink_cluster_row_thresholds_are_scale_invariant() -> None:
     the same layout at half the scan resolution must cluster the same
     way - the absolute pixel gaps were tuned on one batch and would
     merge every row at a different scale."""
+    from document.rectangle import Rectangle
     from pipeline.detect.ink import cluster_rows
 
-    def page(scale: float) -> list[list[float]]:
+    def page(scale: float) -> list[Rectangle]:
         out = []
         for r in range(3):
             for c in range(3):
                 x = (c * 300 + 50) * scale
                 y = (r * 90 + 20) * scale
-                out.append([x, y, x + 200 * scale, y + 40 * scale])
+                out.append(Rectangle(x, y, x + 200 * scale, y + 40 * scale))
         return out
 
     full = cluster_rows(page(1.0))
@@ -1069,7 +1170,8 @@ def test_ink_cluster_rows_splits_a_runaway_row() -> None:
     line's extent cannot exceed ~2.5x its own pieces' median height; an
     over-tall row splits at its internal gaps until every part is
     plausible."""
-    from pipeline.detect.ink import cluster_rows, union
+    from document.rectangle import Rectangle
+    from pipeline.detect.ink import cluster_rows
 
     # three tight text bands (h=40) at staggered x's, centers 25px
     # apart - every adjacent pair chains under the y-gap threshold,
@@ -1078,24 +1180,25 @@ def test_ink_cluster_rows_splits_a_runaway_row() -> None:
     for i in range(8):
         y = 100.0 + i * 25.0
         x = 100.0 + (i % 3) * 400.0
-        pieces.append([x, y, x + 150.0, y + 40.0])
+        pieces.append(Rectangle(x, y, x + 150.0, y + 40.0))
     rows = cluster_rows(pieces)
     assert len(rows) >= 3, f"chained into {len(rows)} row(s)"
     for row in rows:
-        u = union(row)
-        assert u[3] - u[1] <= 2.5 * 40.0 + 1e-9
+        extent = row.union()
+        assert extent.y1 - extent.y0 <= 2.5 * 40.0 + 1e-9
 
 
 def test_ink_cluster_rows_keeps_a_tall_but_legitimate_line() -> None:
     """A slanting cursive line with ascenders is ONE row: its extent
     stays within ~2x its pieces' scale. The split must not shred real
     lines - only the implausible ones."""
+    from document.rectangle import Rectangle
     from pipeline.detect.ink import cluster_rows
 
     pieces = [
-        [100.0, 100.0, 300.0, 150.0],  # h=50
-        [320.0, 115.0, 520.0, 165.0],
-        [540.0, 130.0, 740.0, 180.0],  # drift 30px over the line; extent 80px = 1.6x
+        Rectangle(100.0, 100.0, 300.0, 150.0),  # h=50
+        Rectangle(320.0, 115.0, 520.0, 165.0),
+        Rectangle(540.0, 130.0, 740.0, 180.0),  # drift 30px over the line; extent 80px = 1.6x
     ]
     rows = cluster_rows(pieces)
     assert len(rows) == 1
@@ -1112,13 +1215,19 @@ def test_multi_layout_orders_zero_first_then_each_next_direction() -> None:
         200,
         100,
         [
-            (270, [{"text": "HARBOTTLE, MORPETH", "box": [10, 10, 20, 20], "score": 0.9, "words": []}]),
-            (0, [{"text": "We are from beauford", "box": [1, 1, 5, 5], "score": 0.95, "words": []}]),
+            DetectionPass(
+                degrees=270,
+                lines=[Detection(box=[10, 10, 20, 20], text="HARBOTTLE, MORPETH", score=0.9, words=[])],
+            ),
+            DetectionPass(
+                degrees=0,
+                lines=[Detection(box=[1, 1, 5, 5], text="We are from beauford", score=0.95, words=[])],
+            ),
         ],
     )
-    assert [line["text"] for line in layout["lines"]] == ["We are from beauford", "HARBOTTLE, MORPETH"]
-    assert [line["orientation"] for line in layout["lines"]] == [0, 270]
-    assert layout["unmatched"] == []
+    assert [line.text for line in layout.lines] == ["We are from beauford", "HARBOTTLE, MORPETH"]
+    assert [line.orientation for line in layout.lines] == [0, 270]
+    assert layout.unmatched == []
 
 
 def test_multi_layout_keeps_only_the_best_reading_of_a_region() -> None:
@@ -1133,16 +1242,25 @@ def test_multi_layout_keeps_only_the_best_reading_of_a_region() -> None:
         200,
         100,
         [
-            (90, [{"text": "MHOTH", "box": [10, 10, 20, 60], "score": 0.9, "words": []}]),
-            (270, [{"text": "HARBOTTLE, MORPETH", "box": [10, 10, 20, 60], "score": 0.9, "words": []}]),
-            (0, [{"text": "With Greetings", "box": [30, 30, 40, 80], "score": 0.95, "words": []}]),
+            DetectionPass(
+                degrees=90,
+                lines=[Detection(box=[10, 10, 20, 60], text="MHOTH", score=0.9, words=[])],
+            ),
+            DetectionPass(
+                degrees=270,
+                lines=[Detection(box=[10, 10, 20, 60], text="HARBOTTLE, MORPETH", score=0.9, words=[])],
+            ),
+            DetectionPass(
+                degrees=0,
+                lines=[Detection(box=[30, 30, 40, 80], text="With Greetings", score=0.95, words=[])],
+            ),
         ],
     )
-    texts = [line["text"] for line in layout["lines"]]
+    texts = [line.text for line in layout.lines]
     assert "MHOTH" not in texts
     assert "HARBOTTLE, MORPETH" in texts
     assert "With Greetings" in texts
-    assert len(layout["lines"]) == 2
+    assert len(layout.lines) == 2
 
 
 def test_load_orientation_hint_needs_two_distinct_directions(tmp_path: Path) -> None:
@@ -1186,12 +1304,12 @@ def test_reading_order_sorts_top_to_bottom_then_left_to_right() -> None:
     from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
-        {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
-        {"index": 1, "box": [100, 100, 300, 120], "orientation": 0},
-        {"index": 2, "box": [400, 100, 600, 120], "orientation": 0},
+        LayoutLine(index=0, text="", box=[100, 300, 300, 320], orientation=0),
+        LayoutLine(index=1, text="", box=[100, 100, 300, 120], orientation=0),
+        LayoutLine(index=2, text="", box=[400, 100, 600, 120], orientation=0),
     ]
     ordered = order_lines_by_blocks(lines)
-    assert [ln["index"] for ln in ordered] == [1, 2, 0]  # top band first, then the lower line
+    assert [ln.index for ln in ordered] == [1, 2, 0]  # top band first, then the lower line
 
 
 def test_reading_order_180_line_reads_after_the_upright_header() -> None:
@@ -1201,12 +1319,12 @@ def test_reading_order_180_line_reads_after_the_upright_header() -> None:
     from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
-        {"index": 0, "box": [100, 100, 300, 120], "orientation": 180},
-        {"index": 1, "box": [100, 200, 300, 220], "orientation": 0},
+        LayoutLine(index=0, text="", box=[100, 100, 300, 120], orientation=180),
+        LayoutLine(index=1, text="", box=[100, 200, 300, 220], orientation=0),
     ]
     ordered = order_lines_by_blocks(lines)
-    assert [ln["index"] for ln in ordered] == [0, 1]
-    assert ordered[0]["orientation"] == 180  # the exact angle survives
+    assert [ln.index for ln in ordered] == [0, 1]
+    assert ordered[0].orientation == 180  # the exact angle survives
 
 
 def test_reading_order_handles_exact_near_cardinal_angles() -> None:
@@ -1216,12 +1334,12 @@ def test_reading_order_handles_exact_near_cardinal_angles() -> None:
     from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
-        {"index": 0, "box": [100, 400, 300, 420], "orientation": 88.4},
-        {"index": 1, "box": [100, 100, 300, 120], "orientation": 358.7},
+        LayoutLine(index=0, text="", box=[100, 400, 300, 420], orientation=88.4),
+        LayoutLine(index=1, text="", box=[100, 100, 300, 120], orientation=358.7),
     ]
     ordered = order_lines_by_blocks(lines)
-    assert [ln["index"] for ln in ordered] == [1, 0]
-    assert ordered[1]["orientation"] == 88.4
+    assert [ln.index for ln in ordered] == [1, 0]
+    assert ordered[1].orientation == 88.4
 
 
 def test_reading_order_preserves_line_index() -> None:
@@ -1230,43 +1348,43 @@ def test_reading_order_preserves_line_index() -> None:
     from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
-        {"index": 7, "box": [100, 300, 300, 320], "orientation": 0},
-        {"index": 3, "box": [100, 100, 300, 120], "orientation": 0},
+        LayoutLine(index=7, text="", box=[100, 300, 300, 320], orientation=0),
+        LayoutLine(index=3, text="", box=[100, 100, 300, 120], orientation=0),
     ]
     ordered = order_lines_by_blocks(lines)
-    assert [ln["index"] for ln in ordered] == [3, 7]
+    assert [ln.index for ln in ordered] == [3, 7]
 
 
 def test_reading_order_boxless_lines_last_in_input_order() -> None:
     from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
-        {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
-        {"index": 1, "text": "no box"},
-        {"index": 2, "box": [100, 100, 300, 120], "orientation": 0},
+        LayoutLine(index=0, text="", box=[100, 300, 300, 320], orientation=0),
+        LayoutLine(index=1, text="no box"),
+        LayoutLine(index=2, text="", box=[100, 100, 300, 120], orientation=0),
     ]
     ordered = order_lines_by_blocks(lines)
-    assert [ln["index"] for ln in ordered] == [2, 0, 1]
+    assert [ln.index for ln in ordered] == [2, 0, 1]
 
 
 def test_reading_order_is_stable_for_equal_starts() -> None:
     from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
-        {"index": 0, "box": [100, 100, 300, 120], "orientation": 0},
-        {"index": 1, "box": [100, 100, 300, 120], "orientation": 0},
+        LayoutLine(index=0, text="", box=[100, 100, 300, 120], orientation=0),
+        LayoutLine(index=1, text="", box=[100, 100, 300, 120], orientation=0),
     ]
     ordered = order_lines_by_blocks(lines)
-    assert [ln["index"] for ln in ordered] == [0, 1]  # ties keep input order
+    assert [ln.index for ln in ordered] == [0, 1]  # ties keep input order
 
 
 def test_reading_order_degenerate_box_does_not_crash() -> None:
     from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
-        {"index": 0, "box": [100, 300, 300, 320], "orientation": 0},
-        {"index": 1, "box": [50, 50, 50, 50], "orientation": 0},  # zero-area
-        {"index": 2, "box": [0, 0, 10, 10], "orientation": 0},
+        LayoutLine(index=0, text="", box=[100, 300, 300, 320], orientation=0),
+        LayoutLine(index=1, text="", box=[50, 50, 50, 50], orientation=0),  # zero-area
+        LayoutLine(index=2, text="", box=[0, 0, 10, 10], orientation=0),
     ]
     ordered = order_lines_by_blocks(lines)
     assert len(ordered) == 3
@@ -1283,7 +1401,7 @@ def test_validate_layout_orientation_matches_box_aspect() -> None:
     from pipeline.layout import validate_layout
 
     def _layout(lines):
-        return {"width": 1000, "height": 1000, "lines": lines}
+        return Layout.from_dict({"width": 1000, "height": 1000, "lines": lines})
 
     # clearly-wide box labeled with a vertical axis -> violation
     assert validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 90}]))
@@ -1299,7 +1417,7 @@ def test_validate_layout_orientation_consistent_cases_pass() -> None:
     from pipeline.layout import validate_layout
 
     def _layout(lines):
-        return {"width": 1000, "height": 1000, "lines": lines}
+        return Layout.from_dict({"width": 1000, "height": 1000, "lines": lines})
 
     # wide box with horizontal axis -> pass
     assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 0}]))
@@ -1334,7 +1452,7 @@ def test_validate_layout_text_length_matches_box_extent() -> None:
     from pipeline.layout import validate_layout
 
     def _layout(lines):
-        return {"width": 1000, "height": 1000, "lines": lines}
+        return Layout.from_dict({"width": 1000, "height": 1000, "lines": lines})
 
     # a wide box (500px) with a 3-char text -> ~167 px/char: wildly out
     assert validate_layout(_layout([{"text": "abc", "box": [0, 0, 500, 50], "orientation": 0}]))
@@ -1350,7 +1468,7 @@ def test_validate_layout_text_length_reasonable_cases_pass() -> None:
     from pipeline.layout import validate_layout
 
     def _layout(lines):
-        return {"width": 1000, "height": 1000, "lines": lines}
+        return Layout.from_dict({"width": 1000, "height": 1000, "lines": lines})
 
     # a 500px box with ~25 chars -> ~20 px/char: plausible handwriting
     assert not validate_layout(_layout([{"text": "x" * 25, "box": [0, 0, 500, 50], "orientation": 0}]))
@@ -1457,27 +1575,13 @@ class TestRecognizeExtra:
 
         image = self._png(tmp_path, 200, 200)
         passes = [
-            (
-                0,
-                [
-                    {
-                        "text": "anchored line",
-                        "box": [10, 10, 150, 30],
-                        "score": 0.9,
-                        "words": [],
-                    }
-                ],
+            DetectionPass(
+                degrees=0,
+                lines=[Detection(box=[10, 10, 150, 30], text="anchored line", score=0.9, words=[])],
             ),
-            (
-                90,
-                [
-                    {
-                        "text": "frag",
-                        "box": [10, 50, 30, 150],
-                        "score": 0.8,
-                        "words": [],
-                    }
-                ],
+            DetectionPass(
+                degrees=90,
+                lines=[Detection(box=[10, 50, 30, 150], text="frag", score=0.8, words=[])],
             ),
         ]
         recognized: list[str] = []
@@ -1491,12 +1595,12 @@ class TestRecognizeExtra:
             200,
             200,
             passes,
-            report_lines=[{"index": 0, "box": [50, 50, 750, 150], "degrees": 0, "text": "anchored line"}],
+            report_lines=[OrientationLine(index=0, box=[50, 50, 750, 150], degrees=0, text="anchored line")],
             vlm_text="anchored line",
             image=image,
             recognize=fake_recognize,
         )
-        texts = [ln["text"] for ln in layout["lines"]]
+        texts = [ln.text for ln in layout.lines]
         assert "anchored line" in texts
         assert "the true text" in texts  # the first extra recognized
         assert "frag" not in texts  # the second extra's recognition failed -> dropped
@@ -1519,20 +1623,26 @@ def test_multi_layout_trusts_clip_report_degrees_over_the_pass() -> None:
         1000,
         1000,
         [
-            (0, [{"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []}]),
-            (90, [{"text": "my first Theory", "box": [501, 201, 999, 252], "score": 0.9, "words": []}]),
+            DetectionPass(
+                degrees=0,
+                lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
+            ),
+            DetectionPass(
+                degrees=90,
+                lines=[Detection(box=[501, 201, 999, 252], text="my first Theory", score=0.9, words=[])],
+            ),
         ],
         report_lines=[
-            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+            OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
             # the clip classifier located the line at 0 (it IS horizontal);
             # the 90° pass merely read the mirrored frame
-            {"index": 1, "box": [500, 200, 1000, 252], "degrees": 0},
+            OrientationLine(index=1, box=[500, 200, 1000, 252], degrees=0),
         ],
         vlm_text="POST CARD\nmy first Theory lesson to",
         trust_report_degrees=True,
     )
-    line = [ln for ln in layout["lines"] if "Theory" in ln["text"]][0]
-    assert line["orientation"] == 0, f"the located degrees must win over the pass, was {line['orientation']}"
+    line = [ln for ln in layout.lines if "Theory" in ln.text][0]
+    assert line.orientation == 0, f"the located degrees must win over the pass, was {line.orientation}"
 
 
 def test_multi_layout_uses_the_match_box_when_the_report_box_misses_the_ink() -> None:
@@ -1549,26 +1659,22 @@ def test_multi_layout_uses_the_match_box_when_the_report_box_misses_the_ink() ->
         1000,
         1000,
         [
-            (
-                0,
-                [
-                    {
-                        "text": "P.S. I had a whole Grade 3A",
-                        "box": [100, 400, 480, 440],  # the rec found the text HERE
-                        "score": 0.95,
-                        "words": [],
-                    }
+            DetectionPass(
+                degrees=0,
+                lines=[
+                    # the rec found the text HERE
+                    Detection(box=[100, 400, 480, 440], text="P.S. I had a whole Grade 3A", score=0.95, words=[]),
                 ],
             ),
         ],
         report_lines=[
             # the report claims the line ~200px ABOVE the actual text
-            {"index": 0, "box": [100, 150, 480, 190], "degrees": 0},
+            OrientationLine(index=0, box=[100, 150, 480, 190], degrees=0),
         ],
         vlm_text="P.S. I had a whole Grade 3A",
     )
-    line = layout["lines"][0]
-    assert line["box"] == [100, 400, 480, 440], f"the rec match's box must win, was {line['box']}"
+    line = layout.lines[0]
+    assert line.box == [100, 400, 480, 440], f"the rec match's box must win, was {line.box}"
 
 
 def test_multi_layout_rejects_an_inconsistent_report_angle_on_a_wide_box() -> None:
@@ -1584,24 +1690,20 @@ def test_multi_layout_rejects_an_inconsistent_report_angle_on_a_wide_box() -> No
         1000,
         1000,
         [
-            (
-                90,
-                [
-                    {
-                        "text": "my first Theory lesson",
-                        "box": [100, 200, 601, 251],  # wide: horizontal text
-                        "score": 0.9,
-                        "words": [],
-                    }
+            DetectionPass(
+                degrees=90,
+                lines=[
+                    # wide: horizontal text
+                    Detection(box=[100, 200, 601, 251], text="my first Theory lesson", score=0.9, words=[]),
                 ],
             ),
         ],
-        report_lines=[{"index": 0, "box": [100, 200, 601, 251], "degrees": 90}],
+        report_lines=[OrientationLine(index=0, box=[100, 200, 601, 251], degrees=90)],
         vlm_text="my first Theory lesson",
         trust_report_degrees=True,
     )
-    line = layout["lines"][0]
-    assert line["orientation"] == 0, f"the wide box must force 0, was {line['orientation']}"
+    line = layout.lines[0]
+    assert line.orientation == 0, f"the wide box must force 0, was {line.orientation}"
 
 
 def test_multi_layout_extras_force_the_aspect_consistent_orientation() -> None:
@@ -1616,22 +1718,18 @@ def test_multi_layout_extras_force_the_aspect_consistent_orientation() -> None:
         1000,
         1000,
         [
-            (
-                90,
-                [
-                    {
-                        "text": "When Dr W. saw & di",
-                        "box": [100, 100, 351, 220],  # wide -> horizontal
-                        "score": 0.9,
-                        "words": [],
-                    }
+            DetectionPass(
+                degrees=90,
+                lines=[
+                    # wide -> horizontal
+                    Detection(box=[100, 100, 351, 220], text="When Dr W. saw & di", score=0.9, words=[]),
                 ],
             ),
         ],
         report_lines=None,
     )
-    line = layout["lines"][0]
-    assert line["orientation"] == 0, f"the wide extra box must force 0, was {line['orientation']}"
+    line = layout.lines[0]
+    assert line.orientation == 0, f"the wide extra box must force 0, was {line.orientation}"
 
 
 def test_build_layout_leaves_a_wildly_oversized_positional_box_boxless() -> None:
@@ -1649,13 +1747,13 @@ def test_build_layout_leaves_a_wildly_oversized_positional_box_boxless() -> None
         1000,
         "a real line\n③",
         [
-            {"box": [100, 100, 600, 140], "text": "a real line", "score": 0.95, "words": []},
-            {"box": [50, 500, 602, 589], "text": "garbage", "score": 0.9, "words": []},  # 552px wide
+            Detection(box=[100, 100, 600, 140], text="a real line", score=0.95, words=[]),
+            Detection(box=[50, 500, 602, 589], text="garbage", score=0.9, words=[]),  # 552px wide
         ],
     )
-    by_text = {ln["text"]: ln for ln in layout["lines"]}
-    assert by_text["a real line"]["box"] == [100, 100, 600, 140]
-    assert by_text["③"]["box"] is None, "the absurd positional box must be dropped, not assigned"
+    by_text = {ln.text: ln for ln in layout.lines}
+    assert by_text["a real line"].box == [100, 100, 600, 140]
+    assert by_text["③"].box is None, "the absurd positional box must be dropped, not assigned"
     # the drop is per-line: a plausible positional box still anchors
     layout2 = build_layout(
         "p1.jpg",
@@ -1663,12 +1761,12 @@ def test_build_layout_leaves_a_wildly_oversized_positional_box_boxless() -> None
         1000,
         "a real line\nN.B",
         [
-            {"box": [100, 100, 600, 140], "text": "a real line", "score": 0.95, "words": []},
-            {"box": [50, 500, 150, 540], "text": "garbage", "score": 0.9, "words": []},  # 100px for 3 chars
+            Detection(box=[100, 100, 600, 140], text="a real line", score=0.95, words=[]),
+            Detection(box=[50, 500, 150, 540], text="garbage", score=0.9, words=[]),  # 100px for 3 chars
         ],
     )
-    by2 = {ln["text"]: ln for ln in layout2["lines"]}
-    assert by2["N.B"]["box"] == [50, 500, 150, 540]
+    by2 = {ln.text: ln for ln in layout2.lines}
+    assert by2["N.B"].box == [50, 500, 150, 540]
 
 
 def test_multi_layout_report_box_anchors_over_a_positional_match() -> None:
@@ -1686,30 +1784,23 @@ def test_multi_layout_report_box_anchors_over_a_positional_match() -> None:
         1000,
         1000,
         [
-            (
-                0,
-                [
-                    {
-                        "text": "POST CARD",
-                        "box": [101, 51, 299, 99],
-                        "score": 0.99,
-                        "words": [],
-                    },
-                ],
+            DetectionPass(
+                degrees=0,
+                lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
             ),
         ],
         report_lines=[
-            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
+            OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
             # the report located line 1 at the left margin; the positional
             # match box is the unrelated HERNSPETH detection
-            {"index": 1, "box": [50, 400, 100, 500], "degrees": 0},
+            OrientationLine(index=1, box=[50, 400, 100, 500], degrees=0),
         ],
         vlm_text="POST CARD\ncritic's view. To quote:",
     )
-    by_text = {ln["text"]: ln for ln in layout["lines"]}
+    by_text = {ln.text: ln for ln in layout.lines}
     critic = by_text["critic's view. To quote:"]
-    assert critic["box_source"] == "report-unconfirmed"
-    assert critic["box"] == [50.0, 400.0, 100.0, 500.0], f"the report's box must anchor, was {critic['box']}"
+    assert critic.box_source == "report-unconfirmed"
+    assert critic.box == [50.0, 400.0, 100.0, 500.0], f"the report's box must anchor, was {critic.box}"
 
 
 def test_multi_layout_false_content_match_cannot_override_the_report_box() -> None:
@@ -1727,28 +1818,24 @@ def test_multi_layout_false_content_match_cannot_override_the_report_box() -> No
         3500,
         2215,
         [
-            (
-                0,
-                [
-                    {
-                        "text": "e r",  # the rec's noisy stamp reading
-                        "box": [1998, 988, 3339, 1316],  # a 1341px merged band
-                        "score": 0.95,
-                        "words": [],
-                    }
+            DetectionPass(
+                degrees=0,
+                lines=[
+                    # the rec's noisy stamp reading
+                    Detection(box=[1998, 988, 3339, 1316], text="e r", score=0.95, words=[]),  # a 1341px merged band
                 ],
             ),
         ],
         report_lines=[
-            {"index": 0, "box": [900, 76, 950, 101], "degrees": 0},  # the located stamp text, tight
+            OrientationLine(index=0, box=[900, 76, 950, 101], degrees=0),  # the located stamp text, tight
         ],
         vlm_text="E    R",
     )
-    line = layout["lines"][0]
-    assert line["text"] == "E    R"
+    line = layout.lines[0]
+    assert line.text == "E    R"
     # the report's scaled box: 900/1000*3500 = 3150 ... 950/1000*3500 = 3325
-    assert line["box"][0] == 3150, f"the report's located box must anchor, was {line['box']}"
-    assert line["box"][2] == 3325
+    assert _box(line)[0] == 3150, f"the report's located box must anchor, was {line.box}"
+    assert _box(line)[2] == 3325
 
 
 def test_multi_layout_drops_the_box_when_no_candidate_holds_the_text() -> None:
@@ -1764,24 +1851,19 @@ def test_multi_layout_drops_the_box_when_no_candidate_holds_the_text() -> None:
         3500,
         2215,
         [
-            (
-                0,
-                [
-                    {
-                        "text": "e r",
-                        "box": [1998, 988, 3339, 1316],
-                        "score": 0.95,
-                        "words": [],
-                    }
+            DetectionPass(
+                degrees=0,
+                lines=[
+                    Detection(box=[1998, 988, 3339, 1316], text="e r", score=0.95, words=[]),
                 ],
             ),
         ],
         report_lines=[
-            {"index": 0, "box": [821, 76, 964, 101], "degrees": 0},  # 501px for 'E    R' — still too loose
+            OrientationLine(index=0, box=[821, 76, 964, 101], degrees=0),  # 501px for 'E    R' — still too loose
         ],
         vlm_text="E    R",
     )
-    assert layout["lines"][0]["box"] is None, "no candidate holds the text — boxless, flagged"
+    assert layout.lines[0].box is None, "no candidate holds the text — boxless, flagged"
 
 
 def test_build_layout_keeps_the_transcription_order_for_margin_blocks() -> None:
@@ -1803,13 +1885,13 @@ def test_build_layout_keeps_the_transcription_order_for_margin_blocks() -> None:
         1000,
         "P.S. line one\ntheory paper\nPostmark 27.9.63\nQueen's House",
         [
-            {"box": [100, 100, 300, 140], "text": "P.S. line one", "score": 0.95, "words": []},
-            {"box": [100, 150, 300, 190], "text": "theory paper", "score": 0.95, "words": []},
-            {"box": [400, 102, 600, 142], "text": "Postmark", "score": 0.95, "words": []},
-            {"box": [400, 152, 600, 192], "text": "Queen's House", "score": 0.95, "words": []},
+            Detection(box=[100, 100, 300, 140], text="P.S. line one", score=0.95, words=[]),
+            Detection(box=[100, 150, 300, 190], text="theory paper", score=0.95, words=[]),
+            Detection(box=[400, 102, 600, 142], text="Postmark", score=0.95, words=[]),
+            Detection(box=[400, 152, 600, 192], text="Queen's House", score=0.95, words=[]),
         ],
     )
-    texts = [ln["text"] for ln in layout["lines"]]
+    texts = [ln.text for ln in layout.lines]
     # the transcription order — NOT the reading-start interleave
     assert texts == ["P.S. line one", "theory paper", "Postmark 27.9.63", "Queen's House"], texts
 
@@ -1828,39 +1910,33 @@ def test_multi_layout_keeps_the_physical_reading_order() -> None:
         1000,
         1000,
         [
-            (
-                270,
-                [
-                    {
-                        "text": "message line",
-                        "box": [700, 400, 900, 900],  # the 270° message at the bottom-right
-                        "score": 0.9,
-                        "words": [],
-                    }
+            DetectionPass(
+                degrees=270,
+                lines=[
+                    # the 270° message at the bottom-right
+                    Detection(box=[700, 400, 900, 900], text="message line", score=0.9, words=[]),
                 ],
             ),
-            (
-                0,
-                [
-                    {"text": "POST CARD", "box": [101, 51, 299, 99], "score": 0.99, "words": []},
-                ],
+            DetectionPass(
+                degrees=0,
+                lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
             ),
         ],
         report_lines=[
-            {"index": 0, "box": [100, 50, 300, 100], "degrees": 0},
-            {"index": 1, "box": [700, 400, 900, 900], "degrees": 270},
+            OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
+            OrientationLine(index=1, box=[700, 400, 900, 900], degrees=270),
         ],
         vlm_text="POST CARD\nmessage line",
     )
-    texts = [ln["text"] for ln in layout["lines"]]
+    texts = [ln.text for ln in layout.lines]
     # the 270° message reads upright with its reading-start ABOVE the
     # 0° POST CARD? No — POST CARD (y50) is physically above the message
     # (y400): the physical order reads POST CARD first.
     assert texts == ["POST CARD", "message line"], texts
     # and the 270° line keeps its orientation (the reading frame, not a
     # per-line rotation flip)
-    msg = [ln for ln in layout["lines"] if ln["text"] == "message line"][0]
-    assert msg["orientation"] == 270
+    msg = [ln for ln in layout.lines if ln.text == "message line"][0]
+    assert msg.orientation == 270
 
 
 def test_dedupe_regions_survives_boxless_lines() -> None:
@@ -1870,11 +1946,11 @@ def test_dedupe_regions_survives_boxless_lines() -> None:
     from pipeline.layout import dedupe_regions
 
     lines = [
-        {"index": 0, "text": "E    R", "box": None, "conf": 0.0, "box_source": "report-unconfirmed"},
-        {"index": 1, "text": "extra fragment", "box": [0, 0, 100, 20], "conf": 0.0, "box_source": "multi"},
+        LayoutLine(index=0, text="E    R", box=None, conf=0.0, box_source=BOX_SOURCE_REPORT_UNCONFIRMED),
+        LayoutLine(index=1, text="extra fragment", box=[0, 0, 100, 20], conf=0.0, box_source=BOX_SOURCE_MULTI),
     ]
     out = dedupe_regions(lines)
-    assert [ln["text"] for ln in out] == ["E    R", "extra fragment"]
+    assert [ln.text for ln in out] == ["E    R", "extra fragment"]
 
 
 def test_multi_layout_keeps_text_order_when_orientations_resolve_single() -> None:
@@ -1892,27 +1968,27 @@ def test_multi_layout_keeps_text_order_when_orientations_resolve_single() -> Non
         1000,
         1000,
         [
-            (
-                90,
-                [
+            DetectionPass(
+                degrees=90,
+                lines=[
                     # the rec read the horizontal lines during the 90° pass
-                    {"text": "P.S. line one", "box": [100, 100, 300, 140], "score": 0.9, "words": []},
-                    {"text": "theory paper", "box": [100, 150, 300, 190], "score": 0.9, "words": []},
-                    {"text": "Postmark", "box": [400, 102, 600, 142], "score": 0.9, "words": []},
+                    Detection(box=[100, 100, 300, 140], text="P.S. line one", score=0.9, words=[]),
+                    Detection(box=[100, 150, 300, 190], text="theory paper", score=0.9, words=[]),
+                    Detection(box=[400, 102, 600, 142], text="Postmark", score=0.9, words=[]),
                 ],
             ),
         ],
         report_lines=[
-            {"index": 0, "box": [100, 100, 300, 140], "degrees": 0},
-            {"index": 1, "box": [100, 150, 300, 190], "degrees": 0},
-            {"index": 2, "box": [400, 102, 600, 142], "degrees": 90},  # a garbage label — aspect-corrected to 0
+            OrientationLine(index=0, box=[100, 100, 300, 140], degrees=0),
+            OrientationLine(index=1, box=[100, 150, 300, 190], degrees=0),
+            OrientationLine(index=2, box=[400, 102, 600, 142], degrees=90),  # a garbage label — aspect-corrected to 0
         ],
         vlm_text="P.S. line one\ntheory paper\nPostmark",
         trust_report_degrees=True,
     )
-    texts = [ln["text"] for ln in layout["lines"]]
+    texts = [ln.text for ln in layout.lines]
     assert texts == ["P.S. line one", "theory paper", "Postmark"], texts
-    assert all(ln["orientation"] == 0 for ln in layout["lines"])
+    assert all(ln.orientation == 0 for ln in layout.lines)
 
 
 def test_block_order_reads_each_block_whole() -> None:
@@ -1926,15 +2002,15 @@ def test_block_order_reads_each_block_whole() -> None:
     from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
-        {"index": 0, "text": "POST CARD", "box": [1575, 73, 2240, 222], "orientation": 0},
-        {"index": 1, "text": "Printed in Great Britain", "box": [1295, 246, 1995, 301], "orientation": 0},
-        {"index": 2, "text": "We are from", "box": [1277, 343, 1540, 975], "orientation": 90},
-        {"index": 3, "text": "beauford & Mrs", "box": [1505, 235, 1662, 1108], "orientation": 90},
-        {"index": 4, "text": "Paul Wink", "box": [1999, 988, 3339, 1316], "orientation": 0},
-        {"index": 5, "text": "47 Brighton Grove", "box": [2142, 1376, 3479, 1692], "orientation": 0},
+        LayoutLine(index=0, text="POST CARD", box=[1575, 73, 2240, 222], orientation=0),
+        LayoutLine(index=1, text="Printed in Great Britain", box=[1295, 246, 1995, 301], orientation=0),
+        LayoutLine(index=2, text="We are from", box=[1277, 343, 1540, 975], orientation=90),
+        LayoutLine(index=3, text="beauford & Mrs", box=[1505, 235, 1662, 1108], orientation=90),
+        LayoutLine(index=4, text="Paul Wink", box=[1999, 988, 3339, 1316], orientation=0),
+        LayoutLine(index=5, text="47 Brighton Grove", box=[2142, 1376, 3479, 1692], orientation=0),
     ]
     ordered = order_lines_by_blocks(lines)
-    texts = [ln["text"] for ln in ordered]
+    texts = [ln.text for ln in ordered]
     # the printed top (block 1), then the message (block 2), then the
     # address (block 3) — each whole, no interleave
     assert texts == [
@@ -1954,10 +2030,10 @@ def test_block_order_keeps_boxless_lines_in_place() -> None:
     from tools.reading import order_lines as order_lines_by_blocks
 
     lines = [
-        {"index": 0, "text": "message line", "box": [100, 100, 200, 900], "orientation": 90},
-        {"index": 1, "text": "POSTAGE", "box": None, "orientation": 0},
+        LayoutLine(index=0, text="message line", box=[100, 100, 200, 900], orientation=90),
+        LayoutLine(index=1, text="POSTAGE", box=None, orientation=0),
     ]
-    assert [ln["text"] for ln in order_lines_by_blocks(lines)] == ["message line", "POSTAGE"]
+    assert [ln.text for ln in order_lines_by_blocks(lines)] == ["message line", "POSTAGE"]
 
 
 def test_validate_layout_catches_duplicate_region_claims() -> None:
@@ -1968,18 +2044,20 @@ def test_validate_layout_catches_duplicate_region_claims() -> None:
     different texts in one region is ambiguity the review must see."""
     from pipeline.layout import validate_layout
 
-    layout = {
-        "width": 3500,
-        "height": 2215,
-        "lines": [
-            {"text": "We are from", "box": [1505, 235, 1662, 1108], "orientation": 90},
-            {"text": "beauford & Mrs", "box": [1505, 235, 1662, 1108], "orientation": 90},  # the same box
-        ],
-    }
+    layout = Layout.from_dict(
+        {
+            "width": 3500,
+            "height": 2215,
+            "lines": [
+                {"text": "We are from", "box": [1505, 235, 1662, 1108], "orientation": 90},
+                {"text": "beauford & Mrs", "box": [1505, 235, 1662, 1108], "orientation": 90},  # the same box
+            ],
+        }
+    )
     viol = validate_layout(layout)
     assert any("same region" in v for v in viol), viol
     # the same text in one region is NOT a duplicate-region violation
-    layout["lines"][1]["text"] = "We are from"
+    layout.lines[1].text = "We are from"
     assert not [v for v in validate_layout(layout) if "same region" in v]
 
 
@@ -1997,13 +2075,13 @@ def test_drop_inkless_boxes_removes_blank_estimates(tmp_path) -> None:
             img.putpixel((x, y), (40, 40, 40))  # ink at the TOP
     img.save(tmp_path / "p1.png")
     lines = [
-        {"index": 0, "text": "real line", "box": [100, 20, 140, 40]},  # on the ink
-        {"index": 1, "text": "P.S. I had a whole", "box": [100, 150, 180, 190]},  # blank region
+        LayoutLine(index=0, text="real line", box=[100, 20, 140, 40]),  # on the ink
+        LayoutLine(index=1, text="P.S. I had a whole", box=[100, 150, 180, 190]),  # blank region
     ]
     dropped = drop_inkless_boxes(lines, tmp_path / "p1.png")
     assert dropped == 1
-    assert lines[0]["box"] == [100, 20, 140, 40]
-    assert lines[1]["box"] is None, "the blank-region box is an estimate — dropped, flagged"
+    assert lines[0].box == [100, 20, 140, 40]
+    assert lines[1].box is None, "the blank-region box is an estimate — dropped, flagged"
 
 
 def test_box_overlap_is_intersection_over_the_smaller_box() -> None:
@@ -2032,15 +2110,15 @@ def test_drop_conflicting_boxes_keeps_the_confirmed_anchor() -> None:
     from pipeline.layout import drop_conflicting_boxes
 
     lines = [
-        {"index": 0, "text": "P.S. I had a whole Grade 3A", "box": [526, 2247, 1044, 2294], "conf": 1.0},
-        {"index": 1, "text": "critic's view. To quote:", "box": [517, 2247, 1048, 2302], "conf": 0.0},
-        {"index": 2, "text": "theory paper", "box": [540, 2297, 1042, 2340], "conf": 1.0},
+        LayoutLine(index=0, text="P.S. I had a whole Grade 3A", box=[526, 2247, 1044, 2294], conf=1.0),
+        LayoutLine(index=1, text="critic's view. To quote:", box=[517, 2247, 1048, 2302], conf=0.0),
+        LayoutLine(index=2, text="theory paper", box=[540, 2297, 1042, 2340], conf=1.0),
     ]
     dropped = drop_conflicting_boxes(lines)
     assert dropped == 1
-    assert lines[0]["box"] == [526, 2247, 1044, 2294]
-    assert lines[1]["box"] is None, "the unconfirmed claim on the anchor's region must drop"
-    assert lines[2]["box"] == [540, 2297, 1042, 2340]
+    assert lines[0].box == [526, 2247, 1044, 2294]
+    assert lines[1].box is None, "the unconfirmed claim on the anchor's region must drop"
+    assert lines[2].box == [540, 2297, 1042, 2340]
 
 
 def test_box_line_count_by_projection() -> None:
@@ -2103,28 +2181,30 @@ def test_split_by_bands_divides_a_multi_line_union() -> None:
     too-few-rows into accurate-rows instead of refusing the page."""
     from PIL import Image, ImageDraw
 
+    from document.rectangle import Rectangle
     from pipeline.detect.ink import split_by_bands
 
     im = Image.new("L", (400, 200), 255)
     d = ImageDraw.Draw(im)
     d.rectangle([40, 30, 360, 51], fill=0)
     d.rectangle([60, 120, 340, 141], fill=0)
-    parts = split_by_bands([20, 10, 380, 190], im)
+    parts = split_by_bands(Rectangle(20, 10, 380, 190), im)
     assert len(parts) == 2
-    top, bottom = sorted(parts, key=lambda b: b[1])
-    assert 25 <= top[1] <= 35 and 45 <= top[3] <= 58  # the first band's rows
-    assert 115 <= bottom[1] <= 125 and 135 <= bottom[3] <= 148
+    top, bottom = sorted(parts, key=lambda box: box.y0)
+    assert 25 <= top.y0 <= 35 and 45 <= top.y1 <= 58  # the first band's rows
+    assert 115 <= bottom.y0 <= 125 and 135 <= bottom.y1 <= 148
 
 
 def test_split_by_bands_keeps_single_line_boxes_whole() -> None:
     from PIL import Image, ImageDraw
 
+    from document.rectangle import Rectangle
     from pipeline.detect.ink import split_by_bands
 
     im = Image.new("L", (400, 200), 255)
     d = ImageDraw.Draw(im)
     d.rectangle([40, 90, 360, 111], fill=0)
-    box = [20, 80, 380, 120]
+    box = Rectangle(20, 80, 380, 120)
     assert split_by_bands(box, im) == [box]
 
 
@@ -2154,26 +2234,26 @@ def test_selfreport_flags_mark_words_in_the_layout() -> None:
     (selfreport_words + build_layout's conf-0.0 flagging) but the batch
     never runs it — the UI's "red words are ones the machine wasn't
     sure of" promise goes unmet on every served layout. These helpers
-    are the missing link: tokenize a line into the layout's word dicts
+    are the missing link: tokenize a line into the layout's word records
     and mark the flagged ones."""
     from tools.text import flag_line_words, selfreport_by_line
 
     words = flag_line_words("No peace eh? Hah !", {"peace"})
-    flagged = [w["word"] for w in words if w["conf"] == 0.0]
+    flagged = [w.word for w in words if w.conf == 0.0]
     assert flagged == ["peace"], flagged
-    assert all(w["conf"] == 1.0 for w in words if w["word"] != "peace")
+    assert all(w.conf == 1.0 for w in words if w.word != "peace")
 
     # the report cites "Peace" — matching is case/punct-insensitive
     words2 = flag_line_words("No peace eh?", {"Peace"})
-    assert [w["word"] for w in words2 if w["conf"] == 0.0] == ["peace"]
+    assert [w.word for w in words2 if w.conf == 0.0] == ["peace"]
 
     # the line→flags map, 0-based, keyed per line index
-    report = [{"line": 2, "word": "gen"}, {"line": 1, "word": "qualms"}]
+    report = [UnsureWord(2, "gen"), UnsureWord(1, "qualms")]
     by_line = selfreport_by_line(report, 3)
     assert by_line == {0: {"qualms"}, 1: {"gen"}}
 
     # out-of-range lines are ignored; empty report maps to nothing
-    assert selfreport_by_line([{"line": 9, "word": "x"}], 3) == {}
+    assert selfreport_by_line([UnsureWord(9, "x")], 3) == {}
     assert selfreport_by_line([], 2) == {}
 
 
@@ -2186,16 +2266,16 @@ def test_selfreport_flags_match_by_word_content() -> None:
     from tools.text import selfreport_words_by_line
 
     lines = ["No peace eh?", "Have the gen", "So much for your qualms"]
-    by_line = selfreport_words_by_line(lines, [{"line": 1, "word": "Peace"}, {"line": 2, "word": "GEN"}])
+    by_line = selfreport_words_by_line(lines, [UnsureWord(1, "Peace"), UnsureWord(2, "GEN")])
     assert by_line == {0: {"peace"}, 1: {"gen"}}, by_line
 
     # a cited word that drifted to the wrong line number still lands on
     # the line that contains it
-    shifted = selfreport_words_by_line(lines, [{"line": 3, "word": "peace"}])
+    shifted = selfreport_words_by_line(lines, [UnsureWord(3, "peace")])
     assert shifted == {0: {"peace"}}, shifted
 
     # a word nowhere in the text flags nothing
-    assert selfreport_words_by_line(lines, [{"line": 1, "word": "nonexistent"}]) == {}
+    assert selfreport_words_by_line(lines, [UnsureWord(1, "nonexistent")]) == {}
 
 
 def _two_call_urlopen(payloads: list[bytes]):

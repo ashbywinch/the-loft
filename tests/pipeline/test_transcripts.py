@@ -10,13 +10,16 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from document.page_size import PageSize
 from document.rectangle import Rectangle
 from document.row import Row
 from document.word import Word
+from pipeline.model.token_usage import TokenUsage
 from pipeline.model.vlm import VlmOptions
+from pipeline.model.vlm_answer import VlmAnswer
 from pipeline.transcribe.transcripts import masked_row, row_crop, row_transcripts, transcribe
 
-PAGE = (2544, 4642)
+PAGE = PageSize(2544, 4642)
 PAPER = (247, 243, 232)
 INK = (60, 60, 60)
 FOREIGN = (200, 80, 80)  # a neighbour's ink, painted so it cannot be mistaken
@@ -100,19 +103,19 @@ def test_the_engine_reads_a_page_of_rows(tmp_path: Path) -> None:
     Image.new("RGB", (900, 1400), PAPER).save(page_path)
     asked: list[int] = []
 
-    def stub_call(paths: list[Path], *, options: VlmOptions) -> tuple[str, dict[str, int]]:
+    def stub_call(paths: list[Path], *, options: VlmOptions) -> VlmAnswer:
         """Answer for exactly the rows the prompt names, as the model must."""
         numbers = sorted({int(n) for n in re.findall(r"row (\d+)", options.user_text or "")})
         asked.extend(n for n in numbers if n not in asked)
         segments = [{"rows": [n], "type": "body", "transcript": f"writing of row {n}"} for n in numbers]
-        return json.dumps({"segments": segments}), {"total_tokens": 1}
+        return VlmAnswer(json.dumps({"segments": segments}), TokenUsage(total_tokens=1, reasoning=""))
 
     report = transcribe(page_path, fixture=fixture, call=stub_call, out_dir=tmp_path)
 
     assert asked, "the prompt named no rows — no rows were built from the fixture's words"
-    assert report["transcripts"] == {str(number): f"writing of row {number}" for number in asked}
+    assert report.transcripts == {str(number): f"writing of row {number}" for number in asked}
     assert (tmp_path / "p1.answer.json").is_file(), "the reading was not persisted beside the page"
-    assert report["rows"] == 2, f"the fixture's two lines should make two rows, got {report['rows']}"
+    assert report.rows == 2, f"the fixture's two lines should make two rows, got {report.rows}"
 
 
 def test_a_page_whose_reading_answers_nothing_reads_nothing(tmp_path: Path) -> None:
@@ -121,6 +124,6 @@ def test_a_page_whose_reading_answers_nothing_reads_nothing(tmp_path: Path) -> N
     page_path = tmp_path / "empty.jpg"
     Image.new("RGB", (400, 400), PAPER).save(page_path)
 
-    read = row_transcripts(page_path, tmp_path, call=lambda *_a, **_k: ('{"segments": []}', {}))
+    read = row_transcripts(page_path, tmp_path, call=lambda *_a, **_k: VlmAnswer('{"segments": []}', TokenUsage()))
 
     assert read == {}

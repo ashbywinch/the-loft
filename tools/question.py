@@ -1,0 +1,135 @@
+"""A question the assessment asks the narrator.
+
+Every question is skippable — the FLOW's guarantee, never the model's
+discretion (user: the narrator answers in their own words or declines, while the
+flow keeps pursuing the issue) — and its wire form (``{"text": …, "why": …,
+"skippable": …, "suggestions": […], "type": …, "date_kind": …}``) is this
+class's dict. The type is closed: a plain question, a date question (the
+narrator answers it in their own words — never a hand-rolled picker), or a
+people multi-select.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from typing import Any
+
+from tools.parsed_phrase import ParsedPhrase
+
+MAX_QUESTIONS = 5
+MAX_SUGGESTIONS = 3
+MAX_SUGGESTION_CHARS = 60  # a tap-sized label, never a paragraph
+
+QUESTION_TYPES = ("date", "people")
+
+# The words that make a question a date question even when the model left
+# "type" null.
+_DATE_ASK_WORDS = (
+    "what year",
+    "which year",
+    "in what year",
+    "in which year",
+    "date of birth",
+    "born",
+    "how old",
+    "your age",
+    "what date",
+    "when did",
+    "when was",
+    "when do",
+    "when were",
+)
+
+
+@dataclass(frozen=True)
+class Question:
+    """One question — its text, its why, its tappable suggestions, and what
+    kind of answer it takes. ``skippable`` is the flow's guarantee, never the
+    model's discretion."""
+
+    text: str
+    why: str = ""
+    skippable: bool = True
+    suggestions: tuple[str, ...] = ()
+    type: str | None = None
+    date_kind: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.text.strip():
+            raise ValueError("a question needs text")
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> Question:
+        """The question a wire entry states, narrowed to the flow's fields —
+        at most MAX_SUGGESTIONS bounded suggestions, and the schema's
+        "skippable": true enforced here, at the seam (the eval's contract pins
+        it)."""
+        text = raw.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError(f"question needs text: {raw!r}")
+        raw_suggestions = raw.get("suggestions", [])
+        suggestions = tuple(
+            str(s).strip()[:MAX_SUGGESTION_CHARS]
+            for s in (raw_suggestions if isinstance(raw_suggestions, list) else [])
+            if isinstance(s, str) and s.strip()
+        )[:MAX_SUGGESTIONS]
+        q_type = raw.get("type") if raw.get("type") in QUESTION_TYPES else None
+        return cls(
+            text=text.strip(),
+            why=str(raw.get("why", "")),
+            skippable=True,
+            suggestions=suggestions,
+            type=q_type,
+            date_kind=raw.get("date_kind") if q_type == "date" else None,
+        )
+
+    @classmethod
+    def from_list(cls, raw: Any) -> tuple[Question, ...]:
+        """The questions a wire list states — capped at MAX_QUESTIONS, entries
+        the flow cannot use dropped."""
+        if not isinstance(raw, list):
+            return ()
+        out: list[Question] = []
+        for entry in raw[:MAX_QUESTIONS]:
+            if not isinstance(entry, dict):
+                continue
+            try:
+                out.append(cls.from_dict(entry))
+            except ValueError:
+                continue
+        return tuple(out)
+
+    def to_dict(self) -> dict[str, Any]:
+        """The question as its wire record."""
+        return {
+            "text": self.text,
+            "why": self.why,
+            "skippable": self.skippable,
+            "suggestions": list(self.suggestions),
+            "type": self.type,
+            "date_kind": self.date_kind,
+        }
+
+    def asks_for_a_date(self) -> bool:
+        """Does the question need a date — typed as one, or asked in the words
+        the flow recognises? The narrator answers in their own words; the flow
+        never shows a hand-rolled picker."""
+        return self.type == "date" or any(word in self.text.lower() for word in _DATE_ASK_WORDS)
+
+    def asks_for_a_date_of_birth(self) -> bool:
+        """Is this the polite question for the narrator's own date of birth?"""
+        return self.type == "date" and self.date_kind == "dob"
+
+    def asks_for_the_events_date(self) -> bool:
+        """Is this the (skippable) question for when the events happened?"""
+        return self.type == "date" and self.date_kind == "event"
+
+    def with_plausible_suggestions(self, dob_year: int) -> Question:
+        """Keep only the suggestion years the narrator could plausibly have
+        lived — a year before their birth is never offered. Suggestions the
+        parser cannot date are kept; a dob question (the date is being asked) is
+        never filtered."""
+        if self.type != "date" or self.asks_for_a_date_of_birth() or not self.suggestions:
+            return self
+        kept = tuple(s for s in self.suggestions if (year := ParsedPhrase.year_of(s)) is None or year >= dob_year)
+        return replace(self, suggestions=kept)

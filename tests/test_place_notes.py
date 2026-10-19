@@ -33,8 +33,8 @@ def test_place_notes_never_carry_process_status() -> None:
     if table is None:
         return  # a fresh archive predating the places seam has no notes to check
     offenders = []
-    for place in table["places"]:
-        note = str(place.get("note") or "")
+    for place in table.places:
+        note = place.note
         if JARGON.search(note):
-            offenders.append((place["id"], note))
+            offenders.append((place.id, note))
     assert not offenders, f"place notes carry process jargon: {offenders}"

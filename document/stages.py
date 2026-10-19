@@ -20,8 +20,9 @@ eight stages of the writing.
 
 The objects are the model's (`document/` — `Word`, `Row`, `Marks`, the
 `Document`; the identity records are `tools/records.py`'s). This module names
-them, it does not define them: a stage's `schemas` lists the `document.schemas`
-contracts that carry its artefact, and a test resolves every name.
+them, it does not define them: a stage's `schemas` lists the classes whose own
+wire carries its artefact (`Words`, `Rows`, `RowAdjustments`, `Document`), and
+a test resolves every name.
 
 A page's progress through the stages is a `PageStatus` — the scan pickup's
 `new -> oriented -> marks -> words -> rows_draft -> rows_pending`. The statuses
@@ -41,7 +42,8 @@ from types import MappingProxyType
 class StageFacts:
     """What one stage is: the PRD's number for it, its name, the object it
     makes, the artefact that carries that object, the wire contracts of the
-    artefact (`document.schemas` names), and whether a human decides here."""
+    artefact (the model's classes — `Words`, `Rows`, `RowAdjustments`,
+    `Document`), and whether a human decides here."""
 
     number: int
     label: str
@@ -67,7 +69,7 @@ class Stage(Enum):
         label="rows_adjusted",
         produces="Rows",
         artefact="<page>.row-adjustments.json + <page>.rows-adjusted.json",
-        schemas=("UserRowAdjustments", "Rows"),
+        schemas=("RowAdjustments", "Rows"),
         human=True,
     )
     TRANSCRIPTS_PROPOSED = StageFacts(

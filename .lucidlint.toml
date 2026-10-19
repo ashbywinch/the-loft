@@ -4,14 +4,16 @@
 # 2026-08-16, first full-repo run).
 
 [lucidlint]
-# record-shape: the object model already implements the class rule
-# (tools/records.py — Person/Place/Org/Relationship/Item/Knowledge). The
-# remaining dict[str, Any] are deliberate wire-format seams the standards
-# name: to_dict/from_dict own the persistence contract, API responses are
-# output format ("Don't let output format drive the domain model"), eval
-# result dicts are one-shot shapes. A dict shape re-parsed in 2+ places is
-# still a finding per coding-standards.md — the repo reviewer enforces it;
-# the tool's blanket flagging of every annotation is noise on the seams.
+# record-shape: the family is FIXED IN CODE (2026-10-17) — every record is a
+# class in a file named after it, owning its wire format; `document/schemas.py`
+# (a TypedDict bag) is dissolved and ~150 record modules landed. What the rule
+# still reports is a TOOL BUG: it fires on the very pattern its own message
+# prescribes — `from_dict(cls, raw: dict[str, Any])`, `to_dict(self) ->
+# dict[str, Any]`, and the constant-key literal that method builds (the
+# serialization edge, where a bare dict is correct). The minimal repro and the
+# reasoning: docs/PLAN/lucidlint-review-log.md §1.5 and §2.2. The rule stays
+# ignored so the gate's verdict is not polluted by the tool's own bug; a NEW
+# bare dict for a record is still a finding at review.
 ignore = ["record-shape", "class-module", "vague-name", "magic-number"]
 # noqa: no longer ignored (2026-10-17) — every `# noqa` site now carries its
 # why in the tool's format (`# noqa: F401 — the architecture test's

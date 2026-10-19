@@ -40,6 +40,8 @@ from collections.abc import Callable
 from typing import override
 from urllib.error import HTTPError
 
+from pipeline.model.http_headers import HttpHeaders
+
 BOT_STEP_MARK = "Run the-pr-agent/pr-agent"
 
 # The markers the bot leaves when a review dies inside the (swallowed)
@@ -71,7 +73,7 @@ class _GitHub:
     def get(self, url: str, accept: str = "application/vnd.github+json", token: str = "") -> bytes:
         req = urllib.request.Request(
             url,
-            headers={"Authorization": f"Bearer {token or self.token}", "Accept": accept},
+            headers=HttpHeaders(authorization=f"Bearer {token or self.token}", accept=accept).to_dict(),
         )
         return self._open(req)
 
@@ -111,7 +113,7 @@ def _job_log(repo: str, token: str) -> str | None:
             return None
         req = urllib.request.Request(
             f"https://api.github.com/repos/{repo}/actions/jobs/{jobs['jobs'][0]['id']}/logs",
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            headers=HttpHeaders(authorization=f"Bearer {token}", accept="application/vnd.github+json").to_dict(),
         )
         try:
             return _OPENER.open(req).read().decode("utf-8", errors="replace")

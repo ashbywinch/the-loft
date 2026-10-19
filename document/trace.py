@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from document.point import Point
 from pipeline.detect.mark import SCALE, Mark
 
 Box = list[list[float]]  # a quadrilateral's four corners, page pixels
@@ -25,12 +26,12 @@ class Trace:
     trace cannot silently claim half the page.
     """
 
-    strokes: list[list[tuple[float, float]]]
+    strokes: list[list[Point]]
     line_index: int
     covered: list[Mark]
 
     def box(self, stroke_tol: float) -> Box:
-        points = [(p[0] / SCALE, p[1] / SCALE) for stroke in self.strokes for p in stroke]
+        points = [(p.x / SCALE, p.y / SCALE) for stroke in self.strokes for p in stroke]
         sx0, sx1 = min(p[0] for p in points), max(p[0] for p in points)
         sy0, sy1 = min(p[1] for p in points), max(p[1] for p in points)
         x0 = min(sx0, max(min((w.x0 for w in self.covered), default=sx0), sx0 - stroke_tol))

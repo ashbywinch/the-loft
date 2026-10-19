@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from PIL import Image
 
+from document.rectangle import Rectangle
 from pipeline.rows.page_visuals import captioned_sheet, review_image
 from tools.word_numbering import render_numbered, unplaced
 
@@ -28,34 +29,39 @@ DATA = Path("/tmp/newpipe")
 OUT = Path(__file__).resolve().parent / "evidence"
 
 
-def _words() -> list[tuple[float, float, float, float]]:
+def _words() -> list[Rectangle]:
     """Every word box the pipeline measured, in page px."""
     words = json.loads((DATA / "words.json").read_text())["words"]
-    return [(w["x0"], w["y0"], w["x1"], w["y1"]) for w in words]
+    return [Rectangle(x0=w["x0"], y0=w["y0"], x1=w["x1"], y1=w["y1"]) for w in words]
 
 
-def _rows() -> list[tuple[float, float, float, float]]:
+def _rows() -> list[Rectangle]:
     """Every row box: each polygon as its bounding rectangle in page px."""
     boxes = json.loads((DATA / "boxes.json").read_text())["boxes"]
     return [
-        (min(px for px, _ in box), min(py for _, py in box), max(px for px, _ in box), max(py for _, py in box))
+        Rectangle(
+            x0=min(px for px, _ in box),
+            y0=min(py for _, py in box),
+            x1=max(px for px, _ in box),
+            y1=max(py for _, py in box),
+        )
         for box in boxes
     ]
 
 
-def _draw(path: Path, title: str, boxes: list[tuple[float, float, float, float]]) -> None:
+def _draw(path: Path, title: str, boxes: list[Rectangle]) -> None:
     """The whole page with every box numbered and coloured, plus a review copy.
 
     One image, not panels: a caption bar or a gap between stacked panels lands
     inside the writing and reads as a white box across the page (user,
     2026-09-16)."""
     page = Image.open(SCAN).convert("RGB")
-    section = (0.0, 0.0, float(page.width), float(page.height))
-    image, chips = render_numbered(page, section, boxes, 1.0)
-    sheet = captioned_sheet(image, [title, f"{len(boxes)} boxes, numbered in reading order"])
+    section = Rectangle(x0=0.0, y0=0.0, x1=float(page.width), y1=float(page.height))
+    rendered = render_numbered(page, section, [(b.x0, b.y0, b.x1, b.y1) for b in boxes], 1.0)
+    sheet = captioned_sheet(rendered.image, [title, f"{len(boxes)} boxes, numbered in reading order"])
     sheet.sheet.save(path.with_suffix(".png"))
     path.write_bytes(review_image(sheet.sheet, width=1400, quality=74))
-    missing = unplaced(chips)
+    missing = unplaced(rendered.chips)
     print(f"{path.name} -> {path} ({path.stat().st_size // 1024}KB); {len(boxes)} boxes, {len(missing)} chips unplaced")
 
 
@@ -70,7 +76,7 @@ class _Half:
     scale: float = 2.0
 
 
-def _draw_half(path: Path, boxes: list, half: _Half) -> None:
+def _draw_half(path: Path, boxes: list[Rectangle], half: _Half) -> None:
     """One half of the page as its own file, boxes numbered within the half.
 
     Separate files, never a stack: a stacked panel's caption bar and gap land
@@ -78,13 +84,14 @@ def _draw_half(path: Path, boxes: list, half: _Half) -> None:
     whole-page density the chip placer runs out of free space."""
     page = Image.open(SCAN).convert("RGB")
     y0, y1 = half.fy0 * page.height, half.fy1 * page.height
-    section = (0.0, y0, float(page.width), y1)
-    inside = [b for b in boxes if b[3] >= y0 and b[1] <= y1]
-    image, chips = render_numbered(page, section, inside, half.scale)
-    sheet = captioned_sheet(image, [half.title, f"{len(inside)} boxes, numbered in reading order"])
+    section = Rectangle(x0=0.0, y0=y0, x1=float(page.width), y1=y1)
+    inside = [b for b in boxes if b.y1 >= y0 and b.y0 <= y1]
+    rendered = render_numbered(page, section, [(b.x0, b.y0, b.x1, b.y1) for b in inside], half.scale)
+    sheet = captioned_sheet(rendered.image, [half.title, f"{len(inside)} boxes, numbered in reading order"])
     sheet.sheet.save(path.with_suffix(".png"))
     path.write_bytes(review_image(sheet.sheet, width=1400, quality=74))
-    print(f"{path.name} -> {path.stat().st_size // 1024}KB; {len(inside)} boxes, {len(unplaced(chips))} chips unplaced")
+    missing = unplaced(rendered.chips)
+    print(f"{path.name} -> {path.stat().st_size // 1024}KB; {len(inside)} boxes, {len(missing)} chips unplaced")
 
 
 def _main() -> int:

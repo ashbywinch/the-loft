@@ -10,6 +10,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from pipeline.model.cached_read import CachedRead
 from pipeline.model.vlm_cache import PanelRead, load_cached_read, store_read
 
 
@@ -23,7 +24,7 @@ def test_same_panel_and_spec_hits(tmp_path) -> None:
     panel = _png(tmp_path, (10, 20, 30))
     store_read(PanelRead(panel, {"model": "m", "max_tokens": 8000}), "the text", 1234, cache_dir=tmp_path)
     hit = load_cached_read(PanelRead(panel, {"model": "m", "max_tokens": 8000}), cache_dir=tmp_path)
-    assert hit == ("the text", 1234)
+    assert hit == CachedRead("the text", 1234)
 
 
 def test_changed_panel_misses(tmp_path) -> None:

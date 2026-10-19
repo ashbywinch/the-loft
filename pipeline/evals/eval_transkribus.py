@@ -4,6 +4,11 @@ Recognition API. Auth is OpenID Connect password-grant (Transkribus
 issues NO api keys: your account username+password exchange for a
 Bearer token at account.readcoop.eu; client_id transkribus-api-client).
 
+The API's bodies are records here — the token grant, the submission, and
+a process's state — so a wire key is a named field, and the lines this
+leg reads go into the head-to-head's own run record (EngineRun), the same
+one the other engines' files hold.
+
 Credentials come from TRANSCRIBUS_USER / TRANSCRIBUS_PASSWORD in the
 environment — the script never sees them in code, args, or logs. The
 trial images must be reachable by Transkribus's cloud, so they are
@@ -17,6 +22,7 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import time
@@ -24,9 +30,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from pipeline.evals.eval_htr_trial import PAGES
+from pipeline.evals.eval_htr_trial import PAGES, EngineRun
+from pipeline.model.http_headers import HttpHeaders
 
 TOKEN_URL = "https://account.readcoop.eu/auth/realms/readcoop/protocol/openid-connect/token"
 PROCESS_URL = "https://transkribus.eu/processing/v1/processes"
@@ -36,20 +45,67 @@ MODEL_GENERAL_HANDWRITING = 38230  # the Super Model from the docs' example
 NAMESPACE = {"p": "http://schema.primaresearch.org/PAGE/gfx/pagecontent/2013-07-15"}
 
 
+@dataclass(frozen=True)
+class TokenRequest:
+    """The OIDC password grant's form body: the account, its password, and
+    the client asking. The password travels only in this body."""
+
+    username: str
+    password: str
+    client_id: str = CLIENT_ID
+    grant_type: str = "password"
+
+    def to_dict(self) -> dict[str, Any]:
+        """The form's fields, in the order the endpoint's docs state them."""
+        return {
+            "grant_type": self.grant_type,
+            "username": self.username,
+            "password": self.password,
+            "client_id": self.client_id,
+        }
+
+
+@dataclass(frozen=True)
+class ProcessSubmission:
+    """The processing request's body: which model to run, and the image
+    itself as base64 (the v1 schema takes base64 or imageUrl; base64 keeps
+    the scans off any tunnel)."""
+
+    model_id: int
+    image_base64: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """The body as the v1 schema takes it."""
+        return {"config": {"modelId": self.model_id}, "image": {"base64": self.image_base64}}
+
+
+@dataclass(frozen=True)
+class ProcessState:
+    """One poll's answer about a submitted process: where it is, and — when
+    it stopped on an error — the response's own error text."""
+
+    status: str
+    error: str | None = None
+
+    @property
+    def reason(self) -> str:
+        """Why the process stopped: its error text when the response carries
+        one, else the status that stopped it."""
+        return self.error if self.error is not None else self.status
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> ProcessState:
+        """The state a process-status response states."""
+        return cls(status=str(raw.get("status", "")), error=raw.get("error"))
+
+
 def get_token(username: str, password: str) -> str:
     """The OIDC password grant — returns the access token (a short-lived
     bearer). The password travels only in this request body."""
-    body = urllib.parse.urlencode(
-        {
-            "grant_type": "password",
-            "username": username,
-            "password": password,
-            "client_id": CLIENT_ID,
-        }
-    ).encode()
+    body = urllib.parse.urlencode(TokenRequest(username, password).to_dict()).encode()
     req = urllib.request.Request(TOKEN_URL, data=body, method="POST")
     with urllib.request.urlopen(req, timeout=60) as resp:
-        data = __import__("json").loads(resp.read().decode())
+        data = json.loads(resp.read().decode())
     token = data.get("access_token")
     if not token:
         raise RuntimeError(f"token exchange failed: {data.get('error', data)[:120]}")
@@ -62,43 +118,37 @@ def submit_process(token: str, image: Path, model_id: int = MODEL_GENERAL_HANDWR
     # lucidlint: ignore inline-import this trial tool is removed in the stacked top PR — its findings are moot
     import base64 as _b64
 
-    body = (
-        __import__("json")
-        .dumps(
-            {
-                "config": {"modelId": model_id},
-                "image": {"base64": _b64.b64encode(image.read_bytes()).decode("ascii")},
-            }
-        )
-        .encode()
-    )
+    submission = ProcessSubmission(model_id, _b64.b64encode(image.read_bytes()).decode("ascii"))
     req = urllib.request.Request(
         PROCESS_URL,
-        data=body,
+        data=json.dumps(submission.to_dict()).encode(),
         method="POST",
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        headers=HttpHeaders(authorization=f"Bearer {token}", content_type="application/json").to_dict(),
     )
     with urllib.request.urlopen(req, timeout=60) as resp:
-        return __import__("json").loads(resp.read().decode())["processId"]
+        return json.loads(resp.read().decode())["processId"]
 
 
-def poll_process(token: str, process_id: str, timeout_s: float = 600.0) -> dict:
+def poll_process(token: str, process_id: str, timeout_s: float = 600.0) -> ProcessState:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        req = urllib.request.Request(f"{PROCESS_URL}/{process_id}", headers={"Authorization": f"Bearer {token}"})
+        req = urllib.request.Request(
+            f"{PROCESS_URL}/{process_id}", headers=HttpHeaders(authorization=f"Bearer {token}").to_dict()
+        )
         with urllib.request.urlopen(req, timeout=60) as resp:
-            state = __import__("json").loads(resp.read().decode())
-        status = state.get("status", "")
-        if status in ("SUCCEEDED", "COMPLETED", "DONE"):
+            state = ProcessState.from_dict(json.loads(resp.read().decode()))
+        if state.status in ("SUCCEEDED", "COMPLETED", "DONE"):
             return state
-        if status in ("FAILED", "ERROR", "CANCELLED"):
-            raise RuntimeError(f"transkribus process failed: {state.get('error', state)[:200]}")
+        if state.status in ("FAILED", "ERROR", "CANCELLED"):
+            raise RuntimeError(f"transkribus process failed: {state.reason[:200]}")
         time.sleep(5)
     raise TimeoutError(f"transkribus process {process_id} did not finish in {timeout_s}s")
 
 
 def fetch_page_xml(token: str, process_id: str) -> str:
-    req = urllib.request.Request(f"{PROCESS_URL}/{process_id}/page", headers={"Authorization": f"Bearer {token}"})
+    req = urllib.request.Request(
+        f"{PROCESS_URL}/{process_id}/page", headers=HttpHeaders(authorization=f"Bearer {token}").to_dict()
+    )
     with urllib.request.urlopen(req, timeout=120) as resp:
         return resp.read().decode()
 
@@ -143,8 +193,8 @@ def main(argv: list[str] | None = None) -> int:
         lines = extract_lines(xml)
         out = Path("/run/media/ashby/One Touch/Loft/work/eval-htr")
         out = out / f"{page}.transkribus.json"
-        payload = {"engine": "transkribus", "lines": lines, "n": len(lines)}
-        out.write_text(__import__("json").dumps(payload), encoding="utf-8")
+        run = EngineRun(engine="transkribus", lines=lines)
+        out.write_text(json.dumps(run.to_dict()), encoding="utf-8")
         print(f"{page[:26]}: {len(lines)} lines -> {out.name}", file=sys.stderr)
     return 0
 

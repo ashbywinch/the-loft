@@ -94,12 +94,14 @@ def _main() -> int:
     for name, (window, scale, wanted, caption) in CASES.items():
         x0, y0, x1, y1 = window
         whole = number_words(boxes)
-        inside = [entry["box"] for entry in whole if entry["render_id"] in wanted]
-        image, chips = render_numbered(page, (x0, y0, x1, y1), inside, scale)
-        sheet = captioned_sheet(image, caption)
+        inside = [entry.box for entry in whole if entry.render_id in wanted]
+        rendered = render_numbered(page, (x0, y0, x1, y1), inside, scale)
+        sheet = captioned_sheet(rendered.image, caption)
         out = OUT / f"{name}.jpg"
         out.write_bytes(review_image(sheet.sheet, width=1400, quality=76))
-        print(f"{name}: {len(inside)} boxes in the window, {len(unplaced(chips))} chips unplaced -> {out.name}")
+        print(
+            f"{name}: {len(inside)} boxes in the window, {len(unplaced(rendered.chips))} chips unplaced -> {out.name}"
+        )
     return 0
 
 

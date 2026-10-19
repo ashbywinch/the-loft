@@ -25,6 +25,7 @@ from PIL import Image, ImageDraw
 from document.colour import Colour
 from document.rectangle import Rectangle, overlaps
 from document.row import Row
+from document.span import Span
 from pipeline.rows.render import RenderStyle
 
 ROW_NUM_SIZE = 26  # px: the pill's number, the review surface's own type size
@@ -159,8 +160,8 @@ class NumberedRows:
             word.x1 for row in ordered for word in row.word_boxes
         ]
         # the crop spans the numbers (now in the LEFT margin) and the writing
-        number_left, _number_right = cls.numbers_extent(ordered)
-        ink_left = max(0, int(min(float(min(xs) if xs else 0), float(number_left))) - INK_MARGIN)
+        number_span = cls.numbers_extent(ordered)
+        ink_left = max(0, int(min(float(min(xs) if xs else 0), float(number_span.start))) - INK_MARGIN)
         ink_right = min(page.width, int(max(xs) if xs else page.width) + INK_MARGIN)
         out: list[NumberedRows] = []
         for index in range(bands):
@@ -199,8 +200,9 @@ class NumberedRows:
         return cls._draw(canvas, sorted(rows, key=lambda row: row.number), offset_x=offset_x, offset_y=offset_y)
 
     @classmethod
-    def numbers_extent(cls, rows: list[Row], *, offset_y: float = 0) -> tuple[float, float]:
-        """The left and right edges the numbers reach, page px (right margin).
+    def numbers_extent(cls, rows: list[Row], *, offset_y: float = 0) -> Span:
+        """The span the numbers reach, page px: the leftmost edge and the
+        rightmost, in the right margin.
 
         A number that shares its corner with another's steps outward, so the
         numbers can reach further left than the writing does. A caller that
@@ -209,8 +211,8 @@ class NumberedRows:
         no such row (page-01's rows 6 and 7, twice)."""
         boxes = cls._pill_boxes(rows)
         if not boxes:
-            return 0.0, 0.0
-        return min(b.x0 for b in boxes), max(b.x1 for b in boxes)
+            return Span(start=0.0, end=0.0)
+        return Span(min(b.x0 for b in boxes), max(b.x1 for b in boxes))
 
     @classmethod
     def end_centre(cls, row: Row, *, left_end: bool) -> float:

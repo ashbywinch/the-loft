@@ -10,10 +10,13 @@ boxes are schematic and cannot be trusted as positions.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from typing import Any
 
 from document.rectangle import Rectangle
+from pipeline.detect.model_band import ModelBand
+from pipeline.detect.piece_row import PieceRow
+from pipeline.detect.projection_scale import ProjectionScale
+from pipeline.detect.row_band import RowBand
 
 
 def _median(values: list[float], fallback: float) -> float:
@@ -21,30 +24,30 @@ def _median(values: list[float], fallback: float) -> float:
     return ordered[len(ordered) // 2] if ordered else fallback
 
 
-def _split_by_x_gap(row: list[list[float]], gap: float = 300.0) -> list[list[list[float]]]:
+def _split_by_x_gap(row: PieceRow, gap: float = 300.0) -> list[PieceRow]:
     """Split one row at its x-gaps wider than ``gap`` - the rec's y-band
     clustering can merge pieces that are side by side (the postcard's
     date and the HERNSPETH sharing a band; a line whose words sit at
     the two ends with a blank middle). Each side becomes its own row -
     the union-boxes tighten to the ink, and the text-extent gates stop
     false-positives."""
-    ordered = sorted(row, key=lambda b: b[0])
-    parts: list[list[list[float]]] = []
+    ordered = sorted(row.pieces, key=lambda piece: piece.x0)
+    parts: list[PieceRow] = []
     current = [ordered[0]]
-    for b in ordered[1:]:
-        if b[0] - current[-1][2] > gap:
-            parts.append(current)
-            current = [b]
+    for piece in ordered[1:]:
+        if piece.x0 - current[-1].x1 > gap:
+            parts.append(PieceRow(current))
+            current = [piece]
         else:
-            current.append(b)
-    parts.append(current)
+            current.append(piece)
+    parts.append(PieceRow(current))
     return parts
 
 
 ROW_HEIGHT_FACTOR = 2.5
 
 
-def _split_tall_row(row: list[list[float]], factor: float = ROW_HEIGHT_FACTOR) -> list[list[list[float]]]:
+def _split_tall_row(row: PieceRow, factor: float = ROW_HEIGHT_FACTOR) -> list[PieceRow]:
     """Split an implausibly tall row at its internal y-gaps until every
     part could be ONE line: single-linkage chaining merges pieces whose
     every ADJACENT gap is small into rows spanning many real lines — the
@@ -55,65 +58,61 @@ def _split_tall_row(row: list[list[float]], factor: float = ROW_HEIGHT_FACTOR) -
     slant); past that the row splits at its widest center-gap,
     recursively. All thresholds are the row's OWN scale — invariant to
     scan resolution."""
-
-    def extent(part: list[list[float]]) -> float:
-        return max(b[3] for b in part) - min(b[1] for b in part)
-
-    cap = factor * _median([b[3] - b[1] for b in row], 50.0)
-    out: list[list[list[float]]] = []
-    stack = [sorted(row, key=lambda b: (b[1] + b[3]) / 2)]
+    cap = factor * _median([piece.height for piece in row.pieces], 50.0)
+    out: list[PieceRow] = []
+    stack = [PieceRow(sorted(row.pieces, key=lambda piece: piece.cy))]
     while stack:
         part = stack.pop()
-        if len(part) < 2 or extent(part) <= cap:
+        if len(part.pieces) < 2 or part.union().height <= cap:
             out.append(part)
             continue
         best_i, best_gap = 1, -1.0
-        for i in range(1, len(part)):
-            gap = (part[i][1] + part[i][3]) / 2 - (part[i - 1][1] + part[i - 1][3]) / 2
+        for i in range(1, len(part.pieces)):
+            gap = part.pieces[i].cy - part.pieces[i - 1].cy
             if gap > best_gap:
                 best_i, best_gap = i, gap
         if best_gap <= 0:  # coincident centers: nothing to split on
             out.append(part)
             continue
-        stack += [part[:best_i], part[best_i:]]
+        stack += [PieceRow(part.pieces[:best_i]), PieceRow(part.pieces[best_i:])]
     return out
 
 
-def _band_parts(
-    bands: list[tuple[int, int]], ink: Any, box: Rectangle, scales: tuple[float, float]
-) -> list[list[float]]:
+def _band_parts(bands: list[RowBand], ink: Any, box: Rectangle, scale: ProjectionScale) -> list[Rectangle]:
     """Each band's inked x-extent as a page-space box (extracted from
     split_by_bands 2026-08-29 for the complexity bar)."""
-    scale_x, scale_y = scales
     cols = ink.getprojection()[0]
-    parts: list[list[float]] = []
-    for s, e in bands:
+    parts: list[Rectangle] = []
+    for band in bands:
         xs = [i for i, c in enumerate(cols) if c]
         if not xs:
             continue
         pad = 2
-        bx0 = box.x0 + (min(xs) - pad) * scale_x
-        bx1 = box.x0 + (max(xs) + 1 + pad) * scale_x
-        by0 = box.y0 + s * scale_y
-        by1 = box.y0 + (e + 1) * scale_y
-        parts.append([bx0, by0, min(bx1, box.x1), min(by1, box.y1)])
+        parts.append(
+            Rectangle(
+                scale.page_x(box.x0, min(xs) - pad),
+                scale.page_y(box.y0, band.top),
+                min(scale.page_x(box.x0, max(xs) + 1 + pad), box.x1),
+                min(scale.page_y(box.y0, band.bottom + 1), box.y1),
+            )
+        )
     return parts
 
 
-def _merge_gap_runs(runs: list[tuple[int, int]], gap: int) -> list[tuple[int, int]]:
+def _merge_gap_runs(runs: list[RowBand], gap: int) -> list[RowBand]:
     """Merge projection runs separated by less than ``gap`` rows - a thin
     descender touch must not split a line band (extracted from
     split_by_bands 2026-08-29 for the complexity bar)."""
-    merged: list[tuple[int, int]] = []
-    for s, e in runs:
-        if merged and s - merged[-1][1] - 1 < gap:
-            merged[-1] = (merged[-1][0], e)
+    merged: list[RowBand] = []
+    for run in runs:
+        if merged and run.top - merged[-1].bottom - 1 < gap:
+            merged[-1] = merged[-1].extend_to(run.bottom)
         else:
-            merged.append((s, e))
+            merged.append(run)
     return merged
 
 
-def split_by_bands(box: Sequence[float], image: Any) -> list[list[float]]:
+def split_by_bands(box: Rectangle, image: Any) -> list[Rectangle]:
     """A multi-line union divided along its own ink bands: when the
     projection shows several separated writing bands, their row ranges —
     and each band's inked x-extent — ARE the true line boxes. Splitting
@@ -127,35 +126,32 @@ def split_by_bands(box: Sequence[float], image: Any) -> list[list[float]]:
     x0, y0 = max(0, x0), max(0, y0)
     x1, y1 = min(w, x1), min(h, y1)
     if x1 <= x0 or y1 <= y0:
-        return [list(box)]
+        return [box]
     gray = image.crop((x0, y0, x1, y1)).convert("L")
     norm_h = 100
     norm = gray.resize((max(1, round(gray.width * norm_h / max(1, gray.height))), norm_h))
-    scale_x = gray.width / norm.width
-    scale_y = gray.height / norm_h
+    scale = ProjectionScale(gray.width / norm.width, gray.height / norm_h)
     ink = norm.point(lambda p: 255 - p)
     rows = ink.getprojection()[1]
-    runs: list[tuple[int, int]] = []
+    runs: list[RowBand] = []
     start: int | None = None
     for i, r in enumerate(rows):
         if r and start is None:
             start = i
         elif not r and start is not None:
-            runs.append((start, i - 1))
+            runs.append(RowBand(start, i - 1))
             start = None
     if start is not None:
-        runs.append((start, len(rows) - 1))
+        runs.append(RowBand(start, len(rows) - 1))
     merged = _merge_gap_runs(runs, 3)
-    bands = [(s, e) for s, e in merged if e - s + 1 >= 3]
+    bands = [band for band in merged if band.length >= 3]
     if len(bands) < 2:
-        return [list(box)]
-    parts = _band_parts(bands, ink, Rectangle(x0, y0, x1, y1), (scale_x, scale_y))
-    return parts or [list(box)]
+        return [box]
+    parts = _band_parts(bands, ink, box, scale)
+    return parts or [box]
 
 
-def cluster_rows(
-    boxes: list[list[float]], gap: float | None = None, x_gap: float | None = None
-) -> list[list[list[float]]]:
+def cluster_rows(boxes: list[Rectangle], gap: float | None = None, x_gap: float | None = None) -> list[PieceRow]:
     """The rec's pieces clustered by y-proximity into ROWS — one text
     line's pieces share the y-band — then each row split at its wide
     x-gaps (side-by-side pieces are separate lines, or a line's words
@@ -172,30 +168,20 @@ def cluster_rows(
     any column gap exists)."""
     if not boxes:
         return []
-    heights = [b[3] - b[1] for b in boxes]
-    widths = [b[2] - b[0] for b in boxes]
+    heights = [box.height for box in boxes]
+    widths = [box.width for box in boxes]
     y_gap = gap if gap is not None else _median(heights, 50.0) * 0.65
     x_split = x_gap if x_gap is not None else _median(widths, 200.0) * 1.5
-    ordered = sorted(boxes, key=lambda b: (b[1] + b[3]) / 2)
-    rows: list[list[list[float]]] = []
-    for b in ordered:
-        cy = (b[1] + b[3]) / 2
-        if rows and cy - (rows[-1][-1][1] + rows[-1][-1][3]) / 2 < y_gap:
-            rows[-1].append(b)
+    ordered = sorted(boxes, key=lambda box: box.cy)
+    grouped: list[list[Rectangle]] = []
+    for box in ordered:
+        if grouped and box.cy - grouped[-1][-1].cy < y_gap:
+            grouped[-1].append(box)
         else:
-            rows.append([b])
-    treated = [sub for row in rows for sub in _split_tall_row(row)]
+            grouped.append([box])
+    rows = [PieceRow(group) for group in grouped]
+    treated = [part for row in rows for part in _split_tall_row(row)]
     return [part for row in treated for part in _split_by_x_gap(row, x_split)]
-
-
-def union(boxes: list[list[float]]) -> list[float]:
-    """The boxes' bounding box — the row's measured extent."""
-    return [
-        min(b[0] for b in boxes),
-        min(b[1] for b in boxes),
-        max(b[2] for b in boxes),
-        max(b[3] for b in boxes),
-    ]
 
 
 def transcription_line_count_plausible(line_count: int, row_count: int) -> bool:
@@ -212,9 +198,9 @@ def transcription_line_count_plausible(line_count: int, row_count: int) -> bool:
 
 
 def match_labels(
-    row_unions: list[list[float]],
+    row_unions: list[Rectangle],
     transcription_lines: list[str],
-    model_bands: list[tuple[float, float, str]] | None = None,
+    model_bands: list[ModelBand] | None = None,
 ) -> list[str]:
     """The rows' labels — the transcription's lines, in order. The
     PROPORTIONAL assignment: each row's y-center, as a fraction of the
@@ -228,9 +214,9 @@ def match_labels(
     proportional."""
     if not row_unions:
         return []
-    centers = [(u[1] + u[3]) / 2 for u in row_unions]
-    top = min(u[1] for u in row_unions)
-    span = max(max(u[3] for u in row_unions) - top, 1)
+    centers = [row.cy for row in row_unions]
+    top = min(row.y0 for row in row_unions)
+    span = max(max(row.y1 for row in row_unions) - top, 1)
     n = len(transcription_lines)
     proportional = [transcription_lines[min(n - 1, max(0, round(((c - top) / span) * (n - 1))))] for c in centers]
     if not model_bands or not transcription_lines:
@@ -242,16 +228,15 @@ def match_labels(
     return [transcription_lines[i] if i >= 0 else "" for i in overlap_idx]
 
 
-def _overlap_assignments(row_unions: list[list[float]], model_bands: list[tuple[float, float, str]]) -> list[int]:
+def _overlap_assignments(row_unions: list[Rectangle], model_bands: list[ModelBand]) -> list[int]:
     """Each row's best y-overlapping band's index — the model's boxes
     as positions, refined by the measured rows' extents."""
     overlap_idx: list[int] = []
-    for u in row_unions:
-        ry0, ry1 = u[1], u[3]
+    for row in row_unions:
         best_i, best_ov = -1, 0.0
-        for i, (my0, my1, _) in enumerate(model_bands):
-            ov = max(0, min(ry1, my1) - max(ry0, my0))
-            if ov > best_ov:
-                best_i, best_ov = i, ov
+        for i, band in enumerate(model_bands):
+            overlap = band.overlap(row)
+            if overlap > best_ov:
+                best_i, best_ov = i, overlap
         overlap_idx.append(best_i)
     return overlap_idx

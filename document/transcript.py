@@ -4,7 +4,9 @@ A page is read by showing the model the page with its rows numbered — one
 number per row — and asking for the writing of each numbered row. The answer
 is a list of segments; each names the rows it covers, says what it is (body
 writing, an injection, or marginalia), gives its transcript, and — for an
-injection — the row it injects after.
+injection — the row it injects after. That segment is `RowTranscript`
+(document/row_transcript.py), which owns the answer's wire and refuses a
+segment the contract cannot read.
 
 Nothing is guessed at: a missing row, a row claimed twice, a kind outside the
 vocabulary, or an injection point that names no row refuses the whole answer.
@@ -17,33 +19,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
-from typing import Any
 
-KINDS = ("body", "injection", "marginalia")
-"""What a segment of writing can be. `rule` is absent on purpose: a rule is a
-detector artefact, not writing, and it carries no transcript."""
+from document.row_transcript import RowTranscript
 
 _FENCE = "```"  # the markdown fence the model sometimes wraps its JSON in
 
 
 class TranscriptError(ValueError):
     """The model's answer violates the contract — fail loudly, never merge."""
-
-
-@dataclass(frozen=True)
-class RowTranscript:
-    """One row's transcript: what it says, what it is, and where it injects.
-
-    `rows` are the numbered rows this transcript covers (a body row is one; a
-    small aside may be several). `injection_after` is the row number an
-    injection follows — the two are set together, always.
-    """
-
-    rows: tuple[int, ...]
-    text: str  # "" when the model could not read the row: unread, never text
-    kind: str
-    injection_after: int | None
 
 
 class Transcript:
@@ -67,12 +50,9 @@ class Transcript:
         cover exactly those."""
         wanted = tuple(range(1, rows + 1)) if isinstance(rows, int) else tuple(sorted(rows))
         highest = max(wanted, default=0)
-        segments = parse_segments(answer)
-        row_transcripts: list[RowTranscript] = []
+        row_transcripts = parse_segments(answer, rows=highest)
         claimed: dict[int, int] = {}  # row number -> the transcript that claimed it
-        for index, segment in enumerate(segments):
-            row_transcript = _row_transcript(segment, index=index, rows=highest)
-            row_transcripts.append(row_transcript)
+        for index, row_transcript in enumerate(row_transcripts):
             for number in row_transcript.rows:
                 if number in claimed:
                     raise TranscriptError(
@@ -117,8 +97,14 @@ class Transcript:
         raise TranscriptError(f"row {row} was never read")
 
 
-def parse_segments(answer: str) -> list[dict[str, Any]]:
-    """The model's JSON answer (fence-tolerant) as the segments list."""
+def parse_segments(answer: str, *, rows: int) -> list[RowTranscript]:
+    """The model's JSON answer (fence-tolerant) as the row transcripts of the
+    page whose highest numbered row is `rows`.
+
+    The answer's own shape is checked here (it is JSON, and it carries a
+    segments list); each segment is read against the contract by
+    `RowTranscript.from_dict`, so a caller gets transcripts it can trust or a
+    refusal naming the segment and what is wrong with it."""
     stripped = answer.strip()
     if stripped.startswith(_FENCE):
         lines = stripped.splitlines()
@@ -130,54 +116,9 @@ def parse_segments(answer: str) -> list[dict[str, Any]]:
         raise TranscriptError(f"the answer is not JSON: {answer[:200]!r}") from exc
     if not isinstance(parsed, dict) or not isinstance(parsed.get("segments"), list):
         raise TranscriptError(f"the answer has no segments list: {answer[:200]!r}")
-    return parsed["segments"]
-
-
-def _rows_of(segment: dict[str, Any], *, index: int, rows: int) -> tuple[int, ...]:
-    """The numbered rows a transcript covers, or a refusal naming what is wrong
-    with them: none named, one outside the page, one twice."""
-    numbers = segment.get("rows")
-    if not isinstance(numbers, list) or not numbers:
-        raise TranscriptError(f"transcript {index} names no rows: {segment!r}")
-    if any(not isinstance(number, int) or not 1 <= number <= rows for number in numbers):
-        raise TranscriptError(f"transcript {index} names a row outside 1..{rows}: {numbers!r}")
-    if len(set(numbers)) != len(numbers):
-        raise TranscriptError(f"transcript {index} repeats a row: {numbers!r}")
-    return tuple(numbers)
-
-
-def _injection_after(segment: dict[str, Any], kind: str, *, index: int, rows: int) -> int | None:
-    """The row an injection injects after: required for an injection, and
-    forbidden on writing that injects nowhere."""
-    after = segment.get("injection_after")
-    if kind == "injection":
-        if not isinstance(after, int) or not 1 <= after <= rows:
-            raise TranscriptError(f"transcript {index} is an injection without a row to inject after: {after!r}")
-        return after
-    if after is not None:
-        raise TranscriptError(f"transcript {index} is {kind!r} and must carry no injection point: {after!r}")
-    return None
-
-
-def _row_transcript(segment: Any, *, index: int, rows: int) -> RowTranscript:
-    """One segment as a row transcript, or a refusal naming what is wrong with it."""
-    if not isinstance(segment, dict):
-        raise TranscriptError(f"transcript {index} is not an object: {segment!r}")
-    numbers = _rows_of(segment, index=index, rows=rows)
-    kind = segment.get("type")
-    if kind not in KINDS:
-        raise TranscriptError(f"reading {index}: unknown type {kind!r} (not {KINDS})")
-    text = segment.get("transcript")
-    if not isinstance(text, str):
-        raise TranscriptError(f"transcript {index} has no transcript: {segment!r}")
-    # an EMPTY transcript is the model saying it cannot read that row. That is
-    # a fact about the page, not a malformed answer: it is recorded as unread
-    # (no text, and nothing unconfirmed is treated as the document's words) and
-    # the reviewer is shown the row. A row ABSENT from the answer is still a
-    # refusal — that is a partial read pretending to be a whole one.
-    return RowTranscript(
-        rows=numbers,
-        text=text.strip(),
-        kind=kind,
-        injection_after=_injection_after(segment, kind, index=index, rows=rows),
-    )
+    try:
+        return [
+            RowTranscript.from_dict(segment, index=index, rows=rows) for index, segment in enumerate(parsed["segments"])
+        ]
+    except ValueError as exc:  # a segment the contract cannot read
+        raise TranscriptError(str(exc)) from exc

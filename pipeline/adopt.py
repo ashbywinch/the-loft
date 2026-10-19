@@ -22,8 +22,11 @@ import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
+from pipeline.adoption_result import AdoptionResult
+from pipeline.batch_record import BatchRecord
+from pipeline.pile_candidate import PileCandidate
+from pipeline.registry_entry import RegistryEntry
 from pipeline.store import PipelineStore
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.store import StoreError
@@ -87,39 +90,45 @@ class _Adoption:
             raise AdoptionError(f"no such folder: {folder}")
         return sorted(p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS)
 
-    def _existing_records(self) -> list[tuple[Path, dict[str, Any]]]:
+    def _existing_records(self) -> list[RegistryEntry]:
         """The registry's records — the match and same-pile candidates."""
         registry_dir = self.registry_dir
-        records: list[tuple[Path, dict[str, Any]]] = []
+        entries: list[RegistryEntry] = []
         if not registry_dir.is_dir():
-            return records
+            return entries
         store = PipelineStore(registry_dir)
         for path in sorted(registry_dir.glob("*.json")):
             if _is_versioned_copy(path):
                 continue  # PipelineStore versioned copies are read via the base path
             rel = str(path.relative_to(registry_dir))
             try:
-                records.append((path, json.loads(store.read_latest(rel))))
-            except (OSError, json.JSONDecodeError, StoreError) as exc:
+                entries.append(RegistryEntry(path, BatchRecord.from_dict(json.loads(store.read_latest(rel)))))
+            except (OSError, json.JSONDecodeError, StoreError, KeyError, TypeError, ValueError) as exc:
                 raise AdoptionError(f"registry record unreadable: {path} ({exc})") from exc
-        return records
+        return entries
 
-    def match_fingerprint(self) -> tuple[Path, str] | None:
+    def _save(self, entry: RegistryEntry) -> None:
+        """Write the entry's record back where it came from."""
+        rel = str(entry.path.relative_to(self.registry_dir))
+        PipelineStore(self.registry_dir).write(
+            rel, json.dumps(entry.record.to_dict(), indent=1, ensure_ascii=False) + "\n"
+        )
+
+    def match_fingerprint(self) -> AdoptionResult | None:
         """An exact fingerprint match: already-registered (same path) or
         re-associated — the folder moved and its content matched an existing
         record (R4: reorganising costs us work, never data)."""
-        for record_path, record in self._existing_records():
-            if record.get("fingerprint") == self.fingerprint:
-                old_path = str(record.get("path", ""))
-                if old_path == str(self.folder):
-                    return record_path, "already-registered"
-                record["path"] = str(self.folder)  # re-association: the folder moved
-                rel = str(record_path.relative_to(self.registry_dir))
-                PipelineStore(self.registry_dir).write(rel, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
-                return record_path, "re-associated"
+        for entry in self._existing_records():
+            if entry.record.fingerprint != self.fingerprint:
+                continue
+            if entry.record.path == self.folder:
+                return AdoptionResult(entry.path, "already-registered")
+            entry.record.re_home(self.folder)  # re-association: the folder moved
+            self._save(entry)
+            return AdoptionResult(entry.path, "re-associated")
         return None
 
-    def find_same_pile(self) -> tuple[int, Path, dict[str, Any]] | None:
+    def find_same_pile(self) -> PileCandidate | None:
         """The content-changed candidate: a path-matching record is the same
         pile outright; a path-MISMATCHED record with a LARGE hash overlap is
         the same pile moved AND changed (a small overlap is a duplicate-scan
@@ -127,72 +136,63 @@ class _Adoption:
         resolved_folder = str(self.folder.resolve())
         fp_set = set(self.fingerprint)
 
-        def _overlap(record: dict[str, Any]) -> int:
-            return len(set(record.get("fingerprint") or []) & fp_set)
+        def _overlap(record: BatchRecord) -> int:
+            return len(set(record.fingerprint) & fp_set)
 
-        best: tuple[int, Path, dict[str, Any]] | None = None
-        for record_path, record in self._existing_records():
-            if str(Path(str(record.get("path", ""))).resolve()) != resolved_folder:
+        best: PileCandidate | None = None
+        for entry in self._existing_records():
+            if str(entry.record.path.resolve()) != resolved_folder:
                 continue
-            overlap = _overlap(record)
-            if overlap and (best is None or overlap > best[0]):
-                best = (overlap, record_path, record)
+            overlap = _overlap(entry.record)
+            if overlap and (best is None or overlap > best.overlap):
+                best = PileCandidate(overlap, entry.path, entry.record)
         if best is None:  # moved AND changed — only a large overlap is the same pile
-            for record_path, record in self._existing_records():
+            for entry in self._existing_records():
+                record = entry.record
                 overlap = _overlap(record)
-                record_fp = set(record.get("fingerprint") or [])
+                record_fp = set(record.fingerprint)
                 same_pile = overlap >= max(1, len(fp_set) // 2) and overlap >= max(1, len(record_fp) // 2)
-                if same_pile and (best is None or overlap > best[0]):
-                    best = (overlap, record_path, record)
+                if same_pile and (best is None or overlap > best.overlap):
+                    best = PileCandidate(overlap, entry.path, record)
         return best
 
-    def apply_content_changed(self, record_path: Path, record: dict[str, Any]) -> tuple[Path, str]:
+    def apply_content_changed(self, candidate: PileCandidate) -> AdoptionResult:
         """Update the same-pile record: the new hashes, the pile's new home,
         and the flag for a manual review. Confirmed transcriptions are NEVER
         auto-cleared — the only copy lives in the registry record (the
         operator reviews what changed before any reprocess); without them the
         regenerable work stages are cleared."""
-        batch_id = str(record["batch_id"])
-        if not _BATCH_ID.match(batch_id):
-            raise AdoptionError(f"record has an unsafe batch id: {batch_id!r}")  # the rmtree path below
-        record["pages"] = self.pages
-        record["fingerprint"] = self.fingerprint
-        record["path"] = str(self.folder)  # the pile moved — record its new home
-        record["status"] = "pending"
-        record["content_changed"] = True
-        confirmed = [b for b in (record.get("boundaries") or []) if b.get("status") == "confirmed"]
-        if confirmed:
-            rel = str(record_path.relative_to(self.registry_dir))
-            PipelineStore(self.registry_dir).write(rel, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
-            return record_path, "content-changed"
-        record["boundaries"] = None
-        rel = str(record_path.relative_to(self.registry_dir))
-        PipelineStore(self.registry_dir).write(rel, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
-        stale_work = self.work_dir / batch_id
-        if stale_work.exists():
-            shutil.rmtree(stale_work)  # our workspace, no confirmed content — the stages regenerate
-        return record_path, "content-changed"
+        entry = RegistryEntry(candidate.path, candidate.record)
+        record = entry.record
+        if not _BATCH_ID.match(record.batch_id):
+            raise AdoptionError(f"record has an unsafe batch id: {record.batch_id!r}")  # the rmtree path below
+        confirmed = record.confirmed_boundaries()
+        record.apply_content_changed(self.folder, self.pages, self.fingerprint)
+        self._save(entry)
+        if not confirmed:
+            stale_work = self.work_dir / record.batch_id
+            if stale_work.exists():
+                shutil.rmtree(stale_work)  # our workspace, no confirmed content — the stages regenerate
+        return AdoptionResult(entry.path, "content-changed")
 
-    def register_new(self) -> tuple[Path, str]:
+    def register_new(self) -> AdoptionResult:
         """A fresh record for an unknown pile — new batch id, registered in
         place, nothing of the user's folder touched."""
-        record = {
-            "batch_id": f"adopt-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S-%f')}",
-            "path": str(self.folder),
-            "label": self.label,
-            "source": self.source,
-            "status": "pending",
-            "arrived_at": datetime.now(UTC).isoformat(timespec="seconds"),
-            "pages": self.pages,
-            "fingerprint": self.fingerprint,
-            "boundaries": None,
-        }
-        self.registry_dir.mkdir(parents=True, exist_ok=True)
-        record_path = self.registry_dir / f"{record['batch_id']}.json"
-        PipelineStore(self.registry_dir).write(
-            f"{record['batch_id']}.json", json.dumps(record, indent=1, ensure_ascii=False) + "\n"
+        record = BatchRecord(
+            batch_id=f"adopt-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S-%f')}",
+            path=self.folder,
+            label=self.label,
+            source=self.source,
+            arrived_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            pages=self.pages,
+            fingerprint=self.fingerprint,
         )
-        return record_path, "new"
+        self.registry_dir.mkdir(parents=True, exist_ok=True)
+        record_path = self.registry_dir / f"{record.batch_id}.json"
+        PipelineStore(self.registry_dir).write(
+            f"{record.batch_id}.json", json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n"
+        )
+        return AdoptionResult(record_path, "new")
 
 
 def register_adopted(
@@ -202,8 +202,9 @@ def register_adopted(
     source: str = DEFAULT_SOURCE,
     registry_dir: Path = REGISTRY_DIR,
     work_dir: Path = WORK_DIR,
-) -> tuple[Path, str]:
-    """Hash ``folder`` in place and register it; returns (record_path, outcome).
+) -> AdoptionResult:
+    """Hash ``folder`` in place and register it; returns where the record
+    landed and the outcome.
 
     Outcome is one of ``new``, ``already-registered``, ``re-associated``
     (the folder moved and its content fingerprint matched an existing record),
@@ -221,8 +222,7 @@ def register_adopted(
     # are NEVER auto-cleared: the change is flagged for a manual review.
     best = adoption.find_same_pile()
     if best is not None:
-        _overlap, record_path, record = best
-        return adoption.apply_content_changed(record_path, record)
+        return adoption.apply_content_changed(best)
 
     return adoption.register_new()
 
@@ -237,14 +237,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        record_path, outcome = register_adopted(args.folder, label=args.label, source=args.source)
+        result = register_adopted(args.folder, label=args.label, source=args.source)
     except AdoptionError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    record = json.loads(record_path.read_text(encoding="utf-8"))
-    print(f"{outcome}: {len(record['pages'])} page(s) from {args.folder}")
-    print(f"registry: {record_path}" + (f" (label: {args.label})" if args.label else ""))
+    record = BatchRecord.from_dict(json.loads(result.path.read_text(encoding="utf-8")))
+    print(f"{result.outcome}: {len(record.pages)} page(s) from {args.folder}")
+    print(f"registry: {result.path}" + (f" (label: {args.label})" if args.label else ""))
     return 0
 
 

@@ -14,6 +14,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from document.page_size import PageSize
 from document.rectangle import Rectangle
 from document.word import Word
 from pipeline.rows.page_visuals import captioned_sheet, review_image
@@ -55,7 +56,7 @@ def adjudicated_rows() -> list[Row]:
 def library_rows() -> list[Row]:
     return Rows.from_words(
         [Word(w["x0"], w["y0"], w["x1"], w["y1"], baseline=w.get("baseline"), line=w.get("line")) for w in WORDS],
-        (PAGE["width"], PAGE["height"]),
+        PageSize(PAGE["width"], PAGE["height"]),
     ).adjust(LINES)
 
 

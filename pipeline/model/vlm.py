@@ -22,11 +22,22 @@ import re
 import sys
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from pipeline.model.ai_client import DEFAULT_BASE_URL, find_api_key
+from pipeline.model.chat_message import ChatMessage
+from pipeline.model.chat_request import ChatRequest
+from pipeline.model.chat_response import ChatResponse
+from pipeline.model.http_headers import USER_AGENT, HttpHeaders
+from pipeline.model.image_content import ImageContent
+from pipeline.model.orientation_report import OrientationReport
+from pipeline.model.text_content import TextContent
+from pipeline.model.token_usage import TokenUsage
+from pipeline.model.transcription import Transcription
+from pipeline.model.unsure_word import UnsureWord
+from pipeline.model.vlm_answer import VlmAnswer
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +73,6 @@ VLM_FORMAT_PLAIN = (
 )
 
 VLM_SYSTEM = _VLM_READING_RULES + VLM_FORMAT_JSON
-# line falls back to the detector's association.
-DEGENERATE_BOX_DIVISOR = 3
-
-BOX_COORDINATE_COUNT = 4  # a box is [x0, y0, x1, y1]
 
 _CODE_FENCE = "```"  # the markdown fence the model sometimes wraps its JSON in
 _CODE_FENCE_LEN = len(_CODE_FENCE)
@@ -130,32 +137,23 @@ _MIME_BY_SUFFIX = {
 }
 
 
-def parse_transcription_response(text: str) -> tuple[str, dict[int, list[float]] | None]:
+def parse_transcription_response(text: str) -> Transcription:
     """The vision model's transcription response — the JSON format the
     system prompt requests (lines with normalized boxes) or the plain-text
-    format (a model that did not follow the instruction). Returns
-    (transcription, boxes): the transcription lines joined with newlines
-    (the .txt content), and the per-line boxes keyed by the line index in
-    NORMALIZED 0-1000 units (the layout pass converts to the image's
-    pixels). Empty lines are skipped — the .txt's own split skips them
-    too, so the indexes stay aligned. ``boxes`` is None when the model
-    returned no usable geometry (the pipeline falls back to the detector's
-    association — the geometry must come from the model that can READ the
-    cursive, not the rec engine that merges/misses its lines)."""
+    format (a model that did not follow the instruction). The reading's
+    text is the transcription lines joined with newlines (the .txt
+    content), and its boxes are keyed by the line index in NORMALIZED
+    0-1000 units (the layout pass converts to the image's pixels). Empty
+    lines are skipped — the .txt's own split skips them too, so the
+    indexes stay aligned. No boxes when the model returned no usable
+    geometry (the pipeline falls back to the detector's association — the
+    geometry must come from the model that can READ the cursive, not the
+    rec engine that merges/misses its lines)."""
     try:
         data = _extract_json(text)
     except VlmError:
-        return text.strip(), None
-    if not isinstance(data, dict):
-        return text.strip(), None
-    entries = data.get("lines")
-    if not isinstance(entries, list):
-        return text.strip(), None
-    collected = _collect_line_entries(entries)
-    if collected is None:
-        return text.strip(), None
-    texts, boxes = collected
-    return "\n".join(texts), (_drop_degenerate_boxes(boxes) or None)
+        return Transcription(text.strip())
+    return Transcription.from_payload(data, text.strip())
 
 
 def transcription_problem(text: str) -> str | None:
@@ -184,85 +182,47 @@ def transcription_problem(text: str) -> str | None:
 
 def transcribe_with_fallbacks(
     image: Path,
-    variants: list[dict[str, Any]],
+    variants: list[VlmOptions],
     *,
     usable: Callable[[str], bool] | None = None,
-    transcribe: Callable[..., tuple[str, dict[str, int]]] | None = None,
-) -> tuple[str, dict[str, int]]:
-    """Try each call spec in order; return the first usable response as
-    (text, usage). A variant dict passes straight to transcribe_image_vlm
-    (model, system, max_tokens, ...). Unusable responses and call errors
-    print their reason to stderr and fall through to the next variant.
-    When every variant is exhausted: the LAST unusable response comes
-    back (the gates refuse it downstream — never a silent drop) unless
-    every attempt ERRORED, in which case the last exception re-raises.
-    The returned usage sums every attempt's tokens — the honest cost."""
+    transcribe: Callable[..., VlmAnswer] | None = None,
+) -> VlmAnswer:
+    """Try each call spec in order; return the first usable answer. Each
+    variant is a VlmOptions — one rung of the ladder (model, system,
+    max_tokens, ...). Unusable responses and call errors print their reason
+    to stderr and fall through to the next variant. When every variant is
+    exhausted: the LAST unusable response comes back (the gates refuse it
+    downstream — never a silent drop) unless every attempt ERRORED, in
+    which case the last exception re-raises. The returned usage sums every
+    attempt's tokens — the honest cost."""
     usable = usable or (lambda text: transcription_problem(text) is None)
     # the injectable seam: the tests pass a fake instead of
     # monkeypatching the module attribute
     call = transcribe or transcribe_image_vlm
     last_error: Exception | None = None
-    last_text: str | None = None
+    last_answer: VlmAnswer | None = None
     total_tokens = 0
     name = getattr(image, "name", str(image))
     for attempt, spec in enumerate(variants, start=1):
         try:
-            text, usage = call(image, **spec)
+            answer = spec.run(call, image)
         # lucidlint: ignore broad-except the variant retry: every failure surfaces as VlmError
         except Exception as exc:
             last_error = exc
             print(f"vlm {name} attempt {attempt}/{len(variants)}: {exc}", file=sys.stderr)
             continue
-        total_tokens += int(usage.get("total_tokens", 0) or 0)
-        problem = None if usable(text) else (transcription_problem(text) or "failed the caller's checks")
+        total_tokens += answer.usage.tokens
+        problem = (
+            None if usable(answer.answer) else (transcription_problem(answer.answer) or "failed the caller's checks")
+        )
         if problem is None:
-            return text, {"total_tokens": total_tokens}
-        last_text = text
+            return VlmAnswer(answer.answer, TokenUsage(total_tokens=total_tokens))
+        last_answer = answer
         print(f"vlm {name} attempt {attempt}/{len(variants)} unusable ({problem}) — falling back", file=sys.stderr)
-    if last_text is None and last_error is not None:
+    if last_answer is None and last_error is not None:
         raise last_error
-    assert last_text is not None  # exhausted on unusable responses
-    return last_text, {"total_tokens": total_tokens}
-
-
-def _collect_line_entries(entries: list[Any]) -> tuple[list[str], dict[int, list[float]]] | None:
-    """The transcription lines and their boxes from the model's "lines"
-    array — blank lines carry no box (the .txt's own split skips them too,
-    so the indexes stay aligned). None when an entry is not a usable
-    object — the caller falls back to the plain-text form."""
-    texts: list[str] = []
-    boxes: dict[int, list[float]] = {}
-    for entry in entries:
-        if not isinstance(entry, dict):
-            return None
-        t = entry.get("text")
-        if not isinstance(t, str) or not t.strip():
-            continue  # blank lines carry no box — the .txt split skips them too
-        i = len(texts)
-        texts.append(t)
-        b = entry.get("box")
-        if (
-            isinstance(b, list)
-            and len(b) == BOX_COORDINATE_COUNT
-            and all(isinstance(v, (int, float)) and v == v for v in b)
-        ):
-            boxes[i] = [float(v) for v in b]
-    return texts, boxes
-
-
-def _drop_degenerate_boxes(boxes: dict[int, list[float]]) -> dict[int, list[float]]:
-    """Drop the model's degenerate boxes — they COLLAPSE at the page's
-    bottom edge: any box smaller than a third of the median line height
-    is unusable; the line falls back to the detector's association."""
-    if not boxes:
-        return boxes
-    heights = sorted(y1 - y0 for x0, y0, x1, y1 in boxes.values())
-    median_h = heights[len(heights) // 2]
-    if median_h > 0:
-        boxes = {
-            i: [x0, y0, x1, y1] for i, (x0, y0, x1, y1) in boxes.items() if y1 - y0 >= median_h / DEGENERATE_BOX_DIVISOR
-        }
-    return boxes
+    assert last_answer is not None  # exhausted on unusable responses
+    return VlmAnswer(last_answer.answer, TokenUsage(total_tokens=total_tokens))
 
 
 # (model/system/user_text/base_url/api_key/timeout) — a parameter object would add a type for the one required argument
@@ -281,8 +241,23 @@ class VlmOptions:
     max_tokens: int = 64000
     urlopen: Callable[..., Any] | None = None
 
+    def run(self, transcribe: Callable[..., VlmAnswer], image: Path) -> VlmAnswer:
+        """This spec's call: the config travels as named arguments, so one
+        rung of the retry ladder is one value."""
+        return transcribe(
+            image,
+            model=self.model,
+            system=self.system,
+            user_text=self.user_text,
+            base_url=self.base_url,
+            api_key=self.api_key,
+            timeout=self.timeout,
+            max_tokens=self.max_tokens,
+            urlopen=self.urlopen,
+        )
 
-def transcribe_images_vlm(images: list[Path], *, options: VlmOptions | None = None) -> tuple[str, dict[str, int]]:
+
+def transcribe_images_vlm(images: list[Path], *, options: VlmOptions | None = None) -> VlmAnswer:
     """ONE multimodal call carrying several images — a page read in strips,
     sent together so the model sees the whole page in one answer. The images
     ride the user message in order, so a prompt can name them by position;
@@ -291,30 +266,31 @@ def transcribe_images_vlm(images: list[Path], *, options: VlmOptions | None = No
     if not images:
         raise VlmError("transcribe_images_vlm needs at least one image")
     opts = options or VlmOptions()
-    user_content: list[dict[str, Any]] = []
+    user_content: list[ImageContent | TextContent] = []
     for image in images:
         mime = _MIME_BY_SUFFIX.get(image.suffix.lower(), "application/octet-stream")
         data_url = f"data:{mime};base64," + base64.b64encode(image.read_bytes()).decode("ascii")
-        user_content.append({"type": "image_url", "image_url": {"url": data_url}})
+        user_content.append(ImageContent(url=data_url))
     if opts.user_text:
-        user_content.append({"type": "text", "text": opts.user_text})
-    body = _vision_post(
-        base_url=opts.base_url,
-        key=opts.api_key or find_api_key(),
-        payload={
-            "model": opts.model,
-            "messages": [
-                {"role": "system", "content": opts.system},
-                {"role": "user", "content": user_content},
-            ],
-            "temperature": 0,
-            "max_tokens": opts.max_tokens,
-            "thinking": {"type": "disabled"},
-        },
-        timeout=opts.timeout,
-        urlopen=opts.urlopen,
+        user_content.append(TextContent(text=opts.user_text))
+    return _content_and_usage(
+        _vision_post(
+            base_url=opts.base_url,
+            key=opts.api_key or find_api_key(),
+            payload=ChatRequest(
+                model=opts.model,
+                messages=[
+                    ChatMessage(role="system", content=opts.system),
+                    ChatMessage(role="user", content=user_content),
+                ],
+                temperature=0,
+                max_tokens=opts.max_tokens,
+                thinking=False,
+            ),
+            timeout=opts.timeout,
+            urlopen=opts.urlopen,
+        )
     )
-    return _content_and_usage(body)
 
 
 # lucidlint: ignore long-param-list one required argument (image) plus defaulted call options
@@ -329,80 +305,71 @@ def transcribe_image_vlm(
     timeout: float = 900.0,
     max_tokens: int = 64000,
     urlopen: Callable[..., Any] | None = None,
-) -> tuple[str, dict[str, int]]:
-    """One multimodal call; returns (text, token usage) — the cost measure.
-    ``user_text`` rides the user message alongside the image. ``max_tokens``
-    bounds the completion: reasoning models need large headroom for
-    location tasks (64000) but a line-crop classification is done with a
-    small budget (1000). ``urlopen`` is the test seam (DI, never
+) -> VlmAnswer:
+    """One multimodal call; returns the answer and its token usage — the cost
+    measure. ``user_text`` rides the user message alongside the image.
+    ``max_tokens`` bounds the completion: reasoning models need large
+    headroom for location tasks (64000) but a line-crop classification is
+    done with a small budget (1000). ``urlopen`` is the test seam (DI, never
     monkeypatch); None uses urllib.request.urlopen."""
     mime = _MIME_BY_SUFFIX.get(image.suffix.lower(), "application/octet-stream")
     data_url = f"data:{mime};base64," + base64.b64encode(image.read_bytes()).decode("ascii")
-    user_content: list[dict[str, Any]] = [{"type": "image_url", "image_url": {"url": data_url}}]
+    user_content: list[ImageContent | TextContent] = [ImageContent(url=data_url)]
     if user_text:
-        user_content.append({"type": "text", "text": user_text})
-    body = _vision_post(
-        base_url=base_url,
-        key=api_key or find_api_key(),
-        payload={
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_content},
-            ],
-            "temperature": 0,
-            "max_tokens": max_tokens,
-            # thinking disabled: transcription is an extraction task, not a
-            # judgment — a reasoning model will otherwise spend the whole
-            # budget reasoning and return empty content. A model that
-            # rejects the param gets one retry without it (the AIClient
-            # house pattern).
-            "thinking": {"type": "disabled"},
-        },
-        timeout=timeout,
-        urlopen=urlopen,
+        user_content.append(TextContent(text=user_text))
+    return _content_and_usage(
+        _vision_post(
+            base_url=base_url,
+            key=api_key or find_api_key(),
+            payload=ChatRequest(
+                model=model,
+                messages=[
+                    ChatMessage(role="system", content=system),
+                    ChatMessage(role="user", content=user_content),
+                ],
+                temperature=0,
+                max_tokens=max_tokens,
+                # thinking disabled: transcription is an extraction task, not a
+                # judgment — a reasoning model will otherwise spend the whole
+                # budget reasoning and return empty content. A model that
+                # rejects the param gets one retry without it (the AIClient
+                # house pattern).
+                thinking=False,
+            ),
+            timeout=timeout,
+            urlopen=urlopen,
+        )
     )
-    return _content_and_usage(body)
 
 
-def _content_and_usage(body: dict[str, Any]) -> tuple[str, dict[str, int]]:
-    """The answer and its usage from one chat-completions body."""
-    try:
-        choice = body.get("choices", [{}])[0]
-        message = choice.get("message") or {}
-        content = message.get("content") or ""
-        finish_reason = choice.get("finish_reason")
-        reasoning = message.get("reasoning") or message.get("reasoning_content") or ""
-        usage = dict(body.get("usage", {}))
-        usage["reasoning"] = reasoning
-        # The model's thinking, always captured — a failed call is diagnosable
-        # from its trace. Mirrors AIClient.last_reasoning.
-        if finish_reason == "length" and not content.strip():
-            raise VlmError(
-                "vision model produced only reasoning tokens, no content — "
-                f"the max_tokens limit was hit. reasoning={len(reasoning)} chars, "
-                f"tokens={usage.get('completion_tokens')}. tail: …{reasoning[-300:]}"
-            )
-        if not content.strip():
-            raise VlmError(
-                f"vision model returned empty content (finish_reason={finish_reason}); "
-                f"reasoning={len(reasoning)} chars, tokens={usage.get('completion_tokens')}. "
-                f"tail: …{reasoning[-300:]}"
-            )
-        text = str(content)
-    except (KeyError, IndexError, TypeError) as exc:
-        raise VlmError(f"unexpected vision response: {json.dumps(body)[:300]}") from exc
-    return text, usage
+def _content_and_usage(response: ChatResponse) -> VlmAnswer:
+    """The answer and its usage from one chat-completions response. The
+    model's thinking is always captured — a failed call is diagnosable
+    from its trace. Mirrors AIClient.last_reasoning."""
+    reasoning = response.usage.reasoning or ""
+    if response.finish_reason == "length" and not response.answer.strip():
+        raise VlmError(
+            "vision model produced only reasoning tokens, no content — "
+            f"the max_tokens limit was hit. reasoning={len(reasoning)} chars, "
+            f"tokens={response.usage.completion_tokens}. tail: …{reasoning[-300:]}"
+        )
+    if not response.answer.strip():
+        raise VlmError(
+            f"vision model returned empty content (finish_reason={response.finish_reason}); "
+            f"reasoning={len(reasoning)} chars, tokens={response.usage.completion_tokens}. "
+            f"tail: …{reasoning[-300:]}"
+        )
+    return VlmAnswer(response.answer, response.usage)
 
 
 def _vision_post(
     *,
     base_url: str,
     key: str,
-    payload: dict[str, Any],
+    payload: ChatRequest,
     timeout: float,
     urlopen: Callable[..., Any] | None,
-) -> dict[str, Any]:
+) -> ChatResponse:
     """POST one chat-completions payload. On a 400/422 that the model
     blames on the ``thinking`` param, retry once without it; every other
     failure surfaces as VlmError (the module's contract)."""
@@ -412,12 +379,11 @@ def _vision_post(
             with do_open(
                 urllib.request.Request(
                     f"{base_url.rstrip('/')}/chat/completions",
-                    data=json.dumps(payload).encode("utf-8"),
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {key}",
-                        # Cloudflare in front of the API rejects the urllib default UA
-                        "User-Agent": "opencode/1.14.20",
+                    data=json.dumps(payload.to_dict()).encode("utf-8"),
+                    headers=HttpHeaders(
+                        content_type="application/json",
+                        authorization=f"Bearer {key}",
+                        user_agent=USER_AGENT,
                         # A gateway in front of the model may cache completions,
                         # and a measurement served from that cache is not a
                         # measurement: a cached reply "answers" in 0.3s where the
@@ -425,26 +391,32 @@ def _vision_post(
                         # which hid several render fixes behind stale answers
                         # before it was caught. The project caches its own
                         # readings (the .vlm.json sidecars), so this is always on.
-                        "cf-aig-skip-cache": "true",
-                    },
+                        skip_gateway_cache=True,
+                    ).to_dict(),
                     method="POST",
                 ),
                 timeout=timeout,
             ) as response:
-                return json.loads(response.read().decode("utf-8"))
+                body = json.loads(response.read().decode("utf-8"))
+                try:
+                    return ChatResponse.from_dict(body)
+                except (KeyError, IndexError, TypeError) as exc:
+                    raise VlmError(f"unexpected vision response: {json.dumps(body)[:300]}") from exc
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")[:300]
-            if e.code in (400, 422) and "thinking" in payload:
+            if e.code in (400, 422) and payload.thinking is not None:
                 # model doesn't understand the thinking param — retry once
                 # without it (mirrors AIClient._post)
-                payload.pop("thinking")
+                payload = replace(payload, thinking=None)
                 logger.info(
                     "model %s rejected the thinking param (HTTP %d); retrying without it",
-                    payload.get("model"),
+                    payload.model,
                     e.code,
                 )
                 continue
             raise VlmError(f"vision model call failed: HTTP {e.code} - {detail}") from e
+        except VlmError:
+            raise  # the response's own contract failure — already the module's error
         # lucidlint: ignore broad-except the module's contract — every failure surfaces as VlmError
         except Exception as exc:  # network or API errors surface loudly
             raise VlmError(f"vision model call failed: {exc}") from exc
@@ -463,16 +435,16 @@ def line_orientation_degrees(crop: Path, *, max_tokens: int = 4000, timeout: flo
     ~6s — vs the full-page location call that burned 64K reasoning tokens
     with zero content. The exact value disambiguates the
     90-vs-270 flip the rounded question never could."""
-    text, _usage = transcribe_image_vlm(
+    answer = transcribe_image_vlm(
         crop,
         system="You measure text orientation precisely.",
         user_text=ANGLE_PROMPT,
         max_tokens=max_tokens,
         timeout=timeout,
     )
-    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    match = re.search(r"-?\d+(?:\.\d+)?", answer.answer)
     if not match:
-        raise VlmError(f"could not parse an angle from the model's answer: {text[:80]!r}")
+        raise VlmError(f"could not parse an angle from the model's answer: {answer.answer[:80]!r}")
     return float(match.group(0)) % 360
 
 
@@ -483,7 +455,7 @@ def selfreport_words(
     people: list[str] | None = None,
     places: list[str] | None = None,
     transcribe: Any = None,
-) -> list[dict[str, Any]]:
+) -> list[UnsureWord]:
     """The transcription model's own doubt (user): which of its
     words is it least sure of, or that read oddly in context — the flag
     source that replaces the noisy cross-reader agreement. ``transcribe``
@@ -496,17 +468,17 @@ def selfreport_words(
         places=", ".join(places) if places else "none",
     )
     call = transcribe if transcribe is not None else transcribe_image_vlm
-    text, _usage = call(image, system=system, user_text=f"Your transcription:\n{numbered}")
-    data = _extract_json(text)
+    answer = call(image, system=system, user_text=f"Your transcription:\n{numbered}")
+    data = _extract_json(answer.answer)
     unsure = data.get("unsure", []) if isinstance(data, dict) else []
-    validated: list[dict[str, Any]] = []
+    validated: list[UnsureWord] = []
     for entry in unsure:
         if not isinstance(entry, dict):
             continue
         line = entry.get("line")
         word = entry.get("word")
         if isinstance(line, int) and isinstance(word, str) and word.strip():
-            validated.append({"line": line, "word": word.strip()})
+            validated.append(UnsureWord(line=line, word=word.strip()))
     return validated
 
 
@@ -543,28 +515,7 @@ _ORIENTATION_PROMPT = (
 )
 
 
-def _parse_report_lines(raw_lines: list[Any]) -> list[dict[str, Any]]:
-    """The report's located lines: {index, box (0-1000), degrees} — the
-    index keys to the given transcription's line numbers."""
-    lines: list[dict[str, Any]] = []
-    for i, entry in enumerate(raw_lines):
-        if not isinstance(entry, dict):
-            continue
-        if not (isinstance(entry.get("box"), list) and len(entry.get("box")) == 4):
-            continue
-        if entry.get("degrees") not in (0, 90, 180, 270):
-            continue
-        lines.append(
-            {
-                "index": int(entry.get("index")) if isinstance(entry.get("index"), int) else i,
-                "box": entry.get("box"),
-                "degrees": entry.get("degrees"),
-            }
-        )
-    return lines
-
-
-def orientation_report(image: Path, text: str | None = None) -> dict[str, Any]:
+def orientation_report(image: Path, text: str | None = None) -> OrientationReport:
     """The page's text geometry, structured — used by the layout stage when
     the arbiter's scores suggest more than one direction (PRD VR15).
 
@@ -574,26 +525,24 @@ def orientation_report(image: Path, text: str | None = None) -> dict[str, Any]:
     authoritative text and a partial report degrades only the geometry,
     never the text (the report's own transcription varies between calls
     and can drop whole paragraphs).
-    Returns {"orientation_hint": [...], "lines": [{"index", "box",
-    "degrees"}]} — the lines keyed to the given text's line numbers."""
+    The report's lines are keyed to the given text's line numbers; an
+    unusable entry (no box, no readable direction) is dropped, and a
+    report the model did not answer with JSON in the requested shape is
+    empty."""
     numbered = "\n".join(f"{i}. {line}" for i, line in enumerate((text or "").splitlines()))
     prompt = _ORIENTATION_PROMPT + numbered if text else _ORIENTATION_TRANSCRIBE_PROMPT
-    raw, _ = transcribe_image_vlm(
+    answer = transcribe_image_vlm(
         image,
         system=_ORIENTATION_SYSTEM,
         user_text=prompt,
     )
     try:
-        data = _extract_json(raw)
+        data = _extract_json(answer.answer)
     except VlmError:
-        return {}
+        return OrientationReport()
     if not isinstance(data, dict):
-        return {}
-    hints = data.get("orientation_hint") if isinstance(data.get("orientation_hint"), list) else []
-    hints = [h for h in hints if isinstance(h, dict) and h.get("degrees") in (0, 90, 180, 270)]
-    raw_lines = data.get("lines") if isinstance(data.get("lines"), list) else []
-    lines = _parse_report_lines(raw_lines)
-    return {"orientation_hint": hints, "lines": lines}
+        return OrientationReport()
+    return OrientationReport.from_answer(data)
 
 
 _ORIENTATION_TRANSCRIBE_PROMPT = (

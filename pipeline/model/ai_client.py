@@ -16,8 +16,14 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, final
+
+from pipeline.model.backoff import Backoff
+from pipeline.model.chat_message import ChatMessage
+from pipeline.model.chat_request import ChatRequest
+from pipeline.model.http_headers import USER_AGENT, HttpHeaders
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +46,6 @@ AUTH_JSON_PROVIDER_HINTS = ("opencode-go", "opencode")
 
 class AIClientError(RuntimeError):
     """Raised when the configured model endpoint cannot be used."""
-
-
-def _sleep_and_backoff(sleep: Callable[[float], None], delay: float, attempt: int) -> tuple[float, int]:
-    """Sleep one backoff interval and advance the retry budget."""
-    sleep(delay)
-    return delay * 2, attempt + 1
 
 
 @final
@@ -106,11 +106,11 @@ class AIClient:
         diagnosable. Thinking needs output headroom — deepseek-v4-flash at
         3000 tokens spent the whole budget reasoning and returned empty
         content."""
-        payload: dict[str, Any] = {
-            "model": self.model,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
+        request = ChatRequest(
+            model=self.model,
+            messages=[
+                ChatMessage(role="system", content=system),
+                ChatMessage(role="user", content=user),
             ],
             # thinking needs room for the reasoning plus the JSON verdict;
             # only used tokens are billed, so the headroom is free when the
@@ -122,7 +122,7 @@ class AIClient:
             # takes a fresh sample — the reasoning budget alone cannot bound
             # the circling on every gateway (the CI gateway ignores
             # reasoning.max_tokens).
-            "max_tokens": 16000 if thinking else self.max_tokens,
+            max_tokens=16000 if thinking else self.max_tokens,
             # reduces brittle failure modes caused by deterministic
             # repetition loops" (arXiv:2602.03664). A small temperature
             # breaks the attractor and gives the burn retry a genuinely
@@ -130,39 +130,36 @@ class AIClient:
             # evals evaluate output properties, not draws, so this does not
             # loosen the gates. The non-thinking (direct-answer) path stays
             # at 0 for the deterministic fallback.
-            "temperature": 0.3 if thinking else 0.0,
-            # structured output: the API guarantees a syntactically valid JSON
-            # response, eliminating truncated/bare-object responses
-            "response_format": {"type": "json_object"},
+            temperature=0.3 if thinking else 0.0,
             # the model thinks its way to the structured verdict (see the
             # docstring); a model that rejects the param falls back below
             # (the 400/422 retry)
-            "thinking": {"type": "enabled" if thinking else "disabled"},
-        }
-        # the thinking-token cap — only when explicitly configured: the
-        # CI gateway ignores the cap and reshapes the response (the JSON
-        # lands in reasoning, content empty — the stop-empty cascade),
-        # so the default is OFF; the local litellm path honors it.
-        if thinking and self.reasoning_budget is not None:
-            payload["reasoning"] = {"max_tokens": self.reasoning_budget}
-        return self._post(payload)
+            thinking=thinking,
+            # structured output: the API guarantees a syntactically valid JSON
+            # response, eliminating truncated/bare-object responses
+            json_response=True,
+            # the thinking-token cap — only when explicitly configured: the
+            # CI gateway ignores the cap and reshapes the response (the JSON
+            # lands in reasoning, content empty — the stop-empty cascade),
+            # so the default is OFF; the local litellm path honors it.
+            reasoning_budget=self.reasoning_budget if thinking else None,
+        )
+        return self._post(request)
 
-    def _post(self, payload: dict[str, Any]) -> str:
+    def _post(self, payload: ChatRequest) -> str:
         """Send one chat-completions request with the retry/backoff loop."""
-        body = json.dumps(payload).encode("utf-8")
+        body = json.dumps(payload.to_dict()).encode("utf-8")
         request = urllib.request.Request(
             f"{self.base_url}/chat/completions",
             data=body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-                # Cloudflare in front of the API rejects the urllib default UA
-                "User-Agent": "opencode/1.14.20",
-            },
+            headers=HttpHeaders(
+                content_type="application/json",
+                authorization=f"Bearer {self.api_key}",
+                user_agent=USER_AGENT,
+            ).to_dict(),
             method="POST",
         )
-        delay = 2.0
-        attempt = 0
+        backoff = Backoff(delay=2.0, attempt=0)
         content = ""  # the completion content — set per attempt, used by the empty-path check
         finish_reason = ""  # the response's finish_reason — set per attempt, used by the empty-path log
         burn_retried = False  # the fresh-sample rescue fires ONCE — a second burn is a persistent stall
@@ -187,13 +184,13 @@ class AIClient:
                 self.last_reasoning = str(message.get("reasoning_content") or message.get("reasoning") or "")
             except urllib.error.HTTPError as e:
                 if e.code in (429, 500, 502, 503, 529):
-                    if attempt >= self.max_retries:
+                    if backoff.attempt >= self.max_retries:
                         raise AIClientError(
                             f"model API error {e.code}: {e.read().decode('utf-8', 'replace')[:200]}"
                         ) from e
-                    delay, attempt = _sleep_and_backoff(self._sleep, delay, attempt)
+                    backoff = backoff.advance(self._sleep)
                     continue
-                if e.code in (400, 422) and (payload.get("thinking") or payload.get("reasoning")):
+                if e.code in (400, 422) and (payload.thinking is not None or payload.reasoning_budget is not None):
                     # model/endpoint doesn't understand the reasoning params —
                     # retry without them; the fallback must NOT consume the
                     # retry budget
@@ -202,17 +199,16 @@ class AIClient:
                         self.model,
                         e.code,
                     )
-                    payload.pop("thinking", None)
-                    payload.pop("reasoning", None)
+                    payload = replace(payload, thinking=None, reasoning_budget=None)
                     # temperature follows the thinking state too: a rejected
                     # thinking param must not leave the retry running at the
                     # thinking 0.3 — it is a non-thinking call at 0.0
-                    payload["temperature"] = 0.0
-                    request.data = json.dumps(payload).encode("utf-8")
+                    payload = replace(payload, temperature=0.0)
+                    request.data = json.dumps(payload.to_dict()).encode("utf-8")
                     continue
             if content and content.strip():
                 return content
-            thinking_enabled = bool((payload.get("thinking") or {}).get("type") == "enabled")
+            thinking_enabled = payload.thinking is True
             if thinking_enabled and finish_reason == "length" and not burn_retried:
                 # the completion is a deliberation stall: the model circled
                 # its decisions and spent the whole budget reasoning without
@@ -238,9 +234,9 @@ class AIClient:
                 # a different draw: the stall is stochastic, not a
                 # deterministic attractor (the temperature-0 loop class is
                 # already gone) — the new sample often concludes (2502.08235)
-                payload["temperature"] = 0.5
+                payload = replace(payload, temperature=0.5)
                 burn_retried = True
-                request.data = json.dumps(payload).encode("utf-8")
+                request.data = json.dumps(payload.to_dict()).encode("utf-8")
                 continue
             if (
                 not content.strip()
@@ -275,9 +271,9 @@ class AIClient:
                 len(content),
                 len(self.last_reasoning),
             )
-            if attempt >= self.max_retries:
+            if backoff.attempt >= self.max_retries:
                 raise AIClientError(f"empty response from API (finish_reason={finish_reason or 'n/a'})")
-            delay, attempt = _sleep_and_backoff(self._sleep, delay, attempt)
+            backoff = backoff.advance(self._sleep)
 
     @staticmethod
     def _reasoning_is_answer(reasoning: str) -> bool:
@@ -329,11 +325,15 @@ def find_api_key(_env: Mapping[str, str] | None = None, _home: Path | None = Non
     )
 
 
-def json_object(text: str) -> dict[str, Any]:
+def json_object(text: str) -> Mapping[str, Any]:
     """Extract the LAST complete JSON object from model output, tolerating
     fences, prose, and MULTIPLE objects — a reasoning preamble followed by
     the verdict is the shape the model emits. Scanning with raw_decode
-    skips a malformed brace instead of failing."""
+    skips a malformed brace instead of failing.
+
+    The object's shape is whatever the prompt asked for, so this returns
+    the JSON document read-only: each caller reads the fields it knows
+    (the verdict, the tool call) and names their own record for them."""
     decoder = json.JSONDecoder()
     stripped = text.strip()
     found: dict[str, Any] | None = None

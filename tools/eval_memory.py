@@ -4,6 +4,10 @@ Not part of `make test` (tests never hit the network): this needs a network
 and a configured key (OPENAI_API_KEY / OPENCODE_API_KEY / opencode auth.json).
 Run with `loft eval-memory` (tools/cli.py).
 
+The flows run the real assessment and hand back its record
+(`tools/assessment.py` Assessment) — the conditions read that object, never a
+bare dict.
+
 The cases cover the family's own stories AND a fictional family (the
 Kowalskis of Gdańsk), so the assessment cannot be tuned to one household's
 data: the fictional cases assert the model never over-matches to this
@@ -16,24 +20,29 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, override
+from typing import override
 
 from pipeline.model.ai_client import AIClient
+from tools.anchor import Anchor
+from tools.assessment import Assessment
+from tools.assessment_fact import AssessmentFact
 from tools.memory import BUCKETS, KINDS, MAX_QUESTIONS, MAX_SUGGESTIONS, Knowledge, assess
 
 REPO = Path(__file__).resolve().parent.parent
 
-AssertFn = Callable[[dict[str, Any]], list[str]]
+AssertFn = Callable[[Assessment], list[str]]
 
 
-def load_projection() -> dict[str, list[dict[str, Any]]]:
+def load_projection() -> Knowledge:
+    """The published projection as the standing knowledge the real flows
+    assess against — the same records the server loads."""
     data = REPO / "app" / "data"
-    return {
-        "people": json.loads((data / "people.json").read_text(encoding="utf-8"))["people"],
-        "places": json.loads((data / "places.json").read_text(encoding="utf-8"))["places"],
-        "themes": json.loads((data / "themes.json").read_text(encoding="utf-8"))["themes"],
-        "items": json.loads((data / "index.json").read_text(encoding="utf-8"))["items"],
-    }
+    return Knowledge.from_projection(
+        people=json.loads((data / "people.json").read_text(encoding="utf-8"))["people"],
+        places=json.loads((data / "places.json").read_text(encoding="utf-8"))["places"],
+        themes=json.loads((data / "themes.json").read_text(encoding="utf-8"))["themes"],
+        items=json.loads((data / "index.json").read_text(encoding="utf-8"))["items"],
+    )
 
 
 # The elicitation speaks the family's language, never the process's — the
@@ -52,70 +61,61 @@ _PROCESS_JARGON = (
 )
 
 
-def _persona_errors(result: dict[str, Any]) -> list[str]:
+def _persona_errors(result: Assessment) -> list[str]:
     return [
-        f"question echoes the process ('{word}'): {q.get('text', '')[:80]}"
-        for q in result.get("questions", [])
+        f"question echoes the process ('{word}'): {q.text[:80]}"
+        for q in result.questions
         for word in _PROCESS_JARGON
-        if word in str(q.get("text", "")).lower()
+        if word in q.text.lower()
     ]
 
 
-def contract_errors(result: dict[str, Any]) -> list[str]:
+def contract_errors(result: Assessment) -> list[str]:
     errors: list[str] = []
     errors.extend(_persona_errors(result))
-    if not isinstance(result.get("title"), str) or not result["title"].strip():
+    if not result.title.strip():
         errors.append("missing title")
     # three distinct conditional validation messages per iteration — a comprehension
     # would need a None-sentinel tuple, which is harder to read than the loop
     # lucidlint: ignore loop-pipeline three conditional messages per iteration, sentinel-tuple comprehension
-    for ex in result.get("extractions", []):
-        if ex.get("kind") not in KINDS:
+    for ex in result.extractions:
+        if ex.kind not in KINDS:
             errors.append(f"extraction kind not in {KINDS}: {ex!r}")
-        if ex.get("bucket") not in BUCKETS:
+        if ex.bucket not in BUCKETS:
             errors.append(f"extraction bucket not in {BUCKETS}: {ex!r}")
-        if not (ex.get("match") is None or isinstance(ex.get("match"), str)):
+        if not (ex.match is None or isinstance(ex.match, str)):
             errors.append(f"extraction match must be str|null: {ex!r}")
-    questions = result.get("questions", [])
-    if len(questions) > MAX_QUESTIONS:
+    if len(result.questions) > MAX_QUESTIONS:
         errors.append(f"more than {MAX_QUESTIONS} questions")
     # two distinct conditional validation messages per iteration plus a derived local
     # (suggestions) — a comprehension would need a None-sentinel tuple
     # lucidlint: ignore loop-pipeline two conditional messages per iteration plus a derived local
-    for q in questions:
-        if q.get("skippable") is not True:
+    for q in result.questions:
+        if q.skippable is not True:
             errors.append(f"question not skippable: {q!r}")
-        suggestions = q.get("suggestions", [])
+        suggestions = q.suggestions
         if len(suggestions) > MAX_SUGGESTIONS or not all(isinstance(s, str) for s in suggestions):
             errors.append(f"bad suggestions: {suggestions!r}")
     return errors
 
 
-def _matches(result: dict[str, Any]) -> list[str]:
-    return [ex["match"] for ex in result.get("extractions", []) if ex.get("match")]
+def _matches(result: Assessment) -> list[str]:
+    return [match for ex in result.extractions if (match := ex.match)]
 
 
-def _extraction_names(result: dict[str, Any]) -> list[str]:
-    return [ex.get("name", "") for ex in result.get("extractions", [])]
+def _extraction_names(result: Assessment) -> list[str]:
+    return [ex.name for ex in result.extractions]
 
 
-def _questioned(question_words: tuple[str, ...], result: dict[str, Any], failure: str) -> list[str]:
-    """The flows' shared assertion: a question containing any of the words must
-    have been asked — empty list when one has, else the failure text."""
-    if any(word in _question_texts(result) for word in question_words):
-        return []
-    return [failure]
+def _question_texts(result: Assessment) -> str:
+    return " ".join(q.text for q in result.questions).lower()
 
 
-def _question_texts(result: dict[str, Any]) -> str:
-    return " ".join(q.get("text", "") for q in result.get("questions", [])).lower()
+def _facts_of_kind(result: Assessment, kind: str) -> list[AssessmentFact]:
+    return [f for f in result.facts if f.kind == kind]
 
 
-def _facts_of_kind(result: dict[str, Any], kind: str) -> list[dict[str, Any]]:
-    return [f for f in result.get("facts", []) if f.get("kind") == kind]
-
-
-def _expect_linked(expected: set[str], result: dict[str, Any], message: str) -> list[str]:
+def _expect_linked(expected: set[str], result: Assessment, message: str) -> list[str]:
     """The common link assertion: at least one expected id must be matched.
     Empty means the condition holds."""
     if any(m in expected for m in _matches(result)):
@@ -123,7 +123,7 @@ def _expect_linked(expected: set[str], result: dict[str, Any], message: str) -> 
     return [message]
 
 
-def _expect_not_linked(disallowed: str, result: dict[str, Any], message: str) -> list[str]:
+def _expect_not_linked(disallowed: str, result: Assessment, message: str) -> list[str]:
     """The mention-vs-link guard: the disallowed id must NOT be matched.
     Empty means the condition holds."""
     if disallowed in _matches(result):
@@ -149,16 +149,25 @@ _DATE_ASK = (
 )
 
 
-def _real_knowledge_with_dob() -> dict[str, list[dict[str, Any]]]:
+def _real_knowledge_with_dob() -> Knowledge:
     """Fictional narrator for the dob cases — the rule must not depend on
     which real people happen to be in the projection (no person is
     special-cased in code)."""
-    return {
-        "people": [{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"], "dob": "1982-05-01"}],
-        "places": [],
-        "themes": [],
-        "items": [],
-    }
+    return Knowledge.from_projection(
+        people=[
+            {
+                "id": "p-marek",
+                "name": "Marek Kowalski",
+                "aliases": ["Marek"],
+                # the projection carries a dob as a dated fact ({date, precision}),
+                # never a bare phrase — the record validates the shape
+                "dob": {"date": "1982-05-01", "precision": "exact"},
+            }
+        ],
+        places=[],
+        themes=[],
+        items=[],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -175,26 +184,26 @@ class MemoryFlow:
     name the flows, cache the runs, independent tests)."""
 
     name = ""
-    anchor: dict[str, Any] = {}
+    anchor: Anchor = Anchor()
     who = ""
     account = ""
-    knowledge: dict[str, Any] | None = None  # None = the real archive's projection
+    knowledge: Knowledge | None = None  # None = the real archive's projection
 
     @staticmethod
-    def assert_(result: dict[str, Any]) -> list[str]:
+    def assert_(result: Assessment) -> list[str]:
         """The flow's conditions on the output — empty means they all hold."""
         raise NotImplementedError
 
 
 class RealBoatsLinksFlow(MemoryFlow):
     name = "real-boats-links-the-artifacts"
-    anchor = {"kind": "place", "id": "pl-farndale-wharf", "name": "Iron Wharf, Farndale"}
+    anchor = Anchor(kind="place", id="pl-farndale-wharf", name="Iron Wharf, Farndale")
     who = "Alex"
     account = "The boats were built on Iron Wharf — Sunlight first in 1980. The yard had a slipway into the creek."
 
     @override
     @staticmethod
-    def assert_(result: dict[str, Any]) -> list[str]:
+    def assert_(result: Assessment) -> list[str]:
         return _expect_linked(
             {"t-the-boats", "object-sunlight"},
             result,
@@ -204,7 +213,7 @@ class RealBoatsLinksFlow(MemoryFlow):
 
 class RealSheppeyFlow(MemoryFlow):
     name = "real-sheppey-extracts-about-entities"
-    anchor = {"kind": "place", "id": "pl-seagate", "name": "Seagate"}
+    anchor = Anchor(kind="place", id="pl-seagate", name="Seagate")
     who = "Alex"
     account = (
         "We used to sail around the Isle of Seagate and under the old ford, not the new one. "
@@ -213,7 +222,7 @@ class RealSheppeyFlow(MemoryFlow):
 
     @override
     @staticmethod
-    def assert_(result: dict[str, Any]) -> list[str]:
+    def assert_(result: Assessment) -> list[str]:
         return _expect_linked(
             {"pl-seagate", "pl-farndale-wharf", "p-owen", "p-nora", "t-the-boats"},
             result,
@@ -223,16 +232,16 @@ class RealSheppeyFlow(MemoryFlow):
 
 class FictionalNoOvermatchFlow(MemoryFlow):
     name = "fictional-family-no-overmatch"
-    knowledge = {
-        "people": [
+    knowledge = Knowledge.from_projection(
+        people=[
             {"id": "p-helena", "name": "Helena Kowalski", "aliases": ["Grandma", "Babcia"]},
             {"id": "p-jan", "name": "Jan Kowalski", "aliases": ["Janek"]},
         ],
-        "places": [{"id": "pl-gdansk", "name": "Gdańsk"}, {"id": "pl-dluga", "name": "Ulica Długa"}],
-        "themes": [],
-        "items": [],
-    }
-    anchor = {"kind": "place", "id": "pl-gdansk", "name": "Gdańsk"}
+        places=[{"id": "pl-gdansk", "name": "Gdańsk"}, {"id": "pl-dluga", "name": "Ulica Długa"}],
+        themes=[],
+        items=[],
+    )
+    anchor = Anchor(kind="place", id="pl-gdansk", name="Gdańsk")
     who = "Marek"
     account = (
         "Grandma Helena ran a bakery on Ulica Długa in Gdańsk. We used to visit after school and she "
@@ -241,7 +250,7 @@ class FictionalNoOvermatchFlow(MemoryFlow):
 
     @override
     @staticmethod
-    def assert_(result: dict[str, Any]) -> list[str]:
+    def assert_(result: Assessment) -> list[str]:
         names = _extraction_names(result)
         if any(p in n for n in names for p in ("Helena", "Janek", "Jan")) and any(
             p in n for n in names for p in ("Gdańsk", "Długa", "Ulica")
@@ -252,7 +261,7 @@ class FictionalNoOvermatchFlow(MemoryFlow):
 
 class FictionalMentionNotLinkFlow(MemoryFlow):
     name = "fictional-mention-is-not-a-link"
-    anchor = {"kind": "theme", "id": "t-the-boats", "name": "The boats"}
+    anchor = Anchor(kind="theme", id="t-the-boats", name="The boats")
     who = "Marek"
     account = (
         "Aunt Nora from next door brought her famous plum cake to our wedding. It rained, but "
@@ -261,7 +270,7 @@ class FictionalMentionNotLinkFlow(MemoryFlow):
 
     @override
     @staticmethod
-    def assert_(result: dict[str, Any]) -> list[str]:
+    def assert_(result: Assessment) -> list[str]:
         return _expect_not_linked(
             disallowed="p-nora",
             result=result,
@@ -271,22 +280,22 @@ class FictionalMentionNotLinkFlow(MemoryFlow):
 
 class KinshipTermNotAliasFlow(MemoryFlow):
     name = "kinship-term-not-an-archive-alias"
-    knowledge = {
-        "people": [
+    knowledge = Knowledge.from_projection(
+        people=[
             {"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]},
             {"id": "p-otto", "name": "Otto Nowak", "aliases": ["Dad"]},
         ],
-        "places": [],
-        "themes": [],
-        "items": [],
-    }
-    anchor = {"kind": "theme", "id": "t-kowalski-house", "name": "The house"}
+        places=[],
+        themes=[],
+        items=[],
+    )
+    anchor = Anchor(kind="theme", id="t-kowalski-house", name="The house")
     who = "Marek"
     account = "Dad came with me to see the house we wanted to buy. He said nothing, which is his way."
 
     @override
     @staticmethod
-    def assert_(result: dict[str, Any]) -> list[str]:
+    def assert_(result: Assessment) -> list[str]:
         return _expect_not_linked(
             disallowed="p-otto",
             result=result,
@@ -300,13 +309,13 @@ class KinshipTermNotAliasFlow(MemoryFlow):
 class AgeWithKnownDobNotAskedFlow(MemoryFlow):
     name = "age-with-known-dob-is-not-asked"
     knowledge = _real_knowledge_with_dob()
-    anchor = {"kind": "item", "id": "letter-1990-03-01", "name": "A letter"}
+    anchor = Anchor(kind="item", id="letter-1990-03-01", name="A letter")
     who = "Marek"
     account = "I was eight when we moved to the new house."
 
     @override
     @staticmethod
-    def assert_(result: dict[str, Any]) -> list[str]:
+    def assert_(result: Assessment) -> list[str]:
         if not any(w in _question_texts(result) for w in _DATE_ASK):
             return []
         return [f"asked for a date despite a known dob + given age: {_question_texts(result)}"]
@@ -314,19 +323,19 @@ class AgeWithKnownDobNotAskedFlow(MemoryFlow):
 
 class AgeWithoutDobAsksFlow(MemoryFlow):
     name = "age-without-dob-asks-politely"
-    knowledge = {
-        "people": [{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]}],
-        "places": [],
-        "themes": [],
-        "items": [],
-    }
-    anchor = {"kind": "item", "id": "letter-1990-03-01", "name": "A letter"}
+    knowledge = Knowledge.from_projection(
+        people=[{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]}],
+        places=[],
+        themes=[],
+        items=[],
+    )
+    anchor = Anchor(kind="item", id="letter-1990-03-01", name="A letter")
     who = "Marek"
     account = "I was eight when we moved to the new house."
 
     @override
     @staticmethod
-    def assert_(result: dict[str, Any]) -> list[str]:
+    def assert_(result: Assessment) -> list[str]:
         if any(w in _question_texts(result) for w in _DATE_ASK):
             return []
         return ["no date question asked despite an unknown dob and only an age given"]
@@ -334,19 +343,19 @@ class AgeWithoutDobAsksFlow(MemoryFlow):
 
 class DobStatedAssertedFlow(MemoryFlow):
     name = "dob-stated-in-account-is-asserted"
-    knowledge = {
-        "people": [{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]}],
-        "places": [],
-        "themes": [],
-        "items": [],
-    }
-    anchor = {"kind": "item", "id": "letter-1990-03-01", "name": "A letter"}
+    knowledge = Knowledge.from_projection(
+        people=[{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]}],
+        places=[],
+        themes=[],
+        items=[],
+    )
+    anchor = Anchor(kind="item", id="letter-1990-03-01", name="A letter")
     who = "Marek"
     account = "I was eight when we moved. My DOB is 15/09/1981."
 
     @override
     @staticmethod
-    def assert_(result: dict[str, Any]) -> list[str]:
+    def assert_(result: Assessment) -> list[str]:
         if _facts_of_kind(result, "dob") and not any(w in _question_texts(result) for w in _DATE_ASK):
             return []
         return ["expected an asserted dob fact and no date question when dob + age are computable"]
@@ -354,19 +363,19 @@ class DobStatedAssertedFlow(MemoryFlow):
 
 class NewNarratorConnectionFlow(MemoryFlow):
     name = "new-narrator-connection-asked"
-    knowledge = {
-        "people": [{"id": "p-helena", "name": "Helena Kowalski", "aliases": ["Grandma", "Babcia"]}],
-        "places": [],
-        "themes": [],
-        "items": [],
-    }
-    anchor = {"kind": "theme", "id": "t-kowalski-wedding", "name": "The wedding"}
+    knowledge = Knowledge.from_projection(
+        people=[{"id": "p-helena", "name": "Helena Kowalski", "aliases": ["Grandma", "Babcia"]}],
+        places=[],
+        themes=[],
+        items=[],
+    )
+    anchor = Anchor(kind="theme", id="t-kowalski-wedding", name="The wedding")
     who = "Zofia Kowalski"
     account = "The wedding was lovely, the cake was poppy seed."
 
     @override
     @staticmethod
-    def assert_(result: dict[str, Any]) -> list[str]:
+    def assert_(result: Assessment) -> list[str]:
         if any(w in _question_texts(result) for w in ("connect", "related", "relationship", "family")):
             return []
         return ["no question asks how the new narrator is connected to the family"]
@@ -374,19 +383,19 @@ class NewNarratorConnectionFlow(MemoryFlow):
 
 class NewArtifactAskedFlow(MemoryFlow):
     name = "new-artifact-asked-about"
-    knowledge = {
-        "people": [{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]}],
-        "places": [],
-        "themes": [],
-        "items": [],
-    }
-    anchor = {"kind": "theme", "id": "t-kowalski-boats", "name": "The boats"}
+    knowledge = Knowledge.from_projection(
+        people=[{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"]}],
+        places=[],
+        themes=[],
+        items=[],
+    )
+    anchor = Anchor(kind="theme", id="t-kowalski-boats", name="The boats")
     who = "Marek"
     account = "We sailed on the Kasia, a little yacht Dad rebuilt in the garden."
 
     @override
     @staticmethod
-    def assert_(result: dict[str, Any]) -> list[str]:
+    def assert_(result: Assessment) -> list[str]:
         if "kasia" in _question_texts(result):
             return []
         return ["no 'tell me more' question about the newly named artifact (Kasia)"]
@@ -409,32 +418,21 @@ FLOWS: tuple[MemoryFlow, ...] = (
 def run_flow(
     client: AIClient,
     flow: MemoryFlow,
-    default_knowledge: dict[str, list[dict[str, Any]]],
-) -> dict[str, Any]:
+    default_knowledge: Knowledge,
+) -> Assessment:
     """Run the flow ONCE — the assess stage, exactly once (the production
     call self-corrects internally, so the eval must not repeat it). The
     condition tests verify the single output."""
-    knowledge = flow.knowledge or default_knowledge
     return assess(
         client,
         anchor=flow.anchor,
         who=flow.who,
         account=flow.account,
-        # Knowledge's own conversion point for the projection's plain dicts
-        # — the raw constructor's annotation is loose (it normalizes in
-        # __post_init__); from_projection declares the dict-accepting
-        # contract — the class's own seam, never a cast/Any papering over
-        # the mismatch.
-        knowledge=Knowledge.from_projection(
-            people=knowledge["people"],
-            places=knowledge["places"],
-            themes=knowledge["themes"],
-            items=knowledge["items"],
-        ),
+        knowledge=flow.knowledge or default_knowledge,
     )
 
 
-def condition_contract(result: dict[str, Any]) -> list[str]:
+def condition_contract(result: Assessment) -> list[str]:
     """The shared elicitation contract — every flow's output must satisfy
     it (the skippability of questions, the persona guard)."""
     return contract_errors(result)

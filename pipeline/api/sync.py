@@ -23,21 +23,27 @@ from typing import Any
 
 from PIL import Image, ImageOps
 
-from document.schemas import DOCUMENT_AGREED, DOCUMENT_REJECTED, Document
-from document.word import Word
+from document.document import DOCUMENT_AGREED, DOCUMENT_REJECTED
+from document.page_size import PageSize
+from document.rectangle import Rectangle
+from document.row import Row
+from document.row_adjustments import RowAdjustments
+from document.words import Words
+from pipeline.boundary import Boundary
 from pipeline.detect.reader import reading_for_page
 from pipeline.htr import htr_pages_vlm
 from pipeline.layout import (
+    Layout,
     build_layout,
-    layout_detections,
     load_layout_store,
     rotate_detections,
-    validate_layout,
-    write_layout_store,
 )
+from pipeline.model.unsure_word import UnsureWord
 from pipeline.model.vlm import orientation_report, selfreport_words
+from pipeline.page_image import PageImage
 from pipeline.registry import load_batch, record_path
 from pipeline.rows.rows import Rows
+from pipeline.rows_reading import RowsReading
 from pipeline.store import PipelineStore
 from tools.atomic import atomic_write
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
@@ -81,32 +87,37 @@ class BatchReadings:
 
     def rebuild_rotated_layout(
         self,
-        reading: dict[str, Any],
+        reading: RowsReading | Layout,
         page: str,
         steps: int,
         image: Image.Image,
         rotated: Image.Image,
-    ) -> dict[str, Any]:
+    ) -> Layout:
         """The strip-era reading's rotation: rotate the layout's detections
         in the PRE-turn frame (the stale boxes live in the pre-turn dims,
         not the current image's) and rebuild the layout at the rotated
         image's size, so the boxes never misalign with the pixels."""
-        detections = rotate_detections(layout_detections(reading), steps, image.width, image.height)
+        layout = _as_layout(reading)
+        detections = rotate_detections(layout.detections(), steps, image.width, image.height)
         selfreport_path = self.guess_dir / Path(page).with_suffix(".selfreport.json")
-        selfreport = json.loads(selfreport_path.read_text(encoding="utf-8")) if selfreport_path.exists() else None
-        vlm_text = "\n".join(line["text"] for line in reading.get("lines", []))
+        selfreport = (
+            [UnsureWord.from_dict(entry) for entry in json.loads(selfreport_path.read_text(encoding="utf-8"))]
+            if selfreport_path.exists()
+            else None
+        )
+        vlm_text = "\n".join(line.text for line in layout.lines)
         rebuilt = build_layout(
-            reading.get("page", page),
+            layout.page or page,
             rotated.width,
             rotated.height,
             vlm_text,
             detections,
             selfreport=selfreport,
         )
-        rebuilt["lines"].sort(key=lambda ln: ln["index"])
+        rebuilt.lines.sort(key=lambda line: line.index)
         return rebuilt
 
-    def load_reading(self, page: str, journal_path: Path, image_path: Path) -> dict[str, Any]:
+    def load_reading(self, page: str, journal_path: Path, image_path: Path) -> RowsReading | Layout:
         """The page's reading for a rotate — the rows reading where one
         exists, else the strip-era layout — with any half-rotated crash
         completed FIRST. A rows recovery that is abandoned (an unreadable
@@ -118,19 +129,32 @@ class BatchReadings:
         rows_path = self.rows_path(page)
         layout_path = self.guess_dir / Path(page).with_suffix(".layout.json")
         if rows_path.is_file():
-            reading = json.loads(rows_path.read_text(encoding="utf-8"))
+            reading = RowsReading.from_dict(json.loads(rows_path.read_text(encoding="utf-8")))
             if journal_path.exists() and not _recover_crashed_rows(journal_path, reading, image_path, rows_path):
                 raise ValueError(
                     f"rotation recovery failed: the journal {journal_path.name} is unreadable — "
                     "the reading may be misaligned with the image; resolve the journal before retrying"
                 )
             return reading
-        reading = load_layout_store(PipelineStore(self.work_dir), str(layout_path.relative_to(self.work_dir)))
+        layout = load_layout_store(PipelineStore(self.work_dir), str(layout_path.relative_to(self.work_dir)))
         if journal_path.exists():
-            reading = _recover_crashed_layout(
-                journal_path, reading, layout_path, image_path, page, self.work_dir, self.batch_id
+            layout = _recover_crashed_layout(
+                journal_path, layout, layout_path, image_path, page, self.work_dir, self.batch_id
             )
-        return reading
+        return layout
+
+
+def _as_layout(reading: RowsReading | Layout) -> Layout:
+    """A reading as the layout record the layout tools take — a rows reading
+    carries the same lines, so the conversion loses nothing (its rotation and
+    revision ride the layout's carried-through keys)."""
+    return reading if isinstance(reading, Layout) else Layout.from_dict(reading.to_dict())
+
+
+def _rotation_of(reading: RowsReading | Layout) -> int:
+    """The rotation a reading records — the rows reading's own field, or the
+    strip-era layout's carried-through wire key."""
+    return reading.rotation if isinstance(reading, RowsReading) else int(reading.extra.get("rotation", 0))
 
 
 logger = logging.getLogger(__name__)
@@ -216,7 +240,7 @@ class Outbox:
 def record_confirmation(
     batch_id: str,
     doc_index: int,
-    document: dict[str, Any],
+    document: Boundary,
     text: str | None,
     *,
     work_dir: Path = WORK_DIR,
@@ -239,28 +263,28 @@ def record_confirmation(
         confirmed_dir = work_dir / batch_id / "ocr-confirmed"
         confirmed_dir.mkdir(parents=True, exist_ok=True)
         atomic_write(confirmed_dir / f"doc-{doc_index:02d}.txt", text)
-        entry: dict[str, Any] = {**document, "status": DOCUMENT_AGREED}
+        document.reviewed(DOCUMENT_AGREED)
     else:
-        entry = {**document, "status": DOCUMENT_REJECTED}
-    boundaries = [b for b in record.get("boundaries") or [] if b.get("pages") != document.get("pages")]
-    boundaries.append(entry)
-    record["boundaries"] = boundaries
-    atomic_write(record_path(batch_id, registry_dir), json.dumps(record, indent=1, ensure_ascii=False) + "\n")
+        document.reviewed(DOCUMENT_REJECTED)
+    boundaries = [b for b in record.boundaries or [] if b.pages != document.pages]
+    boundaries.append(document)
+    record.boundaries = boundaries
+    atomic_write(record_path(batch_id, registry_dir), json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n")
 
 
 # the review seam's functions all take (batch_id, page, work_dir) — they are the
 # module's one vocabulary, each a thin file operation over the same batch tree; a
 # carrier class would be the object-model Phase 6 package restructure, not this change
 # lucidlint: ignore latent-class the batch-path vocabulary is this module's shape; the restructure is Phase 6
-def apply_row_adjustments(batch_id: str, page: str, adjustments: Any, work_dir: Path) -> list[Any]:
+def apply_row_adjustments(batch_id: str, page: str, adjustments: RowAdjustments, work_dir: Path) -> list[Row]:
     """The reviewer's drawn row lines -> the page's rows
     (`rows.adjust` over the words the read stage persisted, each with
     its own reading line, so an incomplete set of lines merges with the
     draft rows), persisted beside the reading:
 
     - ``<page>.row-adjustments.json`` — the drawn lines, as drawn;
-    - ``<page>.rows-adjusted.json`` — the correction's rows, the wire
-      contract (`document.schemas.Rows`).
+    - ``<page>.rows-adjusted.json`` — the correction's rows, the artefact
+      `Rows.to_dict` writes.
 
     A page whose words were never persisted (read before the read stage
     wrote them) cannot be corrected — ValueError, never a silent empty
@@ -274,25 +298,12 @@ def apply_row_adjustments(batch_id: str, page: str, adjustments: Any, work_dir: 
         raise ValueError(f"no reading for {page} — the read stage must run first")
     if not words_path.is_file():
         raise ValueError(f"no words for {page} — re-read the page, then draw its rows")
-    words = json.loads(words_path.read_text(encoding="utf-8"))["words"]
-    reading = json.loads(rows_path.read_text(encoding="utf-8"))
-    boxes = [
-        Word(
-            w["x0"],
-            w["y0"],
-            w["x1"],
-            w["y1"],
-            baseline=w.get("baseline"),
-            waistline=w.get("waistline"),
-            line=w.get("line"),
-        )
-        for w in words
-    ]
-    rows = Rows.from_words(boxes, (int(reading["width"]), int(reading["height"]))).adjust(
-        [list(line) for line in adjustments["lines"]]
-    )
-    atomic_write(readings.adjustments_path(page), json.dumps(adjustments, ensure_ascii=False, indent=1) + "\n")
-    atomic_write(readings.adjusted_rows_path(page), json.dumps(Rows.to_wire(rows), ensure_ascii=False, indent=1) + "\n")
+    words = Words.from_dict(json.loads(words_path.read_text(encoding="utf-8")))
+    reading = RowsReading.from_dict(json.loads(rows_path.read_text(encoding="utf-8")))
+    rows = Rows.from_words(list(words), PageSize(reading.width, reading.height)).adjust(adjustments)
+    adjustments_json = json.dumps(adjustments.to_dict(), ensure_ascii=False, indent=1)
+    atomic_write(readings.adjustments_path(page), adjustments_json + "\n")
+    atomic_write(readings.adjusted_rows_path(page), json.dumps(Rows.to_dict(rows), ensure_ascii=False, indent=1) + "\n")
     return rows
 
 
@@ -346,11 +357,11 @@ def _page_review_state(readings: BatchReadings, pages: list[str]) -> PageReviewS
         if not layout_path.exists():
             continue
         layout = load_layout_store(PipelineStore(readings.work_dir), str(layout_path.relative_to(readings.work_dir)))
-        violations = validate_layout(layout)
+        violations = layout.validate()
         if violations:
             layout_errors[page] = violations
             continue
-        layouts[page] = layout
+        layouts[page] = layout.to_dict()
     return PageReviewState(
         layouts=layouts,
         layout_errors=layout_errors,
@@ -372,10 +383,12 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
     boundaries_path = guess_dir / "boundaries.json"
     if not boundaries_path.exists():
         return []
-    boundaries: list[Document] = json.loads(boundaries_path.read_text(encoding="utf-8"))
+    # the registry's own boundary records: the document's artefact fields plus
+    # the transport's keys, which the drafts payload carries through as they are
+    entries: list[dict[str, Any]] = json.loads(boundaries_path.read_text(encoding="utf-8"))
     drafts: list[dict[str, Any]] = []
-    for document in boundaries:
-        pages = document.get("pages", [])
+    for boundary in (Boundary.from_dict(entry) for entry in entries):
+        pages = boundary.pages
         for page in pages:
             if not safe_page_name(page):
                 raise ValueError(f"unsafe page name in boundaries: {page!r}")
@@ -406,7 +419,7 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
                 "orientations": orientations,
                 "row_adjustments": state.adjustments,
                 "adjusted_rows": state.adjusted_rows,
-                **document,
+                **boundary.to_dict(),
             }
         )
     return drafts
@@ -414,13 +427,13 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
 
 def _recover_crashed_layout(
     journal_path: Path,
-    layout: dict[str, Any],
+    layout: Layout,
     layout_path: Path,
     image_path: Path,
     page: str,
     work_dir: Path,
     batch_id: str,
-) -> dict[str, Any]:
+) -> Layout:
     """Complete a half-rotated crash from the journal — rebuild the layout to
     the recorded intent so the boxes never silently misalign. An unreadable
     journal abandons recovery (logged) and the stale layout stands; the
@@ -429,17 +442,14 @@ def _recover_crashed_layout(
         journal = json.loads(journal_path.read_text(encoding="utf-8"))
         intended = int(journal.get("rotation", 0)) % FULL_ROTATION_DEGREES
         stale = int(journal.get("from", 0)) % FULL_ROTATION_DEGREES
-        if int(layout.get("rotation", 0)) % FULL_ROTATION_DEGREES == stale:
+        if int(layout.extra.get("rotation", 0)) % FULL_ROTATION_DEGREES == stale:
             swapped = journal.get("swapped")
             if swapped is None:
-                # a journal written before the flag existed: fall back to
-                # the dimensions heuristic (blind at 180° — the flag is
-                # the reliable check for new journals)
                 image = ImageOps.exif_transpose(Image.open(image_path))
-                swapped = image.width != int(layout.get("width", 0)) or image.height != int(layout.get("height", 0))
+                swapped = image.width != layout.width or image.height != layout.height
             if not swapped:
-                # the crash happened BEFORE the image swap — the journal
-                # is premature, the layout is still consistent
+                # the crash happened BEFORE the image swap — the layout is
+                # still consistent with the current image
                 journal_path.unlink(missing_ok=True)
             else:
                 # the image IS rotated — recover the layout to the intent
@@ -451,26 +461,28 @@ def _recover_crashed_layout(
                     # them by the STALE LAYOUT's recorded dims, not the
                     # current image's
                     detections = rotate_detections(
-                        layout_detections(layout),
+                        layout.detections(),
                         steps,
-                        int(layout.get("width", image.width)),
-                        int(layout.get("height", image.height)),
+                        int(layout.width or image.width),
+                        int(layout.height or image.height),
                     )
-                    vlm_text = "\n".join(line["text"] for line in layout.get("lines", []))
+                    vlm_text = "\n".join(line.text for line in layout.lines)
                     selfreport_path = work_dir / batch_id / "ocr-guess" / Path(page).with_suffix(".selfreport.json")
                     selfreport = (
-                        json.loads(selfreport_path.read_text(encoding="utf-8")) if selfreport_path.exists() else None
+                        [UnsureWord.from_dict(entry) for entry in json.loads(selfreport_path.read_text())]
+                        if selfreport_path.exists()
+                        else None
                     )
                     layout = build_layout(
-                        layout.get("page", page),
+                        layout.page or page,
                         image.width,
                         image.height,
                         vlm_text,
                         detections,
                         selfreport=selfreport,
                     )
-                    layout["rotation"] = intended
-                    write_layout_store(layout, PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
+                    layout.extra["rotation"] = intended
+                    layout.write_store(PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
     except (OSError, json.JSONDecodeError, ValueError) as e:
         logger.warning("sync: unreadable rotation journal %s — recovery abandoned: %s", journal_path, e)
         journal_path.unlink(missing_ok=True)
@@ -480,7 +492,7 @@ def _recover_crashed_layout(
 
 def _recover_crashed_rows(
     journal_path: Path,
-    rows: dict[str, Any],
+    rows: RowsReading,
     image_path: Path,
     rows_path: Path,
 ) -> bool:
@@ -499,12 +511,12 @@ def _recover_crashed_rows(
         journal = json.loads(journal_path.read_text(encoding="utf-8"))
         intended = int(journal.get("rotation", 0)) % FULL_ROTATION_DEGREES
         stale = int(journal.get("from", 0)) % FULL_ROTATION_DEGREES
-        if int(rows.get("rotation", 0)) % FULL_ROTATION_DEGREES != stale:
+        if rows.rotation % FULL_ROTATION_DEGREES != stale:
             return True
         swapped = journal.get("swapped")
         if swapped is None:
             image = ImageOps.exif_transpose(Image.open(image_path))
-            swapped = image.width != int(rows.get("width", 0)) or image.height != int(rows.get("height", 0))
+            swapped = image.width != rows.width or image.height != rows.height
         if not swapped:
             # the crash happened BEFORE the image swap — the rows are
             # still consistent with the current image
@@ -512,14 +524,14 @@ def _recover_crashed_rows(
             return True
         recovery = (intended - stale) % FULL_ROTATION_DEGREES
         steps = recovery // QUARTER_TURN_DEGREES
-        width, height = int(rows["width"]), int(rows["height"])
+        width, height = rows.width, rows.height
         for _ in range(steps):
-            for line in rows["lines"]:
+            for line in rows.lines:
                 x0, y0, x1, y1 = line["box"]
                 line["box"] = [height - y1, x0, height - y0, x1]
             width, height = height, width
-        rows["rotation"] = intended
-        atomic_write(rows_path, json.dumps(rows, ensure_ascii=False, indent=1) + "\n")
+        rows.rotation = intended
+        atomic_write(rows_path, json.dumps(rows.to_dict(), ensure_ascii=False, indent=1) + "\n")
         journal_path.unlink(missing_ok=True)
         return True
     except (OSError, json.JSONDecodeError, ValueError) as e:
@@ -531,34 +543,34 @@ def _recover_crashed_rows(
 
 
 def _rotate_rows_reading(
-    reading: dict[str, Any],
+    reading: RowsReading,
     words_path: Path,
     steps: int,
     image: Image.Image,
-) -> dict[str, Any] | None:
+) -> Words | None:
     """Rotate the rows reading one quarter-turn per step in the reading's
     recorded frame: the line boxes — and the words' coordinates, when the
     words sidecar was persisted — remap by (x, y) -> (height - y, x), and
     the measured waistline/baseline become the rotated box's own edges,
     keeping the reading-order rule (rows.adjust's rule B) in the new
     frame. Returns the rotated words for the caller's atomic write."""
-    width, height = int(reading.get("width", image.width)), int(reading.get("height", image.height))
-    words = json.loads(words_path.read_text(encoding="utf-8")) if words_path.is_file() else None
+    width, height = reading.width, reading.height
+    words = Words.from_dict(json.loads(words_path.read_text(encoding="utf-8"))) if words_path.is_file() else None
     for _ in range(steps):
         lines: list[dict[str, Any]] = []
-        for line in reading["lines"]:
+        for line in reading.lines:
             x0, y0, x1, y1 = line["box"]
             line["box"] = [height - y1, x0, height - y0, x1]
             lines.append(line)
-        reading["lines"] = lines
+        reading.lines = lines
         if words is not None:
-            for word in words["words"]:
-                x0, y0, x1, y1 = word["x0"], word["y0"], word["x1"], word["y1"]
-                word["x0"], word["y0"], word["x1"], word["y1"] = height - y1, x0, height - y0, x1
+            for word in words:
+                x0, y0, x1, y1 = word.x0, word.y0, word.x1, word.y1
+                word.rect = Rectangle(x0=height - y1, y0=x0, x1=height - y0, y1=x1)
                 # the measured baseline/waistline are horizontals now
                 # vertical: the rotated box's own edges keep the reading
                 # order rule (rows.adjust's rule B) in the new frame
-                word["waistline"], word["baseline"] = word["y0"], word["y1"]
+                word.waistline, word.baseline = word.y0, word.y1
         width, height = height, width
     return words
 
@@ -577,8 +589,8 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
         raise ValueError(f"no reading for {page} — the read stage must run before a rotate")
     journal_path = work_dir / batch_id / "oriented" / f"{Path(page).stem}.rotate.json"
     reading = readings.load_reading(page, journal_path, image_path)
-    current = int(reading.get("rotation", 0)) % FULL_ROTATION_DEGREES
-    words: dict[str, Any] | None = None
+    current = _rotation_of(reading) % FULL_ROTATION_DEGREES
+    words: Words | None = None
     delta = (quarters * QUARTER_TURN_DEGREES - current) % FULL_ROTATION_DEGREES
     if delta == 0:
         journal_path.unlink(missing_ok=True)
@@ -588,13 +600,13 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
     rotated = image.rotate(-QUARTER_TURN_DEGREES * steps, expand=True)  # clockwise
     rotated.info.pop("exif", None)
     words_path = readings.words_path(page)
-    if rows_path.is_file():
+    if isinstance(reading, RowsReading):
         words = _rotate_rows_reading(reading, words_path, steps, image)
-        reading["width"], reading["height"] = rotated.width, rotated.height
-        reading["rotation"] = (current + delta) % FULL_ROTATION_DEGREES
+        reading.width, reading.height = rotated.width, rotated.height
+        reading.rotation = (current + delta) % FULL_ROTATION_DEGREES
     else:
         reading = readings.rebuild_rotated_layout(reading, page, steps, image, rotated)
-        reading["rotation"] = (current + delta) % FULL_ROTATION_DEGREES
+        reading.extra["rotation"] = (current + delta) % FULL_ROTATION_DEGREES
     tmp = image_path.with_name(image_path.name + ".tmp")
     rotated.save(tmp, format=image.format or "JPEG")
     # the journal lands BEFORE the image swap with swapped:false — a crash
@@ -605,19 +617,19 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
     # 180°).
     atomic_write(
         journal_path,
-        json.dumps({"from": current, "rotation": reading["rotation"], "swapped": False}, ensure_ascii=False) + "\n",
+        json.dumps({"from": current, "rotation": _rotation_of(reading), "swapped": False}, ensure_ascii=False) + "\n",
     )
     tmp.replace(image_path)
     atomic_write(
         journal_path,
-        json.dumps({"from": current, "rotation": reading["rotation"], "swapped": True}, ensure_ascii=False) + "\n",
+        json.dumps({"from": current, "rotation": _rotation_of(reading), "swapped": True}, ensure_ascii=False) + "\n",
     )
-    if rows_path.is_file():
-        atomic_write(rows_path, json.dumps(reading, ensure_ascii=False, indent=1) + "\n")
+    if isinstance(reading, RowsReading):
+        atomic_write(rows_path, json.dumps(reading.to_dict(), ensure_ascii=False, indent=1) + "\n")
         if words is not None:
-            atomic_write(words_path, json.dumps(words, ensure_ascii=False, indent=1) + "\n")
+            atomic_write(words_path, json.dumps(words.to_dict(), ensure_ascii=False, indent=1) + "\n")
     else:
-        write_layout_store(reading, PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
+        reading.write_store(PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
     journal_path.unlink(missing_ok=True)
     return True
 
@@ -699,7 +711,7 @@ def reprocess_page_transcription(
     work_dir: Path,
     *,
     transcribe: Any = None,
-    selfreport: Any = None,
+    selfreport: Callable[..., list[UnsureWord]] | None = None,
     orientation_report_fn: Callable[[Path, str], dict[str, Any]] | None = None,
     people: list[str] | None = None,
     places: list[str] | None = None,
@@ -735,13 +747,13 @@ def reprocess_page_transcription(
             # strip-era fallback: carry the old layout's recorded rotation
             layout_path = guess_dir / Path(page).with_suffix(".layout.json")
             layout = load_layout_store(PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
-            rotation = int(layout.get("rotation", 0))
+            rotation = int(layout.extra.get("rotation", 0))
         # force the re-read: drop the markers the pipeline's skip logic uses
         raw_dir = guess_dir
         for suffix in (".txt", ".vlm.json", ".selfreport.json", ".orientation.json"):
             (raw_dir / Path(page).with_suffix(suffix)).unlink(missing_ok=True)
         htr_pages_vlm(
-            [(page, image_path)],
+            [PageImage(page, image_path)],
             raw_dir,
             transcribe=transcribe,
             people=people,
@@ -758,7 +770,7 @@ def reprocess_page_transcription(
             else selfreport_words(image_path, new_text, people=people, places=places)
         )
         report_path = raw_dir / Path(page).with_suffix(".selfreport.json")
-        atomic_write(report_path, json.dumps(report, ensure_ascii=False, indent=1) + "\n")
+        atomic_write(report_path, json.dumps([word.to_dict() for word in report], ensure_ascii=False, indent=1) + "\n")
         # the fresh orientation report on the CORRECTED image — a
         # multi-direction report writes the sidecar the layout stage reads
         _write_multi_sidecar(page, image_path, raw_dir, new_text, orientation_report_fn)
@@ -770,18 +782,17 @@ def reprocess_page_transcription(
         text_lines = [ln for ln in new_text.splitlines() if ln.strip()]
         for i, line in enumerate(reading.lines):
             line["text"] = text_lines[i] if i < len(text_lines) else ""
-        new_rows = {
-            "page": page,
-            "width": reading.width,
-            "height": reading.height,
-            "rotation": rotation,
-            "revision": 1,
-            "lines": reading.lines,
-        }
-        atomic_write(rows_path, json.dumps(new_rows, ensure_ascii=False, indent=1) + "\n")
+        new_rows = RowsReading(
+            page=page,
+            width=reading.width,
+            height=reading.height,
+            rotation=rotation,
+            lines=reading.lines,
+        )
+        atomic_write(rows_path, json.dumps(new_rows.to_dict(), ensure_ascii=False, indent=1) + "\n")
         atomic_write(
             BatchReadings(work_dir, batch_id).words_path(page),
-            json.dumps({"words": reading.words}, ensure_ascii=False, indent=1) + "\n",
+            json.dumps(Words(reading.words).to_dict(), ensure_ascii=False, indent=1) + "\n",
         )
         set_page_job(batch_id, page, None, work_dir)
     # lucidlint: ignore broad-except the stage's terminal boundary — mark failed on ANY error, then re-raise

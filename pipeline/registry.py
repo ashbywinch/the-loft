@@ -8,8 +8,8 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
 
+from pipeline.batch_record import BatchRecord
 from pipeline.store import VERSION_SUFFIX, PipelineStore
 from tools.loft_paths import REGISTRY_DIR
 from tools.store import StoreError
@@ -27,15 +27,15 @@ def record_path(batch_id: str, registry_dir: Path = REGISTRY_DIR) -> Path:
     return registry_dir / f"{batch_id}.json"
 
 
-def load_batch(batch_id: str, registry_dir: Path = REGISTRY_DIR) -> dict[str, Any]:
+def load_batch(batch_id: str, registry_dir: Path = REGISTRY_DIR) -> BatchRecord:
     name = f"{batch_id}.json"
     store = PipelineStore(registry_dir)
     if not store.exists(name):
         raise RegistryError(f"no registry record for batch {batch_id!r} — adopt it first")
-    return json.loads(store.read_latest(name))
+    return _read_record(name, store)
 
 
-def list_batches(registry_dir: Path = REGISTRY_DIR) -> list[dict[str, Any]]:
+def list_batches(registry_dir: Path = REGISTRY_DIR) -> list[BatchRecord]:
     """Every batch record, newest first — the review surface's batch list."""
     store = PipelineStore(registry_dir)
     batches = []
@@ -47,9 +47,14 @@ def list_batches(registry_dir: Path = REGISTRY_DIR) -> list[dict[str, Any]]:
             base = name[: m.start()] + ".json"
             if store.exists(base):
                 continue
-        try:
-            record = json.loads(store.read_latest(name))
-        except (StoreError, json.JSONDecodeError) as exc:
-            raise RegistryError(f"registry record {name} is unreadable: {exc}") from exc
-        batches.append(record)
-    return sorted(batches, key=lambda b: str(b.get("arrived_at", "")), reverse=True)
+        batches.append(_read_record(name, store))
+    return sorted(batches, key=lambda batch: batch.arrived_at, reverse=True)
+
+
+def _read_record(name: str, store: PipelineStore) -> BatchRecord:
+    """The record a registry file holds; an unreadable file is a RegistryError,
+    never a half-read record."""
+    try:
+        return BatchRecord.from_dict(json.loads(store.read_latest(name)))
+    except (StoreError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+        raise RegistryError(f"registry record {name} is unreadable: {exc}") from exc

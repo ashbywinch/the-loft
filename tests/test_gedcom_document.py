@@ -11,53 +11,62 @@ from typing import Any
 import gedcom7
 
 from tools.archive import Archive
-from tools.gedcom_document import GedcomDocument, gedcom_date
+from tools.gedcom_date import GedcomDate
+from tools.gedcom_document import GedcomDocument
+from tools.gedcom_person import GedcomPerson
+from tools.gedcom_shapes import GedcomShapes
+from tools.records import ImportsTable, Item, PeopleTable, PlacesTable, ThemesTable
 from tools.store import MemoryStore
+
+# the archive's own records for the export tests: the confirmed family (mum,
+# dad, kid) plus a proposed stranger, and the town mum lived in
+BASE_PEOPLE: list[dict[str, Any]] = [
+    {
+        "id": "p-mum",
+        "name": "Mum",
+        "pronouns": "she/her",
+        "hue": "amber",
+        "residence": [{"place": "pl-town", "from": "1973", "to": "1973", "status": "confirmed"}],
+    },
+    {"id": "p-dad", "name": "Dad", "pronouns": "he/him", "hue": "sky"},
+    {"id": "p-kid", "name": "Kid", "hue": "rose"},
+    {"id": "p-stranger", "name": "Stranger", "status": "proposed"},
+]
+
+BASE_RELATIONSHIPS: list[dict[str, Any]] = [
+    {"a": "p-mum", "b": "p-dad", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"},
+    {"a": "p-mum", "b": "p-kid", "kind": "parent", "label_a": "child", "label_b": "parent"},
+    {"a": "p-dad", "b": "p-kid", "kind": "parent", "label_a": "child", "label_b": "parent"},
+    {"a": "p-mum", "b": "p-stranger", "kind": "parent", "label_a": "child", "label_b": "parent"},
+]
 
 
 def make_archive() -> Archive:
     archive = Archive(MemoryStore())
     archive.save_identity(
         "people",
-        {
-            "people": [
-                {
-                    "id": "p-mum",
-                    "name": "Mum",
-                    "pronouns": "she/her",
-                    "hue": "amber",
-                    "residence": [{"place": "pl-town", "from": "1973", "to": "1973", "status": "confirmed"}],
-                },
-                {"id": "p-dad", "name": "Dad", "pronouns": "he/him", "hue": "sky"},
-                {"id": "p-kid", "name": "Kid", "hue": "rose"},
-                {"id": "p-stranger", "name": "Stranger", "status": "proposed"},
-            ],
-            "relationships": [
-                {"a": "p-mum", "b": "p-dad", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"},
-                {"a": "p-mum", "b": "p-kid", "kind": "parent", "label_a": "child", "label_b": "parent"},
-                {"a": "p-dad", "b": "p-kid", "kind": "parent", "label_a": "child", "label_b": "parent"},
-                {"a": "p-mum", "b": "p-stranger", "kind": "parent", "label_a": "child", "label_b": "parent"},
-            ],
-        },
+        PeopleTable.from_dict({"people": BASE_PEOPLE, "relationships": BASE_RELATIONSHIPS}),
     )
-    archive.save_identity("places", {"places": [{"id": "pl-town", "name": "Town"}]})
-    archive.save_identity("themes", {"themes": []})
+    archive.save_identity("places", PlacesTable.from_dict({"places": [{"id": "pl-town", "name": "Town"}]}))
+    archive.save_identity("themes", ThemesTable.from_dict({"themes": []}))
     archive.save_item(
-        {
-            "id": "story-x",
-            "type": "story",
-            "title": "X",
-            "date": "2026-08-01",
-            "date_precision": "exact",
-            "story": "A family memory about Mum.",
-            "told_by": "p-kid",
-            "people": [{"id": "p-mum", "status": "confirmed"}],
-            "places": [],
-            "themes": [],
-            "assets": [],
-            "status": "catalogued",
-            "created": "2026-08-05",
-        }
+        Item.from_dict(
+            {
+                "id": "story-x",
+                "type": "story",
+                "title": "X",
+                "date": "2026-08-01",
+                "date_precision": "exact",
+                "story": "A family memory about Mum.",
+                "told_by": "p-kid",
+                "people": [{"id": "p-mum", "status": "confirmed"}],
+                "places": [],
+                "themes": [],
+                "assets": [],
+                "status": "catalogued",
+                "created": "2026-08-05",
+            }
+        )
     )
     return archive
 
@@ -91,18 +100,22 @@ def test_export_round_trips_dates_and_roles() -> None:
     archive = make_archive()
     archive.save_identity(
         "people",
-        {
-            "people": [
-                {
-                    "id": "p-mum",
-                    "name": "Mum",
-                    "pronouns": "she/her",
-                    "dob": {"date": "1947-05-11", "precision": "exact"},
-                },
-                {"id": "p-dad", "name": "Dad", "dob": {"date": "1938", "precision": "approx"}},
-            ],
-            "relationships": [{"a": "p-mum", "b": "p-dad", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"}],
-        },
+        PeopleTable.from_dict(
+            {
+                "people": [
+                    {
+                        "id": "p-mum",
+                        "name": "Mum",
+                        "pronouns": "she/her",
+                        "dob": {"date": "1947-05-11", "precision": "exact"},
+                    },
+                    {"id": "p-dad", "name": "Dad", "dob": {"date": "1938", "precision": "approx"}},
+                ],
+                "relationships": [
+                    {"a": "p-mum", "b": "p-dad", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"}
+                ],
+            }
+        ),
     )
     text = GedcomDocument.from_archive(archive).to_text()
     _parse(text)
@@ -112,12 +125,12 @@ def test_export_round_trips_dates_and_roles() -> None:
 
 
 def test_gedcom_date_mapping() -> None:
-    assert gedcom_date("1871-01-07", "exact") == "7 JAN 1871"
-    assert gedcom_date("1901-01", "month") == "JAN 1901"
-    assert gedcom_date("1938", "year") == "1938"
-    assert gedcom_date("1917", "approx") == "ABT 1917"
-    assert gedcom_date("1881", "before") == "BEF 1881"
-    assert gedcom_date("1880", "between", "1881") == "BET 1880 AND 1881"
+    assert GedcomDate("1871-01-07", "exact").payload() == "7 JAN 1871"
+    assert GedcomDate("1901-01", "month").payload() == "JAN 1901"
+    assert GedcomDate("1938", "year").payload() == "1938"
+    assert GedcomDate("1917", "approx").payload() == "ABT 1917"
+    assert GedcomDate("1881", "before").payload() == "BEF 1881"
+    assert GedcomDate("1880", "between", "1881").payload() == "BET 1880 AND 1881"
 
 
 def test_round_trip_is_exact_for_what_the_export_carries() -> None:
@@ -128,48 +141,39 @@ def test_round_trip_is_exact_for_what_the_export_carries() -> None:
     people_table = archive.get_identity("people")
     places_table = archive.get_identity("places")
     assert people_table is not None and places_table is not None
-    people = people_table["people"]
-    confirmed = [p for p in people if p.get("status") != "proposed"]
-    confirmed_edges = [
-        r
-        for r in people_table["relationships"]
-        if r.get("a") in {p["id"] for p in confirmed} and r.get("b") in {p["id"] for p in confirmed}
-    ]
+    confirmed = [p for p in people_table.people if p.status != "proposed"]
+    confirmed_ids = {p.id for p in confirmed}
+    confirmed_edges = [r for r in people_table.relationships if r.a in confirmed_ids and r.b in confirmed_ids]
     text = GedcomDocument.from_archive(archive).to_text()
     _parse(text)
     imported = GedcomDocument.from_text(text).wire_shapes()
-    by_id = {p["id"]: p for p in imported["people"]}
-    places_table = archive.get_identity("places")
-    place_names = {p["id"]: p.get("name", p["id"]) for p in places_table["places"]} if places_table else {}
-    by_id = {p["id"]: p for p in imported["people"]}
-    assert set(by_id) == {p["id"] for p in confirmed}
+    by_id = {p.id: p for p in imported.people}
+    place_names = {p.id: p.name for p in places_table.places}
+    assert set(by_id) == confirmed_ids
     for person in confirmed:
-        got = by_id[person["id"]]
-        assert got["name"] == person["name"]
-        assert (got.get("aliases") or []) == (person.get("aliases") or [])
-        assert got.get("dob") == person.get("dob")
-        assert got.get("dod") == person.get("dod")
-        assert (got.get("occupations") or []) == (person.get("occupations") or [])
+        got = by_id[person.id]
+        assert got.name == person.name
+        assert got.aliases == person.aliases
+        # the archive's dated fact and the island's date record are
+        # different types; their wire records are what must match
+        assert (got.dob.to_dict() if got.dob else None) == (person.dob.to_dict() if person.dob else None)
+        assert (got.dod.to_dict() if got.dod else None) == (person.dod.to_dict() if person.dod else None)
+        assert got.occupations == person.occupations
 
         # residence status is archive-internal (confirmed-only exports; the
         # imported data is confirmed by construction), and the island's
         # imported residence carries the place NAME as given — the archive
         # residence's place id resolves to its name for the comparison
-        def no_status(entries: list[dict[str, str]]) -> list[dict[str, str]]:
-            return [{k: v for k, v in e.items() if k != "status"} for e in entries]
+        exported = []
+        for entry in person.residence:
+            wire = {k: v for k, v in entry.items() if k != "status"}
+            if wire.get("place") in place_names:
+                wire["place"] = place_names[wire["place"]]
+            exported.append(wire)
+        got_residence = [{k: v for k, v in entry.to_dict().items() if k != "status"} for entry in got.residence]
+        assert got_residence == exported
 
-        def as_exported(entries: list[dict[str, str]]) -> list[dict[str, str]]:
-            out = []
-            for e in entries:
-                entry = dict(e)
-                if entry.get("place") in place_names:
-                    entry["place"] = place_names[entry["place"]]
-                out.append(entry)
-            return out
-
-        assert no_status(got.get("residence") or []) == as_exported(no_status(person.get("residence") or []))
-
-    def _norm(edges: list[dict[str, str]]) -> list[dict[str, str]]:
+    def _norm(edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Spouse edges are undirected — the FAM's positional roles cannot
         carry the authoring direction, so the round-trip compares them as
         unordered pairs."""
@@ -182,11 +186,9 @@ def test_round_trip_is_exact_for_what_the_export_carries() -> None:
         return sorted(out, key=lambda r: (r["a"], r["kind"], r["b"]))
 
     expected_edges = [
-        {"a": r["a"], "b": r["b"], "kind": r["kind"]}
-        for r in confirmed_edges
-        if r.get("a") in {p["id"] for p in confirmed} and r.get("b") in {p["id"] for p in confirmed}
+        {"a": r.a, "b": r.b, "kind": r.kind} for r in confirmed_edges if r.a in confirmed_ids and r.b in confirmed_ids
     ]
-    assert _norm(imported["relationships"]) == _norm(expected_edges)
+    assert _norm([r.to_dict() for r in imported.relationships]) == _norm(expected_edges)
 
 
 def test_round_trip_preserves_bound_precisions() -> None:
@@ -194,25 +196,26 @@ def test_round_trip_preserves_bound_precisions() -> None:
     archive = make_archive()
     archive.save_identity(
         "people",
-        {
-            "people": [
-                {
-                    "id": "p-x",
-                    "name": "X",
-                    "dob": {"date": "1917", "precision": "after"},
-                    "dod": {"date": "1880", "date2": "1881", "precision": "between"},
-                }
-            ],
-            "relationships": [],
-        },
+        PeopleTable.from_dict(
+            {
+                "people": [
+                    {
+                        "id": "p-x",
+                        "name": "X",
+                        "dob": {"date": "1917", "precision": "after"},
+                        "dod": {"date": "1880", "date2": "1881", "precision": "between"},
+                    }
+                ],
+                "relationships": [],
+            }
+        ),
     )
     text = GedcomDocument.from_archive(archive).to_text()
     _parse(text)
-    places_table = archive.get_identity("places")
-    assert places_table is not None
-    imported = GedcomDocument.from_text(text).wire_shapes()["people"][0]
-    assert imported["dob"] == {"date": "1917", "precision": "after"}
-    assert imported["dod"] == {"date": "1880", "date2": "1881", "precision": "between"}
+    imported = GedcomDocument.from_text(text).wire_shapes().people[0]
+    assert imported.dob is not None and imported.dod is not None
+    assert imported.dob.to_dict() == {"date": "1917", "precision": "after"}
+    assert imported.dod.to_dict() == {"date": "1880", "date2": "1881", "precision": "between"}
 
 
 def test_multi_married_parent_children_route_by_co_parent() -> None:
@@ -221,27 +224,29 @@ def test_multi_married_parent_children_route_by_co_parent() -> None:
     archive = Archive(MemoryStore())
     archive.save_identity(
         "people",
-        {
-            "people": [
-                {"id": "p-harper", "name": "Harper"},
-                {"id": "p-h1", "name": "Husband One"},
-                {"id": "p-h2", "name": "Husband Two"},
-                {"id": "p-k1", "name": "Kid One"},
-                {"id": "p-k2", "name": "Kid Two"},
-            ],
-            "relationships": [
-                {"a": "p-harper", "b": "p-h1", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"},
-                {"a": "p-harper", "b": "p-h2", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"},
-                # kid one belongs to the first marriage, kid two to the second
-                {"a": "p-harper", "b": "p-k1", "kind": "parent", "label_a": "child", "label_b": "parent"},
-                {"a": "p-h1", "b": "p-k1", "kind": "parent", "label_a": "child", "label_b": "parent"},
-                {"a": "p-harper", "b": "p-k2", "kind": "parent", "label_a": "child", "label_b": "parent"},
-                {"a": "p-h2", "b": "p-k2", "kind": "parent", "label_a": "child", "label_b": "parent"},
-            ],
-        },
+        PeopleTable.from_dict(
+            {
+                "people": [
+                    {"id": "p-harper", "name": "Harper"},
+                    {"id": "p-h1", "name": "Husband One"},
+                    {"id": "p-h2", "name": "Husband Two"},
+                    {"id": "p-k1", "name": "Kid One"},
+                    {"id": "p-k2", "name": "Kid Two"},
+                ],
+                "relationships": [
+                    {"a": "p-harper", "b": "p-h1", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"},
+                    {"a": "p-harper", "b": "p-h2", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"},
+                    # kid one belongs to the first marriage, kid two to the second
+                    {"a": "p-harper", "b": "p-k1", "kind": "parent", "label_a": "child", "label_b": "parent"},
+                    {"a": "p-h1", "b": "p-k1", "kind": "parent", "label_a": "child", "label_b": "parent"},
+                    {"a": "p-harper", "b": "p-k2", "kind": "parent", "label_a": "child", "label_b": "parent"},
+                    {"a": "p-h2", "b": "p-k2", "kind": "parent", "label_a": "child", "label_b": "parent"},
+                ],
+            }
+        ),
     )
-    archive.save_identity("places", {"places": []})
-    archive.save_identity("themes", {"themes": []})
+    archive.save_identity("places", PlacesTable.from_dict({"places": []}))
+    archive.save_identity("themes", ThemesTable.from_dict({"themes": []}))
     text = GedcomDocument.from_archive(archive).to_text()
     records = _parse(text)
     fams = [r for r in records if r.tag == "FAM"]
@@ -264,13 +269,15 @@ def test_multi_married_parent_children_route_by_co_parent() -> None:
 def test_role_never_infers_gender() -> None:
     """A person without she/he pronouns is not forced into HUSB by default —
     the pair's position decides."""
-    from tools.gedcom_document import _role
 
-    assert _role({"pronouns": "she/her"}, 0) == "WIFE"
-    assert _role({"pronouns": "he/him"}, 1) == "HUSB"
-    assert _role({"pronouns": "they/them"}, 0) == "HUSB"  # positional, not inferred
-    assert _role({"pronouns": "they/them"}, 1) == "WIFE"
-    assert _role({}, 1) == "WIFE"
+    def role(pronouns: str | None, position: int) -> str:
+        return GedcomPerson(id="p-x", name="X", pronouns=pronouns).role(position)
+
+    assert role("she/her", 0) == "WIFE"
+    assert role("he/him", 1) == "HUSB"
+    assert role("they/them", 0) == "HUSB"  # positional, not inferred
+    assert role("they/them", 1) == "WIFE"
+    assert role(None, 1) == "WIFE"
 
 
 def test_dated_marriage_exports_as_marr() -> None:
@@ -279,22 +286,24 @@ def test_dated_marriage_exports_as_marr() -> None:
     archive = Archive(MemoryStore())
     archive.save_identity(
         "people",
-        {
-            "people": [{"id": "p-a", "name": "A"}, {"id": "p-b", "name": "B"}],
-            "relationships": [
-                {
-                    "a": "p-a",
-                    "b": "p-b",
-                    "kind": "spouse",
-                    "label_a": "spouse",
-                    "label_b": "spouse",
-                    "date": {"date": "1888-06-20", "precision": "exact"},
-                },
-            ],
-        },
+        PeopleTable.from_dict(
+            {
+                "people": [{"id": "p-a", "name": "A"}, {"id": "p-b", "name": "B"}],
+                "relationships": [
+                    {
+                        "a": "p-a",
+                        "b": "p-b",
+                        "kind": "spouse",
+                        "label_a": "spouse",
+                        "label_b": "spouse",
+                        "date": {"date": "1888-06-20", "precision": "exact"},
+                    },
+                ],
+            }
+        ),
     )
-    archive.save_identity("places", {"places": []})
-    archive.save_identity("themes", {"themes": []})
+    archive.save_identity("places", PlacesTable.from_dict({"places": []}))
+    archive.save_identity("themes", ThemesTable.from_dict({"themes": []}))
     text = GedcomDocument.from_archive(archive).to_text()
     assert "1 MARR" in text
     assert "2 DATE 20 JUN 1888" in text
@@ -309,27 +318,27 @@ def test_dated_marriage_round_trips_onto_the_spouse_edge() -> None:
     archive = make_archive()
     archive.save_identity(
         "people",
-        {
-            "people": [{"id": "p-a", "name": "A"}, {"id": "p-b", "name": "B"}],
-            "relationships": [
-                {
-                    "a": "p-a",
-                    "b": "p-b",
-                    "kind": "spouse",
-                    "label_a": "spouse",
-                    "label_b": "spouse",
-                    "date": {"date": "1888-06-20", "precision": "exact"},
-                },
-            ],
-        },
+        PeopleTable.from_dict(
+            {
+                "people": [{"id": "p-a", "name": "A"}, {"id": "p-b", "name": "B"}],
+                "relationships": [
+                    {
+                        "a": "p-a",
+                        "b": "p-b",
+                        "kind": "spouse",
+                        "label_a": "spouse",
+                        "label_b": "spouse",
+                        "date": {"date": "1888-06-20", "precision": "exact"},
+                    },
+                ],
+            }
+        ),
     )
-    archive.save_identity("places", {"places": []})
-    archive.save_identity("themes", {"themes": []})
+    archive.save_identity("places", PlacesTable.from_dict({"places": []}))
+    archive.save_identity("themes", ThemesTable.from_dict({"themes": []}))
     text = GedcomDocument.from_archive(archive).to_text()
-    places_table = archive.get_identity("places")
-    assert places_table is not None
     imported = GedcomDocument.from_text(text).wire_shapes()
-    assert imported["relationships"] == [
+    assert [r.to_dict() for r in imported.relationships] == [
         {"a": "p-a", "b": "p-b", "kind": "spouse", "date": {"date": "1888-06-20", "precision": "exact"}}
     ]
 
@@ -353,10 +362,10 @@ def test_residence_place_is_the_name_as_given() -> None:
         ]
     )
     shapes = GedcomDocument.from_text(text).wire_shapes()
-    (residence,) = shapes["people"][0]["residence"]
-    assert residence["place"] == "Nowhere-in-Particular"  # the name as given
-    assert residence["note"] == "Lived in the village."
-    assert [p["name"] for p in shapes["places"]] == ["Nowhere-in-Particular"]  # all entries at import, places included
+    (residence,) = shapes.people[0].residence
+    assert residence.place == "Nowhere-in-Particular"  # the name as given
+    assert residence.note == "Lived in the village."
+    assert [p.name for p in shapes.places] == ["Nowhere-in-Particular"]  # all entries at import, places included
     # the round trip re-emits both the PLAC and the NOTE
     out = GedcomDocument.from_text(text).to_text()
     assert "2 PLAC Nowhere-in-Particular" in out
@@ -370,17 +379,19 @@ def test_one_sided_residence_dates_export_cleanly() -> None:
     dangling 'TO ' (review-bot finding on PR #61: hand-authored
     residences can carry a single side)."""
     doc = GedcomDocument.from_shapes(
-        {
-            "people": [
-                {
-                    "id": "p-a",
-                    "name": "Beatrice",
-                    "residence": [{"from": "1900", "to": ""}, {"from": "", "to": "1910"}],
-                }
-            ],
-            "relationships": [],
-            "places": [],
-        }
+        GedcomShapes.from_dict(
+            {
+                "people": [
+                    {
+                        "id": "p-a",
+                        "name": "Beatrice",
+                        "residence": [{"from": "1900", "to": ""}, {"from": "", "to": "1910"}],
+                    }
+                ],
+                "relationships": [],
+                "places": [],
+            }
+        )
     )
     out = doc.to_text()
     assert "2 DATE FROM 1900" in out
@@ -397,64 +408,72 @@ def test_estimated_people_and_edges_export_with_their_evidence() -> None:
     carrying the review conversation's recorded basis (who said it, when,
     their own words). Proposed records still stay out."""
     archive = make_archive()
-    people = archive.get_identity("people")
-    assert people is not None
-    people["people"] = people["people"] + [
-        {
-            "id": "p-cousin",
-            "name": "Cousin",
-            "status": "estimated",
-            "basis": {"text": "Mum always said she was a cousin.", "by": "Kid", "when": "2026-08-09"},
-        }
-    ]
-    people["relationships"] = people["relationships"] + [
-        {
-            "a": "p-mum",
-            "b": "p-cousin",
-            "kind": "parent",
-            "label_a": "child",
-            "label_b": "parent",
-            "status": "estimated",
-        },
-        {
-            "a": "p-mum",
-            "b": "p-stranger",
-            "kind": "parent",
-            "label_a": "child",
-            "label_b": "parent",
-            "status": "proposed",
-        },
-    ]
-    archive.save_identity("people", people)
+    archive.save_identity(
+        "people",
+        PeopleTable.from_dict(
+            {
+                "people": BASE_PEOPLE
+                + [
+                    {
+                        "id": "p-cousin",
+                        "name": "Cousin",
+                        "status": "estimated",
+                        "basis": {"text": "Mum always said she was a cousin.", "by": "Kid", "when": "2026-08-09"},
+                    }
+                ],
+                "relationships": BASE_RELATIONSHIPS
+                + [
+                    {
+                        "a": "p-mum",
+                        "b": "p-cousin",
+                        "kind": "parent",
+                        "label_a": "child",
+                        "label_b": "parent",
+                        "status": "estimated",
+                    },
+                    {
+                        "a": "p-mum",
+                        "b": "p-stranger",
+                        "kind": "parent",
+                        "label_a": "child",
+                        "label_b": "parent",
+                        "status": "proposed",
+                    },
+                ],
+            }
+        ),
+    )
     archive.save_identity(
         "imports",
-        {
-            "imports": [
-                {
-                    "id": "import-documents",
-                    "title": "The document import",
-                    "status": "pending",
-                    "attempts": [
-                        {
-                            "started": "2026-08-09",
-                            "messages": [],
-                            "decisions": [
-                                {
-                                    "person_id": "p-cousin",
-                                    "decision": "estimated",
-                                    "when": "2026-08-09",
-                                    "basis": {
-                                        "text": "Mum always said she was a cousin.",
-                                        "by": "Kid",
+        ImportsTable.from_dict(
+            {
+                "imports": [
+                    {
+                        "id": "import-documents",
+                        "title": "The document import",
+                        "status": "pending",
+                        "attempts": [
+                            {
+                                "started": "2026-08-09",
+                                "messages": [],
+                                "decisions": [
+                                    {
+                                        "person_id": "p-cousin",
+                                        "decision": "estimated",
                                         "when": "2026-08-09",
-                                    },
-                                }
-                            ],
-                        }
-                    ],
-                }
-            ]
-        },
+                                        "basis": {
+                                            "text": "Mum always said she was a cousin.",
+                                            "by": "Kid",
+                                            "when": "2026-08-09",
+                                        },
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
     )
     text = GedcomDocument.from_archive(archive).to_text()
     records = _parse(text)
@@ -474,7 +493,7 @@ def test_estimated_people_and_edges_export_with_their_evidence() -> None:
 MAXIMAL70 = Path(__file__).parent / "fixtures" / "maximal70.ged"
 
 
-def _maximal_shapes() -> dict[str, Any]:
+def _maximal_shapes() -> GedcomShapes:
     return GedcomDocument.from_text(MAXIMAL70.read_text(encoding="utf-8")).wire_shapes()
 
 
@@ -488,29 +507,31 @@ def test_maximal70_round_trip_both_directions() -> None:
     # the old importer dropped every record without a REFN (I2/I3/I4) and
     # their edges — the fixture's flag of that error: ids fall back to the
     # record's xref
-    assert [p["id"] for p in shapes["people"]] == ["1", "I2", "I3", "I4"]
-    person = shapes["people"][0]
-    assert person["name"].startswith("Lt. Cmndr. Joseph")
-    assert person["aliases"] == ["John /Doe/", "Aka", "Immigrant Name"]
-    assert person["dob"] == {"date": "2000-01-01", "precision": "exact"}
-    assert person["dod"] == {"date": "2022-03-28", "precision": "exact"}
-    assert person["occupations"] == ["occu"]
-    assert person["residence"] == [{"from": "", "to": "", "place": ""}]
+    assert [p.id for p in shapes.people] == ["1", "I2", "I3", "I4"]
+    person = shapes.people[0]
+    assert person.name.startswith("Lt. Cmndr. Joseph")
+    assert person.aliases == ("John /Doe/", "Aka", "Immigrant Name")
+    assert person.dob is not None and person.dod is not None
+    assert person.dob.to_dict() == {"date": "2000-01-01", "precision": "exact"}
+    assert person.dod.to_dict() == {"date": "2022-03-28", "precision": "exact"}
+    assert person.occupations == ("occu",)
+    assert [entry.to_dict() for entry in person.residence] == [{"from": "", "to": "", "place": ""}]
     # the F1 family rides the round trip: spouse + parents. The F1-level
     # ASSO (the record's ROLE OTHER association with @I3@) is outside the
     # closed set: the export re-emits only person-level ASSOs, so it has
     # no record (nothing the export re-emits may be dropped — nothing it
     # does not re-emit needs one)
-    assert sorted((r["a"], r["kind"], r["b"]) for r in shapes["relationships"]) == [
+    assert sorted((r.a, r.kind, r.b) for r in shapes.relationships) == [
         ("1", "parent", "I4"),
         ("1", "spouse", "I2"),
         ("I2", "parent", "I4"),
     ]
-    spouse = next(r for r in shapes["relationships"] if r["kind"] == "spouse")
-    assert spouse["date"] == {"date": "2022-03-27", "precision": "exact"}
+    spouse = next(r for r in shapes.relationships if r.kind == "spouse")
+    assert spouse.date is not None
+    assert spouse.date.to_dict() == {"date": "2022-03-27", "precision": "exact"}
     # places: every distinct PLAC payload name becomes a Place — including
     # the nested SOUR DATA payload (the recursive walk)
-    assert [p["id"] for p in shapes["places"]] == [
+    assert [p.id for p in shapes.places] == [
         "place",
         "some-city-some-county-some-state-some-country",
         "somewhere",
@@ -582,9 +603,11 @@ def test_status_faithfulness(tmp_path) -> None:
         ]
     )
     shapes = GedcomDocument.from_text(text).wire_shapes()
-    assert {p["id"]: p.get("status") for p in shapes["people"]} == {"p-a": "pending", "p-b": None}
-    assert shapes["relationships"] == [{"a": "p-a", "b": "p-b", "kind": "spouse", "status": "pending"}]
-    assert [{"id": pl["id"], "name": pl["name"], "status": pl.get("status")} for pl in shapes["places"]] == [
+    assert {p.id: p.status for p in shapes.people} == {"p-a": "pending", "p-b": None}
+    assert [r.to_dict() for r in shapes.relationships] == [
+        {"a": "p-a", "b": "p-b", "kind": "spouse", "status": "pending"}
+    ]
+    assert [{"id": pl.id, "name": pl.name, "status": pl.status} for pl in shapes.places] == [
         {"id": "dunmail", "name": "Dunmail", "status": None},
         {"id": "seascale", "name": "Seascale", "status": "pending"},
     ]
@@ -594,8 +617,8 @@ def test_status_faithfulness(tmp_path) -> None:
     assert "Beatrice" not in out and "_LOFT_STATUS" not in out
     assert "Seascale" not in out and "Dunmail" in out  # the pending PLAC record stays out
     reimported = GedcomDocument.from_text(out).wire_shapes()
-    assert reimported["people"] == [p for p in shapes["people"] if p.get("status") != "pending"]
-    assert reimported["places"] == [p for p in shapes["places"] if p.get("status") != "pending"]
+    assert reimported.people == tuple(p for p in shapes.people if p.status != "pending")
+    assert reimported.places == tuple(p for p in shapes.places if p.status != "pending")
 
 
 def test_export_four_refusals(tmp_path) -> None:
@@ -657,7 +680,7 @@ def test_person_association_role_round_trips() -> None:
         ]
     )
     shapes = GedcomDocument.from_text(text).wire_shapes()
-    assert shapes["relationships"] == [{"a": "p-a", "b": "p-b", "kind": "other"}]
+    assert [r.to_dict() for r in shapes.relationships] == [{"a": "p-a", "b": "p-b", "kind": "other"}]
     out = GedcomDocument.from_text(text).to_text()
     assert "1 ASSO @P2@" in out and "2 RELA other" in out
     assert GedcomDocument.from_text(out).wire_shapes() == shapes
@@ -704,9 +727,9 @@ def test_places_sort_by_id_not_name() -> None:
             "0 TRLR",
         ]
     )
-    places = GedcomDocument.from_text(text).wire_shapes()["places"]
-    assert [p["id"] for p in places] == ["aaa", "zzz"]
-    assert [p["name"] for p in places] == ["Zebra", "Alpha"]
+    places = GedcomDocument.from_text(text).wire_shapes().places
+    assert [p.id for p in places] == ["aaa", "zzz"]
+    assert [p.name for p in places] == ["Zebra", "Alpha"]
 
 
 def test_existing_folder_target_any_content_is_refused(tmp_path) -> None:

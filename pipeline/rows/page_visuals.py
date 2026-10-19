@@ -21,9 +21,13 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from document.colour import Colour
+from document.point import Point
 from document.rectangle import Rectangle
+from document.span import Span
 from pipeline.detect.mark import Ink, WordGeometry
+from pipeline.rows.drawn_word import DrawnWord
 from pipeline.rows.render import RenderStyle
+from pipeline.rows.row_runs import RowRuns
 
 # the drawing style, consistent across every experiment page
 BOX_FILL = Colour(red=0, green=200, blue=255, alpha=25)  # word boxes: faint cyan fill with a thin edge
@@ -91,14 +95,15 @@ def drawn_geometry(
     measured: Sequence[WordGeometry | None],
     overrides: dict[int, WordGeometry | None] | None = None,
     indices: Sequence[int] | None = None,
-) -> list[tuple[int, Sequence[float], WordGeometry | None]]:
-    """Zip each box with the geometry that will be drawn: (page word index,
-    box, lines-or-None). `indices` is the page index of each box - a strip's
-    boxes are the page's words in the SAME order, so the overrides (keyed by
-    page index) match; without it the boxes are their own page (0..n-1)."""
+) -> list[DrawnWord]:
+    """Zip each box with the geometry that will be drawn: the word's page
+    index, its box and its lines-or-None. `indices` is the page index of each
+    box - a strip's boxes are the page's words in the SAME order, so the
+    overrides (keyed by page index) match; without it the boxes are their own
+    page (0..n-1)."""
     order = indices if indices is not None else range(len(boxes))
     return [
-        (page_index, box, resolve(m, overrides.get(page_index, _MISSING) if overrides else _MISSING))
+        DrawnWord(page_index, box, resolve(m, overrides.get(page_index, _MISSING) if overrides else _MISSING))
         for page_index, (box, m) in zip(order, zip(boxes, measured, strict=False), strict=False)
     ]
 
@@ -144,7 +149,7 @@ class PagePainter:
     def draw_page(
         self,
         boxes: Sequence[Sequence[float]],
-        geometry: Sequence[tuple[int, Sequence[float], WordGeometry | None]],
+        geometry: Sequence[DrawnWord],
         numbered: bool = True,
         draw_boxes: bool = True,
     ) -> Image.Image:
@@ -155,11 +160,11 @@ class PagePainter:
         overlay = Image.new("RGBA", page.size, (0, 0, 0, 0))
         layer = ImageDraw.Draw(overlay)
         if draw_boxes:
-            for _index, box, _g in geometry:
-                layer.rectangle(box, fill=BOX_FILL, outline=BOX_EDGE, width=2)
-        for _index, box, g in geometry:
-            if g is not None:
-                draw_word_lines(layer, box, g)
+            for drawn in geometry:
+                layer.rectangle(drawn.box, fill=BOX_FILL, outline=BOX_EDGE, width=2)
+        for drawn in geometry:
+            if drawn.geometry is not None:
+                draw_word_lines(layer, drawn.box, drawn.geometry)
         if self._strokes:
             font = ImageFont.load_default()
             known = [str(index + 1) for index, _ in enumerate(self._strokes)]
@@ -224,10 +229,11 @@ class PagePainter:
 # ----------------------------------------------------------------------- audit
 
 
-def _line_spans(arr: np.ndarray, colour: Colour) -> dict[int, tuple[int, int]]:
-    """Row -> (min, max) column span of the given line colour: each line's
-    drawn extent. A word's line spans its box's width, so the span identifies
-    its owner where boxes sit cheek by jowl."""
+def _line_spans(arr: np.ndarray, colour: Colour) -> dict[int, Span]:
+    """Row -> the column span of the given line colour: each line's drawn
+    extent, from its leftmost column to its rightmost. A word's line spans its
+    box's width, so the span identifies its owner where boxes sit cheek by
+    jowl."""
     mask = (
         (abs(arr[:, :, 0] - colour.red) <= 60)
         & (abs(arr[:, :, 1] - colour.green) <= 60)
@@ -237,14 +243,18 @@ def _line_spans(arr: np.ndarray, colour: Colour) -> dict[int, tuple[int, int]]:
     spans: dict[int, list[int]] = {
         int(y): [int(x) for _, x in group] for y, group in groupby(zip(ys, xs, strict=False), key=lambda yx: int(yx[0]))
     }
-    return {y: (min(cols), max(cols)) for y, cols in spans.items()}
+    return {y: Span(start=min(cols), end=max(cols)) for y, cols in spans.items()}
+
+
+# a full-page image needs no offset: its top-left IS the page's own origin
+PAGE_ORIGIN = Point(x=0.0, y=0.0)
 
 
 # lucidlint: ignore unused a test seam: the drawing tests drive the audit directly (DI convention)
 def audit_geometry(
     image: Image.Image,
     boxes: Sequence[Sequence[float]],
-    origin: tuple[float, float] = (0.0, 0.0),
+    origin: Point = PAGE_ORIGIN,
 ) -> list[WordGeometry | None]:
     """Where the render actually placed each word's lines, as WordGeometry in
     page rows. `origin` = the page coordinates of the image's top-left (a crop
@@ -257,7 +267,7 @@ def audit_geometry(
     greens = _line_spans(arr, Colour(red=0, green=255, blue=80))
     reds = _line_spans(arr, Colour(red=255, green=60, blue=60))
 
-    def owned(spans: dict[int, tuple[int, int]], box: Sequence[float]) -> int | None:
+    def owned(spans: dict[int, Span], box: Sequence[float]) -> int | None:
         """The row of the word's own drawn line: the span that CONTAINS the
         box's full extent (a word's line is drawn exactly box-width + 4px),
         STARTS at the box's own left edge (a stranger's line begins elsewhere
@@ -265,9 +275,9 @@ def audit_geometry(
         is closest to the box's own width."""
         width = box[2] - box[0]
         best: tuple[int, float] | None = None
-        for row, (s0, s1) in spans.items():
-            if s0 + ox <= box[0] - 2 and s1 + ox >= box[2] + 2:
-                closeness = abs((s1 - s0) - width)
+        for row, span in spans.items():
+            if span.start + ox <= box[0] - 2 and span.end + ox >= box[2] + 2:
+                closeness = abs(span.end - span.start - width)
                 if best is None or closeness < best[1]:
                     best = (row, closeness)
         return best[0] if best else None
@@ -336,7 +346,7 @@ def captioned_sheet(crop: Image.Image, caption: Sequence[str], size: int = 22) -
 
 def halo_text(
     draw: ImageDraw.ImageDraw,
-    xy: tuple[float, float],
+    xy: Point,
     text: str,
     fill: Colour | None = None,
     size: int = 24,
@@ -373,10 +383,10 @@ def dashed_hline(draw: ImageDraw.ImageDraw, rule: DashRule) -> None:
         x += rule.dash + rule.gap
 
 
-def contiguous_runs(values: Sequence[int]) -> list[list[int]]:
+def contiguous_runs(values: Sequence[int]) -> RowRuns:
     """Sorted ints grouped into contiguous runs: dropped rows become bands."""
     ordered = sorted(values)
-    runs: list[list[int]] = [
+    runs: RowRuns = [
         [value for _, value in group] for _, group in groupby(enumerate(ordered), key=lambda iv: iv[1] - iv[0])
     ]
     return runs
@@ -399,7 +409,7 @@ def labeled_box(draw: ImageDraw.ImageDraw, spec: LabeledBox) -> None:
     detected piece reads on a sheet. Both diagnose zooms and splitter case
     sheets label boxes this way."""
     draw.rectangle(spec.box, outline=spec.outline, width=spec.width)
-    halo_text(draw, (spec.box.x0 + 3, spec.box.y0 + 2), spec.label, size=spec.size)
+    halo_text(draw, Point(x=spec.box.x0 + 3, y=spec.box.y0 + 2), spec.label, size=spec.size)
 
 
 def stack_sheets(sheets: Sequence[Image.Image], gap: int = 24, max_width: int = 1000) -> Image.Image:
@@ -500,13 +510,18 @@ def split_sheet(case: SplitCase) -> Image.Image:
         if y0 < cy < y1:
             left, right = px(max(x0, case.raw_box.x0)), px(min(x1, case.raw_box.x1))
             dashed_hline(draw, DashRule(left, right, py(cy)))
-            halo_text(draw, (right - 150, py(cy) - 28), f"cut y{cy:.0f}", fill=Colour(red=200, green=0, blue=0))
+            halo_text(
+                draw, Point(x=right - 150, y=py(cy) - 28), f"cut y{cy:.0f}", fill=Colour(red=200, green=0, blue=0)
+            )
     for lo, hi in case.drops:
         draw.rectangle([px(case.raw_box.x0), py(lo), px(case.raw_box.x1), py(hi)], fill=DROP_FILL)
     if case.drops:
         biggest = max(case.drops, key=lambda run: run[1] - run[0])
         label_y = max(biggest[1], max(box.y1 for box, _label in case.pieces) + 2)
         halo_text(
-            draw, (px(case.raw_box.x0) + 4, py(label_y) + 2), case.drop_label, fill=Colour(red=200, green=0, blue=0)
+            draw,
+            Point(x=px(case.raw_box.x0) + 4, y=py(label_y) + 2),
+            case.drop_label,
+            fill=Colour(red=200, green=0, blue=0),
         )
     return sheet

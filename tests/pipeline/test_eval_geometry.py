@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 
 from pipeline.evals.eval_geometry import measure, synthetic_letter, synthetic_postcard
+from pipeline.layout import Layout
 from tools.gates import validate_layout
 from tools.text import normalize
 
@@ -59,20 +60,24 @@ def test_the_gates_catch_the_failings_when_they_reach_the_layout() -> None:
     loose-box failings, WHEN PRESENT in a layout, are seen — the gates
     fire and the layout refuses (fail-loud, never silent bad data). The
     arbitration prevents them at the source; the gates are the backstop."""
-    duplicate = {
-        "width": 1000,
-        "height": 1500,
-        "lines": [
-            {"text": "We are from", "box": [150, 200, 220, 700], "orientation": 90},
-            {"text": "beauford & Mrs", "box": [150, 200, 220, 700], "orientation": 90},  # the same box
-        ],
-    }
+    duplicate = Layout.from_dict(
+        {
+            "width": 1000,
+            "height": 1500,
+            "lines": [
+                {"text": "We are from", "box": [150, 200, 220, 700], "orientation": 90},
+                {"text": "beauford & Mrs", "box": [150, 200, 220, 700], "orientation": 90},  # the same box
+            ],
+        }
+    )
     assert any("same region" in v for v in validate_layout(duplicate))
-    loose = {
-        "width": 1000,
-        "height": 1500,
-        "lines": [{"text": "POSTAGE", "box": [820, 200, 1500, 213], "orientation": 0}],  # 97 px/char
-    }
+    loose = Layout.from_dict(
+        {
+            "width": 1000,
+            "height": 1500,
+            "lines": [{"text": "POSTAGE", "box": [820, 200, 1500, 213], "orientation": 0}],  # 97 px/char
+        }
+    )
     assert validate_layout(loose)
 
 
@@ -93,6 +98,6 @@ def test_the_crop_grid_dedupes_the_boundary_lines() -> None:
     layout must carry each line once (the cross-crop duplicates drop)."""
     fixture = synthetic_letter()
     layout = fixture.crop_grid()
-    texts = [normalize(ln["text"]) for ln in layout["lines"]]
+    texts = [normalize(line.text) for line in layout.lines]
     assert len(texts) == len(set(texts)), "every truth line appears exactly once"
-    assert len(layout["lines"]) == len(fixture.truth)
+    assert len(layout.lines) == len(fixture.truth)

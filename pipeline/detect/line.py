@@ -10,7 +10,9 @@ import numpy as np
 
 from document.trace import Box
 from pipeline.detect.mark import SCALE, Mark
+from pipeline.detect.projected_ink import ProjectedInk
 from pipeline.detect.ruler import Ruler
+from pipeline.detect.u_span import USpan
 
 SLOPE_LIMIT = 0.13  # ≈7.5°: writing on a page never slopes more than this
 MERGE_DIVISOR = 4  # pitch ÷ this: how close two fits are the same line
@@ -97,11 +99,14 @@ class Line:
         norm = math.sqrt(1 + self.a * self.a)
         return Frame(x_ref, y_ref, 1 / norm, self.a / norm, -self.a / norm, 1 / norm)
 
-    def project(self, shapes: list[Mark], shape: Mark) -> tuple[np.ndarray, np.ndarray]:
+    def project(self, shapes: list[Mark], shape: Mark) -> ProjectedInk:
         """The shape's ink in the line's own frame: along the line, and across it."""
         x_ref, y_ref, ux, uy, nx, ny = self.frame(shapes)
         ys, xs = shape.pix
-        return (xs - x_ref) * ux + (ys - y_ref) * uy, (xs - x_ref) * nx + (ys - y_ref) * ny
+        return ProjectedInk(
+            along=(xs - x_ref) * ux + (ys - y_ref) * uy,
+            across=(xs - x_ref) * nx + (ys - y_ref) * ny,
+        )
 
     def box(self, shapes: list[Mark], u0: float, u1: float, v0: float, v1: float) -> Box:
         """A box [u0, u1] along the line by [v0, v1] across it, in page pixels."""
@@ -111,11 +116,11 @@ class Line:
             for u, v in ((u0, v0), (u1, v0), (u1, v1), (u0, v1))
         ]
 
-    def u_span(self, shapes: list[Mark], poly: Box) -> tuple[float, float]:
+    def u_span(self, shapes: list[Mark], poly: Box) -> USpan:
         """Where a box lies along this line, in the line's own units."""
         x_ref, y_ref, ux, uy, _, _ = self.frame(shapes)
         us = [((px / SCALE - x_ref) * ux + (py / SCALE - y_ref) * uy) for px, py in poly]
-        return min(us), max(us)
+        return USpan(min(us), max(us))
 
     def boxes(self, scale: Ruler) -> list[Box]:
         """The line's ink as one or more boxes, split at column-sized x gaps.
@@ -133,20 +138,21 @@ class Line:
             return []
         runs: list[list[Mark]] = []
         current = [shapes[0]]
-        edge = self.project(shapes, shapes[0])[0].max()
+        edge = self.project(shapes, shapes[0]).along.max()
         for shape in shapes[1:]:
-            along, _ = self.project(shapes, shape)
-            if along.min() - edge > scale.join_gap:
+            projected = self.project(shapes, shape)
+            if projected.along.min() - edge > scale.join_gap:
                 runs.append(current)
                 current = [shape]
             else:
                 current.append(shape)
-            edge = max(edge, along.max())
+            edge = max(edge, projected.along.max())
         runs.append(current)
         out: list[Box] = []
         for run in runs:
-            us, vs = zip(*(self.project(run, shape) for shape in run), strict=False)
-            along, across = np.concatenate(us), np.concatenate(vs)
+            in_frame = [self.project(run, shape) for shape in run]
+            along = np.concatenate([part.along for part in in_frame])
+            across = np.concatenate([part.across for part in in_frame])
             out.append(
                 self.box(
                     run,

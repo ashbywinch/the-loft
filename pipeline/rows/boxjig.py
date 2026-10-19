@@ -24,7 +24,15 @@ import json
 import math
 import sys
 from pathlib import Path
-from typing import Any
+
+from document.page_size import PageSize
+from document.point import Point
+from document.rectangle import Rectangle
+from document.span import Span
+from document.trace import Box
+from document.word import Word
+from document.words import Words
+from pipeline.rows.drawn_lines import DrawnLines
 
 DEFAULT_TRACE = Path("/tmp/trace")  # where boxes.json, words.json and strokes.json live
 TRACE = Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_TRACE
@@ -36,14 +44,14 @@ SURFACE_MARGIN = 40.0  # A4: px a box may exceed the ink area
 MAX_SLOPE_DEG = 6.0  # A5: the letter's lines run ~0-2.4 degrees
 
 
-def word_share(word: dict, quad: list[list[float]]) -> float:
-    ix = max(0.0, min(word["x1"], max(p[0] for p in quad)) - max(word["x0"], min(p[0] for p in quad)))
-    iy = max(0.0, min(word["y1"], max(p[1] for p in quad)) - max(word["y0"], min(p[1] for p in quad)))
-    area = (word["x1"] - word["x0"]) * (word["y1"] - word["y0"])
+def word_share(word: Word, quad: Box) -> float:
+    ix = max(0.0, min(word.x1, max(p[0] for p in quad)) - max(word.x0, min(p[0] for p in quad)))
+    iy = max(0.0, min(word.y1, max(p[1] for p in quad)) - max(word.y0, min(p[1] for p in quad)))
+    area = (word.x1 - word.x0) * (word.y1 - word.y0)
     return ix * iy / area if area else 0.0
 
 
-def in_quad(px: float, py: float, quad: list[list[float]]) -> bool:
+def in_quad(px: float, py: float, quad: Box) -> bool:
     inside = False
     for i in range(len(quad)):
         x1, y1 = quad[i]
@@ -53,26 +61,26 @@ def in_quad(px: float, py: float, quad: list[list[float]]) -> bool:
     return inside
 
 
-def sample(path: list[list[float]], page_w: int, page_h: int) -> list[tuple[float, float]]:
-    pts = [(x * page_w, y * page_h) for x, y in path]
-    out: list[tuple[float, float]] = []
+def sample(path: Box, page_w: int, page_h: int) -> list[Point]:
+    pts = [Point(x * page_w, y * page_h) for x, y in path]
+    out: list[Point] = []
     for (ax, ay), (bx, by) in zip(pts, pts[1:], strict=False):
         steps = max(1, int(math.hypot(bx - ax, by - ay) / 10))
-        out += [(ax + t / steps * (bx - ax), ay + t / steps * (by - ay)) for t in range(steps)]
+        out += [Point(ax + t / steps * (bx - ax), ay + t / steps * (by - ay)) for t in range(steps)]
     return out
 
 
-def coverage(line: list[tuple[float, float]], quad: list[list[float]]) -> float:
+def coverage(line: list[Point], quad: Box) -> float:
     if not line:
         return 0.0
     return sum(1 for px, py in line if in_quad(px, py, quad)) / len(line)
 
 
-def quad_x(quad: list[list[float]]) -> tuple[float, float]:
-    return min(p[0] for p in quad), max(p[0] for p in quad)
+def quad_x(quad: Box) -> Span:
+    return Span(start=min(p[0] for p in quad), end=max(p[0] for p in quad))
 
 
-def quad_slope(quad: list[list[float]]) -> float:
+def quad_slope(quad: Box) -> float:
     (x0, y0), (x1, y1) = quad[0], quad[1]
     return math.degrees(math.atan2(y1 - y0, x1 - x0))
 
@@ -86,11 +94,11 @@ class BoxJig:
 
     def __init__(
         self,
-        lines: list[list[tuple[float, float]]],
-        boxes: list[list[list[float]]],
-        page: dict[str, Any],
-        ink: list[dict[str, Any]],
-        surface: dict[str, Any],
+        lines: DrawnLines,
+        boxes: list[Box],
+        page: PageSize,
+        ink: list[Word],
+        surface: Rectangle,
     ) -> None:
         self.lines = lines
         self.boxes = boxes
@@ -102,12 +110,14 @@ class BoxJig:
     @classmethod
     def load(cls, trace: Path) -> BoxJig:
         """Read the trace artifacts (strokes, boxes, surface, words)."""
-        strokes = json.loads((trace / "strokes.json").read_text())["strokes"]
-        boxes = json.loads((trace / "boxes.json").read_text())["boxes"]
-        page = json.loads((trace / "boxes.json").read_text())["page"]
-        surface = json.loads((trace / "surface.json").read_text())
-        ink = json.loads((trace / "words.json").read_text())["words"] if (trace / "words.json").exists() else []
-        return cls([sample(s, page["width"], page["height"]) for s in strokes], boxes, page, ink, surface)
+        strokes = json.loads((trace / "strokes.json").read_text(encoding="utf-8"))["strokes"]
+        boxes = json.loads((trace / "boxes.json").read_text(encoding="utf-8"))
+        page = PageSize.from_dict(boxes["page"])
+        surface = Rectangle.from_dict(json.loads((trace / "surface.json").read_text(encoding="utf-8")))
+        words = trace / "words.json"
+        ink = list(Words.from_dict(json.loads(words.read_text(encoding="utf-8")))) if words.exists() else []
+        lines: DrawnLines = [sample(stroke, page.width, page.height) for stroke in strokes]
+        return cls(lines, boxes["boxes"], page, ink, surface)
 
     def _stroke_line(self, i: int) -> int | None:
         """The line of writing a stroke's points cover most - A3's judge
@@ -116,8 +126,8 @@ class BoxJig:
         counts: dict[int, int] = {}
         for p in self.lines[i]:
             for w in self.ink:
-                if w["x0"] - 8 <= p[0] <= w["x1"] + 8 and w["y0"] - 8 <= p[1] <= w["y1"] + 8:
-                    counts[w["line"]] = counts.get(w["line"], 0) + 1
+                if w.line is not None and w.x0 - 8 <= p.x <= w.x1 + 8 and w.y0 - 8 <= p.y <= w.y1 + 8:
+                    counts[w.line] = counts.get(w.line, 0) + 1
         return max(counts, key=lambda k: counts[k]) if counts else None
 
     def _near_box(self, cx: float, cy: float) -> float:
@@ -144,7 +154,7 @@ class BoxJig:
         print("A7  no box holding words of two different lines")
         failures = 0
         for j, b in enumerate(self.boxes):
-            holds = {w["line"] for w in self.ink if word_share(w, b) >= A7_HOLDS}
+            holds = {w.line for w in self.ink if word_share(w, b) >= A7_HOLDS and w.line is not None}
             if len(holds) > 1:
                 failures += 1
                 print(f"    FAIL box {j}: holds words of lines {sorted(holds)}")
@@ -161,8 +171,8 @@ class BoxJig:
             if not inside:
                 continue
             bx0, bx1 = quad_x(self.boxes[j])
-            sx0 = min(min(p[0] for p in self.lines[i]) for i in inside)
-            sx1 = max(max(p[0] for p in self.lines[i]) for i in inside)
+            sx0 = min(min(p.x for p in self.lines[i]) for i in inside)
+            sx1 = max(max(p.x for p in self.lines[i]) for i in inside)
             dx0, dx1 = abs(bx0 - sx0), abs(bx1 - sx1)
             if dx0 > TOL_X or dx1 > TOL_X:
                 failures += 1
@@ -206,7 +216,7 @@ class BoxJig:
         leftover = 0
         overlapped = 0
         for w in self.ink:
-            cx, cy = (w["x0"] + w["x1"]) / 2, (w["y0"] + w["y1"]) / 2
+            cx, cy = w.cx, w.cy
             hits = [b for b in self.boxes if in_quad(cx, cy, b)]
             if not hits and self._near_box(cx, cy) < close:
                 hits = [min(self.boxes, key=lambda b: min(math.hypot(cx - px, cy - py) for px, py in b))]
@@ -236,13 +246,13 @@ class BoxJig:
         for j, b in enumerate(self.boxes):
             for x, y in b:
                 if not (
-                    self.surface["x0"] - SURFACE_MARGIN <= x <= self.surface["x1"] + SURFACE_MARGIN
-                    and self.surface["y0"] - SURFACE_MARGIN <= y <= self.surface["y1"] + SURFACE_MARGIN
+                    self.surface.x0 - SURFACE_MARGIN <= x <= self.surface.x1 + SURFACE_MARGIN
+                    and self.surface.y0 - SURFACE_MARGIN <= y <= self.surface.y1 + SURFACE_MARGIN
                 ):
                     failures += 1
                     print(
                         f"    FAIL box {j}: corner ({x:.0f}, {y:.0f}) outside the surface "
-                        f"x{self.surface['x0']}-{self.surface['x1']} y{self.surface['y0']}-{self.surface['y1']}"
+                        f"x{self.surface.x0:.0f}-{self.surface.x1:.0f} y{self.surface.y0:.0f}-{self.surface.y1:.0f}"
                     )
                     break
         print(f"    {'PASS' if failures == 0 else f'{failures} failure(s)'}\n")
@@ -268,7 +278,7 @@ class BoxJig:
         mode = "detector alone (A1-A3 need yellow lines, so they are skipped)" if detector_only else "assisted"
         print(
             f"jig: {len(self.lines)} yellow lines, {len(self.boxes)} boxes,"
-            f" page {self.page['width']}x{self.page['height']} — {mode}"
+            f" page {self.page.width}x{self.page.height} — {mode}"
         )
         print(
             f"     coverage >= {COVERAGE:.0%} · x tolerance {TOL_X:.0f}px"

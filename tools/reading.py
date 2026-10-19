@@ -6,13 +6,18 @@ and within each block the TRANSCRIPTION order is preserved — each block
 reads WHOLE with one rotation, never the row-by-row interleave of
 overlapping blocks (the postcard's 0° top and 90° message bounced per
 line under the old reading-start sort).
+
+The lines are `LayoutLine` records (`pipeline/layout_line.py`) — the record
+the review pane reads and the class that owns the layout-JSON entry — so the
+order is computed on the lines themselves, never on their wire form.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Sequence
 
 from document.unionfind import UnionFind
+from pipeline.layout_line import LayoutLine
 from tools.box import overlap
 
 
@@ -21,41 +26,41 @@ class Block:
     — the transcription order inside, never interleaved with another
     block's lines."""
 
-    def __init__(self, lines: list[dict[str, Any]]) -> None:
-        self.lines = lines
+    def __init__(self, lines: Sequence[LayoutLine]) -> None:
+        self.lines = list(lines)
 
     @property
     def top(self) -> float:
         """The topmost box's y — the block's position for the top-to-bottom
         block order."""
-        return min((line["box"][1] for line in self.lines if line.get("box")), default=0.0)
+        return min((line.box[1] for line in self.lines if line.box), default=0.0)
 
-    def in_transcription_order(self) -> list[dict[str, Any]]:
+    def in_transcription_order(self) -> list[LayoutLine]:
         """The block's lines in the transcription order (the line's input
         position — each line's ``index`` is the review's edit key)."""
-        return sorted(self.lines, key=lambda line: line.get("index", 0))
+        return sorted(self.lines, key=lambda line: line.index)
 
     @classmethod
-    def cluster(cls, lines: list[dict[str, Any]]) -> list[Block]:
+    def cluster(cls, lines: Sequence[LayoutLine]) -> list[Block]:
         """The connected components of the box-overlap graph — lines
         sharing any ink form one block. Boxless lines are singletons."""
         components = UnionFind(len(lines))
         for i in range(len(lines)):
-            a = lines[i].get("box")
+            a = lines[i].box
             if not a:
                 continue
             for j in range(i + 1, len(lines)):
-                b = lines[j].get("box")
+                b = lines[j].box
                 if b and overlap(a, b) > 0:
                     components.union(i, j)
-        members: dict[int, list[dict[str, Any]]] = {
+        members: dict[int, list[LayoutLine]] = {
             root: [line for j, line in enumerate(lines) if components.find(j) == root]
             for root in dict.fromkeys(components.find(i) for i in range(len(lines)))
         }
         return [cls(m) for m in members.values()]
 
 
-def order_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def order_lines(lines: Sequence[LayoutLine]) -> list[LayoutLine]:
     """The block-aware reading order: the boxed lines cluster into blocks,
     the blocks read top-to-bottom, each whole in the transcription order;
     the boxless lines keep their input relative order."""
@@ -65,6 +70,8 @@ def order_lines(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [line for block in blocks for line in block.in_transcription_order()] + rest
 
 
-def _is_boxed(line: dict[str, Any]) -> bool:
-    box = line.get("box")
+def _is_boxed(line: LayoutLine) -> bool:
+    """A line whose box is well-formed and holds ink — the gates' own test
+    at the line record."""
+    box = line.box
     return isinstance(box, list) and len(box) == 4 and box[2] > box[0] and box[3] > box[1]

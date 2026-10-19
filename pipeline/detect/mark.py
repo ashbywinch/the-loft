@@ -14,7 +14,10 @@ from itertools import groupby
 
 import numpy as np
 
+from document.page_size import PageSize
 from document.unionfind import UnionFind
+from pipeline.detect.column_run import ColumnRun
+from pipeline.detect.row_band import RowBand
 
 
 @dataclass(frozen=True)
@@ -112,10 +115,9 @@ class Mark:
         """The shape's ink by row — how a straddling shape is cut between lines."""
         return _columns_by_row(*self.pix)
 
-    def piece(self, ink: list[tuple[int, int]], line: int, suffix: int) -> Mark:
+    def piece(self, ink: Ink, line: int, suffix: int) -> Mark:
         """The part of this shape on the given rows, as its own shape on one line."""
-        ny = np.array([point[0] for point in ink], dtype=np.float32)
-        nx = np.array([point[1] for point in ink], dtype=np.float32)
+        ny, nx = ink.ys, ink.xs
         histogram: dict[int, int] = {}
         for y in ny.astype(int):
             histogram[int(y)] = histogram.get(int(y), 0) + 1
@@ -124,9 +126,9 @@ class Mark:
             y0=float(ny.min()),
             x1=float(nx.max()),
             y1=float(ny.max()),
-            baseline=float(Ink(ny, nx).baseline_row()),
-            waistline=float(Ink(ny, nx).waistline_row()),
-            area=float(len(ink)),
+            baseline=float(ink.baseline_row()),
+            waistline=float(ink.waistline_row()),
+            area=float(ink.size),
             cx=(float(nx.min()) + float(nx.max())) / 2,
             pix=(ny, nx),
             line=line,
@@ -243,7 +245,7 @@ class Mark:
             band_rows.append(y)
         if not band_rows:
             return None
-        band = self.piece([(y, x) for y in band_rows for x in rows[y]], self.line, int(min(band_rows)))
+        band = self.piece(Ink.of_rows(rows, set(band_rows)), self.line, int(min(band_rows)))
         if band.height <= 0:
             if len(band_rows) != 1 or band.pix[0].size == 0:
                 return None
@@ -261,17 +263,14 @@ class Mark:
                 id=band.id,
             )
         bound = set(band_rows)
-        remaining = [(y, x) for y in rows for x in rows[y] if y not in bound]
-        if remaining:
-            self.pix = (
-                np.asarray([p[0] for p in remaining], dtype=np.float32),
-                np.asarray([p[1] for p in remaining], dtype=np.float32),
-            )
-            self.x0 = float(min(p[1] for p in remaining))
-            self.x1 = float(max(p[1] for p in remaining))
-            self.y0 = float(min(p[0] for p in remaining))
-            self.y1 = float(max(p[0] for p in remaining))
-            self.area = float(len(remaining))
+        remaining = Ink.of_rows(rows, set(rows) - bound)
+        if remaining.size:
+            self.pix = (remaining.ys, remaining.xs)
+            self.x0 = float(remaining.xs.min())
+            self.x1 = float(remaining.xs.max())
+            self.y0 = float(remaining.ys.min())
+            self.y1 = float(remaining.ys.max())
+            self.area = float(remaining.size)
         return band
 
 
@@ -289,6 +288,30 @@ class Ink:
 
     ys: np.ndarray
     xs: np.ndarray
+
+    @classmethod
+    def of_shape(cls, shape: Mark) -> Ink:
+        """The ink a shape holds — its `pix`, as the pair of arrays the
+        measurements read."""
+        return cls(shape.pix[0], shape.pix[1])
+
+    @classmethod
+    def of_rows(cls, rows: dict[int, list[int]], wanted: set[int]) -> Ink:
+        """The ink of the wanted rows of a row→column table (`Mark.rows()`) —
+        the shape's part on the given rows, or all of it but them."""
+        ys = [y for y in sorted(rows) if y in wanted for _ in rows[y]]
+        xs = [x for y in sorted(rows) if y in wanted for x in rows[y]]
+        return cls(np.asarray(ys, dtype=np.float32), np.asarray(xs, dtype=np.float32))
+
+    @property
+    def size(self) -> int:
+        """The number of ink pixels."""
+        return int(self.ys.size)
+
+    def joined_with(self, other: Ink) -> Ink:
+        """This ink plus another's pixels — a piece's ink welded to its
+        continuation's."""
+        return Ink(np.concatenate([self.ys, other.ys]), np.concatenate([self.xs, other.xs]))
 
     def longest_runs(self) -> dict[int, int]:
         """Per-row longest continuous ink run, in columns."""
@@ -341,8 +364,8 @@ class Ink:
         bands = _consecutive_bands(broad)
         band_at_foot = bool(
             bands
-            and (bottom - max(bands[-1])) <= 0.25 * (bottom - top)
-            and (max(bands[-1]) - min(bands[-1])) <= 0.35 * (bottom - top)
+            and (bottom - bands[-1].bottom) <= 0.25 * (bottom - top)
+            and (bands[-1].bottom - bands[-1].top) <= 0.35 * (bottom - top)
         )
         if band_at_foot:
             seam = self._letters_on_top_of(bands[-1], intensities, peak_row, top)
@@ -359,7 +382,7 @@ class Ink:
         return _modal_bottom(kept)
 
     @staticmethod
-    def _letters_on_top_of(band: list[int], intensities: np.ndarray, peak_row: int, top: int) -> int | None:
+    def _letters_on_top_of(band: RowBand, intensities: np.ndarray, peak_row: int, top: int) -> int | None:
         """Where the letters end when an UNDERLINE owns the word's foot.
 
         The last broad band touches the foot, so the letters end at the last
@@ -367,7 +390,7 @@ class Ink:
         the letters end at row 43, the valley dips to 2-5, the underline's core
         runs 50-56. The valley must be DEEP - a dense bottom is a bottom-heavy
         word's own body, not an underline."""
-        band_top = min(band)
+        band_top = band.top
         valley = (
             min(range(max(top, band_top - 6), band_top), key=lambda y: intensities[y])
             if band_top > max(top, band_top - 6)
@@ -420,10 +443,10 @@ class Ink:
         broad = {y for y, run in row_runs.items() if run >= max(0.15 * span, UNDERLINE_RUN)}
         bands2 = _consecutive_bands(broad)
         top, bottom = int(ys.min()), int(ys.max())
-        if bands2 and (bottom - max(bands2[-1])) <= 0.25 * (bottom - top):
+        if bands2 and (bottom - bands2[-1].bottom) <= 0.25 * (bottom - top):
             # only the foot band (a welded underline) leaves the crown profile;
             # a mid-word bar (the f's crossbar) is the word's own geometry
-            forbidden = {y for y in range(min(bands2[-1]) - 2, bottom + 1)}
+            forbidden = {y for y in range(bands2[-1].top - 2, bottom + 1)}
         keep = np.array([int(y) not in forbidden for y in ys.astype(int)])
         kept_ys = ys[keep]
         if len(kept_ys) == 0:
@@ -450,10 +473,14 @@ def _columns_by_row(ys: np.ndarray, xs: np.ndarray) -> dict[int, list[int]]:
     }
 
 
-def _consecutive_bands(rows: set[int]) -> list[list[int]]:
+def _consecutive_bands(rows: set[int]) -> list[RowBand]:
     """The rows in bands a gap no wider than one keeps apart — the thick
     band's rows and the foot's, as the measurements group them."""
-    return [[y for _, y in group] for _, group in groupby(enumerate(sorted(rows)), key=lambda iy: iy[0] - iy[1])]
+    bands: list[RowBand] = []
+    for _, group in groupby(enumerate(sorted(rows)), key=lambda indexed_row: indexed_row[0] - indexed_row[1]):
+        band = [row for _, row in group]
+        bands.append(RowBand(band[0], band[-1]))
+    return bands
 
 
 def _modal_bottom(bottoms: list[int]) -> int:
@@ -478,42 +505,41 @@ class Components:
 
     def __init__(self) -> None:
         self._components = UnionFind()
-        self.rows: list[list[tuple[int, int, int]]] = []
-        self._previous: list[tuple[int, int, int]] = []
+        self.rows: list[list[ColumnRun]] = []
+        self._previous: list[ColumnRun] = []
 
     def add_row(self, row: np.ndarray) -> None:
         """One mask row: its runs, joined to the runs above where they overlap."""
-        current: list[tuple[int, int, int]] = []
+        current: list[ColumnRun] = []
         if row.any():
             edges = np.diff(np.concatenate(([0], row.view(np.int8), [0])))
             for start, end in zip(np.flatnonzero(edges == 1), np.flatnonzero(edges == -1), strict=False):
                 rid = self._components.size
                 self._components.ensure(rid + 1)
-                current.append((int(start), int(end) - 1, rid))
+                current.append(ColumnRun(int(start), int(end) - 1, rid))
             self._join_overlapping(current)
         self.rows.append(current)
         self._previous = current
 
-    def _join_overlapping(self, current: list[tuple[int, int, int]]) -> None:
+    def _join_overlapping(self, current: list[ColumnRun]) -> None:
         """Unite every run of this row with the ones it touches above it."""
         i = j = 0
         while i < len(current) and j < len(self._previous):
-            start, end, _ = current[i]
-            prev_start, prev_end, _ = self._previous[j]
-            if end < prev_start:
+            run, above = current[i], self._previous[j]
+            if run.end < above.start:
                 i += 1
-            elif prev_end < start:
+            elif above.end < run.start:
                 j += 1
             else:
-                self._components.union(current[i][2], self._previous[j][2])
-                i, j = (i + 1, j) if end < prev_end else (i, j + 1)
+                self._components.union(run.id, above.id)
+                i, j = (i + 1, j) if run.end < above.end else (i, j + 1)
 
-    def labels(self, shape: tuple[int, int]) -> np.ndarray:
+    def labels(self, size: PageSize) -> np.ndarray:
         """Every pixel's component id, 1-based in the order the runs were found."""
-        labels = np.zeros(shape, dtype=np.int32)
+        labels = np.zeros((size.height, size.width), dtype=np.int32)
         for y, current in enumerate(self.rows):
-            for start, end, rid in current:
-                labels[y, start : end + 1] = self._components.find(rid) + 1
+            for run in current:
+                labels[y, run.start : run.end + 1] = self._components.find(run.id) + 1
         return labels
 
 
@@ -522,7 +548,8 @@ def find_marks(mask: np.ndarray, min_area: int = SHAPE_MIN_AREA) -> list[Mark]:
     components = Components()
     for row in mask:
         components.add_row(row)
-    labels = components.labels(mask.shape)
+    height, width = mask.shape
+    labels = components.labels(PageSize(width=width, height=height))
     out: list[Mark] = []
     ids, counts = np.unique(labels[labels > 0], return_counts=True)
     for component, area in zip(ids, counts, strict=False):

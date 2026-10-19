@@ -16,14 +16,14 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from pipeline.layout import load_layout_store
+from pipeline.layout import Layout, load_layout_store
 from pipeline.store import PipelineStore
 from tools.loft_paths import WORK_DIR
 
 MAX_SHEET_WIDTH = 1600  # vision-legible; scans here are 3000-4000px
 
 
-def annotate_page(image_path: Path, layout: dict, out_path: Path) -> int:
+def annotate_page(image_path: Path, layout: Layout, out_path: Path) -> int:
     """Draw the layout's line boxes (red, indexed) on the page image."""
     with Image.open(image_path) as im:
         im = im.convert("RGB")
@@ -32,13 +32,12 @@ def annotate_page(image_path: Path, layout: dict, out_path: Path) -> int:
             im = im.resize((round(im.width * scale), round(im.height * scale)))
         draw = ImageDraw.Draw(im)
         n = 0
-        for line in layout.get("lines", []):
-            box = line.get("box")
-            if not box:
+        for line in layout.lines:
+            if not line.box:
                 continue
-            x0, y0, x1, y1 = (v * scale for v in box)
+            x0, y0, x1, y1 = (v * scale for v in line.box)
             draw.rectangle([x0, y0, x1, y1], outline=(255, 0, 0), width=3)
-            draw.text((x0 + 4, y0 + 2), str(line.get("index", n)), fill=(255, 0, 0))
+            draw.text((x0 + 4, y0 + 2), str(line.index), fill=(255, 0, 0))
             n += 1
         out_path.parent.mkdir(parents=True, exist_ok=True)
         im.save(out_path)

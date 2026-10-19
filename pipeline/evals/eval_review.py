@@ -20,11 +20,13 @@ household's data, and the PII guard never sees a real name.
 from __future__ import annotations
 
 import json as _json
+from dataclasses import dataclass
 from typing import Any
 
 from pipeline.model.ai_client import AIClient
 from tools.records import Message, Person, ReviewContext
 from tools.review import assistant_message, investigate
+from tools.review_verdict import ReviewVerdict
 
 PEOPLE: list[dict[str, Any]] = [
     {"id": "p-quentin", "name": "Quentin Whitlock"},
@@ -199,7 +201,7 @@ PERSONA_JARGON = (
 )
 
 
-def persona_errors(result: dict[str, Any], reviewer_text: str = "") -> list[str]:
+def persona_errors(result: ReviewVerdict, reviewer_text: str = "") -> list[str]:
     """The genealogist's voice guard: the assistant's words (the question,
     the findings — and the note, which flows into the steer ONLY when the
     answer is off-topic) never contain the process vocabulary, the
@@ -212,12 +214,10 @@ def persona_errors(result: dict[str, Any], reviewer_text: str = "") -> list[str]
     violation (user: "it's always acceptable to use vocabulary that the
     user themselves introduces"). A jargon word the reviewer's statement
     also contains is allowed in the assistant's reply."""
-    fields: list[tuple[str, str]] = [("question", result.get("question", ""))]
-    if result.get("relevant") != "true":
-        fields.append(("note", result.get("note", "")))
-    for i, f in enumerate(result.get("findings", [])):
-        text = f.get("text", "") if isinstance(f, dict) else str(f)
-        fields.append((f"findings[{i}]", text))
+    fields: list[tuple[str, str]] = [("question", result.question)]
+    if result.relevant != "true":
+        fields.append(("note", result.note))
+    fields.extend((f"findings[{i}]", finding.text) for i, finding in enumerate(result.findings))
     return [
         f"{field} echoes the system ('{word}'): {text}"
         for field, text in fields
@@ -226,7 +226,7 @@ def persona_errors(result: dict[str, Any], reviewer_text: str = "") -> list[str]
     ]
 
 
-def run_flow(client: AIClient, flow: ReviewFlow) -> dict[str, Any]:
+def run_flow(client: AIClient, flow: ReviewFlow) -> ReviewVerdict:
     """Run the flow ONCE — the reviewer's statement through investigate.
     The condition tests evaluate the single output; the run is never
     repeated for a condition (2026-08-10, user: one run, many
@@ -246,35 +246,35 @@ class ReviewRun:
     when the run satisfied it (the condition tests are independent and
     unaware they share the run; each checks one condition)."""
 
-    def __init__(self, flow: ReviewFlow, result: dict[str, Any]) -> None:
+    def __init__(self, flow: ReviewFlow, result: ReviewVerdict) -> None:
         self.flow = flow
         self.result = result
 
     def relevant(self) -> str | None:
         flow, result = self.flow, self.result
-        if result.get("relevant") != flow.relevant:
-            return f"relevant: expected {flow.relevant}, got {result.get('relevant')}"
+        if result.relevant != flow.relevant:
+            return f"relevant: expected {flow.relevant}, got {result.relevant}"
         return None
 
     def contradiction(self) -> str | None:
         flow, result = self.flow, self.result
-        contradiction = result.get("contradiction", {})
-        if contradiction.get("found") != flow.contradiction:
-            return f"contradiction: expected {flow.contradiction}, got {contradiction.get('found')}"
-        if flow.detail_mentions and flow.detail_mentions not in str(contradiction.get("detail", "")):
+        contradiction = result.contradiction
+        if contradiction.found != flow.contradiction:
+            return f"contradiction: expected {flow.contradiction}, got {contradiction.found}"
+        if flow.detail_mentions and flow.detail_mentions not in contradiction.detail:
             return f"contradiction detail should name {flow.detail_mentions}: {contradiction}"
         return None
 
     def confidence(self) -> str | None:
         flow, result = self.flow, self.result
-        if flow.confidence and result.get("confidence") not in flow.confidence:
-            return f"confidence: expected one of {flow.confidence}, got {result.get('confidence')}"
+        if flow.confidence and result.confidence not in flow.confidence:
+            return f"confidence: expected one of {flow.confidence}, got {result.confidence}"
         return None
 
     def findings(self) -> str | None:
         flow, result = self.flow, self.result
-        findings = result.get("findings", [])
-        texts = [f.get("text", "") if isinstance(f, dict) else str(f) for f in findings]
+        findings = result.findings
+        texts = [finding.text for finding in findings]
         if flow.no_claim_assertion and any(flow.no_claim_assertion in t for t in texts):
             # the R2 robot-note rule: a person-record relation line is not
             # attestation — quoting it as a finding asserts the claim without a
@@ -285,7 +285,7 @@ class ReviewRun:
         # genealogist's move either way, the same contract the arc condition
         # declares (2026-10-08: findings-only punished the model for asking
         # about the lead it had found; sampling decided the verdict)
-        response_texts = texts + [str(result.get("question", ""))]
+        response_texts = texts + [result.question]
         if flow.findings_mention and not any(flow.findings_mention in t for t in response_texts):
             return (
                 f"the lead ({flow.findings_mention}) went unanswered — neither findings nor "
@@ -300,15 +300,15 @@ class ReviewRun:
 
     def no_term(self) -> str | None:
         flow, result = self.flow, self.result
-        if flow.no_term and "term" in result:
-            return f"the check returned a derived term — it must never: {result['term']}"
+        if flow.no_term and "term" in result.extra:
+            return f"the check returned a derived term — it must never: {result.extra['term']}"
         return None
 
     def question(self) -> str | None:
         flow, result = self.flow, self.result
-        question = str(result.get("question", ""))
+        question = result.question
         if flow.has_question and not question:
-            raw = str(result.get("raw", ""))
+            raw = result.raw
             if '"question"' not in raw:
                 # a verdict without the question key is a MISSING field, not a
                 # silent empty one — it fails loudly with the whole output, never
@@ -346,13 +346,13 @@ class ReviewRun:
         exception: their deterministic results are the fed-back content,
         and they are logged in the trace."""
         errors: list[str] = []
-        final = self.result.get("final_prompt", "")
-        steps = self.result.get("trace", [])
+        final = self.result.final_prompt
+        steps = self.result.trace
         # the LAST step is the final verdict — the end of the conversation,
         # fed forward to the reviewer, not back into a prompt
         for i, step in enumerate(steps[:-1]):
-            raw = str(step.get("model", ""))
-            if raw and "tool" not in step and raw not in final:
+            raw = step.model
+            if raw and not step.tool and raw not in final:
                 errors.append(f"trace step {i}'s answer was not fed back into the prompt: {raw}")
         return errors
 
@@ -386,7 +386,16 @@ class MultiTurnArcFlow:
     lead = "Seascale"
 
 
-def run_arc(client: AIClient) -> dict[str, Any]:
+@dataclass(frozen=True)
+class ArcRun:
+    """The two-turn arc's one run — both turns' verdicts, the pair the
+    arc's condition tests verify."""
+
+    t1: ReviewVerdict
+    t2: ReviewVerdict
+
+
+def run_arc(client: AIClient) -> ArcRun:
     """Run the two-turn arc ONCE; the condition tests verify the output."""
     t1 = investigate(client, text=MultiTurnArcFlow.turn1, person=PERSON, who="Alex", facts=_facts())
     history = (
@@ -395,7 +404,7 @@ def run_arc(client: AIClient) -> dict[str, Any]:
             role="assistant",
             text=assistant_message(t1, PERSON),
             when="",
-            thinking=_json.dumps(t1.get("trace"), ensure_ascii=False),
+            thinking=_json.dumps([step.to_dict() for step in t1.trace], ensure_ascii=False),
         ),
     )
     t2 = investigate(
@@ -406,20 +415,17 @@ def run_arc(client: AIClient) -> dict[str, Any]:
         facts=_facts(),
         history=history,
     )
-    return {"t1": t1, "t2": t2, "q1": str(t1.get("question", ""))}
+    return ArcRun(t1=t1, t2=t2)
 
 
-def condition_arc_lead(result: dict[str, Any]) -> str | None:
+def condition_arc_lead(result: ArcRun) -> str | None:
     """The lead is FOLLOWED when the assistant's response names it — in the
     findings (the tool path) or in the question (the known-facts path):
     "Is the Seascale visit you remember the same one recorded in the
     archive…?" is the genealogist's move, either way (R3: the tools — and
     the archive's facts — inform the conversation)."""
-    t2 = result["t2"]
-    response_text = " ".join(
-        [(f.get("text", "") if isinstance(f, dict) else str(f)) for f in t2.get("findings", [])]
-        + [str(t2.get("question", ""))]
-    )
+    t2 = result.t2
+    response_text = " ".join([finding.text for finding in t2.findings] + [t2.question])
     if MultiTurnArcFlow.lead not in response_text:
         return (
             "the reviewer answered with a PLACE lead (Seascale) and the model's response "
@@ -428,9 +434,8 @@ def condition_arc_lead(result: dict[str, Any]) -> str | None:
     return None
 
 
-def condition_arc_no_repeat(result: dict[str, Any]) -> str | None:
-    q1 = str(result.get("q1", ""))
-    q2 = str(result["t2"].get("question", ""))
+def condition_arc_no_repeat(result: ArcRun) -> str | None:
+    q1, q2 = result.t1.question, result.t2.question
     if q1 and q2 and q2 == q1:
         return f"the model repeated its own question verbatim — the walk stalled (R4): {q2!r}"
     return None
@@ -450,28 +455,35 @@ class CachingFlow:
     )
 
 
-def run_caching(client: AIClient) -> dict[str, Any]:
+@dataclass(frozen=True)
+class CachingRun:
+    """The caching cross-check's one run — every turn's prompt, in order."""
+
+    prompts: tuple[str, ...]
+
+
+def run_caching(client: AIClient) -> CachingRun:
     """Run the three-turn caching conversation ONCE; the condition test
     verifies the prompts' prefix property."""
     history: tuple[Message, ...] = ()
     prompts: list[str] = []
     for text in CachingFlow.turns:
         result = investigate(client, text=text, person=PERSON, who="Alex", facts=_facts(), history=history)
-        prompts.append(str(result.get("prompt", "")))
+        prompts.append(result.prompt)
         history = history + (
             Message(role="user", text=text, when=""),
             Message(
                 role="assistant",
                 text=assistant_message(result, PERSON),
                 when="",
-                thinking=_json.dumps(result.get("trace"), ensure_ascii=False),
+                thinking=_json.dumps([step.to_dict() for step in result.trace], ensure_ascii=False),
             ),
         )
-    return {"prompts": prompts}
+    return CachingRun(prompts=tuple(prompts))
 
 
-def condition_caching_prefix(result: dict[str, Any]) -> str | None:
-    prompts = result.get("prompts", [])
+def condition_caching_prefix(result: CachingRun) -> str | None:
+    prompts = result.prompts
     for prev, current in zip(prompts, prompts[1:], strict=False):
         if not current.startswith(prev):
             return (

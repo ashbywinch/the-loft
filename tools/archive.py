@@ -14,29 +14,38 @@ in 2060 can follow the chain (docs/TECHSPEC.md §3).
 
 from __future__ import annotations
 
-import copy
 import json
 import re
 import threading
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import replace
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast, final
+from typing import Any, Literal, TypeVar, cast, overload
 
+from tools.anchor import Anchor
+from tools.asset import Asset
 from tools.memory import Knowledge, Memory, StoryRequest
 from tools.projection import Projection, projection_json
 from tools.records import (
     CONTENT_CAPTIONS,
     CONTENT_FILES,
+    IdentityTable,
+    ImportsTable,
     Item,
+    OrgsTable,
+    PeopleTable,
     Person,
     Place,
+    PlacesTable,
     ReviewDecision,
     ReviewQueue,
     Session,
+    ThemesTable,
     is_valid_record_id,
     split_content,
+    validate_identity,
 )
+from tools.resolution import Resolution
 from tools.store import FileStore
 
 SIDECAR = "item.json"
@@ -52,37 +61,6 @@ def _valid_record_id(record_id: str) -> str:
     return record_id
 
 
-def _dismiss_apply(person_id: str, table: dict[str, Any] | None) -> dict[str, Any]:
-    """The dismissal mutation: drop the person and their relationships from
-    the people table — a missing or non-proposed person fails loudly (a
-    double dismiss is an error, never a silent no-op)."""
-    assert table is not None, "archive has no people table"
-    person = next((p for p in table["people"] if p["id"] == person_id), None)
-    # a missing person is an error to raise, never a silent stand-in
-    if person is None:
-        raise KeyError(f"no person {person_id}")
-    if person.get("status") != "proposed":
-        raise ValueError(f"{person_id} is not proposed — dismiss only removes pending people")
-    table["people"] = [p for p in table["people"] if p["id"] != person_id]
-    table["relationships"] = [
-        r for r in table.get("relationships", []) if r.get("a") != person_id and r.get("b") != person_id
-    ]
-    return table
-
-
-def _record_resolution(
-    result: dict[str, Any], person: dict[str, Any] | None, table: dict[str, Any], changed: bool
-) -> dict[str, Any]:
-    """Record one resolution outcome: the person record as it now stands
-    (None when the record is already gone — the already-resolved state,
-    never an error), whether the disposition altered anything, and the
-    resulting table (returned so a no-change path writes nothing)."""
-    result["person"] = person
-    result["changed"] = changed
-    result["was_proposed"] = changed
-    return table
-
-
 def _versioned_path(label: str, subject: str, base: str, version: int) -> str:
     """One versioned append-only chain's path: ``base`` is the location and
     stem without the suffix, and the ``.json`` / ``-N.json`` form follows —
@@ -93,31 +71,28 @@ def _versioned_path(label: str, subject: str, base: str, version: int) -> str:
     return f"{base}.json" if version == 1 else f"{base}-{version}.json"
 
 
-def _import_session_apply(table: dict[str, Any] | None) -> dict[str, Any]:
+def _import_session_apply(table: ImportsTable | None) -> ImportsTable:
     """The import-session mutation: write the pending document-import
     session once — a no-op when it is already present."""
-    record = Session.from_dict(
-        {
-            "id": "import-documents",
-            "kind": "import-review",
-            "title": "The document import",
-            "status": "pending",
-            # the session's lifecycle at a glance: current
-            # is the resume point; attempts is one entry per walk of
-            # the review — the transcript and decisions of each walk,
-            # separated so a fresh agent can see what happened in THIS
-            # walk versus the last one
-            "current": None,
-            "attempts": [],
-        }
-    ).to_dict()
+    session = Session(
+        id="import-documents",
+        kind="import-review",
+        title="The document import",
+        status="pending",
+        # the session's lifecycle at a glance: current
+        # is the resume point; attempts is one entry per walk of
+        # the review — the transcript and decisions of each walk,
+        # separated so a fresh agent can see what happened in THIS
+        # walk versus the last one
+        current=None,
+        attempts=(),
+    )
     # a missing table is an error to raise, never a silent stand-in
     if table is None:
-        return {"imports": [record]}
-    if any(s.get("id") == "import-documents" for s in table["imports"]):
+        return ImportsTable(imports=(session,))
+    if table.has("import-documents"):
         return table  # already present — a no-op writes nothing
-    table["imports"] = [s for s in table["imports"] if s.get("id") != "import-documents"] + [record]
-    return table
+    return table.with_session(session)
 
 
 # Primary content lives in files the sidecar describes (never as sidecar
@@ -131,22 +106,14 @@ IDENTITY_TABLES = ("people", "places", "themes", "orgs", "imports")
 # over this.
 ProposedRecord = TypeVar("ProposedRecord", Person, Place)
 
+# The identity-table seam's own generic: ``_mutate_identity`` re-reads one
+# table, applies the caller's mutation, and writes the next version — one
+# implementation for every table type.
+TTable = TypeVar("TTable", PeopleTable, PlacesTable, OrgsTable, ThemesTable, ImportsTable)
+
 
 class ArchiveError(RuntimeError):
     """Raised when the archive invariant is broken."""
-
-
-# The _save_lock write-seam is thread-safety, not a second domain
-@final
-@dataclass(frozen=True)
-class Resolution:
-    """The review's verdict on one proposed person: the record (or None when
-    a duplicate delete leaves nothing), and the two booleans that describe
-    what happened — attested, and whether the table changed."""
-
-    person: dict[str, Any] | None
-    changed: bool
-    attested: bool
 
 
 class Archive:
@@ -210,13 +177,15 @@ class Archive:
         versions item-N.json, under assets/<id>/."""
         return _versioned_path("sidecar", item_id, f"assets/{item_id}/item", version)
 
-    def get_item(self, item_id: str) -> dict[str, Any] | None:
-        """The highest-version sidecar, or None when missing or tombstoned."""
+    def get_item(self, item_id: str) -> Item | None:
+        """The highest-version sidecar, or None when missing or tombstoned.
+        Typed: the Item record owns the sidecar's wire format and its
+        accessors."""
         versions = self._sidecar_versions(item_id)
         if not versions:
             return None
-        item = json.loads(self.store.read(self._sidecar_path(item_id, max(versions))))
-        return None if item.get("status") == "deleted" else item
+        item = Item(json.loads(self.store.read(self._sidecar_path(item_id, max(versions)))))
+        return None if item.status == "deleted" else item
 
     def item_ids(self) -> list[str]:
         """Every item folder in the archive (deleted or not)."""
@@ -237,12 +206,33 @@ class Archive:
         versions <name>-N.json, at the archive root."""
         return _versioned_path("identity", name, name, version)
 
-    def get_identity(self, name: str) -> dict[str, Any] | None:
-        """The highest-version identity table, or None when absent."""
+    @overload
+    def get_identity(self, name: Literal["people"]) -> PeopleTable | None: ...
+
+    @overload
+    def get_identity(self, name: Literal["places"]) -> PlacesTable | None: ...
+
+    @overload
+    def get_identity(self, name: Literal["orgs"]) -> OrgsTable | None: ...
+
+    @overload
+    def get_identity(self, name: Literal["themes"]) -> ThemesTable | None: ...
+
+    @overload
+    def get_identity(self, name: Literal["imports"]) -> ImportsTable | None: ...
+
+    @overload
+    def get_identity(self, name: str) -> IdentityTable | None: ...
+
+    def get_identity(self, name: str) -> IdentityTable | None:
+        """The highest-version identity table as its own record type, or
+        None when absent — the table's class owns the wire format and the
+        invariants (tools/records.py), so a caller reads fields, never
+        keys."""
         versions = self._identity_versions(name)
         if not versions:
             return None
-        return json.loads(self.store.read(self._identity_path(name, max(versions))))
+        return validate_identity(name, json.loads(self.store.read(self._identity_path(name, max(versions)))))
 
     @staticmethod
     def content_path(item_id: str, filename: str) -> str:
@@ -293,7 +283,7 @@ class Archive:
 
     # -- writes ------------------------------------------------------------
 
-    def save_item(self, item: dict[str, Any], content: dict[str, str] | None = None) -> int:
+    def save_item(self, item: Item, content: dict[str, str] | None = None) -> int:
         """Create or supersede: writes the next version, never edits an
         existing file (the store refuses edits). The sidecar is validated
         against the Item record (tools/records.py) before writing — the
@@ -302,14 +292,13 @@ class Archive:
         primary text, written as a versioned content file the sidecar
         references — primary content is never a sidecar JSON field. Returns
         the version written."""
-        item_id = _valid_record_id(item["id"])
+        item_id = _valid_record_id(item.id)
         try:
-            Item.from_dict(item)
+            payload = dict(Item.from_dict(item.to_dict()).to_dict())
         except ValueError as e:
             raise ArchiveError(f"invalid item: {e}") from e
         versions = self._sidecar_versions(item_id)
         version = (versions[-1] if versions else 0) + 1
-        payload = dict(item)
         if version > 1:
             payload["supersedes"] = self._sidecar_path(item_id, version - 1)
         pending_content: list[tuple[str, str]] = []
@@ -325,7 +314,7 @@ class Archive:
             for kind, text in content.items():
                 if not text:
                     continue
-                bare, caption = CONTENT_FILES.get(kind), CONTENT_CAPTIONS.get(kind)
+                bare, caption = CONTENT_FILES.get(kind), CONTENT_CAPTIONS.get(kind, "")
                 if bare is None:
                     raise ArchiveError(f"unknown content kind: {kind}")
                 filename = self._content_filename(bare, version)
@@ -337,7 +326,7 @@ class Archive:
                 if entry is not None:
                     entry["file"] = filename
                 else:
-                    payload["assets"].append({"kind": kind, "file": filename, "caption": caption})
+                    payload["assets"].append(Asset(kind=kind, file=filename, caption=caption).to_dict())
         # the sidecar goes FIRST: a crash mid-save leaves the version advanced
         # (sidecar present, content missing), so the next save supersedes and
         # writes a fresh content file. Content-first leaves an orphan content
@@ -356,7 +345,7 @@ class Archive:
         stem, suffix = bare.rsplit(".", 1)
         return f"{stem}-{version}.{suffix}"
 
-    def save_identity(self, name: str, table: dict[str, Any]) -> int:
+    def save_identity(self, name: str, table: IdentityTable) -> int:
         """Create or supersede an identity table — the same append-only rule
         as sidecars: never edits, a change is the next version. Callers with
         a ready-made table use this; callers that READ then modify must use
@@ -368,24 +357,26 @@ class Archive:
         with self._save_lock:
             versions = self._identity_versions(name)
             version = (versions[-1] if versions else 0) + 1
-            payload = dict(table)
+            payload = dict(table.to_dict())
             if version > 1:
                 payload["supersedes"] = self._identity_path(name, version - 1)
             self.store.write_new(self._identity_path(name, version), json.dumps(payload, indent=1, ensure_ascii=False))
             return version
 
-    def _mutate_identity(self, name: str, mutate: Callable[[dict[str, Any] | None], dict[str, Any]]) -> int:
+    def _mutate_identity(self, name: str, mutate: Callable[[TTable | None], TTable]) -> int:
         """Atomic read-modify-write of an identity table: the lock must
         span the READ, the mutation, AND the write — a writer that reads
         the table before the lock supersedes a concurrent writer's change.
         The caller expresses its intent as a
         function of the current table; the seam re-reads under the lock,
-        applies, and writes the next version. Returns the version written."""
+        applies, and writes the next version. The records are immutable, so
+        the mutation RETURNS the table it wants — an unchanged return
+        writes nothing (no copy, no in-place edit to detect). Returns the
+        version written."""
         with self._save_lock:
-            table = self.get_identity(name)
-            before = copy.deepcopy(table)
-            payload = mutate(table)
-            if payload == before:
+            table = cast(TTable | None, self.get_identity(name))
+            updated = mutate(table)
+            if updated == table:
                 # a no-op mutation (a stale decision, a pending, an
                 # unchanged record) writes NOTHING — byte-identical versions
                 # would clutter the append-only history the PRD describes as
@@ -394,6 +385,7 @@ class Archive:
                 return versions[-1] if versions else 0
             versions = self._identity_versions(name)
             version = (versions[-1] if versions else 0) + 1
+            payload = dict(updated.to_dict())
             if version > 1:
                 payload["supersedes"] = self._identity_path(name, version - 1)
             self.store.write_new(self._identity_path(name, version), json.dumps(payload, indent=1, ensure_ascii=False))
@@ -403,16 +395,7 @@ class Archive:
         """Tombstone: supersede with a ``status: deleted`` marker — the old
         files stay forever. Returns the tombstone's version."""
         item_id = _valid_record_id(item_id)
-        current = self.get_item(item_id)
-        return self.save_item(
-            {
-                "id": item_id,
-                "type": (current or {}).get("type", "item"),
-                "title": (current or {}).get("title", item_id),
-                "status": "deleted",
-                "reason": reason,
-            }
-        )
+        return self.save_item(Item.tombstone(item_id, reason, self.get_item(item_id)))
 
     # -- proposed records --------------------------------------------------
     # The propose/confirm seam: a proposed person/place is the SAME record
@@ -421,34 +404,28 @@ class Archive:
     # the proposed file stays after promotion; derive skips ids already in
     # the table.
 
-    def _propose(
-        self,
-        kind: str,
-        record_type: Callable[[dict[str, Any]], ProposedRecord],
-        payload: dict[str, Any],
-        directory: str,
-    ) -> None:
-        """Queue one proposed record — validated, marked proposed, written
-        to the proposed queue (proposed/people/ or proposed/places/)."""
-        try:
-            record = record_type(payload).as_proposed()
-        except ValueError as e:
-            raise ArchiveError(f"cannot propose {kind}: {e}") from e
-        record_id = _valid_record_id(record.id)
+    def _propose(self, kind: str, record: ProposedRecord, directory: str) -> None:
+        """Queue one proposed record — marked proposed, written to the
+        proposed queue (proposed/people/ or proposed/places/). The record
+        is already validated (its class owns the invariants); a crafted id
+        fails loudly, because the id becomes the store path."""
+        proposed = record.as_proposed()
+        if not is_valid_record_id(proposed.id):
+            raise ArchiveError(f"cannot propose {kind}: invalid record id: {proposed.id!r}")
         self.store.write_new(
-            f"proposed/{directory}/{record_id}.json",
-            json.dumps(record.to_dict(), indent=1, ensure_ascii=False),
+            f"proposed/{directory}/{proposed.id}.json",
+            json.dumps(proposed.to_dict(), indent=1, ensure_ascii=False),
         )
 
-    def propose_person(self, person: dict[str, Any]) -> None:
-        """Queue a person record for review — validated, marked proposed."""
-        self._propose("person", Person.from_dict, person, "people")
+    def propose_person(self, person: Person) -> None:
+        """Queue a person record for review — marked proposed."""
+        self._propose("person", person, "people")
 
-    def propose_place(self, place: dict[str, Any]) -> None:
-        """Queue a place record for review — validated, marked proposed."""
-        self._propose("place", Place.from_dict, place, "places")
+    def propose_place(self, place: Place) -> None:
+        """Queue a place record for review — marked proposed."""
+        self._propose("place", place, "places")
 
-    def confirm_person(self, person_id: str, relation: str | None = None) -> dict[str, Any]:
+    def confirm_person(self, person_id: str, relation: str | None = None) -> Person:
         """The import's pending people — confirm one (kept = confirmed).
         Supersedes the people table; a confirmed record omits the status
         key. ``relation`` pins the SPECIFIC kinship the review settled on
@@ -457,24 +434,24 @@ class Archive:
         confirmed person changes nothing."""
         table = self.get_identity("people")
         assert table is not None, "archive has no people table"
-        person = next((p for p in table["people"] if p["id"] == person_id), None)
+        person = table.record(person_id)
         if person is None:
             raise KeyError(f"no person {person_id}")
-        if person.get("status") == "proposed":
-            confirmed = {k: v for k, v in person.items() if k != "status"}
-            if relation:
-                confirmed["relation"] = relation
-            table["people"] = [confirmed if p["id"] == person_id else p for p in table["people"]]
-            self.save_identity("people", table)
-            return confirmed
-        return person
+        if person.status != "proposed":
+            return person
+        confirmed = person.as_confirmed()
+        if relation:
+            confirmed = replace(confirmed, relation=relation)
+        self.save_identity("people", table.with_record(confirmed))
+        return confirmed
 
     def dismiss_person(self, person_id: str) -> None:
         """The import's pending people — dismiss one (dropped = gone): the
         person and their relationships leave the people table (supersede)."""
 
-        def apply(table: dict[str, Any] | None) -> dict[str, Any]:
-            return _dismiss_apply(person_id, table)
+        def apply(table: PeopleTable | None) -> PeopleTable:
+            assert table is not None, "archive has no people table"
+            return table.dismissed(person_id)
 
         self._mutate_identity("people", apply)
 
@@ -486,55 +463,28 @@ class Archive:
         estimated with the recorded basis {text, by, when} — the reviewer's
         words, the named person, the date; ``pending`` -> the import's guess
         stays proposed, nothing changes; ``delete`` -> the person leaves the
-        table. Returns (the person record — None when a duplicate delete
-        finds the person already gone —, changed, was_proposed): did the
-        mutation alter the record, and was the person still proposed at
-        mutation time. Both flags are set INSIDE the lock, in the mutation
-        itself, so a concurrent duplicate decision cannot misread them — a
-        post-hoc status comparison would race (a confirmed record omits the
-        status key, and the pre-read status would be stale for a second
-        concurrent decide). The whole read-check-write is atomic."""
-        result: dict[str, Any] = {}
+        table. The disposition itself is the table's own rule
+        (PeopleTable.resolved); this seam is what makes it atomic. Returns
+        the Resolution (tools/resolution.py): the person record as it now
+        stands — None when a duplicate delete finds the person already gone
+        — whether the disposition altered it, and whether the person was
+        still proposed at mutation time. Both flags are set INSIDE the lock,
+        in the mutation itself, so a concurrent duplicate decision cannot
+        misread them — a post-hoc status comparison would race (a confirmed
+        record omits the status key, and the pre-read status would be stale
+        for a second concurrent decide). The whole read-check-write is
+        atomic."""
+        result: Resolution | None = None
 
-        def apply(current: dict[str, Any] | None) -> dict[str, Any]:
-            assert current is not None, "archive has no people table"
-            person = next((p for p in current["people"] if p["id"] == person_id), None)
-            if person is None:
-                # a duplicate delete (double-tap, two devices) finds the
-                # person already removed — that is the already-resolved
-                # state, never an error
-                return _record_resolution(result, person=None, table=current, changed=False)
-            if person.get("status") != "proposed":
-                # the queue never holds resolved people — a stale decision is a
-                # state, not an error: the person stays as they are
-                return _record_resolution(result, person=person, table=current, changed=False)
-            if decision == "pending":
-                result["person"] = person
-                result["changed"] = False
-                result["was_proposed"] = True
-                return current
-            if decision == "delete":
-                return _record_resolution(
-                    result,
-                    person={"id": person_id, "gone": True},
-                    table=_dismiss_apply(person_id, current),
-                    changed=True,
-                )
-            updated = dict(person)
-            if decision == "estimated":
-                if basis is None or not str(basis.get("text", "")).strip():
-                    raise ValueError(f"estimated needs a basis: {person_id}")
-                updated["status"] = "estimated"
-                updated["basis"] = basis
-            elif decision == "attested":
-                updated.pop("status", None)  # confirmed records omit the status key
-            else:
-                raise ValueError(f"unknown decision: {decision!r}")
-            current["people"] = [updated if p["id"] == person_id else p for p in current["people"]]
-            return _record_resolution(result, person=updated, table=current, changed=True)
+        def apply(table: PeopleTable | None) -> PeopleTable:
+            nonlocal result
+            assert table is not None, "archive has no people table"
+            updated, result = table.resolved(person_id, decision, basis)
+            return updated
 
         self._mutate_identity("people", apply)
-        return Resolution(result["person"], result["changed"], result["was_proposed"])
+        assert result is not None, "the people table mutation never ran"
+        return result
 
     def _proposed(
         self, directory: str, record_type: Callable[[dict[str, Any]], ProposedRecord]
@@ -567,39 +517,43 @@ class Archive:
         """Ids of proposed people and places (unverified, awaiting review)."""
         return {p.id for p in self.proposed_people()} | {pl.id for pl in self.proposed_places()}
 
-    def _promote(
+    def _proposed_record(
         self,
         table_name: str,
         record_id: str,
         record_type: Callable[[dict[str, Any]], ProposedRecord],
         kind: str,
-    ) -> int:
-        """Confirm a proposed record: supersede the *table_name* identity
-        table with the record appended (append-only) — the proposed queue
-        lives at proposed/<table_name>/ and the table's records under the
-        same key. Returns the new version."""
+    ) -> ProposedRecord:
+        """One queued proposed record, typed and validated — a missing file
+        fails loudly (confirming a record the review never queued is a
+        mistake, never a silent no-op)."""
         record_id = _valid_record_id(record_id)
         path = f"proposed/{table_name}/{record_id}.json"
         if not self.store.exists(path):
             raise ArchiveError(f"no proposed {kind} record: {record_id}")
-        record = record_type(json.loads(self.store.read(path)))
-        table = self.get_identity(table_name)
-        if table is None:
-            raise ArchiveError(f"archive has no {table_name} identity table")
-        if any(p["id"] == record_id for p in table[table_name]):
-            raise ArchiveError(f"{record_id} is already in the {table_name} table")
-        table[table_name].append(record.as_confirmed().to_dict())
-        return self.save_identity(table_name, table)
+        return record_type(json.loads(self.store.read(path)))
 
     def promote_person(self, person_id: str) -> int:
         """Confirm a proposed person: supersede the people identity table
         with the record appended (append-only). Returns the new version."""
-        return self._promote("people", person_id, Person.from_dict, "person")
+        record = self._proposed_record("people", person_id, Person.from_dict, "person")
+        table = self.get_identity("people")
+        if table is None:
+            raise ArchiveError("archive has no people identity table")
+        if table.has(record.id):
+            raise ArchiveError(f"{record.id} is already in the people table")
+        return self.save_identity("people", table.with_record(record.as_confirmed()))
 
     def promote_place(self, place_id: str) -> int:
         """Confirm a proposed place: supersede the places identity table
         with the record appended (append-only). Returns the new version."""
-        return self._promote("places", place_id, Place.from_dict, "place")
+        record = self._proposed_record("places", place_id, Place.from_dict, "place")
+        table = self.get_identity("places")
+        if table is None:
+            raise ArchiveError("archive has no places identity table")
+        if table.has(record.id):
+            raise ArchiveError(f"{record.id} is already in the places table")
+        return self.save_identity("places", table.with_record(record.as_confirmed()))
 
     def _referencing_catalogued(self, record_id: str, ref_kind: str) -> list[str]:
         """Every catalogued item whose refs still point at *record_id* —
@@ -611,14 +565,15 @@ class Archive:
         referrers: list[str] = []
         for item_id in self.item_ids():
             item = self.get_item(item_id)
-            if not item or item.get("status") != "catalogued":
+            if item is None or item.status != "catalogued":
                 continue
-            if any(r.get("id") == record_id for r in item.get(ref_kind) or []):
+            refs = item.people_refs if ref_kind == "people" else item.place_refs
+            if any(ref.id == record_id for ref in refs):
                 referrers.append(item_id)
                 continue
             if any(
                 ex.get("on") is not False and ex.get("match") == record_id
-                for ex in (item.get("chat") or {}).get("extractions") or []
+                for ex in (item.raw.get("chat") or {}).get("extractions") or []
                 if ex.get("kind") == extraction_kind
             ):
                 referrers.append(item_id)
@@ -679,19 +634,16 @@ class Archive:
         the import's proposals (proposed people) are all confirmed or
         dismissed, so the session is done (user)."""
         people = self.get_identity("people")
-        pending_people = any(p.get("status") == "proposed" for p in (people or {}).get("people", []))
+        pending_people = any(p.status == "proposed" for p in people.people) if people else False
         if pending_people:
             return
         imports = self.get_identity("imports")
-        if imports is None or not any(s.get("status") == "pending" for s in imports.get("imports", [])):
+        if imports is None or not any(s.status == "pending" for s in imports.imports):
             return
 
-        def apply(table: dict[str, Any] | None) -> dict[str, Any]:
+        def apply(table: ImportsTable | None) -> ImportsTable:
             assert table is not None
-            for i, s in enumerate(table["imports"]):
-                if s.get("status") == "pending":
-                    table["imports"][i] = Session.from_dict(s).completed().to_dict()
-            return table
+            return table.completed()
 
         self._mutate_identity("imports", apply)
 
@@ -711,7 +663,7 @@ class Archive:
         the already-placed count (the reconcile-first view; the queue never
         holds resolved people). Typed: the queue owns its shape."""
         people = self.get_identity("people")
-        all_people = tuple(Person.from_dict(p) for p in (people or {}).get("people", []))
+        all_people = people.people if people else ()
         pending = tuple(p for p in all_people if p.status == "proposed")
         return ReviewQueue(pending=pending, already=len(all_people) - len(pending))
 
@@ -723,8 +675,7 @@ class Archive:
         imports = self.get_identity("imports")
         if imports is None:
             return None
-        session = next((s for s in imports.get("imports", []) if s.get("id") == session_id), None)
-        return Session.from_dict(session) if session else None
+        return next((s for s in imports.imports if s.id == session_id), None)
 
     def _update_import_session(self, session_id: str, mutate: Callable[[Session], Session]) -> None:
         """Apply one Session mutation atomically: the read-modify-write
@@ -732,15 +683,13 @@ class Archive:
         change. ``mutate`` runs on the session found in the
         imports table; a missing table or session is an error to raise."""
 
-        def apply(table: dict[str, Any] | None) -> dict[str, Any]:
+        def apply(table: ImportsTable | None) -> ImportsTable:
             if table is None:
                 raise ArchiveError(f"no imports table for session {session_id}")
-            session = next((s for s in table["imports"] if s.get("id") == session_id), None)
+            session = next((s for s in table.imports if s.id == session_id), None)
             if session is None:
                 raise ArchiveError(f"no import session {session_id}")
-            updated = mutate(Session.from_dict(session))
-            table["imports"] = [updated.to_dict() if s.get("id") == session_id else s for s in table["imports"]]
-            return table
+            return table.with_session(mutate(session))
 
         self._mutate_identity("imports", apply)
 
@@ -785,11 +734,11 @@ class Archive:
         self,
         client: Any,
         *,
-        anchor: dict[str, Any],
+        anchor: Anchor,
         who: str,
         account: str,
         status: str = "draft",
-    ) -> dict[str, Any]:
+    ) -> Item:
         """Capture a narrator's memory end to end — assess the account,
         build the story, save it through the append-only store, and refresh
         the projection. The headless form of the server's capture API
@@ -807,16 +756,16 @@ class Archive:
             request=StoryRequest(
                 anchor=anchor,
                 who=who,
-                title=assessment["title"],
+                title=assessment.title,
                 account=account,
-                extractions=assessment["extractions"],
-                facts=assessment["facts"],
+                extractions=assessment.extractions,
+                facts=assessment.facts,
                 status=status,
             ),
             existing_ids=set(self.item_ids()) | self.proposed_ids(),
         )
-        sidecar, content = split_content(built_story.story)
-        self.save_item(sidecar, content=content)
+        split = split_content(built_story.story)
+        self.save_item(split.sidecar, content=split.content)
         for person in built_story.new_people:
             self.propose_person(person)
         for place in built_story.new_places:

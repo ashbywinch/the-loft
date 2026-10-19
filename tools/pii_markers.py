@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.loft_paths import ARCHIVE_DIR
+from tools.records import Person, Place
 
 # aliases that are generic kin terms or initials, not identifiers — "Mum" in
 # a fixture is not family PII; "Nora Voss" is
@@ -104,72 +105,67 @@ def _latest(paths: list[Path]) -> Path:
     return best[1]
 
 
-def _table_tokens(table: list[dict[str, Any]]) -> set[str]:
-    """Names and name-tokens from one identity table's records."""
+def _name_tokens(record_id: str, name: str, aliases: tuple[str, ...]) -> set[str]:
+    """A record's identifying names: its id, its name and the name's own
+    tokens, and its aliases — generic kin terms and initials are not
+    identifiers."""
     markers: set[str] = set()
-    for record in table:
-        record_id = str(record.get("id", "")).strip()
-        if record_id:
-            markers.add(record_id)
-        name = str(record.get("name", "")).strip()
-        if name:
-            markers.add(name)
-            markers.update(
-                t for t in re.findall(r"[A-Z][A-Za-z]+", name) if len(t) > 2 and t.lower() not in _COMMON_WORDS
-            )
-        for alias in record.get("aliases", []):
-            a = str(alias).strip()
-            if a and a.lower() not in _GENERIC_ALIASES and len(a) > 2:
-                markers.add(a)
-        email = str(record.get("email", "")).strip().lower()
-        if email:
-            markers.add(email)
+    if record_id:
+        markers.add(record_id)
+    if name:
+        markers.add(name)
+        markers.update(t for t in re.findall(r"[A-Z][A-Za-z]+", name) if len(t) > 2 and t.lower() not in _COMMON_WORDS)
+    for alias in aliases:
+        a = alias.strip()
+        if a and a.lower() not in _GENERIC_ALIASES and len(a) > 2:
+            markers.add(a)
     return {m for m in markers if m}
 
 
-def _date_markers(record: dict[str, Any]) -> set[str]:
-    """A person's attested birth/death dates — exact dates are identifying.
-    Bare years are story years, not identifiers, and are left out."""
-    markers: set[str] = set()
-    for field in ("dob", "dod"):
-        value = record.get(field)
-        if isinstance(value, dict) and value.get("date"):
-            markers.add(str(value["date"]))
-        elif isinstance(value, str):
-            markers.add(value)
-    return {m for m in markers if len(m) > _DATE_MARKER_MIN_LEN}
+def _person_markers(person: Person) -> set[str]:
+    """A person's identifying markers: their names and aliases, their email,
+    and the attested birth/death dates. Exact dates are identifying; bare
+    years are story years and are left out."""
+    markers = _name_tokens(person.id, person.name, person.aliases)
+    if person.email:
+        markers.add(person.email)
+    dates = {fact.date for fact in (person.dob, person.dod) if fact is not None}
+    return markers | {d for d in dates if len(d) > _DATE_MARKER_MIN_LEN}
 
 
-def _geo_markers(record: dict[str, Any]) -> set[str]:
-    """A place's coordinates — street-precision lat/lng are identifying.
-    Coarse 1-2 decimal values are not (they collide with versions and CSS)."""
-    markers: set[str] = set()
-    for field in ("lat", "lng"):
-        value = record.get(field)
-        if isinstance(value, (int, float)):
-            text = str(value)
-            if "." in text and len(text) - text.index(".") - 1 >= _STREET_PRECISION_DECIMALS:
-                markers.add(text)
+def _place_markers(place: Place) -> set[str]:
+    """A place's identifying markers: its names and aliases, and its
+    street-precision coordinates. Coarse 1-2 decimal values are not
+    identifying (they collide with versions and CSS)."""
+    markers = _name_tokens(place.id, place.name, place.aliases)
+    for value in (place.lat, place.lng):
+        if not isinstance(value, (int, float)):
+            continue
+        text = str(value)
+        if "." in text and len(text) - text.index(".") - 1 >= _STREET_PRECISION_DECIMALS:
+            markers.add(text)
     return markers
 
 
-def _archive_markers(paths: list[Path], key: str, extra: Callable[[dict[str, Any]], set[str]]) -> set[str]:
-    """Names, aliases, emails and ids from one identity table plus the
-    per-record identifying extras — dates for people, coordinates for
-    places."""
+def _table_markers(paths: list[Path], key: str, parse: Callable[[dict[str, Any]], Person | Place]) -> set[str]:
+    """One identity table's markers: every record parsed into its own class
+    and asked for its identifying markers (names and aliases, plus the
+    record's own extras — dates for people, coordinates for places)."""
+    if not paths:
+        return set()
+    table = json.loads(_latest(paths).read_text(encoding="utf-8"))
     markers: set[str] = set()
-    if paths:
-        table = json.loads(_latest(paths).read_text(encoding="utf-8"))
-        for record in table.get(key, []):
-            markers |= _table_tokens([record]) | extra(record)
+    for raw in table.get(key, []):
+        record = parse(raw)
+        markers |= _person_markers(record) if isinstance(record, Person) else _place_markers(record)
     return markers
 
 
 def family_markers() -> set[str]:
     """Every identifying name, alias, email, place, id, date and coordinate
     from the live dataset."""
-    people = _archive_markers(sorted(ARCHIVE_DIR.glob("people*.json")), "people", _date_markers)
-    places = _archive_markers(sorted(ARCHIVE_DIR.glob("places*.json")), "places", _geo_markers)
+    people = _table_markers(sorted(ARCHIVE_DIR.glob("people*.json")), "people", Person.from_dict)
+    places = _table_markers(sorted(ARCHIVE_DIR.glob("places*.json")), "places", Place.from_dict)
     return people | places
 
 

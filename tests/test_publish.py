@@ -19,6 +19,7 @@ import pytest
 from tools.archive import Archive
 from tools.loft_paths import ARCHIVE_DIR
 from tools.projection import DeriveError, Projection, projection_json, resolved_items
+from tools.records import Item, Person, Place, validate_identity
 from tools.store import DiskStore
 
 
@@ -28,24 +29,29 @@ def make_archive(root: Path) -> Archive:
 
 def sample_identity(root: Path) -> Archive:
     archive = make_archive(root)
-    archive.save_identity("people", {"people": [{"id": "p-mum", "name": "Mum", "hue": "amber"}], "relationships": []})
-    archive.save_identity("places", {"places": [{"id": "pl-town", "name": "Town"}]})
-    archive.save_identity("themes", {"themes": [{"id": "t-boat", "title": "The boats"}]})
+    archive.save_identity(
+        "people",
+        validate_identity("people", {"people": [{"id": "p-mum", "name": "Mum", "hue": "amber"}], "relationships": []}),
+    )
+    archive.save_identity("places", validate_identity("places", {"places": [{"id": "pl-town", "name": "Town"}]}))
+    archive.save_identity("themes", validate_identity("themes", {"themes": [{"id": "t-boat", "title": "The boats"}]}))
     return archive
 
 
 def test_publish_writes_every_derived_file(tmp_path: Path) -> None:
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "letter-a",
-            "type": "letter",
-            "title": "A",
-            "date": "1962-01-01",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "letter-a",
+                "type": "letter",
+                "title": "A",
+                "date": "1962-01-01",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "assets": [],
+            }
+        )
     )
     out = tmp_path / "out"
     Projection(archive, out).build()
@@ -56,112 +62,127 @@ def test_publish_writes_every_derived_file(tmp_path: Path) -> None:
 def test_publish_embeds_story_from_content_file_and_strips_the_entry(tmp_path: Path) -> None:
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "story-x",
-            "type": "story",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "assets": [],
-        },
+        Item.from_dict(
+            {
+                "id": "story-x",
+                "type": "story",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "assets": [],
+            }
+        ),
         content={"story": "We took the dinghy out."},
     )
     items = resolved_items(archive)
-    assert items[0]["story"] == "We took the dinghy out."
-    assert all(a.get("kind") != "story" for a in items[0]["assets"])  # never rendered as an image
+    assert items[0].raw["story"] == "We took the dinghy out."
+    assert all(asset.kind != "story" for asset in items[0].assets)  # never rendered as an image
 
 
 def test_publish_embeds_transcription_and_builds_transcripts(tmp_path: Path) -> None:
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "letter-a",
-            "type": "letter",
-            "title": "A",
-            "date": "1962-01-01",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "assets": [],
-        },
+        Item.from_dict(
+            {
+                "id": "letter-a",
+                "type": "letter",
+                "title": "A",
+                "date": "1962-01-01",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "assets": [],
+            }
+        ),
         content={"transcription": "Dear Mum, …"},
     )
     items = resolved_items(archive)
-    assert items[0]["transcription"] == "Dear Mum, …"
+    assert items[0].raw["transcription"] == "Dear Mum, …"
     assert json.loads(projection_json(archive)["transcripts.json"]) == {"letter-a": "Dear Mum, …"}
 
 
 def test_publish_skips_tombstoned_and_resolves_versions(tmp_path: Path) -> None:
     archive = sample_identity(tmp_path)
     _ = archive.save_item(
-        {
-            "id": "story-x",
-            "type": "story",
-            "title": "One",
-            "date": "2026-01-01",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-x",
+                "type": "story",
+                "title": "One",
+                "date": "2026-01-01",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "assets": [],
+            }
+        )
     )
     archive.delete_item("story-x", "test")
     _ = archive.save_item(
-        {
-            "id": "story-y",
-            "type": "story",
-            "title": "First",
-            "date": "2026-02-01",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-y",
+                "type": "story",
+                "title": "First",
+                "date": "2026-02-01",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "assets": [],
+            }
+        )
     )
     _ = archive.save_item(
-        {
-            "id": "story-y",
-            "type": "story",
-            "title": "Second",
-            "date": "2026-02-01",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "assets": [],
-        },
+        Item.from_dict(
+            {
+                "id": "story-y",
+                "type": "story",
+                "title": "Second",
+                "date": "2026-02-01",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "assets": [],
+            }
+        ),
         content={"story": "latest"},
     )
-    items = {it["id"]: it for it in resolved_items(archive)}
+    items = {it.id: it for it in resolved_items(archive)}
     assert "story-x" not in items  # tombstoned — gone
-    assert items["story-y"]["title"] == "Second"  # highest version wins
-    assert items["story-y"]["story"] == "latest"
+    assert items["story-y"].title == "Second"  # highest version wins
+    assert items["story-y"].raw["story"] == "latest"
 
 
 def test_publish_keeps_drafts_for_the_owner(tmp_path: Path) -> None:
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "story-d",
-            "type": "story",
-            "title": "Draft",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "draft",
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-d",
+                "type": "story",
+                "title": "Draft",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "draft",
+                "assets": [],
+            }
+        )
     )
     items = resolved_items(archive)
-    assert items[0]["status"] == "draft"
+    assert items[0].status == "draft"
 
 
 def test_publish_carries_relationships_from_the_identity_table(tmp_path: Path) -> None:
     archive = make_archive(tmp_path)
     archive.save_identity(
         "people",
-        {
-            "people": [{"id": "p-a", "name": "A", "hue": "rose"}, {"id": "p-b", "name": "B", "hue": "sky"}],
-            "relationships": [{"a": "p-a", "b": "p-b", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"}],
-        },
+        validate_identity(
+            "people",
+            {
+                "people": [{"id": "p-a", "name": "A", "hue": "rose"}, {"id": "p-b", "name": "B", "hue": "sky"}],
+                "relationships": [{"a": "p-a", "b": "p-b", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"}],
+            },
+        ),
     )
-    archive.save_identity("places", {"places": []})
-    archive.save_identity("themes", {"themes": []})
+    archive.save_identity("places", validate_identity("places", {"places": []}))
+    archive.save_identity("themes", validate_identity("themes", {"themes": []}))
     people = json.loads(projection_json(archive)["people.json"])
     assert people["relationships"] == [
         {"a": "p-a", "b": "p-b", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"}
@@ -171,26 +192,30 @@ def test_publish_carries_relationships_from_the_identity_table(tmp_path: Path) -
 def test_publish_copies_real_assets_and_generates_placeholders(tmp_path: Path) -> None:
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "photo-x",
-            "type": "photo",
-            "title": "Beach",
-            "date": "1975",
-            "date_precision": "approx",
-            "status": "catalogued",
-            "assets": [{"kind": "photo", "file": "real.svg", "caption": "Real"}],
-        },
+        Item.from_dict(
+            {
+                "id": "photo-x",
+                "type": "photo",
+                "title": "Beach",
+                "date": "1975",
+                "date_precision": "approx",
+                "status": "catalogued",
+                "assets": [{"kind": "photo", "file": "real.svg", "caption": "Real"}],
+            }
+        )
     )
     archive.save_item(
-        {
-            "id": "letter-x",
-            "type": "letter",
-            "title": "L",
-            "date": "1963-01-01",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "assets": [{"kind": "page", "file": "page-1.svg", "caption": "Page 1"}],
-        },
+        Item.from_dict(
+            {
+                "id": "letter-x",
+                "type": "letter",
+                "title": "L",
+                "date": "1963-01-01",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "assets": [{"kind": "page", "file": "page-1.svg", "caption": "Page 1"}],
+            }
+        )
     )
     # the photo's scan exists in the archive; the letter's page is missing
     archive.store.write_new("assets/photo-x/real.svg", "<svg>real scan</svg>")
@@ -207,15 +232,17 @@ def test_publish_leaves_no_staging_residue(tmp_path: Path) -> None:
     pointing at a deleted assets/."""
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "object-x",
-            "type": "object",
-            "title": "X",
-            "date": "1980",
-            "date_precision": "year",
-            "status": "catalogued",
-            "assets": [{"kind": "photo", "file": "pic.jpg", "caption": "X"}],
-        }
+        Item.from_dict(
+            {
+                "id": "object-x",
+                "type": "object",
+                "title": "X",
+                "date": "1980",
+                "date_precision": "year",
+                "status": "catalogued",
+                "assets": [{"kind": "photo", "file": "pic.jpg", "caption": "X"}],
+            }
+        )
     )
     out = tmp_path / "out"
     Projection(archive, out).build()
@@ -233,15 +260,17 @@ def test_publish_copies_binary_scans_byte_identical(tmp_path: Path) -> None:
     archive = sample_identity(tmp_path)
     blob = b"\xff\xd8\xff\xe0" + bytes(range(256))
     archive.save_item(
-        {
-            "id": "photo-b",
-            "type": "photo",
-            "title": "B",
-            "date": "1975",
-            "date_precision": "approx",
-            "status": "catalogued",
-            "assets": [{"kind": "photo", "file": "scan.jpg", "caption": "Scan"}],
-        },
+        Item.from_dict(
+            {
+                "id": "photo-b",
+                "type": "photo",
+                "title": "B",
+                "date": "1975",
+                "date_precision": "approx",
+                "status": "catalogued",
+                "assets": [{"kind": "photo", "file": "scan.jpg", "caption": "Scan"}],
+            }
+        )
     )
     archive.save_file("photo-b", "scan.jpg", blob)
     out = tmp_path / "out"
@@ -262,17 +291,20 @@ def test_publish_writes_an_avatar_for_every_person_even_without_a_hue(tmp_path: 
     # unconditionally). The hue defaults deterministically from the id:
     # same person, same colour, every publish.
     archive = make_archive(tmp_path)
-    archive.save_identity("places", {"places": [{"id": "pl-town", "name": "Town"}]})
-    archive.save_identity("themes", {"themes": [{"id": "t-boat", "title": "The boats"}]})
+    archive.save_identity("places", validate_identity("places", {"places": [{"id": "pl-town", "name": "Town"}]}))
+    archive.save_identity("themes", validate_identity("themes", {"themes": [{"id": "t-boat", "title": "The boats"}]}))
     archive.save_identity(
         "people",
-        {
-            "people": [
-                {"id": "p-mum", "name": "Mum", "hue": "amber"},
-                {"id": "p-no-hue", "name": "No Hue"},
-            ],
-            "relationships": [],
-        },
+        validate_identity(
+            "people",
+            {
+                "people": [
+                    {"id": "p-mum", "name": "Mum", "hue": "amber"},
+                    {"id": "p-no-hue", "name": "No Hue"},
+                ],
+                "relationships": [],
+            },
+        ),
     )
     out = tmp_path / "out"
     Projection(archive, out).build()
@@ -289,15 +321,17 @@ def test_publish_writes_an_avatar_for_every_person_even_without_a_hue(tmp_path: 
 def test_publish_is_deterministic(tmp_path: Path) -> None:
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "story-x",
-            "type": "story",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "assets": [],
-        },
+        Item.from_dict(
+            {
+                "id": "story-x",
+                "type": "story",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "assets": [],
+            }
+        ),
         content={"story": "hi"},
     )
     out1, out2 = tmp_path / "out1", tmp_path / "out2"
@@ -319,27 +353,31 @@ def test_archive_without_identity_table_fails_fast(tmp_path: Path) -> None:
 
 def _catalogued_story_linking(archive: Archive, target_id: str, target_status: str) -> None:
     archive.save_item(
-        {
-            "id": "story-a",
-            "type": "story",
-            "title": "A",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "items": [{"id": target_id, "status": "confirmed"}],
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-a",
+                "type": "story",
+                "title": "A",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "items": [{"id": target_id, "status": "confirmed"}],
+                "assets": [],
+            }
+        )
     )
     archive.save_item(
-        {
-            "id": target_id,
-            "type": "object",
-            "title": "Target",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": target_status,
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": target_id,
+                "type": "object",
+                "title": "Target",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": target_status,
+                "assets": [],
+            }
+        )
     )
 
 
@@ -349,15 +387,17 @@ def test_publish_fails_on_missing_content_file(tmp_path: Path) -> None:
     story/transcription (a partial Drive sync is the realistic trigger, PRD §7)."""
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "story-x",
-            "type": "story",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "assets": [{"kind": "story", "file": "story.txt", "caption": "The story, verbatim"}],
-        }
+        Item.from_dict(
+            {
+                "id": "story-x",
+                "type": "story",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "assets": [{"kind": "story", "file": "story.txt", "caption": "The story, verbatim"}],
+            }
+        )
     )
     assert not (tmp_path / "archive" / "assets" / "story-x" / "story.txt").exists()
     with pytest.raises(DeriveError, match="story.txt"):
@@ -385,8 +425,8 @@ def test_publish_merges_proposed_records_with_status(tmp_path: Path) -> None:
     a derive that dropped proposed/ entirely would leave a fresh publish
     dangling those refs."""
     archive = sample_identity(tmp_path)
-    archive.propose_person({"id": "p-nova", "name": "Nova", "relation": "added from a story"})
-    archive.propose_place({"id": "pl-new", "name": "New place", "note": "Added from a story."})
+    archive.propose_person(Person.from_dict({"id": "p-nova", "name": "Nova", "relation": "added from a story"}))
+    archive.propose_place(Place.from_dict({"id": "pl-new", "name": "New place", "note": "Added from a story."}))
     out = projection_json(archive)
     people = json.loads(out["people.json"])["people"]
     assert any(p["id"] == "p-nova" and p.get("status") == "proposed" for p in people)
@@ -398,7 +438,7 @@ def test_publish_dedupes_proposed_against_the_table(tmp_path: Path) -> None:
     """A proposed record whose id is already confirmed is a promoted one —
     the table wins, the stale proposed file is skipped."""
     archive = sample_identity(tmp_path)  # p-mum in the table
-    archive.propose_person({"id": "p-mum", "name": "Mum", "hue": "amber"})
+    archive.propose_person(Person.from_dict({"id": "p-mum", "name": "Mum", "hue": "amber"}))
     people = json.loads(projection_json(archive)["people.json"])["people"]
     assert sum(1 for p in people if p["id"] == "p-mum") == 1
     assert people[0].get("status") is None  # the table copy stays confirmed
@@ -408,7 +448,10 @@ def test_publish_strips_supersedes_from_identity_tables(tmp_path: Path) -> None:
     """The supersession chain is archive-internal — never projection
     content: people.json must not ship 'supersedes'."""
     archive = sample_identity(tmp_path)
-    archive.save_identity("people", {"people": [{"id": "p-mum", "name": "Mum", "hue": "amber"}], "relationships": []})
+    archive.save_identity(
+        "people",
+        validate_identity("people", {"people": [{"id": "p-mum", "name": "Mum", "hue": "amber"}], "relationships": []}),
+    )
     people = json.loads(projection_json(archive)["people.json"])
     assert "supersedes" not in people
 
@@ -419,7 +462,9 @@ def test_publish_fails_on_theme_record_referencing_missing_item(tmp_path: Path) 
     archive = sample_identity(tmp_path)
     archive.save_identity(
         "themes",
-        {"themes": [{"id": "t-x", "title": "X", "items": [{"id": "letter-ghost", "note": "gone"}]}]},
+        validate_identity(
+            "themes", {"themes": [{"id": "t-x", "title": "X", "items": [{"id": "letter-ghost", "note": "gone"}]}]}
+        ),
     )
     with pytest.raises(DeriveError, match="letter-ghost"):
         _ = projection_json(archive)
@@ -431,17 +476,22 @@ def test_publish_fails_on_theme_referencing_draft_item(tmp_path: Path) -> None:
     refs and comment_on."""
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "object-x",
-            "type": "object",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "draft",
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "object-x",
+                "type": "object",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "draft",
+                "assets": [],
+            }
+        )
     )
-    archive.save_identity("themes", {"themes": [{"id": "t-full", "title": "Full", "items": [{"id": "object-x"}]}]})
+    archive.save_identity(
+        "themes",
+        validate_identity("themes", {"themes": [{"id": "t-full", "title": "Full", "items": [{"id": "object-x"}]}]}),
+    )
     with pytest.raises(DeriveError, match="object-x"):
         _ = projection_json(archive)
 
@@ -449,24 +499,29 @@ def test_publish_fails_on_theme_referencing_draft_item(tmp_path: Path) -> None:
 def test_publish_accepts_empty_and_resolving_theme_items(tmp_path: Path) -> None:
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "object-ok",
-            "type": "object",
-            "title": "OK",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "object-ok",
+                "type": "object",
+                "title": "OK",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "assets": [],
+            }
+        )
     )
     archive.save_identity(
         "themes",
-        {
-            "themes": [
-                {"id": "t-full", "title": "Full", "items": [{"id": "object-ok", "note": "fine"}]},
-                {"id": "t-empty", "title": "Empty", "items": []},
-            ]
-        },
+        validate_identity(
+            "themes",
+            {
+                "themes": [
+                    {"id": "t-full", "title": "Full", "items": [{"id": "object-ok", "note": "fine"}]},
+                    {"id": "t-empty", "title": "Empty", "items": []},
+                ]
+            },
+        ),
     )
     projection_json(archive)  # no raise
 
@@ -476,8 +531,10 @@ def test_publish_dedupes_proposed_places_by_name(tmp_path: Path) -> None:
     record whose NAME already exists in the table (a story mention minted a
     fresh id) is skipped."""
     archive = sample_identity(tmp_path)
-    archive.save_identity("places", {"places": [{"id": "pl-x", "name": "The dock", "note": "curated"}]})
-    archive.propose_place({"id": "pl-x-2", "name": "The dock", "note": "Added from a story."})
+    archive.save_identity(
+        "places", validate_identity("places", {"places": [{"id": "pl-x", "name": "The dock", "note": "curated"}]})
+    )
+    archive.propose_place(Place.from_dict({"id": "pl-x-2", "name": "The dock", "note": "Added from a story."}))
     places = json.loads(projection_json(archive)["places.json"])["places"]
     assert [p["id"] for p in places] == ["pl-x"]  # the proposed duplicate is not published
 
@@ -487,27 +544,31 @@ def test_publish_fails_on_catalogued_story_commenting_on_draft(tmp_path: Path) -
     draft (or missing) ships with an invisible target."""
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "object-x",
-            "type": "object",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "draft",
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "object-x",
+                "type": "object",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "draft",
+                "assets": [],
+            }
+        )
     )
     archive.save_item(
-        {
-            "id": "story-c",
-            "type": "story",
-            "title": "C",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "comment_on": "object-x",
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-c",
+                "type": "story",
+                "title": "C",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "comment_on": "object-x",
+                "assets": [],
+            }
+        )
     )
     with pytest.raises(DeriveError, match="object-x"):
         _ = projection_json(archive)
@@ -519,16 +580,18 @@ def test_publish_fails_on_extraction_match_that_does_not_resolve(tmp_path: Path)
     cannot see is dangling — the p-dad/p-mum class."""
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "story-x",
-            "type": "story",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "chat": {"extractions": [{"kind": "person", "name": "Dad", "match": "p-dad"}]},
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-x",
+                "type": "story",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "chat": {"extractions": [{"kind": "person", "name": "Dad", "match": "p-dad"}]},
+                "assets": [],
+            }
+        )
     )
     with pytest.raises(DeriveError, match="p-dad"):
         _ = projection_json(archive)
@@ -540,27 +603,31 @@ def test_publish_fails_on_extraction_match_to_draft_item(tmp_path: Path) -> None
     owner."""
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "object-x",
-            "type": "object",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "draft",
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "object-x",
+                "type": "object",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "draft",
+                "assets": [],
+            }
+        )
     )
     archive.save_item(
-        {
-            "id": "story-x",
-            "type": "story",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "chat": {"extractions": [{"kind": "item", "name": "X", "match": "object-x"}]},
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-x",
+                "type": "story",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "chat": {"extractions": [{"kind": "item", "name": "X", "match": "object-x"}]},
+                "assets": [],
+            }
+        )
     )
     with pytest.raises(DeriveError, match="object-x"):
         _ = projection_json(archive)
@@ -572,21 +639,23 @@ def test_publish_ignores_excluded_extraction_matches(tmp_path: Path) -> None:
     on it must not fail publish."""
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "story-x",
-            "type": "story",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "chat": {
-                "extractions": [
-                    {"kind": "person", "name": "Dad", "match": "p-dad", "bucket": "proposed", "on": False},
-                    {"kind": "person", "name": "Ghost", "match": "p-ghost", "bucket": "proposed", "on": True},
-                ]
-            },
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-x",
+                "type": "story",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "chat": {
+                    "extractions": [
+                        {"kind": "person", "name": "Dad", "match": "p-dad", "bucket": "proposed", "on": False},
+                        {"kind": "person", "name": "Ghost", "match": "p-ghost", "bucket": "proposed", "on": True},
+                    ]
+                },
+                "assets": [],
+            }
+        )
     )
     with pytest.raises(DeriveError, match="p-ghost"):  # the included one still resolves
         _ = projection_json(archive)
@@ -598,21 +667,23 @@ def test_publish_passes_when_extraction_matches_resolve_or_are_null(tmp_path: Pa
     see is a dangling link."""
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "story-x",
-            "type": "story",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "chat": {
-                "extractions": [
-                    {"kind": "person", "name": "Mum", "match": "p-mum"},
-                    {"kind": "person", "name": "Grandma", "match": None},
-                ]
-            },
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-x",
+                "type": "story",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "chat": {
+                    "extractions": [
+                        {"kind": "person", "name": "Mum", "match": "p-mum"},
+                        {"kind": "person", "name": "Grandma", "match": None},
+                    ]
+                },
+                "assets": [],
+            }
+        )
     )
     projection_json(archive)  # no raise
 
@@ -620,27 +691,31 @@ def test_publish_passes_when_extraction_matches_resolve_or_are_null(tmp_path: Pa
 def test_publish_passes_when_comment_on_target_is_catalogued(tmp_path: Path) -> None:
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "object-x",
-            "type": "object",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "object-x",
+                "type": "object",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "assets": [],
+            }
+        )
     )
     archive.save_item(
-        {
-            "id": "story-c",
-            "type": "story",
-            "title": "C",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "comment_on": "object-x",
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-c",
+                "type": "story",
+                "title": "C",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "comment_on": "object-x",
+                "assets": [],
+            }
+        )
     )
     projection_json(archive)  # no raise
 
@@ -649,10 +724,13 @@ def test_publish_dedupes_proposed_people_by_name(tmp_path: Path) -> None:
     """The cast never fragments: a proposed person whose NAME already exists
     in the table (or in another proposal) is skipped."""
     archive = sample_identity(tmp_path)
-    archive.save_identity("people", {"people": [{"id": "p-mum", "name": "Mum", "hue": "amber"}], "relationships": []})
-    archive.propose_person({"id": "p-nora", "name": "Nora Smith", "relation": "added from a story"})
-    archive.propose_person({"id": "p-nora-2", "name": "Nora Smith", "relation": "added from a story"})
-    archive.propose_person({"id": "p-mum-2", "name": "Mum", "relation": "added from a story"})
+    archive.save_identity(
+        "people",
+        validate_identity("people", {"people": [{"id": "p-mum", "name": "Mum", "hue": "amber"}], "relationships": []}),
+    )
+    archive.propose_person(Person.from_dict({"id": "p-nora", "name": "Nora Smith", "relation": "added from a story"}))
+    archive.propose_person(Person.from_dict({"id": "p-nora-2", "name": "Nora Smith", "relation": "added from a story"}))
+    archive.propose_person(Person.from_dict({"id": "p-mum-2", "name": "Mum", "relation": "added from a story"}))
     people = json.loads(projection_json(archive)["people.json"])["people"]
     nora = [p for p in people if "Nora" in p["name"]]
     assert len(nora) == 1  # proposed-vs-proposed deduped
@@ -665,10 +743,14 @@ def test_publish_keeps_same_named_people_with_distinct_dobs(tmp_path: Path) -> N
     Walters, two Claras, two Theos) — never collapsed into one."""
     archive = sample_identity(tmp_path)
     archive.propose_person(
-        {"id": "p-richard-sr", "name": "Walter Kendall", "dob": {"date": "1830-09-02", "precision": "exact"}}
+        Person.from_dict(
+            {"id": "p-richard-sr", "name": "Walter Kendall", "dob": {"date": "1830-09-02", "precision": "exact"}}
+        )
     )
     archive.propose_person(
-        {"id": "p-richard-jr", "name": "Walter Kendall", "dob": {"date": "1895-08-27", "precision": "exact"}}
+        Person.from_dict(
+            {"id": "p-richard-jr", "name": "Walter Kendall", "dob": {"date": "1895-08-27", "precision": "exact"}}
+        )
     )
     people = json.loads(projection_json(archive)["people.json"])["people"]
     richards = [p for p in people if p["name"] == "Walter Kendall"]
@@ -683,15 +765,18 @@ def test_publish_table_resolves_relationships_regardless_of_status(tmp_path: Pat
     archive = sample_identity(tmp_path)
     archive.save_identity(
         "people",
-        {
-            "people": [
-                {"id": "p-richard-sr", "name": "Walter Kendall", "status": "proposed"},
-                {"id": "p-eleanor", "name": "Clara Kendall", "status": "proposed"},
-            ],
-            "relationships": [
-                {"a": "p-richard-sr", "b": "p-eleanor", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"}
-            ],
-        },
+        validate_identity(
+            "people",
+            {
+                "people": [
+                    {"id": "p-richard-sr", "name": "Walter Kendall", "status": "proposed"},
+                    {"id": "p-eleanor", "name": "Clara Kendall", "status": "proposed"},
+                ],
+                "relationships": [
+                    {"a": "p-richard-sr", "b": "p-eleanor", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"}
+                ],
+            },
+        ),
     )
     people = json.loads(projection_json(archive)["people.json"])
     statuses = {p["id"]: p.get("status") for p in people["people"]}
@@ -705,8 +790,8 @@ def test_publish_dedupes_proposed_places_against_each_other(tmp_path: Path) -> N
     """Two story mentions minting two proposed records with the same name
     publish one."""
     archive = sample_identity(tmp_path)
-    archive.propose_place({"id": "pl-new-1", "name": "The dock", "note": "Added from a story."})
-    archive.propose_place({"id": "pl-new-2", "name": "The dock", "note": "Added from a story."})
+    archive.propose_place(Place.from_dict({"id": "pl-new-1", "name": "The dock", "note": "Added from a story."}))
+    archive.propose_place(Place.from_dict({"id": "pl-new-2", "name": "The dock", "note": "Added from a story."}))
     places = json.loads(projection_json(archive)["places.json"])["places"]
     docks = [p for p in places if "dock" in p["name"].lower()]
     assert len(docks) == 1
@@ -718,16 +803,18 @@ def test_publish_fails_on_confirmed_ref_to_missing_person(tmp_path: Path) -> Non
     dangling."""
     archive = sample_identity(tmp_path)
     archive.save_item(
-        {
-            "id": "story-b",
-            "type": "story",
-            "title": "B",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "people": [{"id": "p-ghost", "status": "confirmed"}],
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-b",
+                "type": "story",
+                "title": "B",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "people": [{"id": "p-ghost", "status": "confirmed"}],
+                "assets": [],
+            }
+        )
     )
     with pytest.raises(DeriveError, match="p-ghost"):
         _ = projection_json(archive)
@@ -739,39 +826,46 @@ def test_publish_emits_orgs_and_validates_org_refs(tmp_path: Path) -> None:
     archive = sample_identity(tmp_path)
     archive.save_identity(
         "orgs",
-        {"orgs": [{"id": "org-ministry", "name": "Ministry of Supply", "address": "Ivybridge House, Adam Street"}]},
+        validate_identity(
+            "orgs",
+            {"orgs": [{"id": "org-ministry", "name": "Ministry of Supply", "address": "Ivybridge House, Adam Street"}]},
+        ),
     )
     archive.save_item(
-        {
-            "id": "letter-x",
-            "type": "letter",
-            "title": "X",
-            "date": "1949-02-04",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "people": [],
-            "places": [],
-            "themes": [],
-            "orgs": [{"id": "org-ministry", "status": "confirmed"}],
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "letter-x",
+                "type": "letter",
+                "title": "X",
+                "date": "1949-02-04",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "people": [],
+                "places": [],
+                "themes": [],
+                "orgs": [{"id": "org-ministry", "status": "confirmed"}],
+                "assets": [],
+            }
+        )
     )
     orgs = json.loads(projection_json(archive)["orgs.json"])["orgs"]
     assert [o["id"] for o in orgs] == ["org-ministry"]
     archive.save_item(
-        {
-            "id": "letter-y",
-            "type": "letter",
-            "title": "Y",
-            "date": "1949-02-05",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "people": [],
-            "places": [],
-            "themes": [],
-            "orgs": [{"id": "org-ghost", "status": "confirmed"}],
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "letter-y",
+                "type": "letter",
+                "title": "Y",
+                "date": "1949-02-05",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "people": [],
+                "places": [],
+                "themes": [],
+                "orgs": [{"id": "org-ghost", "status": "confirmed"}],
+                "assets": [],
+            }
+        )
     )
     with pytest.raises(DeriveError, match="org-ghost"):
         _ = projection_json(archive)
@@ -809,8 +903,6 @@ def test_committed_sidecars_all_validate() -> None:
     """Every committed sidecar satisfies the Item record — the write seam
     refuses anything that doesn't, so the archive and the model can never
     drift."""
-    from tools.records import Item  # local import — records is not this module's subject
-
     scanned = 0
     for folder in sorted((ARCHIVE_DIR / "assets").iterdir()):
         item_path = _latest_sidecar(folder)

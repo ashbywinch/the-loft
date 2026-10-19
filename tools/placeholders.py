@@ -11,7 +11,8 @@ artifact. When a real scan lands in the archive, publish copies it instead.
 from __future__ import annotations
 
 import html
-from typing import Any
+
+from tools.records import Item
 
 FILLS = {
     "amber": "#e8c39a",
@@ -103,18 +104,18 @@ def _letter_page_no(filename: str) -> int:
         return 1
 
 
-def asset_svg(item: dict[str, Any], filename: str) -> str:
+def asset_svg(item: Item, filename: str) -> str:
     """The stand-in for one missing asset of *item* — the shape follows the
     item's type, the label comes from the item's own data: a ``demo`` field
     marks stand-in text that is not attested (fictional/demo content), and
     everything else falls back to the item's real title. Never the item's
     id — the engine is family-agnostic."""
-    label = html.escape(str(item.get("demo") or item["title"]), quote=True)
-    if item["type"] == "letter":
+    label = html.escape(str(item.raw.get("demo") or item.title), quote=True)
+    if item.type == "letter":
         page_no = _letter_page_no(filename)
-        return svg_paper(page_no, len(item["assets"]))
-    if item["type"] == "object":
-        return svg_object(label, item["date"])
+        return svg_paper(page_no, len(item.assets))
+    if item.type == "object":
+        return svg_object(label, item.date)
     return svg_photo(label, "sky")
 
 

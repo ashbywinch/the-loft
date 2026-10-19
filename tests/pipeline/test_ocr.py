@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from pipeline.ocr import orient_pages
+from pipeline.oriented_page import OrientedPage
 
 
 def _text_card(path: Path) -> None:
@@ -39,11 +40,12 @@ def test_orient_pages_records_the_audit_trail(tmp_path: Path) -> None:
     results = orient_pages([card], tmp_path / "oriented")
     assert len(results) == 1
     page = results[0]
-    assert page["name"] == card.name
-    assert page["degrees"] == 0  # the card is upright; the arbiter must keep it
-    assert page["strong"] > 0
-    assert set(page["scores"]) == {"0", "90", "180", "270"}
-    assert page["scores"]["0"] == page["strong"]
+    assert page.name == card.name
+    assert page.degrees == 0  # the card is upright; the arbiter must keep it
+    assert page.strong > 0
+    assert set(page.scores) == {"0", "90", "180", "270"}
+    assert page.scores["0"] == page.strong
+    assert OrientedPage.from_dict(page.to_dict()) == page  # the wire record round-trips
     assert (tmp_path / "oriented" / card.name).exists()
 
 
@@ -57,5 +59,5 @@ def test_orient_pages_rotated_input_is_fixed(tmp_path: Path) -> None:
 
     results = orient_pages([rotated], tmp_path / "oriented")
     page = results[0]
-    assert page["degrees"] == 180  # the arbiter must turn it back
-    assert page["scores"]["180"] > page["scores"]["0"]
+    assert page.degrees == 180  # the arbiter must turn it back
+    assert page.scores["180"] > page.scores["0"]

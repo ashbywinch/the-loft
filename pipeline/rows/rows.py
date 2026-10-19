@@ -31,8 +31,11 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
 
+from document.page_size import PageSize
+from document.point import Point
 from document.rectangle import Rectangle
 from document.row import Row
+from document.row_adjustments import RowAdjustments
 from document.word import Word
 from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop
 from pipeline.rows.render import Colour, tint_row
@@ -59,12 +62,12 @@ class Rows:
     a corrected row and a proposed row are the same Row.
     """
 
-    def __init__(self, words: list[Word], page_size: tuple[int, int]) -> None:
+    def __init__(self, words: list[Word], page_size: PageSize) -> None:
         self.words = list(words)
         self.page_size = page_size
 
     @classmethod
-    def from_words(cls, words: list[Word], page_size: tuple[int, int]) -> Rows:
+    def from_words(cls, words: list[Word], page_size: PageSize) -> Rows:
         """The page's grouping before any line is drawn: `words` (the
         detected words, each carrying its reading line) and the page's pixel
         dimensions. The words' own reading lines are the draft rows."""
@@ -72,9 +75,9 @@ class Rows:
 
     def rows(self) -> list[Row]:
         """The draft rows: the words' own reading lines, nothing drawn."""
-        return self.adjust([])
+        return self.adjust(RowAdjustments([]))
 
-    def adjust(self, row_adjustments: list[list[tuple[float, float]]]) -> list[Row]:
+    def adjust(self, adjustments: RowAdjustments) -> list[Row]:
         """The reviewer's drawn lines applied to this page: the rows are
         re-derived from them. A drawn line claims each word whose centre its
         stroke covers (enlarged by the touch) and whose drawn height is
@@ -86,45 +89,23 @@ class Rows:
         so the reviewer never draws over a row that is already right. Rows
         come out numbered in reading order (topmost band first), all one
         type — a corrected row and a proposed row are the same Row."""
-        return _Claims(self.words, row_adjustments, self.page_size).rows()
+        return _Claims(self.words, adjustments, self.page_size).rows()
 
     @staticmethod
-    def to_wire(rows: Sequence[Row]) -> dict[str, Any]:
-        """The rows as the wire contract (`document.schemas.Rows`: id, kind,
-        number, word_boxes, band, text, stage — plain x0..y1 records). This
-        is the shape the review's correction persists and the app reads; the
-        schema's strict loader is the check."""
-        return {
-            "rows": [
-                {
-                    "id": row.id,
-                    "kind": row.kind,
-                    "number": row.number,
-                    "word_boxes": [_box_wire(box) for box in row.word_boxes],
-                    "band": _box_wire(row.band),
-                    "text": row.text,
-                    "stage": row.stage,
-                }
-                for row in rows
-            ]
-        }
+    def to_dict(rows: Sequence[Row]) -> dict[str, Any]:
+        """The rows as the rows.json artefact — each row's own record (`Row.to_dict`:
+        id, kind, number, word_boxes, band, text, stage). This is the shape the
+        review's correction persists and the app reads."""
+        return {"rows": [row.to_dict() for row in rows]}
 
     @staticmethod
-    def from_wire(data: Mapping[str, Any]) -> list[Row]:
-        """The wire contract's rows as Row records (the inverse of
-        ``to_wire``) — the app's persisted correction read back."""
-        return [
-            Row(
-                id=str(record["id"]),
-                kind=str(record["kind"]),
-                number=int(record["number"]),
-                word_boxes=[_word_from_wire(box) for box in record["word_boxes"]],
-                band=_rect_from_wire(record["band"]),
-                text=str(record.get("text", "")),
-                stage=str(record.get("stage", "")),
-            )
-            for record in data["rows"]
-        ]
+    def from_dict(data: Mapping[str, Any]) -> list[Row]:
+        """The artefact's rows as Row records (the inverse of ``to_dict``) — the
+        app's persisted correction read back, each record read by `Row.from_dict`."""
+        records = data.get("rows")
+        if not isinstance(records, list):
+            raise ValueError("not a Rows (no top-level 'rows' list)")
+        return [Row.from_dict(record) for record in records]
 
 
 class _Claims:
@@ -137,17 +118,16 @@ class _Claims:
     def __init__(
         self,
         words: list[Word],
-        row_adjustments: list[list[tuple[float, float]]],
-        page_size: tuple[int, int],
+        adjustments: RowAdjustments,
+        page_size: PageSize,
     ) -> None:
-        width, height = page_size
         self.words = words
         # a page the reader found no writing on has no rows — there is no
         # writing height to measure, and every caller downstream (the reading,
         # the review) is about rows that exist
         self.unit = self._writing_height() if words else 0.0
         self.spacing = SPACING_RATIO * self.unit
-        self.spans = _line_spans([[(x * width, y * height) for x, y in line] for line in row_adjustments])
+        self.spans = _line_spans(adjustments, page_size)
 
     def rows(self) -> list[Row]:
         """The rows the drawn lines and the words' own lines make."""
@@ -297,27 +277,15 @@ class _Claims:
         return abs(other.cy - word.cy) <= self.unit / 4
 
 
-def _box_wire(box: Word | Rectangle) -> dict[str, float]:
-    """One box as the wire record (the four fields, and only those)."""
-    return {"x0": box.x0, "y0": box.y0, "x1": box.x1, "y1": box.y1}
-
-
-def _rect_from_wire(record: Mapping[str, Any]) -> Rectangle:
-    return Rectangle(float(record["x0"]), float(record["y0"]), float(record["x1"]), float(record["y1"]))
-
-
-def _word_from_wire(record: Mapping[str, Any]) -> Word:
-    """A wire word box as a Word — the wire carries the box only."""
-    return Word(float(record["x0"]), float(record["y0"]), float(record["x1"]), float(record["y1"]))
-
-
-def _line_spans(lines: list[list[tuple[float, float]]]) -> list[tuple[float, float, float, float, float]]:
-    """Each user line's span and drawn height: its x-extent, y-extent and
-    mean y — the measures the assignment uses."""
+def _line_spans(adjustments: RowAdjustments, page_size: PageSize) -> list[tuple[float, float, float, float, float]]:
+    """Each drawn line's span and drawn height in page pixels: its x-extent,
+    y-extent and mean y — the measures the assignment uses. The lines are
+    normalised (0..1) where the reviewer drew them, so the page's size
+    measures them."""
     spans: list[tuple[float, float, float, float, float]] = []
-    for line in lines:
-        xs = [point[0] for point in line]
-        ys = [point[1] for point in line]
+    for line in adjustments.lines:
+        xs = [point[0] * page_size.width for point in line]
+        ys = [point[1] * page_size.height for point in line]
         spans.append((min(xs), max(xs), min(ys), max(ys), sum(ys) / len(ys)))
     return spans
 
@@ -332,8 +300,8 @@ class MapView:
     window: Rectangle
     scale: float = 1.0
     word_numbers: dict[tuple[float, float, float, float], int] | None = None
-    row_adjustments: list[list[tuple[float, float]]] | None = None
-    page_size: tuple[int, int] | None = None
+    row_adjustments: RowAdjustments | None = None
+    page_size: PageSize | None = None
 
 
 @dataclass(frozen=True)
@@ -407,12 +375,12 @@ def render_map(page: Image.Image, rows: list[Row], path: Path, view: MapView) ->
                 outline=(20, 20, 20),
                 width=3,
             )
-            halo_text(label_layer, (left + 2, top + 2), str(number), size=40)
+            halo_text(label_layer, Point(x=left + 2, y=top + 2), str(number), size=40)
     if row_adjustments and page_size:
         line_colour = (235, 185, 0)
-        for line in row_adjustments:
+        for line in row_adjustments.lines:
             points = [
-                (int((px * page_size[0] - window.x0) * scale), int((py * page_size[1] - window.y0) * scale))
+                (int((px * page_size.width - window.x0) * scale), int((py * page_size.height - window.y0) * scale))
                 for px, py in line
             ]
             label_layer.line(points, fill=line_colour, width=4)

@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import pytest
 
+from tools.asset import Asset
 from tools.records import Item, Org, OrgsTable, PeopleTable, Person, Place, PlacesTable, Relationship, validate_identity
+from tools.ref import Ref
 
 
 def test_place_rejects_escaping_record_id() -> None:
@@ -245,8 +247,7 @@ def test_org_proposed_status_round_trip() -> None:
 
 def test_validate_identity_supports_orgs() -> None:
     out = validate_identity("orgs", {"orgs": [{"id": "org-x", "name": "X"}], "supersedes": "orgs.json"})
-    assert "supersedes" not in out
-    assert out == {"orgs": [{"id": "org-x", "name": "X"}]}
+    assert out.to_dict() == {"orgs": [{"id": "org-x", "name": "X"}]}
 
 
 def test_item_round_trip_is_verbatim() -> None:
@@ -276,8 +277,8 @@ def test_item_round_trip_is_verbatim() -> None:
     item = Item.from_dict(raw)
     assert item.to_dict() == raw
     assert item.id == "letter-x" and item.type == "letter" and item.status == "catalogued"
-    assert item.people_refs == [{"id": "p-owen", "status": "confirmed"}]
-    assert item.assets == [{"kind": "page", "file": "page-1.jpg", "caption": ""}]
+    assert item.people_refs == (Ref("p-owen", "confirmed"),)
+    assert item.assets == (Asset("page", "page-1.jpg", ""),)
 
 
 def test_item_requires_core_fields() -> None:

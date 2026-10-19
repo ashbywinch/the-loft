@@ -9,15 +9,23 @@ from __future__ import annotations
 
 import pytest
 
+from document.page_size import PageSize
 from pipeline.grouping import first_page_number, paper_aspect, same_paper, score_boundaries
+from pipeline.page_flag import PageFlag
 
 
 def _kinds(*entries: tuple[str, str]) -> dict[str, str]:
     return dict(entries)
 
 
-def _flag(page: str, starts: bool = False, ends: bool = False, greeting: str | None = None) -> dict[str, object]:
-    return {"page": page, "starts_document": starts, "ends_document": ends, "greeting": greeting}
+def _dims(*entries: tuple[str, int, int]) -> dict[str, PageSize]:
+    return {page: PageSize(width, height) for page, width, height in entries}
+
+
+def _flag(page: str, starts: bool = False, ends: bool = False, greeting: str | None = None) -> PageFlag:
+    """One page's model boundary report — its corrected text is the separate
+    ``texts`` evidence, so the test flags carry none."""
+    return PageFlag(page=page, text="", starts_document=starts, ends_document=ends, greeting=greeting)
 
 
 def test_duplex_pairs_a_photo_with_its_text_side() -> None:
@@ -28,12 +36,12 @@ def test_duplex_pairs_a_photo_with_its_text_side() -> None:
     docs = score_boundaries(
         pages,
         _kinds(("p1.jpg", "photo"), ("p2.jpg", "text")),
-        {"p1.jpg": (3500, 2333), "p2.jpg": (3500, 2215)},  # aspects 0.667 vs 0.633
+        _dims(("p1.jpg", 3500, 2333), ("p2.jpg", 3500, 2215)),  # aspects 0.667 vs 0.633
         {"p1.jpg": None, "p2.jpg": "POST CARD"},
         {},
     )
     assert len(docs) == 1
-    assert docs[0]["pages"] == ["p1.jpg", "p2.jpg"]
+    assert docs[0].pages == ["p1.jpg", "p2.jpg"]
 
 
 def test_duplex_reorders_a_text_side_scanned_first() -> None:
@@ -44,12 +52,12 @@ def test_duplex_reorders_a_text_side_scanned_first() -> None:
     docs = score_boundaries(
         pages,
         _kinds(("back.jpg", "text"), ("front.jpg", "photo")),
-        {"back.jpg": (3500, 2215), "front.jpg": (2333, 3500)},
+        _dims(("back.jpg", 3500, 2215), ("front.jpg", 2333, 3500)),
         {"back.jpg": "POST CARD", "front.jpg": None},
         {},
     )
     assert len(docs) == 1
-    assert docs[0]["pages"] == ["front.jpg", "back.jpg"]
+    assert docs[0].pages == ["front.jpg", "back.jpg"]
 
 
 def test_duplex_never_fires_across_different_papers() -> None:
@@ -59,11 +67,11 @@ def test_duplex_never_fires_across_different_papers() -> None:
     docs = score_boundaries(
         pages,
         _kinds(("photo.jpg", "photo"), ("letter.jpg", "text")),
-        {"photo.jpg": (2000, 3000), "letter.jpg": (3500, 1500)},  # 0.667 vs 0.429
+        _dims(("photo.jpg", 2000, 3000), ("letter.jpg", 3500, 1500)),  # 0.667 vs 0.429
         {"photo.jpg": None, "letter.jpg": "Dear X"},
         {},
     )
-    assert [d["pages"] for d in docs] == [["photo.jpg"], ["letter.jpg"]]
+    assert [d.pages for d in docs] == [["photo.jpg"], ["letter.jpg"]]
 
 
 def test_duplex_greedy_consumes_disjoint_pairs() -> None:
@@ -74,11 +82,11 @@ def test_duplex_greedy_consumes_disjoint_pairs() -> None:
     docs = score_boundaries(
         pages,
         _kinds(("b1.jpg", "text"), ("f1.jpg", "photo"), ("b2.jpg", "text"), ("f2.jpg", "photo")),
-        {p: (3500, 2215) for p in pages},
+        {p: PageSize(3500, 2215) for p in pages},
         {p: f"text {p}" if "b" in p else None for p in pages},
         {},
     )
-    assert [d["pages"] for d in docs] == [["f1.jpg", "b1.jpg"], ["f2.jpg", "b2.jpg"]]
+    assert [d.pages for d in docs] == [["f1.jpg", "b1.jpg"], ["f2.jpg", "b2.jpg"]]
 
 
 def test_text_pages_of_different_papers_split() -> None:
@@ -90,7 +98,7 @@ def test_text_pages_of_different_papers_split() -> None:
     docs = score_boundaries(
         pages,
         _kinds(("a4.jpg", "text"), ("postcard.jpg", "text")),
-        {"a4.jpg": (2480, 3508), "postcard.jpg": (3500, 1500)},  # 0.707 vs 0.429
+        _dims(("a4.jpg", 2480, 3508), ("postcard.jpg", 3500, 1500)),  # 0.707 vs 0.429
         {"a4.jpg": "page one", "postcard.jpg": "POST CARD"},
         {},
     )
@@ -104,7 +112,7 @@ def test_page_number_two_continues_despite_a_model_start_flag() -> None:
     docs = score_boundaries(
         pages,
         _kinds(("p1.jpg", "text"), ("p2.jpg", "text")),
-        {p: (2480, 3508) for p in pages},
+        {p: PageSize(2480, 3508) for p in pages},
         {"p1.jpg": "Dear X", "p2.jpg": "2"},
         {"p2.jpg": _flag("p2.jpg", starts=True)},  # the model misread it
     )
@@ -118,7 +126,7 @@ def test_page_number_one_starts_a_new_document() -> None:
     docs = score_boundaries(
         pages,
         _kinds(("p1.jpg", "text"), ("p2.jpg", "text")),
-        {p: (2480, 3508) for p in pages},
+        {p: PageSize(2480, 3508) for p in pages},
         {"p1.jpg": "…mid-letter", "p2.jpg": "1"},
         {},
     )
@@ -132,12 +140,12 @@ def test_model_flags_boundary_without_other_evidence() -> None:
     docs = score_boundaries(
         pages,
         _kinds(("a.jpg", "text"), ("b.jpg", "text")),
-        {p: (2480, 3508) for p in pages},
+        {p: PageSize(2480, 3508) for p in pages},
         {"a.jpg": "page one", "b.jpg": "Dear Maman"},
         {"b.jpg": _flag("b.jpg", starts=True, greeting="Chère Maman.")},
     )
     assert len(docs) == 2
-    assert docs[1]["greeting"] == "Chère Maman."
+    assert docs[1].greeting == "Chère Maman."
 
 
 def test_model_flags_join_without_boundary_cues() -> None:
@@ -147,7 +155,7 @@ def test_model_flags_join_without_boundary_cues() -> None:
     docs = score_boundaries(
         pages,
         _kinds(("a.jpg", "text"), ("b.jpg", "text")),
-        {p: (2480, 3508) for p in pages},
+        {p: PageSize(2480, 3508) for p in pages},
         {"a.jpg": "page one", "b.jpg": "more of the letter"},
         {},
     )
@@ -161,11 +169,11 @@ def test_standalone_photo_is_its_own_document() -> None:
     docs = score_boundaries(
         pages,
         _kinds(("f1.jpg", "photo"), ("f2.jpg", "photo")),
-        {p: (3500, 2333) for p in pages},
+        {p: PageSize(3500, 2333) for p in pages},
         {p: None for p in pages},
         {},
     )
-    assert [d["pages"] for d in docs] == [["f1.jpg"], ["f2.jpg"]]
+    assert [d.pages for d in docs] == [["f1.jpg"], ["f2.jpg"]]
 
 
 def test_first_page_number_ignores_dates_and_greetings() -> None:
@@ -187,15 +195,15 @@ def test_greeting_and_signoff_carry_into_duplex_docs() -> None:
     docs = score_boundaries(
         pages,
         _kinds(("front.jpg", "photo"), ("back.jpg", "text")),
-        {p: (3500, 2215) for p in pages},
+        {p: PageSize(3500, 2215) for p in pages},
         {"front.jpg": None, "back.jpg": "POST CARD"},
         {"back.jpg": _flag("back.jpg", starts=True, greeting="Chère Maman.")},
     )
-    assert docs[0]["pages"] == ["front.jpg", "back.jpg"]
-    assert docs[0]["greeting"] == "Chère Maman."
+    assert docs[0].pages == ["front.jpg", "back.jpg"]
+    assert docs[0].greeting == "Chère Maman."
 
 
 def test_paper_aspect_is_rotation_invariant() -> None:
     assert paper_aspect(3500, 2215) == pytest.approx(paper_aspect(2215, 3500))
-    assert same_paper((3500, 2215), (2333, 3500))  # the postcard's two sides
-    assert not same_paper((2480, 3508), (3500, 1500))  # 0.707 vs 0.429
+    assert same_paper(PageSize(3500, 2215), PageSize(2333, 3500))  # the postcard's two sides
+    assert not same_paper(PageSize(2480, 3508), PageSize(3500, 1500))  # 0.707 vs 0.429

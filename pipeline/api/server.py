@@ -25,18 +25,43 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from document.schemas import DOCUMENT_DRAFT, validate_user_row_adjustments
+from document.document import DOCUMENT_DRAFT
+from document.row_adjustments import RowAdjustments
 from pipeline.api import auth
+from pipeline.api.assess_request import AssessRequest
+from pipeline.api.batch_drafts_answer import BatchDraftsAnswer
+from pipeline.api.confirmation_answer import ConfirmationAnswer
+from pipeline.api.confirmation_request import ConfirmationRequest
+from pipeline.api.delete_request import DeleteRequest
+from pipeline.api.device_poll_request import DevicePollRequest
+from pipeline.api.error_answer import ErrorAnswer
+from pipeline.api.health_answer import HealthAnswer
+from pipeline.api.narrator import Narrator
+from pipeline.api.page_processing_answer import PageProcessingAnswer
+from pipeline.api.received_request import ReceivedRequest
+from pipeline.api.review_decide_answer import ReviewDecideAnswer
+from pipeline.api.review_decide_request import ReviewDecideRequest
+from pipeline.api.review_item import ReviewItem
+from pipeline.api.review_message_request import ReviewMessageRequest
+from pipeline.api.review_stale_answer import ReviewStaleAnswer
+from pipeline.api.review_start_answer import ReviewStartAnswer
+from pipeline.api.review_start_request import ReviewStartRequest
+from pipeline.api.review_text_answer import ReviewTextAnswer
+from pipeline.api.review_text_request import ReviewTextRequest
+from pipeline.api.rotate_page_request import RotatePageRequest
+from pipeline.api.row_adjustments_answer import RowAdjustmentsAnswer
+from pipeline.api.save_answer import SaveAnswer
+from pipeline.api.save_request import SaveRequest
+from pipeline.api.session_user import SessionUser
 from pipeline.api.sync import (
     BATCH_ID,
-    QUARTERS_PER_TURN,
     Outbox,
     apply_row_adjustments,
     demote_stale_jobs,
@@ -47,16 +72,16 @@ from pipeline.api.sync import (
     rotate_page,
     safe_page_name,
     set_page_job,
-    validate_confirmation,
 )
 from pipeline.model.ai_client import AIClient
 from pipeline.registry import RegistryError, list_batches, load_batch
 from pipeline.rows.rows import Rows
 from tools import memory, review
 from tools.archive import Archive, ArchiveError
+from tools.decision_basis import DecisionBasis
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.memory import ElicitationError, Knowledge
-from tools.records import Person, ReviewContext, ReviewDecision, split_content
+from tools.records import Item, Person, Place, ReviewContext, ReviewDecision, split_content
 from tools.store import FileStore
 
 logger = logging.getLogger(__name__)
@@ -114,26 +139,20 @@ def build_app(
 
     app = FastAPI(title="The Loft", docs_url=None, redoc_url=None)
 
-    def session_user(request: Request) -> dict[str, Any] | None:
+    def session_user(request: Request) -> SessionUser | None:
         return auth.session_user_from_cookie(request.cookies.get(auth.COOKIE_NAME))
 
-    def narrator(request: Request) -> dict[str, Any] | None:
+    def narrator(request: Request) -> Narrator | None:
         """The signed-in narrator — the verified session's person. The
         capture API never trusts a client-claimed name."""
         session = session_user(request)
         if not session:
             return None
-        person_id = auth.person_for_email(archive, session.get("email"))
-        person = None
-        if person_id:
-            people = archive.get_identity("people") or {"people": []}
-            person = next((p for p in people["people"] if p["id"] == person_id), None)
-        return {
-            "email": session.get("email", ""),
-            "name": person["name"] if person else session.get("name", ""),
-            "person": person_id,
-            "who": person["name"] if person else session.get("name", ""),
-        }
+        person_id = auth.person_for_email(archive, session.email)
+        people = archive.get_identity("people") if person_id else None
+        person = next((p for p in people.people if p.id == person_id), None) if people else None
+        name = person.name if person else session.name
+        return Narrator(email=session.email, name=name, person=person_id, who=name)
 
     def knowledge() -> Knowledge:
         return Knowledge.from_projection(
@@ -158,17 +177,17 @@ def build_app(
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return {"ok": True, "ai": client is not None}
+        return HealthAnswer(ai=client is not None).to_dict()
 
     @app.get("/api/auth/login")
     def login() -> dict[str, Any]:
-        return auth.login_url()
+        return auth.login_url().to_dict()
 
     @app.get("/api/auth/me")
     def me(request: Request) -> dict[str, Any]:
         session = session_user(request)
         logger.info("auth: /me saw %s", "a session" if session else "no session")
-        return auth.me_payload(archive, session)
+        return auth.me_payload(archive, session).to_dict()
 
     @app.post("/api/auth/logout")
     def logout() -> JSONResponse:
@@ -182,27 +201,27 @@ def build_app(
         query."""
         if error:
             return RedirectResponse(auth.callback_error_url(f"google:{error}"))
-        id_info = auth.exchange_code(code, state) if code and state else None
-        if id_info is None:
+        user = auth.exchange_code(code, state) if code and state else None
+        if user is None:
             return RedirectResponse(auth.callback_error_url("failed"))
         response = RedirectResponse(f"{auth.public_url()}/")
-        _set_session_cookie(response, id_info)
+        _set_session_cookie(response, user)
         return response
 
     @app.get("/api/auth/device/start")
     def device_start() -> dict[str, Any]:
-        return auth.start_device_grant()
+        return auth.start_device_grant().to_dict()
 
     @app.post("/api/auth/device/poll")
-    def device_poll(body: dict[str, Any]) -> dict[str, Any]:
+    def device_poll(body: Mapping[str, Any]) -> dict[str, Any]:
         """The device grant's poll (headless tools; the browser uses the web
         flow). The cookie rides the complete NAVIGATION, never this response
         — the phone's network rejects fetch-carried cookies."""
-        result = auth.poll_device_grant(str(body.get("state", "")))
-        if result.get("status") == "ok" and result.get("id_info"):
+        answer = auth.poll_device_grant(DevicePollRequest.from_dict(body).state)
+        if answer.status == "ok":
             return {"ok": True, "complete": True}
-        logger.info("auth: device poll -> %s", result.get("status"))
-        return {"ok": False, **{k: v for k, v in result.items() if k != "id_info"}}
+        logger.info("auth: device poll -> %s", answer.status)
+        return {"ok": False, **answer.to_dict()}
 
     @app.get("/api/auth/device/complete")
     def device_complete(state: str = "") -> RedirectResponse:
@@ -211,15 +230,11 @@ def build_app(
             return RedirectResponse(f"{auth.public_url()}/?auth_error=expired")
         response = RedirectResponse(f"{auth.public_url()}/")
         _set_session_cookie(response, minted)
-        logger.info("auth: device complete — session cookie issued for %s", minted.get("email"))
+        logger.info("auth: device complete — session cookie issued for %s", minted.email)
         return response
 
-    def _set_session_cookie(response: JSONResponse | RedirectResponse, id_info: dict[str, Any]) -> None:
-        cookie = auth._make_session_cookie(
-            str(id_info.get("email", "")).casefold(),
-            str(id_info.get("name", "")),
-            str(id_info.get("picture", "")),
-        )
+    def _set_session_cookie(response: JSONResponse | RedirectResponse, user: SessionUser) -> None:
+        cookie = auth._make_session_cookie(user)
         response.set_cookie(
             auth.COOKIE_NAME,
             cookie,
@@ -232,42 +247,44 @@ def build_app(
     # -- the capture API (session required, narrator from the session) ------
 
     @app.post("/api/assess", response_model=None)
-    def assess(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+    def assess(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
         mine = narrator(request)
         # the 401 auth gate IS the absent case — a stand-in would hide the boundary
         if mine is None:
-            return JSONResponse({"ok": False, "error": "sign in to tell a story"}, status_code=401)
+            return JSONResponse(ErrorAnswer("sign in to tell a story").to_dict(), status_code=401)
         if client is None:
-            return JSONResponse({"ok": False, "error": "the AI isn't configured on this server"}, status_code=503)
+            return JSONResponse(ErrorAnswer("the AI isn't configured on this server").to_dict(), status_code=503)
+        fields = AssessRequest.from_dict(body)
         assessment = memory.assess(
             client,
-            anchor=body.get("anchor", {}),
-            who=mine["who"],
-            account=str(body.get("account", "")),
+            anchor=fields.anchor,
+            who=mine.who,
+            account=fields.account,
             knowledge=knowledge(),
         )
-        return {"ok": True, **assessment}
+        return {"ok": True, **assessment.to_dict()}
 
     @app.post("/api/save", response_model=None)
-    def save(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+    def save(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
         mine = narrator(request)
         if mine is None:
-            return JSONResponse({"ok": False, "error": "sign in to tell a story"}, status_code=401)
+            return JSONResponse(ErrorAnswer("sign in to tell a story").to_dict(), status_code=401)
+        fields = SaveRequest.from_dict(body)
         # typed answers to date questions arrive as pending facts (value
         # null) — the model asserts their value/precision, the library
         # validates; offline, the pending fact stays for a person to resolve
-        facts = memory.resolve_pending_facts(client, body.get("facts", []))
+        facts = memory.resolve_pending_facts(client, fields.facts)
         built = memory.build_story(
             request=memory.StoryRequest(
-                anchor=body.get("anchor", {}),
-                who=mine["who"],  # the verified session, never the client
-                title=str(body.get("title", "")),
-                account=str(body.get("account", "")),
-                extractions=body.get("extractions", []),
+                anchor=fields.anchor,
+                who=mine.who,  # the verified session, never the client
+                title=fields.title,
+                account=fields.account,
+                extractions=fields.extractions,
                 facts=facts,
-                status=str(body.get("status", "draft")),
-                story_id=body.get("id"),
-                chat=body.get("chat"),
+                status=fields.status,
+                story_id=fields.story_id,
+                chat=fields.chat,
             ),
             knowledge=knowledge(),
             existing_ids=existing_ids(),
@@ -278,80 +295,83 @@ def build_app(
         # writes go through the archive library (docs/CONTRIBUTIONS.md). The
         # story text is primary content: it becomes a content file the
         # sidecar references, never a sidecar JSON field (TECHSPEC §3).
-        sidecar, content = split_content(built.story)
-        archive.save_item(sidecar, content=content)
+        split = split_content(built.story)
+        archive.save_item(split.sidecar, content=split.content)
         for person in built.new_people:
             archive.propose_person(person)
         for place in built.new_places:
             archive.propose_place(place)
         _refresh_projection(built.story, built.new_people, built.new_places)
-        return {
-            "ok": True,
-            "id": built.story["id"],
-            "story": built.story,
-            "people": built.new_people,
-            "places": built.new_places,
-        }
+        return SaveAnswer(
+            id=built.story.id,
+            story=built.story.to_dict(),
+            people=[person.to_dict() for person in built.new_people],
+            places=[place.to_dict() for place in built.new_places],
+        ).to_dict()
 
     @app.post("/api/delete", response_model=None)
-    def delete(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+    def delete(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
         """Abandon: the draft is superseded with a tombstone — append-only,
         the files stay, the newest version says deleted (user)."""
         mine = narrator(request)
         if mine is None:
-            return JSONResponse({"ok": False, "error": "sign in to tell a story"}, status_code=401)
-        item_id = str(body.get("id", ""))
-        if not item_id:
-            return JSONResponse({"ok": False, "error": "no id"}, status_code=400)
-        archive.delete_item(item_id, str(body.get("reason", "abandoned")))
-        _drop_from_projection(item_id)
+            return JSONResponse(ErrorAnswer("sign in to tell a story").to_dict(), status_code=401)
+        try:
+            fields = DeleteRequest.from_dict(body)
+        except ValueError as exc:
+            return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)
+        archive.delete_item(fields.id, fields.reason)
+        _drop_from_projection(fields.id)
         return {"ok": True}
 
     @app.post("/api/review/start", response_model=None)
-    def review_start(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+    def review_start(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
         """Begin a new walk of the review — the sessions' storage is
         attempt-separated: a fresh attempt starts only when
         the last is empty or finished, so a mid-walk re-render continues
         the same walk and the diagnosis never mixes attempts."""
         mine = narrator(request)
         if mine is None:
-            return JSONResponse({"ok": False, "error": "sign in to review the import"}, status_code=401)
-        session_id = str(body.get("session_id", ""))
-        if not session_id:
-            return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
+            return JSONResponse(ErrorAnswer("sign in to review the import").to_dict(), status_code=401)
+        try:
+            fields = ReviewStartRequest.from_dict(body)
+        except ValueError as exc:
+            return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)
+        session_id = fields.session_id
         try:
             archive.start_review_attempt(session_id)
         except ArchiveError as e:
-            return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
+            return JSONResponse(ErrorAnswer(str(e)).to_dict(), status_code=404)
         # the lines already recorded in the current attempt — the app
         # records its rendered opening/claim only when they're new, so a
         # mid-walk re-render never duplicates the transcript
         session_record = archive.get_review_session(session_id)
         attempt = session_record.current_attempt() if session_record else None
         messages = attempt.messages if attempt else ()
-        return {"ok": True, "messages": [m.text for m in messages]}
+        return ReviewStartAnswer(messages=[m.text for m in messages]).to_dict()
 
     @app.post("/api/review/message", response_model=None)
-    def review_message(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+    def review_message(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
         """Record one of the app's own rendered lines (the opening, the
         claim) so the transcript is exactly what the family saw (user:
         "when you load a given transcript, you see exactly what I saw")."""
         mine = narrator(request)
         if mine is None:
-            return JSONResponse({"ok": False, "error": "sign in to review the import"}, status_code=401)
-        session_id = str(body.get("session_id", ""))
-        role = str(body.get("role", ""))
-        text = str(body.get("text", ""))
-        if not session_id or role not in ("user", "assistant") or not text.strip():
-            return JSONResponse({"ok": False, "error": "session_id, role and text are required"}, status_code=400)
+            return JSONResponse(ErrorAnswer("sign in to review the import").to_dict(), status_code=401)
         try:
-            archive.record_review_message(session_id, role, text, datetime.now(UTC).date().isoformat())
+            fields = ReviewMessageRequest.from_dict(body)
+        except ValueError as exc:
+            return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)
+        try:
+            archive.record_review_message(
+                fields.session_id, fields.role, fields.text, datetime.now(UTC).date().isoformat()
+            )
         except ArchiveError as e:
-            return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
+            return JSONResponse(ErrorAnswer(str(e)).to_dict(), status_code=404)
         return {"ok": True}
 
     @app.post("/api/review/decide", response_model=None)
-    def review_decide(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+    def review_decide(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
         """The import review (user): one decision per proposed
         link — attested (→ confirmed, the reviewer's own verified word),
         estimated (→ estimated with the recorded basis {text, by, when}),
@@ -360,36 +380,28 @@ def build_app(
         a status, never an action."""
         mine = narrator(request)
         if mine is None:
-            return JSONResponse({"ok": False, "error": "sign in to review the import"}, status_code=401)
-        person_id = str(body.get("person_id", ""))
-        decision = str(body.get("decision", ""))
-        if not person_id or decision not in {"attested", "estimated", "pending", "delete"}:
-            return JSONResponse(
-                {
-                    "ok": False,
-                    "error": "person_id and a valid decision (attested/estimated/pending/delete) are required",
-                },
-                status_code=400,
-            )
-        basis = body.get("basis")
-        if basis is not None and not isinstance(basis, dict):
-            return JSONResponse({"ok": False, "error": "basis must be an object"}, status_code=400)
-        session_id = str(body.get("session_id", ""))
-        if not session_id:
-            return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
+            return JSONResponse(ErrorAnswer("sign in to review the import").to_dict(), status_code=401)
+        try:
+            fields = ReviewDecideRequest.from_dict(body)
+        except ValueError as exc:
+            return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)
+        session_id = fields.session_id
+        person_id = fields.person_id
+        decision = fields.decision
+        basis = fields.basis
         # the session must exist BEFORE anything mutates — a stale session id
         # must not change the archive and then fail
         if archive.get_review_session(session_id) is None:
-            return JSONResponse({"ok": False, "error": f"no import session {session_id}"}, status_code=404)
+            return JSONResponse(ErrorAnswer(f"no import session {session_id}").to_dict(), status_code=404)
         # the confirmation names the person — the resolve returns a
         # gone-marker for a delete, so the name comes from the table first
-        people_table = archive.get_identity("people") or {"people": []}
-        pre_person = next((p for p in people_table["people"] if p["id"] == person_id), None)
-        person_name = (pre_person or {}).get("name", person_id)
+        people_table = archive.get_identity("people")
+        pre_person = people_table.record(person_id) if people_table else None
+        person_name = pre_person.name if pre_person else person_id
         try:
             resolution = archive.resolve_person(person_id, decision, basis)
         except (KeyError, ValueError) as e:
-            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+            return JSONResponse(ErrorAnswer(str(e)).to_dict(), status_code=400)
         # a stale decision on an already-resolved person is a state, not an
         # error — and it must not record a false confirmation ("removed"
         # when nothing was removed). Both flags come
@@ -399,9 +411,10 @@ def build_app(
         # lock was taken) — the pre-read status is gone entirely.
         # A keep on a genuinely PROPOSED person is the
         # deliberate "leave for later" and is recorded.
+        person_payload = resolution.person.to_dict() if resolution.person is not None else None
         if not resolution.changed and (decision != "pending" or not resolution.attested):
             message = f"{person_name} was already resolved — nothing changed."
-            return {"ok": True, "person": resolution.person, "message": message}
+            return ReviewStaleAnswer(person=person_payload, message=message).to_dict()
         # the review record — the decision and the confirmation message the
         # family saw, both persisted (the transcript is the messages)
         when = datetime.now(UTC).date().isoformat()
@@ -410,23 +423,23 @@ def build_app(
             session_id,
             ReviewDecision(
                 person_id=person_id,
-                decision=cast(Literal["attested", "estimated", "pending", "delete"], decision),
+                decision=decision,
                 when=when,
                 basis=basis,
                 last=not queue.pending,
             ),
         )
-        message = review.confirmation_message(person_name, decision, basis)
+        message = review.confirmation_message(person_name, decision, DecisionBasis.from_dict(basis) if basis else None)
         archive.record_review_message(session_id, "assistant", message, when)
         archive.refresh_import_status()  # the last pending person completes the session
         archive.publish(data_dir)
         # the accurate remaining count — the server's post-decision truth
         # (the client's projection is stale until reload; the count must
         # always be right, user)
-        return {"ok": True, "person": resolution.person, "message": message, "pending": len(queue.pending)}
+        return ReviewDecideAnswer(person=person_payload, message=message, pending=len(queue.pending)).to_dict()
 
     @app.post("/api/review/text", response_model=None)
-    def review_text(request: Request, body: dict[str, Any]) -> dict[str, Any] | JSONResponse:
+    def review_text(request: Request, body: Mapping[str, Any]) -> dict[str, Any] | JSONResponse:
         """The reviewer's free text vs the exact claim under review: the
         relevance check — on-topic (the answer addresses
         the proposed record and is recorded verbatim) or off-topic (the
@@ -434,25 +447,25 @@ def build_app(
         relationships — the reviewer's words are the record or nothing is."""
         mine = narrator(request)
         if mine is None:
-            return JSONResponse({"ok": False, "error": "sign in to review the import"}, status_code=401)
-        person_id = str(body.get("person_id", ""))
-        text = str(body.get("text", ""))
-        if not person_id or not text.strip():
-            return JSONResponse({"ok": False, "error": "person_id and text are required"}, status_code=400)
-        session_id = str(body.get("session_id", ""))
-        if not session_id:
-            return JSONResponse({"ok": False, "error": "session_id is required"}, status_code=400)
+            return JSONResponse(ErrorAnswer("sign in to review the import").to_dict(), status_code=401)
+        try:
+            fields = ReviewTextRequest.from_dict(body)
+        except ValueError as exc:
+            return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)
+        session_id = fields.session_id
+        person_id = fields.person_id
+        text = fields.text
         # the session must exist BEFORE the costly model call — a stale id
         # must not run the investigation and then 500 in the recording
         if archive.get_review_session(session_id) is None:
-            return JSONResponse({"ok": False, "error": f"no import session {session_id}"}, status_code=404)
-        people = archive.get_identity("people") or {"people": []}
-        all_people = tuple(Person.from_dict(p) for p in people["people"])
+            return JSONResponse(ErrorAnswer(f"no import session {session_id}").to_dict(), status_code=404)
+        people = archive.get_identity("people")
+        all_people = people.people if people else ()
         person = next((p for p in all_people if p.id == person_id), None)
         if person is None:
-            return JSONResponse({"ok": False, "error": f"no person {person_id}"}, status_code=404)
+            return JSONResponse(ErrorAnswer(f"no person {person_id}").to_dict(), status_code=404)
         if client is None:
-            return JSONResponse({"ok": False, "error": "the AI isn't configured on this server"}, status_code=503)
+            return JSONResponse(ErrorAnswer("the AI isn't configured on this server").to_dict(), status_code=503)
         try:
             # the model sees the whole conversation — its own reasoning and
             # speech, verbatim — so a message that re-answers an earlier
@@ -491,13 +504,13 @@ def build_app(
             # differently-cased mention must not hide the attesting
             # document
             needles = tuple(n.lower() for n in (person.name, person.name.split()[0]))
-            items: list[dict[str, Any]] = []
+            items: list[ReviewItem] = []
             for item_id in archive.item_ids():
                 item = archive.get_item(item_id)
-                if not item or item.get("status") != "catalogued":
+                if item is None or item.status != "catalogued":
                     continue
-                involved = person_id in [p.get("id") for p in item.get("people", []) if isinstance(p, dict)]
-                story = str(item.get("story") or "").strip()
+                involved = person_id in [ref.id for ref in item.people_refs]
+                story = str(item.raw.get("story") or "").strip()
                 if involved or any(n in story.lower() for n in needles):
                     transcription = archive.read_content(item_id, "transcription.txt") or ""
                     item_text = transcription or story
@@ -516,33 +529,33 @@ def build_app(
                     item_text = transcription
                 if item_text:
                     items.append(
-                        {
-                            "id": item_id,
-                            "title": item.get("title", ""),
-                            "story": item_text,
+                        ReviewItem(
+                            id=item_id,
+                            title=item.title,
+                            story=item_text,
                             # Rule L: a draft transcription is machine-read
                             # and unverified — its sentences are never the
                             # document's own words; the model must know
                             # which texts are drafts so it never quotes
                             # one as verified evidence
-                            "transcription_status": item.get("transcription_status"),
-                            "people": [p.get("id") for p in item.get("people", []) if isinstance(p, dict)],
-                        }
+                            transcription_status=item.raw.get("transcription_status"),
+                            people=[ref.id for ref in item.people_refs],
+                        )
                     )
             result = review.investigate(
                 client,
                 text=text,
                 person=person,
-                who=mine["who"],
+                who=mine.who,
                 facts=ReviewContext(
                     people=all_people,
-                    items=tuple(items),
-                    relationships=tuple(people.get("relationships", [])),
+                    items=tuple(item.to_dict() for item in items),
+                    relationships=tuple(r.to_dict() for r in people.relationships) if people else (),
                 ),
                 history=history,
             )
         except ElicitationError as e:
-            return JSONResponse({"ok": False, "error": str(e)}, status_code=422)
+            return JSONResponse(ErrorAnswer(str(e)).to_dict(), status_code=422)
         # the transcript is the MESSAGES — what the family saw:
         # the user's words (recorded BEFORE the call, so an outage never
         # loses them) and the assistant's rendered
@@ -551,32 +564,35 @@ def build_app(
         # verdict, verbatim — which goes back to the model on later calls.
         # The note never reaches the user (it had been leaking into the
         # steer's parens).
-        contradiction = result.get("contradiction", {}).get("found") == "true"
+        contradiction = result.contradiction.found == "true"
         if contradiction:
             # the contradiction surfaces before anything else — an off-topic
             # verdict that also flags one must not let the steer hide it
-            message = f"That doesn't match the records — {result['contradiction'].get('detail')}. Which is right?"
-        elif result.get("relevant") == "false":
-            message = review.steer_message(person, result.get("note") or "")
+            message = f"That doesn't match the records — {result.contradiction.detail}. Which is right?"
+        elif result.relevant == "false":
+            message = review.steer_message(person, result.note)
         else:
             # never persist an empty assistant line the family never saw
             message = review.assistant_message(result, person).strip() or "Thank you — that's noted."
         archive.record_review_message(
-            session_id, "assistant", message, when, thinking=json.dumps(result.get("trace"), ensure_ascii=False)
+            session_id,
+            "assistant",
+            message,
+            when,
+            thinking=json.dumps([step.to_dict() for step in result.trace], ensure_ascii=False),
         )
         # the response carries ONLY what the UI consumes — the model's raw
         # output, its tool trace, and the prompt texts are the model's
         # internals, never the family's (R7).
-        return {
-            "ok": True,
-            "message": message,
-            "relevant": result.get("relevant"),
-            "contradiction": result.get("contradiction", {}),
-            "confidence": result.get("confidence", ""),
-            "note": result.get("note", ""),
-            "findings": result.get("findings", []),
-            "question": result.get("question", ""),
-        }
+        return ReviewTextAnswer(
+            message=message,
+            relevant=result.relevant,
+            contradiction=result.contradiction.to_dict(),
+            confidence=result.confidence,
+            note=result.note,
+            findings=[finding.to_dict() for finding in result.findings],
+            question=result.question,
+        ).to_dict()
 
     def _drop_from_projection(item_id: str) -> None:
         index_path = data_dir / "index.json"
@@ -589,30 +605,30 @@ def build_app(
             _atomic_write(index_path, index)
 
     def _refresh_projection(
-        story: dict[str, Any],
-        new_people: list[dict[str, Any]],
-        new_places: list[dict[str, Any]],
+        story: Item,
+        new_people: tuple[Person, ...],
+        new_places: tuple[Place, ...],
     ) -> None:
         """The derived cache (app/data): merge the story and any proposed
         records. Idempotent by id — re-running a save never duplicates."""
         index_path = data_dir / "index.json"
         if index_path.exists():
             index = json.loads(index_path.read_text(encoding="utf-8"))
-            items = [it for it in index.get("items", []) if it["id"] != story["id"]]
-            items.append(story)
+            items = [it for it in index.get("items", []) if it["id"] != story.id]
+            items.append(story.to_dict())
             items.sort(key=lambda it: it["date"])
             index["items"] = items
             _atomic_write(index_path, index)
         _merge_records(filename="people.json", key="people", records=new_people)
         _merge_records(filename="places.json", key="places", records=new_places)
 
-    def _merge_records(filename: str, key: str, records: list[dict[str, Any]]) -> None:
+    def _merge_records(filename: str, key: str, records: tuple[Person | Place, ...]) -> None:
         if not records:
             return
         path = data_dir / filename
         data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {key: []}
         known = {r["id"] for r in data.get(key, [])}
-        data[key] = data.get(key, []) + [r for r in records if r["id"] not in known]
+        data[key] = data.get(key, []) + [r.to_dict() for r in records if r.id not in known]
         _atomic_write(path, data)
 
     # -- the static app + the data gate ------------------------------------
@@ -661,9 +677,9 @@ def build_app(
         """Every adopted batch, newest first — the review surface's batch
         list (the batch label + status ride the registry record)."""
         if session_user(request) is None:
-            return JSONResponse({"ok": False, "error": "sign in to read the batches"}, status_code=401)
+            return JSONResponse(ErrorAnswer("sign in to read the batches").to_dict(), status_code=401)
         try:
-            return {"batches": list_batches(registry_dir)}
+            return {"batches": [batch.to_dict() for batch in list_batches(registry_dir)]}
         except RegistryError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
@@ -674,12 +690,10 @@ def build_app(
         review status merged in (the registry is the status' home — the
         guess stage's boundaries.json never changes after review)."""
         if session_user(request) is None:
-            return JSONResponse({"ok": False, "error": "sign in to read the drafts"}, status_code=401)
+            return JSONResponse(ErrorAnswer("sign in to read the drafts").to_dict(), status_code=401)
         try:
             record = load_batch(batch_id, registry_dir)
-            by_pages = {
-                tuple(b.get("pages", [])): b.get("status", DOCUMENT_DRAFT) for b in (record.get("boundaries") or [])
-            }
+            by_pages = {tuple(b.pages): b.status or DOCUMENT_DRAFT for b in (record.boundaries or [])}
             # The transcription review shows only documents with a text
             # page, and only their TEXT pages (2026-08-17, user: "we just
             # don't need to show users any of the photos when they're
@@ -701,12 +715,12 @@ def build_app(
                         "status": by_pages.get(tuple(document.get("pages", [])), DOCUMENT_DRAFT),
                     }
                 )
-            return {
-                "batch_id": batch_id,
-                "label": record.get("label"),
-                "documents": documents,
-                "processing": page_job_state(batch_id, work_dir),
-            }
+            return BatchDraftsAnswer(
+                batch_id=batch_id,
+                label=record.label,
+                documents=documents,
+                processing=page_job_state(batch_id, work_dir),
+            ).to_dict()
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         except RegistryError as exc:
@@ -718,7 +732,7 @@ def build_app(
         like the drafts; batch id and page name become path segments —
         validated by the sync contract's guard)."""
         if session_user(request) is None:
-            return JSONResponse({"ok": False, "error": "sign in to read the pages"}, status_code=401)
+            return JSONResponse(ErrorAnswer("sign in to read the pages").to_dict(), status_code=401)
         if not BATCH_ID.match(batch_id) or not safe_page_name(page):
             return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
         image = work_dir / batch_id / "oriented" / page
@@ -727,7 +741,7 @@ def build_app(
             # scorer puts the postcard's picture side into its document —
             # the review surface must still see the image)
             record = load_batch(batch_id, registry_dir)
-            raw = Path(str(record.get("path", ""))) / page
+            raw = record.path / page
             if raw.is_file():
                 return FileResponse(raw)
             return JSONResponse({"error": "no such page"}, status_code=404)
@@ -749,7 +763,7 @@ def build_app(
                 ]
                 label = None
                 with contextlib.suppress(RegistryError):
-                    label = load_batch(batch_id, registry_dir).get("label")
+                    label = load_batch(batch_id, registry_dir).label
                 reprocess_page_transcription(batch_id, page, work_dir, people=people, places=places, label=label)
             # The background thread's terminal handler — logger.exception
             # lucidlint: ignore swallow is the observable surface; the thread ends
@@ -759,7 +773,7 @@ def build_app(
         threading.Thread(target=_job, daemon=True).start()
 
     @app.post("/api/sync/batch/{batch_id}/page/{page}/rotate")
-    def sync_rotate_page(batch_id: str, page: str, request: Request, body: dict[str, Any] | None = None) -> Any:
+    def sync_rotate_page(batch_id: str, page: str, request: Request, body: Mapping[str, Any] | None = None) -> Any:
         """The reviewer's orientation fix. The intent is the
         DESIRED cumulative rotation in quarter-turns — no image travels, the
         backend has it (the front and back end are different boxes). The
@@ -768,22 +782,20 @@ def build_app(
         "transcribing" in the drafts payload meanwhile — the surface greys
         the document with a note and the reviewer navigates on."""
         if session_user(request) is None:
-            return JSONResponse({"ok": False, "error": "sign in to fix pages"}, status_code=401)
-        quarters = 1
+            return JSONResponse(ErrorAnswer("sign in to fix pages").to_dict(), status_code=401)
         # 0 is a real intent: the reviewer's rotate-back to the ORIGINAL
         # orientation (the UI's % 4 range) — rejecting it defaulted to a
         # wrong +90 (bot review, 2026-08-16)
-        if body and isinstance(body.get("quarters"), int) and body["quarters"] in range(QUARTERS_PER_TURN):
-            quarters = body["quarters"]
+        quarters = RotatePageRequest.from_dict(body or {}).quarters
         try:
             rotated = rotate_page(batch_id, page, quarters, work_dir)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         if not rotated:
-            return {"ok": True, "batch_id": batch_id, "page": page, "processing": False}
+            return PageProcessingAnswer(batch_id=batch_id, page=page, processing=False).to_dict()
         set_page_job(batch_id, page, "transcribing", work_dir)
         (_reprocess or _reprocess_page)(batch_id, page)
-        return {"ok": True, "batch_id": batch_id, "page": page, "processing": True}
+        return PageProcessingAnswer(batch_id=batch_id, page=page, processing=True).to_dict()
 
     @app.post("/api/sync/batch/{batch_id}/page/{page}/reread")
     def sync_reread_page(batch_id: str, page: str, request: Request) -> Any:
@@ -792,15 +804,15 @@ def build_app(
         and re-run the reprocess over the CURRENT image. Orientation is
         untouched — this only re-runs OCR (2026-08-16, PRD VR10 AC14)."""
         if session_user(request) is None:
-            return JSONResponse({"ok": False, "error": "sign in to re-read pages"}, status_code=401)
+            return JSONResponse(ErrorAnswer("sign in to re-read pages").to_dict(), status_code=401)
         if not BATCH_ID.match(batch_id) or not safe_page_name(page):
             return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
         set_page_job(batch_id, page, "transcribing", work_dir)
         (_reprocess or _reprocess_page)(batch_id, page)
-        return {"ok": True, "batch_id": batch_id, "page": page, "processing": True}
+        return PageProcessingAnswer(batch_id=batch_id, page=page, processing=True).to_dict()
 
     @app.post("/api/sync/batch/{batch_id}/page/{page}/row-adjustments")
-    def sync_row_adjustments(batch_id: str, page: str, request: Request, body: dict[str, Any] | None = None) -> Any:
+    def sync_row_adjustments(batch_id: str, page: str, request: Request, body: Mapping[str, Any] | None = None) -> Any:
         """The reviewer's drawn row lines -> the page's corrected rows.
 
         The lines are the drawn indications (normalised polylines); the
@@ -811,52 +823,51 @@ def build_app(
         before the read stage wrote them) is refused with the remedy —
         never a silent empty build."""
         if session_user(request) is None:
-            return JSONResponse({"ok": False, "error": "sign in to correct rows"}, status_code=401)
+            return JSONResponse(ErrorAnswer("sign in to correct rows").to_dict(), status_code=401)
         if not BATCH_ID.match(batch_id) or not safe_page_name(page):
             return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
         try:
-            adjustments = validate_user_row_adjustments(body or {})
+            adjustments = RowAdjustments.from_dict(dict(body) if body else {})
             rows = apply_row_adjustments(batch_id, page, adjustments, work_dir)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)  # client errors are 4xx, never 500
-        return {"ok": True, "batch_id": batch_id, "page": page, "rows": Rows.to_wire(rows)["rows"]}
+        return RowAdjustmentsAnswer(batch_id=batch_id, page=page, rows=Rows.to_dict(rows)["rows"]).to_dict()
 
     @app.post("/api/sync/confirmations")
-    def sync_confirmations(payload: dict[str, Any], request: Request) -> Any:
+    def sync_confirmations(payload: Mapping[str, Any], request: Request) -> Any:
         """The backend receiver: validate, record (ocr-confirmed + registry),
         re-publish the projection. The frontend never writes the archive."""
         if session_user(request) is None:
-            return JSONResponse({"ok": False, "error": "sign in to send confirmations"}, status_code=401)
+            return JSONResponse(ErrorAnswer("sign in to send confirmations").to_dict(), status_code=401)
         try:
-            validate_confirmation(payload)
-            text = payload.get("text") if payload.get("status") == "confirmed" else None
+            confirmation = ConfirmationRequest.from_dict(payload)
             record_confirmation(
-                str(payload["batch_id"]),
-                int(payload["doc_index"]),
-                payload,
-                text,
+                confirmation.batch_id,
+                confirmation.doc_index,
+                confirmation.boundary,
+                confirmation.text,
                 work_dir=work_dir,
                 registry_dir=registry_dir,
             )
         except (TypeError, ValueError, RegistryError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)  # client errors are 4xx, never 500
         archive.publish(data_dir)
-        return {"ok": True, "batch_id": payload["batch_id"], "doc_index": payload["doc_index"]}
+        return ConfirmationAnswer(batch_id=confirmation.batch_id, doc_index=confirmation.doc_index).to_dict()
 
     @app.get("/api/sync/pending")
     def sync_pending(request: Request) -> Any:
         """The catch-up: the backend pulls anything the real-time push missed."""
         if session_user(request) is None:
-            return JSONResponse({"ok": False, "error": "sign in to pull the outbox"}, status_code=401)
+            return JSONResponse(ErrorAnswer("sign in to pull the outbox").to_dict(), status_code=401)
         return {"pending": [{"id": item_id, **payload} for item_id, payload in outbox.pending()]}
 
     @app.post("/api/sync/pending/received")
-    def sync_received(ids: dict[str, Any], request: Request) -> Any:
+    def sync_received(body: Mapping[str, Any], request: Request) -> Any:
         """The website marks pulled items received — the outbox drains."""
         if session_user(request) is None:
-            return JSONResponse({"ok": False, "error": "sign in to drain the outbox"}, status_code=401)
+            return JSONResponse(ErrorAnswer("sign in to drain the outbox").to_dict(), status_code=401)
         try:
-            outbox.mark_received([str(item_id) for item_id in ids.get("ids", [])])
+            outbox.mark_received(ReceivedRequest.from_dict(body).ids)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"ok": True}

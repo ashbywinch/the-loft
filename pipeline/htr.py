@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Any
 
 from pipeline.model.vlm import parse_transcription_response, transcribe_image_vlm, transcription_system_with_context
+from pipeline.page_image import PageImage
 from pipeline.store import PipelineStore, file_sha256
+from pipeline.transcription_line import TranscriptionLine
 from tools.atomic import atomic_write
 from tools.loft_paths import WORK_DIR
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker (htr writes via the store)
@@ -39,7 +41,7 @@ def _marker_input_matches(marker: Path, input_sha: str) -> bool:
 # stage-inputs type would be ceremony for one use
 # lucidlint: ignore long-param-list the VLM backend's stage inputs are the seam and the reading context
 def htr_pages_vlm(
-    pages: list[tuple[str, Path]],
+    pages: list[PageImage],
     raw_dir: Path,
     transcribe: Any = None,
     *,
@@ -60,7 +62,8 @@ def htr_pages_vlm(
     useful context we have to help it guess better")."""
     call = transcribe if transcribe is not None else transcribe_image_vlm
     previous: str | None = None
-    for name, image in pages:
+    for page in pages:
+        name, image = page.name, page.image
         out = raw_dir / Path(name).with_suffix(".txt")
         marker = out.with_suffix(".vlm.json")
         batch_id = out.parent.parent.name
@@ -86,11 +89,12 @@ def htr_pages_vlm(
         else:
             print(f"vlm: {name} transcribing…", flush=True)
         system = transcription_system_with_context(people=people, places=places, label=label, previous_page=previous)
-        text, usage = call(image, system=system)
-        plain, boxes = parse_transcription_response(text)
+        answer = call(image, system=system)
+        reading = parse_transcription_response(answer.answer)
+        plain, boxes = reading.text, reading.boxes
         atomic_write(out, plain)  # backward compat — callers read from the old path
         PipelineStore(store_root).write(str(Path(batch_id) / "ocr-guess" / out.name), plain)
-        marker_data: dict[str, Any] = dict(usage)
+        marker_data: dict[str, Any] = answer.usage.to_dict()
         marker_data["input_sha"] = input_sha
         if boxes is not None:
             # the VLM's own line geometry (normalized 0-1000) — the layout
@@ -99,13 +103,15 @@ def htr_pages_vlm(
             # misses the top line entirely — the VLM that READ the page can
             # anchor each line it transcribed. Only the entries with boxes
             # ride along; a page without geometry keeps the old fallback.
-            marker_data["lines"] = [{"text": plain.split("\n")[i], "box": boxes[i]} for i in sorted(boxes)]
+            marker_data["lines"] = [
+                TranscriptionLine(text=plain.split("\n")[i], box=boxes[i]).to_dict() for i in sorted(boxes)
+            ]
         PipelineStore(store_root).write(
             str(Path(batch_id) / "ocr-guess" / marker.name), json.dumps(marker_data, ensure_ascii=False)
         )
         atomic_write(marker, json.dumps(marker_data, ensure_ascii=False))  # backward compat — marker.exists()
         previous = plain
-        print(f"vlm: {name} -> {out.name} ({usage.get('total_tokens', 0)} tokens)")
+        print(f"vlm: {name} -> {out.name} ({answer.usage.total_tokens or 0} tokens)")
 
 
 if __name__ == "__main__":

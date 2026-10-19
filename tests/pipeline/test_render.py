@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from document.point import Point
 from document.rectangle import Rectangle
 from document.row import Row
 from document.word import Word
@@ -131,7 +132,7 @@ def test_the_row16_tail_drawing_is_pinned(letter: dict) -> None:
         max(words[i]["x1"] for i in (102, 105, 108)),
         max(words[i]["y1"] for i in (102, 105, 108)),
     ]
-    drawn = audit_geometry(image, [union], origin=(1510 / scale, 3000 / scale))[0]
+    drawn = audit_geometry(image, [union], origin=Point(x=1510 / scale, y=3000 / scale))[0]
     assert drawn is not None
     assert abs(drawn.waistline - 1553.0) <= 2 and abs(drawn.baseline - 1560.5) <= 2, f"trio: {drawn}"
 
@@ -165,11 +166,15 @@ def test_the_row18_group_drawing_is_pinned(letter: dict) -> None:
     for index, want in ((129, 3233.0), (131, 3238.0), (135, 3238.0)):
         w = words[index]
         box = [w["x0"], w["y0"], w["x1"], w["y1"]]
-        drawn = audit_geometry(image, [box], origin=(1400 / scale, 3140 / scale))[0]
+        drawn = audit_geometry(image, [box], origin=Point(x=1400 / scale, y=3140 / scale))[0]
         assert drawn is not None
         assert abs(drawn.waistline - want / scale) <= 2, f"idx {index} waist: {drawn}"
     w = words[135]
-    drawn = audit_geometry(image, [[w["x0"], w["y0"], w["x1"], w["y1"]]], origin=(1400 / scale, 3140 / scale))[0]
+    drawn = audit_geometry(
+        image,
+        [[w["x0"], w["y0"], w["x1"], w["y1"]]],
+        origin=Point(x=1400 / scale, y=3140 / scale),
+    )[0]
     assert drawn is not None
     assert abs(drawn.waistline - 3238.0 / scale) <= 2 and abs(drawn.baseline - 3251.0 / scale) <= 2, f"idx 135: {drawn}"
 
@@ -321,7 +326,7 @@ def test_labeled_box_outlines_and_labels() -> None:
     sheet = Image.new("RGB", (100, 60), (255, 255, 255))
     draw = ImageDraw.Draw(sheet, "RGBA")
     labeled_box(draw, LabeledBox(Rectangle(10, 10, 60, 40), Colour(230, 50, 50, 255), "P1"))
-    halo_text(draw, (70, 10), "P2")
+    halo_text(draw, Point(x=70, y=10), "P2")
     assert sheet.getpixel((10, 25)) == (230, 50, 50)
     assert sheet.getpixel((30, 25)) == (255, 255, 255)
     assert sheet.getpixel((80, 25)) != (255, 255, 255)

@@ -21,17 +21,18 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any
 
 from PIL import Image
 
 from document.numbered_rows import NumberedRows
-from document.schemas import load_user_row_adjustments
+from document.page_size import PageSize
 from document.word import Word
+from pipeline.evals.band_reading import BandReading
+from pipeline.evals.band_summary import BandSummary
 from pipeline.model.vlm import VlmOptions, transcribe_images_vlm
 from pipeline.rows.render import render_rows
 from pipeline.rows.rows import Rows
-from pipeline.transcribe.transcripts import SYSTEM, band_prompt, words_from
+from pipeline.transcribe.transcripts import SYSTEM, band_prompt, drawn_lines, words_from
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 FIXTURE = Path("tests/fixtures/page01-rows-gold")
@@ -44,66 +45,70 @@ OUT = Path("work/eval-band-size")
 HEIGHTS = (2450, 2000, 1700, 1500, 1300, 1100, 900)
 
 
-def read_band(band: NumberedRows, index: int, of: int, height: int, out_dir: Path) -> dict[str, Any]:
+def read_band(band: NumberedRows, index: int, of: int, height: int, out_dir: Path) -> BandReading:
     """One band's call, and what it could see of that band: the numbers drawn on
     it are known, so which of them the answer names is checkable with no gold."""
     numbers = sorted(band.numbers.values())
     path = out_dir / f"page-01.max-{height}.band-{index + 1}.jpg"
     band.image.save(path, quality=88)
     started = time.monotonic()
-    answer, _usage = transcribe_images_vlm(
+    answer = transcribe_images_vlm(
         [path], options=VlmOptions(system=SYSTEM, user_text=band_prompt(index, of, numbers, []))
     )
     (out_dir / f"page-01.max-{height}.band-{index + 1}.answer.json").write_text(
-        json.dumps({"answer": answer}, indent=1), encoding="utf-8"
+        json.dumps({"answer": answer.answer}, indent=1), encoding="utf-8"
     )
-    named = _numbers_named(answer, numbers)
-    return {
-        "height": band.image.height,
-        "width": band.image.width,
-        "rows": numbers,
-        "read": named,
-        "seconds": round(time.monotonic() - started, 1),
-    }
+    return BandReading(
+        height=band.image.height,
+        width=band.image.width,
+        rows=numbers,
+        read=_numbers_named(answer.answer, numbers),
+        seconds=round(time.monotonic() - started, 1),
+    )
 
 
-def run(image_path: Path, fixture: Path, heights: tuple[int, ...] = HEIGHTS) -> list[dict[str, Any]]:
+def run(image_path: Path, fixture: Path, heights: tuple[int, ...] = HEIGHTS) -> list[BandSummary]:
     """One pass per band height: the bands that height makes, and how much of
     each band's numbering the model could see."""
     page = Image.open(image_path)
-    rows = Rows.from_words(_words(fixture), (page.width, page.height)).adjust(
-        load_user_row_adjustments(fixture / "user-row-adjustments.json")["lines"]
+    rows = Rows.from_words(_words(fixture), PageSize(page.width, page.height)).adjust(
+        drawn_lines(fixture / "user-row-adjustments.json")
     )
     OUT.mkdir(parents=True, exist_ok=True)
-    report: list[dict[str, Any]] = []
+    report: list[BandSummary] = []
     for height in heights:
         bands = NumberedRows.render_strips(render_rows(page, rows), rows, max_band_height=height)
         if not bands:
             continue
         read = [read_band(band, index, len(bands), height, OUT) for index, band in enumerate(bands)]
-        wanted = [number for band in read for number in band["rows"]]
-        found = [number for band in read for number in band["read"]]
+        wanted = [number for band in read for number in band.rows]
+        found = [number for band in read for number in band.read]
         missed = sorted(set(wanted) - set(found))
-        silent = sum(1 for band in read if not band["read"])
-        summary = {
-            "max_height": height,
-            "bands": len(bands),
-            "band_height": max(band["height"] for band in read),
-            "band_width": max(band["width"] for band in read),
-            "rows": len(wanted),
-            "numbers_read": len(found),
-            "numbers_missed": missed,
-            "bands_with_no_number": silent,
-            "seconds": round(sum(band["seconds"] for band in read), 1),
-        }
+        silent = sum(1 for band in read if not band.read)
+        summary = BandSummary(
+            max_height=height,
+            bands=len(bands),
+            band_height=max(band.height for band in read),
+            band_width=max(band.width for band in read),
+            rows=len(wanted),
+            numbers_read=len(found),
+            numbers_missed=missed,
+            bands_with_no_number=silent,
+            seconds=round(sum(band.seconds for band in read), 1),
+        )
         report.append(summary)
         print(
-            f"max {height}px -> bands {summary['bands']} (tallest {summary['band_height']}px): "
-            f"numbers {summary['numbers_read']}/{summary['rows']} read"
+            f"max {height}px -> bands {summary.bands} (tallest {summary.band_height}px): "
+            f"numbers {summary.numbers_read}/{summary.rows} read"
             + (f", {silent} band(s) named nothing" if silent else "")
         )
-    (OUT / "report.json").write_text(json.dumps(report, indent=1), encoding="utf-8")
+    _write_report(report)
     return report
+
+
+def _write_report(report: list[BandSummary]) -> None:
+    """The pass's summaries as the eval's report.json — one per height tried."""
+    (OUT / "report.json").write_text(json.dumps([one.to_dict() for one in report], indent=1), encoding="utf-8")
 
 
 def _numbers_named(answer: str, wanted: list[int]) -> list[int]:
@@ -131,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
     if not SCAN.is_file():
         print(f"SKIP {SCAN}: not on this box")
         return 0
-    print(json.dumps(run(SCAN, fixture, heights), indent=1))
+    print(json.dumps([one.to_dict() for one in run(SCAN, fixture, heights)], indent=1))
     return 0
 
 

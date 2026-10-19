@@ -11,8 +11,14 @@ from __future__ import annotations
 
 import pytest
 
-from document import schemas
+from document.boxes import Boxes
+from document.document import Document, DocumentLine
+from document.page_size import PageSize
+from document.row import Row
+from document.row_adjustments import RowAdjustments
 from document.stages import PageStatus, Stage
+from document.words import Words
+from pipeline.rows.rows import Rows
 
 # the PRD's stages (docs/PRD/pipeline-stages-spec.md UR1), in order
 PRD_STAGES = (
@@ -27,9 +33,12 @@ PRD_STAGES = (
     "entities_agreed",
 )
 
-# the wire contracts document.schemas defines — a stage's `schemas` may only
-# name these
-CONTRACTS = {name for name, value in vars(schemas).items() if isinstance(value, type) and issubclass(value, dict)}
+# the classes whose own wire carries a stage's artefact — a stage's `schemas`
+# may only name these. Each one owns its `from_dict`/`to_dict`, so there is no
+# bag of contracts beside them to look the names up in.
+CONTRACTS = {
+    contract.__name__ for contract in (Boxes, Document, DocumentLine, PageSize, Row, RowAdjustments, Rows, Words)
+}
 
 
 def test_the_stages_are_the_prds_list_in_order() -> None:
@@ -53,11 +62,12 @@ def test_the_human_stages_are_the_users_decisions() -> None:
 
 
 def test_every_named_contract_is_a_document_schema() -> None:
-    """A stage's `schemas` names the wire contracts of its artefact; a name
-    that is not a contract in document.schemas is a typo, not a seam."""
+    """A stage's `schemas` names the classes that carry its artefact's wire; a
+    name that is not one of the model's contract classes is a typo, not a
+    seam."""
     named = {name for stage in Stage for name in stage.facts.schemas}
     assert named, "the vocabulary names no contracts at all"
-    assert named <= CONTRACTS, f"not document.schemas contracts: {sorted(named - CONTRACTS)}"
+    assert named <= CONTRACTS, f"not the model's wire contracts: {sorted(named - CONTRACTS)}"
 
 
 def test_every_stage_says_what_it_makes() -> None:

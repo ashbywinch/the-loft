@@ -16,15 +16,18 @@ import json
 import os
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
-from typing import Any, NamedTuple
+from typing import Any
 
 from PIL import Image
 
 from document.rectangle import Rectangle
-from pipeline.evals.eval_geometry import CropReading, PageSize, assemble_crop_grid, grid_crops
-from pipeline.layout import load_layout_store
+from pipeline.evals.eval_geometry import CropLine, CropReading, PageSize, assemble_crop_grid, grid_crops
+from pipeline.layout import Layout, load_layout_store
+from pipeline.layout_line import LayoutLine
+from pipeline.model.transcription import Transcription
 from pipeline.model.vlm import (
     DEFAULT_BASE_URL,
     VlmError,
@@ -32,44 +35,46 @@ from pipeline.model.vlm import (
     transcribe_image_vlm,
     transcription_system_with_context,
 )
+from pipeline.model.vlm_answer import VlmAnswer
 from pipeline.store import PipelineStore
+from pipeline.unmatched_line import UnmatchedLine
 from tools.box import overlap
 from tools.loft_paths import WORK_DIR
 from tools.text import normalize
 
 
-def _accumulate_bounds(xs: list[float], ys: list[float], item: dict[str, Any]) -> None:
+def _accumulate_bounds(xs: list[float], ys: list[float], item: LayoutLine | UnmatchedLine) -> None:
     """One boxed record's ink extent joins the bounds accumulators."""
-    if item.get("box"):
-        xs += [item["box"][0], item["box"][2]]
-        ys += [item["box"][1], item["box"][3]]
+    if item.box:
+        xs += [item.box[0], item.box[2]]
+        ys += [item.box[1], item.box[3]]
 
 
-def _content_bounds(layout: dict[str, Any]) -> Rectangle:
+def _content_bounds(layout: Layout) -> Rectangle:
     """The ink extent: the layout's boxed lines + the unmatched
     detections — the crops cover the letter, never the blank margins."""
     xs: list[float] = []
     ys: list[float] = []
-    for line in layout.get("lines", []):
+    for line in layout.lines:
         _accumulate_bounds(xs, ys, line)
-    for u in layout.get("unmatched", []):
-        _accumulate_bounds(xs, ys, u)
+    for unmatched in layout.unmatched:
+        _accumulate_bounds(xs, ys, unmatched)
     return Rectangle(min(xs), min(ys), max(xs), max(ys))
 
 
-class _TranscriptionRead(NamedTuple):
-    """One crop's transcription: the plain text, the parsed boxes, and the
-    usage the read cost — the three values a crop read returns together."""
+@dataclass(frozen=True)
+class CropRead:
+    """One crop's read: the crop-local lines it yielded and what the read
+    cost (both reads' tokens when the crop was rotated and re-read)."""
 
-    plain: str
-    boxes: dict[int, list[float]] | None
-    usage: dict[str, int]
+    lines: list[CropLine]
+    tokens: int
 
 
-def _read_transcription(path: Path, model: str, base_url: str, api_key: str | None) -> _TranscriptionRead:
-    """The VLM read + parse: transcribe one crop image (upright or
-    rotated) and parse the transcription response."""
-    text, usage = transcribe_image_vlm(
+def _read_transcription(path: Path, model: str, base_url: str, api_key: str | None) -> VlmAnswer:
+    """The VLM call for one crop image (upright or rotated): the model's
+    answer and what the call cost."""
+    return transcribe_image_vlm(
         path,
         model=model,
         system=transcription_system_with_context(),
@@ -80,8 +85,6 @@ def _read_transcription(path: Path, model: str, base_url: str, api_key: str | No
         # context once the image is in.
         max_tokens=8000,
     )
-    plain, boxes = parse_transcription_response(text)
-    return _TranscriptionRead(plain=plain, boxes=boxes, usage=usage)
 
 
 def _fail_crop_read(index: int, reason: str) -> None:
@@ -99,59 +102,66 @@ def read_crop(
     model: str,
     base_url: str,
     api_key: str | None,
-) -> tuple[list[dict[str, Any]], int] | None:
+) -> CropRead | None:
     """Read ONE crop with the VLM — the text + the crop-local boxes.
     When the upright read's boxes are TALLER than wide (the text is
     vertical — a postcard message), the crop is rotated +90° so the
     text is horizontal and re-read; the boxes are remapped back into
     the crop frame. None when the call failed or the model gave no
-    geometry. Returns (the lines, the token usage)."""
+    geometry."""
     box = (int(crop.x), int(crop.y), int(crop.x + crop.w), int(crop.y + crop.h))
     crop_path = tmp / f"crop-{index}.png"
     with Image.open(image_path) as im:
         im.crop(box).save(crop_path)
     t0 = monotonic()
     try:
-        plain, boxes, usage = _read_transcription(crop_path, model, base_url, api_key)
+        answer = _read_transcription(crop_path, model, base_url, api_key)
+        reading = parse_transcription_response(answer.answer)
     except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
         print(f"crop {index} FAILED: {str(exc)[:120]}", file=sys.stderr)
         return None
-    tokens = int(usage.get("total_tokens", 0) or 0)
-    if boxes is None:
+    tokens = answer.usage.tokens
+    if reading.boxes is None:
         return _fail_crop_read(index, "no geometry from the model")
+    text, boxes = reading.text, reading.boxes
     rotated_ok = False
     if _vertical_boxes(boxes):
         rotated = tmp / f"crop-{index}-rot.png"
         with Image.open(crop_path) as im:
             im.rotate(90, expand=True).save(rotated)
-        usage2: dict[str, int] = {}
+        # the answer and its parse travel as one pair: a failed re-read leaves
+        # NOTHING behind, so the upright read's answer is never paired with a
+        # parse that did not happen (the fallback is the upright read)
+        rotated_read: tuple[VlmAnswer, Transcription] | None = None
         try:
-            plain2, boxes2, usage2 = _read_transcription(rotated, model, base_url, api_key)
+            answer2 = _read_transcription(rotated, model, base_url, api_key)
+            rotated_read = (answer2, parse_transcription_response(answer2.answer))
         # lucidlint: ignore swallow a failed re-read keeps the upright read (the fallback)
         except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
             print(f"crop {index} rotated read FAILED: {str(exc)[:120]}", file=sys.stderr)
-            plain2, boxes2 = None, None
-        if boxes2 and plain2:
-            # the +90 rotation's inverse: the rotated frame's height is
-            # the crop's width (pinned empirically)
-            rot_h = int(crop.w)
-            boxes2 = {li: remap_rotated(b, int(crop.h), rot_h) for li, b in boxes2.items()}
-            plain, boxes, tokens = plain2, boxes2, tokens + int(usage2.get("total_tokens", 0) or 0)
-            rotated_ok = True
-            print(f"crop {index}: vertical text — rotated +90 and re-read", file=sys.stderr)
-    if plain is None:
+        if rotated_read is not None:
+            answer2, reading2 = rotated_read
+            if reading2.boxes and reading2.text:
+                # the +90 rotation's inverse: the rotated frame's height is
+                # the crop's width (pinned empirically)
+                rot_h = int(crop.w)
+                boxes = {li: remap_rotated(b, int(crop.h), rot_h) for li, b in reading2.boxes.items()}
+                text, tokens = reading2.text, tokens + answer2.usage.tokens
+                rotated_ok = True
+                print(f"crop {index}: vertical text — rotated +90 and re-read", file=sys.stderr)
+    if not text:
         return _fail_crop_read(index, "no readable text")
     # the rotated re-read's lines carry the crop's text orientation: the
     # +90 rotation makes them horizontal for the read, and the page-frame
     # consumer needs to know they are vertical on the page
     orientation = 90 if rotated_ok else 0
-    lines = [{"text": plain.split("\n")[li], "box": boxes[li], "orientation": orientation} for li in sorted(boxes)]
+    lines = [CropLine(text=text.split("\n")[li], box=boxes[li], orientation=orientation) for li in sorted(boxes)]
     print(
         f"crop {index} ({box[0]},{box[1]}) {crop.w:.0f}x{crop.h:.0f}: {len(lines)} lines, "
         f"{monotonic() - t0:.1f}s, {tokens} tokens",
         file=sys.stderr,
     )
-    return (lines, tokens)
+    return CropRead(lines=lines, tokens=tokens)
 
 
 def _vertical_boxes(boxes: dict[int, list[float]]) -> bool:
@@ -179,20 +189,69 @@ def remap_rotated(box: list[float], rot_w: int, rot_h: int) -> list[float]:
     ]
 
 
-def _anchor_agreement(assembled: dict[str, Any], layout: dict[str, Any]) -> tuple[list[float], int]:
+@dataclass(frozen=True)
+class AnchorAgreement:
+    """How the crop-grid's boxes agree with the current pipeline's boxes:
+    the per-line IoUs and how many lines matched."""
+
+    ious: list[float]
+    matched: int
+
+    @property
+    def mean_iou(self) -> float | None:
+        """The mean IoU over the matched lines — None when none matched."""
+        return round(sum(self.ious) / len(self.ious), 3) if self.ious else None
+
+
+def _anchor_agreement(assembled: Layout, layout: Layout) -> AnchorAgreement:
     """The crop-grid's boxes vs the current pipeline's rec-ink boxes:
-    the same model's text, so the normalized-text matching is reliable.
-    Returns (the IoUs, the matched count)."""
+    the same model's text, so the normalized-text matching is reliable."""
     ious: list[float] = []
     matched = 0
-    for current in layout.get("lines", []):
-        if not current.get("box"):
+    for current in layout.lines:
+        if not current.box:
             continue
-        match = next((ln for ln in assembled["lines"] if normalize(ln["text"]) == normalize(current["text"])), None)
-        if match and match.get("box"):
-            ious.append(overlap(match["box"], current["box"]))
+        match = next((line for line in assembled.lines if normalize(line.text) == normalize(current.text)), None)
+        if match and match.box:
+            ious.append(overlap(match.box, current.box))
             matched += 1
-    return ious, matched
+    return AnchorAgreement(ious=ious, matched=matched)
+
+
+@dataclass(frozen=True)
+class CropGridReport:
+    """The crop-grid run's ledger: how the page was read, what failed, what
+    it cost, and how the stitched boxes agree with the current layout."""
+
+    page: str
+    cols: int
+    rows: int
+    crops: int
+    failed_crops: int
+    lines: int
+    boxless: int
+    tokens: int
+    elapsed_s: float
+    mean_iou_vs_current: float | None
+    matched_lines: int
+    current_boxed: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """The report as its JSON record."""
+        return {
+            "page": self.page,
+            "cols": self.cols,
+            "rows": self.rows,
+            "crops": self.crops,
+            "failed_crops": self.failed_crops,
+            "lines": self.lines,
+            "boxless": self.boxless,
+            "tokens": self.tokens,
+            "elapsed_s": self.elapsed_s,
+            "mean_iou_vs_current": self.mean_iou_vs_current,
+            "matched_lines": self.matched_lines,
+            "current_boxed": self.current_boxed,
+        }
 
 
 def run(
@@ -204,9 +263,9 @@ def run(
     model: str = "dynamic/image",
     base_url: str = DEFAULT_BASE_URL,
     api_key: str | None = None,
-) -> dict[str, Any]:
-    """Read the page's crops, stitch, and report. Returns the report
-    dict (the run's record — the geometry experiment's ledger)."""
+) -> CropGridReport:
+    """Read the page's crops, stitch, and report — the geometry
+    experiment's ledger for one page."""
     image_path = work_dir / batch_id / "oriented" / f"{page}.jpg"
     store = PipelineStore(work_dir)
     layout = load_layout_store(store, f"{batch_id}/ocr-guess/{page}.layout.json")
@@ -226,34 +285,34 @@ def run(
             if read is None:
                 failed += 1
                 continue
-            crop.lines, used = read
-            tokens += used
+            crop.lines = read.lines
+            tokens += read.tokens
     elapsed = monotonic() - started
     assembled = assemble_crop_grid(crops, page, PageSize(width, height))
-    boxless = [ln for ln in assembled["lines"] if not ln.get("box")]
-    ious, matched = _anchor_agreement(assembled, layout)
-    current_boxed = len([line for line in layout.get("lines", []) if line.get("box")])
-    report = {
-        "page": page,
-        "cols": cols,
-        "rows": rows,
-        "crops": len(crops),
-        "failed_crops": failed,
-        "lines": len(assembled["lines"]),
-        "boxless": len(boxless),
-        "tokens": tokens,
-        "elapsed_s": round(elapsed, 1),
-        "mean_iou_vs_current": round(sum(ious) / len(ious), 3) if ious else None,
-        "matched_lines": matched,
-        "current_boxed": current_boxed,
-    }
+    boxless = [line for line in assembled.lines if not line.box]
+    agreement = _anchor_agreement(assembled, layout)
+    current_boxed = len([line for line in layout.lines if line.box])
+    report = CropGridReport(
+        page=page,
+        cols=cols,
+        rows=rows,
+        crops=len(crops),
+        failed_crops=failed,
+        lines=len(assembled.lines),
+        boxless=len(boxless),
+        tokens=tokens,
+        elapsed_s=round(elapsed, 1),
+        mean_iou_vs_current=agreement.mean_iou,
+        matched_lines=agreement.matched,
+        current_boxed=current_boxed,
+    )
     # the model-scoped saves — the trial runs several models on the same
     # page; each keeps its own assembled layout + report
     slug = model.replace("/", "-").replace("@", "")
     out = work_dir / batch_id / "ocr-guess" / f"{page}.cropgrid-{slug}.json"
-    out.write_text(json.dumps(assembled, indent=1, ensure_ascii=False), encoding="utf-8")
+    out.write_text(json.dumps(assembled.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
     report_path = work_dir / batch_id / "ocr-guess" / f"{page}.cropgrid-report-{slug}.json"
-    report_path.write_text(json.dumps(report, indent=1, ensure_ascii=False), encoding="utf-8")
+    report_path.write_text(json.dumps(report.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
     return report
 
 
@@ -282,7 +341,7 @@ def main(argv: list[str] | None = None) -> int:
         base_url=args.base_url,
         api_key=args.api_key or os.environ.get("OPENROUTER_API_KEY"),
     )
-    print(json.dumps(report, indent=1))
+    print(json.dumps(report.to_dict(), indent=1))
     return 0
 
 

@@ -9,15 +9,15 @@ definition the user pointed to (L3: a segment is a logically consecutive
 run of writing).
 
 Pure: no model call, no network, no image — the numbered render is the
-caller's; here live the words of the contract.
+caller's; here live the words of the contract, and the `Segment` record that
+owns this wire.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
-
-from document.transcript import parse_segments
 
 VALID_TYPES = ("body", "injection", "marginalia", "rule")
 
@@ -29,113 +29,149 @@ class ContractError(ValueError):
 
 
 @dataclass(frozen=True)
-class SegmentAnswer:
-    """One validated segment the VLM returned: its words, type, transcript
-    and injection point, in the render's id space (the numbered boxes)."""
+class Segment:
+    """One segment of the VLM's answer, judged against the render's numbered
+    boxes: the id, the type, the word ids it read, its transcript (None for a
+    rule that states none) and the word an injection lands after.
+
+    The class owns the contract's wire record — ``{"id", "type", "word_ids",
+    "transcript"?, "injection_point": {"after": <word id>}?}``: ``from_dict``
+    reads it and is the whole per-segment contract (every rule both ways),
+    ``to_dict`` writes it back.
+    """
 
     id: str
     type: str
-    transcript: str
+    transcript: str | None
     word_ids: tuple[int, ...]
     injection_after: int | None
 
-
-def parse_answer(answer: str) -> list[dict[str, Any]]:
-    """The contract's parser — one implementation (document.transcript)."""
-    return parse_segments(answer)
-
-
-class _RawSegment:
-    """One raw segment from the model's answer, against the render
-    universe of word ids — the contract's unit of validation: the id
-    (present, unique in the answer), the type, the word ids (ints in
-    1..N, unique), the injection point (required for exactly injections)
-    and the transcript (a string; a rule may omit its own)."""
-
-    def __init__(self, entry: dict[str, Any], universe: int) -> None:
-        self.entry = entry
-        self.universe = universe
-        segment_id = entry.get("id")
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any], universe: int) -> Segment:
+        """One wire record as a segment, or a loud refusal naming what is wrong
+        with it. ``universe`` is the render's word count: the id space every
+        word id and every injection point must land in."""
+        segment_id = raw.get("id")
         if not isinstance(segment_id, str) or not segment_id:
-            raise ContractError(f"a segment has no id: {entry!r}")
-        self.id = segment_id
-
-    def answer(self, seen_ids: set[str]) -> SegmentAnswer:
-        """The validated segment — the id joining ``seen_ids`` here, so
-        a duplicate across the answer fails loudly."""
-        if self.id in seen_ids:
-            raise ContractError(f"duplicate segment id: {self.id!r}")
-        seen_ids.add(self.id)
-        kind = self.entry.get("type")
+            raise ContractError(f"a segment has no id: {raw!r}")
+        kind = raw.get("type")
         if kind not in VALID_TYPES:
-            raise ContractError(f"{self.id}: unknown type {kind!r} (not {VALID_TYPES})")
-        assert isinstance(kind, str)
-        return SegmentAnswer(
-            id=self.id,
+            raise ContractError(f"{segment_id}: unknown type {kind!r} (not {VALID_TYPES})")
+        return cls(
+            id=segment_id,
             type=kind,
-            transcript=self._transcript(kind),
-            word_ids=self._word_ids(),
-            injection_after=self._injection_point(kind),
+            transcript=_transcript(segment_id, kind, raw.get("transcript")),
+            word_ids=_word_ids(segment_id, raw.get("word_ids"), universe),
+            injection_after=_injection_point(segment_id, kind, raw.get("injection_point"), universe),
         )
 
-    def _word_ids(self) -> tuple[int, ...]:
-        raw_ids = self.entry.get("word_ids")
-        if not isinstance(raw_ids, list) or not all(isinstance(v, int) and not isinstance(v, bool) for v in raw_ids):
-            raise ContractError(f"{self.id}: word_ids must be a list of ints, got {raw_ids!r}")
-        if not all(1 <= v <= self.universe for v in raw_ids):
-            raise ContractError(f"{self.id}: a word id outside 1..{self.universe}")
-        if len(raw_ids) != len(set(raw_ids)):
-            raise ContractError(f"{self.id}: duplicate word ids {raw_ids!r}")
-        return tuple(raw_ids)
-
-    def _injection_point(self, kind: str) -> int | None:
-        """The injection's required point (the word id the injection
-        lands after), or None for non-injections — which FORBID the
-        field outright."""
-        point = self.entry.get("injection_point")
-        if kind == "injection":
-            if not isinstance(point, dict):
-                raise ContractError(f"{self.id}: an injection REQUIRES injection_point")
-            candidate = point.get("after")
-            if not isinstance(candidate, int) or isinstance(candidate, bool) or not 1 <= candidate <= self.universe:
-                raise ContractError(
-                    f"{self.id}: injection_point.after must be a word id in 1..{self.universe}, got {candidate!r}"
-                )
-            return candidate
-        if point is not None:
-            raise ContractError(f"{self.id}: only an injection may carry injection_point ({point!r})")
-        return None
-
-    def _transcript(self, kind: str) -> str:
-        transcript = self.entry.get("transcript")
-        if kind == "rule":
-            if transcript is not None and not isinstance(transcript, str):
-                raise ContractError(f"{self.id}: a rule's transcript, when present, is a string")
-            return transcript if isinstance(transcript, str) else ""
-        if not isinstance(transcript, str) or not transcript:
-            raise ContractError(f"{self.id}: missing transcript")
-        return transcript
+    def to_dict(self) -> dict[str, Any]:
+        """The segment as the contract's wire record — the keys the model sent,
+        and only those."""
+        out: dict[str, Any] = {"id": self.id, "type": self.type}
+        if self.transcript is not None:
+            out["transcript"] = self.transcript
+        out["word_ids"] = list(self.word_ids)
+        if self.injection_after is not None:
+            out["injection_point"] = {"after": self.injection_after}
+        return out
 
 
-def validate_segments(raw_segments: list[dict[str, Any]], universe: int) -> list[SegmentAnswer]:
-    """The structural contract, every rule both ways (per segment, see
-    ``_RawSegment``): the type is one of body/injection/marginalia/rule;
-    word_ids are ints in 1..N, unique within the segment; injection
-    REQUIRES injection_point.after (a word id); every other type FORBIDS
-    injection_point; transcripts are strings, a rule may omit its
-    transcript."""
+def _word_ids(segment_id: str, raw_ids: Any, universe: int) -> tuple[int, ...]:
+    """The word ids a segment read, or a refusal naming what is wrong with
+    them: not a list of ints, one outside the render, one twice."""
+    if not isinstance(raw_ids, list) or not all(isinstance(v, int) and not isinstance(v, bool) for v in raw_ids):
+        raise ContractError(f"{segment_id}: word_ids must be a list of ints, got {raw_ids!r}")
+    if not all(1 <= v <= universe for v in raw_ids):
+        raise ContractError(f"{segment_id}: a word id outside 1..{universe}")
+    if len(raw_ids) != len(set(raw_ids)):
+        raise ContractError(f"{segment_id}: duplicate word ids {raw_ids!r}")
+    return tuple(raw_ids)
+
+
+def _injection_point(segment_id: str, kind: str, raw_point: Any, universe: int) -> int | None:
+    """The injection's required point (the word id the injection lands after),
+    or None for non-injections — which FORBID the field outright."""
+    if kind == "injection":
+        if not isinstance(raw_point, dict):
+            raise ContractError(f"{segment_id}: an injection REQUIRES injection_point")
+        candidate = raw_point.get("after")
+        if not isinstance(candidate, int) or isinstance(candidate, bool) or not 1 <= candidate <= universe:
+            raise ContractError(
+                f"{segment_id}: injection_point.after must be a word id in 1..{universe}, got {candidate!r}"
+            )
+        return candidate
+    if raw_point is not None:
+        raise ContractError(f"{segment_id}: only an injection may carry injection_point ({raw_point!r})")
+    return None
+
+
+def _transcript(segment_id: str, kind: str, raw_transcript: Any) -> str | None:
+    """The segment's transcript: a rule may state none (None — the wire omits
+    the key); every other type must state a non-empty one."""
+    if kind == "rule":
+        if raw_transcript is not None and not isinstance(raw_transcript, str):
+            raise ContractError(f"{segment_id}: a rule's transcript, when present, is a string")
+        return raw_transcript if isinstance(raw_transcript, str) else None
+    if not isinstance(raw_transcript, str) or not raw_transcript:
+        raise ContractError(f"{segment_id}: missing transcript")
+    return raw_transcript
+
+
+def _segments_of(answer: str) -> list[Any]:
+    """The answer's raw segments, or a refusal: the model sometimes wraps its
+    JSON in a markdown fence, and the envelope must be
+    ``{"segments": [...]}``."""
+    stripped = answer.strip()
+    if stripped.startswith(_FENCE):
+        lines = stripped.splitlines()
+        lines = lines[1:] if lines[0].strip().startswith(_FENCE) else lines
+        stripped = "\n".join(line for line in lines if not line.strip().startswith(_FENCE)).strip()
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError as exc:
+        raise ContractError(f"the answer is not JSON: {answer[:200]!r}") from exc
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("segments"), list):
+        raise ContractError(f"the answer has no segments list: {answer[:200]!r}")
+    return parsed["segments"]
+
+
+def parse_answer(answer: str, universe: int) -> list[Segment]:
+    """The contract's reader: the model's answer as its segments, every one
+    judged against the render universe (see ``Segment``). An answer with no
+    segments, and an id claimed twice, fail loudly here.
+
+    This module reads its own answer because the wire is the render's WORD-id
+    contract; document.transcript's parser speaks the product's ROW contract.
+    """
+    raw_segments = _segments_of(answer)
     if not raw_segments:
         raise ContractError("no segments in the answer")
-    seen_ids: set[str] = set()
-    return [_RawSegment(entry, universe).answer(seen_ids) for entry in raw_segments]
+    segments: list[Segment] = []
+    claimed: set[str] = set()
+    for raw in raw_segments:
+        segment = Segment.from_dict(raw, universe)
+        if segment.id in claimed:
+            raise ContractError(f"duplicate segment id: {segment.id!r}")
+        claimed.add(segment.id)
+        segments.append(segment)
+    return segments
 
 
-def reconcile(answers: list[SegmentAnswer], universe: int) -> tuple[dict[int, str], list[str]]:
+@dataclass(frozen=True)
+class Reconciliation:
+    """The plan's reconciliation: which segment claimed each rendered word, and
+    the problems the claims raised. A perfect answer has no problems; a gap or
+    a double is a visible failure, never a silent merge."""
+
+    assignment: dict[int, str]
+    problems: list[str]
+
+
+def reconcile(answers: list[Segment], universe: int) -> Reconciliation:
     """Every rendered word in exactly one non-rule segment: set equality minus
-    the rule ids (the plan's reconciliation). Returns (assignment, problems)
-    — a perfect answer has no problems; a gap or a double is a visible
-    failure, never a silent merge."""
-    assigned: dict[int, str] = {}
+    the rule ids (the plan's reconciliation)."""
+    assignment: dict[int, str] = {}
     problems: list[str] = []
     rule_ids: set[int] = set()
     for answer in answers:
@@ -143,14 +179,14 @@ def reconcile(answers: list[SegmentAnswer], universe: int) -> tuple[dict[int, st
             if answer.type == "rule":
                 rule_ids.add(word_id)
                 continue
-            if word_id in assigned:
-                problems.append(f"word {word_id} in both {assigned[word_id]} and {answer.id}")
+            if word_id in assignment:
+                problems.append(f"word {word_id} in both {assignment[word_id]} and {answer.id}")
             else:
-                assigned[word_id] = answer.id
-    missing = sorted(set(range(1, universe + 1)) - set(assigned) - rule_ids)
+                assignment[word_id] = answer.id
+    missing = sorted(set(range(1, universe + 1)) - set(assignment) - rule_ids)
     if missing:
         problems.append(f"unassigned words: {missing[:20]}{'...' if len(missing) > 20 else ''}")
-    return assigned, problems
+    return Reconciliation(assignment, problems)
 
 
 _SYSTEM_LINES = (

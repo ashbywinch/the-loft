@@ -10,9 +10,14 @@ from typing import Any
 
 import pytest
 
+from tools.attested_args import AttestedArgs
+from tools.finding import Finding
+from tools.item_hit import ItemHit
 from tools.memory import ElicitationError
 from tools.records import Person, ReviewContext
-from tools.review import investigate, run_tool, steer_message
+from tools.review import ToolResult, investigate, run_tool, steer_message
+from tools.review_verdict import ReviewVerdict
+from tools.trace_step import TraceStep
 
 PEOPLE: list[dict[str, Any]] = [
     {"id": "p-quentin", "name": "Quentin Whitlock", "relation": "brother of Pearl Whitlock"},
@@ -47,6 +52,18 @@ def _person() -> Person:
     return Person.from_dict({"id": "p-quentin", "name": "Quentin Whitlock", "relation": "brother of Pearl Whitlock"})
 
 
+def _item_hits(result: ToolResult) -> list[ItemHit]:
+    """The item hits of a tool's list result — a test asserting on them
+    asserts the tool answered with hits, never the note or the error a tool
+    answers with when nothing matched."""
+    assert isinstance(result, list), f"the tool did not answer with hits: {result!r}"
+    hits: list[ItemHit] = []
+    for hit in result:
+        assert isinstance(hit, ItemHit), f"not an item hit: {hit!r}"
+        hits.append(hit)
+    return hits
+
+
 class FakeClient:
     """Satisfies the ChatClient protocol — one scripted response queue."""
 
@@ -75,8 +92,8 @@ def test_on_topic_answer_is_relevant() -> None:
         ]
     )
     result = investigate(client, text="Grandma used to say so.", person=_person(), who="Alex", facts=make_facts())
-    assert result["relevant"] == "true"
-    assert result["contradiction"]["found"] == "false"
+    assert result.relevant == "true"
+    assert result.contradiction.found == "false"
     assert len(client.calls) == 1  # no digging needed — a direct verdict
     # the prompt must name the exact claim and carry the attested facts
     assert "Quentin Whitlock" in client.calls[0][1]
@@ -98,8 +115,8 @@ def test_off_topic_answer_is_flagged_not_recorded() -> None:
         who="Alex",
         facts=make_facts(),
     )
-    assert result["relevant"] == "false"
-    assert "house" in result["note"]
+    assert result.relevant == "false"
+    assert "house" in result.note
 
 
 def test_facts_ledger_deduplicates_and_sits_last() -> None:
@@ -117,7 +134,7 @@ def test_facts_ledger_deduplicates_and_sits_last() -> None:
         ]
     )
     result = investigate(client, text="I think we visited him once.", person=_person(), who="Alex", facts=make_facts())
-    assert result["relevant"] == "true"
+    assert result.relevant == "true"
     final_user = client.calls[2][1]
     assert final_user.count("Facts already gathered (deduplicated") == 2  # appended after every tool call
     # the FINAL ledger block sits at the very end and holds the repeated
@@ -143,7 +160,7 @@ def test_ledger_survives_unserializable_tool_results() -> None:
     class Exotic:
         name = "not-json"
 
-    ledger = _facts_ledger([{"tool": "attested", "args": {"id": "p-x"}, "result": Exotic()}])
+    ledger = _facts_ledger((TraceStep(model="", reasoning="", tool="attested", args={"id": "p-x"}, result=Exotic()),))
     assert 'attested({"id": "p-x"})' in ledger
     assert "Exotic" in ledger  # the repr carried the payload — no crash, no json failure
 
@@ -182,9 +199,9 @@ def test_contradiction_with_the_attested_facts_is_flagged() -> None:
         who="Alex",
         facts=make_facts(),
     )
-    assert result["relevant"] == "true"
-    assert result["contradiction"]["found"] == "true"
-    assert "Walter Whitlock" in result["contradiction"]["detail"]
+    assert result.relevant == "true"
+    assert result.contradiction.found == "true"
+    assert "Walter Whitlock" in result.contradiction.detail
 
 
 def test_a_typoed_question_key_fails_loudly_never_silently() -> None:
@@ -196,7 +213,7 @@ def test_a_typoed_question_key_fails_loudly_never_silently() -> None:
     from pipeline.evals.eval_review import PlaceLeadFlow, ReviewRun
 
     raw = '{"relevant": true, "findings": [], "quetion": "Did you ever meet him?"}'
-    error = ReviewRun(PlaceLeadFlow(), {"question": "", "raw": raw}).question()
+    error = ReviewRun(PlaceLeadFlow(), ReviewVerdict.from_dict({"question": "", "raw": raw})).question()
     assert error is not None
     assert "lacks the 'question' key" in error
     assert raw in error, "the guard must carry the FULL output (2026-09-23)"
@@ -223,9 +240,9 @@ def test_the_model_can_dig_with_the_tools_and_reports_findings() -> None:
     )
     assert len(client.calls) == 2  # the tool call, then the verdict
     assert "Tool result (search_people)" in client.calls[1][1]  # the result was fed back
-    assert result["findings"] == [
-        {"text": "one of Nora's siblings, Walter, died in the war — the archive has his record", "item_id": None}
-    ]
+    assert result.findings == (
+        Finding(text="one of Nora's siblings, Walter, died in the war — the archive has his record"),
+    )
 
 
 def test_the_tools_are_read_only() -> None:
@@ -254,8 +271,8 @@ def test_the_model_never_derives_relationships() -> None:
         ]
     )
     result = investigate(client, text="He was her brother, I think.", person=_person(), who="Alex", facts=make_facts())
-    assert "term" not in result
-    assert result["relevant"] == "true"
+    assert "term" not in result.extra
+    assert result.relevant == "true"
 
 
 def test_model_that_never_concludes_fails_loudly() -> None:
@@ -315,7 +332,7 @@ def test_the_model_sees_the_whole_conversation_including_its_own_reasoning() -> 
         facts=make_facts(),
         history=history,
     )
-    assert result["relevant"] == "true"
+    assert result.relevant == "true"
     prompt = client.calls[0][1]
     assert "Did Mum tell you that personally?" in prompt  # the assistant's own earlier speech
     assert '"relevant": true, "confidence": "think_so"' in prompt  # its earlier reasoning, verbatim
@@ -403,16 +420,21 @@ def test_the_tool_calls_are_logged_in_the_trace_and_fed_back() -> None:
         ]
     )
     result = investigate(client, text="Walter died in the war", person=_person(), who="Alex", facts=make_facts())
-    trace = result["trace"]
+    trace = result.trace
     assert len(trace) == 2
-    assert trace[0]["tool"] == "search_people"
-    assert trace[0]["result"]  # the deterministic harness output
-    assert trace[1]["model"]  # the final verdict's raw output
+    assert trace[0].tool == "search_people"
+    assert trace[0].result  # the deterministic harness output
+    assert trace[1].model  # the final verdict's raw output
 
     # the next investigation sees the previous trace in its history
     history = (
         Message(role="user", text="Walter died in the war", when=""),
-        Message(role="assistant", text="The documents show: ...", when="", thinking=_json.dumps(trace)),
+        Message(
+            role="assistant",
+            text="The documents show: ...",
+            when="",
+            thinking=_json.dumps([step.to_dict() for step in trace]),
+        ),
     )
     client2 = FakeClient(
         [
@@ -460,10 +482,10 @@ def test_the_attested_tool_returns_the_sentence_that_mentions_the_person() -> No
         ),
     }
     facts = ReviewContext(people=facts.people, items=facts.items + (long_item,), relationships=facts.relationships)
-    result = run_tool("attested", {"id": "p-walter"}, facts)
-    letter = next(r for r in result if r["id"] == "doc-1916-letter")
-    assert letter["quotes"] == ["I must tell you that Walter Whitlock was killed in the bombardment on the fifteenth."]
-    assert not any("rested at the camp" in q for q in letter["quotes"])  # never the opening
+    hits = _item_hits(run_tool("attested", AttestedArgs(id="p-walter"), facts))
+    letter = next(hit for hit in hits if hit.id == "doc-1916-letter")
+    assert letter.quotes == ("I must tell you that Walter Whitlock was killed in the bombardment on the fifteenth.",)
+    assert not any("rested at the camp" in q for q in letter.quotes)  # never the opening
 
 
 def test_a_partial_answer_is_fed_back_verbatim_on_the_correction() -> None:
@@ -493,10 +515,10 @@ def test_a_partial_answer_is_fed_back_verbatim_on_the_correction() -> None:
     # the second call carries the first response verbatim — the model's own
     # reasoning is its context, exactly as across turns
     assert partial in client.calls[1][1]
-    assert result["relevant"] == "true"
-    assert result["confidence"] == "dont_know"
+    assert result.relevant == "true"
+    assert result.confidence == "dont_know"
     # and the trace logs the partial answer too — nothing the model said is lost
-    assert any("verdict" in str(step.get("model", "")) for step in result["trace"])
+    assert any("verdict" in step.model for step in result.trace)
 
 
 def test_the_attested_tool_matches_mentions_case_insensitively() -> None:
@@ -511,10 +533,10 @@ def test_the_attested_tool_matches_mentions_case_insensitively() -> None:
         "story": "the notes my aunt left say pearl was the one who kept the photographs.",
     }
     facts = ReviewContext(people=facts.people, items=facts.items + (lower_item,), relationships=facts.relationships)
-    result = run_tool("attested", {"id": "p-pearl"}, facts)
-    assert any(r["id"] == "doc-ocr-letter" for r in result)
-    quotes = next(r for r in result if r["id"] == "doc-ocr-letter")["quotes"]
-    assert quotes == ["the notes my aunt left say pearl was the one who kept the photographs."]
+    hits = _item_hits(run_tool("attested", AttestedArgs(id="p-pearl"), facts))
+    assert any(hit.id == "doc-ocr-letter" for hit in hits)
+    quotes = next(hit for hit in hits if hit.id == "doc-ocr-letter").quotes
+    assert quotes == ("the notes my aunt left say pearl was the one who kept the photographs.",)
 
 
 def test_known_facts_mark_guess_statuses_never_attested() -> None:
@@ -563,7 +585,7 @@ def test_over_budget_tool_calls_are_logged_and_fed_back() -> None:
     )
     assert len(client.calls) == 6  # four digs, the over-budget turn, the verdict
     # the over-budget turn's own words are in the trace AND fed forward
-    assert any(over in str(step.get("model", "")) for step in result["trace"])
+    assert any(over in step.model for step in result.trace)
     assert over in client.calls[5][1]
 
 
@@ -573,7 +595,9 @@ def test_persona_guard_allows_reviewer_introduced_vocabulary() -> None:
     # (user; PRD R1)
     from pipeline.evals.eval_review import persona_errors
 
-    result = {"relevant": "true", "question": "Where did the import get that idea — did Pearl ever mention a brother?"}
+    result = ReviewVerdict.from_dict(
+        {"relevant": "true", "question": "Where did the import get that idea — did Pearl ever mention a brother?"}
+    )
     assert persona_errors(result, reviewer_text="I'm fairly sure the import has it right") == []
     # the same question is a violation when the reviewer never said it
     assert persona_errors(result)
@@ -588,8 +612,8 @@ def test_persona_guard_error_carries_the_full_text() -> None:
     question = (
         "She mentioned several people, but I wanted to be sure about Walter's name "
         "before I asked anything further about the other brother whose records still "
-        "need closer inspection, because the exact wording is awaiting confirmation. "
+        "need closer inspection, because the exact wording is awaiting confirmation."
     )
     assert len(question) > 80, "the fixture must exceed the old truncation bound"
-    errors = persona_errors({"relevant": "true", "question": question})
+    errors = persona_errors(ReviewVerdict.from_dict({"relevant": "true", "question": question}))
     assert errors == [f"question echoes the system ('awaiting'): {question}"]

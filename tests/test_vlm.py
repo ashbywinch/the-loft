@@ -11,7 +11,16 @@ from pathlib import Path
 import pytest
 
 import pipeline.model.vlm as vlm
-from pipeline.model.vlm import VlmError, _extract_json, selfreport_words, transcription_system_with_context
+from pipeline.model.token_usage import TokenUsage
+from pipeline.model.unsure_word import UnsureWord
+from pipeline.model.vlm import (
+    VlmError,
+    VlmOptions,
+    _extract_json,
+    selfreport_words,
+    transcription_system_with_context,
+)
+from pipeline.model.vlm_answer import VlmAnswer
 
 
 class TestTranscriptionSystemWithContext:
@@ -57,7 +66,9 @@ class TestSelfreportWords:
         def fake(image, *, system, user_text):
             assert "line one\n2| line two" in user_text  # the guess is numbered for citing
             assert "known family people" in system.lower() or "known people" in system.lower()
-            return json.dumps({"unsure": [{"line": 2, "word": "doubtful"}, {"line": 1, "word": "one"}]}), {}
+            return VlmAnswer(
+                json.dumps({"unsure": [{"line": 2, "word": "doubtful"}, {"line": 1, "word": "one"}]}), TokenUsage()
+            )
 
         result = selfreport_words(
             __import__("pathlib").Path("p.jpg"),
@@ -65,13 +76,14 @@ class TestSelfreportWords:
             people=["Alex"],
             transcribe=fake,
         )
-        assert result == [{"line": 2, "word": "doubtful"}, {"line": 1, "word": "one"}]
+        assert result == [UnsureWord(2, "doubtful"), UnsureWord(1, "one")]
 
     def test_junk_entries_dropped(self) -> None:
         def fake(image, *, system, user_text):
-            return json.dumps(
-                {"unsure": [{"line": "x", "word": "bad"}, {"line": 3, "word": ""}, {"word": "no-line"}]}
-            ), {}
+            return VlmAnswer(
+                json.dumps({"unsure": [{"line": "x", "word": "bad"}, {"line": 3, "word": ""}, {"word": "no-line"}]}),
+                TokenUsage(),
+            )
 
         result = selfreport_words(__import__("pathlib").Path("p.jpg"), "one\ntwo\nthree", transcribe=fake)
         assert result == []
@@ -89,24 +101,24 @@ class TestParseTranscriptionResponse:
                 ]
             }
         )
-        plain, boxes = parse_transcription_response(text)
-        assert plain == "piano-practising facilities. At the\nmoment it looks awfully complicated,"
-        assert boxes == {0: [219.0, 496.0, 760.0, 526.0], 1: [234.0, 513.0, 733.0, 543.0]}
+        reading = parse_transcription_response(text)
+        assert reading.text == "piano-practising facilities. At the\nmoment it looks awfully complicated,"
+        assert reading.boxes == {0: [219.0, 496.0, 760.0, 526.0], 1: [234.0, 513.0, 733.0, 543.0]}
 
     def test_fence_and_prose_tolerated(self) -> None:
         from pipeline.model.vlm import parse_transcription_response
 
         text = '```json\n{"lines": [{"text": "line one", "box": [1, 2, 3, 4]}]}\n```\nHope that helps'
-        plain, boxes = parse_transcription_response(text)
-        assert plain == "line one"
-        assert boxes == {0: [1.0, 2.0, 3.0, 4.0]}
+        reading = parse_transcription_response(text)
+        assert reading.text == "line one"
+        assert reading.boxes == {0: [1.0, 2.0, 3.0, 4.0]}
 
     def test_plain_text_falls_back(self) -> None:
         from pipeline.model.vlm import parse_transcription_response
 
-        plain, boxes = parse_transcription_response("Chère Maman.\nline two")
-        assert plain == "Chère Maman.\nline two"
-        assert boxes is None  # no geometry — the detector association fills it
+        reading = parse_transcription_response("Chère Maman.\nline two")
+        assert reading.text == "Chère Maman.\nline two"
+        assert reading.boxes is None  # no geometry — the detector association fills it
 
     def test_blank_lines_skipped_keep_indexes_aligned(self) -> None:
         from pipeline.model.vlm import parse_transcription_response
@@ -120,24 +132,24 @@ class TestParseTranscriptionResponse:
                 ]
             }
         )
-        plain, boxes = parse_transcription_response(text)
-        assert plain == "first\nthird"
-        assert boxes == {0: [0.0, 0.0, 10.0, 10.0], 1: [20.0, 20.0, 30.0, 30.0]}
+        reading = parse_transcription_response(text)
+        assert reading.text == "first\nthird"
+        assert reading.boxes == {0: [0.0, 0.0, 10.0, 10.0], 1: [20.0, 20.0, 30.0, 30.0]}
 
     def test_missing_or_bad_boxes_dropped_geometry(self) -> None:
         from pipeline.model.vlm import parse_transcription_response
 
         text = json.dumps({"lines": [{"text": "no box"}, {"text": "bad box", "box": "x"}]})
-        plain, boxes = parse_transcription_response(text)
-        assert plain == "no box\nbad box"
-        assert boxes is None
+        reading = parse_transcription_response(text)
+        assert reading.text == "no box\nbad box"
+        assert reading.boxes is None
 
     def test_garbage_is_plain_text(self) -> None:
         from pipeline.model.vlm import parse_transcription_response
 
-        plain, boxes = parse_transcription_response("I could not read the page")
-        assert plain == "I could not read the page"
-        assert boxes is None
+        reading = parse_transcription_response("I could not read the page")
+        assert reading.text == "I could not read the page"
+        assert reading.boxes is None
 
     def test_collapsed_bottom_boxes_dropped(self) -> None:
         from pipeline.model.vlm import parse_transcription_response
@@ -151,11 +163,11 @@ class TestParseTranscriptionResponse:
                 ]
             }
         )
-        plain, boxes = parse_transcription_response(text)
-        assert plain == "normal line\nanother\nbottom collapsed"
+        reading = parse_transcription_response(text)
+        assert reading.text == "normal line\nanother\nbottom collapsed"
         # the sliver is < a third of the median height — dropped, the line
         # falls back to the detector's association
-        assert boxes == {0: [10.0, 10.0, 900.0, 100.0], 1: [10.0, 110.0, 900.0, 200.0]}
+        assert reading.boxes == {0: [10.0, 10.0, 900.0, 100.0], 1: [10.0, 110.0, 900.0, 200.0]}
 
 
 class TestTranscriptionProblem:
@@ -232,30 +244,40 @@ class TestTranscribeWithFallbacks:
     def test_first_usable_response_wins(self, monkeypatch) -> None:
         from pipeline.model.vlm import transcribe_with_fallbacks
 
-        responses = [("good text", {"total_tokens": 10}), ("never reached", {"total_tokens": 99})]
+        responses = [
+            VlmAnswer("good text", TokenUsage(total_tokens=10)),
+            VlmAnswer("never reached", TokenUsage(total_tokens=99)),
+        ]
         calls: list[dict] = []
 
         def fake(image, **kwargs):
             calls.append(kwargs)
             return responses.pop(0)
 
-        text, usage = transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "b"}], transcribe=fake)
-        assert text == "good text"
-        assert usage["total_tokens"] == 10
+        answer = transcribe_with_fallbacks(
+            Path("x.png"), [VlmOptions(model="a"), VlmOptions(model="b")], transcribe=fake
+        )
+        assert answer.answer == "good text"
+        assert answer.usage.total_tokens == 10
         assert len(calls) == 1
 
     def test_unusable_response_falls_through_to_the_next_variant(self, monkeypatch) -> None:
         from pipeline.model.vlm import transcribe_with_fallbacks
 
-        responses = [('{"lines": [{"text": "unterminated', {"total_tokens": 10}), ("good text", {"total_tokens": 20})]
+        responses = [
+            VlmAnswer('{"lines": [{"text": "unterminated', TokenUsage(total_tokens=10)),
+            VlmAnswer("good text", TokenUsage(total_tokens=20)),
+        ]
         calls: list[dict] = []
 
         def fake(image, **kwargs):
             calls.append(kwargs)
             return responses.pop(0)
 
-        text, usage = transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "a"}], transcribe=fake)
-        assert text == "good text"
+        answer = transcribe_with_fallbacks(
+            Path("x.png"), [VlmOptions(model="a"), VlmOptions(model="a")], transcribe=fake
+        )
+        assert answer.answer == "good text"
         assert len(calls) == 2
 
     def test_call_error_falls_through_to_the_next_variant(self, monkeypatch) -> None:
@@ -267,10 +289,12 @@ class TestTranscribeWithFallbacks:
             calls.append(kwargs)
             if len(calls) == 1:
                 raise RuntimeError("vision model returned empty content")
-            return "recovered", {"total_tokens": 5}
+            return VlmAnswer("recovered", TokenUsage(total_tokens=5))
 
-        text, _usage = transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "a"}], transcribe=fake)
-        assert text == "recovered"
+        answer = transcribe_with_fallbacks(
+            Path("x.png"), [VlmOptions(model="a"), VlmOptions(model="a")], transcribe=fake
+        )
+        assert answer.answer == "recovered"
 
     def test_all_attempts_error_reraises_the_last(self) -> None:
         from pipeline.model.vlm import transcribe_with_fallbacks
@@ -279,34 +303,36 @@ class TestTranscribeWithFallbacks:
             raise RuntimeError("timeout")
 
         with pytest.raises(RuntimeError):
-            transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "b"}], transcribe=fake)
+            transcribe_with_fallbacks(Path("x.png"), [VlmOptions(model="a"), VlmOptions(model="b")], transcribe=fake)
 
     def test_all_unusable_returns_the_last_response_for_the_gates(self, monkeypatch) -> None:
         from pipeline.model.vlm import transcribe_with_fallbacks
 
         blob = '{"lines": [{"text": "unterminated'
-        responses = [(blob, {"total_tokens": 10}), (blob, {"total_tokens": 20})]
+        responses = [VlmAnswer(blob, TokenUsage(total_tokens=10)), VlmAnswer(blob, TokenUsage(total_tokens=20))]
         calls: list[dict] = []
 
         def fake(image, **kwargs):
             calls.append(kwargs)
             return responses.pop(0)
 
-        text, usage = transcribe_with_fallbacks(Path("x.png"), [{"model": "a"}, {"model": "b"}], transcribe=fake)
-        assert text == blob
-        assert usage["total_tokens"] == 30  # honest cost: both attempts
+        answer = transcribe_with_fallbacks(
+            Path("x.png"), [VlmOptions(model="a"), VlmOptions(model="b")], transcribe=fake
+        )
+        assert answer.answer == blob
+        assert answer.usage.total_tokens == 30  # honest cost: both attempts
 
     def test_each_attempt_reason_is_logged(self, monkeypatch, capsys) -> None:
         from pipeline.model.vlm import transcribe_with_fallbacks
 
-        responses = [("", {"total_tokens": 1}), ("good", {"total_tokens": 2})]
+        responses = [VlmAnswer("", TokenUsage(total_tokens=1)), VlmAnswer("good", TokenUsage(total_tokens=2))]
         calls: list[dict] = []
 
         def fake(image, **kwargs):
             calls.append(kwargs)
             return responses.pop(0)
 
-        transcribe_with_fallbacks(Path("page.png"), [{"model": "a"}, {"model": "a"}], transcribe=fake)
+        transcribe_with_fallbacks(Path("page.png"), [VlmOptions(model="a"), VlmOptions(model="a")], transcribe=fake)
         err = capsys.readouterr().err
         assert "attempt 1/2" in err
         assert "page.png" in err
@@ -375,10 +401,10 @@ class TestThinkingDisabled:
                 )
             return _BytesResponse(body)
 
-        text, _usage = vlm.transcribe_image_vlm(
+        answer = vlm.transcribe_image_vlm(
             self._png(tmp_path), model="dynamic/image", base_url="http://x/v1", api_key="k", urlopen=fake_urlopen
         )
-        assert text == "transcribed line"
+        assert answer.answer == "transcribed line"
         assert "thinking" in calls[0]
         assert "thinking" not in calls[1]
 
@@ -393,11 +419,11 @@ class TestThinkingDisabled:
         def fake_urlopen(request, timeout=None):
             return _BytesResponse(json.dumps(body).encode())
 
-        _text, usage = vlm.transcribe_image_vlm(
+        answer = vlm.transcribe_image_vlm(
             self._png(tmp_path),
             model="dynamic/image",
             base_url="http://x/v1",
             api_key="k",
             urlopen=fake_urlopen,
         )
-        assert usage["reasoning"] == "I cannot see the image, so I will estimate."
+        assert answer.usage.reasoning == "I cannot see the image, so I will estimate."

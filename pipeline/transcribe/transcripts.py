@@ -73,12 +73,14 @@ SYSTEM = (
     "Each chip is drawn in the colour of the line it belongs to, and every line of "
     "writing is tinted that same colour: the chip and its row are one colour. When it "
     "is unclear which line a number belongs to — the writing is crowded, the chip sits "
-    "between two lines, or two chips are close together — match the chip to the line "
-    "whose tint is the SAME colour as the chip, and read that line as that number's "
-    "row. The colour decides it; position alone may not.\n\n"
+    "between two lines, or two chips are close together — the tint decides it: match "
+    "the chip to the line whose tint is the SAME colour as the chip, and read that line "
+    "as that number's row.\n\n"
     "For every numbered row, return its writing. A number may cover several rows when "
     "the writing is one continuous piece (a sentence broken across rows); never give a "
-    "row two transcripts.\n\n"
+    'row two transcripts. A row you cannot read comes back with "transcript": "" — '
+    "never guess at it and never dwell on it; an empty transcript is the correct answer "
+    "for writing you cannot make out.\n\n"
     "Types:\n"
     "- body: the running text\n"
     "- injection: writing squeezed above/between rows, meant to be inserted into other "
@@ -96,7 +98,8 @@ SYSTEM = (
     '  {"rows": [1], "type": "body", "transcript": "London Opera Centre"},\n'
     '  {"rows": [2, 3], "type": "body", "transcript": "a sentence that runs on"},\n'
     '  {"rows": [4], "type": "injection", "transcript": "my dear", "injection_after": 3},\n'
-    '  {"rows": [5], "type": "marginalia", "transcript": "Send this first"}\n'
+    '  {"rows": [5], "type": "marginalia", "transcript": "Send this first"},\n'
+    '  {"rows": [6], "type": "body", "transcript": ""}\n'
     "]}\n"
     "Every numbered row must appear exactly once. No prose before or after the JSON."
 )

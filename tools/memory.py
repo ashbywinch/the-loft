@@ -66,16 +66,20 @@ A kinship term ("Dad", "Mum", "Aunt X", "Grandma") names the WRITER's own \
 relative: it matches only where the account evidences the writer's own family. \
 Ask a question only when it is genuinely ambiguous which person is meant, and \
 never guess an identity — an unnamed or ambiguous person is a question or stays \
-unresolved. When in doubt between a link and a mention, choose unresolved: a \
-false link is worse than no link. A person mentioned near a place is not \
-automatically at that place, and presence must be plausible for the story's time.
+unresolved; that rule binds the matches you propose, never the suggestions a \
+question offers. When in doubt between a link and a mention, choose unresolved: \
+a false link is worse than no link. A person mentioned near a place is not \
+automatically at that place, and presence must be plausible for the story's time. \
+The anchor is the archive record the story is filed under: never an extraction.
 
-A name that is not in the standing knowledge but is clearly a person or place is \
-listed with "match": null and bucket "proposed" — a new proposed record the \
-narrator verifies in the review. Artifacts (items) are linked by title; an \
-artifact the story mentions that is not in the catalog stays "unresolved", and \
-no artifact record is ever created. Bucket meanings: "proposed" = a confident \
-link worth one review tap; "question" = genuinely ambiguous, needs a question; \
+An entity the story is about that is not in the standing knowledge — of any \
+kind — is listed with "match": null and bucket "proposed": a new proposed record \
+the narrator verifies in the review. Artifacts (items) are the named objects the \
+story mentions — a boat, a document, a letter, a photograph; a meal, a \
+celebration or a generic thing is not an artifact. They are linked by title; one \
+the story mentions that is not in the catalog stays "unresolved", and no \
+artifact record is ever created. Bucket meanings: "proposed" = a confident link \
+worth one review tap; "question" = genuinely ambiguous, needs a question; \
 "unresolved" = leave as plain text.
 
 Fact rules. Assert every date, date of birth and age the account STATES, and \
@@ -91,23 +95,24 @@ is there. If a phrase makes no sense as a date at all, "value": null.
 Question rules. Ask only what is missing and matters, at most {MAX_QUESTIONS}; \
 every question is skippable and nothing is required. A date the account states \
 is asserted as a fact instead, and a year computable from an asserted date of \
-birth and age is not asked for. Ask for: the event date; \
-who was actually present; the identity of unnamed people; place precision \
-("the old ford" — which one?); the connection of a narrator not in the \
-standing knowledge (unless the story makes it obvious); and a specific artifact \
-the story names that is not in the catalog — a particular boat, object or \
-document — since that is how its archive page gets built. A boat is no more \
-worthy than a letter, a photograph or a tool; the same goes for a named person \
-or place that matters to the story. A question that needs a date carries \
-"type": "date" — the narrator answers it in their own words — and "date_kind": \
-"dob" when asking for a date of birth, else "event". A question asking who was \
-there carries "type": "people" — the narrator can name several — so its \
-"suggestions" are the likely people. Every question carries up to \
-{MAX_SUGGESTIONS} short "suggestions" the narrator can tap instead of typing; \
-they must be plausible for this narrator — never a date before their birth, and \
-consistent with their stated age and with the story's stated time. A date of \
-birth is asked politely, never required, and only when it would disambiguate \
-presence or date a story.
+birth and age is not asked for. Ask for: the event date; who was actually present; the identity of unnamed \
+people; place precision ("the old ford" — which one?); the connection of a \
+narrator not in the standing knowledge — ask this whenever the contributor is \
+absent from the standing knowledge, unless the story itself states the relation; \
+and a specific artifact the story names that is not in the catalog — a \
+particular boat, object or document — since that is how its archive page gets \
+built. A boat is no more worthy than a letter, a photograph or a tool; the same \
+goes for a named person or place that matters to the story. A question whose \
+answer is one or more people carries "type": "people" — the narrator picks names \
+from the cast, any number — so its "suggestions" are the likely people; a \
+question needing a date carries "type": "date" and "date_kind": "dob" when \
+asking for a date of birth, else "event", and the narrator answers it in their \
+own words; every other question carries "type": null. Every question carries up \
+to {MAX_SUGGESTIONS} short "suggestions" the narrator can tap instead of typing: \
+give them only where they are plausible for this narrator — never a date before \
+their birth, and consistent with their stated age and with the story's stated \
+time; with neither known, leave them out. A date of birth is asked politely, \
+never required, and only when it would disambiguate presence or date a story.
 
 If nothing is missing, "questions" is an empty list.
 

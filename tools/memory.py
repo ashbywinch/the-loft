@@ -123,26 +123,25 @@ _QUESTION_RULES = (
     f"Question rules. Ask only what is missing and matters, at most {MAX_QUESTIONS}; "
     "every question is skippable and nothing is required. A date the account states "
     "is asserted as a fact instead, and a year computable from an asserted date of "
-    "birth and age is not asked for. Ask for: the event date; who was actually present; "
-    'the identity of unnamed people; place precision ("the old ford" — which one?); the '
-    "connection of a narrator not in the standing knowledge — ask this whenever the "
-    "contributor is absent from the standing knowledge, unless the story itself states the "
-    "relation; and a specific artifact the story names that is not in the catalog — a "
-    "particular boat, object or document — since that is how its archive page gets built. "
-    "A boat is no more worthy than a letter, a photograph or a tool; the same goes for a "
-    "named person or place that matters to the story. A question whose answer is one or more "
-    'people carries "type": "people" — the narrator picks names from the cast, any number — '
-    'so its "suggestions" are the likely people; a question needing a date carries "type": '
-    '"date" and "date_kind": "dob" when asking for a date of birth, else "event", and the '
-    'narrator answers it in their own words; every other question carries "type": null. '
-    "Every question carries up to "
+    "birth and age is not asked for. Ask for: the event date; the date of birth when the "
+    "account gives an age and no date of birth is known or stated — asked politely, never "
+    "required; who was actually present; the identity of unnamed people; place precision "
+    '("the old ford" — which one?); the connection of a narrator not in the standing '
+    "knowledge — ask this whenever the contributor is absent from the standing knowledge, "
+    "unless the story itself states the relation; and a specific artifact the story names "
+    "that is not in the catalog — a particular boat, object or document — since that is how "
+    "its archive page gets built. A boat is no more worthy than a letter, a photograph or a "
+    "tool; the same goes for a named person or place that matters to the story. A question "
+    'whose answer is one or more people carries "type": "people" — the narrator picks names '
+    'from the cast, any number — so its "suggestions" are the likely people; a question '
+    'needing a date carries "type": "date" and "date_kind": "dob" when asking for a date of '
+    'birth, else "event", and the narrator answers it in their own words; every other '
+    'question carries "type": null. Every question carries up to '
     f'{MAX_SUGGESTIONS} short "suggestions" the narrator can tap instead of typing: give '
     "them only where they are plausible for this narrator — never a date before their "
     "birth, and consistent with their stated age and with the story's stated time; with "
     "neither known, leave them out. A suggestion is an answer to tap, never a match: the "
-    "never-guess rule binds what the first pass links, not what you offer here. A date of "
-    "birth is asked politely, never required, and only when it would disambiguate presence "
-    "or date a story.\n\n"
+    "never-guess rule binds what the first pass links, not what you offer here.\n\n"
     'If nothing is missing, "questions" is an empty list.\n\n'
 )
 

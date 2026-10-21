@@ -112,7 +112,11 @@ def test_caching_prefix(caching_outputs: review_evals.CachingRun) -> None:
 @pytest.fixture(scope="session")
 def memory_outputs(client: AIClient, default_knowledge: Knowledge) -> dict[str, Assessment]:
     """Run every memory flow ONCE — the assess stage — and cache the
-    outputs; the condition tests share the runs."""
+    outputs; the condition tests share the runs. A `-k` selection still pays
+    for all of them (measured: 14 minutes for one flow's assertions), so the
+    unit of iteration is the suite's prompt, not the single test. An identical
+    repeat run is not served from a cache either (measured: two runs of the
+    same requests took 14 and 19 minutes), so a repeat re-samples the model."""
     return {f.name: memory_evals.run_flow(client, f, default_knowledge) for f in memory_evals.FLOWS}
 
 

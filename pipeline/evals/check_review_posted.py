@@ -37,10 +37,18 @@ import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
+from pathlib import Path
 from typing import override
 from urllib.error import HTTPError
 
-from pipeline.model.http_headers import HttpHeaders
+# CI runs this as a FILE (`python3 pipeline/evals/check_review_posted.py`), so
+# sys.path[0] is this script's own directory and the repo root — the `pipeline`
+# package — is absent: without the bootstrap the gate dies with
+# ModuleNotFoundError before reading a comment, and every PR's review check
+# goes red for a reason unrelated to the review (2026-10-21).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from pipeline.model.http_headers import HttpHeaders  # noqa: E402 — the bootstrap above must run first
 
 BOT_STEP_MARK = "Run the-pr-agent/pr-agent"
 

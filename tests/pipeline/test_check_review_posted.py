@@ -5,6 +5,11 @@ the action exits 0 whether or not the review happened (PRAgent.
 handle_request swallows every exception), so a gate that trusts the
 bot's own word re-introduces the exact bug it exists to catch."""
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 from pipeline.evals import check_review_posted as gate
 
 _SHA = "abc123"
@@ -202,3 +207,26 @@ def test_the_real_client_honours_the_fetch_seam() -> None:
     assert client.get_json("https://example.invalid/x", "caller-token") == {"ok": True}
     assert client.get_json("https://example.invalid/x") == {"ok": True}
     assert seen == ["Bearer caller-token", "Bearer instance-token"]
+
+
+def test_the_gate_imports_when_run_as_ci_runs_it() -> None:
+    """CI invokes the gate as a FILE — `.github/workflows/pr-agent.yml`:
+    `python3 pipeline/evals/check_review_posted.py` — so `sys.path[0]` is the
+    script's own directory, never the repo root, and the package import needs
+    the root on the path (2026-10-21: without it the gate died with
+    ModuleNotFoundError before reading a comment, and every PR's review check
+    went red for a reason unrelated to the review — the injected-fetch tests
+    above cannot see it). The CI variables are unset, so the gate stops at its
+    own `KeyError` line: reaching that line is the assertion. No network."""
+    root = Path(__file__).resolve().parents[2]
+    env = {k: v for k, v in os.environ.items() if k not in ("SHA", "GITHUB_REPOSITORY", "PR_NUMBER")}
+    result = subprocess.run(
+        [sys.executable, "pipeline/evals/check_review_posted.py"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+    assert "ModuleNotFoundError" not in result.stderr, result.stderr
+    assert "KeyError" in result.stderr, result.stderr  # the gate's first line, reached

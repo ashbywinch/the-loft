@@ -36,7 +36,7 @@ from tools.dated_fact import DatedFact
 from tools.extraction import BUCKETS, KINDS, Extraction
 from tools.fact_answer import FactAnswer
 from tools.pending_fact import PendingFact
-from tools.question import MAX_QUESTIONS, Question
+from tools.question import MAX_QUESTIONS, MAX_SUGGESTIONS, Question
 from tools.records import Item, Person, Place
 from tools.ref import Ref, RefStatus
 from tools.theme import Theme
@@ -130,8 +130,14 @@ _QUESTION_RULES = (
     "relation; and a specific artifact the story names that is not in the catalog — a "
     "particular boat, object or document — since that is how its archive page gets built. "
     "A boat is no more worthy than a letter, a photograph or a tool; the same goes for a "
-    "named person or place that matters to the story. A date of birth is asked politely, "
-    "never required, and only when it would disambiguate presence or date a story.\n\n"
+    "named person or place that matters to the story. Every question carries up to "
+    f'{MAX_SUGGESTIONS} short "suggestions" the narrator can tap instead of typing: give '
+    "them only where they are plausible for this narrator — never a date before their "
+    "birth, and consistent with their stated age and with the story's stated time; with "
+    "neither known, leave them out. A suggestion is an answer to tap, never a match: the "
+    "never-guess rule binds what the first pass links, not what you offer here. A date of "
+    "birth is asked politely, never required, and only when it would disambiguate presence "
+    "or date a story.\n\n"
     'If nothing is missing, "questions" is an empty list.\n\n'
 )
 
@@ -143,13 +149,11 @@ _CONTENT_JSON = (
     f'"precision": "exact|month|year|approx"|null}}]}}'
 )
 
-# No suggestions field: the model's tappable answers were this pass's most
-# expensive part (it deliberated ~7,000 characters over their plausibility, and
-# produced relation words where the app wants cast names). The capture flow does
-# not need them — the people picker autocompletes over the cast, a date is
-# answered in the narrator's own words, and the chips the flow owns are Skip and
-# "I'd rather not say".
-_QUESTIONS_JSON = '{"questions": [{"text": string, "why": string}]}'
+# The tappable suggestions are a requirement (docs/PRD/MEMORIES.md: each
+# question comes with quick-reply buttons): the model proposes them, and the
+# review filters implausible ones. They cost reasoning (measured ~7,000
+# characters on the questions pass), which is what ASSESS_MAX_TOKENS is for.
+_QUESTIONS_JSON = '{"questions": [{"text": string, "why": string, "suggestions": [string]}]}'
 
 _CONTENT_SYSTEM = f"{_CONTENT_PURPOSE}{_EXTRACTION_RULES}{_FACT_RULES}Respond with ONLY this JSON: {_CONTENT_JSON}"
 _QUESTIONS_SYSTEM = f"{_QUESTIONS_PURPOSE}{_QUESTION_RULES}Respond with ONLY this JSON: {_QUESTIONS_JSON}"
@@ -654,7 +658,11 @@ class Assessor:
         if not isinstance(entries, list):
             raise ElicitationError(f"the questions answer carries no list: {parsed!r}")
         return tuple(
-            Question.from_wording(str(entry.get("text", "")), str(entry.get("why", "")))
+            Question.from_wording(
+                str(entry.get("text", "")),
+                str(entry.get("why", "")),
+                entry.get("suggestions", ()),
+            )
             for entry in entries[:MAX_QUESTIONS]
             if isinstance(entry, dict) and str(entry.get("text", "")).strip()
         )

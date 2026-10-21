@@ -65,11 +65,11 @@ class ChatClient(Protocol):
 # the model deliberate over every field at once: measured on a one-sentence
 # story, 12,000-73,000 characters of reasoning for a 1,000-character answer,
 # which starved the output budget (finish_reason=length, no answer at all).
-# Split, the content pass reasons for ~2,500 characters and the questions pass
-# for ~6,400 — both inside the default budget. The question's input surface
-# (`type`, `date_kind`) is READ OFF ITS WORDING by `Question.from_wording`,
-# never the model's decision: the same split showed the model spending most of
-# its questions reasoning on that metadata (and getting it wrong).
+# Split, each pass reasons for a few thousand characters, inside the budget
+# ASSESS_MAX_TOKENS sets. What the model judges stays the model's: the question
+# fields — text, why, suggestions, and the input surface (`type`, `date_kind`)
+# — are all its own answer, validated at the record's seam; the code never
+# derives a judgment from a string match.
 _CONTENT_PURPOSE = (
     "You are the contribution assistant for a private family archive. A contributor "
     "has told a story about something in the archive. This pass produces three parts of the "
@@ -130,7 +130,12 @@ _QUESTION_RULES = (
     "relation; and a specific artifact the story names that is not in the catalog — a "
     "particular boat, object or document — since that is how its archive page gets built. "
     "A boat is no more worthy than a letter, a photograph or a tool; the same goes for a "
-    "named person or place that matters to the story. Every question carries up to "
+    "named person or place that matters to the story. A question whose answer is one or more "
+    'people carries "type": "people" — the narrator picks names from the cast, any number — '
+    'so its "suggestions" are the likely people; a question needing a date carries "type": '
+    '"date" and "date_kind": "dob" when asking for a date of birth, else "event", and the '
+    'narrator answers it in their own words; every other question carries "type": null. '
+    "Every question carries up to "
     f'{MAX_SUGGESTIONS} short "suggestions" the narrator can tap instead of typing: give '
     "them only where they are plausible for this narrator — never a date before their "
     "birth, and consistent with their stated age and with the story's stated time; with "
@@ -149,11 +154,14 @@ _CONTENT_JSON = (
     f'"precision": "exact|month|year|approx"|null}}]}}'
 )
 
-# The tappable suggestions are a requirement (docs/PRD/MEMORIES.md: each
-# question comes with quick-reply buttons): the model proposes them, and the
-# review filters implausible ones. They cost reasoning (measured ~7,000
-# characters on the questions pass), which is what ASSESS_MAX_TOKENS is for.
-_QUESTIONS_JSON = '{"questions": [{"text": string, "why": string, "suggestions": [string]}]}'
+# The tappable suggestions and the question's input surface (`type`, `date_kind`)
+# are the MODEL's judgment: the buttons are a requirement (docs/PRD/MEMORIES.md)
+# and which surface a question takes is a reading of the question, not a string
+# match. They cost reasoning, which is what ASSESS_MAX_TOKENS is for.
+_QUESTIONS_JSON = (
+    '{"questions": [{"text": string, "why": string, "suggestions": [string], '
+    '"type": "date"|"people"|null, "date_kind": "dob"|"event"|null}]}'
+)
 
 _CONTENT_SYSTEM = f"{_CONTENT_PURPOSE}{_EXTRACTION_RULES}{_FACT_RULES}Respond with ONLY this JSON: {_CONTENT_JSON}"
 _QUESTIONS_SYSTEM = f"{_QUESTIONS_PURPOSE}{_QUESTION_RULES}Respond with ONLY this JSON: {_QUESTIONS_JSON}"
@@ -645,8 +653,9 @@ class Assessor:
         return parsed
 
     def questions(self, content: dict[str, Any], feedback: str = "") -> tuple[Question, ...]:
-        """The questions pass: the model's answer as Question records, each
-        one's input surface read off its wording (`Question.from_wording`)."""
+        """The questions pass: the model's answer as Question records — its
+        text, why, suggestions and the input surface it judged the question
+        takes, validated at the record's own seam."""
         user = self._context + feedback + _content_note(content)
         try:
             parsed = json_object(self._client.chat(_QUESTIONS_SYSTEM, user))
@@ -658,11 +667,7 @@ class Assessor:
         if not isinstance(entries, list):
             raise ElicitationError(f"the questions answer carries no list: {parsed!r}")
         return tuple(
-            Question.from_wording(
-                str(entry.get("text", "")),
-                str(entry.get("why", "")),
-                entry.get("suggestions", ()),
-            )
+            Question.from_dict(entry)
             for entry in entries[:MAX_QUESTIONS]
             if isinstance(entry, dict) and str(entry.get("text", "")).strip()
         )

@@ -184,7 +184,8 @@ def test_assess_parses_and_validates_the_model_response() -> None:
             '{"title": "The trips", "extractions": [{"kind": "place", "name": "Marlock", "match": "pl-marlock", '
             + '"bucket": "proposed", "reason": "the story is about it"}], '
             + '"facts": [{"kind": "event_date", "text": "May 1963", "value": "1963-05", "precision": "month"}], '
-            + '"questions": [{"text": "Who else was there?", "why": "", "suggestions": ["Mum", "Not sure"]}]}'
+            + '"questions": [{"text": "Who else was there?", "why": "", "suggestions": ["Mum", "Not sure"], '
+            + '"type": "people", "date_kind": null}]}'
         ]
     )
     result = assess(
@@ -201,7 +202,7 @@ def test_assess_parses_and_validates_the_model_response() -> None:
     ]
     assert result.questions[0].text == "Who else was there?"
     assert list(result.questions[0].suggestions) == ["Mum", "Not sure"]  # the quick-reply buttons (PRD MEMORIES §49)
-    assert result.questions[0].type == "people"  # read off the wording, never the model's decision
+    assert result.questions[0].type == "people"  # the model's judgment, validated at the record's seam
     assert "Marlock" in client.calls[0][1]  # standing knowledge reached the prompt
 
 

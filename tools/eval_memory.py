@@ -26,7 +26,9 @@ from pipeline.model.ai_client import AIClient
 from tools.anchor import Anchor
 from tools.assessment import Assessment
 from tools.assessment_fact import AssessmentFact
-from tools.memory import BUCKETS, KINDS, MAX_QUESTIONS, MAX_SUGGESTIONS, Knowledge, assess
+from tools.extraction import BUCKETS, KINDS
+from tools.memory import Knowledge, assess
+from tools.question import MAX_QUESTIONS, MAX_SUGGESTIONS
 
 REPO = Path(__file__).resolve().parent.parent
 

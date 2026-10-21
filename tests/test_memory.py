@@ -4,6 +4,7 @@ resolution, and build_story's canonical story shape."""
 
 from __future__ import annotations
 
+import json
 from datetime import date
 from typing import Any
 
@@ -90,18 +91,30 @@ def item(item_id: str, title: str, status: str = "catalogued") -> dict[str, Any]
 
 class FakeClient:
     """Satisfies the ChatClient protocol (chat(system, user) -> str).
-    Routes by prompt: the assessor and the reviewer get their own queues."""
+    Routes by prompt: the content pass, the questions pass and the reviewer get
+    their own queues. A queued assessor answer is a WHOLE assessment (the shape
+    the single call used to return); the double splits it into the two passes
+    the production path runs — content first, then its questions."""
 
     def __init__(self, assessor: list[str], reviewer: list[str] | None = None) -> None:
         self.assessor: list[str] = list(assessor)
         self.reviewer: list[str] = list(reviewer or [])
         self.calls: list[tuple[str, str]] = []
+        self._pending_questions = '{"questions": []}'
 
     def chat(self, system: str, user: str, *, thinking: bool = False) -> str:
         self.calls.append((system, user))
         if "review pass" in system:
             return self.reviewer.pop(0)
-        return self.assessor.pop(0)
+        if "This pass produces the questions" in system:
+            return self._pending_questions
+        raw = self.assessor.pop(0)
+        try:
+            whole = json.loads(raw)
+        except json.JSONDecodeError:
+            return raw  # a deliberately malformed answer: the production seam must refuse it
+        self._pending_questions = json.dumps({"questions": whole.get("questions", [])})
+        return json.dumps({key: value for key, value in whole.items() if key != "questions"})
 
 
 ASSESSOR = "assessor"
@@ -171,8 +184,7 @@ def test_assess_parses_and_validates_the_model_response() -> None:
             '{"title": "The trips", "extractions": [{"kind": "place", "name": "Marlock", "match": "pl-marlock", '
             + '"bucket": "proposed", "reason": "the story is about it"}], '
             + '"facts": [{"kind": "event_date", "text": "May 1963", "value": "1963-05", "precision": "month"}], '
-            + '"questions": [{"text": "Who else was there?", "why": "", "skippable": true, '
-            + '"suggestions": ["Mum", "Not sure"]}]}'
+            + '"questions": [{"text": "Who else was there?", "why": ""}]}'
         ]
     )
     result = assess(
@@ -188,7 +200,7 @@ def test_assess_parses_and_validates_the_model_response() -> None:
         {"kind": "event_date", "text": "May 1963", "entity": None, "value": "1963-05", "precision": "month"}
     ]
     assert result.questions[0].text == "Who else was there?"
-    assert list(result.questions[0].suggestions) == ["Mum", "Not sure"]
+    assert result.questions[0].type == "people"  # read off the wording, never the model's decision
     assert "Marlock" in client.calls[0][1]  # standing knowledge reached the prompt
 
 
@@ -222,8 +234,8 @@ def test_assess_redoes_with_feedback_when_the_reviewer_finds_violations() -> Non
         knowledge=make_knowledge(),
     )
     assert result.extractions[0].match is None  # the redo fixed the over-match
-    assert len(client.calls) == 4  # assessor, reviewer, assessor-redo, reviewer
-    assert "Aunt Nora is a mention" in client.calls[2][1]  # the feedback reached the redo
+    assert len(client.calls) == 6  # content, questions, reviewer, content-redo, questions-redo, reviewer
+    assert "Aunt Nora is a mention" in client.calls[3][1]  # the feedback reached the redo
 
 
 def test_assess_accepts_clean_review_in_one_call() -> None:
@@ -236,7 +248,7 @@ def test_assess_accepts_clean_review_in_one_call() -> None:
         knowledge=make_knowledge(),
     )
     assert result.title == "The trips"
-    assert len(client.calls) == 2  # assessor + clean review, no redo
+    assert len(client.calls) == 3  # content, questions, clean review — no redo
 
 
 def test_assess_deterministically_redoes_when_a_new_narrator_gets_no_connection_question() -> None:
@@ -263,7 +275,7 @@ def test_assess_deterministically_redoes_when_a_new_narrator_gets_no_connection_
     )
     assert len(result.questions) == 2  # the connection question + the required events-date question
     assert "connected" in result.questions[0].text
-    assert "connected to the family" in client.calls[2][1]  # the deterministic feedback reached the redo
+    assert "connected to the family" in client.calls[3][1]  # the deterministic feedback reached the redo
 
 
 def test_assess_deterministically_redoes_an_age_without_a_date_question() -> None:
@@ -316,7 +328,7 @@ def test_assess_deterministically_refuses_a_telling_day_date() -> None:
     assert not any(fact.is_event_date() for fact in result.facts)
     date_q = [q for q in result.questions if q.asks_for_a_date()]
     assert date_q and date_q[0].skippable is True
-    assert "telling day" in client.calls[2][1]  # the deterministic feedback reached the redo
+    assert "telling day" in client.calls[3][1]  # the deterministic feedback reached the redo
 
 
 def test_assess_accepts_a_narrator_stated_telling_day_date() -> None:
@@ -333,7 +345,7 @@ def test_assess_accepts_a_narrator_stated_telling_day_date() -> None:
     client = FakeClient(assessor=[ok], reviewer=['{"violations": []}'])
     result = assess(client, anchor=ANCHOR, who="Alex", account="Went for a walk today.", knowledge=make_knowledge())
     assert any(fact.is_event_date() and fact.value == today for fact in result.facts)
-    assert "telling day" not in client.calls[1][1]  # the reviewer saw no fabrication feedback
+    assert "telling day" not in client.calls[2][1]  # the reviewer saw no fabrication feedback
 
 
 def test_assess_requires_a_date_question_when_none_is_established() -> None:
@@ -351,7 +363,7 @@ def test_assess_requires_a_date_question_when_none_is_established() -> None:
     result = assess(client, anchor=ANCHOR, who="Alex", account="A story.", knowledge=make_knowledge())
     date_q = [q for q in result.questions if q.asks_for_a_date()]
     assert date_q and date_q[0].skippable is True
-    assert "events date" in client.calls[2][1]
+    assert "events date" in client.calls[3][1]
 
 
 def test_assess_deterministically_redoes_a_new_artifact_without_a_tell_me_question() -> None:
@@ -382,7 +394,7 @@ def test_assess_deterministically_redoes_a_new_artifact_without_a_tell_me_questi
     )
     assert len(result.questions) == 2  # the tell-me question + the required events-date question
     assert "Mirosa" in result.questions[0].text
-    assert "tell me more" in client.calls[2][1]  # the deterministic feedback reached the redo
+    assert "tell me more" in client.calls[3][1]  # the deterministic feedback reached the redo
 
 
 def test_assess_deterministically_blocks_a_date_question_when_the_year_is_computable() -> None:

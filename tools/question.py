@@ -22,8 +22,7 @@ MAX_SUGGESTION_CHARS = 60  # a tap-sized label, never a paragraph
 
 QUESTION_TYPES = ("date", "people")
 
-# The words that make a question a date question even when the model left
-# "type" null.
+# The words that make a question a date question even when "type" is unset.
 _DATE_ASK_WORDS = (
     "what year",
     "which year",
@@ -39,6 +38,23 @@ _DATE_ASK_WORDS = (
     "when do",
     "when were",
 )
+
+# A date question that asks for the narrator's OWN date of birth (rather than
+# when the events happened).
+_DOB_ASK_WORDS = ("date of birth", "born", "how old", "your age")
+
+# A question whose answer is one or more people: the app offers the cast picker.
+_PEOPLE_ASK_WORDS = ("who ", "whose ", "who's ")
+
+
+def _bounded_suggestions(raw: Any) -> tuple[str, ...]:
+    """The tappable suggestions a wire entry states — at most MAX_SUGGESTIONS
+    tap-sized labels, blanks dropped."""
+    return tuple(
+        str(s).strip()[:MAX_SUGGESTION_CHARS]
+        for s in (raw if isinstance(raw, list) else [])
+        if isinstance(s, str) and s.strip()
+    )[:MAX_SUGGESTIONS]
 
 
 @dataclass(frozen=True)
@@ -67,21 +83,40 @@ class Question:
         text = raw.get("text")
         if not isinstance(text, str) or not text.strip():
             raise ValueError(f"question needs text: {raw!r}")
-        raw_suggestions = raw.get("suggestions", [])
-        suggestions = tuple(
-            str(s).strip()[:MAX_SUGGESTION_CHARS]
-            for s in (raw_suggestions if isinstance(raw_suggestions, list) else [])
-            if isinstance(s, str) and s.strip()
-        )[:MAX_SUGGESTIONS]
         q_type = raw.get("type") if raw.get("type") in QUESTION_TYPES else None
         return cls(
             text=text.strip(),
             why=str(raw.get("why", "")),
             skippable=True,
-            suggestions=suggestions,
+            suggestions=_bounded_suggestions(raw.get("suggestions", [])),
             type=q_type,
             date_kind=raw.get("date_kind") if q_type == "date" else None,
         )
+
+    @classmethod
+    def from_wording(cls, text: str, why: str = "", suggestions: Any = ()) -> Question:
+        """A question the assessor stated as text, why and tappable
+        suggestions — its input surface READ OFF THE WORDING here.
+
+        `type`/`date_kind` are metadata the code infers, never the model's
+        deliberation (the assessor used to be asked for them, and spent most of
+        its reasoning re-deciding them; the multi-part split measured that).
+        A date question is one asked in the date words, a `dob` one when it
+        asks for the narrator's own birth; a question whose answer is one or
+        more people takes the cast picker; anything else is plain text."""
+        lowered = text.lower()
+        if any(word in lowered for word in _DATE_ASK_WORDS):
+            kind = "dob" if any(word in lowered for word in _DOB_ASK_WORDS) else "event"
+            return cls(
+                text=text.strip(),
+                why=why,
+                suggestions=_bounded_suggestions(suggestions),
+                type="date",
+                date_kind=kind,
+            )
+        if any(word in lowered for word in _PEOPLE_ASK_WORDS):
+            return cls(text=text.strip(), why=why, suggestions=_bounded_suggestions(suggestions), type="people")
+        return cls(text=text.strip(), why=why, suggestions=_bounded_suggestions(suggestions))
 
     @classmethod
     def from_list(cls, raw: Any) -> tuple[Question, ...]:

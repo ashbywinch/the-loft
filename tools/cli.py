@@ -29,6 +29,7 @@ from tools.archive import Archive
 from tools.gedcom_document import GedcomDocument
 from tools.gedcom_shapes import PEOPLE_FILE, PLACES_FILE, GedcomShapes
 from tools.loft_paths import ARCHIVE_DIR
+from tools.memory import ASSESS_MAX_TOKENS
 from tools.store import DiskStore
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -54,7 +55,7 @@ def _capture_client() -> AIClient | None:
     """The capture client when an API key exists — the capture API needs the
     key; absent, the server serves without capture (visible, never silent)."""
     try:
-        return AIClient()
+        return AIClient(max_tokens=ASSESS_MAX_TOKENS)
     except AIClientError as e:
         print(f"serve: no capture client ({e}) — serving the app only")
         return None
@@ -140,7 +141,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 def cmd_capture_memory(args: argparse.Namespace) -> int:
     account = sys.stdin.read() if args.account == "-" else Path(args.account).read_text(encoding="utf-8")
     try:
-        client = AIClient()
+        client = AIClient(max_tokens=ASSESS_MAX_TOKENS)
     except AIClientError as e:
         print(f"capture-memory: no API key: {e}")
         return 1

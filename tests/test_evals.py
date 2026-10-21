@@ -34,14 +34,14 @@ import pipeline.evals.eval_review as review_evals
 import tools.eval_memory as memory_evals
 from pipeline.model.ai_client import AIClient, AIClientError
 from tools.assessment import Assessment
-from tools.memory import Knowledge
+from tools.memory import ASSESS_MAX_TOKENS, Knowledge
 from tools.review_verdict import ReviewVerdict
 
 
 @pytest.fixture(scope="session")
 def client() -> AIClient:
     try:
-        return AIClient()
+        return AIClient(max_tokens=ASSESS_MAX_TOKENS)
     except AIClientError as e:
         # fail loudly, never a silent skip: an eval that cannot run must say
         # so — a skip would green a suite that never ran

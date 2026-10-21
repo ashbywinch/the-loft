@@ -50,7 +50,6 @@ from pipeline.api.review_decide_answer import ReviewDecideAnswer
 from pipeline.api.review_decide_request import ReviewDecideRequest
 from pipeline.api.review_item import ReviewItem
 from pipeline.api.review_message_request import ReviewMessageRequest
-from pipeline.api.review_stale_answer import ReviewStaleAnswer
 from pipeline.api.review_start_answer import ReviewStartAnswer
 from pipeline.api.review_start_request import ReviewStartRequest
 from pipeline.api.review_text_answer import ReviewTextAnswer
@@ -393,28 +392,19 @@ def build_app(
         # must not change the archive and then fail
         if archive.get_review_session(session_id) is None:
             return JSONResponse(ErrorAnswer(f"no import session {session_id}").to_dict(), status_code=404)
-        # the confirmation names the person — the resolve returns a
-        # gone-marker for a delete, so the name comes from the table first
+        # the determination is always applied and recorded: the record's state is
+        # whatever the latest one says, and the append-only chain keeps the
+        # earlier ones — there is no staleness to detect (2026-10-21, user). The
+        # name is read before the mutation because a delete answers with the gone
+        # marker, which carries no name.
         people_table = archive.get_identity("people")
         pre_person = people_table.record(person_id) if people_table else None
         person_name = pre_person.name if pre_person else person_id
         try:
-            resolution = archive.resolve_person(person_id, decision, basis)
-        except (KeyError, ValueError) as e:
+            record = archive.resolve_person(person_id, decision, basis)
+        except ValueError as e:
             return JSONResponse(ErrorAnswer(str(e)).to_dict(), status_code=400)
-        # a stale decision on an already-resolved person is a state, not an
-        # error — and it must not record a false confirmation ("removed"
-        # when nothing was removed). Both flags come
-        # from INSIDE the mutation lock: a concurrent decide cannot make a
-        # stale pre-read look live, and a keep's exempted status is itself
-        # reported by the mutation (was the person still proposed when the
-        # lock was taken) — the pre-read status is gone entirely.
-        # A keep on a genuinely PROPOSED person is the
-        # deliberate "leave for later" and is recorded.
-        person_payload = resolution.person.to_dict() if resolution.person is not None else None
-        if not resolution.changed and (decision != "pending" or not resolution.attested):
-            message = f"{person_name} was already resolved — nothing changed."
-            return ReviewStaleAnswer(person=person_payload, message=message).to_dict()
+        person_payload = record.to_dict() if record is not None else None
         # the review record — the decision and the confirmation message the
         # family saw, both persisted (the transcript is the messages)
         when = datetime.now(UTC).date().isoformat()

@@ -687,28 +687,38 @@ def test_identity_saves_serialize_concurrent_writers() -> None:
     assert all(f"a-{i}" in ids and f"b-{i}" in ids for i in range(15))
 
 
-def test_noop_resolve_writes_no_new_version() -> None:
-    """A stale decision (the person already resolved) or a pending writes
-    NO new people version — byte-identical versions would clutter the
-    append-only chain the PRD describes as the archive's troubleshooting
-    record."""
+def test_a_later_determination_supersedes_an_earlier_one() -> None:
+    """Every review determination is applied to the record as it stands — the
+    archive is append-only, so a second determination supersedes the first and
+    nothing is dismissed as stale (2026-10-21, user). A determination that
+    leaves the record identical writes NO new version (byte-identical versions
+    would clutter the chain the PRD calls the troubleshooting record), and one
+    for an id the table does not hold changes nothing."""
     store = MemoryStore()
     archive = Archive(store)
     archive.save_identity(
         "people", validate_identity("people", {"people": [{"id": "p-x", "name": "X"}], "relationships": []})
     )
+    before = archive.get_identity("people")
+    assert before is not None
     assert len(archive._identity_versions("people")) == 1
-    resolution = archive.resolve_person("p-x", "attested", None)  # stale — p-x is not proposed
-    assert resolution.changed is False  # the authoritative in-lock flag reports the no-op
-    assert resolution.attested is False  # and the person was not proposed at lock time
+    # p-x is already confirmed: confirming writes nothing, the determination stands
+    assert archive.resolve_person("p-x", "attested", None) == before.record("p-x")
     assert len(archive._identity_versions("people")) == 1  # nothing written
     archive.resolve_person("p-x", "pending", None)
-    assert len(archive._identity_versions("people")) == 1  # pending writes nothing
-    # a real mutation still supersedes — and reports the change
-    archive.save_identity(
-        "people", validate_identity("people", {"people": [{"id": "p-y", "name": "Y"}], "relationships": []})
-    )
+    assert len(archive._identity_versions("people")) == 1  # a keep changes nothing
+    # a later determination supersedes the confirmation
+    estimated = archive.resolve_person("p-x", "estimated", {"text": "she told me so"})
+    assert isinstance(estimated, Person) and estimated.status == "estimated"
     assert len(archive._identity_versions("people")) == 2
+    # …and a delete supersedes that
+    assert archive.resolve_person("p-x", "delete", None) is not None
+    table = archive.get_identity("people")
+    assert table is not None and not table.has("p-x")
+    assert len(archive._identity_versions("people")) == 3
+    # an id the table never held: nothing to apply, nothing written
+    assert archive.resolve_person("p-nope", "delete", None) is None
+    assert len(archive._identity_versions("people")) == 3
 
 
 def test_concurrent_message_recording_loses_nothing() -> None:

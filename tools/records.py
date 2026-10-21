@@ -31,7 +31,6 @@ from tools.date_mention import DateMention
 from tools.dated_fact import PRECISIONS, DatedFact, viable_date
 from tools.gone_person import GonePerson
 from tools.ref import Ref
-from tools.resolution import Resolution
 from tools.split_item import SplitItem
 from tools.theme import Theme
 
@@ -403,50 +402,49 @@ class PeopleTable:
         return replace(self, people=self.people + (person,))
 
     def dismissed(self, person_id: str) -> PeopleTable:
-        """The table without *person_id* or their relationships — a missing or
-        non-proposed person fails loudly (a double dismiss is an error, never
-        a silent no-op)."""
+        """The table without *person_id* or their relationships. A missing
+        person fails loudly (never a silent no-op); the delete determination
+        applies to whoever the table holds, confirmed or not."""
         person = self.record(person_id)
         # a missing person is an error to raise, never a silent stand-in
         if person is None:
             raise KeyError(f"no person {person_id}")
-        if person.status != "proposed":
-            raise ValueError(f"{person_id} is not proposed — dismiss only removes pending people")
         return replace(
             self,
             people=tuple(p for p in self.people if p.id != person_id),
             relationships=tuple(r for r in self.relationships if r.a != person_id and r.b != person_id),
         )
 
-    def resolved(self, person_id: str, decision: str, basis: dict[str, str] | None) -> tuple[PeopleTable, Resolution]:
-        """The table after one review disposition, and the verdict on it. The
-        decision vocabulary is NOT the status vocabulary — ``confirm`` is a
-        status, never an action: ``attested`` -> confirmed (the reviewer's own
-        verified word); ``estimated`` -> the status estimated with the recorded
-        basis; ``pending`` -> the import's guess stays proposed, nothing
-        changes; ``delete`` -> the person leaves the table."""
+    def resolved(
+        self, person_id: str, decision: str, basis: dict[str, str] | None
+    ) -> tuple[PeopleTable, Person | GonePerson | None]:
+        """The table after one review determination, and the record as it now
+        stands. The decision vocabulary is NOT the status vocabulary —
+        ``confirm`` is a status, never an action: ``attested`` -> confirmed (the
+        reviewer's own verified word); ``estimated`` -> the status estimated with
+        the recorded basis; ``pending`` -> nothing changes (the determination is
+        the transcript's); ``delete`` -> the person leaves the table.
+
+        Every determination is applied to the record as it stands: the archive is
+        append-only, so a later determination supersedes an earlier one and
+        nothing is dismissed as stale (2026-10-21, user — staleness is not
+        tracked). An id the table does not hold has nothing to apply and returns
+        None."""
         person = self.record(person_id)
         if person is None:
-            # a duplicate delete (double-tap, two devices) finds the person
-            # already removed — that is the already-resolved state, never an
-            # error
-            return self, Resolution()
-        if person.status != "proposed":
-            # the queue never holds resolved people — a stale decision is a
-            # state, not an error: the person stays as they are
-            return self, Resolution(person=person)
+            return self, None
         if decision == "pending":
-            return self, Resolution(person=person, attested=True)
+            return self, person
         if decision == "delete":
-            return self.dismissed(person_id), Resolution(person=GonePerson(person_id), changed=True, attested=True)
+            return self.dismissed(person_id), GonePerson(person_id)
         if decision == "estimated":
             if basis is None or not str(basis.get("text", "")).strip():
                 raise ValueError(f"estimated needs a basis: {person_id}")
             updated = replace(person, status="estimated", basis=basis)
-            return self.with_record(updated), Resolution(person=updated, changed=True, attested=True)
+            return self.with_record(updated), updated
         if decision == "attested":
             updated = person.as_confirmed()
-            return self.with_record(updated), Resolution(person=updated, changed=True, attested=True)
+            return self.with_record(updated), updated
         raise ValueError(f"unknown decision: {decision!r}")
 
 

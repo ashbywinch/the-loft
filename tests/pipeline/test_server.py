@@ -656,50 +656,52 @@ def test_decide_delete_removes_the_person_and_their_relationships(server: Server
     assert any(p.id == "p-robert" for p in table.people)  # the confirmed person stays
 
 
-def test_decide_delete_of_an_already_resolved_person_is_a_state_not_an_error(server: ServerFixture) -> None:
-    """The queue never holds resolved people — a stale delete is a state,
-    not the "not proposed" 400; and it must not record a false confirmation
-    ("removed" when nothing was removed)."""
+def test_decide_delete_applies_to_an_already_confirmed_person(server: ServerFixture) -> None:
+    """Every determination is applied to the record as it stands: a delete
+    removes whoever is in the table, confirmed or not, and the determination is
+    recorded — the family changed their mind, and the append-only chain keeps
+    both determinations (2026-10-21, user)."""
     _seed_pending(server)
     status, body = server.post(
         "/api/review/decide", {"session_id": "import-documents", "person_id": "p-robert", "decision": "delete"}
     )
     assert status == 200
     assert body["ok"] is True
-    assert body["person"]["id"] == "p-robert"  # unchanged — the confirmed person stays
-    assert body["message"] == "Quentin Whitlock was already resolved — nothing changed."
-    # nothing recorded — the stale delete must not persist a false decision
-    # (the seed's session has no attempts, which is itself the proof)
+    assert body["person"]["gone"] is True
+    assert body["message"] == "Done — Quentin Whitlock is not recorded after all."
+    table = server.archive.get_identity("people")
+    assert table is not None and not table.has("p-robert")
     session = server.archive.get_review_session("import-documents")
     assert session is not None
     attempt = session.current_attempt()
-    assert attempt is None or not attempt.decisions
+    assert attempt is not None
+    assert [d.decision for d in attempt.decisions] == ["delete"]  # recorded
 
 
-def test_decide_pending_on_an_already_resolved_person_is_stale_too(server: ServerFixture) -> None:
-    """A "leave for later" on an already-resolved person is stale like any
-    other decision — it must not record a kept-decision, move the session's
-    resume point to a resolved person, or mark the walk finished. The queue
-    never holds resolved people."""
+def test_decide_pending_on_an_already_confirmed_person_is_recorded(server: ServerFixture) -> None:
+    """A "leave for later" on an already-confirmed person changes nothing in the
+    record and is still the family's determination: it is recorded, and the
+    confirmed person stays."""
     _seed_pending(server)
     status, body = server.post(
         "/api/review/decide", {"session_id": "import-documents", "person_id": "p-robert", "decision": "pending"}
     )
     assert status == 200
     assert body["ok"] is True
-    assert body["message"] == "Quentin Whitlock was already resolved — nothing changed."
     assert body["person"]["id"] == "p-robert"  # the confirmed person stays
-    # nothing recorded — the stale keep must not advance the session
+    table = server.archive.get_identity("people")
+    assert table is not None and table.record("p-robert") is not None
     session = server.archive.get_review_session("import-documents")
     assert session is not None
     attempt = session.current_attempt()
-    assert attempt is None or not attempt.decisions
+    assert attempt is not None
+    assert [d.decision for d in attempt.decisions] == ["pending"]  # recorded
 
 
-def test_decide_duplicate_delete_on_a_removed_person_is_a_state(server: ServerFixture) -> None:
-    """A second delete (double-tap, two devices) for a person already
-    REMOVED from the table is the already-resolved state — nothing recorded,
-    honest message, nothing written, never a 400 ("no person") for a
+def test_decide_a_second_delete_on_a_removed_person_is_recorded_too(server: ServerFixture) -> None:
+    """A second delete (double-tap, two devices) for a person already REMOVED
+    from the table: the record cannot change — nobody is there — and the
+    determination is recorded like any other, never a 400 ("no person") for a
     deletion that already succeeded."""
     _seed_pending(server)
     status, body = server.post(
@@ -712,14 +714,12 @@ def test_decide_duplicate_delete_on_a_removed_person_is_a_state(server: ServerFi
     )
     assert status2 == 200
     assert body2["ok"] is True
-    assert body2["message"] == "p-judith was already resolved — nothing changed."
     assert body2["person"] is None  # the person is gone — no record returned
     session = server.archive.get_review_session("import-documents")
     assert session is not None
     attempt = session.current_attempt()
     assert attempt is not None
-    # exactly the ONE legitimate delete is recorded — the duplicate added nothing
-    assert [d.decision for d in attempt.decisions] == ["delete"]
+    assert [d.decision for d in attempt.decisions] == ["delete", "delete"]
 
 
 def test_deciding_the_last_proposed_person_completes_the_session(server: ServerFixture) -> None:

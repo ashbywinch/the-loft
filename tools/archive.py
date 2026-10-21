@@ -24,6 +24,7 @@ from typing import Any, Literal, TypeVar, cast, overload
 
 from tools.anchor import Anchor
 from tools.asset import Asset
+from tools.gone_person import GonePerson
 from tools.memory import Knowledge, Memory, StoryRequest
 from tools.projection import Projection, projection_json
 from tools.records import (
@@ -45,7 +46,6 @@ from tools.records import (
     split_content,
     validate_identity,
 )
-from tools.resolution import Resolution
 from tools.store import FileStore
 
 SIDECAR = "item.json"
@@ -377,8 +377,8 @@ class Archive:
             table = cast(TTable | None, self.get_identity(name))
             updated = mutate(table)
             if updated == table:
-                # a no-op mutation (a stale decision, a pending, an
-                # unchanged record) writes NOTHING — byte-identical versions
+                # a no-op mutation (a keep, a determination that leaves the
+                # record identical) writes NOTHING — byte-identical versions
                 # would clutter the append-only history the PRD describes as
                 # the archive's troubleshooting record
                 versions = self._identity_versions(name)
@@ -445,46 +445,35 @@ class Archive:
         self.save_identity("people", table.with_record(confirmed))
         return confirmed
 
-    def dismiss_person(self, person_id: str) -> None:
-        """The import's pending people — dismiss one (dropped = gone): the
-        person and their relationships leave the people table (supersede)."""
+    def resolve_person(
+        self, person_id: str, decision: str, basis: dict[str, str] | None = None
+    ) -> Person | GonePerson | None:
+        """The review's four determinations for a person (user): the decision
+        vocabulary is NOT the status vocabulary — "confirm" is a status, never an
+        action. ``attested`` -> confirmed (the reviewer's own verified word);
+        ``estimated`` -> the status estimated with the recorded basis {text, by,
+        when} — the reviewer's words, the named person, the date; ``pending`` ->
+        nothing changes; ``delete`` -> the person leaves the table.
+
+        Every determination is applied to the record as it stands: a later
+        determination supersedes an earlier one, and staleness is never detected
+        and never tracked (2026-10-21, user). Returns the record as it now stands
+        — None for an id the table does not hold. The determination itself is the
+        table's own rule (PeopleTable.resolved); this seam only makes the
+        read-apply-write atomic."""
+        ran = False
+        record: Person | GonePerson | None = None
 
         def apply(table: PeopleTable | None) -> PeopleTable:
+            nonlocal ran, record
             assert table is not None, "archive has no people table"
-            return table.dismissed(person_id)
-
-        self._mutate_identity("people", apply)
-
-    def resolve_person(self, person_id: str, decision: str, basis: dict[str, str] | None = None) -> Resolution:
-        """The review's four dispositions for a proposed person (user):
-        the decision vocabulary is NOT the status vocabulary —
-        "confirm" is a status, never an action. ``attested`` -> confirmed
-        (the reviewer's own verified word); ``estimated`` -> the status
-        estimated with the recorded basis {text, by, when} — the reviewer's
-        words, the named person, the date; ``pending`` -> the import's guess
-        stays proposed, nothing changes; ``delete`` -> the person leaves the
-        table. The disposition itself is the table's own rule
-        (PeopleTable.resolved); this seam is what makes it atomic. Returns
-        the Resolution (tools/resolution.py): the person record as it now
-        stands — None when a duplicate delete finds the person already gone
-        — whether the disposition altered it, and whether the person was
-        still proposed at mutation time. Both flags are set INSIDE the lock,
-        in the mutation itself, so a concurrent duplicate decision cannot
-        misread them — a post-hoc status comparison would race (a confirmed
-        record omits the status key, and the pre-read status would be stale
-        for a second concurrent decide). The whole read-check-write is
-        atomic."""
-        result: Resolution | None = None
-
-        def apply(table: PeopleTable | None) -> PeopleTable:
-            nonlocal result
-            assert table is not None, "archive has no people table"
-            updated, result = table.resolved(person_id, decision, basis)
+            updated, record = table.resolved(person_id, decision, basis)
+            ran = True
             return updated
 
         self._mutate_identity("people", apply)
-        assert result is not None, "the people table mutation never ran"
-        return result
+        assert ran, "the people table mutation never ran"
+        return record
 
     def _proposed(
         self, directory: str, record_type: Callable[[dict[str, Any]], ProposedRecord]

@@ -72,6 +72,21 @@ class Assessment:
             extractions=tuple(ex.unmatched() if ex.is_kinship_term() else ex for ex in self.extractions),
         )
 
+    def strip_ungrounded_matches(self, account: str) -> Assessment:
+        """A person, place or item extraction that LINKS a name the account never
+        mentions never keeps a match: a name the story never used is not the
+        story's. A model that reaches into the archive for it (the account says
+        "Dad"; the extraction says "Otto", because Otto's record carries that
+        alias) would link a record the narrator never spoke of — and, for a
+        kinship term, assert exactly the misattribution the 2026-08-05 ruling
+        forbids. The extraction survives (match null) so the narrator can still
+        be asked about the person they actually named."""
+        spoken = account.casefold()
+        return replace(
+            self,
+            extractions=tuple(ex.unmatched() if ex.has_ungrounded_link(spoken) else ex for ex in self.extractions),
+        )
+
     def with_plausible_suggestions(self, dob_year: int | None) -> Assessment:
         """Filter the date questions' suggestions to the years the narrator could
         plausibly have lived — their date of birth is in the facts or in the

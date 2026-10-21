@@ -246,7 +246,7 @@ def test_assess_accepts_clean_review_in_one_call() -> None:
         client,
         anchor=ANCHOR,
         who="",
-        account="x",
+        account="We went to Marlock in May 1963.",  # a link stands on the account's own words
         knowledge=make_knowledge(),
     )
     assert result.title == "The trips"
@@ -522,7 +522,7 @@ def test_standing_knowledge_includes_dob_and_items() -> None:
         client,
         anchor=ANCHOR,
         who="",
-        account="x",
+        account="We went to Marlock in May 1963.",
         knowledge=make_knowledge(
             people=[{"id": "p-x", "name": "X", "aliases": [], "dob": dob("1978-04-12")}],
             items=[item("object-sunlight", "Sunlight")],
@@ -842,10 +842,57 @@ def test_assess_strips_kinship_term_matches() -> None:
             )
         ]
     )
-    result = assess(client, anchor=ANCHOR, who="Alex", account="Dad came with me.", knowledge=make_knowledge())
+    result = assess(
+        client,
+        anchor=ANCHOR,
+        who="Alex",
+        account="Dad came with me to Owen's boat.",
+        knowledge=make_knowledge(),
+    )
     by_name = {ex.name: ex for ex in result.extractions}
     assert by_name["Dad"].match is None, "bare kinship term kept a match"
     assert by_name["Owen"].match == "p-dad", "a real name must keep its match"
+
+
+def test_assess_strips_a_link_the_account_never_names() -> None:
+    """A link stands on the account's own words. The account says "Dad"; the
+    extraction says "Owen" — the cast member whose record carries the alias
+    "Dad" — so the model reached into the archive for the name, and the link
+    asserts a record the narrator never named. The code tells the model why and
+    strips the link if the redo keeps it (2026-08-05)."""
+    ungrounded = json.dumps(
+        {
+            "title": "The house",
+            "extractions": [
+                {"kind": "person", "name": "Owen", "match": "p-dad", "bucket": "proposed", "reason": "about it"}
+            ],
+            "facts": [{"kind": "event_date", "entity": None, "text": "1963", "value": "1963", "precision": "year"}],
+            "questions": [],
+        }
+    )
+    client = FakeClient(assessor=[ungrounded] * 3, reviewer=['{"violations": []}'] * 3)
+    result = assess(client, anchor=ANCHOR, who="Alex", account="Dad came with me.", knowledge=make_knowledge())
+    assert any("never names" in user for _, user in client.calls), "the model was not told why"
+    assert result.extractions[0].match is None, "an ungrounded link survived"
+
+
+def test_assess_keeps_a_link_the_account_names() -> None:
+    """The same link, with the account naming the person: "Owen" is in the
+    story's words, so the link stands — the rule is grounding, not suspicion."""
+    grounded = json.dumps(
+        {
+            "title": "The house",
+            "extractions": [
+                {"kind": "person", "name": "Owen", "match": "p-dad", "bucket": "proposed", "reason": "about it"}
+            ],
+            "facts": [{"kind": "event_date", "entity": None, "text": "1963", "value": "1963", "precision": "year"}],
+            "questions": [],
+        }
+    )
+    client = make_client([grounded])
+    result = assess(client, anchor=ANCHOR, who="Alex", account="Owen came with me.", knowledge=make_knowledge())
+    assert result.extractions[0].match == "p-dad"
+    assert len(client.calls) == 3  # content, questions, clean review — no redo
 
 
 def test_build_story_reuses_an_existing_place_by_name() -> None:

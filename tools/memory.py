@@ -360,7 +360,7 @@ class _AssessmentReview:
             return self.assessment
         return self.assessment.with_plausible_suggestions(dob_year)
 
-    def violations(self) -> list[str]:
+    def violations(self, account: str) -> list[str]:
         """Rule violations checkable in code — no model judgment needed.
         These feed the same redo-with-feedback loop as the reviewer's
         findings."""
@@ -369,7 +369,22 @@ class _AssessmentReview:
         violations += self._check_age_without_dob(ages)
         violations += self._check_event_date_rules(ages)
         violations += self._check_new_item_question()
+        violations += self._check_grounded_links(account)
         return violations
+
+    def _check_grounded_links(self, account: str) -> list[str]:
+        """A link stands on the account's own words. A model that reaches into
+        the archive for the name (the account says "Dad"; the extraction says
+        "Otto", the record that carries that alias) links a person, place or
+        object the narrator never named — and for a kinship term asserts exactly
+        the misattribution the ruling forbids (2026-08-05)."""
+        spoken = account.casefold()
+        return [
+            f"the extraction '{ex.name}' is linked to a record the account never names — "
+            "use the word the account used, or leave it unresolved"
+            for ex in self.assessment.extractions
+            if ex.has_ungrounded_link(spoken)
+        ]
 
     def model_violations(self, client: ChatClient, anchor: Anchor, account: str) -> list[str]:
         """A second, cheap model pass reviews the assessment for rule
@@ -629,7 +644,7 @@ class Assessor:
             if attempt >= MAX_ASSESS_ATTEMPTS - 1:
                 break  # last attempt: accept the best effort
             review = _AssessmentReview(assessment, self._who, self._knowledge)
-            violations = review.violations()
+            violations = review.violations(self._account)
             violations += review.model_violations(self._client, self._anchor, self._account)
             if not violations:
                 break
@@ -639,6 +654,7 @@ class Assessor:
             _AssessmentReview(assessment, self._who, self._knowledge)
             .filter_implausible_suggestions()
             .strip_kinship_matches()
+            .strip_ungrounded_matches(self._account)
         )
 
     def content(self, feedback: str = "") -> dict[str, Any]:

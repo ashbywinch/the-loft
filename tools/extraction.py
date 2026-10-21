@@ -15,6 +15,11 @@ from typing import Any
 KINDS = ("person", "place", "theme", "item")
 BUCKETS = ("proposed", "question", "unresolved")
 
+# The kinds whose name is a TERM the account must use — a person, place or
+# object the story names. A theme is a concept: "moving house" need not appear
+# in those words, so it is exempt.
+NAMED_KINDS = frozenset({"person", "place", "item"})
+
 # A bare kinship term names the writer's own relative — never a match to a
 # person record merely because that record carries the alias. The code strips
 # the match deterministically: writer-relative resolution is a later seam
@@ -112,6 +117,20 @@ class Extraction:
         """Is the name a bare kinship term — the writer's own relative, never a
         record the archive happens to alias?"""
         return self.kind == "person" and self.name.strip().lower() in KINSHIP_TERMS
+
+    def has_ungrounded_link(self, spoken: str) -> bool:
+        """Does this extraction LINK a name the account never mentions?
+
+        `spoken` is the account, casefolded. A link asserts that the story's
+        person, place or object IS an archive record; the assertion has to stand
+        on the story's own words. A model reaching into the archive for the name
+        (the account says "Dad"; the extraction says "Otto", the record that
+        carries that alias) links a record the narrator never spoke of — and for
+        a kinship term asserts exactly the misattribution the ruling forbids
+        (2026-08-05). An unmatched extraction asserts nothing: the narrator
+        confirms that proposal later, so it is not this rule's business."""
+        name = self.name.strip().casefold()
+        return bool(self.match) and self.kind in NAMED_KINDS and bool(name) and name not in spoken
 
     def is_new_item(self) -> bool:
         """A specific artifact the story names that is not in the catalog — the

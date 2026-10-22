@@ -610,7 +610,7 @@ today it lumps them.
 ## The HTR head-to-head: existing tools vs our pipeline (2026-08-26)
 
 The user's challenge — "should we be using existing tools?" — answered
-empirically on 5 real pages (tools/eval_htr_trial.py, outputs in
+empirically on 5 real pages (the trial's own outputs in
 work/eval-htr/). CER vs a vision-model reference read (directional,
 not human GT):
 

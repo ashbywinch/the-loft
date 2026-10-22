@@ -395,7 +395,13 @@ def investigate(
     text = str(text or "").strip()
     if not text:
         raise ElicitationError("no answer given")
-    claim = f"the family is checking whether {person.name} was related to the family"
+    # The claim is the APP's question about the document the family uploaded
+    # (user, 2026-10-22: "the app is checking this, as part of a conversation in
+    # which the family are uploading a document about the war"). "The family is
+    # checking" read as the family asking, and left a statement about the
+    # document's own subject — a death in the war — looking like a different
+    # question entirely.
+    claim = f"whether {person.name} was related to the family"
     if person.relation:
         # family language, never the system's — the model echoes the claim's
         # own words, and the persona rule forbids 'the import'/'proposes'/
@@ -412,6 +418,10 @@ def investigate(
     user = "\n\n".join(
         [
             f"Reviewer: {who or 'unknown'}",
+            # the conversation's frame: the family uploaded a document, the app
+            # read it, and it is the app that is checking (2026-10-22)
+            "The family have uploaded a document to the archive; the app has read "
+            "it and is asking them to confirm what it says against what they know.",
             f"The claim under review: {claim}.",
             "Known family (the archive's attested facts):\n" + _known_facts(facts),
             "Decide in this order, once each. "

@@ -58,6 +58,34 @@ a recoverable failure — the standard was tightened to say exactly this and
 `tools/ai_client.find_api_key`'s corrupt-file fallback (which was a genuine
 silently-degraded-config swallow) now raises instead (§ below).
 
+### 1.5 The `record-shape` rule fires on the class pattern its own message prescribes (2026-10-17)
+
+The message says: *"convert it to a class named with a domain noun, with named
+fields; a wire payload is still a record — give the class a to_dict()/to_json()
+at the serialization edge."* Write exactly that and the rule fires twice more:
+
+```python
+@dataclass(frozen=True)
+class Word:
+    x0: float
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> Word:   # flagged: "bare record collection in parameter 'raw'"
+        return cls(float(raw["x0"]))
+
+    def to_dict(self) -> dict[str, Any]:               # flagged: "bare record collection as return type"
+        return {"x0": self.x0}                         # flagged: "dict with constant keys {x0} is a record"
+```
+
+Probed on v0.5.0 (one file, `ignore = []`): all three findings, on the pattern
+the message asks for. The rule should exempt a method named `to_dict`/
+`to_json`/`from_dict` (and the literal it builds) — the serialization edge is
+where a bare dict is *correct*; the class is the record. The repo does NOT
+contort code or invent a parallel "wire type" for it: every such site is left
+visible and the rule stays config-ignored for `record-shape` (the config note
+names this section). Roughly 190 of the rule's findings on this tree are this
+bug.
+
 ---
 
 ## 2. Disagreements — findings suppressed with reasons (see `.lucidlint.toml` + code comments)
@@ -73,28 +101,23 @@ dataset checks must read the real repo tree. The tool's own message
 carves out "real FS semantics (subprocess interop, symlinks, C-level I/O
 like sqlite3)". Suppressed at the tests scope with that citation.
 
-### 2.2 `record-shape` (278 findings) — config-ignored for `tools/**`
+### 2.2 `record-shape` — fixed in code (2026-10-17); what remains is the tool bug (§1.5)
 
-The tool flags every `dict[str, Any]` annotation and constant-key dict
-literal as a record needing a class. The repo's standard is narrower and
-already implemented: "Domain concepts are classes — the type is the
-documentation" applies when a concept has identity/state/invariants or is
-re-parsed in 2+ places; the object model (tools/records.py — Person,
-Place, Org, Relationship, Item, Knowledge) already converts those. The
-remaining dicts are deliberate wire-format seams the standards name:
+The first full-repo run config-ignored this family on the argument that the
+object model already made the domain records classes. That argument was too
+broad: ~600 findings were records with NO name at all (a session record, a
+projection item, a layout detection, a drawn line, a `{date, precision}` pair,
+the whole of `document/schemas.py`'s TypedDict bag). The user's ruling:
+rewriting per the rule IS the point — one class per type, in a file named
+after the class, its wire format owned by the class (`from_dict`/`to_dict`).
+The refactor landed across `document/`, `pipeline/`, `tools/` and `research/`
+(`document/schemas.py` dissolved; ~150 new record modules).
 
-- `to_dict`/`from_dict` return and accept the wire dict by contract ("the
-  class IS the persistence contract... to_dict owns its wire format");
-- API route responses and request bodies are output format — "Don't let
-  output format drive the domain model";
-- eval result dicts are one-shot shapes with no second consumer ("A value
-  type with real behavior and several consumers earns a class" — one-shot
-  dicts don't).
-
-Every records.py finding (33) is the class's own serialization seam. A
-dict shape that is genuinely re-parsed in 2+ places remains a finding per
-the repo standard — the repo reviewer enforces that; the tool's blanket
-flagging is noise on the seams.
+What the rule still reports is the tool bug of §1.5 — each class's own
+`from_dict`/`to_dict` signature and the dict literal that method builds —
+plus `pipeline/api/server.py`'s route envelopes at the time of writing. The
+rule stays config-ignored so the gate's verdict is not polluted by its own
+bug; the config note points here.
 
 ### 2.3 `class-module` (12 findings) — config-ignored for `tools/**`
 

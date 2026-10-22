@@ -13,11 +13,12 @@ import json
 import sys
 from pathlib import Path
 
-from pipeline.layout import is_struck, normalize, write_layout_store
+from pipeline.layout import Layout, is_struck, normalize
+from pipeline.model.unsure_word import UnsureWord
 from pipeline.store import PipelineStore
 from tools.loft_paths import WORK_DIR
 from tools.selfreport_driver import run_cli
-from tools.store import DiskStore  # noqa: F401
+from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 REPORT_NAME = "selfreport.json"
 
@@ -34,25 +35,23 @@ def _word_flag(word: str, *, selfreport_line: set[str] | None) -> float:
     return 1.0
 
 
-def apply_selfreport(layout: dict, selfreport: list[dict] | None) -> dict:
-    """Rewrite the per-word conf values in a layout dict using the
+def apply_selfreport(layout: Layout, selfreport: list[UnsureWord] | None) -> Layout:
+    """Rewrite the per-word conf values in a layout using the
     self-report. Returns the updated layout (modifies in place, returns
     for convenience)."""
     report_by_line: dict[int, set[str]] = {}
     if selfreport:
         for entry in selfreport:
-            line_no = entry.get("line")
-            if isinstance(line_no, int) and 1 <= line_no <= len(layout.get("lines", [])):
-                report_by_line.setdefault(line_no - 1, set()).add(normalize(entry.get("word", "")))
+            if 1 <= entry.line <= len(layout.lines):
+                report_by_line.setdefault(entry.line - 1, set()).add(normalize(entry.word))
 
-    for line in layout.get("lines", []):
-        vi = line.get("index")
-        flags = report_by_line.get(vi) if vi is not None else None
-        for w in line.get("words", []):
-            w["conf"] = _word_flag(w.get("word", ""), selfreport_line=flags)
-        if line.get("words"):
-            confs = [w["conf"] for w in line["words"]]
-            line["conf"] = sum(confs) / len(confs)
+    for line in layout.lines:
+        flags = report_by_line.get(line.index)
+        for word in line.words or []:
+            word.conf = _word_flag(word.word, selfreport_line=flags)
+        if line.words:
+            confs = [word.conf for word in line.words]
+            line.conf = sum(confs) / len(confs)
     return layout
 
 
@@ -67,19 +66,32 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path) -> in
         wanted = set(page_names)
         reports = [p for p in reports if p.stem.split(".")[0] in wanted]
     for report in reports:
-        # the page name is the part before .selfreport:
-        # page-01.selfreport.json -> page-01
-        page_stem = report.stem.split(".")[0]
-        layout_path = report.parent / f"{page_stem}.layout.json"
-        if not layout_path.exists():
-            continue
-        layout = json.loads(layout_path.read_text(encoding="utf-8"))
-        selfreport = json.loads(report.read_text(encoding="utf-8"))
-        apply_selfreport(layout, selfreport)
-        write_layout_store(layout, PipelineStore(WORK_DIR), str(layout_path.relative_to(WORK_DIR)))
-        flagged = sum(1 for line in layout["lines"] for w in line["words"] if w["conf"] == 0.0)
-        print(f"layout: applied self-report to {layout_path.name} -> {flagged} flagged words")
+        _apply_report(report)
     return 0
+
+
+def _apply_report(report: Path) -> None:
+    """Apply one page's self-report to its stored layout. The page name is
+    the part before ``.selfreport``: page-01.selfreport.json -> page-01. A
+    report whose layout is absent is skipped — nothing to rewrite."""
+    page_stem = report.stem.split(".")[0]
+    layout_path = report.parent / f"{page_stem}.layout.json"
+    if not layout_path.exists():
+        return
+    layout = Layout.from_dict(json.loads(layout_path.read_text(encoding="utf-8")))
+    entries = json.loads(report.read_text(encoding="utf-8"))
+    # an entry with no usable line/word is dropped, never fatal: the
+    # file is the model path's, but an old or hand-edited one must not
+    # crash the batch
+    selfreport = [
+        UnsureWord.from_dict(entry)
+        for entry in entries
+        if isinstance(entry, dict) and isinstance(entry.get("line"), int) and isinstance(entry.get("word"), str)
+    ]
+    apply_selfreport(layout, selfreport)
+    layout.write_store(PipelineStore(WORK_DIR), str(layout_path.relative_to(WORK_DIR)))
+    flagged = sum(1 for line in layout.lines for word in line.words or [] if word.conf == 0.0)
+    print(f"layout: applied self-report to {layout_path.name} -> {flagged} flagged words")
 
 
 def main(argv: list[str] | None = None) -> int:

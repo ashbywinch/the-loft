@@ -21,7 +21,10 @@ relationship (the graceful-degradation rule).
 from __future__ import annotations
 
 import re
-from typing import Any
+
+from document.page_size import PageSize
+from pipeline.boundary import Boundary
+from pipeline.page_flag import PageFlag
 
 _ASPECT_EPS = 1e-9  # float division-underflow guard
 
@@ -43,11 +46,11 @@ def paper_aspect(width: int, height: int) -> float:
     return min(width, height) / max(width, height)
 
 
-def same_paper(a: tuple[int, int], b: tuple[int, int], tolerance: float = PAPER_TOLERANCE) -> bool:
+def same_paper(a: PageSize, b: PageSize, tolerance: float = PAPER_TOLERANCE) -> bool:
     """Two page images are the same physical paper when their normalized
     aspects agree within the tolerance (the phone-scan proxy for paper
     size)."""
-    pa, pb = paper_aspect(*a), paper_aspect(*b)
+    pa, pb = paper_aspect(a.width, a.height), paper_aspect(b.width, b.height)
     return abs(pa - pb) / max(min(pa, pb), _ASPECT_EPS) <= tolerance
 
 
@@ -76,40 +79,25 @@ class GroupingScorer:
     def __init__(
         self,
         kinds: dict[str, str],
-        dims: dict[str, tuple[int, int]],
+        dims: dict[str, PageSize],
         texts: dict[str, str | None],
-        flags: dict[str, dict[str, Any]],
+        flags: dict[str, PageFlag],
     ) -> None:
         self._kinds = kinds
         self._dims = dims
         self._texts = texts
         self._flags = flags
 
-    def _new_document(self, page: str) -> dict[str, Any]:
-        """Open a document at ``page`` — the model's greeting when this page
-        carries the starts_document flag (a photo page never does)."""
-        flag = self._flags.get(page, {})
-        return {
-            "pages": [page],
-            "greeting": flag.get("greeting") if flag.get("starts_document") else None,
-            "signoff": None,
-        }
+    def _flag(self, page: str) -> PageFlag | None:
+        """The model's boundary report for ``page``, None for a page the
+        model reported nothing on (a photo page)."""
+        return self._flags.get(page)
 
-    def _open_document(self, documents: list[dict[str, Any]], page: str) -> dict[str, Any]:
-        """A fresh document at ``page``, appended to the sequence."""
-        document = self._new_document(page)
-        documents.append(document)
-        return document
-
-    def _carry(self, doc: dict[str, Any], page: str) -> None:
-        """Carry the model's greeting/sign-off into the doc when a joined page
-        has them — the duplex doc opens with the picture side (no flag), and
-        the text side's model values belong to the doc (2026-08-17)."""
-        flag = self._flags.get(page, {})
-        if doc.get("greeting") is None and flag.get("greeting"):
-            doc["greeting"] = flag["greeting"]
-        if flag.get("ends_document") and flag.get("signoff"):
-            doc["signoff"] = flag["signoff"]
+    def _open_boundary(self, boundaries: list[Boundary], page: str) -> Boundary:
+        """A fresh boundary at ``page``, appended to the sequence."""
+        boundary = Boundary.opening_at(page, self._flag(page))
+        boundaries.append(boundary)
+        return boundary
 
     def _text_pair_decision(self, prev: str, page: str) -> bool:
         """The text-text rules for an adjacent pair — "join" (True, same
@@ -124,13 +112,16 @@ class GroupingScorer:
             # continuation joins, a fresh "1" starts a new document
             return n != 1
         # 4. the model's greeting/sign-off flags
-        return not (self._flags.get(prev, {}).get("ends_document") or self._flags.get(page, {}).get("starts_document"))
+        prev_flag, flag = self._flag(prev), self._flag(page)
+        closes = prev_flag is not None and prev_flag.ends_document
+        opens = flag is not None and flag.starts_document
+        return not (closes or opens)
 
-    def score(self, pages: list[str]) -> list[dict[str, Any]]:
+    def score(self, pages: list[str]) -> list[Boundary]:
         """The full-sequence grouping — the loop score_boundaries runs over
         the scorer's evidence (see score_boundaries for the rules)."""
-        documents: list[dict[str, Any]] = []
-        current: dict[str, Any] | None = None
+        boundaries: list[Boundary] = []
+        current: Boundary | None = None
         # the pages already claimed by a duplex pair — a page is the two sides
         # of at most ONE sheet, so the greedy pair never pairs again with its
         # other neighbour ([back1, front1, back2]: front1 pairs with back1,
@@ -140,7 +131,7 @@ class GroupingScorer:
         for page in pages:
             kind = str(self._kinds.get(page, "text"))
             if current is None:
-                current = self._open_document(documents, page)
+                current = self._open_boundary(boundaries, page)
                 prev = page
                 continue
             assert prev is not None  # the first iteration set it — pyrefly's narrowing needs the explicit fact
@@ -159,31 +150,31 @@ class GroupingScorer:
                     # the picture side was scanned AFTER its text side — it
                     # is still page 1 (user, 2026-08-17: the picture side of
                     # a postcard is the first page, whatever the scan order)
-                    current["pages"].insert(0, page)
+                    current.add_first(page)
                 else:
-                    current["pages"].append(page)
-                self._carry(current, page)
+                    current.add(page)
+                current.carry(self._flag(page))
             elif kind == "text" and prev_kind == "text":
                 if self._text_pair_decision(prev, page):
-                    current["pages"].append(page)
+                    current.add(page)
                 else:
-                    current = self._open_document(documents, page)
-                self._carry(current, page)
+                    current = self._open_boundary(boundaries, page)
+                current.carry(self._flag(page))
             else:
                 # a light page after a text page of a different paper, or two
-                # light pages — no cue: it starts its own document
-                current = self._open_document(documents, page)
+                # light pages — no cue: it starts its own boundary
+                current = self._open_boundary(boundaries, page)
             prev = page
-        return documents
+        return boundaries
 
 
 def score_boundaries(
     pages: list[str],
     kinds: dict[str, str],
-    dims: dict[str, tuple[int, int]],
+    dims: dict[str, PageSize],
     texts: dict[str, str | None],
-    flags: dict[str, dict[str, Any]],
-) -> list[dict[str, Any]]:
+    flags: dict[str, PageFlag],
+) -> list[Boundary]:
     """Group the FULL page sequence (photos included, in scan order) into
     documents by the evidence hierarchy. Returns the boundaries list —
     the same shape the guess stage publishes. ``flags`` is the model's

@@ -28,10 +28,10 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import TypedDict
 
+from pipeline.oriented_page import OrientedPage
 from tools.atomic import atomic_write
-from tools.store import DiskStore  # noqa: F401
+from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 TESSERACT = "tesseract"
 MAGICK = "magick"
@@ -41,14 +41,6 @@ STRONG_CONFIDENCE = 60  # the arbiter's threshold — a word tesseract clearly r
 # columns; the per-word confidence is column 10 (0-based).
 TSV_COLUMN_COUNT = 12
 TSV_CONFIDENCE_COLUMN = 10
-
-
-class OrientedPage(TypedDict):
-    name: str
-    text: str
-    strong: int  # the winner's strong-word count
-    degrees: int  # the winning rotation
-    scores: dict[str, int]  # strong counts per rotation — the audit trail
 
 
 def _read(image: Path, lang: str) -> str:
@@ -163,13 +155,13 @@ def orient_pages(
         else:
             _rotate_to(page, best_degrees, oriented)
         results.append(
-            {
-                "name": str(oriented.relative_to(out_dir)),
-                "text": best_text,
-                "strong": best_count,
-                "degrees": best_degrees,
-                "scores": scores,
-            }
+            OrientedPage(
+                name=str(oriented.relative_to(out_dir)),
+                text=best_text,
+                strong=best_count,
+                degrees=best_degrees,
+                scores=scores,
+            )
         )
     return results
 

@@ -26,10 +26,10 @@ def test_register_adopted_creates_record_without_touching_the_folder(tmp_path: P
     folder = _pile(tmp_path)
     registry = tmp_path / "registry"
 
-    record_path, outcome = register_adopted(folder, label="Box 1", registry_dir=registry)
+    result = register_adopted(folder, label="Box 1", registry_dir=registry)
 
-    assert outcome == "new"
-    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert result.outcome == "new"
+    record = json.loads(result.path.read_text(encoding="utf-8"))
     assert record["label"] == "Box 1"
     assert record["status"] == "pending"
     assert sorted(record["pages"]) == ["a.jpg", "b.jpg"]
@@ -41,11 +41,11 @@ def test_register_adopted_is_idempotent(tmp_path: Path) -> None:
     folder = _pile(tmp_path)
     registry = tmp_path / "registry"
 
-    first, _ = register_adopted(folder, registry_dir=registry)
-    second, outcome = register_adopted(folder, registry_dir=registry)
+    first = register_adopted(folder, registry_dir=registry)
+    second = register_adopted(folder, registry_dir=registry)
 
-    assert outcome == "already-registered"
-    assert second == first
+    assert second.outcome == "already-registered"
+    assert second.path == first.path  # the same record, id stable
     assert len(list(registry.glob("*.json"))) == 1
 
 
@@ -53,14 +53,14 @@ def test_register_adopted_reassociates_a_moved_folder(tmp_path: Path) -> None:
     folder = _pile(tmp_path)
     registry = tmp_path / "registry"
 
-    first, _ = register_adopted(folder, registry_dir=registry)
+    first = register_adopted(folder, registry_dir=registry)
     moved = tmp_path / "renamed-pile"
     folder.rename(moved)
-    second, outcome = register_adopted(moved, registry_dir=registry)
+    second = register_adopted(moved, registry_dir=registry)
 
-    assert outcome == "re-associated"
-    assert second == first  # same record, id stable
-    record = json.loads(first.read_text(encoding="utf-8"))
+    assert second.outcome == "re-associated"
+    assert second.path == first.path  # the same record, id stable
+    record = json.loads(first.path.read_text(encoding="utf-8"))
     assert record["path"] == str(moved)
     assert len(list(registry.glob("*.json"))) == 2  # base + PipelineStore versioned copy
 
@@ -79,14 +79,14 @@ def test_register_adopted_updates_a_changed_pile_not_duplicates_it(tmp_path: Pat
 
     folder = _pile(tmp_path)
     registry = tmp_path / "registry"
-    first, _ = register_adopted(folder, label="Box 1", registry_dir=registry)
+    first = register_adopted(folder, label="Box 1", registry_dir=registry)
 
     Image.new("RGB", (8, 8), (0, 0, 255)).save(folder / "c.jpg", quality=88)  # a page was added
-    second, outcome = register_adopted(folder, registry_dir=registry)
+    second = register_adopted(folder, registry_dir=registry)
 
-    assert outcome == "content-changed"
-    assert second == first  # the same record, not a silent duplicate
-    record = json.loads(first.read_text(encoding="utf-8"))
+    assert second.outcome == "content-changed"
+    assert second.path == first.path  # the same record, not a silent duplicate
+    record = json.loads(first.path.read_text(encoding="utf-8"))
     assert sorted(record["pages"]) == ["a.jpg", "b.jpg", "c.jpg"]
     assert record["label"] == "Box 1"  # the pile's label survives
     assert record["status"] == "pending"  # reprocessed
@@ -114,20 +114,21 @@ def test_register_adopted_preserves_confirmed_content_on_change(tmp_path: Path) 
     from PIL import Image
 
     from pipeline.api.sync import record_confirmation
+    from pipeline.boundary import Boundary
 
     folder = _pile(tmp_path)
     registry = tmp_path / "registry"
-    record_path, _ = register_adopted(folder, label="Box 1", registry_dir=registry)
-    record = json.loads(record_path.read_text(encoding="utf-8"))
+    result = register_adopted(folder, label="Box 1", registry_dir=registry)
+    record = json.loads(result.path.read_text(encoding="utf-8"))
     record_confirmation(
-        record["batch_id"], 1, {"pages": ["a.jpg"]}, "Chère Maman.", work_dir=tmp_path, registry_dir=registry
+        record["batch_id"], 1, Boundary(pages=["a.jpg"]), "Chère Maman.", work_dir=tmp_path, registry_dir=registry
     )
 
     Image.new("RGB", (8, 8), (0, 0, 255)).save(folder / "c.jpg", quality=88)
-    _, outcome = register_adopted(folder, registry_dir=registry)
+    second = register_adopted(folder, registry_dir=registry)
 
-    assert outcome == "content-changed"
-    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert second.outcome == "content-changed"
+    record = json.loads(result.path.read_text(encoding="utf-8"))
     assert record["content_changed"] is True
     assert record["boundaries"][0]["status"] == "confirmed"  # the confirmed text survives
     confirmed = tmp_path / record["batch_id"] / "ocr-confirmed" / "doc-01.txt"
@@ -143,16 +144,16 @@ def test_register_adopted_clears_stages_when_nothing_confirmed(tmp_path: Path) -
     folder = _pile(tmp_path)
     registry = tmp_path / "registry"
     work = tmp_path / "work"
-    record_path, _ = register_adopted(folder, label="Box 1", registry_dir=registry, work_dir=work)
-    record = json.loads(record_path.read_text(encoding="utf-8"))
+    result = register_adopted(folder, label="Box 1", registry_dir=registry, work_dir=work)
+    record = json.loads(result.path.read_text(encoding="utf-8"))
     stale = work / record["batch_id"]
     (stale / "ocr-guess").mkdir(parents=True)
     (stale / "ocr-guess" / "boundaries.json").write_text("[]", encoding="utf-8")
 
     Image.new("RGB", (8, 8), (0, 0, 255)).save(folder / "c.jpg", quality=88)
-    _, outcome = register_adopted(folder, registry_dir=registry, work_dir=work)
+    second = register_adopted(folder, registry_dir=registry, work_dir=work)
 
-    assert outcome == "content-changed"
+    assert second.outcome == "content-changed"
     assert not stale.exists()  # the regenerable stages were cleared
 
 
@@ -163,16 +164,16 @@ def test_register_adopted_reassociates_a_moved_and_changed_pile(tmp_path: Path) 
 
     folder = _pile(tmp_path)
     registry = tmp_path / "registry"
-    first, _ = register_adopted(folder, label="Box 1", registry_dir=registry, work_dir=tmp_path / "work")
+    first = register_adopted(folder, label="Box 1", registry_dir=registry, work_dir=tmp_path / "work")
 
     moved = tmp_path / "renamed-pile"
     folder.rename(moved)
     Image.new("RGB", (8, 8), (0, 0, 255)).save(moved / "c.jpg", quality=88)  # added a page while moving
-    second, outcome = register_adopted(moved, registry_dir=registry, work_dir=tmp_path / "work")
+    second = register_adopted(moved, registry_dir=registry, work_dir=tmp_path / "work")
 
-    assert outcome == "content-changed"
-    assert second == first  # not a duplicate record
-    record = json.loads(first.read_text(encoding="utf-8"))
+    assert second.outcome == "content-changed"
+    assert second.path == first.path  # not a duplicate record
+    record = json.loads(first.path.read_text(encoding="utf-8"))
     assert record["path"] == str(moved)
     assert sorted(record["pages"]) == ["a.jpg", "b.jpg", "c.jpg"]
     assert len(list(registry.glob("*.json"))) == 2  # base + PipelineStore versioned copy

@@ -5,11 +5,13 @@ tombstones, and the proposed-record queue — all through the append-only store
 from __future__ import annotations
 
 import json
-from typing import Any, override
+from dataclasses import replace
+from typing import override
 
 import pytest
 
 from tools.archive import SIDECAR, Archive, ArchiveError
+from tools.records import ImportsTable, Item, Person, Place, Session, validate_identity
 from tools.store import ImmutableStoreError, MemoryStore, StoreError
 
 
@@ -35,6 +37,12 @@ def _item(**overrides: object) -> dict[str, object]:
     }
     defaults.update(overrides)
     return defaults
+
+
+def _record(**overrides: object) -> Item:
+    """The same sidecar as its Item record — what the archive's API takes
+    and returns."""
+    return Item.from_dict(_item(**overrides))
 
 
 def test_content_paths_reject_escaping_ids_and_filenames() -> None:
@@ -84,43 +92,47 @@ def test_reject_also_sees_extraction_matches() -> None:
     the proposed record references it too — rejecting must fail in the same
     session, not later at publish with a dangling extraction match."""
     archive, store = make_archive()
-    archive.propose_person({"id": "p-grandma", "name": "Grandma"})
+    archive.propose_person(Person.from_dict({"id": "p-grandma", "name": "Grandma"}))
     archive.save_item(
-        {
-            "id": "story-x",
-            "type": "story",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "chat": {
-                "extractions": [
-                    {"kind": "person", "name": "Grandma", "match": "p-grandma", "bucket": "proposed", "on": True},
-                ]
-            },
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-x",
+                "type": "story",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "chat": {
+                    "extractions": [
+                        {"kind": "person", "name": "Grandma", "match": "p-grandma", "bucket": "proposed", "on": True},
+                    ]
+                },
+                "assets": [],
+            }
+        ),
     )
     with pytest.raises(ArchiveError, match="still reference"):
         archive.reject_proposed_person("p-grandma")
     # an unticked extraction is excluded content — it does not block the reject
     archive2, store2 = make_archive()
-    archive2.propose_person({"id": "p-grandma", "name": "Grandma"})
+    archive2.propose_person(Person.from_dict({"id": "p-grandma", "name": "Grandma"}))
     archive2.save_item(
-        {
-            "id": "story-x",
-            "type": "story",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "chat": {
-                "extractions": [
-                    {"kind": "person", "name": "Grandma", "match": "p-grandma", "bucket": "proposed", "on": False},
-                ]
-            },
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-x",
+                "type": "story",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "chat": {
+                    "extractions": [
+                        {"kind": "person", "name": "Grandma", "match": "p-grandma", "bucket": "proposed", "on": False},
+                    ]
+                },
+                "assets": [],
+            }
+        ),
     )
     archive2.reject_proposed_person("p-grandma")  # no raise
 
@@ -130,20 +142,22 @@ def test_reject_refuses_when_a_catalogued_story_references_the_record() -> None:
     would leave dangling refs at publish — refuse loudly at the review
     action instead: relink the stories first, or keep the record."""
     archive, store = make_archive()
-    archive.propose_person({"id": "p-grandma", "name": "Grandma"})
-    archive.propose_place({"id": "pl-yard", "name": "The yard"})
+    archive.propose_person(Person.from_dict({"id": "p-grandma", "name": "Grandma"}))
+    archive.propose_place(Place.from_dict({"id": "pl-yard", "name": "The yard"}))
     archive.save_item(
-        {
-            "id": "story-x",
-            "type": "story",
-            "title": "X",
-            "date": "2026-08-03",
-            "date_precision": "exact",
-            "status": "catalogued",
-            "people": [{"id": "p-grandma", "status": "proposed"}],
-            "places": [{"id": "pl-yard", "status": "proposed"}],
-            "assets": [],
-        }
+        Item.from_dict(
+            {
+                "id": "story-x",
+                "type": "story",
+                "title": "X",
+                "date": "2026-08-03",
+                "date_precision": "exact",
+                "status": "catalogued",
+                "people": [{"id": "p-grandma", "status": "proposed"}],
+                "places": [{"id": "pl-yard", "status": "proposed"}],
+                "assets": [],
+            }
+        ),
     )
     with pytest.raises(ArchiveError, match="still reference"):
         archive.reject_proposed_person("p-grandma")
@@ -172,9 +186,9 @@ def test_sidecar_version_gap_fails_loudly() -> None:
     """A lost middle version (a partial Drive sync) must fail loudly, never
     silently serve the older contiguous run."""
     archive, store = make_archive()
-    _ = archive.save_item(_item(title="One"))
-    _ = archive.save_item(_item(title="Two"))
-    _ = archive.save_item(_item(title="Three"))
+    _ = archive.save_item(_record(title="One"))
+    _ = archive.save_item(_record(title="Two"))
+    _ = archive.save_item(_record(title="Three"))
     store.delete("assets/story-x/item-2.json")  # the middle version is lost
     with pytest.raises(ArchiveError, match="gap"):
         _ = archive.get_item("story-x")
@@ -182,9 +196,9 @@ def test_sidecar_version_gap_fails_loudly() -> None:
 
 def test_identity_version_gap_fails_loudly() -> None:
     archive, store = make_archive()
-    archive.save_identity("people", {"people": [{"id": "p-a", "name": "A"}]})
-    archive.save_identity("people", {"people": [{"id": "p-b", "name": "B"}]})
-    archive.save_identity("people", {"people": [{"id": "p-c", "name": "C"}]})
+    archive.save_identity("people", validate_identity("people", {"people": [{"id": "p-a", "name": "A"}]}))
+    archive.save_identity("people", validate_identity("people", {"people": [{"id": "p-b", "name": "B"}]}))
+    archive.save_identity("people", validate_identity("people", {"people": [{"id": "p-c", "name": "C"}]}))
     store.delete("people-2.json")  # the middle version is lost
     with pytest.raises(ArchiveError, match="gap"):
         _ = archive.get_identity("people")
@@ -192,26 +206,26 @@ def test_identity_version_gap_fails_loudly() -> None:
 
 def test_save_and_get_resolve_the_sidecar() -> None:
     archive, _ = make_archive()
-    _ = archive.save_item(_item(title="One"))
-    assert archive.get_item("story-x") == _item(title="One")
+    _ = archive.save_item(_record(title="One"))
+    assert archive.get_item("story-x") == _record(title="One")
     assert archive.get_item("missing") is None
 
 
 def test_supersession_writes_a_new_version_and_never_edits() -> None:
     archive, store = make_archive()
-    _ = archive.save_item(_item(title="One"))
-    version = archive.save_item(_item(title="Two"))
+    _ = archive.save_item(_record(title="One"))
+    version = archive.save_item(_record(title="Two"))
     assert version == 2
     # the original is untouched (append-only), the superseding file carries the chain
     assert json.loads(store.read(f"assets/story-x/{SIDECAR}"))["title"] == "One"
     assert json.loads(store.read("assets/story-x/item-2.json"))["supersedes"] == f"assets/story-x/{SIDECAR}"
     item = archive.get_item("story-x")
-    assert item is not None and item["title"] == "Two"  # the highest version wins
+    assert item is not None and item.title == "Two"  # the highest version wins
 
 
 def test_delete_marks_a_tombstone_instead_of_removing() -> None:
     archive, store = make_archive()
-    _ = archive.save_item(_item(title="One"))
+    _ = archive.save_item(_record(title="One"))
     archive.delete_item("story-x", "test fabrication")
     # the files are all still there — nothing was deleted
     assert store.exists(f"assets/story-x/{SIDECAR}")
@@ -225,8 +239,8 @@ def test_delete_marks_a_tombstone_instead_of_removing() -> None:
 
 def test_item_ids_lists_every_folder() -> None:
     archive, _ = make_archive()
-    _ = archive.save_item(_item(id="b-item"))
-    _ = archive.save_item(_item(id="a-item"))
+    _ = archive.save_item(_record(id="b-item"))
+    _ = archive.save_item(_record(id="a-item"))
     assert archive.item_ids() == ["a-item", "b-item"]
 
 
@@ -248,8 +262,8 @@ def test_store_delete_removes_a_file_and_fails_on_missing() -> None:
 
 def test_proposed_records_queue_and_ids() -> None:
     archive, store = make_archive()
-    archive.propose_person({"id": "p-harper", "name": "Harper"})
-    archive.propose_place({"id": "pl-mirosa", "name": "SB Mirosa"})
+    archive.propose_person(Person.from_dict({"id": "p-harper", "name": "Harper"}))
+    archive.propose_place(Place.from_dict({"id": "pl-mirosa", "name": "SB Mirosa"}))
     assert archive.proposed_ids() == {"p-harper", "pl-mirosa"}
     assert json.loads(store.read("proposed/people/p-harper.json"))["name"] == "Harper"
 
@@ -258,12 +272,12 @@ def test_duplicate_save_via_archive_still_refuses_in_place_edits() -> None:
     """Even the ORM cannot edit: saving again is a new version, and a direct
     write to an existing file still fails."""
     archive, store = make_archive()
-    _ = archive.save_item(_item(id="x", title="One"))
+    _ = archive.save_item(_record(id="x", title="One"))
     with pytest.raises(ImmutableStoreError):
         store.write_new(f"assets/x/{SIDECAR}", "{}")  # the low-level store still guards
-    _ = archive.save_item(_item(id="x", title="One again"))
+    _ = archive.save_item(_record(id="x", title="One again"))
     item = archive.get_item("x")
-    assert item is not None and item["title"] == "One again"
+    assert item is not None and item.title == "One again"
 
 
 # -- identity tables (people/places/themes — versioned like sidecars) ------
@@ -271,19 +285,21 @@ def test_duplicate_save_via_archive_still_refuses_in_place_edits() -> None:
 
 def test_identity_tables_version_like_sidecars() -> None:
     archive, store = make_archive()
-    _ = archive.save_identity("people", {"people": [{"id": "p-harper", "name": "Harper"}]})
-    version = archive.save_identity("people", {"people": [{"id": "p-harper", "name": "Harper"}]})
+    _ = archive.save_identity("people", validate_identity("people", {"people": [{"id": "p-harper", "name": "Harper"}]}))
+    version = archive.save_identity(
+        "people", validate_identity("people", {"people": [{"id": "p-harper", "name": "Harper"}]})
+    )
     assert version == 2
     # the first file is untouched, the superseding file carries the chain
     assert json.loads(store.read("people.json"))["people"][0]["name"] == "Harper"
     assert json.loads(store.read("people-2.json"))["supersedes"] == "people.json"
     table = archive.get_identity("people")
-    assert table is not None and table["people"][0]["name"] == "Harper"  # highest wins
+    assert table is not None and table.people[0].name == "Harper"  # highest wins
 
 
 def test_identity_tables_are_append_only() -> None:
     archive, store = make_archive()
-    _ = archive.save_identity("places", {"places": []})
+    _ = archive.save_identity("places", validate_identity("places", {"places": []}))
     with pytest.raises(ImmutableStoreError):
         store.write_new("places.json", "{}")  # the low-level store still guards
 
@@ -299,7 +315,7 @@ def test_re_save_with_content_updates_the_content_entry() -> None:
     one — otherwise publish would read the stale first entry."""
     archive, store = make_archive()
     _ = archive.save_item(
-        _item(title="One"),
+        _record(title="One"),
         content={"story": "Version one."},
     )
     current = archive.get_item("story-x")
@@ -337,14 +353,14 @@ def test_save_recovers_after_a_crash_mid_save() -> None:
     archive = Archive(store)
     with pytest.raises(ImmutableStoreError):
         archive.save_item(
-            _item(title="One"),
+            _record(title="One"),
             content={"story": "Version two."},
         )
     # the sidecar landed before the crash — the version advanced and a retry
     # uses a fresh content filename instead of colliding with an orphan
     assert store.exists("assets/story-x/item.json")
     version = archive.save_item(
-        _item(title="One"),
+        _record(title="One"),
         content={"story": "Version two."},
     )
     assert version == 2
@@ -365,7 +381,7 @@ def test_unknown_identity_table_fails_fast() -> None:
 def test_save_item_with_content_writes_content_file_and_references_it() -> None:
     archive, store = make_archive()
     _ = archive.save_item(
-        _item(title="One"),
+        _record(title="One"),
         content={"story": "We took the dinghy out."},
     )
     # the story is a content file the sidecar references — not a JSON field
@@ -379,11 +395,11 @@ def test_save_item_with_content_writes_content_file_and_references_it() -> None:
 def test_superseded_content_is_a_new_file_never_an_edit() -> None:
     archive, store = make_archive()
     _ = archive.save_item(
-        _item(title="One"),
+        _record(title="One"),
         content={"story": "Version one."},
     )
     _ = archive.save_item(
-        _item(title="Two"),
+        _record(title="Two"),
         content={"story": "Version two."},
     )
     # both versions of the story survive (append-only), each referenced by its sidecar
@@ -398,7 +414,7 @@ def test_superseded_content_is_a_new_file_never_an_edit() -> None:
 
 def test_save_item_without_content_writes_no_content_file() -> None:
     archive, store = make_archive()
-    _ = archive.save_item(_item(id="letter-x", type="letter", title="One", status="catalogued"))
+    _ = archive.save_item(_record(id="letter-x", type="letter", title="One", status="catalogued"))
     assert not store.exists("assets/letter-x/story.txt")
     assert not store.exists("assets/letter-x/transcription.txt")
 
@@ -406,7 +422,7 @@ def test_save_item_without_content_writes_no_content_file() -> None:
 def test_empty_content_is_skipped() -> None:
     archive, store = make_archive()
     _ = archive.save_item(
-        _item(title="One"),
+        _record(title="One"),
         content={"story": ""},
     )
     assert not store.exists("assets/story-x/story.txt")
@@ -417,7 +433,7 @@ def test_story_with_transcription_keeps_both_content_files() -> None:
     recorded testimony) — split_content must never drop either."""
     archive, store = make_archive()
     _ = archive.save_item(
-        _item(title="One"),
+        _record(title="One"),
         content={"story": "The account.", "transcription": "The typed record."},
     )
     assert store.read("assets/story-x/story.txt") == "The account."
@@ -437,7 +453,7 @@ def test_re_save_clears_stale_content_entry() -> None:
     archive, store = make_archive()
     # v1: save with transcription
     _ = archive.save_item(
-        _item(id="letter-x", type="letter", title="X", status="catalogued"),
+        _record(id="letter-x", type="letter", title="X", status="catalogued"),
         content={"transcription": "Version one."},
     )
     # v2: load the current item (carries the old asset entry), re-save
@@ -460,7 +476,7 @@ def test_proposed_records_are_person_records_with_status() -> None:
     difference is the status field, serialised in the proposed file
     (proposed and confirmed are states, not types)."""
     archive, store = make_archive()
-    archive.propose_person({"id": "p-nova", "name": "Nova", "relation": "added from a story"})
+    archive.propose_person(Person.from_dict({"id": "p-nova", "name": "Nova", "relation": "added from a story"}))
     stored = json.loads(store.read("proposed/people/p-nova.json"))
     assert stored["name"] == "Nova"
     assert stored["status"] == "proposed"
@@ -469,47 +485,51 @@ def test_proposed_records_are_person_records_with_status() -> None:
 
 def test_promote_person_supersedes_the_identity_table() -> None:
     archive, store = make_archive()
-    archive.save_identity("people", {"people": [{"id": "p-a", "name": "A"}], "relationships": []})
-    archive.propose_person({"id": "p-nova", "name": "Nova", "relation": "added from a story"})
+    archive.save_identity(
+        "people", validate_identity("people", {"people": [{"id": "p-a", "name": "A"}], "relationships": []})
+    )
+    archive.propose_person(Person.from_dict({"id": "p-nova", "name": "Nova", "relation": "added from a story"}))
     version = archive.promote_person("p-nova")
     assert version == 2  # people-2.json supersedes people.json
     table = archive.get_identity("people")
-    assert table is not None and [p["id"] for p in table["people"]] == ["p-a", "p-nova"]
-    assert "status" not in table["people"][1]  # confirmed in the table — no status field
+    assert table is not None and [p.id for p in table.people] == ["p-a", "p-nova"]
+    assert "status" not in table.people[1].to_dict()  # confirmed in the table — no status field
     # the proposed file stays (append-only); derive skips ids already in the table
     assert store.exists("proposed/people/p-nova.json")
 
 
 def test_promote_person_missing_raises() -> None:
     archive, _ = make_archive()
-    archive.save_identity("people", {"people": [], "relationships": []})
+    archive.save_identity("people", validate_identity("people", {"people": [], "relationships": []}))
     with pytest.raises(ArchiveError, match="no proposed"):
         archive.promote_person("p-ghost")
 
 
 def test_promote_person_already_confirmed_raises() -> None:
     archive, _ = make_archive()
-    archive.save_identity("people", {"people": [{"id": "p-a", "name": "A"}], "relationships": []})
-    archive.propose_person({"id": "p-a", "name": "A"})
+    archive.save_identity(
+        "people", validate_identity("people", {"people": [{"id": "p-a", "name": "A"}], "relationships": []})
+    )
+    archive.propose_person(Person.from_dict({"id": "p-a", "name": "A"}))
     with pytest.raises(ArchiveError, match="already"):
         archive.promote_person("p-a")
 
 
 def test_promote_place_supersedes_places_table() -> None:
     archive, _ = make_archive()
-    archive.save_identity("places", {"places": [{"id": "pl-a", "name": "A"}]})
-    archive.propose_place({"id": "pl-mirosa", "name": "SB Mirosa"})
+    archive.save_identity("places", validate_identity("places", {"places": [{"id": "pl-a", "name": "A"}]}))
+    archive.propose_place(Place.from_dict({"id": "pl-mirosa", "name": "SB Mirosa"}))
     version = archive.promote_place("pl-mirosa")
     assert version == 2
     table = archive.get_identity("places")
-    assert table is not None and [p["id"] for p in table["places"]] == ["pl-a", "pl-mirosa"]
+    assert table is not None and [p.id for p in table.places] == ["pl-a", "pl-mirosa"]
 
 
 def test_reject_proposed_place_drops_the_record() -> None:
     """A proposal the review rejects is gone from the queue — a passing
     story mention with no attestation is fiction, not a place entity."""
     archive, store = make_archive()
-    archive.propose_place({"id": "pl-barges", "name": "the moored barges"})
+    archive.propose_place(Place.from_dict({"id": "pl-barges", "name": "the moored barges"}))
     assert archive.proposed_ids() == {"pl-barges"}
     archive.reject_proposed_place("pl-barges")
     assert archive.proposed_ids() == set()
@@ -520,7 +540,7 @@ def test_reject_proposed_place_drops_the_record() -> None:
 
 def test_reject_proposed_person_drops_the_record() -> None:
     archive, _ = make_archive()
-    archive.propose_person({"id": "p-nova", "name": "Nova"})
+    archive.propose_person(Person.from_dict({"id": "p-nova", "name": "Nova"}))
     archive.reject_proposed_person("p-nova")
     assert archive.proposed_ids() == set()
     assert archive.proposed_people() == []
@@ -530,7 +550,7 @@ def test_proposed_operations_reject_path_traversal_ids() -> None:
     """A crafted id (../people) must never reach a store path — the
     archive rules say identity tables are never deleted."""
     archive, store = make_archive()
-    archive.save_identity("people", {"people": [], "relationships": []})
+    archive.save_identity("people", validate_identity("people", {"people": [], "relationships": []}))
     for bad in ("../people", "../../people", "p/evil", "p..evil"):
         with pytest.raises(ArchiveError, match="id"):
             archive.reject_proposed_person(bad)
@@ -541,11 +561,11 @@ def test_proposed_operations_reject_path_traversal_ids() -> None:
         with pytest.raises(ArchiveError, match="id"):
             archive.promote_place(bad)
         with pytest.raises(ArchiveError, match="id"):
-            archive.propose_person({"id": bad, "name": "Evil"})
+            archive.propose_person(Person(id=bad, name="Evil"))
         with pytest.raises(ArchiveError, match="id"):
-            archive.propose_place({"id": bad, "name": "Evil"})
+            archive.propose_place(Place(id=bad, name="Evil"))
         with pytest.raises(ArchiveError, match="id"):
-            archive.save_item({"id": bad, "type": "story", "title": "X", "status": "draft", "assets": []})
+            archive.save_item(Item({"id": bad, "type": "story", "title": "X", "status": "draft", "assets": []}))
         with pytest.raises(ArchiveError, match="id"):
             archive.delete_item(bad, "test")
     # the identity tables are untouched
@@ -561,26 +581,22 @@ def test_review_attempts_are_walk_separated() -> None:
     from tools.store import MemoryStore
 
     archive = Archive(MemoryStore())
-    from tools.records import ReviewDecision, Session
+    from tools.records import ReviewDecision
 
-    archive.save_identity(
-        "imports",
+    session = Session.from_dict(
         {
-            "imports": [
-                Session.from_dict(
-                    {
-                        "id": "import-documents",
-                        "kind": "import-review",
-                        "title": "The document import",
-                        "status": "pending",
-                        "current": None,
-                        "attempts": [],
-                    }
-                ).to_dict()
-            ]
-        },
+            "id": "import-documents",
+            "kind": "import-review",
+            "title": "The document import",
+            "status": "pending",
+            "current": None,
+            "attempts": [],
+        }
     )
-    archive.save_identity("people", {"people": [{"id": "p-a", "name": "A", "status": "proposed"}]})
+    archive.save_identity("imports", ImportsTable(imports=(session,)))
+    archive.save_identity(
+        "people", validate_identity("people", {"people": [{"id": "p-a", "name": "A", "status": "proposed"}]})
+    )
 
     assert archive.start_review_attempt("import-documents") == 0  # the first walk
     assert archive.start_review_attempt("import-documents") == 0  # a mid-walk re-render: same attempt
@@ -638,7 +654,7 @@ def test_identity_saves_serialize_concurrent_writers() -> None:
 
     store = MemoryStore()
     archive = Archive(store)
-    archive.save_identity("imports", {"imports": []})
+    archive.save_identity("imports", validate_identity("imports", {"imports": []}))
     errors: list[Exception] = []
 
     def writer(prefix: str) -> None:
@@ -647,10 +663,10 @@ def test_identity_saves_serialize_concurrent_writers() -> None:
                 # the ATOMIC seam — the read must sit inside the lock; the
                 # get_identity-then-save_identity pattern this test used
                 # could lose a concurrent writer's update
-                def apply(table: dict[str, Any] | None, _i: int = i) -> dict[str, Any]:
-                    current = table or {"imports": []}
-                    current["imports"] = current["imports"] + [{"id": f"{prefix}-{_i}"}]
-                    return current
+                def apply(table: ImportsTable | None, _i: int = i) -> ImportsTable:
+                    current = table or ImportsTable(imports=())
+                    session = Session(id=f"{prefix}-{_i}", title=f"{prefix}-{_i}")
+                    return replace(current, imports=current.imports + (session,))
 
                 archive._mutate_identity("imports", apply)
         except Exception as e:  # noqa: BLE001 — the test reports every failure
@@ -665,30 +681,44 @@ def test_identity_saves_serialize_concurrent_writers() -> None:
     assert not errors
     latest = archive.get_identity("imports")
     assert latest is not None
-    ids = [r["id"] for r in latest["imports"]]
+    ids = [s.id for s in latest.imports]
     # every write landed exactly once — no collision crash, no lost update
     assert len(ids) == 30
     assert all(f"a-{i}" in ids and f"b-{i}" in ids for i in range(15))
 
 
-def test_noop_resolve_writes_no_new_version() -> None:
-    """A stale decision (the person already resolved) or a pending writes
-    NO new people version — byte-identical versions would clutter the
-    append-only chain the PRD describes as the archive's troubleshooting
-    record."""
+def test_a_later_determination_supersedes_an_earlier_one() -> None:
+    """Every review determination is applied to the record as it stands — the
+    archive is append-only, so a second determination supersedes the first and
+    nothing is dismissed as stale (2026-10-21, user). A determination that
+    leaves the record identical writes NO new version (byte-identical versions
+    would clutter the chain the PRD calls the troubleshooting record), and one
+    for an id the table does not hold changes nothing."""
     store = MemoryStore()
     archive = Archive(store)
-    archive.save_identity("people", {"people": [{"id": "p-x", "name": "X"}], "relationships": []})
+    archive.save_identity(
+        "people", validate_identity("people", {"people": [{"id": "p-x", "name": "X"}], "relationships": []})
+    )
+    before = archive.get_identity("people")
+    assert before is not None
     assert len(archive._identity_versions("people")) == 1
-    resolution = archive.resolve_person("p-x", "attested", None)  # stale — p-x is not proposed
-    assert resolution.changed is False  # the authoritative in-lock flag reports the no-op
-    assert resolution.attested is False  # and the person was not proposed at lock time
+    # p-x is already confirmed: confirming writes nothing, the determination stands
+    assert archive.resolve_person("p-x", "attested", None) == before.record("p-x")
     assert len(archive._identity_versions("people")) == 1  # nothing written
     archive.resolve_person("p-x", "pending", None)
-    assert len(archive._identity_versions("people")) == 1  # pending writes nothing
-    # a real mutation still supersedes — and reports the change
-    archive.save_identity("people", {"people": [{"id": "p-y", "name": "Y"}], "relationships": []})
+    assert len(archive._identity_versions("people")) == 1  # a keep changes nothing
+    # a later determination supersedes the confirmation
+    estimated = archive.resolve_person("p-x", "estimated", {"text": "she told me so"})
+    assert isinstance(estimated, Person) and estimated.status == "estimated"
     assert len(archive._identity_versions("people")) == 2
+    # …and a delete supersedes that
+    assert archive.resolve_person("p-x", "delete", None) is not None
+    table = archive.get_identity("people")
+    assert table is not None and not table.has("p-x")
+    assert len(archive._identity_versions("people")) == 3
+    # an id the table never held: nothing to apply, nothing written
+    assert archive.resolve_person("p-nope", "delete", None) is None
+    assert len(archive._identity_versions("people")) == 3
 
 
 def test_concurrent_message_recording_loses_nothing() -> None:
@@ -703,16 +733,19 @@ def test_concurrent_message_recording_loses_nothing() -> None:
     archive = Archive(store)
     archive.save_identity(
         "imports",
-        {
-            "imports": [
-                {
-                    "id": "import-documents",
-                    "title": "The document import",
-                    "status": "pending",
-                    "attempts": [{"started": "2026-08-10", "messages": [], "decisions": []}],
-                }
-            ]
-        },
+        validate_identity(
+            "imports",
+            {
+                "imports": [
+                    {
+                        "id": "import-documents",
+                        "title": "The document import",
+                        "status": "pending",
+                        "attempts": [{"started": "2026-08-10", "messages": [], "decisions": []}],
+                    }
+                ]
+            },
+        ),
     )
     errors: list[Exception] = []
 

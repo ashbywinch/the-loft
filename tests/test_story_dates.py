@@ -13,12 +13,12 @@ assessor uses (a fabricated date has no such narrator words).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from tools.archive import Archive
 from tools.loft_paths import ARCHIVE_DIR
+from tools.records import Item
 from tools.store import DiskStore
 
 REPO = Path(__file__).resolve().parents[1]
@@ -26,10 +26,10 @@ REPO = Path(__file__).resolve().parents[1]
 TODAYISH = ("today", "tonight", "this morning", "this evening", "this week", "just now", "earlier today")
 
 
-def _story_transcript(archive: Archive, item: dict[str, Any]) -> str:
-    for asset in item.get("assets") or []:
-        if asset.get("kind") == "story":
-            raw = archive.read_file_bytes(item["id"], str(asset.get("file", "")))
+def _story_transcript(archive: Archive, item: Item) -> str:
+    for asset in item.assets:
+        if asset.kind == "story":
+            raw = archive.read_file_bytes(item.id, asset.file)
             return (raw or b"").decode(errors="replace")
     return ""
 
@@ -52,14 +52,14 @@ def test_no_catalogued_story_is_dated_by_its_told_day() -> None:
     offenders = []
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)
-        if item is None or item.get("type") != "story" or item.get("status") != "catalogued":
+        if item is None or item.type != "story" or item.status != "catalogued":
             continue
-        date = str(item.get("date", ""))
-        told = str(item.get("recorded") or item.get("created") or "").strip()
-        if item.get("reflection") or item.get("clarification"):
+        date = item.date
+        told = str(item.raw.get("recorded") or item.raw.get("created") or "").strip()
+        if item.raw.get("reflection") or item.raw.get("clarification"):
             continue  # a fragment's time IS the telling day — no events' date exists
         if not (told and told[:10] == date[:10]):
             continue
         if not _narrator_stated_it(_story_transcript(archive, item), told[:10]):
-            offenders.append((item_id, date, told, item.get("title")))
+            offenders.append((item_id, date, told, item.title))
     assert not offenders, f"stories dated by their told day without the narrator's words: {offenders}"

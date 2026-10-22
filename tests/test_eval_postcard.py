@@ -72,9 +72,9 @@ def _assert_contracts(registry: Path, work: Path) -> None:
     fragment extras must fail this eval."""
     record = load_batch(BATCH, registry_dir=registry)
     # acceptance 21: the two sides are ONE document, the picture side first
-    docs = [b for b in record.get("boundaries", []) if b.get("pages")]
+    docs = [b for b in record.boundaries or [] if b.pages]
     assert len(docs) == 1, f"expected one document, got {len(docs)}"
-    assert docs[0]["pages"] == ["front.jpg", "back.jpg"], docs[0]["pages"]
+    assert docs[0].pages == ["front.jpg", "back.jpg"], docs[0].pages
 
     back_layout = None
     for document in draft_payloads(BATCH, work):

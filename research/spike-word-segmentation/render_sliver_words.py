@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from PIL import Image
 
 from document.colour import Colour
+from document.point import Point
 from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
@@ -57,7 +58,10 @@ def _main() -> int:
     for sx0, sy0, sx1, sy1 in SLIVERS:
         draw.rectangle([px(sx0), py(sy0), px(sx1), py(sy1)], outline=(200, 0, 0, 255), width=2)
     halo_text(
-        draw, (px(SLIVERS[0][0]) - 130, py(SLIVERS[0][1]) + 10), "the slivers", fill=Colour(red=200, green=0, blue=0)
+        draw,
+        Point(x=px(SLIVERS[0][0]) - 130, y=py(SLIVERS[0][1]) + 10),
+        "the slivers",
+        fill=Colour(red=200, green=0, blue=0),
     )
     OUT.write_bytes(review_image(sheet))
     print(f"sliver words -> {OUT} ({OUT.stat().st_size // 1024}KB)")

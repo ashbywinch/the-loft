@@ -13,7 +13,7 @@ import json
 
 import pytest
 
-from pipeline.layout import validate_layout
+from pipeline.layout import Layout, validate_layout
 from tools.loft_paths import WORK_DIR
 
 
@@ -33,15 +33,15 @@ def test_every_stored_layout_is_clean_or_loudly_refused() -> None:
             continue
         for layout_path in sorted(guess_dir.glob("*.layout.json")):
             try:
-                layout = json.loads(layout_path.read_text(encoding="utf-8"))
+                layout = Layout.from_dict(json.loads(layout_path.read_text(encoding="utf-8")))
             except Exception as exc:
                 dirty.append(f"{batch_dir.name}/{layout_path.name}: unparseable ({exc})")
                 continue
             violations = validate_layout(layout)
             if violations:
                 dirty.append(f"{batch_dir.name}/{layout_path.name}: {violations[0][:70]}")
-            lines = layout.get("lines") or []
-            if any(not ln.get("box_source") for ln in lines):
+            lines = layout.lines
+            if any(not ln.box_source for ln in lines):
                 # pre-ink-column provenance: written by code that predates
                 # the current gates; it must be re-derived, not trusted
                 stale.append(f"{batch_dir.name}/{layout_path.name}")
@@ -73,7 +73,7 @@ def test_serve_walk_boxes_carry_ink_and_single_lines() -> None:
         if not guess_dir.is_dir() or not oriented_dir.is_dir():
             continue
         for layout_path in sorted(guess_dir.glob("*.layout.json")):
-            layout = json.loads(layout_path.read_text(encoding="utf-8"))
+            layout = Layout.from_dict(json.loads(layout_path.read_text(encoding="utf-8")))
             if validate_layout(layout):
                 continue  # already covered by the structural walk
             page = layout_path.name.replace(".layout.json", "")
@@ -82,12 +82,12 @@ def test_serve_walk_boxes_carry_ink_and_single_lines() -> None:
                 continue
             with Image.open(image_path) as im:
                 im.load()
-                for ln in layout.get("lines", []):
-                    box = ln.get("box")
-                    if not box or not (ln.get("text") or "").strip():
+                for ln in layout.lines:
+                    box = ln.box
+                    if not box or not ln.text.strip():
                         continue
                     checked += 1
-                    where = f"{batch_dir.name}/{page}#{ln.get('index')}"
+                    where = f"{batch_dir.name}/{page}#{ln.index}"
                     if not has_ink(box, im):
                         offenders.append(f"{where}: no ink under the box")
                     elif text_line_count(box, im) > 1:

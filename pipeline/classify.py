@@ -29,10 +29,11 @@ import open_clip
 import torch
 from PIL import Image
 
+from pipeline.page_classification import PageClassification
 from pipeline.registry import RegistryError, load_batch
 from pipeline.store import PipelineStore
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
-from tools.store import DiskStore  # noqa: F401
+from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 # CLIP zero-shot labels — image content only; print-vs-cursive is the
 # density signal's job, not CLIP's
@@ -75,19 +76,15 @@ def _load_clip() -> _Clip:
 
 def classify_pages(
     pages: list[Path],
-    classifier: Callable[[Path], tuple[str, dict[str, float]]],
+    classifier: Callable[[Path], PageClassification],
     root: Path,
-) -> dict[str, dict[str, Any]]:
-    """One dict per page keyed by its path RELATIVE to the pile root (the
-    registry's key space — basenames collide for piles with subfolders)."""
-    return {
-        str(page.relative_to(root)): {"kind": kind, "confidences": confidences}
-        for page in pages
-        for kind, confidences in [classifier(page)]
-    }
+) -> dict[str, PageClassification]:
+    """One classification per page keyed by its path RELATIVE to the pile root
+    (the registry's key space — basenames collide for piles with subfolders)."""
+    return {str(page.relative_to(root)): classifier(page) for page in pages}
 
 
-def zero_shot_classifier() -> Callable[[Path], tuple[str, dict[str, float]]]:
+def zero_shot_classifier() -> Callable[[Path], PageClassification]:
     """The CLIP zero-shot classifier bound to CONTENT_PROMPTS (local, CPU)."""
     clip = _load_clip()
     clip.model.eval()
@@ -97,15 +94,13 @@ def zero_shot_classifier() -> Callable[[Path], tuple[str, dict[str, float]]]:
         text_features = clip.model.encode_text(texts)
         text_features /= text_features.norm(dim=-1, keepdim=True)
 
-    def classify(image_path: Path) -> tuple[str, dict[str, float]]:
+    def classify(image_path: Path) -> PageClassification:
         with torch.no_grad():
             image = clip.preprocess(Image.open(image_path).convert("RGB")).unsqueeze(0)
             image_features = clip.model.encode_image(image)
             image_features /= image_features.norm(dim=-1, keepdim=True)
             probs = (image_features @ text_features.T).softmax(dim=-1)[0]
-        confidences = {label: float(probs[i]) for i, label in enumerate(labels)}
-        kind = max(confidences.items(), key=lambda kv: kv[1])[0]
-        return kind, confidences
+        return PageClassification.from_confidences({label: float(probs[i]) for i, label in enumerate(labels)})
 
     return classify
 
@@ -115,12 +110,12 @@ def run_classify(
     *,
     registry_dir: Path = REGISTRY_DIR,
     work_dir: Path = WORK_DIR,
-    classifier: Callable[[Path], tuple[str, dict[str, float]]] | None = None,
+    classifier: Callable[[Path], PageClassification] | None = None,
 ) -> Path:
     """Classify a batch's RAW pages (before orientation — photos need neither)."""
     record = load_batch(batch_id, registry_dir)
-    folder = Path(str(record["path"]))
-    pages = sorted((folder / rel) for rel in record.get("pages", {}))
+    folder = record.path
+    pages = sorted((folder / rel) for rel in record.pages)
     if not pages:
         raise RegistryError(f"batch {batch_id} has no registered pages")
     classify_path = work_dir / batch_id / "classify.json"
@@ -131,7 +126,8 @@ def run_classify(
     classify = classifier if classifier is not None else zero_shot_classifier()
     results = classify_pages(pages, classify, folder)
     classify_path.parent.mkdir(parents=True, exist_ok=True)
-    store.write(store_path, json.dumps(results, indent=1, ensure_ascii=False) + "\n")
+    wire = {name: record.to_dict() for name, record in results.items()}
+    store.write(store_path, json.dumps(wire, indent=1, ensure_ascii=False) + "\n")
     return classify_path
 
 

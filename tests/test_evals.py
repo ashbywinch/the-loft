@@ -33,12 +33,15 @@ import pytest
 import pipeline.evals.eval_review as review_evals
 import tools.eval_memory as memory_evals
 from pipeline.model.ai_client import AIClient, AIClientError
+from tools.assessment import Assessment
+from tools.memory import ASSESS_MAX_TOKENS, Knowledge
+from tools.review_verdict import ReviewVerdict
 
 
 @pytest.fixture(scope="session")
 def client() -> AIClient:
     try:
-        return AIClient()
+        return AIClient(max_tokens=ASSESS_MAX_TOKENS)
     except AIClientError as e:
         # fail loudly, never a silent skip: an eval that cannot run must say
         # so — a skip would green a suite that never ran
@@ -46,7 +49,7 @@ def client() -> AIClient:
 
 
 @pytest.fixture(scope="session")
-def default_knowledge() -> dict[str, list[dict[str, Any]]]:
+def default_knowledge() -> Knowledge:
     return memory_evals.load_projection()
 
 
@@ -54,7 +57,7 @@ def default_knowledge() -> dict[str, list[dict[str, Any]]]:
 
 
 @pytest.fixture(scope="session")
-def review_outputs(client: AIClient) -> dict[str, dict[str, Any]]:
+def review_outputs(client: AIClient) -> dict[str, ReviewVerdict]:
     """Run every review flow ONCE and cache the outputs — the condition
     tests are independent and unaware they share the runs."""
     return {f.name: review_evals.run_flow(client, f) for f in review_evals.FLOWS}
@@ -65,7 +68,7 @@ def review_outputs(client: AIClient) -> dict[str, dict[str, Any]]:
 @pytest.mark.parametrize("flow", review_evals.FLOWS, ids=lambda f: f.name)
 @pytest.mark.parametrize("condition", review_evals.REVIEW_CONDITIONS, ids=lambda c: c[0])
 def test_review_condition(
-    review_outputs: dict[str, dict[str, Any]],
+    review_outputs: dict[str, ReviewVerdict],
     flow: review_evals.ReviewFlow,
     condition: tuple[str, Any],
 ) -> None:
@@ -76,30 +79,30 @@ def test_review_condition(
 
 
 @pytest.fixture(scope="session")
-def arc_outputs(client: AIClient) -> dict[str, Any]:
+def arc_outputs(client: AIClient) -> review_evals.ArcRun:
     return review_evals.run_arc(client)
 
 
 @pytest.mark.eval
 @pytest.mark.eval_review
-def test_arc_lead_followed(arc_outputs: dict[str, Any]) -> None:
+def test_arc_lead_followed(arc_outputs: review_evals.ArcRun) -> None:
     assert review_evals.condition_arc_lead(arc_outputs) is None
 
 
 @pytest.mark.eval
 @pytest.mark.eval_review
-def test_arc_no_repeat(arc_outputs: dict[str, Any]) -> None:
+def test_arc_no_repeat(arc_outputs: review_evals.ArcRun) -> None:
     assert review_evals.condition_arc_no_repeat(arc_outputs) is None
 
 
 @pytest.fixture(scope="session")
-def caching_outputs(client: AIClient) -> dict[str, Any]:
+def caching_outputs(client: AIClient) -> review_evals.CachingRun:
     return review_evals.run_caching(client)
 
 
 @pytest.mark.eval
 @pytest.mark.eval_review
-def test_caching_prefix(caching_outputs: dict[str, Any]) -> None:
+def test_caching_prefix(caching_outputs: review_evals.CachingRun) -> None:
     assert review_evals.condition_caching_prefix(caching_outputs) is None
 
 
@@ -107,9 +110,13 @@ def test_caching_prefix(caching_outputs: dict[str, Any]) -> None:
 
 
 @pytest.fixture(scope="session")
-def memory_outputs(client: AIClient, default_knowledge: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, Any]]:
+def memory_outputs(client: AIClient, default_knowledge: Knowledge) -> dict[str, Assessment]:
     """Run every memory flow ONCE — the assess stage — and cache the
-    outputs; the condition tests share the runs."""
+    outputs; the condition tests share the runs. A `-k` selection still pays
+    for all of them (measured: 14 minutes for one flow's assertions), so the
+    unit of iteration is the suite's prompt, not the single test. An identical
+    repeat run is not served from a cache either (measured: two runs of the
+    same requests took 14 and 19 minutes), so a repeat re-samples the model."""
     return {f.name: memory_evals.run_flow(client, f, default_knowledge) for f in memory_evals.FLOWS}
 
 
@@ -121,7 +128,7 @@ def memory_outputs(client: AIClient, default_knowledge: dict[str, list[dict[str,
     reason="projection not built — run `loft publish` (the memory evals read the archive's projection)",
 )
 @pytest.mark.parametrize("flow", memory_evals.FLOWS, ids=lambda f: f.name)
-def test_memory_contract(memory_outputs: dict[str, dict[str, Any]], flow: memory_evals.MemoryFlow) -> None:
+def test_memory_contract(memory_outputs: dict[str, Assessment], flow: memory_evals.MemoryFlow) -> None:
     errors = memory_evals.condition_contract(memory_outputs[flow.name])
     assert not errors, "\n".join(errors)
 
@@ -134,6 +141,6 @@ def test_memory_contract(memory_outputs: dict[str, dict[str, Any]], flow: memory
     reason="projection not built — run `loft publish` (the memory evals read the archive's projection)",
 )
 @pytest.mark.parametrize("flow", memory_evals.FLOWS, ids=lambda f: f.name)
-def test_memory_flow_conditions(memory_outputs: dict[str, dict[str, Any]], flow: memory_evals.MemoryFlow) -> None:
+def test_memory_flow_conditions(memory_outputs: dict[str, Assessment], flow: memory_evals.MemoryFlow) -> None:
     errors = flow.assert_(memory_outputs[flow.name])
     assert not errors, "\n".join(errors)

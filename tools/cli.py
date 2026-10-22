@@ -24,9 +24,12 @@ import uvicorn
 
 from pipeline.api.server import Server, ServerConfig, build_app, lan_addresses
 from pipeline.model.ai_client import AIClient, AIClientError
+from tools.anchor import Anchor
 from tools.archive import Archive
 from tools.gedcom_document import GedcomDocument
+from tools.gedcom_shapes import PEOPLE_FILE, PLACES_FILE, GedcomShapes
 from tools.loft_paths import ARCHIVE_DIR
+from tools.memory import ASSESS_MAX_TOKENS
 from tools.store import DiskStore
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -52,7 +55,7 @@ def _capture_client() -> AIClient | None:
     """The capture client when an API key exists — the capture API needs the
     key; absent, the server serves without capture (visible, never silent)."""
     try:
-        return AIClient()
+        return AIClient(max_tokens=ASSESS_MAX_TOKENS)
     except AIClientError as e:
         print(f"serve: no capture client ({e}) — serving the app only")
         return None
@@ -138,18 +141,18 @@ def cmd_serve(args: argparse.Namespace) -> int:
 def cmd_capture_memory(args: argparse.Namespace) -> int:
     account = sys.stdin.read() if args.account == "-" else Path(args.account).read_text(encoding="utf-8")
     try:
-        client = AIClient()
+        client = AIClient(max_tokens=ASSESS_MAX_TOKENS)
     except AIClientError as e:
         print(f"capture-memory: no API key: {e}")
         return 1
     story = _archive(args.archive).capture_memory(
         client,
-        anchor=json.loads(args.anchor) if args.anchor else {},
+        anchor=Anchor.from_dict(json.loads(args.anchor)) if args.anchor else Anchor(),
         who=args.who,
         account=account,
         status=args.status,
     )
-    print(f"saved story {story['id']} ({args.status})")
+    print(f"saved story {story.id} ({args.status})")
     return 0
 
 
@@ -175,17 +178,10 @@ def cmd_gedcom(args: argparse.Namespace) -> int:
     text = Path(args.file).read_text(encoding="utf-8")
     shapes = GedcomDocument.from_text(text).wire_shapes()
     target.mkdir(parents=True, exist_ok=True)
-    (target / "people.json").write_text(
-        json.dumps({"people": shapes["people"], "relationships": shapes["relationships"]}, indent=2, sort_keys=True)
-        + "\n",
-        encoding="utf-8",
-    )
-    (target / "places.json").write_text(
-        json.dumps({"places": shapes["places"]}, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    shapes.write(target)
     print(
-        f"imported {args.file}: {len(shapes['people'])} people, "
-        f"{len(shapes['relationships'])} relationships, {len(shapes['places'])} places -> {args.folder}"
+        f"imported {args.file}: {len(shapes.people)} people, "
+        f"{len(shapes.relationships)} relationships, {len(shapes.places)} places -> {args.folder}"
     )
     return 0
 
@@ -205,8 +201,8 @@ def _gedcom_export(folder_arg: str, path_arg: str) -> int:
     dest = Path(path_arg)
     # 1. the first argument must BE an import folder: not a bare file, not
     #    a folder without the imported structure
-    if not folder.is_dir() or not (folder / "people.json").is_file() or not (folder / "places.json").is_file():
-        return _refuse(f"{folder_arg} is not an import folder (needs people.json + places.json)")
+    if not folder.is_dir() or not (folder / PEOPLE_FILE).is_file() or not (folder / PLACES_FILE).is_file():
+        return _refuse(f"{folder_arg} is not an import folder (needs {PEOPLE_FILE} + {PLACES_FILE})")
     # 2. the destination must not be the import folder or any path inside
     #    it — the source island stays untouched
     dest_resolved = dest.resolve()
@@ -223,14 +219,7 @@ def _gedcom_export(folder_arg: str, path_arg: str) -> int:
     #    a clean refusal (review-bot finding)
     if not dest.parent.is_dir():
         return _refuse(f"{path_arg}'s parent directory does not exist")
-    people_table = json.loads((folder / "people.json").read_text(encoding="utf-8"))
-    places_table = json.loads((folder / "places.json").read_text(encoding="utf-8"))
-    shapes = {
-        "people": people_table.get("people", []),
-        "relationships": people_table.get("relationships") or [],
-        "places": places_table.get("places", []),
-    }
-    dest.write_text(GedcomDocument.from_shapes(shapes).to_text(), encoding="utf-8")
+    dest.write_text(GedcomDocument.from_shapes(GedcomShapes.read(folder)).to_text(), encoding="utf-8")
     print(f"wrote GEDCOM 7.0 to {path_arg}")
     return 0
 

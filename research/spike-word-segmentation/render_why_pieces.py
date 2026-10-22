@@ -19,6 +19,7 @@ import numpy as np
 from PIL import Image
 
 from document.colour import Colour
+from document.point import Point
 from pipeline.detect.mark import (
     SCALE,
     WORD_MIN_HEIGHT,
@@ -91,14 +92,14 @@ def _main() -> int:
             colour = COLOURS[index % len(COLOURS)]
             draw.rectangle([bx(piece.x0), by(piece.y0), bx(piece.x1), by(piece.y1)], outline=colour + (255,), width=3)
             label = f"P{index + 1} {_size(piece)} {_verdict(piece, unit)}"
-            halo_text(draw, (bx(piece.x0) + 4, by(piece.y0) - 26), label, fill=Colour(*colour))
+            halo_text(draw, Point(x=bx(piece.x0) + 4, y=by(piece.y0) - 26), label, fill=Colour(*colour))
             print(f"  {name} P{index + 1}: {_size(piece)} {_verdict(piece, unit)}")
 
         for above, below in zip(segments, segments[1:], strict=False):
-            waist = is_waist(per_row, runs, above[2], below[1])
-            note = "waist: cut" if waist else f"no waist (runs {runs.get(above[2], 0)}/{runs.get(below[1], 0)}): merged"
-            halo_text(draw, (bx(mark.x0) + 4, by(below[1]) - 26), note, fill=Colour(red=120, green=60, blue=0))
-            print(f"  {name} boundary y{above[2] * SCALE:.0f}->{below[1] * SCALE:.0f}: {note}")
+            waist = is_waist(per_row, runs, above.y1, below.y0)
+            note = "waist: cut" if waist else f"no waist (runs {runs.get(above.y1, 0)}/{runs.get(below.y0, 0)}): merged"
+            halo_text(draw, Point(x=bx(mark.x0) + 4, y=by(below.y0) - 26), note, fill=Colour(red=120, green=60, blue=0))
+            print(f"  {name} boundary y{above.y1 * SCALE:.0f}->{below.y0 * SCALE:.0f}: {note}")
 
         out = OUT / f"{name}.jpg"
         out.write_bytes(review_image(sheet.sheet, width=1300, quality=78))

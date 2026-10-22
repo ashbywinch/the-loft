@@ -22,26 +22,34 @@ resolves.
 from __future__ import annotations
 
 import json
-import os
 import re
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass, replace
 from datetime import date, datetime
-from functools import partial
 from typing import Any, Literal, Protocol, cast
 
-import dateparser
-
 from pipeline.model.ai_client import AIClientError, json_object
+from tools.anchor import Anchor
+from tools.assessment import Assessment
+from tools.assessment_fact import FACT_KINDS, AssessmentFact
+from tools.dated_fact import DatedFact
+from tools.extraction import BUCKETS, KINDS, Extraction
+from tools.fact_answer import FactAnswer
+from tools.pending_fact import PendingFact
+from tools.question import MAX_QUESTIONS, MAX_SUGGESTIONS, Question
+from tools.records import Item, Person, Place
+from tools.ref import Ref, RefStatus
+from tools.theme import Theme
 
-KINDS = ("person", "place", "theme", "item")
-BUCKETS = ("proposed", "question", "unresolved")
-FACT_KINDS = ("dob", "event_date", "age")
-PRECISIONS = ("exact", "month", "year", "approx")
-MAX_QUESTIONS = 5
-MAX_SUGGESTIONS = 3
 MAX_ASSESS_ATTEMPTS = 3
-MAX_AGE_YEARS = 110  # the oldest plausible human age — older assertions are rejected
+
+# The assess passes' output budget. A reasoning model spends most of its tokens
+# thinking before it writes the small JSON, so the 3,000-token default starved
+# the questions pass (finish_reason=length, no answer) on every story longer
+# than a sentence. Measured on the real flows: the content pass needs ~2,500
+# tokens and the questions pass ~3,300; 8,000 gives both comfortable room. The
+# review pass asks for 16,000 of its own (its call is a thinking one).
+ASSESS_MAX_TOKENS = 8000
 
 
 class ChatClient(Protocol):
@@ -52,86 +60,110 @@ class ChatClient(Protocol):
     def chat(self, system: str, user: str) -> str: ...
 
 
-_SYSTEM_PROMPT = f"""\
-You are the contribution assistant for a private family archive. A contributor \
-has told a story about something in the archive. Your job is ONE assessment: \
-(1) a suggested title; (2) the people, places, themes and artifacts the story \
-is ABOUT, matched against the standing knowledge — proposing links the narrator \
-verifies in the review, never asserting identity you cannot ground; (3) any dates, \
-dates of birth and ages the account states, asserted as structured facts; \
-(4) up to {MAX_QUESTIONS} questions for genuinely missing detail that matters.
+# The assessor runs in TWO passes — the content (title, extractions, facts) and
+# then the questions — each with only its own rules. ONE multi-part call made
+# the model deliberate over every field at once: measured on a one-sentence
+# story, 12,000-73,000 characters of reasoning for a 1,000-character answer,
+# which starved the output budget (finish_reason=length, no answer at all).
+# Split, each pass reasons for a few thousand characters, inside the budget
+# ASSESS_MAX_TOKENS sets. What the model judges stays the model's: the question
+# fields — text, why, suggestions, and the input surface (`type`, `date_kind`)
+# — are all its own answer, validated at the record's seam; the code never
+# derives a judgment from a string match.
+_CONTENT_PURPOSE = (
+    "You are the contribution assistant for a private family archive. A contributor "
+    "has told a story about something in the archive. This pass produces three parts of the "
+    "assessment: a suggested title; the extractions (the people, places, themes and artifacts "
+    "the story is about); and the facts (the dates, dates of birth and ages the account "
+    "states). A separate pass asks the questions.\n\n"
+)
 
-Extraction rules. Link an entity only when the story is about it — a passing \
-mention is not a link. A name that merely shares a name or alias with someone \
-in the standing knowledge is NOT a match: the narrator's own "Dad", "Mum", \
-"Aunt Nora", a neighbour, a different family — same name, different person. \
-Those stay unresolved (match null). A kinship term ("Dad", "Mum", "Aunt X", \
-"Grandma") names the WRITER's own relative — it never matches someone merely \
-because that person's record carries the alias; without the writer's own \
-family evidenced in the account, it stays unresolved (2026-08-05). Ask a question only when it is genuinely \
-ambiguous which person is meant. When in doubt between a link and a mention, \
-choose unresolved — a false link is worse than no link — the narrator would rather see a \
-question than a wrong match. Never guess an identity: an unnamed \
-or ambiguous person is a question or left unresolved. A person mentioned near \
-a place is not automatically at that place. Presence must be plausible for \
-the story's time. \
-For a name that is not in the standing knowledge but is clearly a person or \
-place, still list it with "match": null and bucket "proposed" — it becomes a \
-new proposed record the narrator verifies in the review. Artifacts (items) are linked by \
-title; an artifact the story mentions that is not in the catalog stays \
-"unresolved" — never create artifact records. Bucket meanings: "proposed" = \
-a confident link worth one review tap; "question" = genuinely ambiguous, \
-needs a question; "unresolved" = leave as plain text.
+_EXTRACTION_RULES = (
+    "Extraction rules. Link an entity only when the story is about it: a passing "
+    "mention is not a link, and a name that merely shares a name or alias with "
+    "someone in the standing knowledge is NOT a match — same name, different person. "
+    'A kinship term ("Dad", "Mum", "Aunt X", "Grandma") names the WRITER\'s own '
+    "relative: it matches only where the account evidences the writer's own family. "
+    "Ask a question only when it is genuinely ambiguous which person is meant, and never "
+    "guess an identity — an unnamed or ambiguous person is a question or stays unresolved. "
+    "When in doubt between a link and a mention, choose unresolved: a false link is "
+    "worse than no link. A person mentioned near a place is not automatically at that "
+    "place, and presence must be plausible for the story's time. The anchor is the "
+    "archive record the story is filed under: never an extraction.\n\n"
+    "An entity the story is about that is not in the standing knowledge — of any "
+    'kind — is listed with "match": null and bucket "proposed": a new proposed record '
+    "the narrator verifies in the review. Artifacts (items) are the named objects the "
+    "story mentions — a boat, a document, a letter, a photograph; a meal, a "
+    "celebration or a generic thing is not an artifact. They are linked by title; one "
+    'the story mentions that is not in the catalog stays "unresolved", and no '
+    'artifact record is ever created. Bucket meanings: "proposed" = a confident link '
+    'worth one review tap; "question" = genuinely ambiguous, needs a question; '
+    '"unresolved" = leave as plain text.\n\n'
+)
 
-Fact rules. Assert every date, date of birth and age the account STATES, as \
-facts. "kind": "dob" for a date of birth (entity = the person's id when you \
-can match them to the standing knowledge, else null), "event_date" for when \
-the events happened, "age" for an age the narrator gives about themselves. \
-Quote the exact phrase as "text"; give the best "value" (ISO: a full date \
-must be YYYY-MM-DD, a month YYYY-MM, a year YYYY — never a phrase, which \
-would lose its day; or \
-an integer for an age) and an honest "precision" (exact | month | year | \
-approx). Incomplete forms ("the summer of 1979", "born in 1979") get what is \
-there. If a phrase makes no sense as a date at all, "value": null. NEVER \
-invent a date the account does not state.
+_FACT_RULES = (
+    "Fact rules. Assert every date, date of birth and age the account STATES, and "
+    'never invent one. "kind": "dob" for a date of birth (entity = the person\'s id '
+    'when you can match them to the standing knowledge, else null), "event_date" for '
+    'when the events happened, "age" for an age the narrator gives about themselves. '
+    'Quote the exact phrase as "text"; give the best "value" (ISO: a full date must '
+    "be YYYY-MM-DD, a month YYYY-MM, a year YYYY — never a phrase, which would lose "
+    'its day; or an integer for an age) and an honest "precision" (exact | month | '
+    'year | approx). Incomplete forms ("the summer of 1979", "born in 1979") get what '
+    'is there. If a phrase makes no sense as a date at all, "value": null.\n\n'
+)
 
-Question rules. Ask only what is missing and matters; at most {MAX_QUESTIONS}; \
-every question is skippable and nothing is required. Ask for: the event date; \
-who was actually present; the identity of unnamed people; place precision \
-("the old ford" — which one?); the connection of a narrator not in the \
-standing knowledge (unless the story makes it obvious). A specific artifact \
-the story names that is not in the catalog — a particular boat, object, or \
-document — deserves a question asking about it ("Tell me more about the \
-artifact you mentioned"): that is how its archive page gets built. Never \
-bias toward one kind of artifact: a boat is no more worthy than a letter, a \
-photograph, or a tool. Same for a named \
-person or place not in the standing knowledge that matters to the story. \
-A question that needs a date carries "type": "date" — the narrator answers \
-it in their own words — and "date_kind": "dob" when asking for a date of \
-birth, else "event". A question asking who was there carries "type": \
-"people" — the narrator can name several, so its "suggestions" are the \
-likely people and the flow lets them pick any number. For each question \
-include up to {MAX_SUGGESTIONS} short \
-"suggestions" the narrator can tap instead of typing; suggestions must be \
-plausible for this narrator — never a date before their birth (their date of \
-birth is in the standing knowledge or in the facts), and consistent with \
-their stated age and with the story's stated time. Do not ask for a date \
-the account already states (assert it as a fact instead); if you have \
-asserted a date of birth and an age for the narrator, the year is computable \
-(dob + age) — do not ask for it. Dates of birth are asked politely, never \
-required, and only when they would disambiguate presence or date a story.
+_QUESTIONS_PURPOSE = (
+    "You are the contribution assistant for a private family archive. You are given a story, "
+    "the standing knowledge, and the title, extractions and facts a first pass produced. This "
+    "pass produces the questions worth asking about what is still missing.\n\n"
+)
 
-Never ask what the account or the archive already answers. If nothing is \
-missing, "questions" is an empty list.
+_QUESTION_RULES = (
+    f"Question rules. Ask only what is missing and matters, at most {MAX_QUESTIONS}; "
+    "every question is skippable and nothing is required. A date the account states "
+    "is asserted as a fact instead, and a year computable from an asserted date of "
+    "birth and age is not asked for. Ask for: the event date; the date of birth when the "
+    "account gives an age and no date of birth is known or stated — asked politely, never "
+    "required; who was actually present; the identity of unnamed people; place precision "
+    '("the old ford" — which one?); the connection of a narrator not in the standing '
+    "knowledge — ask this whenever the contributor is absent from the standing knowledge, "
+    "unless the story itself states the relation; and a specific artifact the story names "
+    "that is not in the catalog — a particular boat, object or document — since that is how "
+    "its archive page gets built. A boat is no more worthy than a letter, a photograph or a "
+    "tool; the same goes for a named person or place that matters to the story. A question "
+    'whose answer is one or more people carries "type": "people" — the narrator picks names '
+    'from the cast, any number — so its "suggestions" are the likely people; a question '
+    'needing a date carries "type": "date" and "date_kind": "dob" when asking for a date of '
+    'birth, else "event", and the narrator answers it in their own words; every other '
+    'question carries "type": null. Every question carries up to '
+    f'{MAX_SUGGESTIONS} short "suggestions" the narrator can tap instead of typing: give '
+    "them only where they are plausible for this narrator — never a date before their "
+    "birth, and consistent with their stated age and with the story's stated time; with "
+    "neither known, leave them out. A suggestion is an answer to tap, never a match: the "
+    "never-guess rule binds what the first pass links, not what you offer here.\n\n"
+    'If nothing is missing, "questions" is an empty list.\n\n'
+)
 
-Respond with ONLY this JSON: {{"title": string, "extractions": [{{"kind": \
-"person|place|theme|item", "name": string, "match": "<id>"|null, "bucket": \
-"proposed|question|unresolved", "reason": string}}], "facts": [{{"kind": \
-"dob|event_date|age", "entity": "<person id>"|null, "text": "<verbatim \
-quote>", "value": "<date or integer>"|null, "precision": "exact|month|year| \
-approx"|null}}], "questions": [{{"text": string, "why": string, \
-"skippable": true, "suggestions": [string], "type": "date"|"people"|null, \
-"date_kind": "dob"|"event"|null}}]}}`"""
+_CONTENT_JSON = (
+    f'{{"title": string, "extractions": [{{"kind": "{"|".join(KINDS)}", "name": string, '
+    f'"match": "<id>"|null, "bucket": "{"|".join(BUCKETS)}", "reason": string}}], '
+    f'"facts": [{{"kind": "{"|".join(FACT_KINDS)}", "entity": "<person id>"|null, '
+    f'"text": "<verbatim quote>", "value": "<date or integer>"|null, '
+    f'"precision": "exact|month|year|approx"|null}}]}}'
+)
+
+# The tappable suggestions and the question's input surface (`type`, `date_kind`)
+# are the MODEL's judgment: the buttons are a requirement (docs/PRD/MEMORIES.md)
+# and which surface a question takes is a reading of the question, not a string
+# match. They cost reasoning, which is what ASSESS_MAX_TOKENS is for.
+_QUESTIONS_JSON = (
+    '{"questions": [{"text": string, "why": string, "suggestions": [string], '
+    '"type": "date"|"people"|null, "date_kind": "dob"|"event"|null}]}'
+)
+
+_CONTENT_SYSTEM = f"{_CONTENT_PURPOSE}{_EXTRACTION_RULES}{_FACT_RULES}Respond with ONLY this JSON: {_CONTENT_JSON}"
+_QUESTIONS_SYSTEM = f"{_QUESTIONS_PURPOSE}{_QUESTION_RULES}Respond with ONLY this JSON: {_QUESTIONS_JSON}"
 
 
 _REVIEWER_SYSTEM_PROMPT = """\
@@ -168,170 +200,87 @@ class ElicitationError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class Person:
-    """A cast member as the assessment sees them — one of the Knowledge
-    records (docs/coding-standards.md: a group's members are their own
-    types, never a repeat of dict[str, Any])."""
-
-    id: str
-    name: str
-    aliases: tuple[str, ...] = ()
-    dob: str | None = None
-    status: str = "confirmed"  # the projection carries "proposed" for queued records
-
-    def matches(self, name: str) -> bool:
-        """Name or alias, case-insensitive — the one way a person is named."""
-        wanted = str(name).strip().lower()
-        return bool(wanted) and (
-            self.name.strip().lower() == wanted or any(str(a).strip().lower() == wanted for a in self.aliases)
-        )
-
-    @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> Person:
-        return cls(
-            id=str(raw["id"]),
-            name=str(raw.get("name", "")),
-            aliases=tuple(str(a) for a in (raw.get("aliases") or [])),
-            dob=raw.get("dob"),
-            status=str(raw.get("status", "confirmed")),
-        )
-
-    @classmethod
-    def proposed(cls, name: str, existing: set[str]) -> dict[str, Any]:
-        """The archive record for a person the story introduces — proposed,
-        never confirmed (docs/PRD/MEMORIES.md)."""
-        return {
-            "id": _unique_id("p", _slug(name), existing),
-            "name": name.strip(),
-            "aliases": [],
-            "years": "—",
-            "relation": "added from a story",
-            "bio": "",
-            "hue": "amber",
-        }
-
-
-@dataclass(frozen=True)
-class Place:
-    """A place as the assessment sees it."""
-
-    id: str
-    name: str
-
-    @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> Place:
-        return cls(id=str(raw["id"]), name=str(raw.get("name", "")))
-
-    @classmethod
-    def proposed(cls, name: str, existing: set[str]) -> dict[str, Any]:
-        """The archive record for a place the story introduces — proposed,
-        location unknown (docs/PRD/MEMORIES.md)."""
-        return {
-            "id": _unique_id("pl", _slug(name), existing),
-            "name": name.strip(),
-            "note": "Added from a story — location unknown.",
-            "lat": None,
-            "lng": None,
-            "x": None,
-            "y": None,
-        }
-
-
-@dataclass(frozen=True)
-class Theme:
-    """A curated theme as the assessment sees it."""
-
-    id: str
-    title: str
-
-    @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> Theme:
-        return cls(id=str(raw["id"]), title=str(raw.get("title", "")))
-
-
-@dataclass(frozen=True)
-class Item:
-    """An artifact (or any catalog item) as the assessment sees it."""
-
-    id: str
-    title: str
-    type: str = ""
-    status: str = ""  # catalogued | draft — the projection carries it; the
-    # story-confirm invariant needs it
-
-    @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> Item:
-        return cls(
-            id=str(raw["id"]),
-            title=str(raw.get("title", "")),
-            type=str(raw.get("type", "")),
-            status=str(raw.get("status", "")),
-        )
-
-
-def _person_of(raw: Person | dict[str, Any]) -> Person:
-    return raw if isinstance(raw, Person) else Person.from_dict(raw)
-
-
-def _place_of(raw: Place | dict[str, Any]) -> Place:
-    return raw if isinstance(raw, Place) else Place.from_dict(raw)
-
-
-def _theme_of(raw: Theme | dict[str, Any]) -> Theme:
-    return raw if isinstance(raw, Theme) else Theme.from_dict(raw)
-
-
-def _item_of(raw: Item | dict[str, Any]) -> Item:
-    return raw if isinstance(raw, Item) else Item.from_dict(raw)
-
-
-@dataclass(frozen=True)
 class Knowledge:
     """The standing archive an assessment works against — one object, one
     name, one home for the invariant (docs/coding-standards.md: groups that
     travel together are a type, never repeated parallel parameters). The
-    projection's plain dicts are normalized once, here, into typed records
-    that carry their own behavior — the members are never re-parsed by the
-    callers."""
+    projection's plain dicts are normalized once, in from_projection, into
+    typed records that carry their own behavior — the members are never
+    re-parsed by the callers."""
 
     people: tuple[Person, ...] = ()
     places: tuple[Place, ...] = ()
     themes: tuple[Theme, ...] = ()
     items: tuple[Item, ...] = ()
 
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "people", tuple(_person_of(p) for p in self.people))
-        object.__setattr__(self, "places", tuple(_place_of(p) for p in self.places))
-        object.__setattr__(self, "themes", tuple(_theme_of(t) for t in self.themes))
-        object.__setattr__(self, "items", tuple(_item_of(i) for i in self.items))
-
     @classmethod
     def from_projection(
         cls,
-        people: Iterable[Person | dict[str, Any]],
-        places: Iterable[Place | dict[str, Any]],
-        themes: Iterable[Theme | dict[str, Any]],
-        items: Iterable[Item | dict[str, Any]],
+        people: Iterable[Mapping[str, Any]],
+        places: Iterable[Mapping[str, Any]],
+        themes: Iterable[Mapping[str, Any]],
+        items: Iterable[Mapping[str, Any]],
     ) -> Knowledge:
         """The typed view of the projection — the one conversion point for
         the server's plain dicts (docs/coding-standards.md: members are
         typed records; callers never re-parse them)."""
         return cls(
-            people=tuple(_person_of(p) for p in people),
-            places=tuple(_place_of(p) for p in places),
-            themes=tuple(_theme_of(t) for t in themes),
-            items=tuple(_item_of(i) for i in items),
+            people=tuple(Person.from_dict(dict(p)) for p in people),
+            places=tuple(Place.from_dict(dict(pl)) for pl in places),
+            themes=tuple(Theme.from_dict(dict(t)) for t in themes),
+            items=tuple(Item.from_dict(dict(i)) for i in items),
         )
 
     def speaker_for(self, who: str) -> str | None:
         """Match the contributor's self-name against the cast (name or alias)."""
-        wanted = who.strip()
+        person = self.person_named(who)
+        return person.id if person else None
+
+    def person_named(self, name: str) -> Person | None:
+        """The cast member whose name or alias is this name — the one way a
+        person is named (a story mention reuses them, never mints a duplicate)."""
+        wanted = name.strip().lower()
         if not wanted:
             return None
-        for person in self.people:
-            if person.matches(wanted):
-                return person.id
-        return None
+        return next((p for p in self.people if self._is_named(p, wanted)), None)
+
+    def proposed_person_named(self, name: str) -> Person | None:
+        """The queued proposal whose name or alias is this name — two stories
+        mentioning the same bare kinship term share ONE proposed record: a
+        fresh proposed id per story makes the projection's name-dedup drop the
+        second mint, and its story's ref then dangles at publish."""
+        wanted = name.strip().lower()
+        if not wanted:
+            return None
+        return next((p for p in self.people if p.status == "proposed" and self._is_named(p, wanted)), None)
+
+    def place_named(self, name: str) -> Place | None:
+        """The standing place whose name is this name — a story mention reuses
+        it, never mints a duplicate (the moored-barges ×3 came from minting one
+        id per story mention, 2026-08-05)."""
+        wanted = name.strip().lower()
+        if not wanted:
+            return None
+        return next((pl for pl in self.places if pl.name.strip().lower() == wanted), None)
+
+    def person(self, person_id: str) -> Person | None:
+        """The cast member with this id — the record a model-matched person ref
+        must name."""
+        return next((p for p in self.people if p.id == person_id), None)
+
+    def place(self, place_id: str) -> Place | None:
+        """The standing place with this id — the record a model-matched place
+        ref must name."""
+        return next((pl for pl in self.places if pl.id == place_id), None)
+
+    def theme(self, theme_id: str) -> Theme | None:
+        """The curated theme with this id — themes are curated arrangements, so
+        only a real one may be linked."""
+        return next((t for t in self.themes if t.id == theme_id), None)
+
+    def item(self, item_id: str) -> Item | None:
+        """The catalog item with this id — the artifact a story links by title."""
+        return next((it for it in self.items if it.id == item_id), None)
 
     def narrator_dob(self, speaker_id: str | None) -> str | None:
         """The narrator's date of birth from the standing knowledge, when the
@@ -339,10 +288,8 @@ class Knowledge:
         is never a date before the narrator was born)."""
         if not speaker_id:
             return None
-        for person in self.people:
-            if person.id == speaker_id and person.dob:
-                return person.dob
-        return None
+        person = self.person(speaker_id)
+        return person.dob.date if person and person.dob else None
 
     def render(self) -> str:
         """Compact render of the cast/places/themes/items for the model
@@ -353,7 +300,7 @@ class Knowledge:
             if p.aliases:
                 info.append(f"(aliases: {', '.join(p.aliases)})")
             if p.dob:
-                info.append(f"(born {p.dob})")
+                info.append(f"(born {p.dob.date})")
             lines.append(" ".join(info))
         lines.append("Places:")
         lines += [f"  {pl.id} — {pl.name}" for pl in self.places]
@@ -363,197 +310,15 @@ class Knowledge:
         lines += [f"  {it.id} — {it.title} ({it.type})" for it in self.items]
         return "\n".join(lines)
 
-
-def _anchor_line(anchor: dict[str, str]) -> str:
-    kind = anchor.get("kind", "item")
-    label = anchor.get("name") or anchor.get("id") or "an item in the archive"
-    return f"Anchor (where the contributor started): {kind} — {label}"
-
-
-def _locale_date_order() -> str:
-    """The archive's date order for ambiguous numerics. Default DMY (the
-    family is British); LOFT_LOCALE (e.g. en_US) overrides — locale is
-    respected when reading dates (docs/PRD/MEMORIES.md)."""
-    locale = os.environ.get("LOFT_LOCALE", "en_GB")
-    return "MDY" if locale.lower().startswith("en_us") else "DMY"
+    @staticmethod
+    def _is_named(person: Person, wanted: str) -> bool:
+        """Name or alias, case-insensitive — the one way a person is named."""
+        return person.name.strip().lower() == wanted or any(a.strip().lower() == wanted for a in person.aliases)
 
 
-def _normalize_date_fact(value: Any, precision: Any) -> tuple[str | None, str | None]:
-    """Validate a model-asserted date with the real parser: dateparser parses
-    the asserted VALUE (locale-aware, incomplete forms allowed); the verbatim
-    text is provenance, never parsed. A value the parser cannot make sense of
-    becomes (None, None) — a person resolves.
-    """
-    if precision not in PRECISIONS:
-        precision = None
-    if not isinstance(value, str) or not value.strip():
-        return None, None
-    # strip a hedge word ("around/circa/about 1965") — token stripping, not a
-    # date parser
-    phrase = re.sub(r"^(?:around|circa|about)\s+", "", value.strip(), flags=re.IGNORECASE)
-    # ISO shapes are unambiguous — the stdlib parses them (locale-free);
-    # anything else ("15/09/1981", "July 1979", "1979") goes to the
-    # locale-aware parser
-    try:
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", phrase):
-            parsed = datetime.strptime(phrase, "%Y-%m-%d")
-        elif re.fullmatch(r"\d{4}-\d{2}", phrase):
-            parsed = datetime.strptime(phrase, "%Y-%m")
-        elif re.fullmatch(r"\d{4}", phrase):
-            parsed = datetime.strptime(phrase, "%Y")
-        else:
-            parsed = dateparser.parse(
-                phrase,
-                settings={
-                    "DATE_ORDER": _locale_date_order(),
-                    "PREFER_DAY_OF_MONTH": "first",
-                    "PREFER_DATES_FROM": "past",
-                },
-            )
-    except (ValueError, OverflowError):
-        return None, None
-    if parsed is None:
-        return None, None
-    return _demote_precision(phrase, parsed, precision)
-
-
-def _demote_precision(phrase: str, parsed: datetime, precision: Any) -> tuple[str, str]:
-    """Demote an over-claimed precision to what the VALUE's shape actually
-    supports — an over-claimed "exact" on a bare year must never pin an
-    invented day (PRD §6; reviewer, 2026-08-03). ISO shapes decide by
-    shape; a non-ISO phrase is probed against a far-off base — a stable
-    parse means the value names its own parts, an unstable one means the
-    parser filled them in (demote to the year the parse proved)."""
-    year = parsed.year
-    if precision == "exact":
-        # an exact day is only provable from a full ISO value; a non-ISO
-        # phrase ("July 1979", "31 July 1979") can never claim one — a
-        # month-only phrase must not claim an exact day (PRD §6: never
-        # fabricate a date part)
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", phrase):
-            return f"{year:04d}-{parsed.month:02d}-{parsed.day:02d}", "exact"
-        return _year_or_month(phrase, parsed, year)
-    if precision == "month":
-        return _year_or_month(phrase, parsed, year)
-    return f"{year:04d}", precision or "year"
-
-
-_FAR_BASE_YEAR = 1600  # far enough back that a bare year can't borrow its month/day
-_FAR_BASE = datetime(_FAR_BASE_YEAR, month=1, day=1)
-
-
-def _stable_parse(phrase: str, parsed: datetime) -> bool:
-    """Does the phrase name its own parts? Re-parse against a far-off base —
-    a bare "1963" picks up the base's month/day and shifts; a full
-    "15/09/1981" is unchanged. This is the library's own behaviour, never a
-    hand-rolled parser (docs/coding-standards.md)."""
-    probe = dateparser.parse(
-        phrase,
-        settings={
-            "DATE_ORDER": _locale_date_order(),
-            "PREFER_DAY_OF_MONTH": "first",
-            "PREFER_DATES_FROM": "past",
-            "RELATIVE_BASE": _FAR_BASE,
-        },
-    )
-    return probe is not None and (probe.year, probe.month, probe.day) == (parsed.year, parsed.month, parsed.day)
-
-
-def _year_or_month(phrase: str, parsed: datetime, year: int) -> tuple[str, str]:
-    """The precision a phrase can prove beyond a bare year: an ISO
-    YYYY-MM names its own month; a bare year is a year — the stdlib's
-    Jan-1 is not a real date; a non-ISO phrase is probed against a
-    far-off base — a stable parse means it names its own month, an
-    unstable one demotes to the year the parse proved."""
-    if re.fullmatch(r"\d{4}-\d{2}", phrase):
-        return f"{year:04d}-{parsed.month:02d}", "month"
-    if re.fullmatch(r"\d{4}", phrase):
-        return f"{year:04d}", "year"
-    if _stable_parse(phrase, parsed):
-        return f"{year:04d}-{parsed.month:02d}", "month"
-    return f"{year:04d}", "year"
-
-
-def _normalize_age_fact(value: Any, precision: Any) -> tuple[int | None, str | None]:
-    try:
-        age = int(value)
-    except (TypeError, ValueError):
-        return None, None
-    if not 0 < age < MAX_AGE_YEARS:
-        return None, None
-    return age, precision if precision in PRECISIONS else "approx"
-
-
-def _validate_facts(raw: Any) -> list[dict[str, Any]]:
-    """Structural cleaning + library validation of the model's fact list."""
-    if not isinstance(raw, list):
-        return []
-    cleaned: list[dict[str, Any]] = []
-    for fact in raw:
-        if not isinstance(fact, dict):
-            continue
-        kind = fact.get("kind")
-        if kind not in FACT_KINDS:
-            continue
-        text = fact.get("text")
-        if not isinstance(text, str) or not text.strip():
-            continue
-        entry: dict[str, Any] = {"kind": kind, "text": text.strip()[:300]}
-        entity = fact.get("entity")
-        entry["entity"] = str(entity)[:64] if entity else None
-        if kind == "age":
-            age, precision = _normalize_age_fact(fact.get("value"), fact.get("precision"))
-            if age is None:
-                continue
-            entry["value"], entry["precision"] = age, precision
-        else:
-            value, precision = _normalize_date_fact(fact.get("value"), fact.get("precision"))
-            entry["value"], entry["precision"] = value, precision
-        cleaned.append(entry)
-    return cleaned
-
-
-_DATE_ASK_WORDS = (
-    "what year",
-    "which year",
-    "in what year",
-    "in which year",
-    "date of birth",
-    "born",
-    "how old",
-    "your age",
-    "what date",
-    "when did",
-    "when was",
-    "when do",
-    "when were",
-)
-
-
-def _suggestion_year(s: str) -> int | None:
-    """A suggestion's year via the real parser — never a hand-rolled date
-    parser. Phrases the parser cannot date are kept (None). Only two bounded
-    token strips precede the parser: a hedge word ("around/about/circa") and
-    a season lead-in ("the summer of 1960" -> "1960"); a bare decade token
-    ("the 1960s") the parser mis-reads is taken at its decade start."""
-    phrase = re.sub(r"^(?:around|circa|about)\s+", "", s.strip(), flags=re.IGNORECASE)
-    phrase = re.sub(
-        r"^(?:the\s+)?(?:summer|spring|autumn|fall|winter)\s+of\s+",
-        "",
-        phrase,
-        flags=re.IGNORECASE,
-    )
-    decade = re.fullmatch(r"(?:19|20)\d{2}s", phrase, flags=re.IGNORECASE)
-    if decade:
-        return int(phrase[:4])
-    try:
-        parsed = dateparser.parse(
-            phrase,
-            settings={"DATE_ORDER": _locale_date_order(), "PREFER_DATES_FROM": "past"},
-        )
-    except (ValueError, OverflowError):
-        return None
-    return parsed.year if parsed else None
+def _anchor_line(anchor: Anchor) -> str:
+    kind = anchor.kind
+    return f"Anchor (where the contributor started): {kind} — {anchor.label()}"
 
 
 class _AssessmentReview:
@@ -563,7 +328,7 @@ class _AssessmentReview:
     pass all read (docs/coding-standards.md: deterministic checks beat
     model judgment)."""
 
-    def __init__(self, assessment: dict[str, Any], who: str, knowledge: Knowledge) -> None:
+    def __init__(self, assessment: Assessment, who: str, knowledge: Knowledge) -> None:
         self.assessment = assessment
         self.who = who
         self.knowledge = knowledge
@@ -573,26 +338,18 @@ class _AssessmentReview:
         assessment's own dob fact first (the one being established), then
         the standing knowledge's."""
         speaker_id = self.knowledge.speaker_for(self.who)
-        dob_value: str | None = None
-        for fact in self.assessment.get("facts", []):
-            if fact.get("kind") != "dob" or not fact.get("value"):
-                continue
-            entity = fact.get("entity")
-            if entity in (None, speaker_id):
-                dob_value = fact["value"]
-                break
-        return dob_value or self.knowledge.narrator_dob(speaker_id)
+        for fact in self.assessment.facts:
+            if fact.is_dob() and fact.value and fact.entity in (None, speaker_id):
+                return str(fact.value)
+        return self.knowledge.narrator_dob(speaker_id)
 
-    def filter_implausible_suggestions(self) -> dict[str, Any]:
+    def filter_implausible_suggestions(self) -> Assessment:
         """Deterministic guard on date-question suggestions (docs/coding-
         standards.md: deterministic checks beat model judgment): never offer
         a year before the narrator was born — their dob is in the
         assessment's facts or the standing knowledge. Suggestions the parser
         cannot date are kept; dob questions (the date is being asked) are
         never filtered."""
-        questions = self.assessment.get("questions", [])
-        if not questions:
-            return self.assessment
         dob_value = self.narrator_dob()
         if not dob_value:
             return self.assessment
@@ -600,22 +357,35 @@ class _AssessmentReview:
             dob_year = int(str(dob_value)[:4])
         except (TypeError, ValueError):
             return self.assessment
-        return {**self.assessment, "questions": _filter_date_suggestions(questions, dob_year)}
+        return self.assessment.with_plausible_suggestions(dob_year)
 
-    def violations(self) -> list[str]:
+    def violations(self, account: str) -> list[str]:
         """Rule violations checkable in code — no model judgment needed.
         These feed the same redo-with-feedback loop as the reviewer's
         findings."""
-        violations: list[str] = []
-        facts = self.assessment.get("facts", [])
-        ages = [f for f in facts if f.get("kind") == "age" and isinstance(f.get("value"), int)]
-        violations += self._check_narrator_unknown()
+        ages = [f.value for f in self.assessment.facts if f.is_age() and isinstance(f.value, int)]
+        violations = self._check_narrator_unknown()
         violations += self._check_age_without_dob(ages)
         violations += self._check_event_date_rules(ages)
         violations += self._check_new_item_question()
+        violations += self._check_grounded_links(account)
         return violations
 
-    def model_violations(self, client: ChatClient, anchor: dict[str, str], account: str) -> list[str]:
+    def _check_grounded_links(self, account: str) -> list[str]:
+        """A link stands on the account's own words. A model that reaches into
+        the archive for the name (the account says "Dad"; the extraction says
+        "Otto", the record that carries that alias) links a person, place or
+        object the narrator never named — and for a kinship term asserts exactly
+        the misattribution the ruling forbids (2026-08-05)."""
+        spoken = account.casefold()
+        return [
+            f"the extraction '{ex.name}' is linked to a record the account never names — "
+            "use the word the account used, or leave it unresolved"
+            for ex in self.assessment.extractions
+            if ex.has_ungrounded_link(spoken)
+        ]
+
+    def model_violations(self, client: ChatClient, anchor: Anchor, account: str) -> list[str]:
         """A second, cheap model pass reviews the assessment for rule
         violations (mentions linked, impossible matches, redundant
         questions). Returns the violations to feed back — empty means the
@@ -626,7 +396,7 @@ class _AssessmentReview:
                 f"Contributor: {self.who or 'unknown'}",
                 f"The story (verbatim):\n{account}",
                 "Standing knowledge:\n" + self.knowledge.render(),
-                "The assessor's output to review:\n" + json.dumps(self.assessment, ensure_ascii=False),
+                "The assessor's output to review:\n" + json.dumps(self.assessment.to_dict(), ensure_ascii=False),
             ]
         )
         try:
@@ -646,7 +416,7 @@ class _AssessmentReview:
         connect — the account cannot be placed otherwise."""
         violations: list[str] = []
         if self.who.strip() and self.knowledge.speaker_for(self.who) is None:
-            questions = " ".join(q.get("text", "") for q in self.assessment.get("questions", [])).lower()
+            questions = " ".join(q.text for q in self.assessment.questions).lower()
             if not any(w in questions for w in ("connect", "related", "relationship", "family")):
                 violations.append(
                     "the narrator is not in the standing knowledge and no question asks "
@@ -661,7 +431,7 @@ class _AssessmentReview:
         violations: list[str] = []
         if ages:
             known_dob = self.knowledge.narrator_dob(self.knowledge.speaker_for(self.who))
-            dob_in_facts = any(f.get("kind") == "dob" and f.get("value") for f in self.assessment.get("facts", []))
+            dob_in_facts = any(f.is_dob() and f.value for f in self.assessment.facts)
             if known_dob or dob_in_facts:
                 if self._date_question_asked():
                     violations.append(
@@ -681,10 +451,9 @@ class _AssessmentReview:
         date exists and nothing derives one, the (skippable) date question
         must stay in the flow, never dropped."""
         violations: list[str] = []
-        facts = self.assessment.get("facts", [])
-        event_dates = [f for f in facts if f.get("kind") == "event_date" and f.get("value")]
+        event_dates = tuple(f for f in self.assessment.facts if f.is_event_date() and f.value)
         known_dob = self.knowledge.narrator_dob(self.knowledge.speaker_for(self.who))
-        dob_in_facts = any(f.get("kind") == "dob" and f.get("value") for f in facts)
+        dob_in_facts = any(f.is_dob() and f.value for f in self.assessment.facts)
         if event_dates:
             violations += self._fabricated_today_violations(event_dates)
         elif not (ages and (known_dob or dob_in_facts)):
@@ -695,14 +464,10 @@ class _AssessmentReview:
         """A specific new artifact the story names deserves a "tell me more"
         question — checkable in code from the extractions (item, no match)."""
         violations: list[str] = []
-        new_items = [
-            ex for ex in self.assessment.get("extractions", []) if ex.get("kind") == "item" and not ex.get("match")
-        ]
+        new_items = [ex for ex in self.assessment.extractions if ex.is_new_item()]
         if new_items:
-            questions = " ".join(q.get("text", "") for q in self.assessment.get("questions", [])).lower()
-            if not any(
-                ex.get("name", "").strip().lower() and ex["name"].strip().lower() in questions for ex in new_items
-            ):
+            questions = " ".join(q.text for q in self.assessment.questions).lower()
+            if not any(ex.name.lower() in questions for ex in new_items):
                 violations.append(
                     "a specific new artifact is named in the story and no question asks about it "
                     '("tell me more" — that is how its archive page gets built)'
@@ -710,13 +475,7 @@ class _AssessmentReview:
         return violations
 
     def _date_question_asked(self) -> bool:
-        for q in self.assessment.get("questions", []):
-            if q.get("type") == "date":
-                return True
-            text = str(q.get("text", "")).lower()
-            if any(w in text for w in _DATE_ASK_WORDS):
-                return True
-        return False
+        return any(q.asks_for_a_date() for q in self.assessment.questions)
 
     def _missing_event_date_violations(self) -> list[str]:
         """No events date and nothing to derive one from — the issue must stay
@@ -726,19 +485,16 @@ class _AssessmentReview:
         would otherwise slip through). The question is skippable: the
         narrator answers in their own words or declines, and the item stays
         undated until a later pass."""
-        violations: list[str] = []
-        if not any(
-            q.get("type") == "date" and q.get("date_kind") == "event" for q in self.assessment.get("questions", [])
-        ):
-            violations.append(
-                "no events date is established — keep the (skippable) date question for when "
-                "the events happened in the questions; the narrator answers in their own "
-                "words, and declining is allowed, but the issue is not dropped"
-            )
-        return violations
+        if any(q.asks_for_the_events_date() for q in self.assessment.questions):
+            return []
+        return [
+            "no events date is established — keep the (skippable) date question for when "
+            "the events happened in the questions; the narrator answers in their own "
+            "words, and declining is allowed, but the issue is not dropped"
+        ]
 
     @staticmethod
-    def _fabricated_today_violations(event_dates: list[dict[str, Any]]) -> list[str]:
+    def _fabricated_today_violations(event_dates: tuple[AssessmentFact, ...]) -> list[str]:
         """A date equal to the telling day is only legitimate when the
         narrator's own words stated it — a diary-style entry that really
         happened that day. The verbatim is the discriminator: "Today" / the
@@ -749,10 +505,10 @@ class _AssessmentReview:
         violations: list[str] = []
         today = date.today().isoformat()
         todayish = ("today", "tonight", "this morning", "this evening", "this week", "just now", "now", "earlier today")
-        for f in event_dates:
-            value = str(f.get("value"))
+        for fact in event_dates:
+            value = str(fact.value)
             if value in (today, today[:7], today[:4]):
-                verbatim = str(f.get("text") or "").strip().lower()
+                verbatim = fact.text.strip().lower()
                 if value.lower() not in verbatim and not any(w in verbatim for w in todayish):
                     violations.append(
                         "the events date is the telling day and the narrator never stated it — a "
@@ -762,30 +518,6 @@ class _AssessmentReview:
                     )
                     break
         return violations
-
-
-def _filter_implausible_suggestions(assessment: dict[str, Any], who: str, knowledge: Knowledge) -> dict[str, Any]:
-    """Deterministic guard on date-question suggestions (docs/coding-
-    standards.md: deterministic checks beat model judgment): never offer a
-    year before the narrator was born — their dob is in the assessment's
-    facts or the standing knowledge. Suggestions the parser cannot date are
-    kept; dob questions (the date is being asked) are never filtered."""
-    return _AssessmentReview(assessment, who, knowledge).filter_implausible_suggestions()
-
-
-def _filter_date_suggestions(questions: list[dict[str, Any]], dob_year: int) -> list[dict[str, Any]]:
-    """Keep only the suggestion years the narrator could plausibly have
-    lived — a year before their birth is never offered. Suggestions the
-    parser cannot date are kept; dob questions (the date is being asked)
-    are never filtered."""
-    filtered = []
-    for q in questions:
-        if q.get("type") != "date" or q.get("date_kind") == "dob" or not q.get("suggestions"):
-            filtered.append(q)
-            continue
-        kept = [s for s in q["suggestions"] if (year := _suggestion_year(s)) is None or year >= dob_year]
-        filtered.append({**q, "suggestions": kept})
-    return filtered
 
 
 _PENDING_FACT_PROMPT = """\
@@ -809,7 +541,9 @@ Respond with ONLY this JSON: {"answers": [{"text": string, "value": \
 string|null, "precision": "exact"|"month"|"year"|"approx"|null}]}"""
 
 
-def resolve_pending_facts(client: ChatClient | None, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def resolve_pending_facts(
+    client: ChatClient | None, raw_facts: Iterable[Mapping[str, Any]]
+) -> tuple[AssessmentFact, ...]:
     """Fill the date facts the narrator answered in their own words: a fact
     with kind dob/event_date, verbatim text and no value yet goes to the
     model to assert value and precision; the library validates both
@@ -817,243 +551,183 @@ def resolve_pending_facts(client: ChatClient | None, facts: list[dict[str, Any]]
     answer the model or the parser cannot date stays null — a person's word
     resolves it. Never runs without a client (an offline save keeps the
     fact pending)."""
-    pending = _pending_date_facts(facts)
+    facts = AssessmentFact.from_list(list(raw_facts))
+    pending = PendingFact.all_from(facts)
     if not pending or client is None:
-        return list(facts)
+        return facts
     answers = _answer_pending_facts(client, pending)
     if answers is None:
-        return list(facts)
-    by_text = {
-        str(p.get("text", "")).strip(): p for p in answers if isinstance(p, dict) and isinstance(p.get("text"), str)
-    }
-    return _merge_pending_answers(facts, pending, by_text)
+        return facts
+    return _merge_pending_answers(facts, answers)
 
 
-def _pending_date_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The facts still awaiting the narrator's word: a kind dob/event_date
-    with verbatim text and no value yet."""
-    return [
-        f
-        for f in facts
-        if f.get("kind") in ("dob", "event_date")
-        and isinstance(f.get("text"), str)
-        and f["text"].strip()
-        and not f.get("value")
-    ]
-
-
-def _answer_pending_facts(client: ChatClient, pending: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+def _answer_pending_facts(client: ChatClient, pending: tuple[PendingFact, ...]) -> tuple[FactAnswer, ...] | None:
     """Ask the model to assert value and precision for the pending facts.
     None when the model or the JSON parsing fails — the caller keeps the
     facts pending (an offline save never runs without a client)."""
     try:
         raw = client.chat(
             _PENDING_FACT_PROMPT,
-            json.dumps(
-                [{"kind": f.get("kind"), "text": f["text"].strip()[:300]} for f in pending],
-                ensure_ascii=False,
-            ),
+            json.dumps([fact.to_dict() for fact in pending], ensure_ascii=False),
         )
         parsed = json_object(raw)
         answers = parsed.get("answers") if isinstance(parsed, dict) else None
         if not isinstance(answers, list):
             return None
-        return answers
+        return FactAnswer.from_list(answers)
     except AIClientError:
         return None
 
 
 def _merge_pending_answers(
-    facts: list[dict[str, Any]], pending: list[dict[str, Any]], by_text: dict[str, dict[str, Any]]
-) -> list[dict[str, Any]]:
+    facts: tuple[AssessmentFact, ...],
+    answers: tuple[FactAnswer, ...],
+) -> tuple[AssessmentFact, ...]:
     """Fold the model's answers into the pending facts: a pending fact
     whose verbatim text the model answered gets the validated value and
     precision (the library validates both — the model asserts, the library
     parses); an answer the model or the parser cannot date stays null — a
     person's word resolves it."""
-    out: list[dict[str, Any]] = []
+    by_text = {answer.text: answer for answer in answers}
+    out: list[AssessmentFact] = []
     for fact in facts:
-        if fact not in pending or fact["text"].strip() not in by_text:
-            out.append(fact)
-            continue
-        candidate = by_text[fact["text"].strip()]
-        value, precision = _normalize_date_fact(candidate.get("value"), candidate.get("precision"))
-        if value:
-            out.append({**fact, "value": value, "precision": precision})
-        else:
-            out.append(fact)
-    return out
+        answer = by_text.get(fact.text.strip()) if fact.is_pending() else None
+        dated = answer.dated() if answer else None
+        out.append(replace(fact, value=dated.date, precision=dated.precision) if dated else fact)
+    return tuple(out)
 
 
-# A bare kinship term names the writer's own relative — never a match to a
-# person record merely because that record carries the alias. The code
-# strips the match deterministically: writer-relative resolution is a later
-# seam (option C), not the model's guess (docs/coding-standards.md —
-# deterministic checks beat model judgment).
-_KINSHIP_TERMS = frozenset(
-    {
-        "dad",
-        "daddy",
-        "father",
-        "mum",
-        "mummy",
-        "mom",
-        "mother",
-        "mam",
-        "grandma",
-        "granny",
-        "gran",
-        "nana",
-        "nanny",
-        "grandad",
-        "granddad",
-        "grandpa",
-        "grandfather",
-        "grandmother",
-        "aunt",
-        "aunty",
-        "auntie",
-        "uncle",
-        "sister",
-        "brother",
-        "cousin",
-    }
-)
+class Assessor:
+    """The model actor over one contribution: the two assess passes (content,
+    then questions), the review-redo loop, and the client and context they
+    share.
 
+    One class, because the passes and the loop are one conversation with one
+    client and one context — functions taking the same first argument are its
+    methods (docs/coding-standards.md: groups that travel together are a type).
+    """
 
-def _strip_kinship_matches(assessment: dict[str, Any]) -> dict[str, Any]:
-    """A person extraction whose name is a bare kinship term ('Dad', 'Mum',
-    'Aunt') never keeps a match — the term is the writer's own relative, and
-    matching it to a record the archive happens to alias is a misattribution.
-    The extraction survives (match null) so the unnamed relative can be
-    proposed for the writer to identify."""
-    extractions = []
-    for ex in assessment.get("extractions", []):
-        if ex.get("kind") == "person" and str(ex.get("name", "")).strip().lower() in _KINSHIP_TERMS:
-            ex = {**ex, "match": None}
-        extractions.append(ex)
-    return {**assessment, "extractions": extractions}
+    def __init__(
+        self,
+        client: ChatClient,
+        *,
+        anchor: Anchor,
+        who: str,
+        account: str,
+        knowledge: Knowledge,
+    ) -> None:
+        self._client = client
+        self._anchor = anchor
+        self._who = who
+        self._account = account
+        self._knowledge = knowledge
+        self._context = "\n\n".join(
+            [
+                _anchor_line(anchor),
+                f"Contributor: {who or 'unknown'}",
+                f"The story so far (verbatim):\n{account}",
+                "Standing knowledge:\n" + knowledge.render(),
+            ]
+        )
+
+    def run(self) -> Assessment:
+        """The assessment: both passes, then the self-correction — genuine
+        violations are fed back into the next attempt, never
+        sampling-twice-and-picking."""
+        assessment: Assessment | None = None
+        feedback = ""
+        for attempt in range(MAX_ASSESS_ATTEMPTS):
+            content = self.content(feedback)
+            questions = self.questions(content, feedback)
+            assessment = _assemble(content, questions)
+            if attempt >= MAX_ASSESS_ATTEMPTS - 1:
+                break  # last attempt: accept the best effort
+            review = _AssessmentReview(assessment, self._who, self._knowledge)
+            violations = review.violations(self._account)
+            violations += review.model_violations(self._client, self._anchor, self._account)
+            if not violations:
+                break
+            feedback = "\n\nA reviewer found these problems in your assessment. Fix them:\n- " + "\n- ".join(violations)
+        assert assessment is not None, "the assessment loop always runs at least once"
+        return (
+            _AssessmentReview(assessment, self._who, self._knowledge)
+            .filter_implausible_suggestions()
+            .strip_kinship_matches()
+            .strip_ungrounded_matches(self._account)
+        )
+
+    def content(self, feedback: str = "") -> dict[str, Any]:
+        """The content pass: the model's answer as its object, or a loud
+        ElicitationError — a malformed shape never reaches the assembly."""
+        try:
+            parsed = json_object(self._client.chat(_CONTENT_SYSTEM, self._context + feedback))
+        except AIClientError as e:
+            raise ElicitationError(f"assessment failed: {e}") from e
+        if not isinstance(parsed, dict):
+            raise ElicitationError(f"assessment is not an object: {parsed!r}")
+        return parsed
+
+    def questions(self, content: dict[str, Any], feedback: str = "") -> tuple[Question, ...]:
+        """The questions pass: the model's answer as Question records — its
+        text, why, suggestions and the input surface it judged the question
+        takes, validated at the record's own seam."""
+        user = self._context + feedback + _content_note(content)
+        try:
+            parsed = json_object(self._client.chat(_QUESTIONS_SYSTEM, user))
+        except AIClientError as e:
+            raise ElicitationError(f"assessment failed: {e}") from e
+        if not isinstance(parsed, dict):
+            raise ElicitationError(f"the questions answer is not an object: {parsed!r}")
+        entries = parsed.get("questions", [])
+        if not isinstance(entries, list):
+            raise ElicitationError(f"the questions answer carries no list: {parsed!r}")
+        return tuple(
+            Question.from_dict(entry)
+            for entry in entries[:MAX_QUESTIONS]
+            if isinstance(entry, dict) and str(entry.get("text", "")).strip()
+        )
 
 
 def assess(
     client: ChatClient,
     *,
-    anchor: dict[str, str],
+    anchor: Anchor,
     who: str,
     account: str,
     knowledge: Knowledge,
-) -> dict[str, Any]:
+) -> Assessment:
     """Run the model over the finished account; returns the validated
     assessment {title, extractions, facts, questions}.
 
-    The single production call self-corrects: deterministic rule checks and a
-    second cheap model pass review the output, and genuine violations are fed
-    back for a bounded redo — never sampling-twice-and-picking.
-    """
-    user = "\n\n".join(
-        [
-            _anchor_line(anchor),
-            f"Contributor: {who or 'unknown'}",
-            f"The story so far (verbatim):\n{account}",
-            "Standing knowledge:\n" + knowledge.render(),
-        ]
-    )
-    assessment: dict[str, Any] = {}
-    for attempt in range(MAX_ASSESS_ATTEMPTS):
-        try:
-            raw = client.chat(_SYSTEM_PROMPT, user)
-            parsed = json_object(raw)
-        except AIClientError as e:
-            raise ElicitationError(f"assessment failed: {e}") from e
-        assessment = _validate_assessment(parsed)
-        if attempt >= MAX_ASSESS_ATTEMPTS - 1:
-            break  # last attempt: accept the best effort
-        review = _AssessmentReview(assessment, who, knowledge)
-        violations = review.violations()
-        violations += review.model_violations(client, anchor, account)
-        if not violations:
-            break
-        user = (
-            user
-            + "\n\nA reviewer found these problems in your assessment. Fix them and re-respond "
-            + "with the corrected assessment JSON:\n- "
-            + "\n- ".join(violations)
-        )
-    return _strip_kinship_matches(_filter_implausible_suggestions(assessment, who, knowledge))
+    TWO passes — the content (title, extractions, facts), then the questions —
+    each with only its own rules (see the prompt note above); the question's
+    input surface is inferred from its wording, never the model's decision. The
+    module's face over `Assessor`, which owns the passes, the client and the
+    review-redo loop."""
+    return Assessor(client, anchor=anchor, who=who, account=account, knowledge=knowledge).run()
 
 
-def _assessment_list(parsed: Any, key: str, what: str) -> list[Any]:
-    """The assessment field must be a list — a malformed shape fails
-    loudly with a named error, never a confusing downstream crash."""
-    value = parsed.get(key, [])
-    if not isinstance(value, list):
-        raise ElicitationError(f"assessment {what} are not a list")
-    return value
+def _content_note(content: dict[str, Any]) -> str:
+    """What the questions pass is told about the first pass's output."""
+    return "\n\nThe first pass produced:\n" + json.dumps(content, ensure_ascii=False)
 
 
-def _validate_assessment(parsed: Any) -> dict[str, Any]:
+def _assemble(content: dict[str, Any], questions: tuple[Question, ...]) -> Assessment:
+    """The two passes as ONE assessment — validated at the same seam, so a
+    malformed title or extraction still fails loudly."""
+    return _validate_assessment({**content, "questions": [q.to_dict() for q in questions]})
+
+
+def _validate_assessment(parsed: Any) -> Assessment:
+    """The model's JSON, validated into the assessment record — a malformed
+    shape fails loudly with a named error, never a confusing downstream
+    crash."""
     if not isinstance(parsed, dict):
         raise ElicitationError(f"assessment is not an object: {parsed!r}")
-    title = parsed.get("title")
-    if not isinstance(title, str) or not title.strip():
-        raise ElicitationError("assessment missing a title")
-    extractions = _assessment_list(parsed, key="extractions", what="extractions")
-    questions = _assessment_list(parsed, key="questions", what="questions")
-    return {
-        "title": title.strip(),
-        "extractions": _clean_extractions(extractions),
-        "facts": _validate_facts(parsed.get("facts", [])),
-        "questions": _clean_questions(questions),
-    }
-
-
-def _clean_extractions(extractions: list[Any]) -> list[dict[str, Any]]:
-    """The assessment's extractions, narrowed to the fields the flow uses —
-    entries without a kind/name are dropped, buckets and matches are
-    validated against the known values."""
-    cleaned: list[dict[str, Any]] = []
-    for ex in extractions:
-        if not isinstance(ex, dict):
-            continue
-        kind, name = ex.get("kind"), ex.get("name")
-        if kind not in KINDS or not isinstance(name, str) or not name.strip():
-            continue
-        bucket = ex.get("bucket") if ex.get("bucket") in BUCKETS else "unresolved"
-        match = ex.get("match") if isinstance(ex.get("match"), str) else None
-        reason = str(ex.get("reason", ""))
-        cleaned.append({"kind": kind, "name": name.strip(), "match": match, "bucket": bucket, "reason": reason})
-    return cleaned
-
-
-def _clean_questions(questions: list[Any]) -> list[dict[str, Any]]:
-    """The assessment's questions, narrowed to the flow's fields — capped
-    at MAX_QUESTIONS with at most MAX_SUGGESTIONS bounded suggestions.
-    Skippability is the FLOW's guarantee, never the model's discretion
-    (user: every question is skippable — the narrator answers in their
-    own words or declines, while the flow keeps pursuing the issue): the
-    schema's "skippable": true is enforced here, at the seam, and the
-    eval's contract pins it."""
-    q_cleaned: list[dict[str, Any]] = []
-    for q in questions[:MAX_QUESTIONS]:
-        if isinstance(q, dict) and isinstance(q.get("text"), str) and q["text"].strip():
-            raw_suggestions = q.get("suggestions", [])
-            suggestions = [
-                str(s).strip()[:60]
-                for s in (raw_suggestions if isinstance(raw_suggestions, list) else [])
-                if isinstance(s, str) and s.strip()
-            ][:MAX_SUGGESTIONS]
-            q_type = q.get("type") if q.get("type") in ("date", "people") else None
-            q_cleaned.append(
-                {
-                    "text": q["text"].strip(),
-                    "why": str(q.get("why", "")),
-                    "skippable": True,
-                    "suggestions": suggestions,
-                    "type": q_type,
-                    "date_kind": q.get("date_kind") if q_type == "date" else None,
-                }
-            )
-    return q_cleaned
+    try:
+        return Assessment.from_dict(parsed)
+    except ValueError as e:
+        raise ElicitationError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -1066,48 +740,154 @@ def _slug(name: str) -> str:
     return slug[:40] or "new"
 
 
-def _unique_id(prefix: str, slug: str, existing: set[str]) -> str:
-    candidate = f"{prefix}-{slug}"
-    if candidate not in existing:
-        return candidate
-    n = 2
-    while f"{candidate}-{n}" in existing:
-        n += 1
-    return f"{candidate}-{n}"
+class StoryLinks:
+    """The story's links from the narrator-approved assessment — the refs by
+    kind and the proposed records minted for it. The class owns the link
+    rules: the anchor and the kept extractions become refs (one per entity),
+    a mention links to its standing record or mints a proposed record, and a
+    catalogued story never confirms a link the reader cannot see — an item ref
+    is downgraded to ``proposed`` when its artifact is still a draft
+    (2026-08-05: story-2026-08-03-05 confirmed a draft object-sb-mirosa,
+    leaving a dangling link)."""
 
+    def __init__(self, *, verified: bool, all_ids: set[str]) -> None:
+        self.ref_status: RefStatus = "confirmed" if verified else "proposed"
+        self.all_ids = all_ids
+        self.people: list[Ref] = []
+        self.places: list[Ref] = []
+        self.themes: list[Ref] = []
+        self.items: list[Ref] = []
+        self.new_people: list[Person] = []
+        self.new_places: list[Place] = []
 
-def _dedupe_refs(refs: list[Ref]) -> list[Ref]:
-    """Keep the first ref per entity id — a proposed link is one link."""
-    seen: set[str] = set()
-    out: list[Ref] = []
-    for ref in refs:
-        if ref.id in seen:
-            continue
-        seen.add(ref.id)
-        out.append(ref)
-    return out
+    def anchor(self, page: Anchor) -> None:
+        """The page the narrator started from is their own aboutness evidence."""
+        if not page.id:
+            return
+        if page.kind == "person":
+            self._ref(self.people, page.id)
+        elif page.kind == "place":
+            self._ref(self.places, page.id)
+        elif page.kind == "theme":
+            self._ref(self.themes, page.id)
 
+    def add(self, extraction: Extraction, knowledge: Knowledge) -> None:
+        """One kept extraction becomes its ref — linked to the standing record
+        the model matched, or minted as a proposed record when none matches."""
+        if extraction.kind == "person":
+            self._person(extraction, knowledge)
+        elif extraction.kind == "place":
+            self._place(extraction, knowledge)
+        elif extraction.kind == "theme":
+            self._theme(extraction, knowledge)
+        else:
+            self._item(extraction, knowledge)
 
-def _link_or_mint(
-    outputs: tuple[list[Ref], list[dict[str, Any]]],
-    existing: Person | Place | None,
-    all_ids: set[str],
-    ref_status: Literal["confirmed", "proposed"],
-    mint: Callable[[], dict[str, Any]],
-) -> None:
-    """Link a story mention to its standing record, or mint a proposed
-    record when none matches — one ref per mention either way, and a
-    minted record joins its refs' new-record list (a fresh id per story
-    mention fragments the cast). ``outputs`` is the (refs, new_records)
-    pair for the entity kind; the mint is a closure over the name."""
-    refs, new_records = outputs
-    if existing is not None:
-        refs.append(Ref(existing.id, ref_status))
-    else:
-        record = mint()
-        all_ids.add(record["id"])
-        new_records.append(record)
-        refs.append(Ref(record["id"], ref_status))
+    def speaker(self, who: str, known_id: str | None, dob: DatedFact | None) -> str:
+        """The story's told_by — the known narrator, or a proposed person
+        record minted for a narrator outside the knowledge (their dob rides
+        along when the account offered one)."""
+        if known_id:
+            return known_id
+        return self.mint_person(who.strip() or "Guest", dob=dob).id
+
+    def mint_person(self, name: str, dob: DatedFact | None = None) -> Person:
+        """The archive record for a person the story introduces — proposed,
+        never confirmed (docs/PRD/MEMORIES.md)."""
+        person = Person(
+            id=self._unique_id("p", _slug(name)),
+            name=name.strip(),
+            relation="added from a story",
+            hue="amber",
+            dob=dob,
+            status="proposed",
+        )
+        self.all_ids.add(person.id)
+        self.new_people.append(person)
+        return person
+
+    def mint_place(self, name: str) -> Place:
+        """The archive record for a place the story introduces — proposed,
+        location unknown (docs/PRD/MEMORIES.md)."""
+        place = Place(
+            id=self._unique_id("pl", _slug(name)),
+            name=name.strip(),
+            note="Added from a story — location unknown.",
+            status="proposed",
+        )
+        self.all_ids.add(place.id)
+        self.new_places.append(place)
+        return place
+
+    def _person(self, extraction: Extraction, knowledge: Knowledge) -> None:
+        """A person mention: the model's match, a standing cast member named
+        the same, or a proposed record. A bare kinship term is the writer's own
+        relative, never a cast alias — it stays proposed for the writer to
+        identify (the kinship filter's strip must stay effective). A kinship
+        term never resolves to a CONFIRMED cast member — that alias could be
+        the wrong relative (writer-relative resolution is the option-C task) —
+        but two stories mentioning the same "Grandma" must share ONE proposed
+        record."""
+        if extraction.match and knowledge.person(extraction.match):
+            self._ref(self.people, extraction.match)
+            return
+        name = extraction.name
+        if extraction.is_kinship_term():
+            existing = knowledge.proposed_person_named(name)
+        else:
+            # reuse a standing cast member by name/alias before minting — a
+            # fresh id per story mention fragments the cast (the person analog
+            # of the place name-dedup)
+            existing = knowledge.person_named(name)
+        self._ref(self.people, existing.id if existing else self.mint_person(name).id)
+
+    def _place(self, extraction: Extraction, knowledge: Knowledge) -> None:
+        """A place mention: the model's match, a standing place named the same,
+        or a proposed record (a fresh id per story mention multiplies one place
+        into many — the moored-barges ×3)."""
+        if extraction.match and knowledge.place(extraction.match):
+            self._ref(self.places, extraction.match)
+            return
+        existing = knowledge.place_named(extraction.name)
+        self._ref(self.places, existing.id if existing else self.mint_place(extraction.name).id)
+
+    def _theme(self, extraction: Extraction, knowledge: Knowledge) -> None:
+        """Themes are curated arrangements — proposed only, never auto-created."""
+        if extraction.match and knowledge.theme(extraction.match):
+            self._ref(self.themes, extraction.match)
+
+    def _item(self, extraction: Extraction, knowledge: Knowledge) -> None:
+        """Artifacts are linked by title; a mention without a catalog match
+        stays unresolved — never auto-create artifact records. A draft artifact
+        is hidden from everyone but its owner, so a confirmed link to it would
+        dangle: it stays proposed until the artifact is catalogued
+        (2026-08-05)."""
+        item = knowledge.item(extraction.match) if extraction.match else None
+        if item is None:
+            return
+        status: RefStatus = self.ref_status
+        if status == "confirmed" and item.status == "draft":
+            status = "proposed"
+        self._ref(self.items, item.id, status=status)
+
+    def _ref(self, refs: list[Ref], record_id: str, status: RefStatus | None = None) -> None:
+        """One ref per entity — the anchor and an extraction may name the same
+        one; the first link wins."""
+        if any(ref.id == record_id for ref in refs):
+            return
+        refs.append(Ref(record_id, status or self.ref_status))
+
+    def _unique_id(self, prefix: str, slug: str) -> str:
+        """The next free id for the slug — a name the archive already minted an
+        id for takes the next suffix, so one story mention never mints a second
+        record for the same name."""
+        candidate = f"{prefix}-{slug}"
+        if candidate not in self.all_ids:
+            return candidate
+        n = 2
+        while f"{candidate}-{n}" in self.all_ids:
+            n += 1
+        return f"{candidate}-{n}"
 
 
 @dataclass(frozen=True)
@@ -1157,16 +937,6 @@ class Fact:
 
 
 @dataclass(frozen=True)
-class Ref:
-    """One link a story carries to an entity — ``confirmed`` means the
-    narrator verified it in the review; ``proposed`` awaits a tap
-    (TECHSPEC §16.4)."""
-
-    id: str
-    status: Literal["confirmed", "proposed"]
-
-
-@dataclass(frozen=True)
 class Story:
     """A story contribution as the capture flow's domain object
     (docs/PRD/MEMORIES.md): the sidecar's shape with typed links. The
@@ -1198,160 +968,52 @@ class Story:
     def refs_from_assessment(
         cls,
         *,
-        anchor: dict[str, str],
-        extractions: list[dict[str, Any]],
+        anchor: Anchor,
+        extractions: Iterable[Extraction],
         knowledge: Knowledge,
         verified: bool,
         all_ids: set[str],
     ) -> StoryLinks:
         """The story's links from the narrator-approved assessment: the
         anchor and the kept extractions become refs (one per entity), and
-        newly introduced people/places mint proposed records. A verified
-        (catalogued) story confirms item links only to catalogued
-        artifacts — a link to a still-draft artifact stays proposed until
-        the artifact is catalogued, so confirming a story never leaves a
-        dangling object."""
-        ref_status: Literal["confirmed", "proposed"] = "confirmed" if verified else "proposed"
-        people_refs: list[Ref] = []
-        places_refs: list[Ref] = []
-        themes_refs: list[Ref] = []
-        items_refs: list[Ref] = []
-        new_people: list[dict[str, Any]] = []
-        new_places: list[dict[str, Any]] = []
-        person_ids = {p.id for p in knowledge.people}
-        place_ids = {pl.id for pl in knowledge.places}
-        theme_ids = {t.id for t in knowledge.themes}
-        item_ids = {it.id for it in knowledge.items}
-        by_item = {it.id: it for it in knowledge.items}
+        newly introduced people/places mint proposed records."""
+        links = StoryLinks(verified=verified, all_ids=all_ids)
+        links.anchor(anchor)
+        for extraction in extractions:
+            links.add(extraction, knowledge)
+        return links
 
-        # the page the narrator started from is their own aboutness evidence
-        anchor_kind = anchor.get("kind", "item")
-        anchor_id = anchor.get("id")
-        if anchor_kind == "person" and anchor_id:
-            people_refs.append(Ref(anchor_id, ref_status))
-        elif anchor_kind == "place" and anchor_id:
-            places_refs.append(Ref(anchor_id, ref_status))
-        elif anchor_kind == "theme" and anchor_id:
-            themes_refs.append(Ref(anchor_id, ref_status))
-
-        for ex in extractions:
-            ex_kind = ex.get("kind")
-            name = ex.get("name", "").strip()
-            match = ex.get("match")
-            if ex_kind == "person":
-                if match and match in person_ids:
-                    people_refs.append(Ref(match, ref_status))
-                elif name:
-                    # reuse a standing cast member by name/alias before minting —
-                    # a fresh id per story mention fragments the cast (the person
-                    # analog of the place name-dedup). A bare kinship term is the
-                    # writer's own relative, never a cast alias — it stays
-                    # proposed for the writer to identify (the kinship filter's
-                    # strip must stay effective).
-                    existing = None
-                    if name.strip().lower() not in _KINSHIP_TERMS:
-                        existing = next((p for p in knowledge.people if p.matches(name)), None)
-                    else:
-                        # a kinship term never resolves to a CONFIRMED cast
-                        # member — that alias could be the wrong relative
-                        # (writer-relative resolution is the option-C task) —
-                        # but two stories mentioning the same "Grandma" must
-                        # share ONE proposed record: a fresh proposed id per
-                        # story makes the projection's name-dedup drop the
-                        # second mint, and its story's ref then dangles at
-                        # publish.
-                        existing = next(
-                            (p for p in knowledge.people if p.status == "proposed" and p.matches(name)), None
-                        )
-                    _link_or_mint(
-                        (people_refs, new_people),
-                        existing,
-                        all_ids,
-                        ref_status,
-                        partial(Person.proposed, name, all_ids),
-                    )
-            elif ex_kind == "place":
-                if match and match in place_ids:
-                    places_refs.append(Ref(match, ref_status))
-                elif name:
-                    # reuse a standing place by name before minting — a fresh id
-                    # per story mention multiplies one place into many (the
-                    # moored-barges ×3)
-                    existing = next(
-                        (pl for pl in knowledge.places if pl.name.strip().lower() == name.lower()),
-                        None,
-                    )
-                    _link_or_mint(
-                        (places_refs, new_places), existing, all_ids, ref_status, partial(Place.proposed, name, all_ids)
-                    )
-            elif ex_kind == "theme" and match and match in theme_ids:
-                # themes are curated arrangements — proposed only, never auto-created
-                themes_refs.append(Ref(match, ref_status))
-            elif ex_kind == "item" and match and match in item_ids:
-                # artifacts are linked by title; a mention without a catalog
-                # match stays unresolved — never auto-create artifact records
-                status = ref_status
-                if ref_status == "confirmed" and by_item[match].status == "draft":
-                    # a draft artifact is hidden from everyone but its owner —
-                    # a confirmed link to it would dangle; it stays proposed
-                    # until the artifact is catalogued (2026-08-05)
-                    status = "proposed"
-                items_refs.append(Ref(match, status))
-
-        # one ref per entity — the anchor and an extraction may name the same one
-        return StoryLinks(
-            people=_dedupe_refs(people_refs),
-            places=_dedupe_refs(places_refs),
-            themes=_dedupe_refs(themes_refs),
-            items=_dedupe_refs(items_refs),
-            new_people=new_people,
-            new_places=new_places,
-        )
-
-    def to_sidecar(self) -> dict[str, Any]:
+    def to_sidecar(self) -> Item:
         """The archive sidecar the capture server writes — the app and the
         tests read this shape."""
-        return {
-            "id": self.story_id,
-            "type": "story",
-            "kind": "text",  # PRD §19.2: every testimony carries kind (audio|text)
-            "title": self.title,
-            "date": self.date,
-            "date_precision": self.date_precision,
-            "recorded": self.recorded,
-            "description": self.description,
-            "story": self.story,
-            "transcription": self.transcription,
-            "told_by": self.told_by,
-            "comment_on": self.comment_on,
-            **({"chat": self.chat} if self.chat else {}),  # the transcript behind a draft
-            "source": self.source,
-            "people": [{"id": r.id, "status": r.status} for r in self.people],
-            "places": [{"id": r.id, "status": r.status} for r in self.places],
-            "themes": [{"id": r.id, "status": r.status} for r in self.themes],
-            "items": [{"id": r.id, "status": r.status} for r in self.items],
-            "facts": [f.to_dict() for f in self.facts],
-            "sensitive": False,
-            "status": self.status,
-            "assets": [],
-            "created": self.recorded,
-            "created_at": datetime.now().isoformat(timespec="seconds"),  # the recent feed's tie-break
-        }
-
-
-@dataclass(frozen=True)
-class StoryLinks:
-    """The story's links from the narrator-approved assessment — the refs by
-    kind and the minted proposed records. One record instead of the
-    positional 6-tuple the builder used to return (docs/coding-standards.md:
-    a group that travels together is a type)."""
-
-    people: list[Ref]
-    places: list[Ref]
-    themes: list[Ref]
-    items: list[Ref]
-    new_people: list[dict[str, Any]]
-    new_places: list[dict[str, Any]]
+        return Item(
+            {
+                "id": self.story_id,
+                "type": "story",
+                "kind": "text",  # PRD §19.2: every testimony carries kind (audio|text)
+                "title": self.title,
+                "date": self.date,
+                "date_precision": self.date_precision,
+                "recorded": self.recorded,
+                "description": self.description,
+                "story": self.story,
+                "transcription": self.transcription,
+                "told_by": self.told_by,
+                "comment_on": self.comment_on,
+                **({"chat": self.chat} if self.chat else {}),  # the transcript behind a draft
+                "source": self.source,
+                "people": [ref.to_dict() for ref in self.people],
+                "places": [ref.to_dict() for ref in self.places],
+                "themes": [ref.to_dict() for ref in self.themes],
+                "items": [ref.to_dict() for ref in self.items],
+                "facts": [fact.to_dict() for fact in self.facts],
+                "sensitive": False,
+                "status": self.status,
+                "assets": [],
+                "created": self.recorded,
+                "created_at": datetime.now().isoformat(timespec="seconds"),  # the recent feed's tie-break
+            }
+        )
 
 
 @dataclass(frozen=True)
@@ -1361,11 +1023,11 @@ class StoryFacts:
     and ages that derive the events year when no date is stated. One record
     instead of the positional 5-tuple the collector used to return."""
 
-    story_facts: list[Fact]
+    story_facts: tuple[Fact, ...]
     event_date: str | None
     event_precision: str | None
-    dob: str | None
-    ages: list[int]
+    dob: DatedFact | None
+    ages: tuple[int, ...]
 
 
 def _next_story_id(recorded: str, existing: set[str]) -> str:
@@ -1384,12 +1046,12 @@ class StoryRequest:
     entry points (docs/coding-standards.md: a group that travels together
     is a type)."""
 
-    anchor: dict[str, str]
+    anchor: Anchor
     who: str
     title: str
     account: str
-    extractions: list[dict[str, Any]]
-    facts: list[dict[str, Any]]
+    extractions: tuple[Extraction, ...]
+    facts: tuple[AssessmentFact, ...]
     status: str = "draft"
     story_id: str | None = None
     chat: dict[str, Any] | None = None
@@ -1401,9 +1063,9 @@ class BuiltStory:
     `build_story`'s answer travels (three lists in one hand are a silent swap
     away from three wrong ones)."""
 
-    story: dict[str, Any]
-    new_people: list[dict[str, Any]]
-    new_places: list[dict[str, Any]]
+    story: Item
+    new_people: tuple[Person, ...]
+    new_places: tuple[Place, ...]
 
 
 def build_story(
@@ -1436,15 +1098,11 @@ def build_story(
 
     # facts decide the story's date and the dob proposals
     collected = _collect_story_facts(request.facts, speaker_id)
-    event_year, event_precision = _derive_event_year(
-        collected.event_date, collected.event_precision, collected.dob, collected.ages
-    )
+    event = _derive_event_year(collected)
 
     # the links: built by the Story domain object, which enforces the
     # invariant that a catalogued story never confirms a link to an
     # artifact the reader cannot see (a draft item stays proposed)
-    anchor_kind = request.anchor.get("kind", "item")
-    anchor_id = request.anchor.get("id")
     all_ids = set(existing_ids) | {p.id for p in knowledge.people}
     all_ids |= {pl.id for pl in knowledge.places} | {t.id for t in knowledge.themes}
     links = Story.refs_from_assessment(
@@ -1454,33 +1112,32 @@ def build_story(
         verified=verified,
         all_ids=all_ids,
     )
-
-    speaker = _ensure_speaker(speaker_id, request.who, collected.dob, all_ids, links.new_people)
+    speaker = links.speaker(request.who, speaker_id, collected.dob)
 
     story = Story(
         story_id=story_id,
-        title=request.title.strip() or f"A story about {request.anchor.get('name') or 'the archive'}",
-        date=event_year,
-        date_precision=event_precision,
+        title=request.title.strip() or f"A story about {request.anchor.name or 'the archive'}",
+        date=event.date,
+        date_precision=event.precision,
         recorded=recorded,
         description="",
         story=request.account.strip(),
         transcription="",
         told_by=speaker,
-        comment_on=anchor_id if anchor_kind == "item" else None,
+        comment_on=request.anchor.id if request.anchor.kind == "item" else None,
         chat=request.chat,
         source=f"Site contribution, {recorded}",
         people=tuple(links.people),
         places=tuple(links.places),
         themes=tuple(links.themes),
         items=tuple(links.items),
-        facts=tuple(collected.story_facts),
+        facts=collected.story_facts,
         status=request.status,
     )
-    return BuiltStory(story.to_sidecar(), links.new_people, links.new_places)
+    return BuiltStory(story.to_sidecar(), tuple(links.new_people), tuple(links.new_places))
 
 
-def _collect_story_facts(facts: list[dict[str, Any]], speaker_id: str | None) -> StoryFacts:
+def _collect_story_facts(facts: Iterable[AssessmentFact], speaker_id: str | None) -> StoryFacts:
     """Sort the assessed facts into the story's date inputs and dob
     proposals: the asserted events date wins; the dob is recorded whether
     or not it could be parsed — a phrase the parser rejected still needs a
@@ -1488,72 +1145,46 @@ def _collect_story_facts(facts: list[dict[str, Any]], speaker_id: str | None) ->
     story_facts: list[Fact] = []
     event_date: str | None = None
     event_precision: str | None = None
-    dob: str | None = None
+    dob: DatedFact | None = None
     ages: list[int] = []
     for fact in facts:
-        kind = fact.get("kind")
-        if kind == "event_date" and fact.get("value"):
-            event_date, event_precision = fact["value"], fact.get("precision") or "year"
-        elif kind == "dob":
-            if fact.get("value"):
-                dob = fact["value"]
+        if fact.is_event_date() and fact.value:
+            event_date, event_precision = str(fact.value), fact.precision or "year"
+        elif fact.is_dob():
+            dob = fact.dated() or dob
             # the fact is recorded whether or not it could be parsed — a
             # phrase the parser rejected still needs a person's word
             story_facts.append(
                 Fact(
                     kind="dob",
-                    entity=fact.get("entity") or speaker_id,
-                    text=fact.get("text", ""),
-                    value=fact.get("value"),
-                    precision=fact.get("precision"),
-                    status="confirmed" if fact.get("status") == "confirmed" else "proposed",
-                    source=(
-                        "the narrator's own answer" if fact.get("status") == "confirmed" else "stated in the account"
-                    ),
+                    entity=fact.entity or speaker_id,
+                    text=fact.text,
+                    value=str(fact.value) if fact.value is not None else None,
+                    precision=fact.precision,
+                    status="confirmed" if fact.is_confirmed() else "proposed",
+                    source=("the narrator's own answer" if fact.is_confirmed() else "stated in the account"),
                 )
             )
-        elif kind == "age" and isinstance(fact.get("value"), int):
-            ages.append(fact["value"])
-    return StoryFacts(story_facts, event_date, event_precision, dob, ages)
+        elif fact.is_age() and isinstance(fact.value, int):
+            ages.append(fact.value)
+    return StoryFacts(tuple(story_facts), event_date, event_precision, dob, tuple(ages))
 
 
-def _derive_event_year(
-    event_date: str | None, event_precision: str | None, dob: str | None, ages: list[int]
-) -> tuple[str, str]:
+def _derive_event_year(collected: StoryFacts) -> DatedFact:
     """The story's date: the asserted events date wins; else dob + age
     (arithmetic only — the parsing was the library's and the model's);
     else the story cannot be saved — dating the story by its recording
     day would serve it as an anniversary ("0 years ago this week"); the
     flow must make the narrator provide the events date. The recorded
     day is `recorded`, never `date`."""
-    if event_date:
-        return event_date, event_precision or "year"
-    if dob and ages:
-        return str(int(dob[:4]) + max(ages)), "approx"
+    if collected.event_date:
+        return DatedFact(collected.event_date, collected.event_precision or "year")
+    if collected.dob and collected.ages:
+        return DatedFact(f"{int(collected.dob.date[:4]) + max(collected.ages):04d}", "approx")
     raise ValueError(
         "no events date was established — the narrator must provide one "
         "(the story's date is the events' date, never the telling day)"
     )
-
-
-def _ensure_speaker(
-    speaker_id: str | None,
-    who: str,
-    dob: str | None,
-    all_ids: set[str],
-    new_people: list[dict[str, Any]],
-) -> str:
-    """The story's told_by — the known narrator, or a proposed person
-    record minted for a narrator outside the knowledge (their dob rides
-    along when the account offered one)."""
-    if speaker_id:
-        return speaker_id
-    speaker_person = Person.proposed(who.strip() or "Guest", all_ids)
-    if dob:
-        speaker_person["dob"] = dob  # the new record carries what was offered
-    all_ids.add(speaker_person["id"])
-    new_people.append(speaker_person)
-    return speaker_person["id"]
 
 
 class Memory:
@@ -1573,10 +1204,10 @@ class Memory:
     def assess(
         self,
         *,
-        anchor: dict[str, str],
+        anchor: Anchor,
         who: str,
         account: str,
-    ) -> dict[str, Any]:
+    ) -> Assessment:
         """Run the model over the finished account — {title, extractions,
         facts, questions}, validated and self-corrected."""
         return assess(self.client, anchor=anchor, who=who, account=account, knowledge=self.knowledge)

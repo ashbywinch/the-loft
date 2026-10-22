@@ -5,12 +5,16 @@ This is the plan only: the object model agreed first, then the typed
 scaffold, the missing surfaces, and the sequencing.
 
 **Status:** the rows foundation landed — the
-row library (`tools/rows.py`), the per-stage typed schema loaders
-(`pipeline/schemas.py`), the fixture (`tests/fixtures/page01-rows-gold/`).
-Of the sequencing: step 1's rows-adjacent schemas exist, but the `Stage`
-enum (`tools/stages.py`), the Document and identity artefacts' schemas,
-and step 2's `Rows.from_words` rename have not landed; steps 3–6 (the
-UR3 scan pickup, the stage-4 drawing UI, the portal, the stage-8
+row library (`pipeline/rows/rows.py`), the per-stage typed schema loaders
+(`document/schemas.py`), the fixture (`tests/fixtures/page01-rows-gold/`),
+and step 2's `Rows.from_words` (PR #64). Step 1 landed with it: the stage
+vocabulary (`document/stages.py` — the model's home per the layout below),
+the page statuses it names, and the Document artefact's contract
+(`document/schemas.py`'s `Document`/`DocumentLine`). The identity
+artefacts owed nothing: `tools/records.py` already carries their typed
+records and tables (`Person`, `Place`, `Org`, `Relationship`,
+`validate_identity`). Of the rest, step 4's drawing UI is mostly landed
+(PR #64); steps 3, 5 and 6 (the UR3 scan pickup, the portal, the stage-8
 identification flow) are unbuilt.
 
 ## The layout (agreed 2026-10-08)
@@ -27,7 +31,7 @@ The object model names the objects; this names where the code lives.
 2. **The pipeline functionality lives in `pipeline/`** — particularly as it
    is surfaced to the app. The chain driver, the store, the stage machinery
    (detection, rows, rendering, transcription), the model client, and the
-   API the app talks to (`pipeline/server.py`, `pipeline/sync.py`). The
+   API the app talks to (`pipeline/api/server.py`, `pipeline/api/sync.py`). The
    pipeline is not a `tools/` item.
 3. **`tools/` is only for separate small command-line utilities.** The
    TECHSPEC-§12 list: thumbnails, index/archive rebuilds, archive checks,
@@ -93,10 +97,13 @@ does not record the decision: segments carry {label, text, orientation,
 box} and the draft Document's lines {index, text, box, conf, box_source, words} —
 no kind, no target. The plan:
 
-1. The segmentation prompt asks the model to mark interjection lines and
-   their injection target.
-2. The Document schema carries `kind` (body / interjection / marginalia)
-   and `injection_target` (a line index).
+1. The segmentation prompt asks the model to mark injection lines and
+   their injection point.
+2. The Document schema carries `kind` — `document/transcript.py`'s
+   `KINDS` (`body` / `injection` / `marginalia`; the code's word for the
+   PRD's "interjection") — and `injection_after`, the line index the
+   injection follows (the same field name the model's answer and
+   `RowTranscript` use).
 3. The transcript-review surface renders the interjection at its target
    so the same gate agrees it.
 
@@ -171,7 +178,7 @@ Two processes, clearly separated:
 
 - **The worker** — the batch processor (stages 1–6 machine steps). It
   never serves HTTP and never reads the user's input directly.
-- **The API server** (`pipeline/server.py`) — the front's only window: it
+- **The API server** (`pipeline/api/server.py`) — the front's only window: it
   reads the registry/archive (the portal items, the drafts) and accepts
   the user's writes (row adjustments, transcript confirmations,
   identifications), recording them through the typed seams. The row
@@ -245,10 +252,10 @@ sequenceDiagram
 
 ## Sequencing
 
-1. `tools/stages.py` — the stage enum (object, artefact, human flag) +
-   the schemas extended to the Document and identity artefacts (one
-   schema per artefact) + the pipeline statuses aligned to the
-   vocabulary. No behaviour change — the typed scaffold.
+1. `document/stages.py` — the stage enum (object, artefact, human flag) +
+   the Document artefact's schema (`document/schemas.py`) + the page
+   statuses aligned to the vocabulary. No behaviour change — the typed
+   scaffold. **Landed.**
 2. `Rows.from_words` naming (the classmethod on the object) — a rename,
    no behaviour change; the no-adjustments draft path (the words' line
    structure) is part of this.
@@ -273,9 +280,9 @@ technology out of that folder).
 A developer opening the repo without context must be able to name the
 stages, their objects, and their artefacts:
 
-- One stage vocabulary in code (`tools/stages.py`) naming the eight
-  stages, each with its object, its artefact, and whether it needs human
-  input.
+- One stage vocabulary in code (`document/stages.py`) naming the stages UR1
+  numbers 0–8, each with its object, its artefact, the contracts that carry
+  it, and whether it needs human input.
 - The object model is authoritative: Mark, Word, Row, Trace, Document,
   Person/Relationship/Place/Theme/Org. The transport types (reader,
   pipeline, server) are actors over these objects, not stage nouns.

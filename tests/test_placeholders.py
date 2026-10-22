@@ -8,9 +8,12 @@ from __future__ import annotations
 from typing import Any
 
 from tools.placeholders import asset_svg
+from tools.records import Item
 
 
-def _item(**overrides: Any) -> dict[str, Any]:
+def _item(**overrides: Any) -> Item:
+    """A minimal item as the placeholder engine reads it: the fields the
+    stand-ins use (id, type, title, date, assets)."""
     item: dict[str, Any] = {
         "id": "object-anything",
         "type": "object",
@@ -19,7 +22,7 @@ def _item(**overrides: Any) -> dict[str, Any]:
         "assets": [],
     }
     item.update(overrides)
-    return item
+    return Item(item)
 
 
 def test_demo_label_wins_over_title() -> None:
@@ -63,5 +66,7 @@ def test_label_with_xml_special_characters_is_escaped() -> None:
 def test_letter_asset_not_named_page_falls_back_to_page_one() -> None:
     """A letter asset that isn't page-N (an envelope, a back) must not
     abort the whole publish with an IndexError."""
-    svg = asset_svg(_item(id="letter-a", type="letter", assets=[{"file": "envelope.jpg"}]), "envelope.jpg")
+    svg = asset_svg(
+        _item(id="letter-a", type="letter", assets=[{"kind": "page", "file": "envelope.jpg"}]), "envelope.jpg"
+    )
     assert "1 / 1" in svg

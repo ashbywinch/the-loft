@@ -14,11 +14,26 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from typing import Any, Protocol
 
 from pipeline.model.ai_client import AIClientError, json_object
+from tools.attested_args import AttestedArgs
+from tools.decision_basis import DecisionBasis
+from tools.item_hit import ItemHit
 from tools.memory import ElicitationError
+from tools.person_args import PersonArgs
+from tools.person_hit import PersonHit
+from tools.person_summary import PersonSummary
 from tools.records import Message, Person, ReviewContext
+from tools.relationships_args import RelationshipsArgs
+from tools.review_verdict import ReviewVerdict
+from tools.search_items_args import SearchItemsArgs
+from tools.search_people_args import SearchPeopleArgs
+from tools.tool_error import ToolError
+from tools.tool_note import ToolNote
+from tools.trace_step import TraceStep
 
 MAX_RESOLVE_ATTEMPTS = 2
 
@@ -64,9 +79,9 @@ def _known_facts(facts: ReviewContext) -> str:
         if p.status != "confirmed":
             bits.append(f"(status: {p.status})")
         if p.dob:
-            bits.append(f"(born {p.dob.get('date')})")
+            bits.append(f"(born {p.dob.date})")
         if p.dod:
-            bits.append(f"(died {p.dod.get('date')})")
+            bits.append(f"(died {p.dod.date})")
         if p.relation:
             bits.append(f"(relation: {p.relation})")
         lines.append(" ".join(bits))
@@ -124,7 +139,7 @@ and never restate the reviewer's statement back to yourself. If you
 catch yourself repeating a step, stop and emit the verdict."""
 
 
-def _facts_ledger(trace: list[dict[str, Any]], limit: int = 400) -> str:
+def _facts_ledger(trace: Sequence[TraceStep], limit: int = 400) -> str:
     """The deduplicated facts ledger — one line per (tool, args), last
     value wins — placed at the END of the prompt so the model consults
     what it already gathered instead of re-deriving or re-querying it.
@@ -135,20 +150,34 @@ def _facts_ledger(trace: list[dict[str, Any]], limit: int = 400) -> str:
     Each line truncates to ``limit`` characters; the full result stays
     in the transcript above."""
     lines: dict[tuple[str, str], str] = {}
-    for entry in trace:
-        tool = entry.get("tool")
-        if not tool:
+    for step in trace:
+        if not step.tool:
             continue
-        args = json.dumps(entry.get("args") or {}, sort_keys=True)
+        args = json.dumps(step.args or {}, sort_keys=True)
         # default=repr: an unserializable tool result serializes as its
         # repr instead of raising — the ledger must never crash the
         # investigation on an exotic payload (lucidlint: no swallow to
         # flag, the fallback is declarative)
-        result = json.dumps(entry.get("result"), ensure_ascii=True, default=repr)
+        result = json.dumps(step.result, ensure_ascii=True, default=repr)
         if len(result) > limit:
             result = result[:limit] + "…"
-        lines[(str(tool), args)] = f"- {tool}({args}) -> {result}"
+        lines[(step.tool, args)] = f"- {step.tool}({args}) -> {result}"
     return "\n".join(lines.values())
+
+
+# The tool-call arguments the model may send, one record per tool — the
+# harness parses the model's wire into the tool's own record and dispatches
+# on the name.
+ToolArgs = SearchPeopleArgs | PersonArgs | RelationshipsArgs | AttestedArgs | SearchItemsArgs
+
+# The results the read-only tools answer with: the records the model reads,
+# or the archive's own relationship edges verbatim (the people table already
+# holds them as its wire records, so the harness passes them through).
+ToolHit = PersonHit | PersonSummary | ItemHit
+# One entry of a tool's LIST result: a hit record, or an archive edge's own
+# wire record.
+ToolEntry = ToolHit | dict[str, Any]
+ToolResult = ToolError | ToolNote | ToolHit | list[ToolEntry]
 
 
 class _ReviewTools:
@@ -164,41 +193,39 @@ class _ReviewTools:
     def __init__(self, facts: ReviewContext) -> None:
         self._facts = facts
 
-    def run(self, tool: str, args: dict[str, Any]) -> Any:
-        if tool not in self._TOOLS:
-            return {"error": f"unknown tool {tool}"}
+    def run(self, tool: str, args: ToolArgs | None) -> ToolResult:
+        """One tool call — the tool's own method with its own argument
+        record, or the error result for a tool this harness does not have
+        (the model's mistake, never a crash)."""
+        if args is None or tool not in self._TOOLS:
+            return ToolError(f"unknown tool {tool}")
         return getattr(self, tool)(args)
 
-    def search_people(self, args: dict[str, Any]) -> Any:
-        """People whose name or recorded relation contains the query."""
-        q = str(args.get("query", "")).strip().lower()
-        if not q:
-            return {"error": "query required"}
-        hits = [
-            {"id": p.id, "name": p.name, "relation": p.relation}
+    def search_people(self, args: SearchPeopleArgs) -> ToolResult:
+        if not args.query:
+            return ToolError("query required")
+        hits: list[ToolEntry] = [
+            PersonHit(id=p.id, name=p.name, relation=p.relation)
             for p in self._facts.people
-            if q in p.name.lower() or q in (p.relation or "").lower()
+            if args.query in p.name.lower() or args.query in (p.relation or "").lower()
         ]
-        return hits[:10] or {"note": "no matches"}
+        return hits[:10] or ToolNote("no matches")
 
-    def person(self, args: dict[str, Any]) -> Any:
-        """One person's record — dates, relation, status."""
-        pid = str(args.get("id", ""))
-        p = next((x for x in self._facts.people if x.id == pid), None)
+    def person(self, args: PersonArgs) -> ToolResult:
+        p = next((x for x in self._facts.people if x.id == args.id), None)
         return (
-            {"id": p.id, "name": p.name, "relation": p.relation, "status": p.status}
+            PersonSummary(id=p.id, name=p.name, relation=p.relation, status=p.status)
             if p
-            else {"error": f"no person {pid}"}
+            else ToolError(f"no person {args.id}")
         )
 
-    def relationships(self, args: dict[str, Any]) -> Any:
-        """The recorded family edges touching that person."""
-        pid = str(args.get("id", ""))
-        return [r for r in self._facts.relationships if r.get("a") == pid or r.get("b") == pid] or {
-            "note": "no recorded relationships"
-        }
+    def relationships(self, args: RelationshipsArgs) -> ToolResult:
+        edges: list[ToolEntry] = [
+            edge for edge in self._facts.relationships if edge.get("a") == args.id or edge.get("b") == args.id
+        ]
+        return edges or ToolNote("no recorded relationships")
 
-    def attested(self, args: dict[str, Any]) -> Any:
+    def attested(self, args: AttestedArgs) -> ToolResult:
         """The recorded items that mention the person — their attested facts.
         The sentences that MENTION the person are the part that attests the
         fact, quotable verbatim (2026-08-09, user) — with the person's name
@@ -208,70 +235,99 @@ class _ReviewTools:
         review): OCR and captured text frequently differ in case, and the
         quote extractor matches case-insensitively — an item whose only
         mention is lowercased must not be silently dropped at the door."""
-        pid = str(args.get("id", ""))
-        p = next((x for x in self._facts.people if x.id == pid), None)
-        needles = (p.name, p.name.split()[0]) if p else (pid,)
+        p = next((x for x in self._facts.people if x.id == args.id), None)
+        needles = (p.name, p.name.split()[0]) if p else (args.id,)
         lowered = [n.lower() for n in needles]
-        results = []
+        results: list[ToolEntry] = []
         for it in self._facts.items:
             text = it.get("story") or it.get("transcription") or ""
-            involved = pid in it.get("people", [])
+            involved = args.id in it.get("people", [])
             if involved or any(n in text.lower() for n in lowered):
                 results.append(
-                    {
-                        "id": it["id"],
-                        "title": it["title"],
-                        "draft": it.get("transcription_status") == "draft",
-                        "quotes": _relevant_sentences(text, needles),
-                    }
+                    ItemHit(
+                        id=it["id"],
+                        title=it["title"],
+                        draft=it.get("transcription_status") == "draft",
+                        quotes=tuple(_relevant_sentences(text, needles)),
+                    )
                 )
-        return results or {"note": "no recorded items mention this person"}
+        return results or ToolNote("no recorded items mention this person")
 
-    def search_items(self, args: dict[str, Any]) -> Any:
+    def search_items(self, args: SearchItemsArgs) -> ToolResult:
         """The recorded items whose text mentions the query — follow a place
         or an event the reviewer brings up (a visit, a town, a death)."""
-        q = str(args.get("query", "")).strip().lower()
-        if not q:
-            return {"error": "query required"}
-        hits = []
+        if not args.query:
+            return ToolError("query required")
+        hits: list[ToolEntry] = []
         for it in self._facts.items:
             text = it.get("story") or it.get("transcription") or ""
-            if q in text.lower():
+            if args.query in text.lower():
                 hits.append(
-                    {
-                        "id": it["id"],
-                        "title": it["title"],
-                        "draft": it.get("transcription_status") == "draft",
-                        "quotes": _relevant_sentences(text, (q,)),
-                    }
+                    ItemHit(
+                        id=it["id"],
+                        title=it["title"],
+                        draft=it.get("transcription_status") == "draft",
+                        quotes=tuple(_relevant_sentences(text, (args.query,))),
+                    )
                 )
-        return hits[:5] or {"note": f"no recorded items mention {q!r}"}
+        return hits[:5] or ToolNote(f"no recorded items mention {args.query!r}")
 
 
-def run_tool(tool: str, args: dict[str, Any], facts: ReviewContext) -> Any:
+def _wire_result(result: ToolResult | ToolEntry) -> Any:
+    """A tool result as the model's wire form — a record's own dict, a list
+    of them, or the archive's relationship edges verbatim (the facts table
+    already holds them as its wire records)."""
+    if isinstance(result, list):
+        return [_wire_result(item) for item in result]
+    if isinstance(result, dict):
+        return result
+    return result.to_dict()
+
+
+def _tool_args(tool: str, raw: Mapping[str, Any]) -> ToolArgs | None:
+    """The model's tool-call arguments as the tool's own record — None for a
+    tool this harness does not have (the model's mistake, answered with the
+    error result)."""
+    match tool:
+        case "search_people":
+            return SearchPeopleArgs.from_dict(raw)
+        case "person":
+            return PersonArgs.from_dict(raw)
+        case "relationships":
+            return RelationshipsArgs.from_dict(raw)
+        case "attested":
+            return AttestedArgs.from_dict(raw)
+        case "search_items":
+            return SearchItemsArgs.from_dict(raw)
+    return None
+
+
+def run_tool(tool: str, args: ToolArgs | None, facts: ReviewContext) -> ToolResult:
     """The read-only tool harness — the model can look things up but never
     change them (2026-08-09, user: give the AI the API so it can find out
-    the existing situation — the ad-hoc digging conversation). Public and
-    documented so the tests exercise the real harness, never a private
-    symbol (2026-08-11 review: the imports rule)."""
+    the existing situation — the ad-hoc digging conversation). ``args`` is
+    the tool's own argument record — None for a tool the harness does not
+    have, answered with the error result. Public and documented so the tests
+    exercise the real harness, never a private symbol (2026-08-11 review:
+    the imports rule)."""
     return _ReviewTools(facts).run(tool, args)
 
 
-def assistant_message(result: dict[str, Any], person: Person) -> str:
+def assistant_message(verdict: ReviewVerdict, person: Person) -> str:
     """The assistant's rendered words for one investigation response — what
     the family sees, verbatim (2026-08-09, user: "when you load a given
     transcript, you see exactly what I saw"). The server builds the words;
     the app shows them unmodified; the record stores them. The model's
     internal note never surfaces."""
     parts: list[str] = []
-    if result.get("findings"):
-        parts.append("The documents show: " + " ".join(f["text"] for f in result["findings"]))
-    if result.get("question"):
-        parts.append(result["question"])
+    if verdict.findings:
+        parts.append("The documents show: " + " ".join(finding.text for finding in verdict.findings))
+    if verdict.question:
+        parts.append(verdict.question)
     return " ".join(parts)
 
 
-def confirmation_message(name: str, decision: str, basis: dict[str, Any] | None) -> str:
+def confirmation_message(name: str, decision: str, basis: DecisionBasis | None) -> str:
     """The assistant's rendered confirmation — the receipt the family sees,
     in the genealogist's voice, naming the consequence (the vocabulary is
     the family's, never the statuses': fact / guess / left for later /
@@ -279,7 +335,7 @@ def confirmation_message(name: str, decision: str, basis: dict[str, Any] | None)
     if decision == "attested":
         return f"Done — {name} joins the tree as a fact."
     if decision == "estimated":
-        text = (basis or {}).get("text") or "a guess"
+        text = (basis.text if basis else "") or "a guess"
         return f"Done — I've recorded {name} as a guess: '{text}'."
     if decision == "delete":
         return f"Done — {name} is not recorded after all."
@@ -322,12 +378,12 @@ def investigate(
     who: str,
     facts: ReviewContext,
     history: tuple[Message, ...] = (),
-) -> dict[str, Any]:
+) -> ReviewVerdict:
     """The tool-using review of a free-text answer (user): the
     model can call the archive's read-only lookups to dig into the
     reviewer's statement — follow the leads and surface what the archive
-    already attests — then return the verdict: {relevant, contradiction,
-    confidence, note, findings, question, raw}. *history* is the
+    already attests — then return the ReviewVerdict: the check's answers,
+    the findings the tools surfaced, and the genealogist's question. *history* is the
     conversation so far (the messages, including the model's own previous
     reasoning), rendered verbatim into the prompt — the model always sees
     its own history, so a message that re-answers an earlier question is
@@ -339,7 +395,13 @@ def investigate(
     text = str(text or "").strip()
     if not text:
         raise ElicitationError("no answer given")
-    claim = f"the family is checking whether {person.name} was related to the family"
+    # The claim is the APP's question about the document the family uploaded
+    # (user, 2026-10-22: "the app is checking this, as part of a conversation in
+    # which the family are uploading a document about the war"). "The family is
+    # checking" read as the family asking, and left a statement about the
+    # document's own subject — a death in the war — looking like a different
+    # question entirely.
+    claim = f"whether {person.name} was related to the family"
     if person.relation:
         # family language, never the system's — the model echoes the claim's
         # own words, and the persona rule forbids 'the import'/'proposes'/
@@ -356,6 +418,10 @@ def investigate(
     user = "\n\n".join(
         [
             f"Reviewer: {who or 'unknown'}",
+            # the conversation's frame: the family uploaded a document, the app
+            # read it, and it is the app that is checking (2026-10-22)
+            "The family have uploaded a document to the archive; the app has read "
+            "it and is asking them to confirm what it says against what they know.",
             f"The claim under review: {claim}.",
             "Known family (the archive's attested facts):\n" + _known_facts(facts),
             "Decide in this order, once each. "
@@ -368,27 +434,25 @@ def investigate(
             "2. SEARCH EVERY LEAD FIRST — before judging relevance or "
             "answering: search_items for places and events, "
             "person/relationships/attested for named people. Report what the "
-            "archive holds: the lead is answered even when it does not change "
-            "the verdict, and a statement can be off-topic yet still carry a "
-            "lead to report. "
-            "3. DECIDE RELEVANCE. The statement is RELEVANT if it answers the "
-            "claim in any form: agreement, disagreement, uncertainty, 'I "
-            "don't know', a recollection about the family (the claim's person "
-            "or another family member — 'I don't remember the relationship, "
-            "but we visited Walter in Seascale' IS relevant), or a wrong "
-            "person for an attested family event ('it was Nora who died in "
-            "the war' when the record says Walter — mistaken but on-topic; "
-            "the error is surfaced as a contradiction, not irrelevance). It "
-            "is NOT relevant ONLY when it answers a different question "
-            "entirely: a statement about a house, a holiday, or an unrelated "
-            "person with no connection to the claim, the family, or an "
-            "attested family event. "
+            "archive holds: a lead is answered whatever the verdict. "
+            "3. DECIDE RELEVANCE. The statement is RELEVANT when it bears on "
+            "the claim — the claim's person, the family, or an attested family "
+            "event. That covers agreement, disagreement, uncertainty, 'I don't "
+            "know', a recollection about the family (the claim's person or any "
+            "other family member — 'I don't remember the relationship, but we "
+            "visited Walter in Seascale' IS relevant), and a wrong person for "
+            "an attested family event ('it was Nora who died in the war' when "
+            "the record says Walter bears on the claim: the error is surfaced "
+            "as a contradiction, NEVER as irrelevance). The statement is NOT "
+            "relevant ONLY when it is about something else entirely — a house, "
+            "a holiday, an unrelated person with no connection to the claim, "
+            "the family, or an attested family event. "
             "4. DECIDE CONTRADICTION. Flag it when the statement asserts "
             "something the attested facts deny: the wrong person for an "
-            "attested death, disputing a confirmed relationship. Flag it EVEN "
-            "when the answer is otherwise off-topic. Never flag a different "
-            "version of an UNVERIFIED import guess — the import's guess is "
-            "not attested; only genuine conflicts with the attested facts. "
+            "attested death, disputing a confirmed relationship. Never flag a "
+            "different version of an UNVERIFIED import guess — the import's "
+            "guess is not attested; only genuine conflicts with the attested "
+            "facts. "
             "When you have ALREADY spoken in this conversation, the "
             "reviewer's latest line is a NEW statement — it may not answer "
             "your earlier question: follow ITS leads and NEVER repeat your "
@@ -512,7 +576,7 @@ def investigate(
         "2026-09-23)."
     )
     tool_calls = 0
-    trace: list[dict[str, Any]] = []
+    trace: list[TraceStep] = []
     # the stable prompt — the static plus the conversation before the
     # loop's tool dynamics — is the caching prefix: the next call's stable
     # prompt starts with this one (the tool results are logged in the
@@ -526,6 +590,7 @@ def investigate(
             raise ElicitationError(f"investigation failed: {e}") from e
         parsed_dict = parsed if isinstance(parsed, dict) else {}
         tool = str(parsed_dict.get("tool", "") or "").strip()
+        reasoning = getattr(client, "last_reasoning", "")
         if tool:
             tool_calls += 1
             if tool_calls > MAX_TOOL_CALLS:
@@ -533,7 +598,7 @@ def investigate(
                 # words — logged in the trace AND fed back verbatim, never
                 # discarded (the completeness property — everything the model
                 # produced is fed back and logged)
-                trace.append({"model": raw, "reasoning": getattr(client, "last_reasoning", "")})
+                trace.append(TraceStep(model=raw, reasoning=reasoning))
                 user += (
                     "\n\n[your previous answer] "
                     + raw
@@ -541,18 +606,11 @@ def investigate(
                 )
                 continue
             raw_args = parsed_dict.get("args")
-            args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
-            result = run_tool(tool, args, facts)
-            trace.append(
-                {
-                    "model": raw,
-                    "reasoning": getattr(client, "last_reasoning", ""),
-                    "tool": tool,
-                    "args": args,
-                    "result": result,
-                }
-            )
-            user += f"\n\nTool result ({tool}): {result!r}"
+            wire_args: dict[str, Any] = raw_args if isinstance(raw_args, dict) else {}
+            args = _tool_args(tool, wire_args)
+            wire = _wire_result(run_tool(tool, args, facts))
+            trace.append(TraceStep(model=raw, reasoning=reasoning, tool=tool, args=wire_args, result=wire))
+            user += f"\n\nTool result ({tool}): {wire!r}"
             # the facts ledger sits LAST — the most salient position — and
             # is deduplicated/last-value-wins: the model consults what it
             # has instead of re-deriving it or debating further queries
@@ -561,10 +619,10 @@ def investigate(
                 "consult this, never re-fetch a fact you have):\n" + _facts_ledger(trace)
             )
             continue
-        trace.append({"model": raw, "reasoning": getattr(client, "last_reasoning", "")})
-        result = _verdict_result(parsed_dict, raw, user, trace, base_prompt)
-        if result is not None:
-            return result
+        trace.append(TraceStep(model=raw, reasoning=reasoning))
+        turn = ReviewVerdict.from_dict(parsed_dict)
+        if turn.complete:
+            return replace(turn, raw=raw, trace=tuple(trace), prompt=base_prompt, final_prompt=user)
         user += (
             "\n\n[your previous answer] "
             + raw
@@ -573,58 +631,3 @@ def investigate(
         )
     # pragma: no cover  # defensive: the bounded loop must conclude
     raise ElicitationError("investigation did not conclude")
-
-
-def _verdict_result(
-    parsed_dict: dict[str, Any],
-    raw: str,
-    user: str,
-    trace: list[dict[str, Any]],
-    base_prompt: str,
-) -> dict[str, Any] | None:
-    """The verdict JSON when the model's turn is a complete verdict —
-    normalized findings, the trace and the final prompt attached
-    (completeness). None when the turn is neither a tool call nor a
-    complete verdict — the caller feeds it back for a correction."""
-    # the completeness gate is the ORIGINAL contract: a turn whose fields
-    # carry valid values is accepted AS-IS and evaluated once. A missing
-    # or typo'd key is NOT repaired by re-asking the model (a retry
-    # re-runs the eval's conditions): it produces an empty field and the
-    # condition FAILS LOUDLY with the full output, staying red until the
-    # scenario (the schema presentation) makes the model pass — never a
-    # second chance (user).
-    relevant = str(parsed_dict.get("relevant", "")).strip().lower()
-    raw_contradiction = parsed_dict.get("contradiction")
-    contradiction: dict[str, Any] = raw_contradiction if isinstance(raw_contradiction, dict) else {}
-    found = str(contradiction.get("found", "")).strip().lower()
-    confidence = str(parsed_dict.get("confidence", "")).strip().lower()
-    if (
-        relevant in ("true", "false")
-        and found in ("true", "false")
-        and confidence in ("definitely", "think_so", "dont_know", "think_not", "definitely_not", "unclear")
-    ):
-        findings = parsed_dict.get("findings")
-        normalized = [
-            (
-                {"text": str(f.get("text", "")).strip(), "item_id": str(f.get("item_id", "")).strip() or None}
-                if isinstance(f, dict)
-                else {"text": str(f).strip(), "item_id": None}
-            )
-            for f in (findings if isinstance(findings, list) else [])
-        ]
-        return {
-            "relevant": relevant,
-            "contradiction": {"found": found, "detail": str(contradiction.get("detail", ""))},
-            "confidence": confidence,
-            "note": str(parsed_dict.get("note", "")).strip(),
-            "findings": [f for f in normalized if f["text"]],
-            "question": str(parsed_dict.get("question", "")).strip(),
-            "raw": raw,
-            "trace": trace,
-            "prompt": base_prompt,
-            # the final user string after the loop's appends — the
-            # completeness property: everything the model produced is
-            # fed back (user)
-            "final_prompt": user,
-        }
-    return None

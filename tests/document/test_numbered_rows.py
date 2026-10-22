@@ -21,11 +21,11 @@ from PIL import Image, ImageDraw
 from document.colour import Colour
 from document.numbered_rows import PILL_INSET as PILL_GAP
 from document.numbered_rows import PILL_POINTER, NumberedRows
+from document.page_size import PageSize
 from document.rectangle import Rectangle, overlaps
 from document.row import Row
-from document.schemas import load_user_row_adjustments
 from pipeline.rows.rows import Rows
-from pipeline.transcribe.transcripts import words_from
+from pipeline.transcribe.transcripts import drawn_lines, words_from
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "page01-rows-gold"
 
@@ -34,8 +34,8 @@ def _page01_rows() -> list[Row]:
     """The rows the user's drawn lines make on page-01 — 41 rows, the case
     every placement has to survive."""
     page = Image.new("RGB", (2544, 4642))
-    rows = Rows.from_words(words_from(FIXTURE / "words.json"), (page.width, page.height)).adjust(
-        load_user_row_adjustments(FIXTURE / "user-row-adjustments.json")["lines"]
+    rows = Rows.from_words(words_from(FIXTURE / "words.json"), PageSize(page.width, page.height)).adjust(
+        drawn_lines(FIXTURE / "user-row-adjustments.json")
     )
     return rows
 

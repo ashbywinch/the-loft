@@ -26,25 +26,25 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from types import MappingProxyType
 
 from PIL import Image
 
+from pipeline.batch_record import BatchRecord
 from tools.atomic import atomic_write
 from tools.loft_paths import REGISTRY_DIR, USER_SCAN_AREA
+from tools.mode_sources import ModeSources
 
 INBOX = USER_SCAN_AREA
 SANE_CONFIG_DIR = Path.home() / ".config" / "sane"
 SCANIMAGE = "scanimage"
 RESOLUTION_DPI = 300
 JPEG_QUALITY = 88
-ADF_SOURCE = "ADF Duplex"  # the FF-680W's single sheet-fed ADF handles letters and photos
 MODES = ("docs", "photos")
-# per-mode source: one line here if a future device exposes a photo-specific source
-SOURCE_BY_MODE: Mapping[str, str] = MappingProxyType({"docs": ADF_SOURCE, "photos": ADF_SOURCE})
+# the source each mode reads from: one object — a future device with a
+# photo-specific source changes one field
+SOURCES = ModeSources()
 SCAN_SOURCE = "epson-ff680w"
 
 _DEVICE_LINE = re.compile(r"^device `([^']+)' is a ")
@@ -128,7 +128,7 @@ def scan_job(
                     "-d",
                     device,
                     "--source",
-                    SOURCE_BY_MODE[mode],
+                    SOURCES.for_mode(mode),
                     "--mode",
                     "Color",
                     "--resolution",
@@ -176,20 +176,18 @@ def register_batch(
     user's folder (MULTI-DOC-IMPORT-PRD.md R6).
     """
     pages = {page.name: hashlib.sha256(page.read_bytes()).hexdigest() for page in sorted(job_dir.glob("*.jpg"))}
-    record = {
-        "batch_id": job,
-        "path": str(job_dir),
-        "label": label,
-        "source": source,
-        "status": "pending",
-        "arrived_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "pages": pages,
-        "fingerprint": sorted(pages.values()),
-        "boundaries": None,
-    }
+    record = BatchRecord(
+        batch_id=job,
+        path=job_dir,
+        label=label,
+        source=source,
+        arrived_at=datetime.now(UTC).isoformat(timespec="seconds"),
+        pages=pages,
+        fingerprint=sorted(pages.values()),
+    )
     registry_dir.mkdir(parents=True, exist_ok=True)
     record_path = registry_dir / f"{job}.json"
-    atomic_write(record_path, json.dumps(record, indent=1, ensure_ascii=False) + "\n")
+    atomic_write(record_path, json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n")
     return record_path
 
 

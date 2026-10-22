@@ -20,12 +20,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from tools.archive import Archive
 from tools.loft_paths import ARCHIVE_DIR
+from tools.records import Item
 from tools.store import DiskStore
 
 REPO = Path(__file__).resolve().parents[1]
@@ -38,13 +38,13 @@ QUOTE = re.compile(r"[\"“„][^”\"\n]{6,}[\"”]")
 COMMON = {"A", "An", "The", "Mr", "Mrs", "Ms", "Dr", "St", "No", "Dear", "Found", "This", "It", "I"}
 
 
-def _names(item: dict[str, Any]) -> set[str]:
+def _names(item: Item) -> set[str]:
     """Every person/org ref in the item — the correspondents, not content."""
     out = set()
-    for ref in item.get("people") or []:
-        out.add(str(ref.get("id", "")))
-    for ref in item.get("orgs") or []:
-        out.add(str(ref.get("id", "")))
+    for ref in item.people_refs:
+        out.add(ref.id)
+    for ref in item.org_refs:
+        out.add(ref.id)
     return out
 
 
@@ -63,13 +63,13 @@ def signals(description: str, names: set[str]) -> set[str]:
     return found
 
 
-def catalogued_letters(archive: Archive) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
+def catalogued_letters(archive: Archive) -> list[Item]:
+    items: list[Item] = []
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)
-        if item is None or item.get("status") != "catalogued":
+        if item is None or item.status != "catalogued":
             continue
-        if item.get("type") in ("letter", "document"):
+        if item.type in ("letter", "document"):
             items.append(item)
     return items
 
@@ -79,31 +79,31 @@ def catalogued_letters(archive: Archive) -> list[dict[str, Any]]:
 def test_every_catalogued_letter_has_two_content_signals() -> None:
     archive = Archive(DiskStore(ARCHIVE_DIR))
     for item in catalogued_letters(archive):
-        description = (item.get("description") or "").strip()
-        assert description, f"{item['id']} needs a description"
-        assert description != item.get("title"), f"{item['id']} description is just the title"
+        description = str(item.raw.get("description") or "").strip()
+        assert description, f"{item.id} needs a description"
+        assert description != item.title, f"{item.id} description is just the title"
         sigs = signals(description, _names(item))
-        assert len(sigs) >= 2, f"{item['id']} description is not specific: {description!r} (signals: {sigs})"
+        assert len(sigs) >= 2, f"{item.id} description is not specific: {description!r} (signals: {sigs})"
 
 
 @pytest.mark.archive
 @pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_letters_within_a_correspondence_are_distinguishable() -> None:
     archive = Archive(DiskStore(ARCHIVE_DIR))
-    groups: dict[frozenset[str], list[dict[str, Any]]] = {}
+    groups: dict[frozenset[str], list[Item]] = {}
     for item in catalogued_letters(archive):
         key = frozenset(_names(item))
         groups.setdefault(key, []).append(item)
     for key, items in groups.items():
         if len(items) < 2:
             continue
-        sig_sets = {item["id"]: signals((item.get("description") or ""), set(key)) for item in items}
+        sig_sets = {item.id: signals(str(item.raw.get("description") or ""), set(key)) for item in items}
         for item in items:
-            mine = sig_sets[item["id"]]
-            others = [s for other, s in sig_sets.items() if other != item["id"]]
+            mine = sig_sets[item.id]
+            others = [s for other, s in sig_sets.items() if other != item.id]
             shared = set().union(*others) if others else set()
             unique = mine - shared
             assert unique, (
-                f"{item['id']} is indistinguishable from its correspondence: "
-                f"{item.get('description')!r} shares every signal ({mine})"
+                f"{item.id} is indistinguishable from its correspondence: "
+                f"{item.raw.get('description')!r} shares every signal ({mine})"
             )

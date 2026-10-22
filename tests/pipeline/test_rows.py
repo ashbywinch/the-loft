@@ -16,29 +16,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from document.boxes import Boxes
+from document.page_size import PageSize
 from document.rectangle import Rectangle
-from document.schemas import Row as WireRow
-from document.schemas import Word as WireWord
-from document.schemas import load_boxes, load_rows, load_user_row_adjustments, load_words
+from document.row import Row
+from document.row_adjustments import RowAdjustments
 from document.word import Word
+from document.words import Words
 from pipeline.rows.rows import Rows
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "page01-rows-gold"
-PAGE_SIZE = (1000, 1000)
-
-
-def _word(record: WireWord) -> Word:
-    """A fixture word record as the library's Word — the reading line and
-    the measures travel with the box."""
-    return Word(
-        record["x0"],
-        record["y0"],
-        record["x1"],
-        record["y1"],
-        baseline=record["baseline"],
-        waistline=record["waistline"],
-        line=record["line"],
-    )
+BOXES = Path("tests/fixtures/page01-wordseg/boxes.json")
+PAGE_SIZE = PageSize(1000, 1000)
 
 
 def _words(*boxes: tuple[float, float, float, float], line: int | None = None) -> list[Word]:
@@ -49,11 +38,16 @@ def _line(x0: float, x1: float, y: float) -> list[tuple[float, float]]:
     return [(x0 / 1000, y / 1000), (x1 / 1000, y / 1000)]
 
 
+def _drawn(*lines: list[tuple[float, float]]) -> RowAdjustments:
+    """The reviewer's drawn lines as the artefact the builder takes."""
+    return RowAdjustments(list(lines))
+
+
 def test_the_double_pass_is_one_row() -> None:
     """A second line drawn over words a first line already owns is the
     same row drawn again, not a new row."""
     words = _words((100, 100, 200, 130), (300, 100, 400, 130))
-    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 400, 115), _line(100, 400, 120)])
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(100, 400, 115), _line(100, 400, 120)))
     assert len(rows) == 1, f"the double pass made {len(rows)} rows"
     assert len(rows[0].word_boxes) == 2, "the double pass lost words"
 
@@ -61,7 +55,7 @@ def test_the_double_pass_is_one_row() -> None:
 def test_each_word_belongs_to_one_row() -> None:
     """Two distinct lines own disjoint words; no word appears in two rows."""
     words = _words((100, 100, 200, 130), (100, 300, 200, 330))
-    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 200, 115), _line(100, 200, 315)])
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(100, 200, 115), _line(100, 200, 315)))
     seen: list[Word] = []
     for row in rows:
         for box in row.word_boxes:
@@ -74,7 +68,7 @@ def test_the_band_is_the_words_union() -> None:
     """A row's band is exactly the union of its words' boxes — the render
     tints the band, so anything wider or taller would paint neighbours."""
     words = _words((100, 100, 200, 130), (300, 105, 500, 140))
-    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 500, 118)])
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(100, 500, 118)))
     band = rows[0].band
     assert (band.x0, band.y0, band.x1, band.y1) == (100, 100, 500, 140)
 
@@ -82,16 +76,16 @@ def test_the_band_is_the_words_union() -> None:
 def test_rules_are_not_claimed() -> None:
     """Long-flat ink with no writing above it is a rule, part of no row."""
     words = _words((100, 100, 200, 125), (100, 300, 600, 312))
-    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 600, 306)])
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(100, 600, 306)))
     assert all(box.height < 20 for row in rows for box in row.word_boxes), "a rule was claimed as a word"
 
 
 def test_the_rows_are_deterministic() -> None:
     """Two builds of the same inputs give identical rows."""
     words = _words((100, 100, 200, 130), (300, 100, 400, 130), (100, 300, 200, 330))
-    lines = [_line(100, 400, 115), _line(100, 200, 315)]
-    first = Rows.from_words(words, PAGE_SIZE).adjust(lines)
-    second = Rows.from_words(words, PAGE_SIZE).adjust(lines)
+    drawn = _drawn(_line(100, 400, 115), _line(100, 200, 315))
+    first = Rows.from_words(words, PAGE_SIZE).adjust(drawn)
+    second = Rows.from_words(words, PAGE_SIZE).adjust(drawn)
     assert [(row.number, [(b.x0, b.y0, b.x1, b.y1) for b in row.word_boxes]) for row in first] == [
         (row.number, [(b.x0, b.y0, b.x1, b.y1) for b in row.word_boxes]) for row in second
     ]
@@ -101,7 +95,7 @@ def test_rows_are_numbered_in_reading_order() -> None:
     """The rows are numbered top first: the topmost row keeps the band of
     the topmost words."""
     words = _words((100, 300, 200, 330), (100, 100, 200, 130))
-    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 200, 315), _line(100, 200, 115)])
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(100, 200, 315), _line(100, 200, 115)))
     assert [row.number for row in rows] == [1, 2]
     assert rows[0].word_boxes[0].y0 == 100, "reading order is not topmost-first"
 
@@ -110,7 +104,7 @@ def test_a_word_under_two_lines_joins_the_nearest() -> None:
     """A word lying under two lines goes to the line whose drawn height is
     nearest its centre — not the first line in order."""
     words = _words((100, 195, 250, 215), (300, 205, 450, 225))
-    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 400, 200), _line(100, 400, 220)])
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(100, 400, 200), _line(100, 400, 220)))
     assert len(rows) == 2, f"the nearer line was not separated: {len(rows)} rows"
 
 
@@ -124,12 +118,12 @@ def test_the_adjudicated_rows_are_reproduced() -> None:
     row's band; (3) a word the lines cannot place still lives inside an
     adjudicated row's band (the rulings are in rows.json, not inferred).
     A difference here is a snag to adjudicate, never a silent fix."""
-    words = load_words(FIXTURE / "words.json")["words"]
-    lines = load_user_row_adjustments(FIXTURE / "user-row-adjustments.json")["lines"]
-    page = load_boxes(Path("tests/fixtures/page01-wordseg/boxes.json"))["page"]
-    boxes = [_word(w) for w in words]
-    adjudicated = load_rows(FIXTURE / "rows.json")["rows"]
-    built = Rows.from_words(boxes, (page["width"], page["height"])).adjust(lines)
+    words = Words.from_dict(json.loads((FIXTURE / "words.json").read_text(encoding="utf-8")))
+    drawn = RowAdjustments.from_dict(json.loads((FIXTURE / "user-row-adjustments.json").read_text(encoding="utf-8")))
+    page = Boxes.from_dict(json.loads(BOXES.read_text(encoding="utf-8"))).page
+    boxes = list(words)
+    adjudicated = Rows.from_dict(json.loads((FIXTURE / "rows.json").read_text(encoding="utf-8")))
+    built = Rows.from_words(boxes, page).adjust(drawn)
 
     def key(b: Word | Rectangle) -> tuple[int, int, int, int]:
         return (round(b.x0), round(b.y0), round(b.x1), round(b.y1))
@@ -137,8 +131,8 @@ def test_the_adjudicated_rows_are_reproduced() -> None:
     def centre(b: Rectangle) -> float:
         return (b.y0 + b.y1) / 2
 
-    def adj_centre(row: WireRow) -> float:
-        return (row["band"]["y0"] + row["band"]["y1"]) / 2
+    def adj_centre(row: Row) -> float:
+        return (row.band.y0 + row.band.y1) / 2
 
     # (1) the 47-stack pair the user ruled a row of their own cannot be
     # built from lines that never reach it — at most one row fewer.
@@ -168,34 +162,33 @@ def test_an_annotation_poking_above_the_line_is_discounted() -> None:
     (the asterisk, user); a word whose box starts at its own
     ascenders stays in the line."""
     words = _words((100, 100, 500, 130), (200, 60, 230, 90))
-    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 500, 115)])
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(100, 500, 115)))
     assert len(rows) == 1 and len(rows[0].word_boxes) == 1, "the annotation joined the line"
 
 
 def test_the_rows_round_trip_through_their_wire_format(tmp_path: Path) -> None:
-    """The builder's output serializes to the wire contract
-    (`document.schemas.Rows`: id, kind, number, word_boxes, band — plain
-    x0..y1 records) and reads back as the same rows. This is the file the
-    review's correction persists and the app reads, so the shape is
-    pinned by the schema's own strict loader — not by this test's opinion
-    of it. The wire carries the boxes, never the words' measures: a
-    correction read back is still the rows it was."""
-    words = load_words(FIXTURE / "words.json")["words"]
-    lines = load_user_row_adjustments(FIXTURE / "user-row-adjustments.json")["lines"]
-    page = load_boxes(Path("tests/fixtures/page01-wordseg/boxes.json"))["page"]
-    boxes = [_word(w) for w in words]
-    built = Rows.from_words(boxes, (page["width"], page["height"])).adjust(lines)
+    """The builder's output serializes to the rows artefact (`Rows.to_dict`:
+    id, kind, number, word_boxes, band — plain x0..y1 records) and reads
+    back as the same rows. This is the file the review's correction
+    persists and the app reads, so the shape is pinned by the artefact's
+    own reader — not by this test's opinion of it. The wire carries the
+    boxes, never the words' measures: a correction read back is still the
+    rows it was."""
+    words = Words.from_dict(json.loads((FIXTURE / "words.json").read_text(encoding="utf-8")))
+    drawn = RowAdjustments.from_dict(json.loads((FIXTURE / "user-row-adjustments.json").read_text(encoding="utf-8")))
+    page = Boxes.from_dict(json.loads(BOXES.read_text(encoding="utf-8"))).page
+    built = Rows.from_words(list(words), page).adjust(drawn)
 
     path = tmp_path / "p1.rows.json"
-    path.write_text(json.dumps(Rows.to_wire(built), indent=1), encoding="utf-8")
+    path.write_text(json.dumps(Rows.to_dict(built), indent=1), encoding="utf-8")
 
-    loaded = load_rows(path)  # the strict loader IS the contract check
-    read_back = Rows.from_wire(loaded)
-    assert Rows.to_wire(read_back) == loaded
+    wire = json.loads(path.read_text(encoding="utf-8"))
+    read_back = Rows.from_dict(wire)  # the artefact's own reader IS the contract check
+    assert Rows.to_dict(read_back) == wire
     assert [row.number for row in read_back] == [row.number for row in built]
     assert [row.band for row in read_back] == [row.band for row in built]
-    assert loaded["rows"][0]["id"] == built[0].id and loaded["rows"][0]["number"] == 1
-    assert set(loaded["rows"][0]["band"]) == {"x0", "y0", "x1", "y1"}
+    assert wire["rows"][0]["id"] == built[0].id and wire["rows"][0]["number"] == 1
+    assert set(wire["rows"][0]["band"]) == {"x0", "y0", "x1", "y1"}
 
 
 def test_with_no_lines_the_words_own_lines_are_the_rows() -> None:
@@ -217,7 +210,7 @@ def test_an_incomplete_set_of_lines_merges_with_the_draft_rows() -> None:
     its row — so a correct row never needs a line."""
     words = _words((100, 100, 200, 130), (300, 100, 400, 130), (100, 300, 200, 330), line=1)
     words[2].line = 2
-    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 400, 120)])
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(100, 400, 120)))
     assert len(rows) == 2, f"the untouched draft row was lost: {len(rows)} rows"
     assert [b.x0 for b in rows[0].word_boxes] == [100, 300], "the drawn row lost its neighbours"
     assert [b.x0 for b in rows[1].word_boxes] == [100], "the draft row's words changed"
@@ -228,7 +221,7 @@ def test_a_drawn_line_replaces_the_draft_row_it_covers() -> None:
     """Once a drawn line claims a reading line's words, that draft row is
     gone: the drawn row is the row, and the two are the same type."""
     words = _words((100, 100, 200, 130), (250, 100, 350, 130), line=1)
-    rows = Rows.from_words(words, PAGE_SIZE).adjust([_line(100, 350, 120)])
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(100, 350, 120)))
     assert len(rows) == 1, f"the covered draft row survived beside the drawn row: {len(rows)} rows"
     assert [b.x0 for b in rows[0].word_boxes] == [100, 250]
     assert rows[0].id == "seg-1" and rows[0].kind == "body"
@@ -236,16 +229,13 @@ def test_a_drawn_line_replaces_the_draft_row_it_covers() -> None:
 
 def test_a_rows_text_and_trust_stage_travel_with_the_wire() -> None:
     """Per-row text and its R7 trust stage are the row's own — carried in the
-    wire contract beside its words, so a confirmation survives beside its
-    neighbours' guesses. The schema is the check: a stage outside the
-    vocabulary is refused, and a row file from before a reading ran is read
-    as unread ("") rather than rejected."""
-    from document.row import Row as RecordRow
-    from document.schemas import ROW_STAGES
-
+    artefact beside its words, so a confirmation survives beside its
+    neighbours' guesses. The row's own reader is the check: a stage outside
+    the vocabulary is refused, and a row record from before a reading ran is
+    read as unread ("") rather than rejected."""
     built = Rows.from_words(_words((100, 100, 200, 130), (300, 100, 400, 130), line=1), PAGE_SIZE).rows()
     read = [
-        RecordRow(
+        Row(
             id=row.id,
             kind=row.kind,
             number=row.number,
@@ -256,8 +246,8 @@ def test_a_rows_text_and_trust_stage_travel_with_the_wire() -> None:
         )
         for row in built
     ]
-    wire = Rows.to_wire(read)
+    wire = Rows.to_dict(read)
     assert wire["rows"][0]["text"] == "the machine's try"
     assert wire["rows"][0]["stage"] == "guess"
-    assert Rows.from_wire(wire)[0].stage == "guess"
-    assert ROW_STAGES == ("", "raw", "guess", "confirmed")
+    assert Rows.from_dict(wire)[0].stage == "guess"
+    assert Row.STAGES == ("", "raw", "guess", "confirmed")

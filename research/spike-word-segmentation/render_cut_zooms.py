@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from PIL import Image
 
 from document.colour import Colour
+from document.point import Point
 from pipeline.rows.page_visuals import (
     Crop,
     DashRule,
@@ -66,7 +67,9 @@ def _main() -> int:
             if y0 < row < y1:
                 y = (row - y0) * scale + bar_h
                 dashed_hline(draw, DashRule(0, crop.width, y))
-                halo_text(draw, (crop.width - 120, y - 26), f"cut y{row:.0f}", fill=Colour(red=200, green=0, blue=0))
+                halo_text(
+                    draw, Point(x=crop.width - 120, y=y - 26), f"cut y{row:.0f}", fill=Colour(red=200, green=0, blue=0)
+                )
         sheets.append(sheet)
     out = OUT
     out.write_bytes(review_image(stack_sheets([x.sheet for x in sheets])))

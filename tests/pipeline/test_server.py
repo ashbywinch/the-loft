@@ -17,6 +17,7 @@ import pytest
 from pipeline.api.server import ServerConfig, create_server
 from pipeline.api.sync import Outbox
 from tools.memory import ElicitationError
+from tools.records import Item, validate_identity
 from tools.store import ImmutableStoreError, MemoryStore
 
 
@@ -36,6 +37,7 @@ def make_app_data(tmp_path: Path) -> Path:
                         "date": "1963-05-14",
                         "date_precision": "exact",
                         "type": "letter",
+                        "status": "catalogued",
                         "assets": [],
                     },
                 ],
@@ -83,18 +85,23 @@ class ServerFixture:
         self.archive = Archive(store)
         self.archive.save_identity(
             "people",
-            {
-                "people": [
-                    {"id": "p-alex", "name": "Alex Hale", "email": "alex@example.com"},
-                    {"id": "p-other", "name": "Other", "email": "other@example.com"},
-                ],
-                "relationships": [],
-            },
+            validate_identity(
+                "people",
+                {
+                    "people": [
+                        {"id": "p-alex", "name": "Alex Hale", "email": "alex@example.com"},
+                        {"id": "p-other", "name": "Other", "email": "other@example.com"},
+                    ],
+                    "relationships": [],
+                },
+            ),
         )
         # the sync confirmation receiver re-publishes — the store must be
         # publishable (places/themes present), not just people
-        self.archive.save_identity("places", {"places": [{"id": "pl-marlock", "name": "Marlock"}]})
-        self.archive.save_identity("themes", {"themes": []})
+        self.archive.save_identity(
+            "places", validate_identity("places", {"places": [{"id": "pl-marlock", "name": "Marlock"}]})
+        )
+        self.archive.save_identity("themes", validate_identity("themes", {"themes": []}))
         # the server refuses to start without a session secret (forgeable
         # sessions) — the test secret must be set BEFORE create_server, not
         # after (the dev shell exports the secret; CI has none)
@@ -130,8 +137,10 @@ class ServerFixture:
             raise RuntimeError("uvicorn did not bind a port")
         # a signed-in session for the capture API — the verified Google account
         from pipeline.api import auth
+        from pipeline.api.session_user import SessionUser
 
-        self.cookie = f"{auth.COOKIE_NAME}={auth._make_session_cookie('alex@example.com', 'Alex Hale', '')}"
+        user = SessionUser("alex@example.com", "Alex Hale", "")
+        self.cookie = f"{auth.COOKIE_NAME}={auth._make_session_cookie(user)}"
 
     def post(self, path: str, body: dict[str, Any], cookie: str | None = None) -> tuple[int, dict[str, Any]]:
         headers = {"Content-Type": "application/json"}
@@ -486,22 +495,29 @@ def _seed_pending(server: ServerFixture) -> None:
     the import's pending state."""
     server.archive.save_identity(
         "people",
-        {
-            "people": [
-                {"id": "p-alex", "name": "Alex Hale"},
-                {"id": "p-robert", "name": "Quentin Whitlock"},
-                {"id": "p-judith", "name": "Pearl Whitlock", "status": "proposed"},
-            ],
-            "relationships": [{"a": "p-robert", "b": "p-judith", "kind": "spouse"}],
-        },
+        validate_identity(
+            "people",
+            {
+                "people": [
+                    {"id": "p-alex", "name": "Alex Hale"},
+                    {"id": "p-robert", "name": "Quentin Whitlock"},
+                    {"id": "p-judith", "name": "Pearl Whitlock", "status": "proposed"},
+                ],
+                "relationships": [{"a": "p-robert", "b": "p-judith", "kind": "spouse"}],
+            },
+        ),
     )
     # the confirm/dismiss endpoints republish the projection, which needs the
     # whole identity set — a realistic archive
-    server.archive.save_identity("places", {"places": []})
-    server.archive.save_identity("themes", {"themes": []})
-    server.archive.save_identity("orgs", {"orgs": []})
+    server.archive.save_identity("places", validate_identity("places", {"places": []}))
+    server.archive.save_identity("themes", validate_identity("themes", {"themes": []}))
+    server.archive.save_identity("orgs", validate_identity("orgs", {"orgs": []}))
     server.archive.save_identity(
-        "imports", {"imports": [{"id": "import-documents", "title": "The document import", "status": "pending"}]}
+        "imports",
+        validate_identity(
+            "imports",
+            {"imports": [{"id": "import-documents", "title": "The document import", "status": "pending"}]},
+        ),
     )
 
 
@@ -521,9 +537,10 @@ def test_decide_attested_flips_proposed_to_confirmed(server: ServerFixture) -> N
     assert body["pending"] == 0  # the seed's only proposed person is now decided
     table = server.archive.get_identity("people")
     assert table is not None
-    person = next(p for p in table["people"] if p["id"] == "p-judith")
-    assert "status" not in person
-    assert person.get("relation", "") == ""  # the attested path never rewrites the relation
+    person = table.record("p-judith")
+    assert person is not None
+    assert "status" not in person.to_dict()  # a confirmed record omits the status key
+    assert person.relation == ""  # the attested path never rewrites the relation
 
 
 def test_decide_estimated_records_the_basis_verbatim(server: ServerFixture) -> None:
@@ -539,7 +556,8 @@ def test_decide_estimated_records_the_basis_verbatim(server: ServerFixture) -> N
     assert body["person"]["basis"] == basis
     table = server.archive.get_identity("people")
     assert table is not None
-    assert next(p for p in table["people"] if p["id"] == "p-judith")["basis"] == basis
+    person = table.record("p-judith")
+    assert person is not None and person.basis == basis
 
 
 def test_decide_estimated_requires_a_basis(server: ServerFixture) -> None:
@@ -561,7 +579,8 @@ def test_decide_pending_keeps_the_imports_guess(server: ServerFixture) -> None:
     assert body["person"]["status"] == "proposed"  # unchanged
     table = server.archive.get_identity("people")
     assert table is not None
-    assert next(p for p in table["people"] if p["id"] == "p-judith")["status"] == "proposed"
+    person = table.record("p-judith")
+    assert person is not None and person.status == "proposed"
 
 
 def test_decide_requires_a_session(server: ServerFixture) -> None:
@@ -574,7 +593,8 @@ def test_decide_requires_a_session(server: ServerFixture) -> None:
     assert status == 401
     table = server.archive.get_identity("people")
     assert table is not None
-    assert next(p for p in table["people"] if p["id"] == "p-judith")["status"] == "proposed"  # untouched
+    person = table.record("p-judith")
+    assert person is not None and person.status == "proposed"  # untouched
 
 
 def test_decide_rejects_an_unknown_decision(server: ServerFixture) -> None:
@@ -631,55 +651,57 @@ def test_decide_delete_removes_the_person_and_their_relationships(server: Server
     assert body["person"]["gone"] is True
     table = server.archive.get_identity("people")
     assert table is not None
-    assert all(p["id"] != "p-judith" for p in table["people"])
-    assert all(r.get("a") != "p-judith" and r.get("b") != "p-judith" for r in table["relationships"])
-    assert any(p["id"] == "p-robert" for p in table["people"])  # the confirmed person stays
+    assert all(p.id != "p-judith" for p in table.people)
+    assert all(r.a != "p-judith" and r.b != "p-judith" for r in table.relationships)
+    assert any(p.id == "p-robert" for p in table.people)  # the confirmed person stays
 
 
-def test_decide_delete_of_an_already_resolved_person_is_a_state_not_an_error(server: ServerFixture) -> None:
-    """The queue never holds resolved people — a stale delete is a state,
-    not the "not proposed" 400; and it must not record a false confirmation
-    ("removed" when nothing was removed)."""
+def test_decide_delete_applies_to_an_already_confirmed_person(server: ServerFixture) -> None:
+    """Every determination is applied to the record as it stands: a delete
+    removes whoever is in the table, confirmed or not, and the determination is
+    recorded — the family changed their mind, and the append-only chain keeps
+    both determinations (2026-10-21, user)."""
     _seed_pending(server)
     status, body = server.post(
         "/api/review/decide", {"session_id": "import-documents", "person_id": "p-robert", "decision": "delete"}
     )
     assert status == 200
     assert body["ok"] is True
-    assert body["person"]["id"] == "p-robert"  # unchanged — the confirmed person stays
-    assert body["message"] == "Quentin Whitlock was already resolved — nothing changed."
-    # nothing recorded — the stale delete must not persist a false decision
-    # (the seed's session has no attempts, which is itself the proof)
+    assert body["person"]["gone"] is True
+    assert body["message"] == "Done — Quentin Whitlock is not recorded after all."
+    table = server.archive.get_identity("people")
+    assert table is not None and not table.has("p-robert")
     session = server.archive.get_review_session("import-documents")
     assert session is not None
     attempt = session.current_attempt()
-    assert attempt is None or not attempt.decisions
+    assert attempt is not None
+    assert [d.decision for d in attempt.decisions] == ["delete"]  # recorded
 
 
-def test_decide_pending_on_an_already_resolved_person_is_stale_too(server: ServerFixture) -> None:
-    """A "leave for later" on an already-resolved person is stale like any
-    other decision — it must not record a kept-decision, move the session's
-    resume point to a resolved person, or mark the walk finished. The queue
-    never holds resolved people."""
+def test_decide_pending_on_an_already_confirmed_person_is_recorded(server: ServerFixture) -> None:
+    """A "leave for later" on an already-confirmed person changes nothing in the
+    record and is still the family's determination: it is recorded, and the
+    confirmed person stays."""
     _seed_pending(server)
     status, body = server.post(
         "/api/review/decide", {"session_id": "import-documents", "person_id": "p-robert", "decision": "pending"}
     )
     assert status == 200
     assert body["ok"] is True
-    assert body["message"] == "Quentin Whitlock was already resolved — nothing changed."
     assert body["person"]["id"] == "p-robert"  # the confirmed person stays
-    # nothing recorded — the stale keep must not advance the session
+    table = server.archive.get_identity("people")
+    assert table is not None and table.record("p-robert") is not None
     session = server.archive.get_review_session("import-documents")
     assert session is not None
     attempt = session.current_attempt()
-    assert attempt is None or not attempt.decisions
+    assert attempt is not None
+    assert [d.decision for d in attempt.decisions] == ["pending"]  # recorded
 
 
-def test_decide_duplicate_delete_on_a_removed_person_is_a_state(server: ServerFixture) -> None:
-    """A second delete (double-tap, two devices) for a person already
-    REMOVED from the table is the already-resolved state — nothing recorded,
-    honest message, nothing written, never a 400 ("no person") for a
+def test_decide_a_second_delete_on_a_removed_person_is_recorded_too(server: ServerFixture) -> None:
+    """A second delete (double-tap, two devices) for a person already REMOVED
+    from the table: the record cannot change — nobody is there — and the
+    determination is recorded like any other, never a 400 ("no person") for a
     deletion that already succeeded."""
     _seed_pending(server)
     status, body = server.post(
@@ -692,14 +714,12 @@ def test_decide_duplicate_delete_on_a_removed_person_is_a_state(server: ServerFi
     )
     assert status2 == 200
     assert body2["ok"] is True
-    assert body2["message"] == "p-judith was already resolved — nothing changed."
     assert body2["person"] is None  # the person is gone — no record returned
     session = server.archive.get_review_session("import-documents")
     assert session is not None
     attempt = session.current_attempt()
     assert attempt is not None
-    # exactly the ONE legitimate delete is recorded — the duplicate added nothing
-    assert [d.decision for d in attempt.decisions] == ["delete"]
+    assert [d.decision for d in attempt.decisions] == ["delete", "delete"]
 
 
 def test_deciding_the_last_proposed_person_completes_the_session(server: ServerFixture) -> None:
@@ -710,7 +730,7 @@ def test_deciding_the_last_proposed_person_completes_the_session(server: ServerF
     assert status == 200
     imports = server.archive.get_identity("imports")
     assert imports is not None
-    assert imports["imports"][0]["status"] == "reviewed"  # nothing left pending — the session is done
+    assert imports.imports[0].status == "reviewed"  # nothing left pending — the session is done
 
 
 def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -> None:
@@ -735,15 +755,17 @@ def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -
     try:
         _seed_pending(server2)  # the second init re-seeded the people table
         server2.archive.save_item(
-            {
-                "id": "doc-2001-email",
-                "title": "The 2001 email",
-                "date": "2001-02-07",
-                "date_precision": "exact",
-                "type": "letter",
-                "status": "catalogued",
-                "people": [{"id": "p-judith", "status": "confirmed"}],
-            },
+            Item.from_dict(
+                {
+                    "id": "doc-2001-email",
+                    "title": "The 2001 email",
+                    "date": "2001-02-07",
+                    "date_precision": "exact",
+                    "type": "letter",
+                    "status": "catalogued",
+                    "people": [{"id": "p-judith", "status": "confirmed"}],
+                }
+            ),
             # the summary (the sidecar's story field) and the transcription
             # (the verbatim capture) are DIFFERENT texts — the review must
             # read the transcription. The sidecar has no story at all here,
@@ -772,9 +794,9 @@ def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -
         assert "Grandma used to say so." in seen["user"]
         imports = server2.archive.get_identity("imports")
         assert imports is not None
-        session = next(s for s in imports["imports"] if s.get("id") == "import-documents")
-        messages = session["attempts"][-1]["messages"]
-        user_lines = [m["text"] for m in messages if m["role"] == "user"]
+        session = next(s for s in imports.imports if s.id == "import-documents")
+        messages = session.attempts[-1].messages
+        user_lines = [m.text for m in messages if m.role == "user"]
         # the transcript holds the user's words verbatim, EXACTLY ONCE —
         # the record-before-the-call fix must not double them on the
         # success path
@@ -804,17 +826,19 @@ def test_review_reads_transcription_only_mentions(server: ServerFixture) -> None
     try:
         _seed_pending(server2)
         server2.archive.save_item(
-            {
-                "id": "doc-draft-letter",
-                "title": "A draft letter",
-                "date": "2001-02-07",
-                "date_precision": "exact",
-                "type": "letter",
-                "status": "catalogued",
-                "transcription_status": "draft",
-                # NO people refs, NO sidecar story — the only mention of the
-                # person is inside the transcription text itself
-            },
+            Item.from_dict(
+                {
+                    "id": "doc-draft-letter",
+                    "title": "A draft letter",
+                    "date": "2001-02-07",
+                    "date_precision": "exact",
+                    "type": "letter",
+                    "status": "catalogued",
+                    "transcription_status": "draft",
+                    # NO people refs, NO sidecar story — the only mention of the
+                    # person is inside the transcription text itself
+                }
+            ),
             content={"transcription": "The letter says Pearl was the one who kept the photographs."},
         )
         status, _ = server2.post(
@@ -850,17 +874,19 @@ def test_review_shortlist_matches_mentions_case_insensitively(server: ServerFixt
     try:
         _seed_pending(server2)
         server2.archive.save_item(
-            {
-                "id": "doc-lowercase-letter",
-                "title": "A letter",
-                "date": "2001-02-07",
-                "date_precision": "exact",
-                "type": "letter",
-                "status": "catalogued",
-                "transcription_status": "draft",
-                # NO people refs, NO sidecar story — and the only textual
-                # mention of the person is lowercased
-            },
+            Item.from_dict(
+                {
+                    "id": "doc-lowercase-letter",
+                    "title": "A letter",
+                    "date": "2001-02-07",
+                    "date_precision": "exact",
+                    "type": "letter",
+                    "status": "catalogued",
+                    "transcription_status": "draft",
+                    # NO people refs, NO sidecar story — and the only textual
+                    # mention of the person is lowercased
+                }
+            ),
             content={"transcription": "the notes say pearl was the one who kept the photographs."},
         )
         status, _ = server2.post(
@@ -887,7 +913,8 @@ def test_decide_rejects_a_stale_session_before_any_mutation(server: ServerFixtur
     assert "no import session" in body["error"]
     table = server.archive.get_identity("people")
     assert table is not None
-    assert next(p for p in table["people"] if p["id"] == "p-judith")["status"] == "proposed"  # untouched
+    person = table.record("p-judith")
+    assert person is not None and person.status == "proposed"  # untouched
 
 
 def test_review_text_keeps_the_words_when_the_model_call_fails(server: ServerFixture) -> None:
@@ -912,9 +939,9 @@ def test_review_text_keeps_the_words_when_the_model_call_fails(server: ServerFix
         assert "model is down" in body["error"]
         imports = server2.archive.get_identity("imports")
         assert imports is not None
-        session = next(s for s in imports["imports"] if s.get("id") == "import-documents")
-        messages = session["attempts"][-1]["messages"]
-        user_line = next(m["text"] for m in messages if m["role"] == "user")
+        session = next(s for s in imports.imports if s.id == "import-documents")
+        messages = session.attempts[-1].messages
+        user_line = next(m.text for m in messages if m.role == "user")
         assert user_line == "Grandma used to say so."  # never lost to the outage
     finally:
         server2.close()
@@ -1206,22 +1233,20 @@ def test_sync_rotate_accepts_the_desired_zero(server: ServerFixture) -> None:
 
     from PIL import Image
 
-    from pipeline.layout import Detection, build_layout, write_layout
+    from pipeline.detection import Detection
+    from pipeline.layout import build_layout
 
     _seed_sync_batch(server)
     oriented = server.work_dir / "adopt-0001" / "oriented"
     oriented.mkdir(parents=True)
     Image.new("RGB", (100, 200), "white").save(oriented / "p1.jpg")
-    write_layout(
-        build_layout(
-            "p1.jpg",
-            100,
-            200,
-            "Chère Maman.",
-            [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
-        ),
-        server.work_dir / "adopt-0001" / "ocr-guess" / "p1.layout.json",
-    )
+    build_layout(
+        "p1.jpg",
+        100,
+        200,
+        "Chère Maman.",
+        [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
+    ).write(server.work_dir / "adopt-0001" / "ocr-guess" / "p1.layout.json")
     status, body = server.post("/api/sync/batch/adopt-0001/page/p1.jpg/rotate", {"quarters": 0})
     assert status == 200
     assert body["processing"] is False  # the desired 0 with nothing rotated is a no-op, never a +90
@@ -1239,7 +1264,8 @@ def test_sync_reread_retries_a_failed_re_read_without_reorienting(tmp_path: Path
     from PIL import Image
 
     from pipeline.api.sync import page_job_state, set_page_job
-    from pipeline.layout import Detection, build_layout, write_layout
+    from pipeline.detection import Detection
+    from pipeline.layout import build_layout
 
     fixture = ServerFixture(make_app_data(tmp_path), MemoryStore(), _reprocess=lambda b, p: None)
     _seed_sync_batch(fixture)
@@ -1247,16 +1273,13 @@ def test_sync_reread_retries_a_failed_re_read_without_reorienting(tmp_path: Path
     oriented.mkdir(parents=True)
     Image.new("RGB", (100, 200), "white").save(oriented / "p1.jpg")
     layout_path = fixture.work_dir / "adopt-0001" / "ocr-guess" / "p1.layout.json"
-    write_layout(
-        build_layout(
-            "p1.jpg",
-            100,
-            200,
-            "Chère Maman.",
-            [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
-        ),
-        layout_path,
-    )
+    build_layout(
+        "p1.jpg",
+        100,
+        200,
+        "Chère Maman.",
+        [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
+    ).write(layout_path)
     set_page_job("adopt-0001", "p1.jpg", "failed", fixture.work_dir)
     status, body = fixture.post("/api/sync/batch/adopt-0001/page/p1.jpg/reread", {})
     assert status == 200

@@ -18,12 +18,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from tools.archive import Archive
 from tools.loft_paths import ARCHIVE_DIR
+from tools.records import Item
 from tools.store import DiskStore
 
 REPO = Path(__file__).resolve().parents[1]
@@ -31,8 +31,10 @@ REPO = Path(__file__).resolve().parents[1]
 DATE_START = re.compile(r"^\d{4}")
 
 
-def _refs(item: dict[str, Any], key: str) -> list[str]:
-    return [str(r.get("id", "")) for r in item.get(key) or []]
+def _refs(item: Item, kind: str) -> list[str]:
+    """The ids the item references of one kind — people, places, or items."""
+    refs = {"people": item.people_refs, "places": item.place_refs, "items": item.item_refs}
+    return [ref.id for ref in refs[kind]]
 
 
 def _visible_via(archive: Archive) -> tuple[set[str], set[str], set[str]]:
@@ -43,13 +45,13 @@ def _visible_via(archive: Archive) -> tuple[set[str], set[str], set[str]]:
     items: set[str] = set()
     table = archive.get_identity("people")
     if table is not None:
-        people = {p["id"] for p in table["people"]}
+        people = {p.id for p in table.people}
     places_table = archive.get_identity("places")
     if places_table is not None:
-        places = {p["id"] for p in places_table["places"]}
+        places = {p.id for p in places_table.places}
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)
-        if item is not None and item.get("status") != "deleted":
+        if item is not None and item.status != "deleted":
             items.add(item_id)
     return people, places, items
 
@@ -61,12 +63,12 @@ def test_every_timeline_item_has_a_parseable_date() -> None:
     broken = []
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)
-        if item is None or item.get("status") != "catalogued":
+        if item is None or item.status != "catalogued":
             continue
-        if item.get("clarification") or item.get("reflection") or item.get("evidence"):
+        if item.raw.get("clarification") or item.raw.get("reflection") or item.raw.get("evidence"):
             continue  # fragments and evidence render on their pages, never on the timeline
-        if not DATE_START.match(str(item.get("date", ""))):
-            broken.append((item_id, item.get("date")))
+        if not DATE_START.match(item.date):
+            broken.append((item_id, item.date))
     assert not broken, f"timeline items with unparseable dates are invisible: {broken}"
 
 
@@ -84,22 +86,20 @@ def test_every_object_and_photo_is_attested() -> None:
     refs: dict[str, list[str]] = {}
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)
-        if item is None or item.get("status") != "catalogued":
+        if item is None or item.status != "catalogued":
             continue
-        for r in item.get("items") or []:
-            refs.setdefault(str(r.get("id", "")), []).append(item_id)
+        for ref in item.item_refs:
+            refs.setdefault(ref.id, []).append(item_id)
     unattested = []
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)
-        if item is None or item.get("type") not in ("object", "photo") or item.get("status") != "catalogued":
+        if item is None or item.type not in ("object", "photo") or item.status != "catalogued":
             continue
         if item_id in refs:
             continue  # an artifact names it
-        if item.get("type") == "photo" and any(
-            not str(a.get("file", "")).endswith(".svg") for a in item.get("assets") or []
-        ):
+        if item.type == "photo" and any(not asset.file.endswith(".svg") for asset in item.assets):
             continue  # a real scan is the artifact itself
-        unattested.append((item_id, item.get("title")))
+        unattested.append((item_id, item.title))
     assert not unattested, f"objects/photos no artifact attests: {unattested}"
 
 
@@ -116,17 +116,16 @@ def test_every_items_link_is_bidirectional() -> None:
     catalogued_ids = set()
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)
-        if item is not None and item.get("status") == "catalogued":
+        if item is not None and item.status == "catalogued":
             catalogued_ids.add(item_id)
     dangling = []
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)
-        if item is None or item.get("status") != "catalogued":
+        if item is None or item.status != "catalogued":
             continue
-        for r in item.get("items") or []:
-            target = str(r.get("id", ""))
-            if target not in catalogued_ids:
-                dangling.append((item_id, target))
+        for ref in item.item_refs:
+            if ref.id not in catalogued_ids:
+                dangling.append((item_id, ref.id))
     assert not dangling, f"items refs whose back link cannot render: {dangling}"
 
 
@@ -138,19 +137,19 @@ def test_every_fragment_names_a_target_that_exists() -> None:
     dangling = []
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)
-        if item is None or item.get("status") != "catalogued":
+        if item is None or item.status != "catalogued":
             continue
-        if item.get("clarification"):
+        if item.raw.get("clarification"):
             targets = _refs(item, "people") + _refs(item, "items")
             missing = [t for t in targets if t not in people and t not in items]
             if missing:
                 dangling.append((item_id, missing))
-        if item.get("reflection"):
+        if item.raw.get("reflection"):
             targets = _refs(item, "people") + _refs(item, "places")
             missing = [t for t in targets if t not in people and t not in places]
             if missing:
                 dangling.append((item_id, missing))
-        if item.get("evidence"):
+        if item.raw.get("evidence"):
             targets = _refs(item, "people") + _refs(item, "places") + _refs(item, "items")
             missing = [t for t in targets if t not in people and t not in places and t not in items]
             if missing:

@@ -14,11 +14,14 @@ Routes (mounted on the Server's handler):
   GET  /api/auth/callback  -> session cookie + redirect to the app
   GET  /api/auth/me        -> {authenticated, email, name, picture, person}
   POST /api/auth/logout    -> clears the session cookie
+
+Every record this seam moves — the client config, the session identity, the
+in-flight login state, Google's device-grant answers, the route answers — is
+a class in its own module next to this one; each owns its wire shape.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import secrets
@@ -28,7 +31,6 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
 from datetime import timedelta
-from typing import Any
 from urllib.parse import quote
 
 from google.auth.transport import requests as google_requests
@@ -37,38 +39,51 @@ from google.oauth2 import id_token as google_id_token
 from google_auth_oauthlib.flow import Flow
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
+from pipeline.api.device_code_request import DeviceCodeRequest
+from pipeline.api.device_grant import DeviceGrant
+from pipeline.api.device_poll_answer import DevicePollAnswer
+from pipeline.api.device_start_answer import DeviceStartAnswer
+from pipeline.api.device_token_request import DeviceTokenRequest
+from pipeline.api.grant_answer import GrantAnswer
+from pipeline.api.login_answer import LoginAnswer
+from pipeline.api.me_answer import MeAnswer
+from pipeline.api.minted_session import MintedSession
+from pipeline.api.oauth_client import OAuthClient
+from pipeline.api.oauth_request import OAuthRequest
+from pipeline.api.session_user import SessionUser
 from tools.archive import Archive
 
 logger = logging.getLogger(__name__)
 
 SESSION_MAX_AGE = timedelta(days=30)
 
-# The OAuth state token's entropy (32 bytes -> 43 url-safe chars) and the
-# device-grant poll interval fallback (seconds) when Google omits it.
+# The OAuth state token's entropy (32 bytes -> 43 url-safe chars) and the web
+# flow's scopes (the verified email and profile a session is minted from).
 _STATE_TOKEN_BYTES = 32
-_DEFAULT_DEVICE_POLL_INTERVAL = 5
+_WEB_SCOPES = [
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/userinfo.profile",
+]
 
 
 class AuthState:
     """The in-flight login state — web OAuth states, device grants, and
     recently-minted sessions. Ephemeral by design: a restart invalidates
-    in-flight logins (houses parity). The invariants (max ages, max
-    entries, the sweep) live here, never in the callers."""
+    in-flight logins (houses parity). Each record owns its own lifetime; the
+    store owns the sweep and the cap on in-flight states."""
 
-    STATE_MAX_AGE_SECONDS = 600
     STATE_MAX_ENTRIES = 100
-    DEVICE_GRANT_MAX_AGE = 1800  # google's device codes live ~30 min
-    SESSION_GRACE_SECONDS = 180
 
     def __init__(self) -> None:
-        self.oauth_states: dict[str, dict[str, Any]] = {}
-        self.device_grants: dict[str, dict[str, Any]] = {}
-        self.recent_sessions: dict[str, dict[str, Any]] = {}
+        self.oauth_states: dict[str, OAuthRequest] = {}
+        self.device_grants: dict[str, DeviceGrant] = {}
+        self.recent_sessions: dict[str, MintedSession] = {}
 
     def sweep_stale_states(self) -> None:
         """Drop the web OAuth states older than the max age."""
         now = time.time()
-        stale = [k for k, v in self.oauth_states.items() if v.get("created_at", 0) < now - self.STATE_MAX_AGE_SECONDS]
+        stale = [k for k, v in self.oauth_states.items() if v.is_stale(now)]
         for k in stale:
             self.oauth_states.pop(k, None)
 
@@ -103,27 +118,25 @@ def _serializer() -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(session_secret(), salt="loft-session")
 
 
-def _client_config() -> dict[str, Any] | None:
-    client_id = web_client_id()
-    if not client_id or not web_client_secret():
+def _client_config() -> OAuthClient | None:
+    """The web client the browser flow signs in as — None while the app has
+    no client configured (the login fails honestly)."""
+    if not web_client_id() or not web_client_secret():
         return None
-    return {
-        "web": {
-            "client_id": client_id,
-            "client_secret": web_client_secret(),
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "redirect_uris": [f"{public_url()}/api/auth/callback"],
-        }
-    }
+    return OAuthClient(
+        client_id=web_client_id(),
+        client_secret=web_client_secret(),
+        redirect_uri=f"{public_url()}/api/auth/callback",
+    )
 
 
-def _make_session_cookie(email: str, name: str, picture: str) -> str:
-    return _serializer().dumps({"email": email, "name": name, "picture": picture})
+def _make_session_cookie(user: SessionUser) -> str:
+    """The signed session cookie carrying the verified identity."""
+    return _serializer().dumps(user.to_dict())
 
 
-def session_user_from_cookie(cookie: str | None) -> dict[str, Any] | None:
-    """The verified session payload from the ``session`` cookie, or None.
+def session_user_from_cookie(cookie: str | None) -> SessionUser | None:
+    """The verified session identity from the ``session`` cookie, or None.
 
     Accepts the raw Cookie header (``session=<payload>; …``) or the bare
     payload — the serializer must never see the name= prefix."""
@@ -136,74 +149,61 @@ def session_user_from_cookie(cookie: str | None) -> dict[str, Any] | None:
                 cookie = value
                 break
     try:
-        return _serializer().loads(cookie, max_age=int(SESSION_MAX_AGE.total_seconds()))
+        payload = _serializer().loads(cookie, max_age=int(SESSION_MAX_AGE.total_seconds()))
     except (BadSignature, SignatureExpired):
         return None
+    return SessionUser.from_dict(payload)
 
 
-def login_url() -> dict[str, Any]:
-    """Start the flow — {auth_url} for the browser, or an error detail."""
+def login_url() -> LoginAnswer:
+    """Start the flow — the authorization URL for the browser, or why the
+    flow could not start."""
     config = _client_config()
     if config is None:
-        return {"status": "error", "detail": "Google OAuth is not configured (THE_LOFT_GOOGLE_WEB_CLIENT_ID)"}
+        return LoginAnswer.failed("Google OAuth is not configured (THE_LOFT_GOOGLE_WEB_CLIENT_ID)")
     _auth_state.sweep_stale_states()
     state = secrets.token_urlsafe(_STATE_TOKEN_BYTES)
-    flow = Flow.from_client_config(
-        config,
-        scopes=[
-            "openid",
-            "https://www.googleapis.com/auth/userinfo.email",
-            "https://www.googleapis.com/auth/userinfo.profile",
-        ],
-    )
+    flow = Flow.from_client_config(config.to_dict(), scopes=_WEB_SCOPES)
     flow.redirect_uri = f"{public_url()}/api/auth/callback"
     authorization_url, _ = flow.authorization_url(access_type="online", include_granted_scopes="false", state=state)
     code_verifier = str(getattr(flow, "code_verifier", "") or "")
     if not code_verifier:
-        return {"status": "error", "detail": "PKCE code_verifier not generated"}
+        return LoginAnswer.failed("PKCE code_verifier not generated")
     if len(_auth_state.oauth_states) >= AuthState.STATE_MAX_ENTRIES:
         _auth_state.sweep_stale_states()
     if len(_auth_state.oauth_states) >= AuthState.STATE_MAX_ENTRIES:
-        return {"status": "error", "detail": "Too many login attempts, try again"}
-    _auth_state.oauth_states[state] = {"code_verifier": code_verifier, "created_at": time.time()}
-    return {"status": "ok", "auth_url": authorization_url}
+        return LoginAnswer.failed("Too many login attempts, try again")
+    _auth_state.oauth_states[state] = OAuthRequest.started(code_verifier)
+    return LoginAnswer.started(authorization_url)
 
 
-def exchange_code(code: str, state: str) -> dict[str, Any] | None:
-    """Verify and consume the callback's code+state; returns the verified
-    id_info ({email, name, picture, email_verified}) or None on any failure."""
+def exchange_code(code: str, state: str) -> SessionUser | None:
+    """Verify and consume the callback's code+state; the verified identity, or
+    None on any failure (an unverified email is no identity)."""
     config = _client_config()
     if config is None:
         return None
-    state_data = _auth_state.oauth_states.pop(state, None)
-    if state_data is None:
+    pending = _auth_state.oauth_states.pop(state, None)
+    if pending is None:
         logger.warning("auth: unknown or replayed OAuth state")
         return None
-    code_verifier = str(state_data.get("code_verifier", ""))
-    flow = Flow.from_client_config(
-        config,
-        scopes=[
-            "openid",
-            "https://www.googleapis.com/auth/userinfo.email",
-            "https://www.googleapis.com/auth/userinfo.profile",
-        ],
-    )
+    flow = Flow.from_client_config(config.to_dict(), scopes=_WEB_SCOPES)
     flow.redirect_uri = f"{public_url()}/api/auth/callback"
-    flow.code_verifier = code_verifier
+    flow.code_verifier = pending.code_verifier
     try:
         flow.fetch_token(code=code)
         raw = getattr(flow.credentials, "id_token", "")  # the google-auth type misses the property
         if not raw:
             raise RuntimeError("no id_token on the exchanged credentials")
-        id_info: dict[str, Any] = dict(id_token.verify_oauth2_token(raw, google_requests.Request(), web_client_id()))
+        claims = dict(id_token.verify_oauth2_token(raw, google_requests.Request(), web_client_id()))
     # lucidlint: ignore broad-except the auth boundary must never 500 (the noqa explains the why)
     except Exception as e:  # noqa: BLE001  # the callback must never 500
         logger.exception("auth: token exchange failed: %s", e)
         return None
-    if not id_info.get("email_verified"):
-        logger.warning("auth: unverified email for %s", id_info.get("email"))
+    if not claims.get("email_verified"):
+        logger.warning("auth: unverified email for %s", claims.get("email"))
         return None
-    return id_info
+    return SessionUser.from_dict(claims)
 
 
 def person_for_email(archive: Archive, email: str | None) -> str | None:
@@ -213,24 +213,18 @@ def person_for_email(archive: Archive, email: str | None) -> str | None:
         return None
     folded = email.casefold()
     people = archive.get_identity("people")
-    for person in (people or {}).get("people", []):
-        if str(person.get("email", "")).casefold() == folded:
-            return person.get("id")
+    for person in people.people if people else ():
+        if (person.email or "").casefold() == folded:
+            return person.id
     return None
 
 
-def me_payload(archive: Archive, session: dict[str, Any] | None) -> dict[str, Any]:
-    """The /api/auth/me shape — the authenticated identity + the archive
+def me_payload(archive: Archive, session: SessionUser | None) -> MeAnswer:
+    """The /api/auth/me answer — the authenticated identity + the archive
     person the email maps to (null when the account isn't in the archive)."""
-    if not session:
-        return {"authenticated": False}
-    return {
-        "authenticated": True,
-        "email": session.get("email", ""),
-        "name": session.get("name", ""),
-        "picture": session.get("picture", ""),
-        "person": person_for_email(archive, session.get("email")),
-    }
+    if session is None:
+        return MeAnswer.anonymous()
+    return MeAnswer.signed_in(session, person_for_email(archive, session.email))
 
 
 def callback_error_url(error: str) -> str:
@@ -244,7 +238,6 @@ def callback_error_url(error: str) -> str:
 # google.com/device, the id_token minting the session. No redirect URIs at
 # all. The device client is houses' — one family client for the family apps.
 
-_DEVICE_SCOPES = "openid email profile"
 _DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
 _DEVICE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
@@ -257,158 +250,148 @@ def device_client_secret() -> str:
     return os.environ.get("THE_LOFT_GOOGLE_DEVICE_CLIENT_SECRET", "").strip()
 
 
-def _device_grant_post(url: str, data: dict[str, str]) -> dict[str, Any]:
+def _device_grant_post(url: str, data: dict[str, str]) -> GrantAnswer:
     body = urllib.parse.urlencode(data).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            return _parse_grant_response(resp.read().decode("utf-8"))
+            return GrantAnswer.from_body(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         # Google's token endpoint answers "authorization_pending" with an
         # HTTP 428 — the body IS the meaningful payload
-        return _parse_grant_response(e.read().decode("utf-8"))
+        return GrantAnswer.from_body(e.read().decode("utf-8"))
     # lucidlint: ignore broad-except the auth boundary wraps and re-raises (the noqa explains the why)
     except Exception as e:  # noqa: BLE001  # the endpoint reports the failure
         raise RuntimeError(f"device grant request failed: {e}") from e
 
 
-def _parse_grant_response(payload: str) -> dict[str, Any]:
-    """Google's device/code and token endpoints answer JSON, or form-encoded
-    on error — the 428 body is `error=authorization_pending&...`."""
-    try:
-        return json.loads(payload)
-    except ValueError:
-        return dict(urllib.parse.parse_qsl(payload))
-
-
 def start_device_grant(
-    _post: Callable[[str, dict[str, str]], dict[str, Any]] | None = None,
-) -> dict[str, Any]:
-    """Begin the device grant — {state, user_code, verification_url,
-    interval} for the narrator to approve, or an error detail. ``_post`` is
-    the injectable Google HTTP seam for tests (DI, never monkeypatch)."""
+    _post: Callable[[str, dict[str, str]], GrantAnswer] | None = None,
+) -> DeviceStartAnswer:
+    """Begin the device grant — the state token, the user code the narrator
+    approves at google.com/device, and the poll interval; or why the grant
+    could not start. ``_post`` is the injectable Google HTTP seam for tests
+    (DI, never monkeypatch)."""
     client_id = device_client_id()
     if not client_id:
-        return {
-            "status": "error",
-            "detail": "the device OAuth client is not configured (THE_LOFT_GOOGLE_DEVICE_CLIENT_ID)",
-        }
-    info = (_post or _device_grant_post)(
-        _DEVICE_CODE_URL,
-        {"client_id": client_id, "scope": _DEVICE_SCOPES},
-    )
-    device_code = str(info.get("device_code", ""))
-    user_code = str(info.get("user_code", ""))
-    if not device_code or not user_code:
-        return {"status": "error", "detail": "Google did not start the device grant"}
+        return DeviceStartAnswer.failed("the device OAuth client is not configured (THE_LOFT_GOOGLE_DEVICE_CLIENT_ID)")
+    answer = (_post or _device_grant_post)(_DEVICE_CODE_URL, DeviceCodeRequest(client_id=client_id).to_form())
+    if not answer.device_code or not answer.user_code:
+        return DeviceStartAnswer.failed("Google did not start the device grant")
     state = secrets.token_urlsafe(_STATE_TOKEN_BYTES)
-    _auth_state.device_grants[state] = {"device_code": device_code, "created_at": time.time()}
-    logger.info("auth: device grant started (user_code %s, expires in %ss)", user_code, info.get("expires_in", "?"))
-    return {
-        "status": "ok",
-        "state": state,
-        "user_code": user_code,
-        "verification_url": info.get("verification_url", "https://www.google.com/device"),
-        "interval": max(1, int(info.get("interval", _DEFAULT_DEVICE_POLL_INTERVAL))),
-    }
+    _auth_state.device_grants[state] = DeviceGrant.started(answer.device_code)
+    logger.info(
+        "auth: device grant started (user_code %s, expires in %ss)",
+        answer.user_code,
+        answer.expires_in or "?",
+    )
+    return DeviceStartAnswer.started(
+        state=state,
+        user_code=answer.user_code,
+        verification_url=answer.verification_url,
+        interval=answer.interval,
+    )
 
 
-def minted_session(state: str) -> dict[str, Any] | None:
+def minted_session(state: str) -> SessionUser | None:
     """The session minted for this state, while the grace window holds —
     the device-complete navigation's source (the phone's network can
     reject fetch responses, so the cookie lands on a page navigation
     instead, houses' proven mechanism)."""
-    recent = _auth_state.recent_sessions.get(state)
-    if not recent or time.time() - recent.get("_minted_at", 0) >= AuthState.SESSION_GRACE_SECONDS:
+    minted = _auth_state.recent_sessions.get(state)
+    if minted is None or not minted.is_within_grace(time.time()):
         return None
-    return {k: v for k, v in recent.items() if k != "_minted_at"}
+    return minted.user
 
 
 def poll_device_grant(
     state: str,
-    _post: Callable[[str, dict[str, str]], dict[str, Any]] | None = None,
-    _verify: Callable[[str], dict[str, Any] | None] | None = None,
-) -> dict[str, Any]:
-    """Poll Google for the narrator's approval — {status: "pending"} until
-    approved, then {status: "ok", id_info} after the id_token verifies
-    against the device client (a web-flow token must not be replayable).
-    ``_post``/``_verify`` are the injectable Google seams for tests."""
+    _post: Callable[[str, dict[str, str]], GrantAnswer] | None = None,
+    _verify: Callable[[str], SessionUser | None] | None = None,
+) -> DevicePollAnswer:
+    """Poll Google for the narrator's approval — pending until approved, then
+    the minted session once the id_token verifies against the device client
+    (a web-flow token must not be replayable). ``_post``/``_verify`` are the
+    injectable Google seams for tests."""
     grant = _auth_state.device_grants.get(state)
-    if not grant:
+    if grant is None:
         return _grant_grace_reissue(state)
-    if time.time() - grant.get("created_at", 0) > AuthState.DEVICE_GRANT_MAX_AGE:
+    if grant.is_expired(time.time()):
         _auth_state.device_grants.pop(state, None)
-        return {"status": "error", "detail": "the device grant expired — start again"}
-    token_data: dict[str, str] = {
-        "client_id": device_client_id(),
-        "device_code": str(grant["device_code"]),
-        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-    }
-    if device_client_secret():
-        token_data["client_secret"] = device_client_secret()
-    result = (_post or _device_grant_post)(_DEVICE_TOKEN_URL, token_data)
-    if result.get("error"):
-        return _grant_error_response(state, result)
-    return _complete_grant(state, result, _verify)
+        return DevicePollAnswer.failed("the device grant expired — start again")
+    answer = (_post or _device_grant_post)(
+        _DEVICE_TOKEN_URL,
+        DeviceTokenRequest(
+            client_id=device_client_id(),
+            device_code=grant.device_code,
+            client_secret=device_client_secret(),
+        ).to_form(),
+    )
+    if answer.error:
+        return _grant_error_response(state, answer)
+    return _complete_grant(state, answer, _verify)
 
 
-def _grant_grace_reissue(state: str) -> dict[str, Any]:
+def _grant_grace_reissue(state: str) -> DevicePollAnswer:
     """A grant consumed by a mint whose response the phone lost — re-issue
     the session so a retry lands the cookie."""
-    recent = _auth_state.recent_sessions.get(state)
-    if recent and time.time() - recent.get("_minted_at", 0) < AuthState.SESSION_GRACE_SECONDS:
-        logger.info("auth: re-issuing the minted session (grace) for %s", recent.get("email"))
-        return {"status": "ok", "id_info": {k: v for k, v in recent.items() if k != "_minted_at"}}
-    return {"status": "error", "detail": "no such device grant"}
+    minted = _auth_state.recent_sessions.get(state)
+    if minted is not None and minted.is_within_grace(time.time()):
+        logger.info("auth: re-issuing the minted session (grace) for %s", minted.user.email)
+        return DevicePollAnswer.minted(minted.user)
+    return DevicePollAnswer.failed("no such device grant")
 
 
-def _grant_error_response(state: str, result: dict[str, Any]) -> dict[str, Any]:
+def _grant_error_response(state: str, answer: GrantAnswer) -> DevicePollAnswer:
     """The device grant's error outcomes — pending while Google waits,
     slow_down asks for a slower poll, access_denied/expired_token end the
     grant."""
-    if result["error"] == "authorization_pending":
-        return {"status": "pending"}
-    if result["error"] in ("slow_down", "access_denied", "expired_token"):
-        if result["error"] == "access_denied":
+    error = answer.error
+    if error == "authorization_pending":
+        return DevicePollAnswer.pending()
+    if error in ("slow_down", "access_denied", "expired_token"):
+        if error == "access_denied":
             _auth_state.device_grants.pop(state, None)
-        outcome = "pending" if result["error"] == "slow_down" else "error"
-        logger.info("auth: device grant %s (google: %s)", outcome, result["error"])
-        return {"status": outcome, "detail": result["error"]}
+        if error == "slow_down":
+            logger.info("auth: device grant pending (google: %s)", error)
+            return DevicePollAnswer.pending(error)
+        logger.info("auth: device grant error (google: %s)", error)
+        return DevicePollAnswer.failed(error)
     _auth_state.device_grants.pop(state, None)
-    logger.warning("auth: device grant error: %s", result["error"])
-    return {"status": "error", "detail": result["error"]}
+    logger.warning("auth: device grant error: %s", error)
+    return DevicePollAnswer.failed(error)
 
 
 def _complete_grant(
     state: str,
-    result: dict[str, Any],
-    _verify: Callable[[str], dict[str, Any] | None] | None,
-) -> dict[str, Any]:
+    answer: GrantAnswer,
+    _verify: Callable[[str], SessionUser | None] | None,
+) -> DevicePollAnswer:
     """The approved grant's finish: verify the id_token against the device
     client (a web-flow token must not be replayable) and mint the session."""
-    id_token_value = str(result.get("id_token", ""))
-    if not id_token_value:
+    if not answer.id_token:
         logger.warning("auth: device token response carried no id_token")
-        return {"status": "error", "detail": "no id_token in the device grant response"}
+        return DevicePollAnswer.failed("no id_token in the device grant response")
     _auth_state.device_grants.pop(state, None)
-    id_info = (_verify or verify_device_id_token)(id_token_value)
-    if id_info is None:
+    user = (_verify or verify_device_id_token)(answer.id_token)
+    if user is None:
         logger.warning("auth: device id_token failed verification")
-        return {"status": "error", "detail": "the id_token did not verify"}
-    logger.info("auth: device grant approved by %s", id_info.get("email"))
-    _auth_state.recent_sessions[state] = {**id_info, "_minted_at": time.time()}
-    return {"status": "ok", "id_info": id_info}
+        return DevicePollAnswer.failed("the id_token did not verify")
+    logger.info("auth: device grant approved by %s", user.email)
+    _auth_state.recent_sessions[state] = MintedSession.minted(user)
+    return DevicePollAnswer.minted(user)
 
 
-def verify_device_id_token(token: str) -> dict[str, Any] | None:
+def verify_device_id_token(token: str) -> SessionUser | None:
     """Verify a Google id_token bound to the DEVICE-flow client (houses
     parity: a browser-leakable web id_token must not mint a session here)."""
     client_id = device_client_id()
     if not client_id:
         return None
     try:
-        return dict(google_id_token.verify_oauth2_token(token, google_requests.Request(), client_id))
+        claims = dict(google_id_token.verify_oauth2_token(token, google_requests.Request(), client_id))
     # lucidlint: ignore broad-except the auth boundary reports and returns None (the noqa explains the why)
     except Exception as e:  # noqa: BLE001  # the caller reports the failure
         logger.warning("auth: device id_token verification failed: %s", e)
         return None
+    return SessionUser.from_dict(claims)

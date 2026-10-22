@@ -8,24 +8,28 @@ inkless estimates, the duplicated regions).
 
 from __future__ import annotations
 
-from typing import Any, override
+from typing import TYPE_CHECKING, override
 
+from pipeline.layout_line import LayoutLine
 from tools.box import aspect_consistent, overlap, reading_axis
 from tools.text import normalize
+
+if TYPE_CHECKING:
+    from pipeline.layout import Layout
 
 
 class Gate:
     """One fail-fast check over a layout; ``violations`` returns the
     plain-language findings ([] = the gate passes)."""
 
-    def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
+    def violations(self, layout: Layout, tolerance: float = 4.0) -> list[str]:
         raise NotImplementedError
 
 
-def _boxed(line: dict[str, Any]) -> list[float] | None:
+def _boxed(line: LayoutLine) -> list[float] | None:
     """The line's box when it is a well-formed 4-float list, else None —
     a malformed box cannot be checked by the geometry gates."""
-    box = line.get("box")
+    box = line.box
     if isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box):
         return box
     return None
@@ -37,21 +41,21 @@ class IntegrityGate(Gate):
     without a box; the tolerance covers the model's estimate slop."""
 
     @override
-    def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
-        width = int(layout.get("width", 0))
-        height = int(layout.get("height", 0))
+    def violations(self, layout: Layout, tolerance: float = 4.0) -> list[str]:
+        width = layout.width
+        height = layout.height
         findings: list[str] = []
-        for line in layout.get("lines", []):
+        for line in layout.lines:
             box = _boxed(line)
             if box is None:
-                if isinstance(line.get("box"), list):
-                    findings.append(f"{line.get('text', '')[:20]!r}: malformed box {line['box']}")
+                if isinstance(line.box, list):
+                    findings.append(f"{line.text[:20]!r}: malformed box {line.box}")
                 continue
             x0, y0, x1, y1 = box
             if x1 <= x0 or y1 <= y0:
-                findings.append(f"{line.get('text', '')[:20]!r}: degenerate box {box}")
+                findings.append(f"{line.text[:20]!r}: degenerate box {box}")
             elif x0 < -tolerance or y0 < -tolerance or x1 > width + tolerance or y1 > height + tolerance:
-                findings.append(f"{line.get('text', '')[:20]!r}: box outside the image {box}")
+                findings.append(f"{line.text[:20]!r}: box outside the image {box}")
         return findings
 
 
@@ -62,16 +66,16 @@ class AspectGate(Gate):
     diagonal and a near-square box never flag."""
 
     @override
-    def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
+    def violations(self, layout: Layout, tolerance: float = 4.0) -> list[str]:
         findings: list[str] = []
-        for line in layout.get("lines", []):
+        for line in layout.lines:
             box = _boxed(line)
-            orientation = line.get("orientation")
+            orientation = line.orientation
             if not box or not isinstance(orientation, (int, float)):
                 continue
             if not aspect_consistent(orientation, box):
                 findings.append(
-                    f"{line.get('text', '')[:20]!r}: orientation {orientation:.1f}° inconsistent "
+                    f"{line.text[:20]!r}: orientation {orientation:.1f}° inconsistent "
                     f"with a {int(box[2] - box[0])}x{int(box[3] - box[1])} box"
                 )
         return findings
@@ -149,13 +153,13 @@ class TextExtentGate(Gate):
     there")."""
 
     @override
-    def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
+    def violations(self, layout: Layout, tolerance: float = 4.0) -> list[str]:
         findings: list[str] = []
-        for line in layout.get("lines", []):
+        for line in layout.lines:
             box = _boxed(line)
             if not box:
                 continue
-            violation = text_extent_violation(line.get("text", ""), box, line.get("orientation"))
+            violation = text_extent_violation(line.text, box, line.orientation)
             if violation:
                 findings.append(violation)
         return findings
@@ -170,13 +174,13 @@ class RegionGate(Gate):
     slightly, so the bar is half the smaller box."""
 
     @override
-    def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
-        boxed = [(ln, ln["box"]) for ln in layout.get("lines", []) if _boxed(ln)]
+    def violations(self, layout: Layout, tolerance: float = 4.0) -> list[str]:
+        boxed = [(line, box) for line in layout.lines if (box := _boxed(line)) is not None]
         return [
-            f"{a.get('text', '')[:20]!r} and {b.get('text', '')[:20]!r}: same region claimed by different text"
+            f"{a.text[:20]!r} and {b.text[:20]!r}: same region claimed by different text"
             for i, (a, ab) in enumerate(boxed)
             for b, bb in boxed[i + 1 :]
-            if overlap(ab, bb) >= 0.5 and normalize(a.get("text", "")) != normalize(b.get("text", ""))
+            if overlap(ab, bb) >= 0.5 and normalize(a.text) != normalize(b.text)
         ]
 
 
@@ -191,10 +195,10 @@ class BoxlessGate(Gate):
     explicit choice.)"""
 
     @override
-    def violations(self, layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
+    def violations(self, layout: Layout, tolerance: float = 4.0) -> list[str]:
         return [
-            f"line {line.get('index', i)} is boxless — the pipeline must fix its geometry"
-            for i, line in enumerate(layout.get("lines", []))
+            f"line {line.index} is boxless — the pipeline must fix its geometry"
+            for line in layout.lines
             if _boxed(line) is None
         ]
 
@@ -205,7 +209,7 @@ class BoxlessGate(Gate):
 GATES: tuple[Gate, ...] = (IntegrityGate(), AspectGate(), TextExtentGate(), RegionGate(), BoxlessGate())
 
 
-def validate_layout(layout: dict[str, Any], tolerance: float = 4.0) -> list[str]:
+def validate_layout(layout: Layout, tolerance: float = 4.0) -> list[str]:
     """The fail-fast guard: a layout whose lines fail any
     gate must NEVER reach the front end — the reviewer must never see
     wrong boxes. Returns the violations; [] = clean."""

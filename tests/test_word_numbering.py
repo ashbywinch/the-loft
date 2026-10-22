@@ -13,13 +13,13 @@ import numpy as np
 from PIL import Image
 
 from document.colour import Colour
+from tools.chip import Chip
 from tools.word_numbering import (
     CHIP_GAP,
     EDGE_PAD,
     MAX_CHIP,
     PALETTE,
     UNPLACED,
-    Chip,
     _base_font,
     candidates,
     chip_extent,
@@ -35,8 +35,8 @@ A = (100.0, 100.0, 200.0, 200.0)  # a word the size of the tests' world
 def _expected(box: tuple[float, float, float, float], text: str) -> tuple[float, float, float, float]:
     """The corner chip rect for a word: its text's footprint at the base
     font, placed at the top-left corner — the placement the test asserts."""
-    width, height = chip_extent(text, _base_font(box))
-    return (box[0] - CHIP_GAP - width, box[1] - CHIP_GAP - height, box[0] - CHIP_GAP, box[1] - CHIP_GAP)
+    size = chip_extent(text, _base_font(box))
+    return (box[0] - CHIP_GAP - size.width, box[1] - CHIP_GAP - size.height, box[0] - CHIP_GAP, box[1] - CHIP_GAP)
 
 
 def test_an_isolated_word_gets_the_top_left_corner() -> None:
@@ -100,8 +100,8 @@ def test_a_word_every_position_taken_is_reported_not_overlapped() -> None:
     # the smallest chip (the minimum font's footprint) still leaves every
     # position taken, so a blocker on each min footprint blocks every larger
     # size too
-    width, height = chip_extent("1", 8.0)  # the minimum footprint, any number
-    blockers = [rect for _, rect in candidates(centre, width, height)]
+    size = chip_extent("1", 8.0)  # the minimum footprint, any number
+    blockers = [candidate.rect for candidate in candidates(centre, size.width, size.height)]
     boxes = [centre] + blockers
     chips = place_chips(boxes, numbered_order(boxes))
     centre_chip = next(chip for chip in chips if chip.verdict == UNPLACED)
@@ -119,8 +119,10 @@ def test_a_word_every_position_taken_is_reported_not_overlapped() -> None:
 
 def test_a_chip_never_exceeds_the_max_size() -> None:
     """MAX_CHIP caps every chip side, however large the text or the font."""
-    width, height = chip_extent("999", 500.0)
-    assert width <= MAX_CHIP and height <= MAX_CHIP, f"chip {width:.0f}x{height:.0f} exceeds {MAX_CHIP}"
+    size = chip_extent("999", 500.0)
+    assert size.width <= MAX_CHIP and size.height <= MAX_CHIP, (
+        f"chip {size.width:.0f}x{size.height:.0f} exceeds {MAX_CHIP}"
+    )
     chips = place_chips([A], numbered_order([A]))
     placed = chips[0]
     assert placed.rect[2] - placed.rect[0] <= MAX_CHIP and placed.rect[3] - placed.rect[1] <= MAX_CHIP
@@ -138,9 +140,9 @@ def test_a_chips_bbox_matches_its_text_footprint() -> None:
     for chip in place_chips(boxes, numbered_order(boxes)):
         if chip.verdict == UNPLACED:
             continue
-        width, height = chip_extent(str(chip.render_id), chip.font_size)
-        assert abs((chip.rect[2] - chip.rect[0]) - width) <= 1.0, f"chip {chip.render_id} width mismatch"
-        assert abs((chip.rect[3] - chip.rect[1]) - height) <= 1.0, f"chip {chip.render_id} height mismatch"
+        size = chip_extent(str(chip.render_id), chip.font_size)
+        assert abs((chip.rect[2] - chip.rect[0]) - size.width) <= 1.0, f"chip {chip.render_id} width mismatch"
+        assert abs((chip.rect[3] - chip.rect[1]) - size.height) <= 1.0, f"chip {chip.render_id} height mismatch"
 
 
 def test_numbering_order_is_reading_order() -> None:
@@ -182,7 +184,7 @@ def test_render_numbered_draws_without_error() -> None:
 
     page = Image.new("RGB", (400, 300), (250, 250, 250))
     boxes = [(50.0, 50.0, 150.0, 100.0), (200.0, 180.0, 320.0, 240.0)]
-    image, chips = render_numbered(page, (0.0, 0.0, 400.0, 300.0), boxes, scale=1.0)
-    assert image.size == (400, 300)
-    assert len(chips) == 2
-    assert {chip.render_id for chip in chips} == {1, 2}
+    rendered = render_numbered(page, (0.0, 0.0, 400.0, 300.0), boxes, scale=1.0)
+    assert rendered.image.size == (400, 300)
+    assert len(rendered.chips) == 2
+    assert {chip.render_id for chip in rendered.chips} == {1, 2}

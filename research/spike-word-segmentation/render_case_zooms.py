@@ -33,7 +33,7 @@ CASES: dict[str, tuple[tuple[float, float, float, float], float, list[int], list
         [5555],
         [
             'mark 5528 = the word "5555" on the tests (page x1082-1118, y2770-2842)',
-            'lowering the width bar to admit "of" would split it into 3 boxes',  # noqa: E501
+            'lowering the width bar to admit "of" would split it into 3 boxes',
         ],
     ),
     "case-342": (
@@ -41,7 +41,7 @@ CASES: dict[str, tuple[tuple[float, float, float, float], float, list[int], list
         4.0,
         [323, 336, 344],
         [
-            "336: the box above 342 holding two words (323 above it, 344 below)",  # noqa: E501
+            "336: the box above 342 holding two words (323 above it, 344 below)",
             "numbers as the current whole-page render numbers them",
         ],
     ),
@@ -56,8 +56,8 @@ CASES: dict[str, tuple[tuple[float, float, float, float], float, list[int], list
         3.0,
         [217, 212, 213, 215],
         [
-            "217: one box containing words 212, 213, 215",  # noqa: E501
-            "the failing nested-pair case; numbers as the whole-page render numbers them",  # noqa: E501
+            "217: one box containing words 212, 213, 215",
+            "the failing nested-pair case; numbers as the whole-page render numbers them",
         ],
     ),
     "case-3456": (
@@ -75,7 +75,7 @@ CASES: dict[str, tuple[tuple[float, float, float, float], float, list[int], list
         [213, 212],
         [
             "213: the last nested pair — still two fused words, with 212 inside it",
-            "the y3640 weld's remainder after the underline strip",  # noqa: E501
+            "the y3640 weld's remainder after the underline strip",
         ],
     ),
     "case-1838": (
@@ -94,12 +94,14 @@ def _main() -> int:
     for name, (window, scale, wanted, caption) in CASES.items():
         x0, y0, x1, y1 = window
         whole = number_words(boxes)
-        inside = [entry["box"] for entry in whole if entry["render_id"] in wanted]
-        image, chips = render_numbered(page, (x0, y0, x1, y1), inside, scale)
-        sheet = captioned_sheet(image, caption)
+        inside = [entry.box for entry in whole if entry.render_id in wanted]
+        rendered = render_numbered(page, (x0, y0, x1, y1), inside, scale)
+        sheet = captioned_sheet(rendered.image, caption)
         out = OUT / f"{name}.jpg"
         out.write_bytes(review_image(sheet.sheet, width=1400, quality=76))
-        print(f"{name}: {len(inside)} boxes in the window, {len(unplaced(chips))} chips unplaced -> {out.name}")
+        print(
+            f"{name}: {len(inside)} boxes in the window, {len(unplaced(rendered.chips))} chips unplaced -> {out.name}"
+        )
     return 0
 
 

@@ -4,20 +4,22 @@
 # 2026-08-16, first full-repo run).
 
 [lucidlint]
-# record-shape: the object model already implements the class rule
-# (tools/records.py — Person/Place/Org/Relationship/Item/Knowledge). The
-# remaining dict[str, Any] are deliberate wire-format seams the standards
-# name: to_dict/from_dict own the persistence contract, API responses are
-# output format ("Don't let output format drive the domain model"), eval
-# result dicts are one-shot shapes. A dict shape re-parsed in 2+ places is
-# still a finding per coding-standards.md — the repo reviewer enforces it;
-# the tool's blanket flagging of every annotation is noise on the seams.
-ignore = ["record-shape", "class-module", "vague-name", "magic-number", "noqa"]
-# noqa: the rule fires on `# noqa: F401` markers that suppress ruff's
-# unused-import warnings for intentional architecture dependency imports
-# (from tools.store import DiskStore). The noqa is for RUFF, not for
-# lucidlint — lucidlint's noqa rule doesn't distinguish between "noqa for
-# another tool" and "stale suppression for itself".
+# record-shape: the family is FIXED IN CODE (2026-10-17) — every record is a
+# class in a file named after it, owning its wire format; `document/schemas.py`
+# (a TypedDict bag) is dissolved and ~150 record modules landed. What the rule
+# still reports is a TOOL BUG: it fires on the very pattern its own message
+# prescribes — `from_dict(cls, raw: dict[str, Any])`, `to_dict(self) ->
+# dict[str, Any]`, and the constant-key literal that method builds (the
+# serialization edge, where a bare dict is correct). The minimal repro and the
+# reasoning: docs/PLAN/lucidlint-review-log.md §1.5 and §2.2. The rule stays
+# ignored so the gate's verdict is not polluted by the tool's own bug; a NEW
+# bare dict for a record is still a finding at review.
+ignore = ["record-shape", "class-module", "vague-name", "magic-number"]
+# noqa: no longer ignored (2026-10-17) — every `# noqa` site now carries its
+# why in the tool's format (`# noqa: F401 — the architecture test's
+# store-layer marker`), and the six stale `# noqa: E501` markers are deleted
+# (those lines are inside the limit; ruff never fired on them). The rule
+# stays on so a new bare marker fails the gate.
 # class-module: every flagged module is named after its domain noun and
 # holds the noun's exception or helper class (htr.py/HtrError, sync.py/
 # Outbox, review.py/_Chat) — one reason to change, the standards' stated

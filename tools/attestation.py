@@ -14,7 +14,8 @@ the scanner checks what the table can name, never invents.
 from __future__ import annotations
 
 import re
-from typing import Any
+
+from tools.records import Person, Relationship
 
 # text patterns -> the edge kind the claim asserts. Parent links may name
 # one or both parents ("son of ? Corbett and Harper Pryce") — the first named
@@ -35,7 +36,7 @@ PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 )
 
 
-def _resolve_candidates(name: str, people: list[dict[str, Any]]) -> list[str]:
+def _resolve_candidates(name: str, people: list[Person]) -> list[str]:
     """Every person the claimed name can denote — same-name people are
     common in a family archive, and the edge may link any of them.
     Possessive claims ("Pearl's husband") capture first names, so a name
@@ -45,41 +46,41 @@ def _resolve_candidates(name: str, people: list[dict[str, Any]]) -> list[str]:
         return []
     single_word = " " not in wanted
     return [
-        p["id"]
-        for p in people
-        if p.get("name", "").lower() == wanted
-        or wanted in [a.lower() for a in p.get("aliases", [])]
-        or p.get("name", "").lower().startswith(wanted + " ")
-        or (single_word and wanted in p.get("name", "").lower().split())
+        person.id
+        for person in people
+        if person.name.lower() == wanted
+        or wanted in [alias.lower() for alias in person.aliases]
+        or person.name.lower().startswith(wanted + " ")
+        or (single_word and wanted in person.name.lower().split())
     ]
 
 
-def attested_edge_gaps(people: list[dict[str, Any]], relationships: list[dict[str, Any]]) -> list[str]:
+def attested_edge_gaps(people: list[Person], relationships: list[Relationship]) -> list[str]:
     """Text-attested spouse/parent/inlaw links that lack the edge.
 
     Returns human-readable offenders ("<name> (<id>): text says '<claim>'
     but no <kind> edge links <targets>"), one per claim.
     """
-    edges = [r for r in relationships if r.get("kind") in ("spouse", "parent", "inlaw")]
+    edges = [edge for edge in relationships if edge.kind in ("spouse", "parent", "inlaw")]
 
     def linked(a: str, b: str, kind: str) -> bool:
         return any(
-            e.get("kind") == kind and ((e["a"] == a and e["b"] == b) or (e["a"] == b and e["b"] == a)) for e in edges
+            edge.kind == kind and ((edge.a == a and edge.b == b) or (edge.a == b and edge.b == a)) for edge in edges
         )
 
     offenders: list[str] = []
     for person in people:
-        text = f"{person.get('relation', '')} {person.get('bio', '')}"
+        text = f"{person.relation} {person.bio}"
         for pattern, kind in PATTERNS:
             for match in pattern.finditer(text):
                 targets = _resolve_candidates(match.group(1), people)
                 if not targets:
                     continue  # an unnameable claim — the table can't check it
-                if person["id"] in targets:
+                if person.id in targets:
                     continue  # "wife of X" where X is oneself — an artifact, not a link
-                if not any(linked(person["id"], t, kind) for t in targets):
+                if not any(linked(person.id, t, kind) for t in targets):
                     offenders.append(
-                        f"{person.get('name')} ({person['id']}): text says '{match.group(0).strip()}' "
+                        f"{person.name} ({person.id}): text says '{match.group(0).strip()}' "
                         f"but no {kind} edge links {', '.join(targets)}"
                     )
     return sorted(set(offenders))

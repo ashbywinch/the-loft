@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from PIL import Image
 
 from document.colour import Colour
+from document.point import Point
 from pipeline.detect.mark import SCALE, find_marks
 from pipeline.detect.reader import artifacts, ink_mask
 from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop
@@ -64,12 +65,17 @@ def _main() -> int:
             return (v - _y0) * _s + _b
 
         draw.rectangle([px(red[0]), py(red[1]), px(red[2]), py(red[3])], outline=(200, 0, 0, 255), width=3)
-        halo_text(draw, (px(red[0]) + 2, py(red[1]) - 28), f"render {render_id}", fill=Colour(red=200, green=0, blue=0))
+        halo_text(
+            draw,
+            Point(x=px(red[0]) + 2, y=py(red[1]) - 28),
+            f"render {render_id}",
+            fill=Colour(red=200, green=0, blue=0),
+        )
         for s in sorted(band, key=lambda s: s.x0):
             bx0, by0, bx1, by1 = s.x0 * SCALE, s.y0 * SCALE, s.x1 * SCALE, s.y1 * SCALE
             colour = (0, 140, 0) if s.id == mark_id else (140, 140, 140)
             draw.rectangle([px(bx0), py(by0), px(bx1), py(by1)], outline=colour + (255,), width=2)
-            halo_text(draw, (px(bx0) + 2, py(by0) - 26), s.id, fill=Colour(*colour))
+            halo_text(draw, Point(x=px(bx0) + 2, y=py(by0) - 26), s.id, fill=Colour(*colour))
         out = OUTDIR / f"newcase-{render_id}.jpg"
         out.write_bytes(review_image(sheet.sheet))
         print(f"render {render_id} in mark {mark_id} -> {out} ({out.stat().st_size // 1024}KB)")

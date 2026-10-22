@@ -4,18 +4,29 @@ resolution, and build_story's canonical story shape."""
 
 from __future__ import annotations
 
+import json
 from datetime import date
+from typing import Any
 
 import pytest
 
+from tools.anchor import Anchor
+from tools.assessment import Assessment
+from tools.assessment_fact import AssessmentFact
+from tools.dated_fact import DatedFact
+from tools.extraction import Extraction
 from tools.memory import (
+    BuiltStory,
     ElicitationError,
     Knowledge,
-    Person,
+    StoryLinks,
     StoryRequest,
+    _AssessmentReview,
     assess,
     build_story,
 )
+from tools.parsed_phrase import asserted_date
+from tools.records import Person
 
 PEOPLE = [
     {"id": "p-mum", "name": "Nora Hale", "aliases": ["Mum", "Mummy", "Nora"]},
@@ -27,9 +38,19 @@ PLACES = [
     {"id": "pl-seagate", "name": "Seagate"},
 ]
 THEMES = [{"id": "t-the-boats", "title": "The boats"}]
-ITEMS = [{"id": "object-sunlight", "title": "Sunlight", "type": "object"}]
+ITEMS = [
+    {
+        "id": "object-sunlight",
+        "type": "object",
+        "title": "Sunlight",
+        "date": "1963",
+        "date_precision": "year",
+        "status": "catalogued",
+    }
+]
 
-ANCHOR = {"kind": "theme", "id": "t-the-boats", "name": "The boats"}
+ANCHOR = Anchor(kind="theme", id="t-the-boats", name="The boats")
+SEAGATE = Anchor(kind="place", id="pl-seagate", name="Seagate")
 
 # every story needs an events date — fixtures
 # that don't test the date derivation carry a real event date
@@ -45,20 +66,55 @@ def make_knowledge(people=PEOPLE, places=PLACES, themes=THEMES, items=ITEMS) -> 
     return Knowledge.from_projection(people, places, themes, items)
 
 
+def wire(built: BuiltStory) -> dict[str, Any]:
+    """The story's sidecar wire — what the server writes and the app reads."""
+    return built.story.to_dict()
+
+
+def dob(date_str: str, precision: str = "exact") -> dict[str, str]:
+    """A person's date of birth as the projection carries it — a dated fact,
+    never a bare phrase."""
+    return {"date": date_str, "precision": precision}
+
+
+def item(item_id: str, title: str, status: str = "catalogued") -> dict[str, Any]:
+    """A catalog item as the projection carries it — a whole sidecar."""
+    return {
+        "id": item_id,
+        "type": "object",
+        "title": title,
+        "date": "1963",
+        "date_precision": "year",
+        "status": status,
+    }
+
+
 class FakeClient:
     """Satisfies the ChatClient protocol (chat(system, user) -> str).
-    Routes by prompt: the assessor and the reviewer get their own queues."""
+    Routes by prompt: the content pass, the questions pass and the reviewer get
+    their own queues. A queued assessor answer is a WHOLE assessment (the shape
+    the single call used to return); the double splits it into the two passes
+    the production path runs — content first, then its questions."""
 
     def __init__(self, assessor: list[str], reviewer: list[str] | None = None) -> None:
         self.assessor: list[str] = list(assessor)
         self.reviewer: list[str] = list(reviewer or [])
         self.calls: list[tuple[str, str]] = []
+        self._pending_questions = '{"questions": []}'
 
     def chat(self, system: str, user: str, *, thinking: bool = False) -> str:
         self.calls.append((system, user))
         if "review pass" in system:
             return self.reviewer.pop(0)
-        return self.assessor.pop(0)
+        if "This pass produces the questions" in system:
+            return self._pending_questions
+        raw = self.assessor.pop(0)
+        try:
+            whole = json.loads(raw)
+        except json.JSONDecodeError:
+            return raw  # a deliberately malformed answer: the production seam must refuse it
+        self._pending_questions = json.dumps({"questions": whole.get("questions", [])})
+        return json.dumps({key: value for key, value in whole.items() if key != "questions"})
 
 
 ASSESSOR = "assessor"
@@ -98,24 +154,25 @@ def test_speaker_for_matches_name_and_alias() -> None:
 
 
 def test_knowledge_normalizes_plain_dicts_into_typed_records() -> None:
-    """The projection's dicts become typed records once, in the Knowledge
-    constructor — the members carry their own behavior (docs/coding-
-    standards.md: a group's members are their own types, and the functions
-    that operate on them are methods)."""
+    """The projection's dicts become typed records once, in from_projection —
+    the members carry their own behavior (docs/coding-standards.md: a group's
+    members are their own types, and the functions that operate on them are
+    methods)."""
     knowledge = make_knowledge()
     assert knowledge.people[0] == Person(id="p-mum", name="Nora Hale", aliases=("Mum", "Mummy", "Nora"))
-    assert knowledge.people[0].matches("mummy")
+    assert knowledge.person_named("mummy") is knowledge.people[0]
     assert knowledge.narrator_dob(knowledge.speaker_for("Alex")) is None
 
 
-def test_person_proposed_mints_an_archive_record() -> None:
+def test_minting_a_person_record_is_unique_and_proposed() -> None:
     """Introducing a person mints their proposed record — one per name,
     never a duplicate id."""
-    first = Person.proposed("Zofia Kowalski", set())
-    second = Person.proposed("Zofia Kowalski", {first["id"]})
-    assert first["id"] == "p-zofia-kowalski"
-    assert second["id"].startswith("p-zofia-kowalski-")
-    assert first["relation"] == "added from a story"
+    first = StoryLinks(verified=False, all_ids=set()).mint_person("Zofia Kowalski")
+    second = StoryLinks(verified=False, all_ids={first.id}).mint_person("Zofia Kowalski")
+    assert first.id == "p-zofia-kowalski"
+    assert second.id.startswith("p-zofia-kowalski-")
+    assert first.relation == "added from a story"
+    assert first.status == "proposed"
 
 
 # -- assess: contract and the review-redo loop -----------------------------
@@ -127,8 +184,8 @@ def test_assess_parses_and_validates_the_model_response() -> None:
             '{"title": "The trips", "extractions": [{"kind": "place", "name": "Marlock", "match": "pl-marlock", '
             + '"bucket": "proposed", "reason": "the story is about it"}], '
             + '"facts": [{"kind": "event_date", "text": "May 1963", "value": "1963-05", "precision": "month"}], '
-            + '"questions": [{"text": "Who else was there?", "why": "", "skippable": true, '
-            + '"suggestions": ["Mum", "Not sure"]}]}'
+            + '"questions": [{"text": "Who else was there?", "why": "", "suggestions": ["Mum", "Not sure"], '
+            + '"type": "people", "date_kind": null}]}'
         ]
     )
     result = assess(
@@ -138,13 +195,14 @@ def test_assess_parses_and_validates_the_model_response() -> None:
         account="We went to Marlock in May 1963.",
         knowledge=make_knowledge(),
     )
-    assert result["title"] == "The trips"
-    assert result["extractions"][0]["match"] == "pl-marlock"
-    assert result["facts"] == [
-        {"kind": "event_date", "entity": None, "text": "May 1963", "value": "1963-05", "precision": "month"}
+    assert result.title == "The trips"
+    assert result.extractions[0].match == "pl-marlock"
+    assert [fact.to_dict() for fact in result.facts] == [
+        {"kind": "event_date", "text": "May 1963", "entity": None, "value": "1963-05", "precision": "month"}
     ]
-    assert result["questions"][0]["text"] == "Who else was there?"
-    assert result["questions"][0]["suggestions"] == ["Mum", "Not sure"]
+    assert result.questions[0].text == "Who else was there?"
+    assert list(result.questions[0].suggestions) == ["Mum", "Not sure"]  # the quick-reply buttons (PRD MEMORIES §49)
+    assert result.questions[0].type == "people"  # the model's judgment, validated at the record's seam
     assert "Marlock" in client.calls[0][1]  # standing knowledge reached the prompt
 
 
@@ -177,9 +235,9 @@ def test_assess_redoes_with_feedback_when_the_reviewer_finds_violations() -> Non
         account="Aunt Nora from next door came to our wedding.",
         knowledge=make_knowledge(),
     )
-    assert result["extractions"][0]["match"] is None  # the redo fixed the over-match
-    assert len(client.calls) == 4  # assessor, reviewer, assessor-redo, reviewer
-    assert "Aunt Nora is a mention" in client.calls[2][1]  # the feedback reached the redo
+    assert result.extractions[0].match is None  # the redo fixed the over-match
+    assert len(client.calls) == 6  # content, questions, reviewer, content-redo, questions-redo, reviewer
+    assert "Aunt Nora is a mention" in client.calls[3][1]  # the feedback reached the redo
 
 
 def test_assess_accepts_clean_review_in_one_call() -> None:
@@ -188,11 +246,11 @@ def test_assess_accepts_clean_review_in_one_call() -> None:
         client,
         anchor=ANCHOR,
         who="",
-        account="x",
+        account="We went to Marlock in May 1963.",  # a link stands on the account's own words
         knowledge=make_knowledge(),
     )
-    assert result["title"] == "The trips"
-    assert len(client.calls) == 2  # assessor + clean review, no redo
+    assert result.title == "The trips"
+    assert len(client.calls) == 3  # content, questions, clean review — no redo
 
 
 def test_assess_deterministically_redoes_when_a_new_narrator_gets_no_connection_question() -> None:
@@ -217,9 +275,9 @@ def test_assess_deterministically_redoes_when_a_new_narrator_gets_no_connection_
         account="The wedding was lovely.",
         knowledge=make_knowledge(),
     )
-    assert len(result["questions"]) == 2  # the connection question + the required events-date question
-    assert "connected" in result["questions"][0]["text"]
-    assert "connected to the family" in client.calls[2][1]  # the deterministic feedback reached the redo
+    assert len(result.questions) == 2  # the connection question + the required events-date question
+    assert "connected" in result.questions[0].text
+    assert "connected to the family" in client.calls[3][1]  # the deterministic feedback reached the redo
 
 
 def test_assess_deterministically_redoes_an_age_without_a_date_question() -> None:
@@ -246,8 +304,8 @@ def test_assess_deterministically_redoes_an_age_without_a_date_question() -> Non
         account="I was eight when we moved.",
         knowledge=make_knowledge(people=with_marek),
     )
-    assert len(result["questions"]) == 1
-    assert result["questions"][0]["type"] == "date"
+    assert len(result.questions) == 1
+    assert result.questions[0].type == "date"
 
 
 def test_assess_deterministically_refuses_a_telling_day_date() -> None:
@@ -269,10 +327,10 @@ def test_assess_deterministically_refuses_a_telling_day_date() -> None:
     )
     client = FakeClient(assessor=[bad, fixed], reviewer=['{"violations": []}', '{"violations": []}'])
     result = assess(client, anchor=ANCHOR, who="Alex", account="A story.", knowledge=make_knowledge())
-    assert not any(f.get("kind") == "event_date" for f in result["facts"])
-    date_q = [q for q in result["questions"] if q.get("type") == "date"]
-    assert date_q and date_q[0]["skippable"] is True
-    assert "telling day" in client.calls[2][1]  # the deterministic feedback reached the redo
+    assert not any(fact.is_event_date() for fact in result.facts)
+    date_q = [q for q in result.questions if q.asks_for_a_date()]
+    assert date_q and date_q[0].skippable is True
+    assert "telling day" in client.calls[3][1]  # the deterministic feedback reached the redo
 
 
 def test_assess_accepts_a_narrator_stated_telling_day_date() -> None:
@@ -288,8 +346,8 @@ def test_assess_accepts_a_narrator_stated_telling_day_date() -> None:
     )
     client = FakeClient(assessor=[ok], reviewer=['{"violations": []}'])
     result = assess(client, anchor=ANCHOR, who="Alex", account="Went for a walk today.", knowledge=make_knowledge())
-    assert any(f.get("kind") == "event_date" and f.get("value") == today for f in result["facts"])
-    assert "telling day" not in client.calls[1][1]  # the reviewer saw no fabrication feedback
+    assert any(fact.is_event_date() and fact.value == today for fact in result.facts)
+    assert "telling day" not in client.calls[2][1]  # the reviewer saw no fabrication feedback
 
 
 def test_assess_requires_a_date_question_when_none_is_established() -> None:
@@ -305,9 +363,9 @@ def test_assess_requires_a_date_question_when_none_is_established() -> None:
     )
     client = FakeClient(assessor=[bad, fixed], reviewer=['{"violations": []}', '{"violations": []}'])
     result = assess(client, anchor=ANCHOR, who="Alex", account="A story.", knowledge=make_knowledge())
-    date_q = [q for q in result["questions"] if q.get("type") == "date"]
-    assert date_q and date_q[0]["skippable"] is True
-    assert "events date" in client.calls[2][1]
+    date_q = [q for q in result.questions if q.asks_for_a_date()]
+    assert date_q and date_q[0].skippable is True
+    assert "events date" in client.calls[3][1]
 
 
 def test_assess_deterministically_redoes_a_new_artifact_without_a_tell_me_question() -> None:
@@ -336,15 +394,15 @@ def test_assess_deterministically_redoes_a_new_artifact_without_a_tell_me_questi
         account="The Mirosa moored alongside.",
         knowledge=make_knowledge(),
     )
-    assert len(result["questions"]) == 2  # the tell-me question + the required events-date question
-    assert "Mirosa" in result["questions"][0]["text"]
-    assert "tell me more" in client.calls[2][1]  # the deterministic feedback reached the redo
+    assert len(result.questions) == 2  # the tell-me question + the required events-date question
+    assert "Mirosa" in result.questions[0].text
+    assert "tell me more" in client.calls[3][1]  # the deterministic feedback reached the redo
 
 
 def test_assess_deterministically_blocks_a_date_question_when_the_year_is_computable() -> None:
     """An age plus a known dob makes the year computable — a date question is
     a violation, caught in code."""
-    with_dob = PEOPLE + [{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"], "dob": "1982-05-01"}]
+    with_dob = PEOPLE + [{"id": "p-marek", "name": "Marek Kowalski", "aliases": ["Marek"], "dob": dob("1982-05-01")}]
     bad = (
         '{"title": "T", "extractions": [], "facts": [{"kind": "age", "entity": null, "text": "I was eight", '
         + '"value": 8, "precision": "approx"}], "questions": [{"text": "When did this happen?", "why": "", '
@@ -365,7 +423,7 @@ def test_assess_deterministically_blocks_a_date_question_when_the_year_is_comput
         account="I was eight when we moved.",
         knowledge=make_knowledge(people=with_dob),
     )
-    assert result["questions"] == []
+    assert result.questions == ()
 
 
 def test_assess_raises_on_malformed_output() -> None:
@@ -403,20 +461,19 @@ def test_assess_normalizes_facts_with_the_date_library() -> None:
         account="x",
         knowledge=make_knowledge(),
     )
-    facts = result["facts"]
-    by_text = {f["text"]: f for f in facts}
+    by_text = {fact.text: fact for fact in result.facts}
     # the model's value contract is ISO: an exact day arrives as YYYY-MM-DD;
     # a non-ISO phrase can never claim an exact day
-    assert by_text["15/09/1981"]["value"] == "1981-09-15"
-    assert by_text["15/09/1981"]["precision"] == "exact"
-    assert by_text["15/09/1981"]["entity"] == "p-mum"
-    assert by_text["July 1979"]["value"] == "1979-07" and by_text["July 1979"]["precision"] == "month"
-    assert by_text["1979"]["value"] == "1979" and by_text["1979"]["precision"] == "year"
+    assert by_text["15/09/1981"].value == "1981-09-15"
+    assert by_text["15/09/1981"].precision == "exact"
+    assert by_text["15/09/1981"].entity == "p-mum"
+    assert by_text["July 1979"].value == "1979-07" and by_text["July 1979"].precision == "month"
+    assert by_text["1979"].value == "1979" and by_text["1979"].precision == "year"
     # a phrase the parser cannot make sense of -> null value, kept for the keeper
-    assert by_text["sometime in spring"]["value"] is None
-    assert by_text["sometime in spring"]["precision"] is None
-    assert by_text["I was eight"]["value"] == 8
-    assert "wombat" not in facts
+    assert by_text["sometime in spring"].value is None
+    assert by_text["sometime in spring"].precision is None
+    assert by_text["I was eight"].value == 8
+    assert "junk" not in by_text  # the unknown kind is dropped, never trusted
 
 
 def test_facts_respect_the_locale_for_ambiguous_values(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -438,7 +495,7 @@ def test_facts_respect_the_locale_for_ambiguous_values(monkeypatch: pytest.Monke
         account="x",
         knowledge=make_knowledge(),
     )
-    assert result["facts"][0]["value"] == "1981-09"
+    assert result.facts[0].value == "1981-09"
 
     # lucidlint: ignore monkeypatch LOFT_LOCALE is the env seam the locale-aware date parser reads
     monkeypatch.setenv("LOFT_LOCALE", "en_US")
@@ -456,7 +513,7 @@ def test_facts_respect_the_locale_for_ambiguous_values(monkeypatch: pytest.Monke
         account="x",
         knowledge=make_knowledge(),
     )
-    assert result["facts"][0]["value"] == "1967-08"  # US reads 08/12 as August (month 08), never December
+    assert result.facts[0].value == "1967-08"  # US reads 08/12 as August (month 08), never December
 
 
 def test_standing_knowledge_includes_dob_and_items() -> None:
@@ -465,10 +522,10 @@ def test_standing_knowledge_includes_dob_and_items() -> None:
         client,
         anchor=ANCHOR,
         who="",
-        account="x",
+        account="We went to Marlock in May 1963.",
         knowledge=make_knowledge(
-            people=[{"id": "p-x", "name": "X", "aliases": [], "dob": "1978-04-12"}],
-            items=[{"id": "object-sunlight", "title": "Sunlight", "type": "object"}],
+            people=[{"id": "p-x", "name": "X", "aliases": [], "dob": dob("1978-04-12")}],
+            items=[item("object-sunlight", "Sunlight")],
         ),
     )
     prompt = client.calls[0][1]
@@ -480,56 +537,66 @@ def test_standing_knowledge_includes_dob_and_items() -> None:
 
 
 def test_build_story_dates_events_from_dob_and_age_facts() -> None:
-    with_ashby = PEOPLE + [{"id": "p-alex", "name": "Alex Hale", "aliases": ["Alex"]}]
+    with_alex = PEOPLE + [{"id": "p-alex", "name": "Alex Hale", "aliases": ["Alex"]}]
     built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
             title="T",
             account="When I was three or so I went to the boatyard.",
-            extractions=[],
-            facts=[
-                {"kind": "dob", "entity": "p-alex", "text": "15/09/1981", "value": "1981-09-15", "precision": "exact"},
-                {"kind": "age", "text": "three or so", "value": 3, "precision": "approx"},
-            ],
+            extractions=(),
+            facts=AssessmentFact.from_list(
+                [
+                    {
+                        "kind": "dob",
+                        "entity": "p-alex",
+                        "text": "15/09/1981",
+                        "value": "1981-09-15",
+                        "precision": "exact",
+                    },
+                    {"kind": "age", "text": "three or so", "value": 3, "precision": "approx"},
+                ]
+            ),
         ),
-        knowledge=make_knowledge(people=with_ashby),
+        knowledge=make_knowledge(people=with_alex),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert built.story["date"] == "1984" and built.story["date_precision"] == "approx"  # 1981 + 3, arithmetic only
-    assert built.story["facts"][0]["status"] == "proposed"  # stated in prose, not via the picker
-    assert built.story["facts"][0]["value"] == "1981-09-15"
+    assert wire(built)["date"] == "1984" and wire(built)["date_precision"] == "approx"  # 1981 + 3, arithmetic only
+    assert wire(built)["facts"][0]["status"] == "proposed"  # stated in prose, not via the picker
+    assert wire(built)["facts"][0]["value"] == "1981-09-15"
 
 
 def test_build_story_answered_dob_is_confirmed() -> None:
     """A dob the narrator asserts in answer to a direct question is
     confirmed, not proposed — the answer IS the assertion."""
-    with_ashby = PEOPLE + [{"id": "p-alex", "name": "Alex Hale", "aliases": ["Alex"]}]
+    with_alex = PEOPLE + [{"id": "p-alex", "name": "Alex Hale", "aliases": ["Alex"]}]
     built = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Alex",
             title="T",
             account="That was the year.",
-            extractions=[],
-            facts=[
-                {
-                    "kind": "dob",
-                    "entity": "p-alex",
-                    "text": "",
-                    "value": "1981-09-15",
-                    "precision": "exact",
-                    "status": "confirmed",
-                },
-                EVENT_DATE,
-            ],
+            extractions=(),
+            facts=AssessmentFact.from_list(
+                [
+                    {
+                        "kind": "dob",
+                        "entity": "p-alex",
+                        "text": "the fifteenth of September",
+                        "value": "1981-09-15",
+                        "precision": "exact",
+                        "status": "confirmed",
+                    },
+                    EVENT_DATE,
+                ]
+            ),
         ),
-        knowledge=make_knowledge(people=with_ashby),
+        knowledge=make_knowledge(people=with_alex),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    fact = built.story["facts"][0]
+    fact = wire(built)["facts"][0]
     assert fact["status"] == "confirmed"
     assert fact["source"] == "the narrator's own answer"
 
@@ -541,14 +608,16 @@ def test_build_story_event_date_fact_wins() -> None:
             who="Alex",
             title="T",
             account="We went to Marlock.",
-            extractions=[],
-            facts=[{"kind": "event_date", "text": "May 1963", "value": "1963-05", "precision": "month"}],
+            extractions=(),
+            facts=AssessmentFact.from_list(
+                [{"kind": "event_date", "text": "May 1963", "value": "1963-05", "precision": "month"}]
+            ),
         ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert built.story["date"] == "1963-05" and built.story["date_precision"] == "month"
+    assert wire(built)["date"] == "1963-05" and wire(built)["date_precision"] == "month"
 
 
 def test_build_story_unparseable_dob_stays_verbatim_for_the_keeper() -> None:
@@ -560,20 +629,22 @@ def test_build_story_unparseable_dob_stays_verbatim_for_the_keeper() -> None:
             who="Alex",
             title="T",
             account="I was born one winter.",
-            extractions=[],
-            facts=[
-                {"kind": "dob", "entity": None, "text": "born one winter", "value": None, "precision": None},
-                EVENT_DATE,
-            ],
+            extractions=(),
+            facts=AssessmentFact.from_list(
+                [
+                    {"kind": "dob", "entity": None, "text": "born one winter", "value": None, "precision": None},
+                    EVENT_DATE,
+                ]
+            ),
         ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    fact = built.story["facts"][0]
+    fact = wire(built)["facts"][0]
     assert fact["value"] is None and fact["precision"] is None
     assert fact["status"] == "proposed"  # the keeper resolves the phrase
-    assert built.story["date"] == "1963"  # the events date, not the recorded day
+    assert wire(built)["date"] == "1963"  # the events date, not the recorded day
 
 
 def test_build_story_new_narrator_record_carries_the_stated_dob() -> None:
@@ -583,19 +654,29 @@ def test_build_story_new_narrator_record_carries_the_stated_dob() -> None:
             who="Zofia",
             title="T",
             account="I was eight then.",
-            extractions=[],
-            facts=[
-                {"kind": "dob", "entity": None, "text": "born 15/09/1984", "value": "1984-09-15", "precision": "exact"},
-                {"kind": "age", "text": "I was eight", "value": 8, "precision": "approx"},
-            ],
+            extractions=(),
+            facts=AssessmentFact.from_list(
+                [
+                    {
+                        "kind": "dob",
+                        "entity": None,
+                        "text": "born 15/09/1984",
+                        "value": "1984-09-15",
+                        "precision": "exact",
+                    },
+                    {"kind": "age", "text": "I was eight", "value": 8, "precision": "approx"},
+                ]
+            ),
         ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert built.story["date"] == "1992" and built.story["date_precision"] == "approx"
-    narrator = [p for p in built.new_people if p["id"] == built.story["told_by"]][0]
-    assert narrator["dob"] == "1984-09-15"
+    assert wire(built)["date"] == "1992" and wire(built)["date_precision"] == "approx"
+    narrator = next(p for p in built.new_people if p.id == wire(built)["told_by"])
+    # the record carries the dob the account offered — as a dated fact, the
+    # shape the projection (and the app's person page) reads
+    assert narrator.dob == DatedFact("1984-09-15", "exact")
 
 
 def test_build_story_links_artifacts_and_leaves_unknowns_unresolved() -> None:
@@ -605,17 +686,31 @@ def test_build_story_links_artifacts_and_leaves_unknowns_unresolved() -> None:
             who="Alex",
             title="T",
             account="We sailed Sunlight and later a new boat Dad was building.",
-            extractions=[
-                {"kind": "item", "name": "Sunlight", "match": "object-sunlight", "bucket": "proposed", "reason": ""},
-                {"kind": "item", "name": "the new boat", "match": None, "bucket": "unresolved", "reason": "no match"},
-            ],
-            facts=[EVENT_DATE],
+            extractions=Extraction.from_list(
+                [
+                    {
+                        "kind": "item",
+                        "name": "Sunlight",
+                        "match": "object-sunlight",
+                        "bucket": "proposed",
+                        "reason": "",
+                    },
+                    {
+                        "kind": "item",
+                        "name": "the new boat",
+                        "match": None,
+                        "bucket": "unresolved",
+                        "reason": "no match",
+                    },
+                ]
+            ),
+            facts=AssessmentFact.from_list([EVENT_DATE]),
         ),
         knowledge=make_knowledge(),
         existing_ids=set(),
     )
-    assert {"id": "object-sunlight", "status": "proposed"} in built.story["items"]
-    assert len(built.story["items"]) == 1  # an artifact without a match stays unresolved
+    assert {"id": "object-sunlight", "status": "proposed"} in wire(built)["items"]
+    assert len(wire(built)["items"]) == 1  # an artifact without a match stays unresolved
 
 
 def test_build_story_catalogued_item_link_to_draft_artifact_is_proposed() -> None:
@@ -627,19 +722,25 @@ def test_build_story_catalogued_item_link_to_draft_artifact_is_proposed() -> Non
             who="Alex",
             title="T",
             account="We were babysat by the crew of the Mirosa.",
-            extractions=[
-                {"kind": "item", "name": "SB Mirosa", "match": "object-sb-mirosa", "bucket": "proposed", "reason": ""},
-            ],
-            facts=[EVENT_DATE],
+            extractions=Extraction.from_list(
+                [
+                    {
+                        "kind": "item",
+                        "name": "SB Mirosa",
+                        "match": "object-sb-mirosa",
+                        "bucket": "proposed",
+                        "reason": "",
+                    },
+                ]
+            ),
+            facts=AssessmentFact.from_list([EVENT_DATE]),
             status="catalogued",
         ),
-        knowledge=make_knowledge(
-            items=[{"id": "object-sb-mirosa", "title": "SB Mirosa", "type": "object", "status": "draft"}]
-        ),
+        knowledge=make_knowledge(items=[item("object-sb-mirosa", "SB Mirosa", status="draft")]),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert {"id": "object-sb-mirosa", "status": "proposed"} in built.story["items"]
+    assert {"id": "object-sb-mirosa", "status": "proposed"} in wire(built)["items"]
 
 
 def test_build_story_catalogued_item_link_to_catalogued_artifact_is_confirmed() -> None:
@@ -651,26 +752,33 @@ def test_build_story_catalogued_item_link_to_catalogued_artifact_is_confirmed() 
             who="Alex",
             title="T",
             account="We sailed Sunlight.",
-            extractions=[
-                {"kind": "item", "name": "Sunlight", "match": "object-sunlight", "bucket": "proposed", "reason": ""},
-            ],
-            facts=[EVENT_DATE],
+            extractions=Extraction.from_list(
+                [
+                    {
+                        "kind": "item",
+                        "name": "Sunlight",
+                        "match": "object-sunlight",
+                        "bucket": "proposed",
+                        "reason": "",
+                    },
+                ]
+            ),
+            facts=AssessmentFact.from_list([EVENT_DATE]),
             status="catalogued",
         ),
-        knowledge=make_knowledge(
-            items=[{"id": "object-sunlight", "title": "Sunlight", "type": "object", "status": "catalogued"}]
-        ),
+        knowledge=make_knowledge(items=[item("object-sunlight", "Sunlight")]),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert {"id": "object-sunlight", "status": "confirmed"} in built.story["items"]
+    assert {"id": "object-sunlight", "status": "confirmed"} in wire(built)["items"]
 
 
 def test_story_sidecar_serializes_typed_refs() -> None:
     """The Story domain object carries typed Ref links and serializes to
     the sidecar shape the archive writes (docs/coding-standards.md: a
     group's members are their own types)."""
-    from tools.memory import Ref, Story
+    from tools.memory import Story
+    from tools.ref import Ref
 
     story = Story(
         story_id="story-x",
@@ -692,7 +800,7 @@ def test_story_sidecar_serializes_typed_refs() -> None:
         facts=(),
         status="catalogued",
     )
-    sidecar = story.to_sidecar()
+    sidecar = story.to_sidecar().to_dict()
     assert sidecar["items"] == [{"id": "object-sunlight", "status": "confirmed"}]
     assert sidecar["status"] == "catalogued" and sidecar["type"] == "story"
 
@@ -734,10 +842,57 @@ def test_assess_strips_kinship_term_matches() -> None:
             )
         ]
     )
+    result = assess(
+        client,
+        anchor=ANCHOR,
+        who="Alex",
+        account="Dad came with me to Owen's boat.",
+        knowledge=make_knowledge(),
+    )
+    by_name = {ex.name: ex for ex in result.extractions}
+    assert by_name["Dad"].match is None, "bare kinship term kept a match"
+    assert by_name["Owen"].match == "p-dad", "a real name must keep its match"
+
+
+def test_assess_strips_a_link_the_account_never_names() -> None:
+    """A link stands on the account's own words. The account says "Dad"; the
+    extraction says "Owen" — the cast member whose record carries the alias
+    "Dad" — so the model reached into the archive for the name, and the link
+    asserts a record the narrator never named. The code tells the model why and
+    strips the link if the redo keeps it (2026-08-05)."""
+    ungrounded = json.dumps(
+        {
+            "title": "The house",
+            "extractions": [
+                {"kind": "person", "name": "Owen", "match": "p-dad", "bucket": "proposed", "reason": "about it"}
+            ],
+            "facts": [{"kind": "event_date", "entity": None, "text": "1963", "value": "1963", "precision": "year"}],
+            "questions": [],
+        }
+    )
+    client = FakeClient(assessor=[ungrounded] * 3, reviewer=['{"violations": []}'] * 3)
     result = assess(client, anchor=ANCHOR, who="Alex", account="Dad came with me.", knowledge=make_knowledge())
-    by_name = {ex["name"]: ex for ex in result["extractions"]}
-    assert by_name["Dad"]["match"] is None, "bare kinship term kept a match"
-    assert by_name["Owen"]["match"] == "p-dad", "a real name must keep its match"
+    assert any("never names" in user for _, user in client.calls), "the model was not told why"
+    assert result.extractions[0].match is None, "an ungrounded link survived"
+
+
+def test_assess_keeps_a_link_the_account_names() -> None:
+    """The same link, with the account naming the person: "Owen" is in the
+    story's words, so the link stands — the rule is grounding, not suspicion."""
+    grounded = json.dumps(
+        {
+            "title": "The house",
+            "extractions": [
+                {"kind": "person", "name": "Owen", "match": "p-dad", "bucket": "proposed", "reason": "about it"}
+            ],
+            "facts": [{"kind": "event_date", "entity": None, "text": "1963", "value": "1963", "precision": "year"}],
+            "questions": [],
+        }
+    )
+    client = make_client([grounded])
+    result = assess(client, anchor=ANCHOR, who="Alex", account="Owen came with me.", knowledge=make_knowledge())
+    assert result.extractions[0].match == "p-dad"
+    assert len(client.calls) == 3  # content, questions, clean review — no redo
 
 
 def test_build_story_reuses_an_existing_place_by_name() -> None:
@@ -751,18 +906,20 @@ def test_build_story_reuses_an_existing_place_by_name() -> None:
             who="Alex",
             title="T",
             account="We moored among the moored barges.",
-            extractions=[
-                {"kind": "place", "name": "the moored barges", "match": None, "bucket": "proposed", "reason": ""},
-            ],
-            facts=[EVENT_DATE],
+            extractions=Extraction.from_list(
+                [
+                    {"kind": "place", "name": "the moored barges", "match": None, "bucket": "proposed", "reason": ""},
+                ]
+            ),
+            facts=AssessmentFact.from_list([EVENT_DATE]),
             status="catalogued",
         ),
         knowledge=make_knowledge(places=[{"id": "pl-the-moored-barges", "name": "the moored barges"}]),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert {"id": "pl-the-moored-barges", "status": "confirmed"} in built.story["places"]
-    assert built.new_places == []  # no duplicate record minted
+    assert {"id": "pl-the-moored-barges", "status": "confirmed"} in wire(built)["places"]
+    assert built.new_places == ()  # no duplicate record minted
 
 
 def test_build_story_reuses_an_existing_person_by_name() -> None:
@@ -775,18 +932,20 @@ def test_build_story_reuses_an_existing_person_by_name() -> None:
             who="Alex",
             title="T",
             account="Nora was there.",
-            extractions=[
-                {"kind": "person", "name": "Nora Smith", "match": None, "bucket": "proposed", "reason": ""},
-            ],
-            facts=[EVENT_DATE],
+            extractions=Extraction.from_list(
+                [
+                    {"kind": "person", "name": "Nora Smith", "match": None, "bucket": "proposed", "reason": ""},
+                ]
+            ),
+            facts=AssessmentFact.from_list([EVENT_DATE]),
             status="catalogued",
         ),
         knowledge=make_knowledge(people=PEOPLE + [{"id": "p-nora", "name": "Nora Smith", "aliases": []}]),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert {"id": "p-nora", "status": "confirmed"} in built.story["people"]
-    assert built.new_people == []  # no duplicate record minted
+    assert {"id": "p-nora", "status": "confirmed"} in wire(built)["people"]
+    assert built.new_people == ()  # no duplicate record minted
 
 
 def test_build_story_kinship_term_reuses_an_existing_proposed_record() -> None:
@@ -802,43 +961,47 @@ def test_build_story_kinship_term_reuses_an_existing_proposed_record() -> None:
             who="Alex",
             title="T1",
             account="Grandma came.",
-            extractions=[
-                {"kind": "person", "name": "Grandma", "match": None, "bucket": "proposed", "reason": ""},
-            ],
-            facts=[EVENT_DATE],
+            extractions=Extraction.from_list(
+                [
+                    {"kind": "person", "name": "Grandma", "match": None, "bucket": "proposed", "reason": ""},
+                ]
+            ),
+            facts=AssessmentFact.from_list([EVENT_DATE]),
             status="catalogued",
         ),
         knowledge=make_knowledge(people=PEOPLE),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert len(built.new_people) == 1 and built.new_people[0]["name"] == "Grandma"
-    grandma_id = built.new_people[0]["id"]
+    assert len(built.new_people) == 1 and built.new_people[0].name == "Grandma"
+    grandma_id = built.new_people[0].id
 
     # the second story's standing knowledge includes the queued proposal as
     # the projection carries it (status proposed — the archive propose seam
     # marks it when the first story saves)
-    queued = [{**built.new_people[0], "status": "proposed"}]
+    queued = [person.to_dict() for person in built.new_people]
     built_second = build_story(
         request=StoryRequest(
             anchor=ANCHOR,
             who="Eli",
             title="T2",
             account="Grandma came too.",
-            extractions=[
-                {"kind": "person", "name": "Grandma", "match": None, "bucket": "proposed", "reason": ""},
-            ],
-            facts=[EVENT_DATE],
+            extractions=Extraction.from_list(
+                [
+                    {"kind": "person", "name": "Grandma", "match": None, "bucket": "proposed", "reason": ""},
+                ]
+            ),
+            facts=AssessmentFact.from_list([EVENT_DATE]),
             status="catalogued",
         ),
         knowledge=make_knowledge(people=PEOPLE + queued),
         existing_ids={grandma_id},
         recorded="2026-08-03",
     )
-    assert grandma_id in {r["id"] for r in built_second.story["people"]}
+    assert grandma_id in {r["id"] for r in wire(built_second)["people"]}
     # no duplicate Grandma mint — the only new record is the narrator Eli
-    assert all(p["name"] != "Grandma" for p in built_second.new_people)
-    assert [p["name"] for p in built_second.new_people] == ["Eli"]
+    assert all(p.name != "Grandma" for p in built_second.new_people)
+    assert [p.name for p in built_second.new_people] == ["Eli"]
 
 
 def test_build_story_kinship_term_stays_proposed_not_reused() -> None:
@@ -852,18 +1015,20 @@ def test_build_story_kinship_term_stays_proposed_not_reused() -> None:
             who="Alex",
             title="T",
             account="Grandma came.",
-            extractions=[
-                {"kind": "person", "name": "Grandma", "match": None, "bucket": "proposed", "reason": ""},
-            ],
-            facts=[EVENT_DATE],
+            extractions=Extraction.from_list(
+                [
+                    {"kind": "person", "name": "Grandma", "match": None, "bucket": "proposed", "reason": ""},
+                ]
+            ),
+            facts=AssessmentFact.from_list([EVENT_DATE]),
             status="catalogued",
         ),
         knowledge=make_knowledge(people=PEOPLE + [{"id": "p-x", "name": "X", "aliases": ["Grandma"]}]),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert {"id": "p-x", "status": "confirmed"} not in built.story["people"]
-    assert len(built.new_people) == 1 and built.new_people[0]["name"] == "Grandma"
+    assert {"id": "p-x", "status": "confirmed"} not in wire(built)["people"]
+    assert len(built.new_people) == 1 and built.new_people[0].name == "Grandma"
 
 
 def test_fact_round_trip_and_validation() -> None:
@@ -891,20 +1056,22 @@ def test_build_story_dedupes_anchor_and_extraction_refs() -> None:
     """The starting page and an extraction may name the same entity — one ref."""
     built = build_story(
         request=StoryRequest(
-            anchor={"kind": "place", "id": "pl-seagate", "name": "Seagate"},
+            anchor=SEAGATE,
             who="Alex",
             title="T",
             account="We sailed around Seagate.",
-            extractions=[
-                {"kind": "place", "name": "Seagate", "match": "pl-seagate", "bucket": "proposed", "reason": ""},
-            ],
-            facts=[EVENT_DATE],
+            extractions=Extraction.from_list(
+                [
+                    {"kind": "place", "name": "Seagate", "match": "pl-seagate", "bucket": "proposed", "reason": ""},
+                ]
+            ),
+            facts=AssessmentFact.from_list([EVENT_DATE]),
         ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert built.story["places"].count({"id": "pl-seagate", "status": "proposed"}) == 1
+    assert wire(built)["places"].count({"id": "pl-seagate", "status": "proposed"}) == 1
 
 
 def test_build_story_verified_save_is_catalogued_with_confirmed_refs() -> None:
@@ -913,41 +1080,45 @@ def test_build_story_verified_save_is_catalogued_with_confirmed_refs() -> None:
     abandoned one stays draft with proposed links (docs/CONTRIBUTIONS.md)."""
     built = build_story(
         request=StoryRequest(
-            anchor={"kind": "place", "id": "pl-seagate", "name": "Seagate"},
+            anchor=SEAGATE,
             who="Alex",
             title="T",
-            extractions=[
-                {"kind": "place", "name": "Seagate", "match": "pl-seagate", "bucket": "proposed", "reason": ""},
-            ],
+            extractions=Extraction.from_list(
+                [
+                    {"kind": "place", "name": "Seagate", "match": "pl-seagate", "bucket": "proposed", "reason": ""},
+                ]
+            ),
             account="We sailed around Seagate.",
-            facts=[EVENT_DATE],
+            facts=AssessmentFact.from_list([EVENT_DATE]),
             status="catalogued",
         ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert built.story["status"] == "catalogued"
-    assert built.story["places"] == [{"id": "pl-seagate", "status": "confirmed"}]
+    assert wire(built)["status"] == "catalogued"
+    assert wire(built)["places"] == [{"id": "pl-seagate", "status": "confirmed"}]
 
     built_abandoned = build_story(
         request=StoryRequest(
-            anchor={},
+            anchor=Anchor(),
             who="Alex",
             title="T",
             account="We sailed around Seagate.",
-            extractions=[
-                {"kind": "place", "name": "Seagate", "match": "pl-seagate", "bucket": "proposed", "reason": ""},
-            ],
-            facts=[EVENT_DATE],
+            extractions=Extraction.from_list(
+                [
+                    {"kind": "place", "name": "Seagate", "match": "pl-seagate", "bucket": "proposed", "reason": ""},
+                ]
+            ),
+            facts=AssessmentFact.from_list([EVENT_DATE]),
             status="draft",
         ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert built_abandoned.story["status"] == "draft"
-    assert built_abandoned.story["places"] == [{"id": "pl-seagate", "status": "proposed"}]
+    assert wire(built_abandoned)["status"] == "draft"
+    assert wire(built_abandoned)["places"] == [{"id": "pl-seagate", "status": "proposed"}]
 
 
 def test_build_story_ids_are_unique() -> None:
@@ -958,14 +1129,14 @@ def test_build_story_ids_are_unique() -> None:
             who="Alex",
             title="T",
             account="x",
-            extractions=[],
-            facts=[EVENT_DATE],
+            extractions=(),
+            facts=AssessmentFact.from_list([EVENT_DATE]),
         ),
         knowledge=make_knowledge(),
         existing_ids=existing,
         recorded="2026-08-03",
     )
-    assert built.story["id"] == "story-2026-08-03-02"
+    assert wire(built)["id"] == "story-2026-08-03-02"
 
 
 def test_resolve_pending_facts_asks_the_model_and_validates_with_the_parser() -> None:
@@ -981,8 +1152,8 @@ def test_resolve_pending_facts_asks_the_model_and_validates_with_the_parser() ->
         {"kind": "event_date", "entity": None, "text": "the summer of 1970", "value": None, "precision": None},
     ]
     out = resolve_pending_facts(Interpreter(), facts)
-    assert out[0]["value"] == "1970"
-    assert out[0]["precision"] == "approx"
+    assert out[0].value == "1970"
+    assert out[0].precision == "approx"
 
 
 def test_resolve_pending_facts_keeps_unparseable_answers_null_for_a_person() -> None:
@@ -996,8 +1167,8 @@ def test_resolve_pending_facts_keeps_unparseable_answers_null_for_a_person() -> 
         {"kind": "event_date", "entity": None, "text": "no idea", "value": None, "precision": None},
     ]
     out = resolve_pending_facts(Interpreter(), facts)
-    assert out[0]["value"] is None
-    assert out[0]["text"] == "no idea"
+    assert out[0].value is None
+    assert out[0].text == "no idea"
 
 
 def test_resolve_pending_facts_offline_save_keeps_the_fact_pending() -> None:
@@ -1006,7 +1177,7 @@ def test_resolve_pending_facts_offline_save_keeps_the_fact_pending() -> None:
     facts = [
         {"kind": "dob", "entity": None, "text": "31 July 1979", "value": None, "precision": None},
     ]
-    assert resolve_pending_facts(None, facts) == facts
+    assert [fact.to_dict() for fact in resolve_pending_facts(None, facts)] == facts
 
 
 def test_resolve_pending_facts_ignores_a_model_value_the_parser_rejects() -> None:
@@ -1020,100 +1191,100 @@ def test_resolve_pending_facts_ignores_a_model_value_the_parser_rejects() -> Non
         {"kind": "event_date", "entity": None, "text": "sometime", "value": None, "precision": None},
     ]
     out = resolve_pending_facts(Interpreter(), facts)
-    assert out[0]["value"] is None  # the parser rejected the assertion
+    assert out[0].value is None  # the parser rejected the assertion
 
 
 def test_filter_implausible_suggestions_drops_years_before_the_narrator_was_born() -> None:
     """A quick reply must never offer a date before the narrator was born —
     checkable in code from the facts (docs/coding-standards.md)."""
-    from tools.memory import _filter_implausible_suggestions
-
-    assessment = {
-        "title": "T",
-        "extractions": [],
-        "facts": [{"kind": "dob", "entity": "p-alex", "text": "born 1965", "value": "1965", "precision": "year"}],
-        "questions": [
-            {
-                "text": "When did this happen?",
-                "why": "",
-                "skippable": True,
-                "type": "date",
-                "date_kind": "event",
-                "suggestions": ["the summer of 1960", "1965", "around 1970"],
-            },
-        ],
-    }
-    out = _filter_implausible_suggestions(assessment, "Alex", make_knowledge())
-    assert out["questions"][0]["suggestions"] == ["1965", "around 1970"]
+    assessment = Assessment.from_dict(
+        {
+            "title": "T",
+            "extractions": [],
+            "facts": [{"kind": "dob", "entity": "p-alex", "text": "born 1965", "value": "1965", "precision": "year"}],
+            "questions": [
+                {
+                    "text": "When did this happen?",
+                    "why": "",
+                    "skippable": True,
+                    "type": "date",
+                    "date_kind": "event",
+                    "suggestions": ["the summer of 1960", "1965", "around 1970"],
+                },
+            ],
+        }
+    )
+    out = _AssessmentReview(assessment, "Alex", make_knowledge()).filter_implausible_suggestions()
+    assert list(out.questions[0].suggestions) == ["1965", "around 1970"]
 
 
 def test_filter_implausible_suggestions_uses_the_standing_knowledge_dob() -> None:
-    from tools.memory import _filter_implausible_suggestions
-
     people = [
-        {"id": "p-alex", "name": "Alex Hale", "aliases": ["Alex"], "dob": "1981-09-15"},
+        {"id": "p-alex", "name": "Alex Hale", "aliases": ["Alex"], "dob": dob("1981-09-15")},
     ]
-    assessment = {
-        "title": "T",
-        "extractions": [],
-        "facts": [],
-        "questions": [
-            {
-                "text": "When did this happen?",
-                "why": "",
-                "skippable": True,
-                "type": "date",
-                "date_kind": "event",
-                "suggestions": ["1975", "1985"],
-            },
-        ],
-    }
-    out = _filter_implausible_suggestions(assessment, "Alex", make_knowledge(people=people))
-    assert out["questions"][0]["suggestions"] == ["1985"]
+    assessment = Assessment.from_dict(
+        {
+            "title": "T",
+            "extractions": [],
+            "facts": [],
+            "questions": [
+                {
+                    "text": "When did this happen?",
+                    "why": "",
+                    "skippable": True,
+                    "type": "date",
+                    "date_kind": "event",
+                    "suggestions": ["1975", "1985"],
+                },
+            ],
+        }
+    )
+    out = _AssessmentReview(assessment, "Alex", make_knowledge(people=people)).filter_implausible_suggestions()
+    assert list(out.questions[0].suggestions) == ["1985"]
 
 
 def test_filter_implausible_suggestions_never_filters_a_dob_question() -> None:
-    from tools.memory import _filter_implausible_suggestions
-
-    assessment = {
-        "title": "T",
-        "extractions": [],
-        "facts": [{"kind": "dob", "entity": "p-alex", "text": "born 1965", "value": "1965", "precision": "year"}],
-        "questions": [
-            {
-                "text": "When were you born?",
-                "why": "",
-                "skippable": True,
-                "type": "date",
-                "date_kind": "dob",
-                "suggestions": ["the 1960s", "1965"],
-            },
-        ],
-    }
-    out = _filter_implausible_suggestions(assessment, "Alex", make_knowledge())
-    assert out["questions"][0]["suggestions"] == ["the 1960s", "1965"]
+    assessment = Assessment.from_dict(
+        {
+            "title": "T",
+            "extractions": [],
+            "facts": [{"kind": "dob", "entity": "p-alex", "text": "born 1965", "value": "1965", "precision": "year"}],
+            "questions": [
+                {
+                    "text": "When were you born?",
+                    "why": "",
+                    "skippable": True,
+                    "type": "date",
+                    "date_kind": "dob",
+                    "suggestions": ["the 1960s", "1965"],
+                },
+            ],
+        }
+    )
+    out = _AssessmentReview(assessment, "Alex", make_knowledge()).filter_implausible_suggestions()
+    assert list(out.questions[0].suggestions) == ["the 1960s", "1965"]
 
 
 def test_filter_implausible_suggestions_keeps_unparseable_suggestions() -> None:
-    from tools.memory import _filter_implausible_suggestions
-
-    assessment = {
-        "title": "T",
-        "extractions": [],
-        "facts": [{"kind": "dob", "entity": "p-alex", "text": "born 1965", "value": "1965", "precision": "year"}],
-        "questions": [
-            {
-                "text": "When did this happen?",
-                "why": "",
-                "skippable": True,
-                "type": "date",
-                "date_kind": "event",
-                "suggestions": ["when I was little", "the summer of 1970"],
-            },
-        ],
-    }
-    out = _filter_implausible_suggestions(assessment, "Alex", make_knowledge())
-    assert out["questions"][0]["suggestions"] == ["when I was little", "the summer of 1970"]
+    assessment = Assessment.from_dict(
+        {
+            "title": "T",
+            "extractions": [],
+            "facts": [{"kind": "dob", "entity": "p-alex", "text": "born 1965", "value": "1965", "precision": "year"}],
+            "questions": [
+                {
+                    "text": "When did this happen?",
+                    "why": "",
+                    "skippable": True,
+                    "type": "date",
+                    "date_kind": "event",
+                    "suggestions": ["when I was little", "the summer of 1970"],
+                },
+            ],
+        }
+    )
+    out = _AssessmentReview(assessment, "Alex", make_knowledge()).filter_implausible_suggestions()
+    assert list(out.questions[0].suggestions) == ["when I was little", "the summer of 1970"]
 
 
 def test_assess_keeps_a_people_question_type() -> None:
@@ -1129,22 +1300,20 @@ def test_assess_keeps_a_people_question_type() -> None:
         ]
     )
     result = assess(client, anchor=ANCHOR, who="Alex", account="We went to Marlock.", knowledge=make_knowledge())
-    assert result["questions"][0]["type"] == "people"
+    assert result.questions[0].type == "people"
 
 
 def test_exact_precision_is_demoted_to_what_the_value_supports() -> None:
     """An over-claimed "exact" on a bare year must never pin an invented
     day (PRD §6 — a vague memory is never a fake on-this-day)."""
-    from tools.memory import _normalize_date_fact
-
-    assert _normalize_date_fact("1963", "exact") == ("1963", "year")
-    assert _normalize_date_fact("1963", "month") == ("1963", "year")
-    assert _normalize_date_fact("1979-07", "exact") == ("1979-07", "month")
-    assert _normalize_date_fact("1981-09-15", "exact") == ("1981-09-15", "exact")
+    assert asserted_date("1963", "exact") == DatedFact("1963", "year")
+    assert asserted_date("1963", "month") == DatedFact("1963", "year")
+    assert asserted_date("1979-07", "exact") == DatedFact("1979-07", "month")
+    assert asserted_date("1981-09-15", "exact") == DatedFact("1981-09-15", "exact")
     # a non-ISO phrase can never claim an exact day — "July 1979" must not
     # become 1979-07-01 (reviewer, 2026-08-03; PRD §6)
-    assert _normalize_date_fact("July 1979", "exact") == ("1979-07", "month")
-    assert _normalize_date_fact("31 July 1979", "exact") == ("1979-07", "month")
+    assert asserted_date("July 1979", "exact") == DatedFact("1979-07", "month")
+    assert asserted_date("31 July 1979", "exact") == DatedFact("1979-07", "month")
 
 
 def test_build_story_emits_kind_text_for_testimony() -> None:
@@ -1156,14 +1325,14 @@ def test_build_story_emits_kind_text_for_testimony() -> None:
             who="Alex",
             title="T",
             account="We went to Marlock.",
-            extractions=[],
-            facts=[EVENT_DATE],
+            extractions=(),
+            facts=AssessmentFact.from_list([EVENT_DATE]),
         ),
         knowledge=make_knowledge(),
         existing_ids=set(),
         recorded="2026-08-03",
     )
-    assert built.story["kind"] == "text"
+    assert wire(built)["kind"] == "text"
 
 
 def test_build_story_requires_an_event_date() -> None:
@@ -1179,8 +1348,8 @@ def test_build_story_requires_an_event_date() -> None:
                 who="Alex",
                 title="T",
                 account="text",
-                extractions=[],
-                facts=[],
+                extractions=(),
+                facts=(),
             ),
             knowledge=make_knowledge(),
             existing_ids=set(),

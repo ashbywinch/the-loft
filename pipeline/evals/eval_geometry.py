@@ -15,9 +15,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import ceil
-from typing import Any, cast
+from typing import Any
 
-from pipeline.layout import Detection, Layout
+from pipeline.detection import Detection
+from pipeline.detection_pass import DetectionPass
+from pipeline.layout import Layout
+from pipeline.layout_line import LayoutLine
+from pipeline.model.orientation_line import OrientationLine
 from tools.box import overlap
 from tools.gates import validate_layout
 from tools.text import normalize
@@ -35,6 +39,17 @@ class TruthLine:
     position: int = 0
 
 
+@dataclass(frozen=True)
+class CropLine:
+    """One line the model read inside a crop: its text and its box in the
+    crop's OWN normalized 0-1000 frame (the model's geometry is trustworthy
+    only when the question is LOCAL)."""
+
+    text: str
+    box: list[float]
+    orientation: int = 0
+
+
 @dataclass
 class CropReading:
     """One crop's model reading: the crop's region in the
@@ -47,7 +62,7 @@ class CropReading:
     y: float
     w: float
     h: float
-    lines: list[dict[str, Any]]  # {text, box (normalized in the crop), orientation}
+    lines: list[CropLine]
 
 
 @dataclass(frozen=True)
@@ -89,7 +104,7 @@ class Fixture:
     def _vlm_text(self) -> str:
         return "\n".join(t.text for t in self.truth)
 
-    def baseline(self) -> dict[str, Any]:
+    def baseline(self) -> Layout:
         """The current pipeline: the transcription's own boxes (the marker
         geometry) anchor the single-orientation layout."""
         return Layout.single(
@@ -99,9 +114,9 @@ class Fixture:
             self._vlm_text(),
             self.detections,
             vlm_boxes=self.marker_boxes,
-        ).to_dict()
+        )
 
-    def rec_only(self) -> dict[str, Any]:
+    def rec_only(self) -> Layout:
         """Candidate: the rec association's ink-grounded boxes instead of
         the marker geometry (no vlm_boxes) — the misplaced-marker
         failing's proposed fix."""
@@ -112,27 +127,25 @@ class Fixture:
             self._vlm_text(),
             self.detections,
             vlm_boxes=None,
-        ).to_dict()
+        )
 
-    def multi(self) -> dict[str, Any]:
+    def multi(self) -> Layout:
         """The multi-orientation layout: the report LOCATES the known text
         at its true boxes (the truth, normalized), the passes validate."""
         report_lines = [
-            {
-                "index": i,
-                "box": [
+            OrientationLine(
+                index=i,
+                box=[
                     t.box[0] / self.width * 1000,
                     t.box[1] / self.height * 1000,
                     t.box[2] / self.width * 1000,
                     t.box[3] / self.height * 1000,
                 ],
-                "degrees": t.orientation,
-            }
+                degrees=t.orientation,
+            )
             for i, t in enumerate(self.truth)
         ]
-        passes: list[tuple[int, list[dict[str, Any]]]] = cast(
-            "list[tuple[int, list[dict[str, Any]]]]", [(0, self.detections)]
-        )
+        passes = [DetectionPass(degrees=0, lines=self.detections)]
         return Layout.multi(
             "p1.jpg",
             self.width,
@@ -141,9 +154,9 @@ class Fixture:
             report_lines=report_lines,
             vlm_text=self._vlm_text(),
             trust_report_degrees=True,
-        ).to_dict()
+        )
 
-    def crop_grid(self) -> dict[str, Any]:
+    def crop_grid(self) -> Layout:
         """The crop-grid candidate (2026-08-22): each crop's lines
         stitched into the page frame; the cross-crop duplicates drop;
         the lines read in the grid order. The text comes from the same
@@ -151,30 +164,30 @@ class Fixture:
         return assemble_crop_grid(self.crops or [], "p1.jpg", PageSize(self.width, self.height))
 
 
-def assemble_crop_grid(crops: list[CropReading], page: str, size: PageSize) -> dict[str, Any]:
+def assemble_crop_grid(crops: list[CropReading], page: str, size: PageSize) -> Layout:
     """The crop-grid assembly: each crop's lines stitched into the page
     frame; the cross-crop duplicates (the same line read in the
     overlapping crops) drop; the lines read in the grid order. The
     load-bearing seam of the geometry rework (2026-08-22) — shared by
     the fixture and the real runner."""
     width, height = int(size.width), int(size.height)
-    lines: list[dict[str, Any]] = []
+    lines: list[LayoutLine] = []
     for crop in crops:
         for line in crop.lines:
-            if any(normalize(existing["text"]) == normalize(line["text"]) for existing in lines):
+            if any(normalize(existing.text) == normalize(line.text) for existing in lines):
                 continue  # the cross-crop duplicate — keep the first (the grid order)
             lines.append(
-                {
-                    "index": len(lines),
-                    "text": line["text"],
-                    "box": stitch_crop_box(crop, line["box"]),
-                    "conf": 1.0,
-                    "words": [],
-                    "box_source": "crop",
-                    "orientation": int(line.get("orientation", 0)),
-                }
+                LayoutLine(
+                    index=len(lines),
+                    text=line.text,
+                    box=stitch_crop_box(crop, line.box),
+                    conf=1.0,
+                    words=[],
+                    box_source="crop",
+                    orientation=int(line.orientation),
+                )
             )
-    return {"page": page, "width": width, "height": height, "lines": lines, "unmatched": []}
+    return Layout(page=page, width=width, height=height, lines=lines, unmatched=[])
 
 
 @dataclass
@@ -194,28 +207,25 @@ def synthetic_letter() -> Fixture:
     margin lines (the page-03 failing — well-proportioned boxes ~200px
     above the real text). The detections carry the true boxes."""
     width, height = 1000, 2000
-    body = [
+    body: list[tuple[str, list[float]]] = [
         ("Chere Maman.", [60, 400, 940, 440]),
         ("I've come to the conclusion", [60, 450, 940, 490]),
         ("that it'll be best if I write", [60, 500, 940, 540]),
         ("some each day, so it won't", [60, 550, 940, 590]),
     ]
-    margin = [
+    margin: list[tuple[str, list[float]]] = [
         ("P.S. I had a whole Grade 3A", [60, 100, 460, 140]),
         ("theory paper to work before", [60, 150, 460, 190]),
         ("my first Theory lesson today.", [60, 200, 460, 240]),
     ]
-    address = [
+    address: list[tuple[str, list[float]]] = [
         ("Postmark 27.9.63", [540, 100, 940, 140]),
         ("Queen Alexandra's House,", [540, 150, 940, 190]),
     ]
     truth_lines = [
         TruthLine(text, list(box), 0, position) for position, (text, box) in enumerate(body + margin + address)
     ]
-    detections = cast(
-        "list[Detection]",
-        [{"box": list(box), "text": text, "score": 0.95, "words": []} for text, box in (body + margin + address)],
-    )
+    detections = [Detection(box=list(box), text=text, score=0.95, words=[]) for text, box in (body + margin + address)]
     # the injected failing: the transcription boxes for the margin lines
     # sit ~200px above the real text (well-proportioned, in the blank).
     # The marker boxes are the NORMALIZED 0-1000 frame (the layout's
@@ -268,46 +278,46 @@ def _crop_readings(truth_lines: list[TruthLine]) -> list[CropReading]:
         ]
         inside.sort(key=lambda t: t.position)
         crop.lines = [
-            {
-                "text": t.text,
-                "box": [
+            CropLine(
+                text=t.text,
+                box=[
                     (t.box[0] - crop.x) / crop.w * 1000,
                     (t.box[1] - crop.y) / crop.h * 1000,
                     (t.box[2] - crop.x) / crop.w * 1000,
                     (t.box[3] - crop.y) / crop.h * 1000,
                 ],
-                "orientation": t.orientation,
-            }
+                orientation=t.orientation,
+            )
             for t in inside
         ]
     return crops
 
 
-def _matching_line(layout: dict[str, Any], truth: TruthLine) -> dict[str, Any] | None:
+def _matching_line(layout: Layout, truth: TruthLine) -> LayoutLine | None:
     """The layout line whose normalized text matches the truth line's."""
     wanted = normalize(truth.text)
-    for line in layout["lines"]:
-        if normalize(line.get("text", "")) == wanted:
+    for line in layout.lines:
+        if normalize(line.text) == wanted:
             return line
     return None
 
 
-def measure(layout: dict[str, Any], fixture: Fixture) -> Metrics:
+def measure(layout: Layout, fixture: Fixture) -> Metrics:
     """The candidate's accuracy on the fixture: the mean anchor IoU over
     the matched lines, the orientation agreement, the reading-order
     agreement (the relative positions of the matched pairs), and the
     coverage."""
     ious: list[float] = []
     orientations_ok = 0
-    matched: list[tuple[TruthLine, dict[str, Any]]] = []
+    matched: list[tuple[TruthLine, LayoutLine]] = []
     for truth in fixture.truth:
         line = _matching_line(layout, truth)
         if line is None:
             continue
         matched.append((truth, line))
-        if line.get("box") and truth.box:
-            ious.append(overlap(line["box"], truth.box))
-        if int(line.get("orientation", 0)) == truth.orientation:
+        if line.box and truth.box:
+            ious.append(overlap(line.box, truth.box))
+        if int(line.orientation or 0) == truth.orientation:
             orientations_ok += 1
     order_ok = 0
     total_pairs = 0
@@ -315,7 +325,7 @@ def measure(layout: dict[str, Any], fixture: Fixture) -> Metrics:
         for tb, lb in matched[i + 1 :]:
             total_pairs += 1
             truth_ordered = ta.position < tb.position
-            layout_ordered = layout["lines"].index(la) < layout["lines"].index(lb)
+            layout_ordered = layout.lines.index(la) < layout.lines.index(lb)
             order_ok += truth_ordered == layout_ordered
     return Metrics(
         anchor_iou=sum(ious) / len(ious) if ious else 0.0,
@@ -345,16 +355,16 @@ def synthetic_postcard() -> Fixture:
     The report's located boxes carry the truth (the model LOCATED the
     known text); the pass detections are the rec's readings."""
     width, height = 1000, 1500
-    printed = [
+    printed: list[tuple[str, list[float], int]] = [
         ("POST CARD", [300, 30, 700, 80], 0),
         ("Printed in Great Britain", [300, 90, 700, 120], 0),
     ]
-    message = [
+    message: list[tuple[str, list[float], int]] = [
         ("We are from", [150, 200, 220, 700], 90),
         ("beauford & Mrs", [240, 200, 310, 700], 90),
         ("Hampshire", [330, 200, 400, 700], 90),
     ]
-    address = [
+    address: list[tuple[str, list[float], int]] = [
         ("Paul Wink", [500, 800, 900, 840], 0),
         ("47 Brighton Grove", [500, 850, 900, 890], 0),
     ]
@@ -362,10 +372,7 @@ def synthetic_postcard() -> Fixture:
     truth = [
         TruthLine(text, list(box), orientation, position) for position, (text, box, orientation) in enumerate(all_lines)
     ]
-    detections = cast(
-        "list[Detection]",
-        [{"box": list(box), "text": text, "score": 0.95, "words": []} for text, box, _ in all_lines],
-    )
+    detections = [Detection(box=list(box), text=text, score=0.95, words=[]) for text, box, _ in all_lines]
     marker_boxes = {
         i: [box[0] / width * 1000, box[1] / height * 1000, box[2] / width * 1000, box[3] / height * 1000]
         for i, (_, box, _) in enumerate(all_lines)
@@ -383,10 +390,7 @@ def duplicate_region_fixture() -> Fixture:
         TruthLine("We are from", [150, 200, 220, 700], orientation=90, position=0),
         TruthLine("beauford & Mrs", [240, 200, 310, 700], orientation=90, position=1),
     ]
-    detections = cast(
-        "list[Detection]",
-        [{"box": list(t.box), "text": t.text, "score": 0.95, "words": []} for t in truth],
-    )
+    detections = [Detection(box=list(t.box), text=t.text, score=0.95, words=[]) for t in truth]
     marker_boxes: dict[int, list[float]] = {0: [150.0, 200.0, 220.0, 700.0], 1: [150.0, 200.0, 220.0, 700.0]}
     return Fixture("duplicate-region", width, height, detections, marker_boxes, truth)
 
@@ -399,10 +403,7 @@ def loose_box_fixture() -> Fixture:
     the page."""
     width, height = 1000, 1500
     truth = [TruthLine("POSTAGE", [820, 300, 880, 320], orientation=0, position=0)]
-    detections = cast(
-        "list[Detection]",
-        [{"box": [820, 300, 880, 320], "text": "POSTAGE", "score": 0.95, "words": []}],
-    )
+    detections = [Detection(box=[820, 300, 880, 320], text="POSTAGE", score=0.95, words=[])]
     # the report's box: the same region but ~11x the width (the loose
     # estimate — 'POSTAGE' in a 680px box is 97 px/char, over Gate B's 80)
     marker_boxes = {0: [820 / width * 1000, 300 / height * 1000, 1500 / width * 1000, 320 / height * 1000]}
@@ -465,7 +466,7 @@ class ClipLocation:
         self.batch_size = batch_size
 
     @staticmethod
-    def __call__(fixture: Fixture) -> dict[str, Any]:
+    def __call__(fixture: Fixture) -> Layout:
         report_lines = []
         for i, t in enumerate(fixture.truth):
             marker = fixture.marker_boxes.get(i) if fixture.marker_boxes else None
@@ -481,21 +482,19 @@ class ClipLocation:
                 locatable = False
             if locatable:
                 report_lines.append(
-                    {
-                        "index": i,
-                        "box": [
+                    OrientationLine(
+                        index=i,
+                        box=[
                             t.box[0] / fixture.width * 1000,
                             t.box[1] / fixture.height * 1000,
                             t.box[2] / fixture.width * 1000,
                             t.box[3] / fixture.height * 1000,
                         ],
-                        "degrees": t.orientation,
-                    }
+                        degrees=t.orientation,
+                    )
                 )
         vlm_text = "\n".join(t.text for t in fixture.truth)
-        passes: list[tuple[int, list[dict[str, Any]]]] = cast(
-            "list[tuple[int, list[dict[str, Any]]]]", [(0, fixture.detections)]
-        )
+        passes = [DetectionPass(degrees=0, lines=fixture.detections)]
         return Layout.multi(
             "p1.jpg",
             fixture.width,
@@ -504,7 +503,7 @@ class ClipLocation:
             report_lines=report_lines or None,
             vlm_text=vlm_text,
             trust_report_degrees=True,
-        ).to_dict()
+        )
 
 
 def batch_sweep(fixtures: list[Fixture], batch_sizes: list[int]) -> str:

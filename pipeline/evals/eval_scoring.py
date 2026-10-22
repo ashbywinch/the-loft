@@ -11,8 +11,9 @@ coverage numbers."""
 
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
 
+from pipeline.layout import Layout
 from tools.text import words
 
 
@@ -32,23 +33,48 @@ def _lcs_matches(a: list[str], b: list[str]) -> int:
     return dp[n][m]
 
 
-def score_page(truth_text: str, layout: dict[str, Any] | None) -> dict[str, float | int]:
+@dataclass(frozen=True)
+class PageScore:
+    """One page's transcription score against its reference: the matched
+    and total normalized word tokens, and whether the page was refused.
+    The coverage is the pair's own ratio — a refused page has no coverage
+    at all, and an empty reference is trivially covered."""
+
+    matched: int
+    total: int
+    refused: int  # 1 when the page was refused — captured, never wrong text
+
+    def __post_init__(self) -> None:
+        if self.refused and self.matched:
+            raise ValueError(f"a refused page is never scored for text, got {self.matched} matches")
+
+    @property
+    def coverage(self) -> float:
+        """The matched share of the reference's tokens."""
+        if self.refused:
+            return 0.0
+        return (self.matched / self.total) if self.total else 1.0
+
+    @classmethod
+    def refused_page(cls, total: int) -> PageScore:
+        """The score a refused page carries — captured, never failed."""
+        return cls(matched=0, total=total, refused=1)
+
+    @classmethod
+    def served(cls, matched: int, total: int) -> PageScore:
+        """The score a served page carries."""
+        return cls(matched=matched, total=total, refused=0)
+
+
+def score_page(truth_text: str, layout: Layout | None) -> PageScore:
     """A page's transcription score: the LONGEST COMMON SUBSEQUENCE of
     the reference's and the served layout's NORMALIZED WORD TOKENS,
     over the whole page — granularity-invariant (handwriting wraps at
     arbitrary points, so line-level matching is meaningless), still
     penalizing reordering, tolerant of insertions/omissions. Refused
     pages count as refused, never as wrong text."""
-    if layout is None:
-        return {"matched": 0, "total": len(words(truth_text)), "refused": 1, "coverage": 0.0}
-    served = " ".join(ln.get("text", "") for ln in layout.get("lines", []) if ln.get("text"))
     truth_tokens = words(truth_text)
-    served_tokens = words(served)
-    matched = _lcs_matches(truth_tokens, served_tokens)
-    total = len(truth_tokens)
-    return {
-        "matched": matched,
-        "total": total,
-        "refused": 0,
-        "coverage": (matched / total) if total else 1.0,
-    }
+    if layout is None:
+        return PageScore.refused_page(len(truth_tokens))
+    served = " ".join(line.text for line in layout.lines if line.text)
+    return PageScore.served(_lcs_matches(truth_tokens, words(served)), len(truth_tokens))

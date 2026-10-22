@@ -113,3 +113,32 @@ class Word:
         Its x-height measurement is a guess, not a word's - the page discards
         it when it averages its own size."""
         return self.width < 0.75 * self.height
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> Word:
+        """The word a words.json record describes: its box plus the
+        detector's measures, each absent measure left unmeasured."""
+        return cls(
+            float(raw["x0"]),
+            float(raw["y0"]),
+            float(raw["x1"]),
+            float(raw["y1"]),
+            WordMeasurements(
+                baseline=raw.get("baseline"),
+                waistline=raw.get("waistline"),
+                font_size=float(raw.get("font_size", 0.0)),
+                line=raw.get("line"),
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """The word as its words.json record — the box and the measures it
+        has (an unmeasured word carries no measure keys)."""
+        out: dict[str, Any] = {"x0": self.x0, "y0": self.y0, "x1": self.x1, "y1": self.y1}
+        if self.line is not None:
+            out["line"] = self.line
+        if self.baseline is not None:
+            out["baseline"] = self.baseline
+        if self.waistline is not None:
+            out["waistline"] = self.waistline
+        return out

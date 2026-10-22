@@ -21,20 +21,24 @@ from __future__ import annotations
 
 import datetime
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, replace
 from datetime import UTC
 from typing import Any, Literal, TypeVar, cast
 
+from tools.asset import Asset
+from tools.date_mention import DateMention
+from tools.dated_fact import PRECISIONS, DatedFact, viable_date
+from tools.gone_person import GonePerson
+from tools.ref import Ref
+from tools.split_item import SplitItem
+from tools.theme import Theme
+
 RELATIONSHIP_KINDS = frozenset({"spouse", "parent", "sibling", "inlaw", "teacher"})
 
-# The date-precision vocabulary (GEDCOM alignment): exact /
-# month / year express granularity (a year-only date is exact at year
-# granularity, never uncertainty); approx = about; before / after / between
-# carry bounds the artifacts actually state ("Aft. 1881", "Bet. 1880-1881").
-# ``between`` carries the upper bound in date2.
-PRECISIONS = frozenset({"exact", "month", "year", "approx", "before", "after", "between"})
-
+# The date-precision vocabulary lives with the dated fact that carries it
+# (tools/dated_fact.py) — PRECISIONS is imported here for the item's own
+# date_precision field.
 # The place-coordinate granularity: how precisely the stored
 # point locates the place. "" = unset (treated as a point); exact = the
 # coordinate is the place (street address, surveyed point); street = the
@@ -64,34 +68,19 @@ EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 RECORD_ID_RE = re.compile(r"^[a-z][a-z0-9-]*$")
 
-MONTHS_IN_YEAR = 12  # the date-form validation's month bound
-
 
 def is_valid_record_id(record_id: str) -> bool:
     return bool(RECORD_ID_RE.fullmatch(record_id))
 
 
-def _viable_date(value: str) -> bool:
-    """A real calendar date in the archive's flexible forms: YYYY,
-    YYYY-MM, or YYYY-MM-DD with valid month and day — 2026-99-99 and
-    2026-02-31 are not dates. The granularity stays the precision's
-    business; the form just has to be true."""
-    m = re.fullmatch(r"(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?", value)
-    if not m:
-        return False
-    month, day = m.group(2), m.group(3)  # lucidlint: ignore magic-number fixed regex capture-group
-    # indices — (\d{4})(?:-(\d{2})(?:-(\d{2}))?)?
-    if month and not 1 <= int(month) <= MONTHS_IN_YEAR:
-        return False
-    if day:
-        try:
-            datetime.date(int(m.group(1)), int(month), int(day))
-        except ValueError:
-            return False
-    return True
+def _dated(raw: Mapping[str, Any], key: str) -> DatedFact | None:
+    """The dated fact a record's field states (dob, dod, a relationship
+    date) — None when the field is absent."""
+    value = raw.get(key)
+    return None if not value else DatedFact.from_dict(value, key)
 
 
-def _required_value(raw: dict[str, Any], key: str, vocab: frozenset[str], label: str) -> str:
+def _required_value(raw: Mapping[str, Any], key: str, vocab: frozenset[str], label: str) -> str:
     """A required field whose value must be one of the closed vocabulary —
     the standard 'unknown {label}' error names the field."""
     value = _require(raw, key)
@@ -100,40 +89,11 @@ def _required_value(raw: dict[str, Any], key: str, vocab: frozenset[str], label:
     return value
 
 
-def _require(raw: dict[str, Any], key: str) -> str:
+def _require(raw: Mapping[str, Any], key: str) -> str:
     value = str(raw.get(key, "")).strip()
     if not value:
         raise ValueError(f"missing required field {key!r}")
     return value
-
-
-def _date_field_value(value: Any, key: str, field: str, missing: str) -> str:
-    """One required date field of a dated fact: present, non-empty, and a
-    real calendar date. ``missing`` is the absent-field clause of the error
-    (everything after ``{key} ``)."""
-    parsed = str(value.get(field, "")).strip()
-    if not parsed:
-        raise ValueError(f"{key} {missing}")
-    if not _viable_date(parsed):
-        raise ValueError(f"{key} has an impossible date {parsed!r}")
-    return parsed
-
-
-def _parse_dated(value: Any, key: str) -> dict[str, str] | None:
-    """A dated fact: {date, precision, date2?} — the person dob/dod shape,
-    shared with relationship dates (a marriage's date rides the spouse edge).
-    None when the field is absent; raises on a malformed one."""
-    if not value:
-        return None
-    date_str = _date_field_value(value, key, field="date", missing="needs a date")
-    precision = str(value.get("precision", "exact"))
-    if precision not in PRECISIONS:
-        raise ValueError(f"{key} has unknown precision {precision!r}")
-    out = {"date": date_str, "precision": precision}
-    if precision == "between":
-        date2 = _date_field_value(value, key, field="date2", missing="with precision 'between' needs date2")
-        out["date2"] = date2
-    return out
 
 
 # The record statuses (people, places, orgs, and relationships). The
@@ -149,7 +109,7 @@ def _parse_dated(value: Any, key: str) -> dict[str, str] | None:
 RECORD_STATUSES = frozenset({"confirmed", "proposed", "estimated"})
 
 
-def _status(raw: dict[str, Any]) -> Literal["confirmed", "proposed", "estimated"]:
+def _status(raw: Mapping[str, Any]) -> Literal["confirmed", "proposed", "estimated"]:
     status = str(raw.get("status", "confirmed"))
     if status not in RECORD_STATUSES:
         raise ValueError(f"bad record status: {status!r}")
@@ -160,14 +120,15 @@ TRecord = TypeVar("TRecord")
 
 
 def _unique_records(  # noqa: UP047  # pyrefly cannot infer PEP-695 T from the Callable argument; the TypeVar infers at each call site
-    raw: dict[str, Any], key: str, record_type: Callable[[dict[str, Any]], TRecord], label: str
+    raw: Mapping[str, Any], key: str, record_type: Callable[[dict[str, Any]], TRecord], label: str
 ) -> tuple[TRecord, ...]:
     """Parse one identity table's records and enforce unique ids — the
-    shared construction of the people/places/orgs tables."""
+    shared construction of the people/places/orgs/themes/imports tables."""
     records = tuple(record_type(r) for r in raw.get(key, []))
     # the constructor contract: every record class passed here (Person,
-    # Place, Org) carries ``id`` — pyrefly cannot express that bound for
-    # frozen dataclasses, so the cast states the proven contract
+    # Place, Org, Theme, Session) carries ``id`` — pyrefly cannot express
+    # that bound for frozen dataclasses, so the cast states the proven
+    # contract
     ids = [cast(Any, r).id for r in records]
     if len(ids) != len(set(ids)):
         dupes = sorted({i for i in ids if ids.count(i) > 1})
@@ -175,19 +136,12 @@ def _unique_records(  # noqa: UP047  # pyrefly cannot infer PEP-695 T from the C
     return records
 
 
-def _put_optional(out: dict[str, Any], key: str, value: Any) -> None:
-    """Add an optional field to a record's serialized dict — an absent
-    value stays absent (the projection drops nulls)."""
-    if value is not None:
-        out[key] = value
-
-
 @dataclass(frozen=True)
 class Person:
     """A cast member record — confirmed or proposed, one type. Serializes
     to the identity-table shape; the status appears only when proposed.
-    ``dob``/``dod`` are {date, precision} — honest precision, never a fake
-    exact date; ``occupations`` are forms attested in the artifacts.
+    ``dob``/``dod`` are DatedFacts — honest precision, never a fake exact
+    date; ``occupations`` are forms attested in the artifacts.
     ``residence`` records where they lived and when — {place, from, to,
     status} — the household rule, modelled as residence events (GEDCOM X
     alignment: a residence is the person's fact, not a place's
@@ -202,8 +156,8 @@ class Person:
     relation: str = ""
     bio: str = ""
     hue: str | None = None
-    dob: dict[str, str] | None = None
-    dod: dict[str, str] | None = None
+    dob: DatedFact | None = None
+    dod: DatedFact | None = None
     occupations: tuple[str, ...] = ()
     residence: tuple[dict[str, Any], ...] = ()
     status: Literal["confirmed", "proposed", "estimated"] = "confirmed"
@@ -218,9 +172,6 @@ class Person:
         record_id = _require(raw, "id")
         if not is_valid_record_id(record_id):
             raise ValueError(f"invalid record id: {record_id!r}")
-
-        def _date_field(key: str) -> dict[str, str] | None:
-            return _parse_dated(raw.get(key), key)
 
         residence = raw.get("residence") or []
         for entry in residence:
@@ -252,11 +203,12 @@ class Person:
             relation=str(raw.get("relation", "")),
             bio=str(raw.get("bio", "")),
             hue=raw.get("hue"),
-            dob=_date_field("dob"),
-            dod=_date_field("dod"),
+            dob=_dated(raw, "dob"),
+            dod=_dated(raw, "dod"),
             occupations=tuple(str(o) for o in (raw.get("occupations") or [])),
             residence=tuple(dict(e) for e in residence),
             status=_status(raw),
+            basis=basis,
         )
 
     def as_proposed(self) -> Person:
@@ -279,8 +231,10 @@ class Person:
         out["bio"] = self.bio
         if self.hue is not None:
             out["hue"] = self.hue
-        _put_optional(out, "dob", self.dob)
-        _put_optional(out, "dod", self.dod)
+        if self.dob is not None:
+            out["dob"] = self.dob.to_dict()
+        if self.dod is not None:
+            out["dod"] = self.dod.to_dict()
         if self.occupations:
             out["occupations"] = list(self.occupations)
         if self.residence:
@@ -369,7 +323,7 @@ class Relationship:
     kind: str
     label_a: str
     label_b: str
-    date: dict[str, str] | None = None
+    date: DatedFact | None = None
     status: Literal["confirmed", "proposed", "estimated"] | None = None
 
     @classmethod
@@ -386,7 +340,7 @@ class Relationship:
             kind=kind,
             label_a=str(raw.get("label_a", "")),
             label_b=str(raw.get("label_b", "")),
-            date=_parse_dated(raw.get("date"), "relationship date"),
+            date=_dated(raw, "date"),
             status=status,
         )
 
@@ -399,7 +353,7 @@ class Relationship:
             "label_b": self.label_b,
         }
         if self.date is not None:
-            out["date"] = self.date
+            out["date"] = self.date.to_dict()
         if self.status is not None:
             out["status"] = self.status
         return out
@@ -432,6 +386,67 @@ class PeopleTable:
             "relationships": [r.to_dict() for r in self.relationships],
         }
 
+    def has(self, person_id: str) -> bool:
+        """Is this id in the table?"""
+        return any(p.id == person_id for p in self.people)
+
+    def record(self, person_id: str) -> Person | None:
+        """The table's record for one id, or None — the id is the identity."""
+        return next((p for p in self.people if p.id == person_id), None)
+
+    def with_record(self, person: Person) -> PeopleTable:
+        """The table with *person* replacing their own record — or appended
+        when the id is new."""
+        if self.has(person.id):
+            return replace(self, people=tuple(person if p.id == person.id else p for p in self.people))
+        return replace(self, people=self.people + (person,))
+
+    def dismissed(self, person_id: str) -> PeopleTable:
+        """The table without *person_id* or their relationships. A missing
+        person fails loudly (never a silent no-op); the delete determination
+        applies to whoever the table holds, confirmed or not."""
+        person = self.record(person_id)
+        # a missing person is an error to raise, never a silent stand-in
+        if person is None:
+            raise KeyError(f"no person {person_id}")
+        return replace(
+            self,
+            people=tuple(p for p in self.people if p.id != person_id),
+            relationships=tuple(r for r in self.relationships if r.a != person_id and r.b != person_id),
+        )
+
+    def resolved(
+        self, person_id: str, decision: str, basis: dict[str, str] | None
+    ) -> tuple[PeopleTable, Person | GonePerson | None]:
+        """The table after one review determination, and the record as it now
+        stands. The decision vocabulary is NOT the status vocabulary —
+        ``confirm`` is a status, never an action: ``attested`` -> confirmed (the
+        reviewer's own verified word); ``estimated`` -> the status estimated with
+        the recorded basis; ``pending`` -> nothing changes (the determination is
+        the transcript's); ``delete`` -> the person leaves the table.
+
+        Every determination is applied to the record as it stands: the archive is
+        append-only, so a later determination supersedes an earlier one and
+        nothing is dismissed as stale (2026-10-21, user — staleness is not
+        tracked). An id the table does not hold has nothing to apply and returns
+        None."""
+        person = self.record(person_id)
+        if person is None:
+            return self, None
+        if decision == "pending":
+            return self, person
+        if decision == "delete":
+            return self.dismissed(person_id), GonePerson(person_id)
+        if decision == "estimated":
+            if basis is None or not str(basis.get("text", "")).strip():
+                raise ValueError(f"estimated needs a basis: {person_id}")
+            updated = replace(person, status="estimated", basis=basis)
+            return self.with_record(updated), updated
+        if decision == "attested":
+            updated = person.as_confirmed()
+            return self.with_record(updated), updated
+        raise ValueError(f"unknown decision: {decision!r}")
+
 
 @dataclass(frozen=True)
 class PlacesTable:
@@ -449,6 +464,17 @@ class PlacesTable:
 
     def to_dict(self) -> dict[str, Any]:
         return {"places": [p.to_dict() for p in self.places]}
+
+    def has(self, place_id: str) -> bool:
+        """Is this id in the table?"""
+        return any(p.id == place_id for p in self.places)
+
+    def with_record(self, place: Place) -> PlacesTable:
+        """The table with *place* replacing its own record — or appended when
+        the id is new."""
+        if self.has(place.id):
+            return replace(self, places=tuple(place if p.id == place.id else p for p in self.places))
+        return replace(self, places=self.places + (place,))
 
 
 @dataclass(frozen=True)
@@ -520,6 +546,26 @@ class OrgsTable:
 
     def to_dict(self) -> dict[str, Any]:
         return {"orgs": [o.to_dict() for o in self.orgs]}
+
+
+@dataclass(frozen=True)
+class ThemesTable:
+    """The themes identity table — the curator's arrangements: unique ids,
+    every record named. The records themselves are carried verbatim (a
+    theme is the curator's editorial object)."""
+
+    themes: tuple[Theme, ...] = ()
+    supersedes: str | None = None
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> ThemesTable:
+        return cls(
+            themes=_unique_records(raw, key="themes", record_type=Theme.from_dict, label="theme"),
+            supersedes=raw.get("supersedes"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"themes": [t.to_dict() for t in self.themes]}
 
 
 @dataclass(frozen=True)
@@ -704,6 +750,40 @@ class Session:
 
 
 @dataclass(frozen=True)
+class ImportsTable:
+    """The import-session table — one record per import walk: the review's
+    sessions, unique by id."""
+
+    imports: tuple[Session, ...] = ()
+    supersedes: str | None = None
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> ImportsTable:
+        return cls(
+            imports=_unique_records(raw, key="imports", record_type=Session.from_dict, label="import session"),
+            supersedes=raw.get("supersedes"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"imports": [s.to_dict() for s in self.imports]}
+
+    def has(self, session_id: str) -> bool:
+        """Is this session already in the table?"""
+        return any(s.id == session_id for s in self.imports)
+
+    def with_session(self, session: Session) -> ImportsTable:
+        """The table with *session* present — an existing record with the same
+        id is replaced in place (the id is the identity), never duplicated."""
+        if self.has(session.id):
+            return replace(self, imports=tuple(session if s.id == session.id else s for s in self.imports))
+        return replace(self, imports=self.imports + (session,))
+
+    def completed(self) -> ImportsTable:
+        """Every pending session done — the import is finished."""
+        return replace(self, imports=tuple(s.completed() if s.status == "pending" else s for s in self.imports))
+
+
+@dataclass(frozen=True)
 class ReviewContext:
     """The archive's attested facts the review's investigation reads — the
     people (deaths, relations), the recorded items' stories, and the
@@ -735,7 +815,7 @@ CONTENT_FILES: dict[str, str] = {"story": "story.txt", "transcription": "transcr
 CONTENT_CAPTIONS: dict[str, str] = {"story": "The story, verbatim", "transcription": "The transcription"}
 
 
-def _capture_transcription(sidecar: dict[str, Any], content: dict[str, str]) -> None:
+def _capture_transcription(sidecar: MutableMapping[str, Any], content: dict[str, str]) -> None:
     """Move the transcription out of the sidecar — it is primary content,
     not metadata — and, when present, keep it as a content file."""
     transcription = sidecar.pop("transcription", "") or ""
@@ -743,14 +823,14 @@ def _capture_transcription(sidecar: dict[str, Any], content: dict[str, str]) -> 
         content["transcription"] = transcription
 
 
-def split_content(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+def split_content(item: Item) -> SplitItem:
     """Separate primary content from metadata at the write seam (capture,
     import): the story text (story-type items) and the transcription
     (letters/documents) become content files; descriptions — the story field
-    on photos and objects — stay as metadata. Returns (sidecar, content);
-    feed both to ``Archive.save_item``. The inverse of the derive engine's
-    embedding (tools/derive.py)."""
-    sidecar = dict(item)
+    on photos and objects — stay as metadata. Returns the item's sidecar and
+    its content files; feed both to ``Archive.save_item``. The inverse of
+    the derive engine's embedding (tools/derive.py)."""
+    sidecar = dict(item.raw)
     content: dict[str, str] = {}
     item_type = sidecar["type"]
     if item_type == "story":
@@ -762,10 +842,10 @@ def split_content(item: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]
         _capture_transcription(sidecar, content)
     else:  # photo, object — the story field is a description, keep it
         sidecar.pop("transcription", None)
-    return sidecar, content
+    return SplitItem(sidecar=Item(sidecar), content=content)
 
 
-def _story_flag(raw: dict[str, Any], item_type: str, key: str, story_message: str, allow_story: bool) -> Any:
+def _story_flag(raw: Mapping[str, Any], item_type: str, key: str, story_message: str, allow_story: bool) -> Any:
     """One story flag (clarification, reflection, evidence): absent or a
     boolean, and the flag's own story rule must hold — the write seam
     fails loudly on anything else."""
@@ -824,36 +904,32 @@ class Item:
         return bool(self.raw.get("sensitive"))
 
     @property
-    def story(self) -> str:
-        return str(self.raw.get("story", ""))
+    def people_refs(self) -> tuple[Ref, ...]:
+        return _refs(self.raw, "people")
 
     @property
-    def people_refs(self) -> list[dict[str, Any]]:
-        return list(self.raw.get("people") or [])
+    def place_refs(self) -> tuple[Ref, ...]:
+        return _refs(self.raw, "places")
 
     @property
-    def place_refs(self) -> list[dict[str, Any]]:
-        return list(self.raw.get("places") or [])
+    def org_refs(self) -> tuple[Ref, ...]:
+        return _refs(self.raw, "orgs")
 
     @property
-    def org_refs(self) -> list[dict[str, Any]]:
-        return list(self.raw.get("orgs") or [])
+    def item_refs(self) -> tuple[Ref, ...]:
+        return _refs(self.raw, "items")
 
     @property
-    def item_refs(self) -> list[dict[str, Any]]:
-        return list(self.raw.get("items") or [])
+    def theme_refs(self) -> tuple[Ref, ...]:
+        return _refs(self.raw, "themes")
 
     @property
-    def theme_refs(self) -> list[dict[str, Any]]:
-        return list(self.raw.get("themes") or [])
+    def date_mentions(self) -> tuple[DateMention, ...]:
+        return tuple(DateMention.from_dict(m) for m in self.raw.get("date_mentions") or [])
 
     @property
-    def date_mentions(self) -> list[dict[str, Any]]:
-        return list(self.raw.get("date_mentions") or [])
-
-    @property
-    def assets(self) -> list[dict[str, Any]]:
-        return list(self.raw.get("assets") or [])
+    def assets(self) -> tuple[Asset, ...]:
+        return tuple(Asset.from_dict(a) for a in self.raw.get("assets") or [])
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Item:
@@ -875,12 +951,12 @@ class Item:
         _require(raw, "title")
         _require(raw, "date")
         precision = _required_value(raw, key="date_precision", vocab=PRECISIONS, label="date precision")
-        if not _viable_date(str(raw.get("date", ""))):
+        if not viable_date(str(raw.get("date", ""))):
             # fail loudly at the write seam — an item with no viable date is
             # invisible or misdated everywhere; the whole form
             # must parse, not just the year prefix: 2026-99-99 is not a date
             raise ValueError(f"date is not parseable: {raw.get('date')!r}")
-        if precision == "between" and not _viable_date(str(raw.get("date2", ""))):
+        if precision == "between" and not viable_date(str(raw.get("date2", ""))):
             raise ValueError(f"date2 is not parseable: {raw.get('date2')!r}")
         _validate_refs(raw.get("people"), "people")
         _validate_refs(raw.get("places"), "places")
@@ -929,8 +1005,24 @@ class Item:
             raise ValueError("an evidence record must attest someone or somewhere (people, places or items)")
         return item
 
+    @classmethod
+    def tombstone(cls, item_id: str, reason: str, current: Item | None = None) -> Item:
+        """The tombstone that supersedes a deleted item — the marker shape
+        (id/type/title/status/reason only; the old files stay forever).
+        ``current`` is the item as it stands, so its own type and title
+        survive the delete; a missing item falls back to the archive's own
+        words."""
+        item_type = current.type if current is not None else "item"
+        title = current.title if current is not None and current.title else item_id
+        return cls({"id": item_id, "type": item_type, "title": title, "status": "deleted", "reason": reason})
+
     def to_dict(self) -> dict[str, Any]:
         return dict(self.raw)
+
+
+def _refs(raw: Mapping[str, Any], kind: str) -> tuple[Ref, ...]:
+    """The item's refs of one kind, typed — the accessors' one construction."""
+    return tuple(Ref.from_dict(r, kind) for r in raw.get(kind) or [])
 
 
 def _validate_refs(refs: Any, label: str) -> None:
@@ -940,49 +1032,41 @@ def _validate_refs(refs: Any, label: str) -> None:
     (a family record's entries, a guest book's signatures, a logbook's
     boats)."""
     for ref in refs or []:
-        if not str(ref.get("id", "")).strip():
-            raise ValueError(f"{label} ref missing id: {ref!r}")
-        status = ref.get("status")
-        if status not in (None, "proposed", "confirmed"):
-            raise ValueError(f"{label} ref has bad status: {ref!r}")
-        if ref.get("date") is not None:
-            _parse_dated(ref.get("date"), f"{label} ref date")
+        Ref.from_dict(ref, label)
 
 
 def _validate_assets(assets: Any) -> None:
     for asset in assets or []:
-        if not str(asset.get("kind", "")).strip() or not str(asset.get("file", "")).strip():
-            raise ValueError(f"asset needs kind and file: {asset!r}")
+        Asset.from_dict(asset)
 
 
 def _validate_date_mentions(mentions: Any) -> None:
     for mention in mentions or []:
-        if not str(mention.get("date", "")).strip():
-            raise ValueError(f"date_mention missing date: {mention!r}")
-        precision = mention.get("precision", "exact")
-        if precision not in PRECISIONS:
-            raise ValueError(f"date_mention has unknown precision: {mention!r}")
+        DateMention.from_dict(mention)
 
 
-def validate_identity(name: str, raw: dict[str, Any]) -> dict[str, Any]:
-    """Validate one identity table and return its projection shape —
-    ``supersedes`` stripped (the chain is archive-internal, not content).
-    Raises ValueError on any invariant break; derive wraps it as a
-    DeriveError so a bad table fails publish loudly."""
-    if name == "people":
-        return PeopleTable.from_dict(raw).to_dict()
-    if name == "places":
-        return PlacesTable.from_dict(raw).to_dict()
-    if name == "orgs":
-        return OrgsTable.from_dict(raw).to_dict()
-    if name == "themes":
-        themes = raw.get("themes", [])
-        ids = [str(t.get("id", "")) for t in themes]
-        if len(ids) != len(set(ids)):
-            dupes = sorted({i for i in ids if ids.count(i) > 1})
-            raise ValueError(f"duplicate theme ids: {dupes}")
-        for theme in themes:
-            if not str(theme.get("id", "")).strip() or not str(theme.get("title", "")).strip():
-                raise ValueError("theme records need id and title")
-        return {"themes": themes}
+IdentityTable = PeopleTable | PlacesTable | OrgsTable | ThemesTable | ImportsTable
+
+
+# The identity tables, by the name the archive's store knows them by — one
+# typed record per name, the publish seam's dispatch.
+_IDENTITY_TABLES: tuple[tuple[str, type[IdentityTable]], ...] = (
+    ("people", PeopleTable),
+    ("places", PlacesTable),
+    ("orgs", OrgsTable),
+    ("themes", ThemesTable),
+    ("imports", ImportsTable),
+)
+
+
+def validate_identity(name: str, table: Mapping[str, Any]) -> IdentityTable:
+    """Parse one identity table's wire record, validated — the publish
+    seam's one entry (``supersedes`` is dropped: the chain is
+    archive-internal, not content). Raises ValueError on any invariant
+    break; derive wraps it as a DeriveError so a bad table fails publish
+    loudly."""
+    record = dict(table)
+    for table_name, table_type in _IDENTITY_TABLES:
+        if table_name == name:
+            return table_type.from_dict(record)
     raise ValueError(f"unknown identity table: {name}")

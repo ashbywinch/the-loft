@@ -22,6 +22,7 @@ import hashlib
 import re
 from pathlib import Path
 
+from pipeline.path_suffix import PathSuffix
 from tools.store import DiskStore, FileStore, StoreError
 
 # The version suffix pattern: "base-42.json" captures 42.
@@ -133,13 +134,4 @@ def _versioned_path(path: str, version: int) -> str:
         raise ValueError(f"version must be >= 1, got {version}")
     if version == 1:
         return path
-    stem, ext = _split_suffix(path)
-    return f"{stem}-{version}{ext}"
-
-
-def _split_suffix(path: str) -> tuple[str, str]:
-    """Split into (stem, ext) — the last ``.json`` or ``.txt`` suffix."""
-    dot = path.rfind(".")
-    if dot == -1:
-        return path, ""
-    return path[:dot], path[dot:]
+    return PathSuffix.split(path).with_version(version)

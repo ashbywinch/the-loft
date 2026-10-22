@@ -43,7 +43,7 @@ def _process_page(image: Path, guess_dir: Path) -> None:
     guess = guess_path.read_text(encoding="utf-8")
     print(f"selfreport: {image.name} — asking the model…", flush=True)
     unsure = selfreport_words(image, guess)
-    atomic_write(out, json.dumps(unsure, indent=1, ensure_ascii=False) + "\n")
+    atomic_write(out, json.dumps([word.to_dict() for word in unsure], indent=1, ensure_ascii=False) + "\n")
     print(f"selfreport: {image.name} -> {len(unsure)} unsure words -> {out.name}")
 
 

@@ -13,6 +13,7 @@ import json
 import pytest
 
 from pipeline.evals.eval_scoring import score_page
+from pipeline.layout import Layout
 from tools.loft_paths import WORK_DIR
 
 REFS = WORK_DIR / "eval-htr" / "reference-lines.json"
@@ -34,15 +35,15 @@ def test_serving_coverage_stays_above_the_floor() -> None:
     refused = 0
     for batch, page, refkey in pages:
         lp = WORK_DIR / batch / "ocr-guess" / f"{page}.layout.json"
-        layout = json.loads(lp.read_text(encoding="utf-8")) if lp.is_file() else None
+        layout = Layout.from_dict(json.loads(lp.read_text(encoding="utf-8"))) if lp.is_file() else None
         s = score_page(" ".join(refs[refkey]), layout)
-        refused += s["refused"]
-        if not s["refused"]:
+        refused += s.refused
+        if not s.refused:
             scores.append(s)
-    serving = [s for s in scores if not s["refused"]]
+    serving = [s for s in scores if not s.refused]
     assert serving, "no serving pages in the reference set to score"
-    matched = sum(s["matched"] for s in serving)
-    total = sum(s["total"] for s in serving)
+    matched = sum(s.matched for s in serving)
+    total = sum(s.total for s in serving)
     coverage = matched / total
     assert coverage >= FLOOR, (
         f"serving coverage dropped to {coverage:.2f} (floor {FLOOR}); {refused} pages refused (captured, not failed)"

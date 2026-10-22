@@ -70,7 +70,7 @@ def join_band(left: Rectangle, right: Rectangle) -> Rectangle:
     return Rectangle(left.x1, mid - height / 2, right.x0, mid + height / 2)
 
 
-def tint_row(draw: ImageDraw.ImageDraw, boxes: Sequence[Rectangle], row: Sequence[int], colour: Colour) -> None:  # noqa: E501
+def tint_row(draw: ImageDraw.ImageDraw, boxes: Sequence[Rectangle], row: Sequence[int], colour: Colour) -> None:
     """One row as tinted rectangles: each word's bounds, joined by the minimal
     bands. No outline: the ink stays the loudest thing on the page."""
     ordered = sorted(row, key=lambda i: boxes[i].x0)

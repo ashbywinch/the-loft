@@ -90,13 +90,15 @@ def test_reading_for_page_carries_the_words(tmp_path: Path) -> None:
     reading = reading_for_page(Image.open(page))
     assert (reading.width, reading.height) == (PAGE_W, PAGE_H)
     assert len(reading.lines) == LINES, f"{LINES} lines drawn, {len(reading.lines)} read"
-    assert reading.words == cli_words, "the reading's words differ from the CLI reading's"
-    assert {frozenset(w) for w in reading.words} == {
+    assert [word.to_dict() for word in reading.words] == cli_words, "the reading's words differ from the CLI reading's"
+    assert {frozenset(word.to_dict()) for word in reading.words} == {
         frozenset({"x0", "y0", "x1", "y1", "line", "baseline", "waistline"})
     }
     # every word names one of the reading's own lines, and carries its ink lines
-    assert {w["line"] for w in reading.words} <= {line["index"] for line in reading.lines}
-    assert all(w["baseline"] > w["waistline"] for w in reading.words)
+    assert {word.line for word in reading.words} <= {line["index"] for line in reading.lines}
+    for word in reading.words:
+        assert word.baseline is not None and word.waistline is not None, "every word carries its measured ink lines"
+        assert word.baseline > word.waistline
 
 
 def test_every_word_is_inside_exactly_one_box(detected) -> None:

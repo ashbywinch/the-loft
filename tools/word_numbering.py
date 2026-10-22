@@ -35,6 +35,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 from document.colour import Colour
 from document.rectangle import Rectangle
+from tools.chip import Chip
+from tools.chip_extent import ChipExtent
+from tools.numbered_render import NumberedRender
+from tools.numbered_word import NumberedWord
+from tools.numbering_candidate import NumberingCandidate
 
 Box = tuple[float, float, float, float]  # x0, y0, x1, y1, page px
 
@@ -79,16 +84,16 @@ def _text_bbox(text: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont) ->
     return Rectangle(*draw.textbbox((0, 0), text, font=font))
 
 
-def chip_extent(text: str, font_size: float) -> tuple[float, float]:
-    """The chip's (width, height) for a number: the text's bounding box at
-    that font, plus the ring pad, capped at MAX_CHIP — the chip's bbox
-    matches the font size, never larger than the cap."""
+def chip_extent(text: str, font_size: float) -> ChipExtent:
+    """The chip's extent for a number: the text's bounding box at that
+    font, plus the ring pad, capped at MAX_CHIP — the chip's bbox matches
+    the font size, never larger than the cap."""
     font = _font_at(max(7, round(font_size)))
     tb = _text_bbox(text, font)
     width = float(tb[2] - tb[0] + 2 * CHIP_PAD)
     height = float(tb[3] - tb[1] + 2 * CHIP_PAD)
     if width <= MAX_CHIP and height <= MAX_CHIP:
-        return (width, height)
+        return ChipExtent(width, height)
     # the number is too wide for the cap: shrink the font so the TEXT fits
     # (the padding is not linear in the font size), then clamp the final
     # result so glyph rounding can never exceed the cap
@@ -97,7 +102,7 @@ def chip_extent(text: str, font_size: float) -> tuple[float, float]:
     text_height = height - 2 * CHIP_PAD
     font = _font_at(max(7, round(font_size * target / max(text_width, text_height))))
     tb = _text_bbox(text, font)
-    return (
+    return ChipExtent(
         min(float(tb[2] - tb[0] + 2 * CHIP_PAD), MAX_CHIP),
         min(float(tb[3] - tb[1] + 2 * CHIP_PAD), MAX_CHIP),
     )
@@ -110,18 +115,6 @@ def _base_font(box: Box) -> float:
 
 
 @dataclass(frozen=True)
-class Chip:
-    """A word's number chip: which render id it carries, its footprint and
-    the font size its text is drawn at."""
-
-    render_id: int  # 1-based, the number drawn on the chip
-    rect: Box  # section px: the text bbox + CHIP_PAD, clamped to MAX_CHIP
-    colour: Colour
-    verdict: str  # "corner" | "above" | "below" | "left" | "right" | perimeter | UNPLACED
-    font_size: float  # section px: the size the number is drawn at
-
-
-@dataclass(frozen=True)
 class NumberedWords:
     """The staged numbering of a section's words — what stage 2 produces and
     stage 3 paints: the words, their scaled section-px boxes and the placed
@@ -131,7 +124,7 @@ class NumberedWords:
 
     section: Box
     scale: float
-    words: list[dict]
+    words: list[NumberedWord]
     scaled: list[Box]
     chips: list[Chip]
 
@@ -146,7 +139,7 @@ def numbered_order(words: list[Box]) -> list[int]:
     return sorted(range(len(words)), key=lambda i: (words[i][1] + words[i][3]) / 2 + words[i][0] / 1e6)
 
 
-def candidates(box: Box, width: float, height: float) -> list[tuple[str, Box]]:
+def candidates(box: Box, width: float, height: float) -> list[NumberingCandidate]:
     """A word's placement positions in order — the plan's "above, below,
     left, right, then further along the perimeter". The first position whose
     rect collides with no other word's box wins."""
@@ -156,22 +149,30 @@ def candidates(box: Box, width: float, height: float) -> list[tuple[str, Box]]:
     w, h = width, height
     box_w, box_h = x1 - x0, y1 - y0
     return [
-        ("corner", (x0 - gap - w, y0 - gap - h, x0 - gap, y0 - gap)),
-        ("above", (cx - w / 2, y0 - gap - h, cx + w / 2, y0 - gap)),
-        ("below", (cx - w / 2, y1 + gap, cx + w / 2, y1 + gap + h)),
-        ("left", (x0 - gap - w, cy - h / 2, x0 - gap, cy + h / 2)),
-        ("right", (x1 + gap, cy - h / 2, x1 + gap + w, cy + h / 2)),
-        ("top-right", (x1 + gap, y0 - gap - h, x1 + gap + w, y0 - gap)),
-        ("bottom-left", (x0 - gap - w, y1 + gap, x0 - gap, y1 + gap + h)),
-        ("bottom-right", (x1 + gap, y1 + gap, x1 + gap + w, y1 + gap + h)),
-        ("above-left", (x0 + box_w / 3 - w / 2, y0 - gap - h, x0 + box_w / 3 + w / 2, y0 - gap)),
-        ("above-right", (x0 + 2 * box_w / 3 - w / 2, y0 - gap - h, x0 + 2 * box_w / 3 + w / 2, y0 - gap)),
-        ("below-left", (x0 + box_w / 3 - w / 2, y1 + gap, x0 + box_w / 3 + w / 2, y1 + gap + h)),
-        ("below-right", (x0 + 2 * box_w / 3 - w / 2, y1 + gap, x0 + 2 * box_w / 3 + w / 2, y1 + gap + h)),
-        ("left-top", (x0 - gap - w, y0 + box_h / 3 - h / 2, x0 - gap, y0 + box_h / 3 + h / 2)),
-        ("left-bottom", (x0 - gap - w, y0 + 2 * box_h / 3 - h / 2, x0 - gap, y0 + 2 * box_h / 3 + h / 2)),
-        ("right-top", (x1 + gap, y0 + box_h / 3 - h / 2, x1 + gap + w, y0 + box_h / 3 + h / 2)),
-        ("right-bottom", (x1 + gap, y0 + 2 * box_h / 3 - h / 2, x1 + gap + w, y0 + 2 * box_h / 3 + h / 2)),
+        NumberingCandidate("corner", (x0 - gap - w, y0 - gap - h, x0 - gap, y0 - gap)),
+        NumberingCandidate("above", (cx - w / 2, y0 - gap - h, cx + w / 2, y0 - gap)),
+        NumberingCandidate("below", (cx - w / 2, y1 + gap, cx + w / 2, y1 + gap + h)),
+        NumberingCandidate("left", (x0 - gap - w, cy - h / 2, x0 - gap, cy + h / 2)),
+        NumberingCandidate("right", (x1 + gap, cy - h / 2, x1 + gap + w, cy + h / 2)),
+        NumberingCandidate("top-right", (x1 + gap, y0 - gap - h, x1 + gap + w, y0 - gap)),
+        NumberingCandidate("bottom-left", (x0 - gap - w, y1 + gap, x0 - gap, y1 + gap + h)),
+        NumberingCandidate("bottom-right", (x1 + gap, y1 + gap, x1 + gap + w, y1 + gap + h)),
+        NumberingCandidate("above-left", (x0 + box_w / 3 - w / 2, y0 - gap - h, x0 + box_w / 3 + w / 2, y0 - gap)),
+        NumberingCandidate(
+            "above-right", (x0 + 2 * box_w / 3 - w / 2, y0 - gap - h, x0 + 2 * box_w / 3 + w / 2, y0 - gap)
+        ),
+        NumberingCandidate("below-left", (x0 + box_w / 3 - w / 2, y1 + gap, x0 + box_w / 3 + w / 2, y1 + gap + h)),
+        NumberingCandidate(
+            "below-right", (x0 + 2 * box_w / 3 - w / 2, y1 + gap, x0 + 2 * box_w / 3 + w / 2, y1 + gap + h)
+        ),
+        NumberingCandidate("left-top", (x0 - gap - w, y0 + box_h / 3 - h / 2, x0 - gap, y0 + box_h / 3 + h / 2)),
+        NumberingCandidate(
+            "left-bottom", (x0 - gap - w, y0 + 2 * box_h / 3 - h / 2, x0 - gap, y0 + 2 * box_h / 3 + h / 2)
+        ),
+        NumberingCandidate("right-top", (x1 + gap, y0 + box_h / 3 - h / 2, x1 + gap + w, y0 + box_h / 3 + h / 2)),
+        NumberingCandidate(
+            "right-bottom", (x1 + gap, y0 + 2 * box_h / 3 - h / 2, x1 + gap + w, y0 + 2 * box_h / 3 + h / 2)
+        ),
     ]
 
 
@@ -198,60 +199,61 @@ def place_chips(boxes: list[Box], order: list[int]) -> list[Chip]:
     for render_id, word_index in enumerate(order, start=1):
         box = boxes[word_index]
         text = str(render_id)
-        chosen: tuple[str, Box, float] | None = None
+        chosen: NumberingCandidate | None = None
+        chosen_font = 0.0
         for fraction in CHIP_SHRINK_STEPS:
             font_size = max(MIN_FONT, _base_font(box) * fraction)
-            width, height = chip_extent(text, font_size)
-            for verdict, rect in candidates(box, width, height):
-                blocked = any(_intersects(rect, other) for other in occupied if other is not box)
-                blocked = blocked or any(_intersects(rect, other) for other in placed_rects)
+            size = chip_extent(text, font_size)
+            for candidate in candidates(box, size.width, size.height):
+                blocked = any(_intersects(candidate.rect, other) for other in occupied if other is not box)
+                blocked = blocked or any(_intersects(candidate.rect, other) for other in placed_rects)
                 if not blocked:
-                    chosen = (verdict, rect, font_size)
+                    chosen, chosen_font = candidate, font_size
                     break
             if chosen is not None:
                 break
         if chosen is None:
-            width, height = chip_extent(text, _base_font(box))
-            chosen = (UNPLACED, candidates(box, width, height)[0][1], _base_font(box))
-        verdict, rect, font_size = chosen
+            size = chip_extent(text, _base_font(box))
+            corner = candidates(box, size.width, size.height)[0]
+            chosen, chosen_font = NumberingCandidate(UNPLACED, corner.rect), _base_font(box)
         chips.append(
             Chip(
                 render_id=render_id,
-                rect=rect,
+                rect=chosen.rect,
                 colour=Colour(*PALETTE[word_index % len(PALETTE)]),
-                verdict=verdict,
-                font_size=font_size,
+                verdict=chosen.verdict,
+                font_size=chosen_font,
             )
         )
-        if verdict != UNPLACED:
-            placed_rects.append(rect)
+        if chosen.verdict != UNPLACED:
+            placed_rects.append(chosen.rect)
     return chips
 
 
-def number_words(boxes: list[Box]) -> list[dict]:
+def number_words(boxes: list[Box]) -> list[NumberedWord]:
     """Stage 1 — calculate: every word's render id, hue, and box, in reading
     order. Pure data, no pixels: the pipeline stage the render draws and the
-    tests / locate logic read. One entry per word: render_id, page_index,
-    box (page px), colour."""
+    tests / locate logic read. One record per word: its render id, the index
+    it held in *boxes*, its box (page px) and its hue."""
     return [
-        {
-            "render_id": render_id,
-            "page_index": word_index,
-            "box": boxes[word_index],
-            "colour": PALETTE[word_index % len(PALETTE)],
-        }
+        NumberedWord(
+            render_id=render_id,
+            page_index=word_index,
+            box=boxes[word_index],
+            colour=PALETTE[word_index % len(PALETTE)],
+        )
         for render_id, word_index in enumerate(numbered_order(boxes), start=1)
     ]
 
 
-def place_numbering(words: list[dict], section: Box, scale: float) -> NumberedWords:
+def place_numbering(words: list[NumberedWord], section: Box, scale: float) -> NumberedWords:
     """Stage 2 — calculate: scale the numbered words into section pixels and
     place every chip collision-free. The staged record is still no pixels;
     `draw_numbering` is the only stage that paints."""
     x0, y0, _x1, _y1 = section
     scaled = [
-        ((b[0] - x0) * scale, (b[1] - y0) * scale, (b[2] - x0) * scale, (b[3] - y0) * scale)
-        for b in [w["box"] for w in words]
+        ((word.box[0] - x0) * scale, (word.box[1] - y0) * scale, (word.box[2] - x0) * scale, (word.box[3] - y0) * scale)
+        for word in words
     ]
     order = numbered_order(scaled)
     return NumberedWords(
@@ -280,8 +282,8 @@ def draw_numbering(page: Image.Image, staged: NumberedWords) -> Image.Image:
     draw = ImageDraw.Draw(image)
     box_width = max(2, round(scale))
     for entry in words:
-        x0w, y0w, x1w, y1w = scaled[entry["page_index"]]
-        draw.rectangle((x0w, y0w, x1w, y1w), outline=entry["colour"], width=box_width)
+        x0w, y0w, x1w, y1w = scaled[entry.page_index]
+        draw.rectangle((x0w, y0w, x1w, y1w), outline=entry.colour, width=box_width)
     for chip in chips:
         if chip.verdict == UNPLACED:
             continue  # the caller reports the unplaced words; never draw a lie
@@ -308,11 +310,11 @@ def render_numbered(
     section: Box,
     boxes: list[Box],
     scale: float,
-) -> tuple[Image.Image, list[Chip]]:
+) -> NumberedRender:
     """The numbered image: stages 1–3 composed — number, place, draw."""
     words = number_words(boxes)
     staged = place_numbering(words, section, scale)
-    return draw_numbering(page, staged), staged.chips
+    return NumberedRender(image=draw_numbering(page, staged), chips=staged.chips)
 
 
 def unplaced(chips: list[Chip]) -> list[int]:

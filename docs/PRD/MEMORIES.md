@@ -95,10 +95,11 @@ Every question is skippable ("Don't know / Skip"); the set is bounded (~5,
 progress shows "2 of 5"). Ambiguity → a question, never a proposal; every
 proposal is proposed.
 
-The assessment **self-corrects**: genuine violations (mentions linked,
-impossible matches, redundant questions, missing polite date questions) are
-fed back for a bounded redo; a date computed from an age + a known date of
-birth is derived deterministically, never asked of the model. The evals
+The assessment **self-corrects**: genuine violations (a link named something
+the account never says, mentions linked, impossible matches, redundant
+questions, missing polite date questions) are fed back for a bounded redo; a
+date computed from an age + a known date of birth is derived deterministically,
+never asked of the model. The evals
 cover a fictional family as well as the real one, so nothing is overfit to
 one household. **No person is special-cased** — the narrator resolves like
 anyone else; curation is a role anyone can hold, not a person record.

@@ -36,8 +36,19 @@ import sys
 import time
 import urllib.parse
 import urllib.request
+from collections.abc import Callable
+from pathlib import Path
 from typing import override
 from urllib.error import HTTPError
+
+# CI runs this as a FILE (`python3 pipeline/evals/check_review_posted.py`), so
+# sys.path[0] is this script's own directory and the repo root — the `pipeline`
+# package — is absent: without the bootstrap the gate dies with
+# ModuleNotFoundError before reading a comment, and every PR's review check
+# goes red for a reason unrelated to the review (2026-10-21).
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from pipeline.model.http_headers import HttpHeaders  # noqa: E402 — the bootstrap above must run first
 
 BOT_STEP_MARK = "Run the-pr-agent/pr-agent"
 
@@ -59,20 +70,27 @@ _TRACEBACK_TAIL = 12  # lines after a traceback/marker worth reporting
 
 class _GitHub:
     """The API client this check speaks: every call carries the same token and
-    asks for the same JSON accept header, so they travel as this class's state."""
+    asks for the same JSON accept header, so they travel as this class's state.
+    The transport is injected (the repo's DI convention) — the tests drive the
+    real client through a fake opener, never a patched global."""
 
-    def __init__(self, token: str) -> None:
+    def __init__(self, token: str, open_url: Callable[[urllib.request.Request], bytes] | None = None) -> None:
         self.token = token
+        self._open = open_url or (lambda req: urllib.request.urlopen(req).read())
 
-    def get(self, url: str, accept: str = "application/vnd.github+json") -> bytes:
+    def get(self, url: str, accept: str = "application/vnd.github+json", token: str = "") -> bytes:
         req = urllib.request.Request(
             url,
-            headers={"Authorization": f"Bearer {self.token}", "Accept": accept},
+            headers=HttpHeaders(authorization=f"Bearer {token or self.token}", accept=accept).to_dict(),
         )
-        return urllib.request.urlopen(req).read()
+        return self._open(req)
 
-    def get_json(self, url: str):
-        return json.loads(self.get(url))
+    def get_json(self, url: str, token: str = ""):
+        """The gate's fetch seam is ``fetch(url, token)`` (the tests inject
+        exactly that): the argument is honoured, the instance's token is the
+        default — passing the bound method straight to ``run_review_gate``
+        used to raise TypeError before the first API call (2026-10-17)."""
+        return json.loads(self.get(url, token=token))
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -103,7 +121,7 @@ def _job_log(repo: str, token: str) -> str | None:
             return None
         req = urllib.request.Request(
             f"https://api.github.com/repos/{repo}/actions/jobs/{jobs['jobs'][0]['id']}/logs",
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            headers=HttpHeaders(authorization=f"Bearer {token}", accept="application/vnd.github+json").to_dict(),
         )
         try:
             return _OPENER.open(req).read().decode("utf-8", errors="replace")

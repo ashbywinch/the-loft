@@ -21,10 +21,11 @@ from PIL import Image, ImageDraw, ImageFont
 
 from document.colour import Colour
 from document.numbered_rows import NumberedRows
-from document.schemas import load_user_row_adjustments
-from document.word import Word
+from document.page_size import PageSize
 from pipeline.rows.render import render_rows
 from pipeline.rows.rows import Rows
+from pipeline.transcribe.row_texts import RowTexts
+from pipeline.transcribe.transcripts import drawn_lines, words_from
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 ANSWER = Path("work/eval-rows-transcript/page-01.answer.json")
@@ -59,7 +60,7 @@ def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         return ImageFont.load_default()
 
 
-def _texts(answer: str, rows: int) -> tuple[dict[int, str], dict[int, str]]:
+def _readings(answer: str) -> RowTexts:
     """The reading per row number, and its kind. A refused answer is still
     worth seeing, so an answer that fails the contract is read as it parses."""
     segments = json.loads(answer)["segments"]
@@ -69,7 +70,7 @@ def _texts(answer: str, rows: int) -> tuple[dict[int, str], dict[int, str]]:
         for number in segment.get("rows", []):
             texts[number] = segment.get("transcript", "")
             kinds[number] = segment.get("type", "body")
-    return texts, kinds
+    return RowTexts(texts=texts, kinds=kinds)
 
 
 def main() -> None:
@@ -77,22 +78,8 @@ def main() -> None:
     page = Image.open(SCAN).convert("RGB")
     # the CORRECT rows: the rows the reviewer's drawn lines make — the reading
     # and the highlight are both about those, never the geometry's draft
-    rows = Rows.from_words(
-        [
-            Word(
-                w["x0"],
-                w["y0"],
-                w["x1"],
-                w["y1"],
-                baseline=w.get("baseline"),
-                waistline=w.get("waistline"),
-                line=w.get("line"),
-            )
-            for w in json.loads(WORDS.read_text(encoding="utf-8"))["words"]
-        ],
-        (page.width, page.height),
-    ).adjust(load_user_row_adjustments(LINES)["lines"])
-    texts, kinds = _texts(answer, len(rows))
+    rows = Rows.from_words(words_from(WORDS), PageSize(page.width, page.height)).adjust(drawn_lines(LINES))
+    readings = _readings(answer)
     print(f"the rows are the correction's: {len(rows)} from {LINES.name}")
 
     # the highlight is the house renderer's (each row's words tinted in its own
@@ -103,7 +90,7 @@ def main() -> None:
     height = TEXT_SIZE + 8
     entries: list[list[str]] = []
     for row in rows:
-        text = texts.get(row.number) or "(no reading)"
+        text = readings.texts.get(row.number) or "(no reading)"
         prefix = f"{row.number}   "
         wrapped = textwrap.wrap(text, max(1, (COLUMN - 2 * MARGIN - _width(text_font, prefix)) // (TEXT_SIZE // 2)))
         entries.append([prefix + (wrapped[0] if wrapped else "")] + [" " * 6 + line for line in wrapped[1:]])

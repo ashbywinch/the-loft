@@ -11,9 +11,13 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from document.word import Word
+from document.words import Words
 from pipeline.chain import _guess_prompt, _read_pages, apply_routes, guess_pages, review
 from pipeline.detect.reader import Reading
+from pipeline.page_text import PageText
 from pipeline.registry import RegistryError
+from pipeline.rotation_scores import RotationScores
 from pipeline.store import PipelineStore
 
 
@@ -30,7 +34,7 @@ def _reading() -> Reading:
                 "words": [0],
             }
         ],
-        words=[{"x0": 1.0, "y0": 1.0, "x1": 9.0, "y1": 9.0, "line": 0, "baseline": 9.0, "waistline": 1.0}],
+        words=[Word(1.0, 1.0, 9.0, 9.0, line=0, baseline=9.0, waistline=1.0)],
         width=40,
         height=40,
     )
@@ -69,7 +73,7 @@ def test_read_pages_writes_the_rows_the_model_read_and_the_words(tmp_path: Path)
 
     rows = json.loads((guess / "p1.rows.json").read_text(encoding="utf-8"))
     assert rows["lines"][0]["text"] == "the model read this row"
-    assert json.loads((guess / "p1.words.json").read_text(encoding="utf-8")) == {"words": reading.words}
+    assert json.loads((guess / "p1.words.json").read_text(encoding="utf-8")) == Words(reading.words).to_dict()
 
 
 def test_a_page_the_reading_returns_nothing_for_is_left_unwritten(tmp_path: Path) -> None:
@@ -98,14 +102,14 @@ def _flag(page: str, starts: bool = False, ends: bool = False, **extra: object) 
 
 def test_apply_routes_routes_text_by_density_and_skips_images() -> None:
     classify = {"a.jpg": {"kind": "text"}, "b.jpg": {"kind": "photo"}}
-    rotations = {"a.jpg": {"strong": 42}}  # cursive-class density
+    rotations = {"a.jpg": RotationScores(degrees=90, strong=42)}  # cursive-class density
     out = apply_routes(classify, rotations)
     assert out["a.jpg"]["route"] == "cursive"
     assert out["b.jpg"]["route"] is None  # never transcribed
 
 
 def test_guess_prompt_carries_the_standing_knowledge() -> None:
-    system, user = _guess_prompt([("p1.jpg", "raw text")], "Box 1", ["person-one"], ["place-one"])
+    system, user = _guess_prompt([PageText("p1.jpg", "raw text")], "Box 1", ["person-one"], ["place-one"])
     assert "person-one" in system
     assert "place-one" in system
     assert "Box 1" in system
@@ -138,16 +142,16 @@ def test_guess_pages_parses_the_model_json() -> None:
             }
         )
 
-    flags = guess_pages([("p1.jpg", "x"), ("p2.jpg", "y")], "", [], [], fake_client)
-    assert flags[0]["starts_document"] is True
-    assert flags[1]["signoff"] == "Love, Zelda"
+    flags = guess_pages([PageText("p1.jpg", "x"), PageText("p2.jpg", "y")], "", [], [], fake_client)
+    assert flags[0].starts_document is True
+    assert flags[1].signoff == "Love, Zelda"
 
 
 def test_guess_pages_rejects_garbage_json() -> None:
     with pytest.raises(RegistryError, match="unparseable"):
-        _ = guess_pages([("p1.jpg", "x")], "", [], [], lambda _s, _u: "not json")
+        _ = guess_pages([PageText("p1.jpg", "x")], "", [], [], lambda _s, _u: "not json")
     with pytest.raises(RegistryError, match="malformed"):
-        _ = guess_pages([("p1.jpg", "x")], "", [], [], lambda _s, _u: '{"pages": [{"page": "p1.jpg"}]}')
+        _ = guess_pages([PageText("p1.jpg", "x")], "", [], [], lambda _s, _u: '{"pages": [{"page": "p1.jpg"}]}')
 
 
 def test_guess_pages_parses_string_flags_without_coercion() -> None:
@@ -160,13 +164,13 @@ def test_guess_pages_parses_string_flags_without_coercion() -> None:
             }
         )
 
-    flags = guess_pages([("p1.jpg", "x")], "", [], [], fake_client)
-    assert flags[0]["starts_document"] is False  # "false" must not coerce to True
-    assert flags[0]["ends_document"] is True
+    flags = guess_pages([PageText("p1.jpg", "x")], "", [], [], fake_client)
+    assert flags[0].starts_document is False  # "false" must not coerce to True
+    assert flags[0].ends_document is True
 
 
 def test_guess_pages_rejects_oversized_batches() -> None:
-    pages = [(f"p{i}.jpg", "x") for i in range(31)]
+    pages = [PageText(f"p{i}.jpg", "x") for i in range(31)]
     with pytest.raises(RegistryError, match="chunking is future work"):
         _ = guess_pages(pages, "", [], [], lambda _s, _u: "{}")
 

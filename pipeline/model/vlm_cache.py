@@ -14,6 +14,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pipeline.model.cache_file import CacheFile
+from pipeline.model.cached_read import CachedRead
+from pipeline.model.unsure_word import UnsureWord
 from tools.loft_paths import WORK_DIR
 
 CACHE_DIR = WORK_DIR / ".vlm-cache"
@@ -28,11 +31,11 @@ class PanelRead:
     panel: Path
     spec: dict[str, Any]
 
-    def file_key(self, cache_dir: Path = CACHE_DIR) -> tuple[str, Path]:
+    def file_key(self, cache_dir: Path = CACHE_DIR) -> CacheFile:
         panel_hash = hashlib.sha256(self.panel.read_bytes()).hexdigest()[:32]
         spec_blob = json.dumps(self.spec, sort_keys=True, default=str)
         spec_hash = hashlib.sha256(spec_blob.encode()).hexdigest()[:16]
-        return f"{panel_hash}-{spec_hash}.json", cache_dir
+        return CacheFile(f"{panel_hash}-{spec_hash}.json", cache_dir)
 
 
 @dataclass(frozen=True)
@@ -43,10 +46,10 @@ class PanelTranscript:
     panel: Path
     text: str
 
-    def file_key(self) -> tuple[str, Path]:
+    def file_key(self) -> CacheFile:
         panel_hash = hashlib.sha256(self.panel.read_bytes()).hexdigest()[:32]
         text_hash = hashlib.sha256(self.text.encode()).hexdigest()[:16]
-        return f"{panel_hash}-sr-{text_hash}.json", CACHE_DIR
+        return CacheFile(f"{panel_hash}-sr-{text_hash}.json", CACHE_DIR)
 
 
 def store_read(read: PanelRead, text: str, tokens: int, *, cache_dir: Path = CACHE_DIR) -> None:
@@ -56,57 +59,52 @@ def store_read(read: PanelRead, text: str, tokens: int, *, cache_dir: Path = CAC
     injectable so the hermetic tests never touch the real work disk
     (2026-08-29, the CI's build-and-test failure)."""
     try:
-        key, directory = read.file_key(cache_dir)
-        directory.mkdir(parents=True, exist_ok=True)
-        atomic = directory / f"{key}.tmp"
-        atomic.write_text(json.dumps({"text": text, "tokens": tokens}), encoding="utf-8")
-        atomic.replace(directory / key)
+        entry = read.file_key(cache_dir)
+        entry.write(json.dumps(CachedRead(text, tokens).to_dict()))
     # lucidlint: ignore swallow the cache is an optimization — a full disk must never break a run
     except OSError:
         pass
 
 
-def load_cached_read(read: PanelRead, *, fresh: bool = False, cache_dir: Path = CACHE_DIR) -> tuple[str, int] | None:
-    """The cached (text, tokens) for this exact panel+spec, or None on a
+def load_cached_read(read: PanelRead, *, fresh: bool = False, cache_dir: Path = CACHE_DIR) -> CachedRead | None:
+    """The cached read for this exact panel+spec, or None on a
     miss (or when caching is off via LOFT_VLM_CACHE=0 / fresh=True).
     ``cache_dir`` is injectable (the hermetic tests, 2026-08-29)."""
     if fresh or os.environ.get("LOFT_VLM_CACHE") == "0":
         return None
     try:
-        key, directory = read.file_key(cache_dir)
-        path = directory / key
+        path = read.file_key(cache_dir).path()
         if not path.is_file():
             return None
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data["text"], int(data["tokens"])
+        return CachedRead.from_dict(json.loads(path.read_text(encoding="utf-8")))
     except (OSError, ValueError, KeyError):
         return None
 
 
-def store_selfreport(transcript: PanelTranscript, report: list[dict]) -> None:
+def store_selfreport(transcript: PanelTranscript, report: list[UnsureWord]) -> None:
     """Cache one self-report keyed on (panel bytes, transcription text)
     — the flags are a pure function of the read, so re-assembly of an
     unchanged page never re-pays the doubt call."""
 
     # disk must never break a run that would otherwise succeed
     try:
-        key, directory = transcript.file_key()
-        directory.mkdir(parents=True, exist_ok=True)
-        atomic = directory / f"{key}.tmp"
-        atomic.write_text(json.dumps(report), encoding="utf-8")
-        atomic.replace(directory / key)
+        entry = transcript.file_key()
+        entry.write(json.dumps([word.to_dict() for word in report]))
     # lucidlint: ignore swallow the cache is an optimization — a full disk must never break a run
     except OSError:
         pass
 
 
-def load_selfreport(transcript: PanelTranscript) -> list[dict] | None:
-    """The cached self-report for this exact (panel, text), or None."""
+def load_selfreport(transcript: PanelTranscript) -> list[UnsureWord] | None:
+    """The cached self-report for this exact (panel, text), or None (a
+    file that is not the report's own list of flags reads as a miss)."""
     try:
-        key, directory = transcript.file_key()
-        path = directory / key
+        path = transcript.file_key().path()
         if not path.is_file():
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, list):
+            return None
+        return [UnsureWord.from_dict(entry) for entry in raw]
+    except (OSError, ValueError, KeyError, TypeError):
         return None

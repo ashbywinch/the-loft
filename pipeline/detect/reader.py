@@ -24,10 +24,26 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageFilter
 
+from document.boxes import Boxes
+from document.page_size import PageSize
+from document.point import Point
+from document.span import Span
 from document.trace import Box, Trace
+from document.word import Word, WordMeasurements
+from document.words import Words
+from pipeline.detect.covered_words import CoveredWords
+from pipeline.detect.cut_verdict import CutVerdict
+from pipeline.detect.gap import Gap
 from pipeline.detect.line import Line
 from pipeline.detect.mark import BAND_RUN, SCALE, SHAPE_MIN_AREA, Ink, Mark, find_marks
+from pipeline.detect.row_runs import RowRuns
 from pipeline.detect.ruler import LINE_RATIO_DEFAULT, Ruler
+from pipeline.detect.segment import Segment
+from pipeline.detect.stroke import Stroke
+from pipeline.detect.stroke_group import StrokeGroup
+from pipeline.detect.traced_box import TracedBox
+from pipeline.detect.u_span import USpan
+from pipeline.detect.word_groups import WordGroups
 
 BATCH = Path(os.environ.get("LOFT_BATCH", "/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004"))
 PAGE = BATCH / "oriented/page-01.jpg"
@@ -173,19 +189,19 @@ class LineFitter:
         return lines
 
 
-def _longest_interval(cols: list[int]) -> tuple[int, int]:
+def _longest_interval(cols: list[int]) -> Span:
     """The longest continuous column run on one row: the band's own span."""
     ordered = sorted(cols)
-    best, start, prev = (ordered[0], ordered[0]), ordered[0], ordered[0]
+    best, start, prev = Span(ordered[0], ordered[0]), ordered[0], ordered[0]
     for x in ordered[1:]:
         if x == prev + 1:
             prev = x
         else:
-            if prev - start > best[1] - best[0]:
-                best = (start, prev)
+            if prev - start > best.end - best.start:
+                best = Span(start, prev)
             start, prev = x, x
-    if prev - start > best[1] - best[0]:
-        best = (start, prev)
+    if prev - start > best.end - best.start:
+        best = Span(start, prev)
     return best
 
 
@@ -200,19 +216,20 @@ def is_waist(per_row: dict[int, list[int]], runs: dict[int, int], top: int, bott
         return True
     top_iv = _longest_interval(per_row[top])
     bot_iv = _longest_interval(per_row[bottom])
-    overlap = max(0, min(top_iv[1], bot_iv[1]) - max(top_iv[0], bot_iv[0]) + 1)
-    return overlap < WAIST_OVERLAP * min(top_iv[1] - top_iv[0] + 1, bot_iv[1] - bot_iv[0] + 1)
+    overlap = max(0, min(top_iv.end, bot_iv.end) - max(top_iv.start, bot_iv.start) + 1)
+    return overlap < WAIST_OVERLAP * min(top_iv.end - top_iv.start + 1, bot_iv.end - bot_iv.start + 1)
 
 
-def _rows_ink(shape: Mark, y0: int, y1: int) -> list[tuple[int, int]]:
+def _rows_ink(shape: Mark, y0: int, y1: int) -> Ink:
     """The shape's ink on rows y0..y1 inclusive."""
     ys, xs = shape.pix
-    return [(y, x) for y, x in zip(ys.astype(int), xs.astype(int), strict=False) if y0 <= y <= y1]
+    keep = (ys >= y0) & (ys <= y1)
+    return Ink(ys[keep], xs[keep])
 
 
-def piece_between(shape: Mark, segment: list[int]) -> Mark:
+def piece_between(shape: Mark, segment: Segment) -> Mark:
     """The piece a segment (line, y0, y1) would become."""
-    return shape.piece(_rows_ink(shape, segment[1], segment[2]), segment[0], segment[1])
+    return shape.piece(_rows_ink(shape, segment.y0, segment.y1), segment.line, segment.y0)
 
 
 GAP_FRACTION = 0.25  # of the flanking ink: a row this much thinner is a gap
@@ -263,14 +280,15 @@ def line_pieces(pieces: list[Mark], unit: float) -> list[Mark]:
     ]
 
 
-def covered_by(stroke: list[tuple[float, float]], shapes: list[Mark], touch: float) -> list[Mark]:
+def covered_by(stroke: list[Point], shapes: list[Mark], touch: float) -> list[Mark]:
     """The shapes a traced line passes over — how a stroke names its line."""
     return [
         shape
         for shape in shapes
         if any(
-            shape.x0 - touch <= px / SCALE <= shape.x1 + touch and shape.y0 - touch <= py / SCALE <= shape.y1 + touch
-            for px, py in stroke
+            shape.x0 - touch <= point.x / SCALE <= shape.x1 + touch
+            and shape.y0 - touch <= point.y / SCALE <= shape.y1 + touch
+            for point in stroke
         )
     ]
 
@@ -356,57 +374,58 @@ class Writing:
         for shape in self.marks:
             if shape.id in absorbed:
                 continue
-            groups, continuations = self._word_groups(shape)
-            absorbed.update(continuation.id.split("_")[0] for continuation in continuations.values())
-            out.extend(self._word_pieces(shape, groups, continuations))
+            word_groups = self._word_groups(shape)
+            absorbed.update(continuation.id.split("_")[0] for continuation in word_groups.continuations.values())
+            out.extend(self._word_pieces(shape, word_groups.segments, word_groups.continuations))
         return out
 
     @staticmethod
-    def _word_pieces(shape: Mark, groups: list[list[int]], continuations: dict[int, Mark]) -> list[Mark]:
+    def _word_pieces(shape: Mark, groups: list[Segment], continuations: dict[int, Mark]) -> list[Mark]:
         """The pieces the groups become, each continuation's ink joined to its
         group and the line pieces left for the strip."""
         pieces: list[Mark] = []
-        for index, (line_index, y0, y1) in enumerate(groups):
-            ink = _rows_ink(shape, y0, y1)
+        for index, segment in enumerate(groups):
+            ink = _rows_ink(shape, segment.y0, segment.y1)
             continuation = continuations.get(index)
             if continuation is not None:
-                ys, xs = continuation.pix
-                ink += [(y, x) for y, x in zip(ys.astype(int), xs.astype(int), strict=False)]
-            if len(ink) < SHAPE_MIN_AREA // 2:
+                ink = ink.joined_with(Ink.of_shape(continuation))
+            if ink.size < SHAPE_MIN_AREA // 2:
                 continue
-            piece = shape.piece(ink, line_index, y0)
+            piece = shape.piece(ink, segment.line, segment.y0)
             if piece.is_streak:
                 continue
             pieces.append(piece)
         return pieces
 
-    def _word_groups(self, shape: Mark) -> tuple[list[list[int]], dict[int, Mark]]:
+    def _word_groups(self, shape: Mark) -> WordGroups:
         """The shape's row groups after every boundary verdict — the fit's
         cuts, the lines' ceding, the continuation split at the shape's bottom.
         A single fused group is split at its deep gap when the pieces are
         words' worths of ink."""
         segments = self._candidate_segments(shape)
-        groups: list[list[int]] = []
+        groups: list[Segment] = []
         continuations: dict[int, Mark] = {}
         for segment in segments:
-            if groups:
-                cut, continuation = self._is_a_cut(shape, groups[-1], segment)
-                if not cut:
-                    groups[-1][2] = segment[2]
-                else:
-                    if continuation is not None:
-                        continuations[len(groups)] = continuation
-                    groups.append(list(segment))
-            else:
-                groups.append(list(segment))
+            if not groups:
+                groups.append(segment)
+                continue
+            verdict = self._is_a_cut(shape, groups[-1], segment)
+            if not verdict.cut:
+                groups[-1] = Segment(groups[-1].line, groups[-1].y0, segment.y1)
+                continue
+            if verdict.continuation is not None:
+                continuations[len(groups)] = verdict.continuation
+            groups.append(segment)
         if len(groups) == 1:
             split_y = self._gap_row(shape)
             if split_y is not None and self._gap_pieces_are_words(shape, groups[0], split_y):
-                line, y0, y1 = groups[0]
-                groups = [[line, y0, split_y], [line, split_y + 1, y1]]
-        return groups, continuations
+                groups = [
+                    Segment(groups[0].line, groups[0].y0, split_y),
+                    Segment(groups[0].line, split_y + 1, groups[0].y1),
+                ]
+        return WordGroups(segments=groups, continuations=continuations)
 
-    def _gap_pieces_are_words(self, shape: Mark, group: list[int], split_y: int) -> bool:
+    def _gap_pieces_are_words(self, shape: Mark, group: Segment, split_y: int) -> bool:
         """The two pieces a gap split makes must be tall enough to hold
         letters and joined up — the gap proves the pieces are separate, but
         it does not make a sliver or a pair of ascenders into a word (user:
@@ -414,9 +433,8 @@ class Writing:
         thin and flat checks are waived: they exist to spot fragments at
         fit-proposed cuts, and a gap needs no such guess — it admits narrow
         words like 'of' and flat crossed-out rows."""
-        line, y0, y1 = group
-        upper = shape.piece(_rows_ink(shape, y0, split_y), line, y0)
-        lower = shape.piece(_rows_ink(shape, split_y + 1, y1), line, split_y + 1)
+        upper = shape.piece(_rows_ink(shape, group.y0, split_y), group.line, group.y0)
+        lower = shape.piece(_rows_ink(shape, split_y + 1, group.y1), group.line, split_y + 1)
         return upper.is_word_shaped(self.scale.unit, waive_band=True, waive_width=True) and lower.is_word_shaped(
             self.scale.unit, waive_band=True, waive_width=True
         )
@@ -428,30 +446,30 @@ class Writing:
         flanking ink, the flanks substantial, and the two sides on
         DIFFERENT fitted lines — a gap inside one line is a word's letter
         space."""
-        rows, runs = self._row_runs(shape)
-        score, split_y = self._deepest_gap(rows, runs)
-        if score >= GAP_FRACTION:
+        row_runs = self._row_runs(shape)
+        gap = self._deepest_gap(row_runs.rows, row_runs.runs)
+        if gap.depth >= GAP_FRACTION:
             return None  # strict: a tie at the boundary is a letter's internal gap
         per_row = shape.rows()
-        upper = [y for y in rows if y <= split_y]
-        lower = [y for y in rows if y > split_y]
+        upper = [y for y in row_runs.rows if y <= gap.row]
+        lower = [y for y in row_runs.rows if y > gap.row]
         if not upper or not lower:
             return None
         if self._majority_line(per_row, upper) == self._majority_line(per_row, lower):
             return None
-        return split_y
+        return gap.row
 
     @staticmethod
-    def _row_runs(shape: Mark) -> tuple[list[int], dict[int, int]]:
+    def _row_runs(shape: Mark) -> RowRuns:
         """The shape's rows and each row's longest run."""
         runs = Ink(np.asarray(shape.pix[0]).astype(int), np.asarray(shape.pix[1]).astype(int)).longest_runs()
-        return sorted(runs), runs
+        return RowRuns(rows=sorted(runs), runs=runs)
 
     @staticmethod
-    def _deepest_gap(rows: list[int], runs: dict[int, int]) -> tuple[float, int]:
+    def _deepest_gap(rows: list[int], runs: dict[int, int]) -> Gap:
         """The deepest local ink minimum among the rows, away from the mark's
         edges, with both flanks substantial."""
-        best: tuple[float, int] = (1.0, rows[0])
+        best = Gap(depth=1.0, row=rows[0])
         for i, y in enumerate(rows):
             if i < GAP_WINDOW or i >= len(rows) - GAP_WINDOW:
                 continue
@@ -461,8 +479,8 @@ class Writing:
             if flank < GAP_MIN_FLANK:
                 continue
             score = runs[y] / flank
-            if score < best[0]:
-                best = (score, y)
+            if score < best.depth:
+                best = Gap(depth=score, row=y)
         return best
 
     def _majority_line(self, per_row: dict[int, list[int]], ys: list[int]) -> int:
@@ -475,7 +493,7 @@ class Writing:
             counts[line] = counts.get(line, 0) + 1
         return max(counts, key=counts.__getitem__)
 
-    def _is_a_cut(self, shape: Mark, above: list[int], below: list[int]) -> tuple[bool, Mark | None]:
+    def _is_a_cut(self, shape: Mark, above: Segment, below: Segment) -> CutVerdict:
         """Whether the boundary between two of the shape's segments is a real
         cut: both sides word-shaped, or one side a rule/underline that cedes.
         Fragments refuse the cut — except at the shape's bottom edge, where
@@ -488,21 +506,18 @@ class Writing:
         if upper.classify_line([lower], [upper, lower], self.scale.unit) or lower.classify_line(
             [upper], [upper, lower], self.scale.unit
         ):
-            return True, None
+            return CutVerdict(cut=True, continuation=None)
         if upper.is_word_shaped(self.scale.unit) and lower.is_word_shaped(self.scale.unit):
-            return True, None
-        if below[2] == shape.y1:
+            return CutVerdict(cut=True, continuation=None)
+        if below.y1 == shape.y1:
             continuation = self._continuation(shape, below)
             if continuation is not None:
-                ys, xs = continuation.pix
-                ink = _rows_ink(shape, below[1], below[2]) + [
-                    (y, x) for y, x in zip(ys.astype(int), xs.astype(int), strict=False)
-                ]
-                if shape.piece(ink, below[0], below[1]).is_word_shaped(self.scale.unit):
-                    return True, continuation
-        return False, None
+                ink = _rows_ink(shape, below.y0, below.y1).joined_with(Ink.of_shape(continuation))
+                if shape.piece(ink, below.line, below.y0).is_word_shaped(self.scale.unit):
+                    return CutVerdict(cut=True, continuation=continuation)
+        return CutVerdict(cut=False, continuation=None)
 
-    def _continuation(self, shape: Mark, below: list[int]) -> Mark | None:
+    def _continuation(self, shape: Mark, below: Segment) -> Mark | None:
         """The mark directly beneath the shape whose ink is the same word's
         rest: its ink starts exactly at the shape's bottom edge, it sits on
         the boundary's own fitted line, and it is NOT a word on its own (a
@@ -514,7 +529,7 @@ class Writing:
             if other is not shape
             and other.y0 == shape.y1
             and other.y1 > shape.y1
-            and self._line_of(other) == below[0]
+            and self._line_of(other) == below.line
             and not other.is_word_shaped(self.scale.unit)
         ]
         if not candidates:
@@ -526,7 +541,7 @@ class Writing:
         among the lines this writing holds (`_nearest_line`)."""
         return _nearest_line(shape, self.lines)
 
-    def _candidate_segments(self, shape: Mark) -> list[list[int]]:
+    def _candidate_segments(self, shape: Mark) -> list[Segment]:
         """The cuts the shape's row fit proposes: its ink rows grouped by
         which fitted line each row's centre is nearest, split where the
         assignment changes and the ink narrows to a waist — plus the band
@@ -538,20 +553,24 @@ class Writing:
         per_row = shape.rows()
         ys, xs = shape.pix
         runs = Ink(ys, xs).longest_runs()
-        segments: list[list[int]] = []
+        segments: list[Segment] = []
         for y in sorted(per_row):
             xc = sum(per_row[y]) / len(per_row[y])
             nearest = min(range(len(self.lines)), key=lambda i: self.lines[i].distance(xc, y))
-            if segments and segments[-1][0] == nearest and y - segments[-1][2] <= ROW_MERGE:
-                segments[-1][2] = y
-            elif segments and segments[-1][0] != nearest and not is_waist(per_row, runs, segments[-1][2], y):
-                segments[-1] = [segments[-1][0], segments[-1][1], y]
+            last = segments[-1] if segments else None
+            if last is None:
+                segments.append(Segment(nearest, y, y))
+                continue
+            if (last.line == nearest and y - last.y1 <= ROW_MERGE) or (
+                last.line != nearest and not is_waist(per_row, runs, last.y1, y)
+            ):
+                segments[-1] = Segment(last.line, last.y0, y)
             else:
-                segments.append([nearest, y, y])
+                segments.append(Segment(nearest, y, y))
         return self._band_cut(segments, shape, runs)
 
     @staticmethod
-    def _band_cut(segments: list[list[int]], shape: Mark, runs: dict[int, int]) -> list[list[int]]:
+    def _band_cut(segments: list[Segment], shape: Mark, runs: dict[int, int]) -> list[Segment]:
         """The underline's band of rows, cut into its own segment so the
         strip can classify and remove it."""
         ys, xs = shape.pix
@@ -560,16 +579,16 @@ class Writing:
         if len(band) < 2:
             return segments
         lo, hi = band[0], band[-1]
-        out: list[list[int]] = []
-        for line_index, y0, y1 in segments:
-            if y1 < lo or y0 > hi:
-                out.append([line_index, y0, y1])
+        out: list[Segment] = []
+        for segment in segments:
+            if segment.y1 < lo or segment.y0 > hi:
+                out.append(segment)
                 continue
-            if y0 < lo:
-                out.append([line_index, y0, lo - 1])
-            out.append([line_index, lo, hi])
-            if y1 > hi:
-                out.append([line_index, hi + 1, y1])
+            if segment.y0 < lo:
+                out.append(Segment(segment.line, segment.y0, lo - 1))
+            out.append(Segment(segment.line, lo, hi))
+            if segment.y1 > hi:
+                out.append(Segment(segment.line, hi + 1, segment.y1))
         return out
 
     def _settled(self) -> Writing:
@@ -639,14 +658,20 @@ class Strokes:
     A stroke IS a line — the reviewer drew it along one — and strokes that name
     the same line and overlap along it are one group, one traced box."""
 
-    def __init__(self, raw: list[list[tuple[float, float]]], page_size: tuple[int, int]) -> None:
-        width, height = page_size
+    def __init__(self, raw: list[Stroke], page_size: PageSize) -> None:
+        width, height = page_size.width, page_size.height
         # A drawn point cannot be off the page: the sketch records normalized
         # coordinates and a drag outside the image can exceed [0, 1] (one stroke
         # carried a point at x=14642 on a 2544px page). Clamped here as well as in
         # the sketch, because stored marks outlive the app that made them.
-        self.points = [
-            [(min(max(x, 0.0), 1.0) * width, min(max(y, 0.0), 1.0) * height) for x, y in stroke] for stroke in raw
+        self.strokes = [
+            Stroke(
+                [
+                    Point(min(max(point.x, 0.0), 1.0) * width, min(max(point.y, 0.0), 1.0) * height)
+                    for point in stroke.points
+                ]
+            )
+            for stroke in raw
         ]
 
     def traces(self, shapes: list[Mark], scale: Ruler) -> list[Trace]:
@@ -654,38 +679,38 @@ class Strokes:
         covered = self._covers(shapes, scale.touch)
         naming = self._line_of(covered)
         marks: list[Trace] = []
-        for members in sorted(self._groups(naming), key=lambda group: self._first_line(naming, group)):
-            line_index = next((naming[i] for i in members if naming[i] is not None), None)
+        for group in sorted(self._groups(naming), key=lambda g: self._first_line(naming, g)):
+            line_index = next((naming[i] for i in group.members if naming[i] is not None), None)
             if line_index is None:
                 continue
             marks.append(
                 Trace(
-                    strokes=[self.points[i] for i in members],
+                    strokes=[self.strokes[i].points for i in group.members],
                     line_index=line_index,
-                    covered=[word for i in members for word in covered[i] if word.line == line_index],
+                    covered=[word for i in group.members for word in covered[i].words if word.line == line_index],
                 )
             )
         return marks
 
-    def _covers(self, shapes: list[Mark], touch: float) -> list[list[Mark]]:
+    def _covers(self, shapes: list[Mark], touch: float) -> list[CoveredWords]:
         """The words each stroke passes over — how a stroke names its line."""
-        return [covered_by(stroke, shapes, touch) for stroke in self.points]
+        return [CoveredWords(covered_by(stroke.points, shapes, touch)) for stroke in self.strokes]
 
     @staticmethod
-    def _line_of(covered: list[list[Mark]]) -> list[int | None]:
+    def _line_of(covered: list[CoveredWords]) -> list[int | None]:
         """The line each stroke names: the one holding most of the words it
         covers. That count measured better here than the fitted-baseline
         distance, which fixed a stroke drawn between two lines but cost three
         more A1 failures."""
         naming: list[int | None] = []
-        for words in covered:
-            counts = Counter(shape.line for shape in words)
+        for cover in covered:
+            counts = Counter(shape.line for shape in cover.words)
             naming.append(max(counts, key=lambda key: counts[key]) if counts else None)
         return naming
 
-    def _groups(self, naming: list[int | None]) -> list[list[int]]:
+    def _groups(self, naming: list[int | None]) -> list[StrokeGroup]:
         """The strokes grouped: the ones naming one line and overlapping along it."""
-        parent = list(range(len(self.points)))
+        parent = list(range(len(self.strokes)))
         by_line: dict[int, list[int]] = {
             line_index: [index for index, li in enumerate(naming) if li == line_index]
             for line_index in {li for li in naming if li is not None}
@@ -696,9 +721,9 @@ class Strokes:
                     if self._overlap(members[left], members[right]):
                         self._unite(parent, members[left], members[right])
         grouped: dict[int, list[int]] = {}
-        for index in range(len(self.points)):
+        for index in range(len(self.strokes)):
             self._group_index(grouped, parent, index)
-        return list(grouped.values())
+        return [StrokeGroup(members) for members in grouped.values()]
 
     @staticmethod
     def _group_index(grouped: dict[int, list[int]], parent: list[int], index: int) -> None:
@@ -707,18 +732,20 @@ class Strokes:
 
     def _overlap(self, one: int, other: int) -> bool:
         """Whether two strokes share enough of their run along the line."""
-        (p0, p1), (q0, q1) = self._xspan(one), self._xspan(other)
-        return min(p1, q1) - max(p0, q0) > 0.5 * min(p1 - p0, q1 - q0)
+        one_span, other_span = self._xspan(one), self._xspan(other)
+        return min(one_span.end, other_span.end) - max(one_span.start, other_span.start) > 0.5 * min(
+            one_span.end - one_span.start, other_span.end - other_span.start
+        )
 
-    def _xspan(self, index: int) -> tuple[float, float]:
-        xs = [point[0] for point in self.points[index]]
-        return min(xs), max(xs)
+    def _xspan(self, index: int) -> Span:
+        xs = [point.x for point in self.strokes[index].points]
+        return Span(min(xs), max(xs))
 
     @staticmethod
-    def _first_line(naming: list[int | None], group: list[int]) -> int:
+    def _first_line(naming: list[int | None], group: StrokeGroup) -> int:
         """The first line a group names: its place in the page's order."""
         named: list[int] = []
-        for index in group:
+        for index in group.members:
             line_index = naming[index]
             if line_index is not None:
                 named.append(line_index)
@@ -738,44 +765,62 @@ class Strokes:
             parent[root_other] = root_one
 
 
-def compose_boxes(lines: list[Line], traced: list[tuple[int, Box]], scale: Ruler) -> list[Box]:
+def compose_boxes(lines: list[Line], traced: list[TracedBox], scale: Ruler) -> list[Box]:
     """The page's boxes: the detector boxes every line, and a trace replaces the
     span it defines (the boxes it covers are cut out of its line's)."""
     final: list[Box] = []
     for line_index, line in enumerate(lines):
-        spans = sorted(line.u_span(line.shapes, box) for owner, box in traced if owner == line_index)
+        spans = sorted(
+            line.u_span(line.shapes, traced_box.box) for traced_box in traced if traced_box.line == line_index
+        )
         for poly in line.boxes(scale):
             final += _boxes_between(line, poly, spans, scale)
-    return final + [box for _, box in traced]
+    return final + [traced_box.box for traced_box in traced]
 
 
-def _boxes_between(line: Line, poly: Box, traced: list[tuple[float, float]], scale: Ruler) -> list[Box]:
+def _boxes_between(line: Line, poly: Box, traced: list[USpan], scale: Ruler) -> list[Box]:
     """The boxes one line's polygon gives, with the traced spans taken out."""
     x_ref, y_ref, ux, uy, nx, ny = line.frame(line.shapes)
     along = [(px / SCALE - x_ref) * ux + (py / SCALE - y_ref) * uy for px, py in poly]
     across = [(px / SCALE - x_ref) * nx + (py / SCALE - y_ref) * ny for px, py in poly]
     boxes = [
-        line.box(line.shapes, start, end, min(across), max(across))
-        for start, end in _spans_after([(min(along), max(along))], traced)
-        if (end - start) * SCALE > MIN_BOX_PX
+        line.box(line.shapes, span.start, span.end, min(across), max(across))
+        for span in _spans_after([USpan(min(along), max(along))], traced)
+        if (span.end - span.start) * SCALE > MIN_BOX_PX
     ]
     return boxes
 
 
-def _spans_after(spans: list[tuple[float, float]], traced: list[tuple[float, float]]) -> list[tuple[float, float]]:
+def _spans_after(spans: list[USpan], traced: list[USpan]) -> list[USpan]:
     """The spans that remain when every traced span is taken out of them."""
-    for t0, t1 in traced:
-        remaining: list[tuple[float, float]] = []
-        for s0, s1 in spans:
-            if t1 <= s0 or t0 >= s1:
-                remaining.append((s0, s1))
+    for traced_span in traced:
+        remaining: list[USpan] = []
+        for span in spans:
+            if traced_span.end <= span.start or traced_span.start >= span.end:
+                remaining.append(span)
                 continue
-            if s0 < t0:
-                remaining.append((s0, t0))
-            if t1 < s1:
-                remaining.append((t1, s1))
+            if span.start < traced_span.start:
+                remaining.append(USpan(span.start, traced_span.start))
+            if traced_span.end < span.end:
+                remaining.append(USpan(traced_span.end, span.end))
         spans = remaining
     return spans
+
+
+def _word(shape: Mark) -> Word:
+    """The word a measured shape makes: its box and its own ink lines, in page
+    pixels — the record words.json holds and the reading carries."""
+    return Word(
+        x0=shape.x0 * SCALE,
+        y0=shape.y0 * SCALE,
+        x1=shape.x1 * SCALE,
+        y1=shape.y1 * SCALE,
+        measurements=WordMeasurements(
+            baseline=shape.baseline * SCALE,
+            waistline=shape.waistline * SCALE,
+            line=shape.line,
+        ),
+    )
 
 
 def write_outputs(trace_dir: Path, page: Image.Image, boxes: list[Box], shapes: list[Mark]) -> None:
@@ -783,25 +828,9 @@ def write_outputs(trace_dir: Path, page: Image.Image, boxes: list[Box], shapes: 
     (the words they were measured from), in page pixels."""
     trace_dir.mkdir(parents=True, exist_ok=True)
     with open(trace_dir / "boxes.json", "w") as handle:
-        json.dump({"page": {"width": page.width, "height": page.height}, "boxes": boxes}, handle, indent=1)
+        json.dump(Boxes(PageSize(page.width, page.height), boxes).to_dict(), handle, indent=1)
     with open(trace_dir / "words.json", "w") as handle:
-        json.dump(
-            {
-                "words": [
-                    {
-                        "x0": s.x0 * SCALE,
-                        "y0": s.y0 * SCALE,
-                        "x1": s.x1 * SCALE,
-                        "y1": s.y1 * SCALE,
-                        "line": s.line,
-                        "baseline": s.baseline * SCALE,
-                        "waistline": s.waistline * SCALE,
-                    }
-                    for s in shapes
-                ]
-            },
-            handle,
-        )
+        json.dump(Words([_word(shape) for shape in shapes]).to_dict(), handle)
 
 
 def read_page(page_path: Path, trace_dir: Path, split: bool = True) -> list[Box]:
@@ -835,9 +864,10 @@ def read_page(page_path: Path, trace_dir: Path, split: bool = True) -> list[Box]
         f" · ink removed: {removed + writing.stripped} · shapes {len(shapes)} · lines {len(lines)}"
     )
 
-    strokes = Strokes(strokes_raw, (page.width, page.height))
+    strokes = Strokes([Stroke.from_wire(stroke) for stroke in strokes_raw], PageSize(page.width, page.height))
     traced_boxes = [
-        (trace.line_index, trace.box(writing.scale.stroke_tol)) for trace in strokes.traces(shapes, writing.scale)
+        TracedBox(trace.line_index, trace.box(writing.scale.stroke_tol))
+        for trace in strokes.traces(shapes, writing.scale)
     ]
     final = compose_boxes(lines, traced_boxes, writing.scale)
     write_outputs(trace_dir, page, final, shapes)
@@ -849,12 +879,12 @@ def read_page(page_path: Path, trace_dir: Path, split: bool = True) -> list[Box]
 class Reading:
     """One page's automatic reading, in page pixels: the fitted writing LINES
     (the row proposal the review shows) and the SPLIT WORDS those lines group,
-    each word carrying its own measured baseline and waistline. The
-    drawn-lines correction (`rows.adjust`) groups the words, so the reading
+    each word a `Word` record carrying its own measured baseline and waistline.
+    The drawn-lines correction (`rows.adjust`) groups the words, so the reading
     carries them — the pipeline persists both side by side."""
 
     lines: list[dict[str, Any]]
-    words: list[dict[str, Any]]
+    words: list[Word]
     width: int
     height: int
 
@@ -894,18 +924,7 @@ def reading_for_page(page: Image.Image) -> Reading:
                 "words": [],
             }
         )
-    words = [
-        {
-            "x0": s.x0 * SCALE,
-            "y0": s.y0 * SCALE,
-            "x1": s.x1 * SCALE,
-            "y1": s.y1 * SCALE,
-            "line": s.line,
-            "baseline": s.baseline * SCALE,
-            "waistline": s.waistline * SCALE,
-        }
-        for s in writing.marks
-    ]
+    words = [_word(shape) for shape in writing.marks]
     return Reading(lines=lines, words=words, width=page.width, height=page.height)
 
 

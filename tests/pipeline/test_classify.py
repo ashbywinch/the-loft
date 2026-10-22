@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 from pipeline.classify import classify_pages, route, run_classify
+from pipeline.page_classification import PageClassification
 
 
 def test_route_splits_print_and_cursive_at_the_threshold() -> None:
@@ -25,12 +26,12 @@ def test_classify_pages_records_kind_and_confidences(tmp_path: Path) -> None:
     for p in pages:
         p.write_bytes(b"x")
 
-    def fake(_page: Path) -> tuple[str, dict[str, float]]:
-        return "photo", {"photo": 0.9, "text": 0.05, "drawing": 0.05}
+    def fake(_page: Path) -> PageClassification:
+        return PageClassification("photo", {"photo": 0.9, "text": 0.05, "drawing": 0.05})
 
     result = classify_pages(pages, fake, root)
-    assert result["a.jpg"]["kind"] == "photo"
-    assert result["b.jpg"]["confidences"]["photo"] == 0.9
+    assert result["a.jpg"].kind == "photo"
+    assert result["b.jpg"].confidences["photo"] == 0.9
 
 
 def test_classify_pages_keys_by_relative_path_for_nested_piles(tmp_path: Path) -> None:
@@ -40,8 +41,8 @@ def test_classify_pages_keys_by_relative_path_for_nested_piles(tmp_path: Path) -
     for p in pages:
         p.write_bytes(b"x")
 
-    def fake(_page: Path) -> tuple[str, dict[str, float]]:
-        return "text", {"text": 0.9, "photo": 0.05, "drawing": 0.05}
+    def fake(_page: Path) -> PageClassification:
+        return PageClassification("text", {"text": 0.9, "photo": 0.05, "drawing": 0.05})
 
     result = classify_pages(pages, fake, root)
     assert sorted(result) == ["sub/nested.png", "top.JPG"]  # relative keys, no basename collision
@@ -61,11 +62,14 @@ def test_run_classify_is_idempotent(tmp_path: Path) -> None:
 
     calls = {"n": 0}
 
-    def fake(_page: Path) -> tuple[str, dict[str, float]]:
+    def fake(_page: Path) -> PageClassification:
         calls["n"] += 1
-        return "photo", {"photo": 0.9, "text": 0.05, "drawing": 0.05}
+        return PageClassification("photo", {"photo": 0.9, "text": 0.05, "drawing": 0.05})
 
     first = run_classify(batch, registry_dir=registry, work_dir=tmp_path / "work", classifier=fake)
     second = run_classify(batch, registry_dir=registry, work_dir=tmp_path / "work", classifier=fake)
     assert first == second
     assert calls["n"] == 1  # the classifier ran once — the stage is a cache
+    written = json.loads((tmp_path / "work" / batch / "classify.json").read_text(encoding="utf-8"))
+    assert written["a.jpg"]["kind"] == "photo"
+    assert list(written["a.jpg"]) == ["kind", "confidences"]  # the wire record, key order included

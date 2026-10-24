@@ -70,12 +70,10 @@ EVALS = (
     "affected_evals",
     "eval_crop_grid",
     "eval_geometry",
-    "eval_htr_trial",
     "eval_memory",
     "eval_regions",
     "eval_review",
     "eval_scoring",
-    "eval_transkribus",
 )
 
 

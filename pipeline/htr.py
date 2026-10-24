@@ -1,12 +1,9 @@
-"""The HTR stage — cursive pages, read by the field's tooling (TECHSPEC
-§16.14; MULTI-DOC-IMPORT-PRD.md R10–R12).
+"""The HTR stage — cursive pages, read by the vision-language model
+(TECHSPEC §16.14; MULTI-DOC-IMPORT-PRD.md R10–R12).
 
-Newer field precedent: the vision-language model reads the page
-(``tools/vlm.py``, the opencode-go vision role) — verbatim text, token
-usage in a sidecar, and the line geometry the layout pass needs. The
-local detector/recognition stack (kraken/orli/TrOCR/transformers in a
-.venv-htr) was removed: its recognition was measured garbage on the
-family's pages (TECHSPEC §16.14) and nothing outside it used the stack.
+The model reads the page (``pipeline/model/vlm.py``, the gateway's vision
+role) — verbatim text, token usage in a sidecar, and the line geometry the
+layout pass needs.
 """
 
 from __future__ import annotations
@@ -50,10 +47,8 @@ def htr_pages_vlm(
     label: str | None = None,
     store_root: Path = WORK_DIR,
 ) -> None:
-    """The vision-model backend (the local TrOCR stack was removed as
-    unused): each page in, verbatim text out, token
-    usage recorded in a sidecar so re-runs skip transcribed pages and
-    the cost is auditable.
+    """Each page in, verbatim text out, token usage recorded in a sidecar so
+    re-runs skip transcribed pages and the cost is auditable.
     ``transcribe`` is the injectable seam (transcribe_image_vlm shape).
     The system prompt carries the context that helps the model READ —
     the family's known names and places (a familiar name is read

@@ -13,7 +13,7 @@ edge) and asserts the contracts the review depends on (VR14/VR15):
   detector's boxes made the review's text nonsense);
 - lines at more than one orientation are present with their orientations.
 
-Real model calls (the layout stage's .venv-htr subprocess too) — run
+Real model calls (the layout stage's subprocess too) — run
 with ``make evals`` / ``pytest -m eval``, never in ``make test``.
 """
 
@@ -36,7 +36,7 @@ BATCH = "godolphin-1906-eval"
 # the eval runs the REAL pipeline: real filesystem (the scratch batch +
 # the layout stage's subprocess), real model calls — the fakefs contract
 # is for the unit tests, never for an end-to-end eval
-# lucidlint: ignore-file fakefs the eval drives the real pipeline + the .venv-htr layout subprocess
+# lucidlint: ignore-file fakefs the eval drives the real pipeline + the layout stage's subprocess
 
 
 def _seed_batch(tmp_path: Path) -> tuple[Path, Path]:

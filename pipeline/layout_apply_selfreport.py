@@ -2,7 +2,7 @@
 detection stage (user: "why do we need to rerun the layout
 pass?"). Reads the existing layout.json, recomputes the per-word conf
 values from the self-report and the struck markers, and rewrites the
-file. Pure Python (main venv, no PaddleOCR), ~1s per page.
+file. Pure Python (main venv), ~1s per page.
 
 Usage: python -m pipeline.layout_apply_selfreport <batch_id> [page ...]
 """

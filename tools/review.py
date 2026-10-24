@@ -424,7 +424,11 @@ def investigate(
             "it and is asking them to confirm what it says against what they know.",
             f"The claim under review: {claim}.",
             "Known family (the archive's attested facts):\n" + _known_facts(facts),
-            "Decide in this order, once each. "
+            "Decide in this order, once each, and write no alternatives. Decide a "
+            "thing, write it, move on: never re-word a sentence you have decided, "
+            "never list candidate questions ('Or ask: …' or 'But we need to say …'), "
+            "and never re-read your own draft. The JSON is the answer, not a draft "
+            "of one — produce it as soon as the last decision is made. "
             "1. FIND THE LEADS. A lead is anything the statement names "
             "concretely: a person, a place, a town, an event, a death, a "
             "marriage, or a relationship/kinship claim ('Pearl's brothers', "

@@ -934,7 +934,8 @@ are these endpoints + the CLI review gate's shared write path.
 
 **Decision: the reviewer's alignment and confidence come from a
 real text-detection network, not the transcription model.** The VLM
-transcribes the words; PaddleOCR's detector supplies the geometry. The spike
+transcribes the words; the ink reader (`pipeline/detect/reader.py`, the
+single-pass stage — §16.17) supplies the geometry. The spike
 proved the mechanism on the live pages (page-03 of adopt-20260813-201004):
 40 detected line boxes, all containing real text (ink check); per-line
 recognition confidence spanning 0.60–1.00; per-word boxes via
@@ -965,28 +966,25 @@ help it read (user).
 | kraken legacy `.mlmodel` | Recognition-only (CTCLoss), no segmentation |
 | Azure Document Intelligence | Unavailable — no subscription yet (account verification passes; no subscription in the tenant drop-down) |
 
-**The layout pass.** Per batch, after orientation (§16.14), run PaddleOCR
-(PP-OCRv5 mobile det, `enable_mkldnn=False` — the oneDNN/PIR path crashes on
-this CPU; `use_doc_orientation_classify/use_doc_unwarping/use_textline_orientation`
-all off; `return_word_box=True`) on each oriented page → line boxes, per-line
-rec text + score, per-word boxes. **Coordinate scaling:** the engine resizes
-pages over 4000px on the long side — the returned coordinates are in the
-resized space and must be scaled back to the original oriented image before
-storing. The layout JSON (`layout.json` per page, written atomically) sits
-beside the guess stage's `ocr-guess/`; the confirmation/review seams are
-unchanged (§16.15).
+**The layout pass.** Per batch, after orientation (§16.14), the ink reader
+(`pipeline/detect/reader.py`) finds each oriented page's writing — line
+boxes, per-word boxes, and the page's own writing scale — and the VLM's
+transcription (the guess stage's `ocr-guess/`) supplies the words. No
+recognition engine runs: the reader measures ink; it does not read (the
+zero-rec ruling, 2026-09-22). The layout JSON (`layout.json` per page,
+written atomically) sits beside the guess text; the confirmation/review
+seams are unchanged (§16.15).
 
-**The association (content-based, not positional).** The VLM and PaddleOCR
-read the page in different orders (the spike: PaddleOCR placed the
+**The association (content-based, not positional).** The reader and the VLM
+order the page differently (the spike: the detector placed the
 letterhead/address after the P.S. block; the VLM read the body first), so
 line boxes map to VLM transcription lines by **best text similarity** of
-their normalized texts (PaddleOCR's rec text is noisy on cursive — that
-noise *is* the confidence signal, so the matcher must tolerate it: word-set
-overlap above a threshold wins, ties broken by reading order). Within a
-matched pair, the per-word flags come from the model's self-report
-(amendment above); the rec text's per-word agreement stays in the payload
-as data. Word boxes without a confident line match are still carried (their
-geometry is real) with a line confidence of 0.
+their normalized texts — word-set overlap above a threshold wins, ties
+broken by reading order. Within a matched pair, the per-word flags come from
+the model's self-report (amendment above). When the transcription carried
+its own per-line boxes, those anchor their lines directly. Word boxes
+without a confident line match are still carried (their geometry is real)
+with a line confidence of 0.
 
 **The fail-fast box guard (VR14 — every page reaches the review with
 valid boxes).** A layout with a degenerate or out-of-image box must never
@@ -1199,26 +1197,14 @@ correctly for the dual-pane link and the per-line reading rotation.
 
 **Resource management (VR16 — the app runs lightly on this laptop).**
 
-The layout stage (PaddleOCR) is the only heavy component in the review
-pipeline. Three measures bound its footprint:
+The layout stage's model call (the VLM) is the only heavy step in the review
+pipeline: the ink reader is local arithmetic over per-page arrays, and the
+classifier is one small call per page. Two measures bound the footprint:
 
-- *The detection input is bounded.* The engine's `text_det_limit_side_len`
-  is set to 2000px (the default is 4000px). The engine resizes the input
-  image internally and maps the boxes back to the original pixels (the
-  coordinate assertion in `detect_page` guards that mapping). The
-  prediction arrays drop ~4× in size, and the per-rotation passes (the
-  multi-orientation path) stay within the same bound (VR16 — the
-  pipeline's peak memory is bounded, not the scan's native resolution).
-- *The allocator uses on-demand growth.* The layout subprocess sets
-  `FLAGS_allocator_strategy=auto_growth` and
-  `FLAGS_use_system_allocator=1` — the framework allocates per-operation
-  instead of reserving a large arena up front (VR16 — the framework's
-  base footprint is the floor, not an arena that doubles the peak).
-- *The thread count leaves a core free.* The layout subprocess caps
-  `OMP_NUM_THREADS` and `FLAGS_paddle_num_threads` at `nproc-1`
-  (the 8‑core machine leaves one core for the rest of the
-  box) (VR16 — a core is free for other work while the engine runs).
-
-*Implementation status:* The front-end changes are API-independent and
-ready to build. The page-02 rebuild (201004) needs the model API
-(monthly limit reached).
+- *The model call is bounded by its budget.* Every transcription call carries
+  its own `max_tokens` and timeout, so a page's cost and duration are capped
+  per call rather than growing with the scan's native resolution (VR16 — the
+  pipeline's peak is bounded, not the scan's).
+- *No engine runs beside the app.* The reader measures ink with numpy in the
+  main venv — no recognition engine, no framework arena, no subprocess
+  (VR16 — a core stays free for other work while a page is measured).

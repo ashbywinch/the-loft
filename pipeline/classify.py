@@ -1,8 +1,9 @@
 """Content routing for batches: photo/drawing vs text, and within text,
 cursive vs print (TECHSPEC §16.14; MULTI-DOC-IMPORT-PRD.md R11–R12).
 
-A local zero-shot image classifier (open_clip, MobileCLIP — CPU) decides
-text vs photo vs drawing: image-content discrimination is CLIP's strength.
+A vision-model call decides text vs photo vs drawing: the reader that sees
+the page also names its kind, one small call per raw page (user,
+2026-10-26: the local CLIP classifier and its torch stack are gone).
 Within text pages, the tesseract strong-word density measured at
 orientation decides cursive vs print — print OCRs well under tesseract,
 cursive does not (real data: cursive pages scored 7–58 strong words, the
@@ -18,60 +19,24 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import open_clip
-import torch
-from PIL import Image
-
+from pipeline.model.vlm import VlmError, extract_json, transcribe_image_vlm
 from pipeline.page_classification import PageClassification
 from pipeline.registry import RegistryError, load_batch
 from pipeline.store import PipelineStore
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
-# CLIP zero-shot labels — image content only; print-vs-cursive is the
-# density signal's job, not CLIP's
-CONTENT_PROMPTS = {
-    "text": "a page of written text",
-    "photo": "a photograph",
-    "drawing": "a drawing or illustration",
-}
 DENSITY_THRESHOLD = 200  # strong words per page: cursive measured 7–58, printed reference 1185
 
 
 def route(density: int, threshold: int = DENSITY_THRESHOLD) -> str:
     """Print OCRs well under tesseract, cursive does not — the density decides."""
     return "print" if density >= threshold else "cursive"
-
-
-@dataclass(frozen=True)
-class _Clip:
-    """The loaded CLIP model: the model, its preprocessing pipeline and the
-    tokenizer — open_clip's stubs mis-type the transforms, so the boundary is
-    a named record rather than three untyped returns."""
-
-    model: Any
-    preprocess: Any
-    tokenizer: Any
-
-
-def _load_clip() -> _Clip:
-    """open_clip's stubs mis-type create_model_and_transforms, and its third
-    return is NOT the tokenizer for MobileCLIP (a second Compose); the
-    tokenizer comes from get_tokenizer. The boundary is treated as untyped —
-    the live acceptance test exercises it."""
-    # leave a core for the rest of the box (the laptop
-    # requirement) — torch's inference threads cap at nproc-1
-    torch.set_num_threads(max(1, (os.cpu_count() or 2) - 1))
-    model, preprocess, _ = open_clip.create_model_and_transforms("MobileCLIP-S2", pretrained="datacompdr")
-    tokenizer = open_clip.get_tokenizer("MobileCLIP-S2")
-    return _Clip(model, preprocess, tokenizer)
 
 
 def classify_pages(
@@ -84,25 +49,44 @@ def classify_pages(
     return {str(page.relative_to(root)): classifier(page) for page in pages}
 
 
-def zero_shot_classifier() -> Callable[[Path], PageClassification]:
-    """The CLIP zero-shot classifier bound to CONTENT_PROMPTS (local, CPU)."""
-    clip = _load_clip()
-    clip.model.eval()
-    labels = sorted(CONTENT_PROMPTS)
-    texts = clip.tokenizer([CONTENT_PROMPTS[label] for label in labels])
-    with torch.no_grad():
-        text_features = clip.model.encode_text(texts)
-        text_features /= text_features.norm(dim=-1, keepdim=True)
+CONTENT_KINDS = ("text", "photo", "drawing")
 
-    def classify(image_path: Path) -> PageClassification:
-        with torch.no_grad():
-            image = clip.preprocess(Image.open(image_path).convert("RGB")).unsqueeze(0)
-            image_features = clip.model.encode_image(image)
-            image_features /= image_features.norm(dim=-1, keepdim=True)
-            probs = (image_features @ text_features.T).softmax(dim=-1)[0]
-        return PageClassification.from_confidences({label: float(probs[i]) for i, label in enumerate(labels)})
+PAGE_KIND_PROMPT = (
+    "What does this scanned page SHOW? Reply with JSON only: "
+    '{"kind": "text"|"photo"|"drawing", "confidence": <0.0-1.0>}. '
+    '"text": writing to be read — a letter, a form, a list, a transcript; '
+    '"photo": a picture of people, places or things — a snapshot, a postcard, '
+    'however it was scanned; "drawing": an illustration or sketch. '
+    'Judge the page\'s content, never its paper: a scanned letter is "text" '
+    "even though the scan is photographic. The confidence is your own."
+)
 
-    return classify
+
+def classify_page(
+    image: Path, *, max_tokens: int = 1000, timeout: float = 120.0, urlopen: Any = None
+) -> PageClassification:
+    """The page's content kind, named by the vision model that reads the
+    image itself — one small call per raw page, thinking off, so the answer
+    is a reading and not a deliberation."""
+    answer = transcribe_image_vlm(
+        image,
+        system="You classify scanned pages.",
+        user_text=PAGE_KIND_PROMPT,
+        max_tokens=max_tokens,
+        timeout=timeout,
+        urlopen=urlopen,
+    )
+    raw = extract_json(answer.answer)
+    if not isinstance(raw, dict):
+        raise VlmError(f"no classification in the model's answer: {answer.answer[:120]!r}")
+    try:
+        kind = str(raw["kind"]).strip().lower()
+        confidence = float(raw["confidence"])
+    except (KeyError, TypeError, ValueError) as e:
+        raise VlmError(f"unusable classification: {answer.answer[:120]!r}") from e
+    if kind not in CONTENT_KINDS or not 0.0 <= confidence <= 1.0:
+        raise VlmError(f"unusable classification: {answer.answer[:120]!r}")
+    return PageClassification.from_confidences({kind: confidence})
 
 
 def run_classify(
@@ -123,7 +107,7 @@ def run_classify(
     store_path = str(classify_path.relative_to(work_dir))
     if store.exists(store_path):
         return classify_path  # idempotent
-    classify = classifier if classifier is not None else zero_shot_classifier()
+    classify = classifier if classifier is not None else classify_page
     results = classify_pages(pages, classify, folder)
     classify_path.parent.mkdir(parents=True, exist_ok=True)
     wire = {name: record.to_dict() for name, record in results.items()}

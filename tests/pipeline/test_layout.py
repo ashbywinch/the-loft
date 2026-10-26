@@ -25,7 +25,6 @@ from pipeline.layout import (
     load_layout,
     normalize,
     rotate_detections,
-    word_conf,
     words,
 )
 from pipeline.layout_line import BOX_SOURCE_MULTI, BOX_SOURCE_REPORT_UNCONFIRMED, LayoutLine
@@ -179,25 +178,6 @@ class TestAssociateLines:
         assert by_index[0].box_source == "content"
         assert by_index[1].box_source == "content"
         assert association.unmatched == [dets[2]]
-
-
-class TestWordConf:
-    def test_agreement_flags_confusions(self) -> None:
-        # the spike: fiist vs first, befoe vs before flag
-        confs = word_conf(["fiist", "theory", "befoe"], ["first", "theory", "before"])
-        assert confs == [0.0, 1.0, 0.0]
-
-    def test_accent_insensitive_agreement(self) -> None:
-        confs = word_conf(["Chère", "Maman"], ["Chere", "Maman"])
-        assert confs == [1.0, 1.0]
-
-    def test_extra_rec_words_do_not_flag(self) -> None:
-        confs = word_conf(["had", "a", "whole"], ["had", "a", "whole", "grade"])
-        assert confs == [1.0, 1.0, 1.0]
-
-    def test_missing_vlm_word_flags(self) -> None:
-        confs = word_conf(["P.S.]", "I", "had"], ["I", "had"])
-        assert confs == [0.0, 1.0, 1.0]
 
 
 class TestBuildLayout:
@@ -511,24 +491,6 @@ def test_build_layout_without_vlm_boxes_keeps_the_association(tmp_path: Path) ->
     layout = build_layout("p1.jpg", 100, 200, vlm_text, [])
     assert layout.lines[0].box is None  # no detections, no geometry — boxless
     assert layout.lines[0].box_source is None  # no anchor, no source label
-
-
-def test_load_vlm_boxes_reads_the_sidecar(tmp_path: Path) -> None:
-    from pipeline.layout import load_vlm_boxes
-
-    p = tmp_path / "p1.vlm.json"
-    p.write_text(
-        '{"total_tokens": 11000, "lines": [{"text": "a", "box": [1, 2, 3, 4]}, {"text": "b", "box": [5, 6, 7, 8]}]}',
-        encoding="utf-8",
-    )
-    assert load_vlm_boxes(p) == {0: [1.0, 2.0, 3.0, 4.0], 1: [5.0, 6.0, 7.0, 8.0]}
-    assert load_vlm_boxes(tmp_path / "missing.json") is None
-    bad = tmp_path / "bad.json"
-    bad.write_text("not json", encoding="utf-8")
-    assert load_vlm_boxes(bad) is None
-    nolines = tmp_path / "nolines.json"
-    nolines.write_text('{"total_tokens": 5}', encoding="utf-8")
-    assert load_vlm_boxes(nolines) is None
 
 
 def test_detections_keeps_the_vlm_text_as_the_anchor(tmp_path: Path) -> None:

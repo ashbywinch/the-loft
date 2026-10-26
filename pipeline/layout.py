@@ -63,7 +63,6 @@ from pipeline.line_match import LineMatch
 from pipeline.model.orientation_line import READING_DEGREES, OrientationLine
 from pipeline.model.orientation_report import OrientationReport
 from pipeline.model.unsure_word import UnsureWord
-from pipeline.transcription_line import TranscriptionLine
 from pipeline.unmatched_line import UnmatchedLine
 from tools.atomic import atomic_write
 from tools.box import aspect_consistent, overlap
@@ -225,20 +224,6 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> Associ
     )
     matches.sort(key=_by_vlm_index)
     return Association(matches=matches, unmatched=unmatched[len(boxless) :])
-
-
-def word_conf(vlm_words: list[str], rec_words: list[str]) -> list[float]:
-    """Per-VLM-word cross-reader agreement.
-
-    A VLM word agrees with the detector's line when its normalized form
-    appears among the detector line's normalized words — otherwise it is
-    flagged (the reader must check it). Both sides are normalized here
-    (robust to either raw or pre-normalized input): the rec model's noise
-    is the signal, so near-misses ("fiist" vs "first") flag while accent
-    and apostrophe loss agrees.
-    """
-    rec_set = {normalize(w) for w in rec_words}
-    return [1.0 if normalize(w) in rec_set else 0.0 for w in vlm_words]
 
 
 def _word_flag(
@@ -516,10 +501,9 @@ def build_layout(
     Anchors each VLM transcription line to its box — the VLM's OWN
     per-line boxes when the transcription carried geometry (``vlm_boxes``,
     normalized 0-1000 — the model that READ the page anchors each line it
-    transcribed; the rec engine cannot read cursive and merges/misses its
-    lines), else the detector's box (when one was found) —
+    transcribed), else the detector's box (when one was found) —
     and computes the per-word confidence — the transcription model's own
-    self-report (line + word), falling back to cross-reader agreement
+    self-report (line + word), falling back to the detector's word list
     when no self-report has run; the unmatched detector lines ride along
     with conf 0. Coordinates are trusted as the original image's pixels —
     the detection stage asserts that before handing them over (a future
@@ -643,29 +627,6 @@ def load_layout(path: Path) -> Layout:
 def load_layout_store(store: Any, store_path: str) -> Layout:
     """Read the latest version of a layout from a ``PipelineStore``."""
     return Layout.from_dict(json.loads(store.read_latest(store_path)))
-
-
-def load_vlm_boxes(path: Path) -> dict[int, list[float]] | None:
-    """The VLM's per-line boxes (normalized 0-1000) from a page's
-    transcription sidecar (``page.vlm.json`` — written by
-    pipeline.htr.htr_pages_vlm when the model returned geometry). Keyed by
-    the line index in the page's .txt (the sidecar stores the non-blank
-    entries in order — the .txt's own split skips blanks too). None when
-    the page's transcription carried no geometry — the pipeline then
-    falls back to the detector's association."""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    entries = data.get("lines")
-    if not isinstance(entries, list):
-        return None
-    boxes: dict[int, list[float]] = {}
-    for i, entry in enumerate(entries):
-        line = TranscriptionLine.of(entry)
-        if line is not None:
-            boxes[i] = line.box
-    return boxes or None
 
 
 def is_admissible(text: str, score: float) -> bool:

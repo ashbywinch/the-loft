@@ -11,10 +11,8 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 
-# vendored — the .venv-htr-only stage, foreign-interpreter code not subject
-# to this repo's module contract; the same set ruff and pyrefly exclude.
-# (The code-health tools were vendored here but are now served by lucidlint
-# from its own repo.)
+# third-party modules kept out of this repo's module contract; ruff and
+# pyrefly exclude the same set
 VENDORED: set[str] = set()
 
 

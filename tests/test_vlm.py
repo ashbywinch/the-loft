@@ -16,7 +16,7 @@ from pipeline.model.unsure_word import UnsureWord
 from pipeline.model.vlm import (
     VlmError,
     VlmOptions,
-    _extract_json,
+    extract_json,
     selfreport_words,
     transcription_system_with_context,
 )
@@ -47,18 +47,18 @@ class TestTranscriptionSystemWithContext:
 
 class TestExtractJson:
     def test_plain(self) -> None:
-        assert _extract_json('{"unsure": [{"line": 1, "word": "x"}]}') == {"unsure": [{"line": 1, "word": "x"}]}
+        assert extract_json('{"unsure": [{"line": 1, "word": "x"}]}') == {"unsure": [{"line": 1, "word": "x"}]}
 
     def test_code_fence(self) -> None:
         # the probe's model wrapped its answer in a fence — tolerate it
-        assert _extract_json('```json\n{"unsure": []}\n```') == {"unsure": []}
+        assert extract_json('```json\n{"unsure": []}\n```') == {"unsure": []}
 
     def test_trailing_prose(self) -> None:
-        assert _extract_json('Here you go:\n{"unsure": []}\nHope that helps') == {"unsure": []}
+        assert extract_json('Here you go:\n{"unsure": []}\nHope that helps') == {"unsure": []}
 
     def test_garbage_raises(self) -> None:
         with pytest.raises(VlmError):
-            _extract_json("I could not read the page at all")
+            extract_json("I could not read the page at all")
 
 
 class TestSelfreportWords:

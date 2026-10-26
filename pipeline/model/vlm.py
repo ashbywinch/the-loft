@@ -150,7 +150,7 @@ def parse_transcription_response(text: str) -> Transcription:
     geometry must come from the model that can READ the cursive, not the
     rec engine that merges/misses its lines)."""
     try:
-        data = _extract_json(text)
+        data = extract_json(text)
     except VlmError:
         return Transcription(text.strip())
     return Transcription.from_payload(data, text.strip())
@@ -169,7 +169,7 @@ def transcription_problem(text: str) -> str | None:
     if not text or not text.strip():
         return "empty response"
     try:
-        data = _extract_json(text)
+        data = extract_json(text)
     except VlmError:
         first = text.lstrip()[:1]
         if first in ("{", "["):
@@ -469,7 +469,7 @@ def selfreport_words(
     )
     call = transcribe if transcribe is not None else transcribe_image_vlm
     answer = call(image, system=system, user_text=f"Your transcription:\n{numbered}")
-    data = _extract_json(answer.answer)
+    data = extract_json(answer.answer)
     unsure = data.get("unsure", []) if isinstance(data, dict) else []
     validated: list[UnsureWord] = []
     for entry in unsure:
@@ -482,7 +482,7 @@ def selfreport_words(
     return validated
 
 
-def _extract_json(text: str) -> Any:
+def extract_json(text: str) -> Any:
     """The model's JSON, tolerating a code-fence wrapper (the probe wrapped
     its answer in ```json … ```)."""
     stripped = text.strip()
@@ -498,8 +498,8 @@ def _extract_json(text: str) -> Any:
             try:
                 return json.loads(stripped[start : end + 1])
             except json.JSONDecodeError:
-                raise VlmError(f"self-report returned no JSON: {text[:300]}") from None
-        raise VlmError(f"self-report returned no JSON: {text[:300]}") from None
+                raise VlmError(f"the model's answer carried no JSON: {text[:300]}") from None
+        raise VlmError(f"the model's answer carried no JSON: {text[:300]}") from None
 
 
 _ORIENTATION_SYSTEM = "You analyse document layouts precisely. Reply with the requested JSON only."
@@ -537,7 +537,7 @@ def orientation_report(image: Path, text: str | None = None) -> OrientationRepor
         user_text=prompt,
     )
     try:
-        data = _extract_json(answer.answer)
+        data = extract_json(answer.answer)
     except VlmError:
         return OrientationReport()
     if not isinstance(data, dict):

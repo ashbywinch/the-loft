@@ -8,7 +8,7 @@ dependencies = [
     "python-dateutil>=2.9.0",
     "dateparser>=1.2.0",
     "uncertainties>=3.2.3",
-    "open-clip-torch>=2.24",
+    "numpy>=2.0",  # the ink reader's measurement arithmetic (was riding on torch)
 ]
 [dependency-groups]
 dev = [

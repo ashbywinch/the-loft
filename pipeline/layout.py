@@ -226,43 +226,29 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> Associ
     return Association(matches=matches, unmatched=unmatched[len(boxless) :])
 
 
-def _word_flag(
-    word: str,
-    *,
-    selfreport_line: set[str] | None,
-    rec_words: list[str],
-    use_selfreport: bool,
-) -> float:
-    """The per-word flag source (user). With a self-report the
-    transcription model's own doubt drives the flags (it is the good
-    reader — the cross-reader's agreement over-flagged 75-90% of lines
-    because the detector's rec model garbles every cursive line); without
-    one, the cross-reader agreement is the fallback. Struck words always
-    flag."""
+def _word_flag(word: str, *, selfreport_line: set[str] | None) -> float:
+    """The per-word flag source (user): the transcription model's own doubt,
+    and nothing else. A page whose self-report did not run carries no flags —
+    no flag is not a claim of certainty (2026-10-26). There is no fallback:
+    the cross-reader agreement compared these words with a recognition engine
+    that no longer exists. Struck words always flag."""
     if is_struck(word):
         return 0.0
-    if use_selfreport:
-        return 0.0 if normalize(word) in (selfreport_line or set()) else 1.0
-    return 0.0 if normalize(word) not in {normalize(w) for w in rec_words} else 1.0
+    if selfreport_line is None:
+        return 1.0
+    return 0.0 if normalize(word) in selfreport_line else 1.0
 
 
 def _words_out(
     vw: list[str],
     *,
     selfreport_line: set[str] | None,
-    rec_words: list[str],
-    use_selfreport: bool,
 ) -> list[LayoutWord]:
-    """The per-word layout entries for one line — the flag source applies
-    per word (self-report / cross-reader fallback / struck)."""
+    """The per-word layout entries for one line — the self-report's flags
+    apply per word; struck words flag."""
     out: list[LayoutWord] = []
     for w in vw:
-        conf = _word_flag(
-            w,
-            selfreport_line=selfreport_line,
-            rec_words=rec_words,
-            use_selfreport=use_selfreport,
-        )
+        conf = _word_flag(w, selfreport_line=selfreport_line)
         out.append(LayoutWord(word=w, box=None, conf=conf))
     return out
 
@@ -515,7 +501,6 @@ def build_layout(
     by_index = {match.vlm_index: match for match in matches}
     # the self-report cites 1-based line numbers; the layout lines are 0-based
     report_by_line = _selfreport_by_line(selfreport, len(vlm_lines))
-    use_selfreport = selfreport is not None
     lines: list[LayoutLine] = []
     for vi, line in enumerate(vlm_lines):
         vw = vlm_line_words(line)
@@ -536,8 +521,6 @@ def build_layout(
             words_out = _words_out(
                 vw,
                 selfreport_line=report_by_line.get(vi),
-                rec_words=[],
-                use_selfreport=use_selfreport,
             )
             line_conf = (sum(word.conf for word in words_out) / len(words_out)) if words_out else 0.0
             lines.append(
@@ -562,8 +545,6 @@ def build_layout(
                     words=_words_out(
                         vw,
                         selfreport_line=report_by_line.get(vi),
-                        rec_words=[],
-                        use_selfreport=use_selfreport,
                     ),
                 )
             )
@@ -571,8 +552,6 @@ def build_layout(
         words_out = _words_out(
             vw,
             selfreport_line=report_by_line.get(vi),
-            rec_words=match.rec_words,
-            use_selfreport=use_selfreport,
         )
         line_conf = (sum(word.conf for word in words_out) / len(words_out)) if words_out else 0.0
         lines.append(

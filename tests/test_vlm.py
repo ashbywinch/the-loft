@@ -88,6 +88,28 @@ class TestSelfreportWords:
         result = selfreport_words(__import__("pathlib").Path("p.jpg"), "one\ntwo\nthree", transcribe=fake)
         assert result == []
 
+    def test_a_failed_selfreport_is_retried_then_carried(self) -> None:
+        """The second pass either runs or the page carries no flags (user,
+        2026-10-26): one retry after a failure; a second failure returns an
+        empty list rather than raising, because no flag is not a claim of
+        certainty and a lost self-report must not lose the page."""
+        calls: list[int] = []
+
+        def flaky(image, *, system, user_text):
+            calls.append(1)
+            if len(calls) == 1:
+                raise VlmError("first attempt died")
+            return VlmAnswer(json.dumps({"unsure": [{"line": 1, "word": "fiist"}]}), TokenUsage())
+
+        retried = selfreport_words(__import__("pathlib").Path("p.jpg"), "fiist line", transcribe=flaky)
+        assert retried == [UnsureWord(1, "fiist")]
+        assert len(calls) == 2  # one retry
+
+        def dead(image, *, system, user_text):
+            raise VlmError("always dies")
+
+        assert selfreport_words(__import__("pathlib").Path("p.jpg"), "a line", transcribe=dead) == []
+
 
 class TestParseTranscriptionResponse:
     def test_json_with_boxes(self) -> None:

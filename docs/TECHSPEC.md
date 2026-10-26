@@ -949,11 +949,13 @@ information. One extra VLM call per page (`tools/selfreport.py`, ~17k
 tokens) has the model review its own numbered transcription and mark the
 words it is least sure of, or that read oddly in context — page-01: 3
 flagged words vs the cross-reader's 154. The ~~struck~~ markers (crossed-out
-words the VLM left in) always flag. The cross-reader agreement remains the
-fallback when no self-report has run, and its per-line data stays in the
-layout payload. The transcription prompt also carries the standing
-knowledge (people/places), the pile label, and the previous page's text to
-help it read (user).
+words the VLM left in) always flag. **There is no fallback** (user,
+2026-10-26): when the self-report does not run it is retried once, and if it
+still does not run the page carries no flags — no flag is not a claim of
+certainty, and the cross-reader agreement it once fell back to compared the
+words with a recognition engine that no longer exists. The transcription
+prompt also carries the standing knowledge (people/places), the pile label,
+and the previous page's text to help it read (user).
 
 **Why not the alternatives (spike evidence):**
 

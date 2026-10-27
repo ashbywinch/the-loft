@@ -112,6 +112,28 @@ def test_scan_job_converts_pages_to_zero_padded_jpegs(tmp_path: Path) -> None:
     assert list(job_dir.glob("*.png")) == []  # staging pngs never reach the inbox
 
 
+def test_scan_job_stages_beside_the_inbox_never_inside_it(tmp_path: Path) -> None:
+    """A directory in the scan area IS a finished pile (the worker adopts every
+    one it sees), so the scan runs in a staging directory outside it."""
+    from PIL import Image
+
+    from tools.scan import scan_job
+
+    source = tmp_path / "source"
+    source.mkdir()
+    Image.new("RGB", (8, 8), (0, 0, 255)).save(source / "page-1.png")
+    marker = tmp_path / "cwd"
+    fake = _fake_scanimage(f'#!/bin/sh\npwd > "{marker}"\ncp {source}/*.png .\n', tmp_path)
+
+    inbox = tmp_path / "inbox"
+    _ = scan_job("epsonds:libusb:fake", "docs", "job", inbox=inbox, _scanimage=fake, _env={})
+
+    staging = Path(marker.read_text(encoding="utf-8").strip())
+    assert staging.parent == inbox.parent  # beside the inbox
+    assert inbox not in staging.parents  # and never inside it
+    assert [path.name for path in inbox.iterdir()] == ["job"]  # the scan area holds only the finished pile
+
+
 def test_scan_job_failure_cleans_up_and_raises(tmp_path: Path) -> None:
     from tools.scan import scan_job
 

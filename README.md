@@ -39,6 +39,22 @@ survive daemon restarts and omp exits, start it through the hub with:
 The general rule lives in `skill://lan-server`; this is this project's
 launch spec.
 
+### The worker (scan pickup, UR3)
+
+`./loft work` is one sweep: every pile in the scan area is registered
+(adoption hashes it where it sits and never modifies it) and every `pending`
+batch runs the machine stages — orient, marks, words, the model guess and
+the reading — ending where a person takes over: each read page waits on
+its row check. `./loft work --watch 60` repeats that sweep every minute.
+The queue is the registry's records, and a pass that dies half-way puts its
+batch back to `pending`, so the next sweep retries it and the failure is
+printed with the batch's id.
+
+For a worker that survives daemon restarts, the launch spec (same rule as
+the server above): **name:** `loft-worker` · **application:** `./loft` ·
+**args:** `work --watch 60` · **cwd:** repo root · **detached:** `true` ·
+**ready:** the banner `worker: watching`.
+
 ## Documents
 
 | Doc | What it is |

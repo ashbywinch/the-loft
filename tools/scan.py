@@ -119,7 +119,10 @@ def scan_job(
     """Scan one ADF job into inbox/<job>/<job>-NN.jpg; the job dir appears only on success."""
     job_dir = ensure_job_dir(inbox, job)
     env = _env if _env is not None else _sane_env()
-    staging = Path(tempfile.mkdtemp(prefix=f"{job}-", dir=inbox))
+    # staged BESIDE the inbox, never inside it: a directory in the scan area
+    # is a finished pile (the worker adopts every one it sees), so a
+    # half-written staging directory must never appear there
+    staging = Path(tempfile.mkdtemp(prefix=f"{job}-", dir=inbox.parent))
     try:
         try:
             _ = subprocess.run(

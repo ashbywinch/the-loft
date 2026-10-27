@@ -805,6 +805,18 @@ whole sequence). `layout` runs the single-pass layout stage (§16.17) for
 the named pages only, inheriting its fail-loud missing-input check. The general
 `process <batch>` remains the whole-chain entry point.
 
+**The worker owns the machine stages** (`pipeline/worker.py`, `loft work`;
+UR3). The registry's records are its queue: a record with status `pending`
+(a fresh scan, an adoption, or a pile whose content changed) is work, and
+a sweep registers every pile in the scan area and runs each pending batch
+through `process`. A page's status is never stored — it is derived from
+the stage artefacts (`BatchReadings.page_status`, §16.14.2's marker rule),
+so the "Check the rows" queue reads the artefacts, not a field. Two rules
+keep the queue honest: a pass that dies half-way writes its record back to
+`pending` (a crash in `importing` would strand the batch where no sweep
+looks), and a scan stages beside the inbox rather than in it (a directory
+in the scan area is a finished pile, and the worker adopts every one).
+
 **The model-API contract (the client side of the Cloudflare gateway).**
 The VLM client must send a User-Agent the gateway's WAF accepts
 (`opencode/1.14.20`), and must give reasoning models `max_tokens` headroom

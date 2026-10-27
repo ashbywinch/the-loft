@@ -15,6 +15,7 @@ A relocation is one edit here, never a grep across modules.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 # The big disk — the one machine-dependent input. Defaults to the current
@@ -29,3 +30,17 @@ REGISTRY_DIR = WORKSPACE / "registry"
 WORK_DIR = WORKSPACE / "work"
 ARCHIVE_DIR = WORKSPACE / "archive"
 PROJECTION_DIR = WORKSPACE / "projection"
+
+
+@dataclass(frozen=True)
+class LoftPaths:
+    """The four locations a pipeline process reads and writes, whole.
+
+    They travel together (the worker's constructor, a test's scratch tree),
+    so they are one value: a caller that overrides one and forgets another
+    would point the work at a folder the registry does not describe."""
+
+    scan_area: Path = USER_SCAN_AREA
+    registry_dir: Path = REGISTRY_DIR
+    work_dir: Path = WORK_DIR
+    archive_dir: Path = ARCHIVE_DIR

@@ -7,13 +7,22 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import override
 
 import pytest
 from PIL import Image
 
 from document.word import Word
 from document.words import Words
-from pipeline.chain import _guess_prompt, _read_pages, apply_routes, guess_pages, review
+from pipeline.chain import (
+    BatchRun,
+    Classification,
+    _guess_prompt,
+    _read_pages,
+    apply_routes,
+    guess_pages,
+    review,
+)
 from pipeline.detect.reader import Reading
 from pipeline.page_text import PageText
 from pipeline.registry import RegistryError
@@ -525,3 +534,35 @@ def test_clip_report_falls_back_to_the_located_report_boxes(tmp_path: Path) -> N
     assert report["lines"][0]["box"] == [100, 50, 300, 100]
     assert report["lines"][0]["degrees"] == 0
     assert report["source"] == "clip"
+
+
+def test_a_failed_pass_puts_the_batch_back_in_the_queue(tmp_path: Path) -> None:
+    """The registry's records ARE the worker's queue: a pass that dies half-way
+    must leave the batch `pending` again, or a crash strands it in `importing`
+    where no sweep looks for it."""
+
+    class _Broken(BatchRun):
+        @override
+        def classify_pages(self, pages: list[Path]) -> Classification:
+            raise RuntimeError("the classifier died")
+
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    Image.new("RGB", (8, 8), (255, 255, 255)).save(folder / "p1.jpg")
+    batch = "adopt-0001"
+    record = {
+        "batch_id": batch,
+        "path": str(folder),
+        "status": "pending",
+        "pages": {"p1.jpg": "hash"},
+        "fingerprint": ["hash"],
+    }
+    _ = (registry / f"{batch}.json").write_text(json.dumps(record), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="classifier died"):
+        _Broken(batch, registry_dir=registry, work_dir=tmp_path / "work").process()
+
+    saved = json.loads((registry / f"{batch}.json").read_text(encoding="utf-8"))
+    assert saved["status"] == "pending"

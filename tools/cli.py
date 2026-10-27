@@ -24,11 +24,12 @@ import uvicorn
 
 from pipeline.api.server import Server, ServerConfig, build_app, lan_addresses
 from pipeline.model.ai_client import AIClient, AIClientError
+from pipeline.worker import Worker
 from tools.anchor import Anchor
 from tools.archive import Archive
 from tools.gedcom_document import GedcomDocument
 from tools.gedcom_shapes import PEOPLE_FILE, PLACES_FILE, GedcomShapes
-from tools.loft_paths import ARCHIVE_DIR
+from tools.loft_paths import ARCHIVE_DIR, USER_SCAN_AREA, LoftPaths
 from tools.memory import ASSESS_MAX_TOKENS
 from tools.store import DiskStore
 
@@ -156,6 +157,27 @@ def cmd_capture_memory(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_work(args: argparse.Namespace) -> int:
+    """The scan pickup (UR3): register the scan area's piles and run the machine
+    stages, which stop where a person takes over — the page's row check."""
+    paths = LoftPaths(scan_area=Path(args.scan_area))
+    worker = Worker(paths)
+    if args.watch:
+        print(f"worker: watching {paths.scan_area} — a sweep every {args.watch:g}s (Ctrl-C stops)")
+        try:
+            worker.watch(args.watch)
+        except KeyboardInterrupt:  # the operator's stop is this command's exit, not a crash
+            print("worker: stopped")
+            return 0
+        return 0
+    report = worker.sweep()
+    print(
+        f"worker: {len(report.adoptions)} pile(s) seen, {len(report.processed)} batch(es) ran, "
+        f"{len(report.failed)} failed"
+    )
+    return 1 if report.failed else 0
+
+
 def cmd_gedcom(args: argparse.Namespace) -> int:
     if args.action == "export":
         return _gedcom_export(args.folder, args.path)
@@ -251,6 +273,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--anchor", default="", help="JSON anchor context (item/person/theme)")
     p.add_argument("--status", default="draft", choices=["draft", "catalogued"])
     p.add_argument("--archive", default=str(ARCHIVE_DIR))
+
+    p = _command(
+        sub,
+        name="work",
+        help_text="run the machine stages for dropped scans — one sweep, or --watch",
+        fn=cmd_work,
+    )
+    p.add_argument("--scan-area", default=str(USER_SCAN_AREA), help="the folder the scanner drops piles into")
+    p.add_argument("--watch", type=float, default=0.0, help="repeat a sweep every N seconds (0 = one sweep)")
 
     p = sub.add_parser(
         "gedcom",

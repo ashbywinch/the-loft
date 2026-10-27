@@ -91,6 +91,13 @@ export function render(main, _ctx, state) {
         (n, b) => n + (b.boundaries || []).filter((x) => x.status !== "confirmed").length,
         0,
       );
+      // The row-check queue: pages whose line detection needs a person's look.
+      // The document boundaries above are the transcript review — a different
+      // queue. Counting only boundaries hid every page waiting on its rows.
+      const pageCount = pending.reduce(
+        (n, b) => n + Object.values(b.pages || {}).filter((status) => status === "rows_pending").length,
+        0,
+      );
       const importSessions = pendingImports(state);
       const importCount = importSessions.length;
       const allDrafts = drafts(state.items);
@@ -98,6 +105,7 @@ export function render(main, _ctx, state) {
       const myDrafts = signedIn ? allDrafts.filter((d) => isMine(d, state)).length : allDrafts.length;
       let note = "";
       const parts = [];
+      if (pageCount) parts.push(`${pageCount} page${pageCount === 1 ? "" : "s"} to check`);
       if (docCount) parts.push(`${docCount} document${docCount === 1 ? "" : "s"}`);
       if (importCount) parts.push(`${importCount} import${importCount === 1 ? "" : "s"}`);
       if (myDrafts) parts.push(`${myDrafts} draft${myDrafts === 1 ? "" : "s"}`);

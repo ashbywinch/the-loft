@@ -50,6 +50,16 @@ persistent_comment = true
 
 [github_action_config]
 handle_push_trigger = true
+# Code commits pushed by the omp bot ARE reviewed (user, 2026-10-27);
+# dependabot stays ignored by the workflow's job-level
+# `if: github.actor != 'dependabot[bot]'`, which never reaches this config.
+# Upstream defaults this key to TRUE and matches the EVENT SENDER's type,
+# not the commit's author: every harness push then returned before
+# `push_commands` ran ("Skipping synchronize: bot commit detected",
+# pr_agent/servers/github_action_runner.py), leaving the workflow's
+# fail-loud check red with no review behind it. The review posts comments,
+# never commits — no bot loop.
+push_trigger_ignore_bot_commits = false
 auto_review = true
 # The review pass only (user, 2026-10-26). /improve is a full-PR pass by
 # upstream design, and on 2026-10-26 it burned its whole output budget

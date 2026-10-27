@@ -91,6 +91,7 @@ export function render(main, _ctx, state) {
         (n, b) => n + (b.boundaries || []).filter((x) => x.status !== "confirmed").length,
         0,
       );
+      const pageCount = pending.reduce((n, b) => n + (b.unchecked_pages || 0), 0);
       const importSessions = pendingImports(state);
       const importCount = importSessions.length;
       const allDrafts = drafts(state.items);
@@ -101,7 +102,11 @@ export function render(main, _ctx, state) {
       if (docCount) parts.push(`${docCount} document${docCount === 1 ? "" : "s"}`);
       if (importCount) parts.push(`${importCount} import${importCount === 1 ? "" : "s"}`);
       if (myDrafts) parts.push(`${myDrafts} draft${myDrafts === 1 ? "" : "s"}`);
-      note = parts.join(" + ") + " to review";
+      note = parts.length ? `${parts.join(" + ")} to review` : "";
+      if (pageCount) {
+        const pages = `${pageCount} page${pageCount === 1 ? "" : "s"} to check`;
+        note = note ? `${note}, ${pages}` : pages;
+      }
       if (!parts.length && importSessions.length) {
         const people = proposedPeople(state).length;
         note = `${people} identit${people === 1 ? "y" : "ies"} to confirm (import session)`;

@@ -55,6 +55,17 @@ ADJUSTMENTS_JSON = "row-adjustments.json"  # the reviewer's drawn row lines
 ADJUSTED_ROWS_JSON = "rows-adjusted.json"  # the correction's rows (the wire contract)
 
 
+def unchecked_pages(readings: BatchReadings, pages: list[str]) -> int:
+    """How many of a batch's pages have no reviewer row check on disk.
+
+    The check's record is the drawn-lines file (`adjustments_path`); a page
+    without one is still waiting for a person. This is a DERIVED count, not
+    a state: `PageStatus`'s `rows_pending` is the planned vocabulary
+    (WORK-PLAN §1.3) and nothing writes it yet, so the door counts what the
+    archive can actually answer rather than inventing a status."""
+    return sum(1 for page in pages if not readings.adjustments_path(page).exists())
+
+
 @dataclass(frozen=True)
 class BatchReadings:
     """One batch's reading files on disk — the one place the ocr-guess

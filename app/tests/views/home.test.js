@@ -483,4 +483,25 @@ describe("the unfinished import session (user: the front page shows the session,
     render(main, {}, pendingState([], [], { person: "p-alex" }));
     expect(main.textContent).not.toContain("The document import");
   });
+
+  it("counts the pages waiting on a row check, not just the documents", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          batches: [
+            { batch_id: "batch-1", status: "pending", boundaries: [{ status: "draft" }], unchecked_pages: 2 },
+          ],
+        }),
+      })),
+    );
+    const main = document.createElement("main");
+    render(main, {}, STATE);
+    await vi.waitFor(() => expect(main.querySelector(".review-card-note")).not.toBeNull());
+    const note = main.querySelector(".review-card-note").textContent;
+    expect(note).toContain("1 document");
+    expect(note).toContain("2 pages to check");
+    vi.unstubAllGlobals();
+  });
 });

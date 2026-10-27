@@ -973,7 +973,15 @@ def _seed_sync_batch(fixture: ServerFixture, batch_id: str = "adopt-0001") -> No
     )
     fixture.registry_dir.mkdir(parents=True)
     (fixture.registry_dir / f"{batch_id}.json").write_text(
-        _json.dumps({"batch_id": batch_id, "path": str(fixture.data_dir), "status": "review", "boundaries": None}),
+        _json.dumps(
+            {
+                "batch_id": batch_id,
+                "path": str(fixture.data_dir),
+                "status": "review",
+                "boundaries": None,
+                "pages": {"p1.jpg": "hash-1", "p2.jpg": "hash-2"},
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -1099,6 +1107,20 @@ def test_sync_batches_lists_the_adopted_batches(server: ServerFixture) -> None:
     body = _json.loads(raw.decode("utf-8"))
     ids = [b["batch_id"] for b in body["batches"]]
     assert ids == ["adopt-0002", "adopt-0001"]  # newest first
+
+
+def test_sync_batches_counts_the_pages_without_a_row_check(server: ServerFixture) -> None:
+    """A page waits on a person until a reviewer's drawn lines are on disk;
+    the count is over the batch's pages, not its documents."""
+    import json as _json
+
+    _seed_sync_batch(server)
+    guess = server.work_dir / "adopt-0001" / "ocr-guess"
+    (guess / "p1.row-adjustments.json").write_text(_json.dumps({"lines": []}), encoding="utf-8")
+    status, raw = server.get("/api/sync/batches", cookie=server.cookie)
+    assert status == 200
+    body = _json.loads(raw.decode("utf-8"))
+    assert body["batches"][0]["unchecked_pages"] == 1  # p1 is checked, p2 is not
 
 
 def test_sync_page_requires_a_session(server: ServerFixture) -> None:

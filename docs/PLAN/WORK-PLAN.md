@@ -85,6 +85,17 @@ draw stays a prompt obligation (the prompt already forbids it after a
 search surfaced a document) — the condition was not widened. Verified by
 the eval, one run: 8/8 conditions of the digs flow.
 
+**The arc eval draws badly too, and the tree proves it is the draw.** The
+same review code passed `build-and-test` on `4d85090` and failed it on
+`c803e8e`, whose only diff is a table cell in `SCRAPS.md`: the failing
+draw repeated the first turn's question verbatim on turn 2
+(`condition_arc_no_repeat`, R4) and never named the Seascale lead the
+family had just given (`condition_arc_lead`, R3) — one stalled turn, two
+conditions. So two eval families (the digs flow and the arc) are
+sample-dependent, and a green CI can depend on the draw: this needs a
+review-chat session that makes the walk's behaviour the thing the prompt
+holds to — not a feature PR, and not a widened condition.
+
 ## 3. Layout and measurement seams (records: `strip-grouping-plan.md` postmortem; `geometry-experiments-log.md`; `design-decisions.md`)
 
 | # | Seam | State |

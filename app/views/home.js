@@ -97,20 +97,18 @@ export function render(main, _ctx, state) {
       const allDrafts = drafts(state.items);
       const signedIn = me(state);
       const myDrafts = signedIn ? allDrafts.filter((d) => isMine(d, state)).length : allDrafts.length;
-      let note = "";
+      // every pending item reports itself — a note per kind, joined. (The
+      // identity count used to replace the whole note instead: it was
+      // unreachable dead code, since a pending import already put an import
+      // in `parts`. docs/UX.md's portal gives each kind its own door next.)
+      const people = importCount ? proposedPeople(state).length : 0;
       const parts = [];
-      if (docCount) parts.push(`${docCount} document${docCount === 1 ? "" : "s"}`);
-      if (importCount) parts.push(`${importCount} import${importCount === 1 ? "" : "s"}`);
-      if (myDrafts) parts.push(`${myDrafts} draft${myDrafts === 1 ? "" : "s"}`);
-      note = parts.length ? `${parts.join(" + ")} to review` : "";
-      if (pageCount) {
-        const pages = `${pageCount} page${pageCount === 1 ? "" : "s"} to check`;
-        note = note ? `${note}, ${pages}` : pages;
-      }
-      if (!parts.length && importSessions.length) {
-        const people = proposedPeople(state).length;
-        note = `${people} identit${people === 1 ? "y" : "ies"} to confirm (import session)`;
-      }
+      if (docCount) parts.push(`${docCount} document${docCount === 1 ? "" : "s"} to review`);
+      if (importCount) parts.push(`${importCount} import${importCount === 1 ? "" : "s"} to review`);
+      if (myDrafts) parts.push(`${myDrafts} draft${myDrafts === 1 ? "" : "s"} to review`);
+      if (pageCount) parts.push(`${pageCount} page${pageCount === 1 ? "" : "s"} to check`);
+      if (people) parts.push(`${people} identit${people === 1 ? "y" : "ies"} to confirm`);
+      const note = parts.join(", ");
       reviewSection = el("section", { class: "block review-promo" }, [
         el("a", { class: "review-card", href: "#/review" }, [
           el("div", { class: "review-card-icon" }, "✓"),

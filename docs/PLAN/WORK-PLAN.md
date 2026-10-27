@@ -71,18 +71,19 @@ memory may simply have more to tell; the conversation is the same one
 that elicits further memories about the item and the identities that
 emerge).
 
-**The review eval is sample-dependent — fix the condition, not the draw**
+**The review's answer language is pinned — the eval found a real defect**
 (2026-10-27). `test_review_condition[findings-the model digs into the
-statement and surfaces the attested death]` failed one CI run: the model
-returned NO findings (the lead reached the question instead) and the
-`findings_quote` condition only searched findings. The same conditions
-passed locally on one run, and the next CI run — with no change to the
-review path — passed too. Per `docs/testing-standards.md` that is a
-flaky check: the contract is "the response surfaces the attested sentence
-verbatim", so the condition should read findings AND the question (the
-widening the mention condition already got, 2026-10-08), or the prompt
-should make findings carry the evidence. Not done yet — it needs the
-review flow's own session (this slice), not a feature PR.
+statement and surfaces the attested death]` failed two CI draws, each
+differently: once with no findings at all, once with the finding answered
+in Chinese — the right fact, quoted in the model's own translation
+(`在战争记录中，Walter Whitlock被记录为'死于1916年9月15日…'`). The prompt never
+said which language the family reads, so the check's English quote was
+never the contract. `tools/review.py`'s persona now says every word the
+family reads (findings, note, question) is in their own language and a
+quotation stays in the document's words, untranslated. The empty-findings
+draw stays a prompt obligation (the prompt already forbids it after a
+search surfaced a document) — the condition was not widened. Verified by
+the eval, one run: 8/8 conditions of the digs flow.
 
 ## 3. Layout and measurement seams (records: `strip-grouping-plan.md` postmortem; `geometry-experiments-log.md`; `design-decisions.md`)
 

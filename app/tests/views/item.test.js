@@ -418,7 +418,7 @@ describe("item description", () => {
 describe("item clarification fragments", () => {
   it("shows a clarification fragment that attests the item, in its own block", () => {
     const clar = {
-      id: "c-winch",
+      id: "c-hale",
       title: "The Hale family",
       date: "2026-08-02",
       date_precision: "exact",

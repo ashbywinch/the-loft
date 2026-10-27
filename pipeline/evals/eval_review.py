@@ -32,13 +32,13 @@ PEOPLE: list[dict[str, Any]] = [
     {"id": "p-pearl", "name": "Pearl Whitlock"},
     {"id": "p-nora", "name": "Nora Whitlock"},
     {"id": "p-walter", "name": "Walter Whitlock", "dod": {"date": "1916-09-15", "precision": "exact"}},
-    # The second Walter — why a family memory can name the wrong man. The real
-    # case (2026-08-08): a LIVING Cecil in Ivy's nephew's generation made the
-    # war-dead Cecil look like "the other brother", so the recollection named
-    # the sibling. Without this second same-name person the case has no cause.
+    # The second Walter — why a family memory can name the wrong man: a LIVING
+    # relative one generation on carries the same name, so the war-dead man
+    # reads as "the other brother". Without this second same-name person the
+    # recollection has no reason to go wrong.
     {
         "id": "p-walter-jr",
-        "name": "Walter Henderson Whitlock",
+        "name": "Walter Ellery Whitlock",
         "dob": {"date": "1922-06-11", "precision": "exact"},
     },
 ]
@@ -110,12 +110,10 @@ class OffTopicFlow(ReviewFlow):
 
 
 class WrongPersonContradictionFlow(ReviewFlow):
-    """The real case (2026-08-08): the family remembered the wrong sibling
-    for an attested war death, because a LIVING relative of the next
-    generation carried the same name — "I thought it was Richard who died,
-    because I remember there being a live Cecil". The app must not confirm:
-    the war record attests Walter, the recollection names his sibling Nora,
-    and the contradiction is surfaced."""
+    """The family remembers the wrong sibling for an attested war death,
+    because a LIVING relative of the next generation carries the same name.
+    The app must not confirm: the war record attests Walter, the recollection
+    names his sibling Nora, and the contradiction is surfaced."""
 
     name = "the user is wrong — a contradiction with the attested war record is surfaced"
     text = (

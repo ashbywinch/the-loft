@@ -122,6 +122,18 @@ PR's. The eval's own message now carries the verdict
 (`ReviewRun.verdict()`, `tests/pipeline/test_eval_review.py`) so the next
 draw is diagnosable from the CI log alone.
 
+**The ruling (user, 2026-10-27): the wrong person for an attested event IS
+the contradiction — the prompt says so now.** `tools/review.py`'s step 4
+names the collision and resolves it: an attested event carries its SUBJECT
+(the war record that Walter died is a fact ABOUT Walter), so a statement
+that gives that death to someone else contradicts it even though the archive
+holds no death record for the other person — silence about them is not
+permission to move the event onto them, and a same-name ambiguity buys no
+pass (ask which one in the question AND still flag). The persona's blanket
+"when in doubt, no contradiction" became "when the record is silent AND no
+attested event is displaced, no contradiction". Verified once, all review
+conditions plus the arc and the caching cross-check: 87 passed.
+
 ## 3. Layout and measurement seams (records: `strip-grouping-plan.md` postmortem; `geometry-experiments-log.md`; `design-decisions.md`)
 
 | # | Seam | State |

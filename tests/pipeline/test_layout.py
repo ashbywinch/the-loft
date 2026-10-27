@@ -208,7 +208,7 @@ class TestBuildLayout:
         layout = build_layout("p.jpg", 100, 100, vlm, dets)
         assert layout.lines[1].box is None
         assert layout.lines[1].conf == 0.0
-        assert all(w.conf == 0.0 for w in _words(layout.lines[1]))
+        assert all(w.conf == 1.0 for w in _words(layout.lines[1]))  # no self-report: no flags
 
     def test_blank_lines_skipped(self) -> None:
         vlm = "\nline one\n\nline two\n"
@@ -242,14 +242,16 @@ class TestSelfReportFlags:
         # a clear word does not flag under an empty self-report
         assert _words(layout.lines[0])[0].conf == 1.0
 
-    def test_no_selfreport_falls_back_to_cross_reader(self) -> None:
-        # backward compatible: without a self-report the cross-reader
-        # agreement drives the flags (the pre-2026-08-15 behavior)
-        vlm = "the quick brown fiist theory"
+    def test_no_selfreport_carries_no_flags(self) -> None:
+        # 2026-10-26 (user): there is no fallback. Without a self-report the
+        # words carry no flags — "no flag" is not a claim of certainty, and
+        # the cross-reader agreement compared them with a rec engine that no
+        # longer exists. A struck word still flags.
+        vlm = "the quick brown ~~fiist~~ theory"
         dets = [_det([0, 0, 10, 10], "the quick brown first theory")]
         layout = build_layout("p.jpg", 100, 100, vlm, dets)
         confs = [w.conf for w in _words(layout.lines[0])]
-        assert confs == [1.0, 1.0, 1.0, 0.0, 1.0]  # fiist disagrees, the rest agree
+        assert confs == [1.0, 1.0, 1.0, 0.0, 1.0]  # only the struck word flags
 
     def test_selfreport_line_numbers_are_one_based(self) -> None:
         # the model cites 1-based lines; the layout lines are 0-based

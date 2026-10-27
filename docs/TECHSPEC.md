@@ -89,7 +89,7 @@ archive/
 - **References carry a status** — `confirmed` | `proposed`. That is the ML seam (P4): models write `proposed`; humans flip to `confirmed` with one tap. No schema change when OCR/labeling arrive.
 - **Dates:** ISO + `date_precision` (`exact | month | year | approx`). Approx renders at range start with a subtle marker; filters treat it honestly.
 - **Person:** `{"id","name","years","relation","bio","photo"}` — thin bios are honest (PRD §4); never padded.
-- **Person IDs are name-based** (p-alex, p-nora, p-owen) — first-name-only for the main characters where unambiguous; on a name clash the ID qualifies with the surname (p-harper-winch). IDs never change once catalogued.
+- **Person IDs are name-based** (p-alex, p-nora, p-owen) — first-name-only for the main characters where unambiguous; on a name clash the ID qualifies with the surname (p-harper-hale). IDs never change once catalogued.
 - **Place:** `{"id","name","aliases","note","lat","lng"}` — `aliases` are the short forms the reader hyperlinks ("Dunmoor" → Dunmoor Primary School); the same alias seam as people (§16.4).
 - **Relationships — RESOLVED (user):** `people.json` (the archive's people identity table) carries typed edges `{"a", "b", "kind", "label_a", "label_b"}` (`spouse | parent | sibling | inlaw | teacher`) — `label_a` is what B is to A. Person pages show a "Related" block; the family tree view (`#/tree`) renders generations from the edges. **Labels are gender-neutral by design** (`child`, not `son` — the model never assumes gender; the family's own gendered words live in the free-text `relation`/bio where the family itself used them). No runtime library; `tools/export-gedcom` remains future work for interop. **Relationships are derived, regenerable content:** the family structure is stated in the primary data (the interview answers: "Mum was Nora… Dad is Owen Hale. Mum's mum was Fern… Dad's sister is Miriam… His aunt is Wilma Hale", "Wilma is Miles's sister", "Harper… married Owen's brother Dale", "Owen's parents Miles and Vera") plus the letters, and the shared engine must be able to regenerate the edges from those artifacts (with the propose/confirm seam for what inference cannot prove). The archive is the only home of the table, and `tests/test_publish.py` fails if the projection ever drifts from it again.
 - **Bios are derived, source-attributed text** — rebuilt when evidence changes (new letters, testimonies); disputed facts are omitted from generated text, never adjudicated (§16.9).
@@ -950,11 +950,13 @@ information. One extra VLM call per page (`tools/selfreport.py`, ~17k
 tokens) has the model review its own numbered transcription and mark the
 words it is least sure of, or that read oddly in context — page-01: 3
 flagged words vs the cross-reader's 154. The ~~struck~~ markers (crossed-out
-words the VLM left in) always flag. The cross-reader agreement remains the
-fallback when no self-report has run, and its per-line data stays in the
-layout payload. The transcription prompt also carries the standing
-knowledge (people/places), the pile label, and the previous page's text to
-help it read (user).
+words the VLM left in) always flag. **There is no fallback** (user,
+2026-10-26): when the self-report does not run it is retried once, and if it
+still does not run the page carries no flags — no flag is not a claim of
+certainty, and the cross-reader agreement it once fell back to compared the
+words with a recognition engine that no longer exists. The transcription
+prompt also carries the standing knowledge (people/places), the pile label,
+and the previous page's text to help it read (user).
 
 **Why not the alternatives (spike evidence):**
 

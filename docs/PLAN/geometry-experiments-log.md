@@ -503,7 +503,7 @@ A. Matching count-mismatch: 40 measured rows vs ~25 transcribed lines
    — proportional assignment hands long labels to fragment rows (the
    birth certificates).
 B. Gate B assumes handwriting scale: 'NHS' at 109 px/char and
-   '~PAUL WINCH~' at 126 px/char may be BIG print/handwriting on
+   '~<NAME>~' at 126 px/char may be BIG print/handwriting on
    photos — the 80 px/char ceiling needs the row's own letter size.
 C. Mixed orientations on one page (the postcard's message panel):
    needs region separation before clustering.

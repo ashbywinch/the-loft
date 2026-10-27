@@ -468,8 +468,19 @@ def selfreport_words(
         places=", ".join(places) if places else "none",
     )
     call = transcribe if transcribe is not None else transcribe_image_vlm
-    answer = call(image, system=system, user_text=f"Your transcription:\n{numbered}")
-    data = extract_json(answer.answer)
+    # The second pass either runs or the page carries no flags (user,
+    # 2026-10-26): one retry, then carry on — no fallback, and no flag is
+    # not a claim of certainty.
+    data: Any = None
+    for attempt in (1, 2):
+        try:
+            answer = call(image, system=system, user_text=f"Your transcription:\n{numbered}")
+            data = extract_json(answer.answer)
+            break
+        except VlmError as e:
+            logger.warning("selfreport attempt %d failed for %s: %s", attempt, image.name, str(e)[:160])
+            if attempt == 2:
+                return []  # carry on: no flags, and the page is not failed
     unsure = data.get("unsure", []) if isinstance(data, dict) else []
     validated: list[UnsureWord] = []
     for entry in unsure:

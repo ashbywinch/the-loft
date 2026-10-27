@@ -29,13 +29,22 @@ from tools.review import assistant_message, investigate
 from tools.review_verdict import ReviewVerdict
 
 PEOPLE: list[dict[str, Any]] = [
-    {"id": "p-quentin", "name": "Quentin Whitlock"},
     {"id": "p-pearl", "name": "Pearl Whitlock"},
     {"id": "p-nora", "name": "Nora Whitlock"},
     {"id": "p-walter", "name": "Walter Whitlock", "dod": {"date": "1916-09-15", "precision": "exact"}},
+    # The second Walter — why a family memory can name the wrong man: a LIVING
+    # relative one generation on carries the same name, so the war-dead man
+    # reads as "the other brother". Without this second same-name person the
+    # recollection has no reason to go wrong.
+    {
+        "id": "p-walter-jr",
+        "name": "Walter Ellery Whitlock",
+        "dob": {"date": "1922-06-11", "precision": "exact"},
+    },
 ]
 RELATIONSHIPS: list[dict[str, Any]] = [
     {"a": "p-walter", "b": "p-nora", "kind": "sibling", "label_a": "sibling", "label_b": "sibling"},
+    {"a": "p-nora", "b": "p-walter-jr", "kind": "parent", "label_a": "parent", "label_b": "child"},
 ]
 
 ITEMS: list[dict[str, Any]] = [
@@ -53,7 +62,7 @@ ITEMS: list[dict[str, Any]] = [
     },
 ]
 
-PERSON: Person = Person.from_dict({"id": "p-quentin", "name": "Quentin Whitlock"})
+PERSON: Person = Person.from_dict({"id": "p-walter", "name": "Walter Whitlock", "relation": "sibling of Nora Whitlock"})
 
 
 class ReviewFlow:
@@ -82,15 +91,15 @@ class ReviewFlow:
 
 class OnTopicFlow(ReviewFlow):
     """A recollection the archive does not attest: relevant, and no
-    fabricated attestation (R2 — a robot's note is never evidence). The
-    people list names Quentin but carries NO relation — the record does not
-    contain the claim, so a finding quoting the relation would be invented
-    attestation (2026-10-08: the fixture used to pre-attest the claim, so
-    the model's correct report of the record was punished as fabrication —
-    the case is unambiguous now)."""
+    fabricated attestation (R2 — a robot's note is never evidence). The cast
+    names Walter and Pearl but carries no relation between them — the record
+    does not contain the claim, so a finding quoting the relation would be
+    invented attestation (2026-10-08: the fixture used to pre-attest the
+    claim, so the model's correct report of the record was punished as
+    fabrication — the case is unambiguous now)."""
 
     name = "on-topic is relevant, and no fabricated attestation (R2)"
-    text = "Grandma used to say that Quentin was Pearl's brother."
+    text = "Grandma used to say that Walter was Pearl's brother."
     no_claim_assertion = "brother of Pearl Whitlock"
 
 
@@ -101,8 +110,16 @@ class OffTopicFlow(ReviewFlow):
 
 
 class WrongPersonContradictionFlow(ReviewFlow):
+    """The family remembers the wrong sibling for an attested war death,
+    because a LIVING relative of the next generation carries the same name.
+    The app must not confirm: the war record attests Walter, the recollection
+    names his sibling Nora, and the contradiction is surfaced."""
+
     name = "the user is wrong — a contradiction with the attested war record is surfaced"
-    text = "It was Nora who died in the war, I remember that clearly."
+    text = (
+        "I thought it was Nora who died in the war — I remember there being a live Walter, "
+        "so I assumed it must have been her."
+    )
     contradiction = "true"
     detail_mentions = "Walter"
 
@@ -143,7 +160,7 @@ class DigsToDeathFlow(ReviewFlow):
 
 class ExhaustedUncertaintyFlow(ReviewFlow):
     name = "exhausted uncertainty concludes instead of re-asking"
-    text = "I've no idea whether Quentin was Pearl's brother — I never met him."
+    text = "I've no idea whether Walter was Pearl's brother — I never met him."
     confidence = ("dont_know",)
     question_concludes = True
 

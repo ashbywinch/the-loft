@@ -267,17 +267,33 @@ class ReviewRun:
         self.flow = flow
         self.result = result
 
+    def verdict(self) -> str:
+        """The whole verdict, for a failure message.
+
+        A condition that says only "expected true, got false" is not
+        diagnosable: the run's output is kept nowhere else (the model's own
+        reasoning is only in the gateway's log), so the message carries it —
+        docs/testing-standards.md's rule that failure messages never truncate
+        the failing content."""
+        result = self.result
+        findings = [f"{finding.item_id}: {finding.text}" for finding in result.findings]
+        return (
+            f"relevant={result.relevant!r} contradiction={result.contradiction} "
+            f"confidence={result.confidence!r} note={result.note!r} "
+            f"question={result.question!r} findings={findings}"
+        )
+
     def relevant(self) -> str | None:
         flow, result = self.flow, self.result
         if result.relevant != flow.relevant:
-            return f"relevant: expected {flow.relevant}, got {result.relevant}"
+            return f"relevant: expected {flow.relevant}, got {result.relevant} — {self.verdict()}"
         return None
 
     def contradiction(self) -> str | None:
         flow, result = self.flow, self.result
         contradiction = result.contradiction
         if contradiction.found != flow.contradiction:
-            return f"contradiction: expected {flow.contradiction}, got {contradiction.found}"
+            return f"contradiction: expected {flow.contradiction}, got {contradiction.found} — {self.verdict()}"
         if flow.detail_mentions and flow.detail_mentions not in contradiction.detail:
             return f"contradiction detail should name {flow.detail_mentions}: {contradiction}"
         return None
@@ -285,7 +301,7 @@ class ReviewRun:
     def confidence(self) -> str | None:
         flow, result = self.flow, self.result
         if flow.confidence and result.confidence not in flow.confidence:
-            return f"confidence: expected one of {flow.confidence}, got {result.confidence}"
+            return f"confidence: expected one of {flow.confidence}, got {result.confidence} — {self.verdict()}"
         return None
 
     def findings(self) -> str | None:

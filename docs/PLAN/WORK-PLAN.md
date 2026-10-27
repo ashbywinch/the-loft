@@ -96,6 +96,32 @@ sample-dependent, and a green CI can depend on the draw: this needs a
 review-chat session that makes the walk's behaviour the thing the prompt
 holds to — not a feature PR, and not a widened condition.
 
+**The failed contradiction draw, read back in full.** The verdict is
+recoverable after the fact: the Cloudflare AI Gateway keeps each request and
+its response (`skill://cloudflare-ai-gateway-analytics`, logs
+`<id>/request`, `<id>/response` — the response includes the model's
+`reasoning`), so `build-and-test`'s failure at 2026-10-27T18:58:06Z could be
+read whole rather than guessed at. What it shows: the model
+(`deepseek/deepseek-v4-flash`, OpenRouter, provider Baidu — the same model on
+every call in the window, so no route fallback) HAD the record in its prompt
+(`item-war-record — Walter Whitlock died on 15 September 1916…`) and had
+already queried `person p-nora` and `attested p-walter`. Its reasoning chose
+`found: false` deliberately — "the reviewer says 'I thought it was Nora who
+died in the war' — that does not conflict with attested facts", and "the
+reviewer could be meaning a different Walter (like Walter Ellery born 1922)…
+we cannot assume they are referring to the same person" — and it deferred
+the ambiguity into the question ("which Walter you remember as alive — the
+one who died in the war in 1916, or the younger Walter…"). So the draw is a
+JUDGEMENT divergence on two prompt rules that collide on this fixture: "the
+wrong person for an attested death" flags, but "never flag a fact the archive
+simply doesn't have / when in doubt, no contradiction" reads Nora's missing
+death record as silence rather than denial, and the second Walter gives the
+model somewhere to defer to. Which rule wins — and whether the fixture should
+attest Nora's survival instead — is this slice's product call, not a feature
+PR's. The eval's own message now carries the verdict
+(`ReviewRun.verdict()`, `tests/pipeline/test_eval_review.py`) so the next
+draw is diagnosable from the CI log alone.
+
 ## 3. Layout and measurement seams (records: `strip-grouping-plan.md` postmortem; `geometry-experiments-log.md`; `design-decisions.md`)
 
 | # | Seam | State |

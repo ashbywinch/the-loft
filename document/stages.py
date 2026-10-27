@@ -25,9 +25,13 @@ wire carries its artefact (`Words`, `Rows`, `RowAdjustments`, `Document`), and
 a test resolves every name.
 
 A page's progress through the stages is a `PageStatus` — the scan pickup's
-`new -> oriented -> marks -> words -> rows_draft -> rows_pending`. The statuses
-the later stages would carry are deliberately absent: nothing writes them yet
-(the portal's remaining doors are the plan's step 5).
+`new -> oriented -> marks -> words -> rows_draft -> rows_pending ->
+rows_adjusted`. `rows_pending` is the one status that names no completion: it
+is the page waiting in the "Check the rows" queue, and `rows_adjusted` is the
+same stage once the person's check is recorded (drawn lines or the decision
+that none are needed — the queue cannot tell them apart). The statuses the
+later stages carry are deliberately absent: nothing writes them yet (the
+portal's remaining doors are the plan's step 5).
 """
 
 from __future__ import annotations
@@ -134,8 +138,9 @@ class PageStatus(Enum):
 
     `rows_draft` is the transient status while the draft rows are written;
     `rows_pending` is the page in the "Check the rows" queue (the plan's scan
-    pickup). A page leaves `rows_pending` when the user's row check is
-    recorded — adjusted or confirmed, the same thing to the queue."""
+    pickup), the one status that completes no stage. A page leaves
+    `rows_pending` when the user's row check is recorded — adjusted or
+    confirmed, the same thing to the queue — and is then `rows_adjusted`."""
 
     NEW = "new"
     ORIENTED = "oriented"
@@ -143,18 +148,25 @@ class PageStatus(Enum):
     WORDS = "words"
     ROWS_DRAFT = "rows_draft"
     ROWS_PENDING = "rows_pending"
+    ROWS_ADJUSTED = "rows_adjusted"
 
     @property
     def stage(self) -> Stage | None:
         """The stage this status is the completion of (`None` for `new`, a page
-        no machine stage has touched)."""
+        no machine stage has touched, and for `rows_pending`, the page waiting
+        for the person who completes stage 4)."""
         return _STAGE_OF_STATUS.get(self)
 
     @property
     def awaiting_human(self) -> bool:
         """True when the page is waiting on a person — the row check's queue."""
-        stage = self.stage
-        return stage is not None and stage.facts.human
+        return self is PageStatus.ROWS_PENDING
+
+    @property
+    def awaits(self) -> Stage | None:
+        """The stage whose person this status waits on (`None` for every
+        status that is not a queue)."""
+        return Stage.ROWS_ADJUSTED if self is PageStatus.ROWS_PENDING else None
 
     @classmethod
     def of(cls, status: str) -> PageStatus:
@@ -174,7 +186,7 @@ _STAGE_OF_STATUS: Mapping[PageStatus, Stage] = MappingProxyType(
         PageStatus.MARKS: Stage.MARKS,
         PageStatus.WORDS: Stage.WORDS,
         PageStatus.ROWS_DRAFT: Stage.ROWS,
-        PageStatus.ROWS_PENDING: Stage.ROWS_ADJUSTED,
+        PageStatus.ROWS_ADJUSTED: Stage.ROWS_ADJUSTED,
     }
 )
 _STATUS_OF_STAGE: Mapping[Stage, PageStatus] = MappingProxyType(

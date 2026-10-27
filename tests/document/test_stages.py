@@ -89,7 +89,8 @@ def test_an_unknown_stage_is_refused() -> None:
 
 def test_the_page_statuses_are_the_scan_pickups_sequence() -> None:
     """docs/PLAN/pipeline-stages-plan.md, the scan pickup: a dropped scan
-    reaches the row-check queue with no manual step."""
+    reaches the row-check queue with no manual step, and leaves it once the
+    person's check is recorded."""
     assert [status.value for status in PageStatus] == [
         "new",
         "oriented",
@@ -97,27 +98,33 @@ def test_the_page_statuses_are_the_scan_pickups_sequence() -> None:
         "words",
         "rows_draft",
         "rows_pending",
+        "rows_adjusted",
     ]
 
 
 def test_every_page_status_names_the_stage_it_completes() -> None:
-    """`new` is a page no stage has touched; every other status is one stage's
-    completion, and the two vocabularies agree in both directions."""
+    """`new` is a page no stage has touched and `rows_pending` is a page
+    WAITING on a stage's person; every other status is one stage's completion,
+    and the two vocabularies agree in both directions."""
     assert PageStatus.NEW.stage is None
     for status in PageStatus:
         stage = status.stage
         if stage is None:
-            assert status is PageStatus.NEW
+            assert status in (PageStatus.NEW, PageStatus.ROWS_PENDING)
             continue
         assert stage.status is status, f"{status.value} and {stage.facts.label} disagree"
 
 
 def test_the_draft_rows_are_written_before_the_page_waits_on_the_user() -> None:
-    """The plan's two rows statuses: `rows_draft` is the transient status while
-    the draft rows are written; `rows_pending` is the page in the "Check the
-    rows" queue — the one status a person holds up."""
+    """The plan's three rows statuses: `rows_draft` is the transient status
+    while the draft rows are written; `rows_pending` is the page in the "Check
+    the rows" queue — the one status a person holds up — and `rows_adjusted` is
+    that stage completed (adjusted or confirmed: the queue cannot tell them
+    apart)."""
     assert Stage.ROWS.status is PageStatus.ROWS_DRAFT
-    assert PageStatus.ROWS_PENDING.stage is Stage.ROWS_ADJUSTED
+    assert Stage.ROWS_ADJUSTED.status is PageStatus.ROWS_ADJUSTED
+    assert PageStatus.ROWS_PENDING.stage is None
+    assert PageStatus.ROWS_PENDING.awaits is Stage.ROWS_ADJUSTED
     assert [status.value for status in PageStatus if status.awaiting_human] == ["rows_pending"]
 
 

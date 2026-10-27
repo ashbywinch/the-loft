@@ -491,7 +491,7 @@ describe("the unfinished import session (user: the front page shows the session,
         ok: true,
         json: async () => ({
           batches: [
-            { batch_id: "batch-1", status: "pending", boundaries: [{ status: "draft" }], unchecked_pages: 2 },
+            { batch_id: "batch-1", status: "pending", boundaries: [{ status: "draft" }], pages_to_check: 2 },
           ],
         }),
       })),

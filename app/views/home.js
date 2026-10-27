@@ -91,7 +91,7 @@ export function render(main, _ctx, state) {
         (n, b) => n + (b.boundaries || []).filter((x) => x.status !== "confirmed").length,
         0,
       );
-      const pageCount = pending.reduce((n, b) => n + (b.unchecked_pages || 0), 0);
+      const pageCount = pending.reduce((n, b) => n + (b.pages_to_check || 0), 0);
       const importSessions = pendingImports(state);
       const importCount = importSessions.length;
       const allDrafts = drafts(state.items);

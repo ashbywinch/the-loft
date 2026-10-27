@@ -67,12 +67,12 @@ from pipeline.api.sync import (
     demote_stale_jobs,
     draft_payloads,
     page_job_state,
+    pages_to_check,
     record_confirmation,
     reprocess_page_transcription,
     rotate_page,
     safe_page_name,
     set_page_job,
-    unchecked_pages,
 )
 from pipeline.model.ai_client import AIClient
 from pipeline.registry import RegistryError, list_batches, load_batch
@@ -668,7 +668,7 @@ def build_app(
     def sync_batches(request: Request) -> Any:
         """Every adopted batch, newest first — the review surface's batch
         list (the batch label + status ride the registry record), each with
-        the pages still waiting on a reviewer's row check."""
+        the pages waiting in the "Check the rows" queue."""
         if session_user(request) is None:
             return JSONResponse(ErrorAnswer("sign in to read the batches").to_dict(), status_code=401)
         try:
@@ -676,7 +676,7 @@ def build_app(
             for batch in list_batches(registry_dir):
                 record = batch.to_dict()
                 readings = BatchReadings(work_dir, str(record["batch_id"]))
-                record["unchecked_pages"] = unchecked_pages(readings, list(record.get("pages") or {}))
+                record["pages_to_check"] = pages_to_check(readings, list(record.get("pages") or {}))
                 batches.append(record)
             return {"batches": batches}
         except RegistryError as exc:

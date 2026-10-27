@@ -1109,18 +1109,27 @@ def test_sync_batches_lists_the_adopted_batches(server: ServerFixture) -> None:
     assert ids == ["adopt-0002", "adopt-0001"]  # newest first
 
 
-def test_sync_batches_counts_the_pages_without_a_row_check(server: ServerFixture) -> None:
-    """A page waits on a person until a reviewer's drawn lines are on disk;
-    the count is over the batch's pages, not its documents."""
+def test_sync_batches_counts_the_pages_waiting_on_a_row_check(server: ServerFixture) -> None:
+    """A page waits on a person only once its draft rows exist: a read page
+    with no recorded check is in the queue, a checked page has left it, and a
+    page the read stage has not reached is the machine's, not a person's."""
     import json as _json
 
     _seed_sync_batch(server)
+    record_path = server.registry_dir / "adopt-0001.json"
+    record = _json.loads(record_path.read_text(encoding="utf-8"))
+    record["pages"]["p3.jpg"] = "hash-3"  # never read: no draft rows, so no person waits
+    record_path.write_text(_json.dumps(record), encoding="utf-8")
     guess = server.work_dir / "adopt-0001" / "ocr-guess"
+    for page in ("p1", "p2"):
+        (guess / f"{page}.rows.json").write_text(_json.dumps({"page": f"{page}.jpg"}), encoding="utf-8")
+        (guess / f"{page}.words.json").write_text(_json.dumps({"words": []}), encoding="utf-8")
     (guess / "p1.row-adjustments.json").write_text(_json.dumps({"lines": []}), encoding="utf-8")
+    (guess / "p1.rows-adjusted.json").write_text(_json.dumps({"rows": []}), encoding="utf-8")
     status, raw = server.get("/api/sync/batches", cookie=server.cookie)
     assert status == 200
     body = _json.loads(raw.decode("utf-8"))
-    assert body["batches"][0]["unchecked_pages"] == 1  # p1 is checked, p2 is not
+    assert body["batches"][0]["pages_to_check"] == 1  # p1 is checked; p2 waits; p3 has no reading
 
 
 def test_sync_page_requires_a_session(server: ServerFixture) -> None:

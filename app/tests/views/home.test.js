@@ -483,4 +483,58 @@ describe("the unfinished import session (user: the front page shows the session,
     render(main, {}, pendingState([], [], { person: "p-alex" }));
     expect(main.textContent).not.toContain("The document import");
   });
+
+  it("counts the pages waiting on a row check, not just the documents", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          batches: [
+            { batch_id: "batch-1", status: "pending", boundaries: [{ status: "draft" }], pages_to_check: 2 },
+          ],
+        }),
+      })),
+    );
+    const main = document.createElement("main");
+    render(main, {}, STATE);
+    await vi.waitFor(() => expect(main.querySelector(".review-card-note")).not.toBeNull());
+    const note = main.querySelector(".review-card-note").textContent;
+    expect(note).toContain("1 document");
+    expect(note).toContain("2 pages to check");
+    vi.unstubAllGlobals();
+  });
+
+  it("reports the pages to check beside the identities to confirm, not instead of them", async () => {
+    // the identity note used to replace the whole note (dead code: a pending
+    // import already put an import in it) — both facts are the reviewer's
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({
+          batches: [{ batch_id: "batch-1", status: "pending", boundaries: [], pages_to_check: 2 }],
+        }),
+      })),
+    );
+    const main = document.createElement("main");
+    render(
+      main,
+      {},
+      pendingState(
+        [{ id: "import-documents", title: "The document import", status: "pending" }],
+        [
+          { id: "p-new", name: "A person", status: "proposed" },
+          { id: "p-known", name: "Another person", status: "confirmed" },
+        ],
+        null,
+      ),
+    );
+    await vi.waitFor(() => expect(main.querySelector(".review-card-note")).not.toBeNull());
+    const note = main.querySelector(".review-card-note").textContent;
+    expect(note).toContain("1 import to review");
+    expect(note).toContain("2 pages to check");
+    expect(note).toContain("1 identity to confirm");
+    vi.unstubAllGlobals();
+  });
 });

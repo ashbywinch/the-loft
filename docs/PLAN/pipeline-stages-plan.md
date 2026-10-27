@@ -160,7 +160,8 @@ are the pipeline:
 `new` (watcher adds the page) → `oriented` → `marks` → `words` →
 `rows_draft` (the draft rows, built from the words alone — no
 adjustments needed) → **`rows_pending`** — the page is now in the
-portal's "Check the rows" queue.
+portal's "Check the rows" queue — → `rows_adjusted` once the person's
+check is recorded (drawn lines, or the decision that none are needed).
 
 - The machine stages are run by the WORKER (a separate process — the
   batch processor built on `pipeline/chain.py`), not by the web server.
@@ -170,7 +171,10 @@ portal's "Check the rows" queue.
   runs in the worker.
 - A page leaves `rows_pending` when the user's row check is recorded
   (adjusted or confirmed); the portal counts `rows_pending` pages in the
-  "Check the rows" door.
+  "Check the rows" door. Both statuses are DERIVED from the stage
+  artefacts (TECHSPEC §16.14.2's marker rule: `oriented/<page>`, then the
+  reading's words and rows, then the reviewer's two check files) — no
+  status field can go stale.
 
 ## Back end and front end: the seams
 

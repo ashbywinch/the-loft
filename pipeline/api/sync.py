@@ -28,6 +28,7 @@ from document.page_size import PageSize
 from document.rectangle import Rectangle
 from document.row import Row
 from document.row_adjustments import RowAdjustments
+from document.stages import PageStatus
 from document.words import Words
 from pipeline.boundary import Boundary
 from pipeline.detect.reader import reading_for_page
@@ -53,6 +54,16 @@ ROWS_JSON = "rows.json"  # the reading's rows file beside the guess (object-mode
 WORDS_JSON = "words.json"  # the reading's words, written beside the rows
 ADJUSTMENTS_JSON = "row-adjustments.json"  # the reviewer's drawn row lines
 ADJUSTED_ROWS_JSON = "rows-adjusted.json"  # the correction's rows (the wire contract)
+
+
+def pages_to_check(readings: BatchReadings, pages: list[str]) -> int:
+    """How many of a batch's pages are waiting in the "Check the rows" queue.
+
+    A page is waiting when it has draft rows and no recorded row check — the
+    derived `PageStatus.ROWS_PENDING` (`BatchReadings.page_status`). A page the
+    read stage has not reached yet is the machine's, not a person's, so it does
+    not count; neither does a page whose check is recorded."""
+    return sum(1 for page in pages if readings.page_status(page) is PageStatus.ROWS_PENDING)
 
 
 @dataclass(frozen=True)
@@ -84,6 +95,32 @@ class BatchReadings:
     def adjusted_rows_path(self, page: str) -> Path:
         """The correction's rows (the wire contract)."""
         return self.guess_dir / Path(page).with_suffix(f".{ADJUSTED_ROWS_JSON}")
+
+    def oriented_path(self, page: str) -> Path:
+        """The oriented page image (the orient stage's marker)."""
+        return self.work_dir / self.batch_id / "oriented" / page
+
+    def checked(self, page: str) -> bool:
+        """Whether the reviewer's row check is recorded — the drawn lines AND
+        the rows they made. Both: a write that fails between the two leaves
+        the check half-recorded, and the review refuses that state too."""
+        return self.adjustments_path(page).is_file() and self.adjusted_rows_path(page).is_file()
+
+    def page_status(self, page: str) -> PageStatus:
+        """Where the page has got to, read from the artefacts that mark its
+        stages (TECHSPEC §16.14.2's marker rule) rather than kept in a field
+        that could go stale. `rows_draft` and `marks` are transient — the
+        marks are never persisted and the draft rows are the reading's own
+        write — so no page is ever read back in either."""
+        if self.checked(page):
+            return PageStatus.ROWS_ADJUSTED
+        if self.rows_path(page).is_file():
+            return PageStatus.ROWS_PENDING
+        if self.words_path(page).is_file():
+            return PageStatus.WORDS
+        if self.oriented_path(page).is_file():
+            return PageStatus.ORIENTED
+        return PageStatus.NEW
 
     def rebuild_rotated_layout(
         self,

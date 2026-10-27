@@ -71,6 +71,19 @@ memory may simply have more to tell; the conversation is the same one
 that elicits further memories about the item and the identities that
 emerge).
 
+**The review eval is sample-dependent — fix the condition, not the draw**
+(2026-10-27). `test_review_condition[findings-the model digs into the
+statement and surfaces the attested death]` failed one CI run: the model
+returned NO findings (the lead reached the question instead) and the
+`findings_quote` condition only searched findings. The same conditions
+passed locally on one run, and the next CI run — with no change to the
+review path — passed too. Per `docs/testing-standards.md` that is a
+flaky check: the contract is "the response surfaces the attested sentence
+verbatim", so the condition should read findings AND the question (the
+widening the mention condition already got, 2026-10-08), or the prompt
+should make findings carry the evidence. Not done yet — it needs the
+review flow's own session (this slice), not a feature PR.
+
 ## 3. Layout and measurement seams (records: `strip-grouping-plan.md` postmortem; `geometry-experiments-log.md`; `design-decisions.md`)
 
 | # | Seam | State |

@@ -134,6 +134,21 @@ pass (ask which one in the question AND still flag). The persona's blanket
 attested event is displaced, no contradiction". Verified once, all review
 conditions plus the arc and the caching cross-check: 87 passed.
 
+**Relevance is judged by what the statement NAMES (2026-10-28).** The next
+CI draw (the message fix made it readable: `relevant: expected false, got
+true … question='Is that the same house you remember — the one in Seascale
+…'`) failed the off-topic flow — "we visited that house every summer" — by
+bridging a house memory to the Seascale visit record through the place's
+word alone. The prompt's step 3 now says relevance needs a PERSON or a
+FAMILY EVENT in the statement itself; a place alone is not enough and a
+record sharing the place's word does not make it so; a place joins the
+claim only through a person or event the statement also names ("we visited
+Walter in Seascale" — the relative is named, so the Seascale arc rule
+stands). Verified once: every review condition plus the arc and the
+caching cross-check passed (67; the run's other 20 selections were memory
+evals matched by `-k arc` against "archive", and they erred on the
+assess-client's token budget — untouched by this change).
+
 ## 3. Layout and measurement seams (records: `strip-grouping-plan.md` postmortem; `geometry-experiments-log.md`; `design-decisions.md`)
 
 | # | Seam | State |

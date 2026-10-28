@@ -1257,7 +1257,11 @@ async function syncRowAdjustments(session, note = "") {
     // the write IS the check (`BatchReadings.page_status`: the page's two
     // check files on disk) — the page leaves the "Check the rows" queue
     session.rowChecked = true;
-    setRowStatus(session, note);
+    // the server validates the traces too (`Rows.validate`): a line that
+    // caught no writing, or ink it left in no row, is named to the person
+    // who drew it — the drawing is kept, so it can be corrected in place
+    const violation = (payload.violations || [])[0];
+    setRowStatus(session, violation || note, Boolean(violation));
     renderRowBands(session);
   } catch (error) {
     console.error("review: the row correction failed — the page is unchanged", error);

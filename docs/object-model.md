@@ -215,8 +215,10 @@ The house Python layout is a flat package at the repo root. The Loft's:
 `pii_markers` in `tools/` with the other guards.
 
 **Tools** live in a top-level `tools/` for the moment — `scan` (the scanner
-driver) and **`BoxAudit`** (the box-invariant check; the name replaces
-`boxjig`). `NumberedWords` lives where it is used:
+driver). The box-invariant check is not a tool: it folded into the model as
+`Rows.validate` (`pipeline/rows/rows.py`, 2026-10-28 — the `BoxAudit` name
+this plan proposed never needed to exist), run by the correction and by
+`tests/pipeline/test_rows.py`. `NumberedWords` lives where it is used:
 `loft/document/` (it renders a page's words).
 
 `tools/` is not a domain concept and dissolves; `archive/` at the repo
@@ -290,8 +292,8 @@ framing that blessed the strip path is corrected in the same change.
 The strip stage's `layout.json` dies with it — and so does "layout" as a
 concept name: the rows are the reading (boxes, text, trust stage, kind
 per row), no `Layout` class exists, nothing validates a separate layout.
-`BoxAudit` (the box-invariant check) is the independent tool, unrelated
-to any layout concept.
+The box-invariant check is `Rows.validate` (folded into the rows library
+2026-10-28), unrelated to any layout concept.
 
 ## Settled — item 5: no batch; Archive owns its paths, Pipeline owns the work
 
@@ -627,7 +629,7 @@ Verify: the fixture's adjust-path tests; the retired modules' tests
 move with them (same cases, new homes); gates.
 
 **Phase 4 — the renames.** `NumberedWords`, `FocusView`, `DashPattern`,
-`BoxAudit` (boxjig), `Memory`, `Vlm` + `VlmOptions`.
+`Memory`, `Vlm` + `VlmOptions`.
 Renames land with their callers (`lsp rename`),
 no aliases. Verify: the renames' tests re-point unchanged; gates.
 
@@ -762,9 +764,6 @@ classDiagram
     }
     namespace "loft/cli" {
         class Cli { the command surface }
-    }
-    namespace "tools" {
-        class BoxAudit { the box-invariant check }
     }
 
     Entity <|-- Person

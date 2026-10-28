@@ -1,9 +1,12 @@
 # Box detection — how a page's writing is found and boxed
 
-Status: working. The reader is `tools/reader.py`, the page's
-scale is `tools/pagescale.py`, and the acceptance check is `tools/boxjig.py`.
-Tests: `tests/test_reader.py` (synthetic pages) and `tests/test_pagescale.py`
-(the scale). The design work and the user rulings behind it are in
+Status: working. The reader is `pipeline/detect/reader.py`, the page's
+scale is `pipeline/detect/ruler.py`, and the acceptance check is
+`Rows.validate` (`pipeline/rows/rows.py`) — the invariants the old
+`boxjig.py` script held, now part of the library and run on every
+correction (`tests/pipeline/test_rows.py`). Tests: `tests/pipeline/test_reader.py`
+(synthetic pages) and `tests/pipeline/test_ruler.py` (the scale). The design
+work and the user rulings behind it are in
 `docs/PLAN/segment-review-stories.md`.
 
 ## What it does
@@ -43,15 +46,15 @@ On the first real letter (page-01, 44 traced lines), the current version:
 | a box spanning two yellow lines | 0 | n/a |
 | words missed entirely | 1 | — |
 
-The jig prints these and exits non-zero on a violation:
-
-```
-.venv/bin/python tools/reader.py
-.venv/bin/python tools/boxjig.py /tmp/trace
-```
-
-`boxjig.py` needs the archive page and a stroked run, so it is a manual check
-(like `make verify`), not part of `make test`; the synthetic tests are.
+The table above is the 2026-09 measurement **record** — the jig that printed
+it was deleted when its invariants folded into `Rows.validate` (2026-10-28).
+The validation now runs where the rows are made: on every correction the
+reviewer draws (the answer names a stroke that caught no writing, one that
+merges two reading lines, a line off the writing's slope, or a row off the
+page), and in `tests/pipeline/test_rows.py` on synthetic pages. Three of the
+jig's checks (A1, A2, A3/A7: the boxes against the lines) cannot fail in the
+object model — a row's band IS its words' union and each word is in one row —
+so they are structure now, not a check.
 
 ## The traps this work paid for
 

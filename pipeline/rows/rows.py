@@ -24,6 +24,7 @@ points), never by the geometry that found the rows.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,6 +37,7 @@ from document.point import Point
 from document.rectangle import Rectangle
 from document.row import Row
 from document.row_adjustments import RowAdjustments
+from document.traces import Traces
 from document.word import Word
 from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop
 from pipeline.rows.render import Colour, tint_row
@@ -44,6 +46,7 @@ TOUCH_FRACTION = 0.38  # x the writing height: how far a line's stroke claims a 
 SPACING_RATIO = 1.6  # x the writing height: where one row ends and the next begins
 RULE_ASPECT = 8.0  # x a box's height: this wide for its height is a rule, not writing
 BUTT_GAP_MIN = 4.0  # px floor for a butting adjacency — physical, never unit-dependent razor
+MAX_LINE_SLOPE_DEG = 6.0  # a drawn line runs along the writing (the jig's A5: ~0–2.4° observed)
 
 
 class Rows:
@@ -77,6 +80,11 @@ class Rows:
         """The draft rows: the words' own reading lines, nothing drawn."""
         return self.adjust(RowAdjustments([]))
 
+    @classmethod
+    def from_traces(cls, traces: Traces) -> Rows:
+        """The page the traces describe — the correction's inputs as one value."""
+        return cls(list(traces.words), traces.page_size)
+
     def adjust(self, adjustments: RowAdjustments) -> list[Row]:
         """The reviewer's drawn lines applied to this page: the rows are
         re-derived from them. A drawn line claims each word whose centre its
@@ -90,6 +98,27 @@ class Rows:
         come out numbered in reading order (topmost band first), all one
         type — a corrected row and a proposed row are the same Row."""
         return _Claims(self.words, adjustments, self.page_size).rows()
+
+    def validate(self, traces: Traces) -> list[str]:
+        """The row invariants, over these traces — one line per violation.
+
+        This is the acceptance check `boxjig` used to be, folded into the
+        library (2026-10-28). The jig compared the detector's BOXES against
+        the reviewer's yellow lines, the words and the page's surface; in the
+        object model a row's band IS its words' union and each word belongs to
+        exactly one row, so those comparisons (A1, A2, A3, A7) cannot fail.
+        What can still go wrong is the drawing and a word box's measurement:
+
+        - a drawn line that claims no word (it missed the writing);
+        - a drawn line running off the writing's slope (A5);
+        - a row whose band leaves the page (A4) — a mis-measured word box.
+
+        A6's leftover count stays out: the words no row shows are exactly the
+        annotations the correction deliberately discounts (an asterisk above
+        its line) and the rules it drops, and without the jig's separate
+        surface measurement the two cannot be told apart from ink the trace
+        missed — a count this check would have to guess at."""
+        return _Claims(list(traces.words), traces.adjustments, traces.page_size).violations()
 
     @staticmethod
     def to_dict(rows: Sequence[Row]) -> dict[str, Any]:
@@ -128,6 +157,8 @@ class _Claims:
         self.unit = self._writing_height() if words else 0.0
         self.spacing = SPACING_RATIO * self.unit
         self.spans = _line_spans(adjustments, page_size)
+        self.page_size = page_size
+        self._owner_of: list[int | None] | None = None
 
     def rows(self) -> list[Row]:
         """The rows the drawn lines and the words' own lines make."""
@@ -162,15 +193,20 @@ class _Claims:
         return rows
 
     def _claimed(self) -> list[int | None]:
-        """Every word's drawn line, or None where no line claimed it."""
+        """Every word's drawn line, or None where no line claimed it.
+
+        Measured once per instance — `rows()` and `violations()` read the same
+        map, and measuring it twice could only drift."""
+        if self._owner_of is not None:
+            return self._owner_of
         owner_of: list[int | None] = [None] * len(self.words)
         for i, word in enumerate(self.words):
             if self._is_rule(word):
                 continue
             candidates: list[tuple[float, int]] = [
-                (abs(mean_y - word.cy), line_index)
-                for line_index, (x_lo, x_hi, y_lo, y_hi, mean_y) in enumerate(self.spans)
-                if x_lo <= word.cx <= x_hi and y_lo - self.unit <= word.cy <= y_hi + self.unit
+                (abs(span.mean_y - word.cy), line_index)
+                for line_index, span in enumerate(self.spans)
+                if span.x_lo <= word.cx <= span.x_hi and span.y_lo - self.unit <= word.cy <= span.y_hi + self.unit
             ]
             if candidates:
                 owner_of[i] = min(candidates)[1]
@@ -178,6 +214,7 @@ class _Claims:
         for i in range(len(self.words)):
             if owner_of[i] is None:
                 owner_of[i] = self._apportion(i, owner_of)
+        self._owner_of = owner_of
         return owner_of
 
     def _discount_annotations(self, owner_of: list[int | None]) -> None:
@@ -190,7 +227,7 @@ class _Claims:
             one of them (an asterisk floats above its line's x-height; a
             real word's box starts at its own ascenders)."""
         words = self.words
-        drawn_bottom = [span[3] for span in self.spans]
+        drawn_bottom = [span.y_hi for span in self.spans]
         for i, word in enumerate(words):
             owner = owner_of[i]
             if owner is None:
@@ -201,6 +238,45 @@ class _Claims:
             pokes_above = bool(over) and word.y0 < min(other.y0 for other in over)
             if hangs_under or pokes_above:
                 owner_of[i] = None
+
+    def violations(self) -> list[str]:
+        """The row invariants this page's traces break — one line each.
+
+        The checks `Rows.validate` documents: a drawn line that caught no
+        writing (and one whose merged reading lines make it say so), a line
+        off the writing's slope, and a row that leaves the page."""
+        owner_of = self._claimed()
+        problems: list[str] = []
+        claimed: dict[int, list[int]] = {}
+        for index, owner in enumerate(owner_of):
+            if owner is not None:
+                claimed.setdefault(owner, []).append(index)
+        for line_index, span in enumerate(self.spans):
+            words = claimed.get(line_index, [])
+            if not words:
+                problems.append(f"line {line_index + 1} claims no word")
+                continue
+            reading_lines: set[int] = set()
+            for index in words:
+                line = self.words[index].line
+                if line is not None:
+                    reading_lines.add(line)
+            if len(reading_lines) > 1:
+                problems.append(f"line {line_index + 1} merges reading lines {sorted(reading_lines)} into one row")
+            if abs(span.slope) > MAX_LINE_SLOPE_DEG:
+                problems.append(f"line {line_index + 1} runs at {span.slope:.1f}°")
+        problems.extend(self._off_page())
+        return problems
+
+    def _off_page(self) -> list[str]:
+        """Rows whose band leaves the page — a word box the reader measured
+        off the image (A4: boxes stay on the letter surface)."""
+        width, height = self.page_size.width, self.page_size.height
+        return [
+            f"row {row.number} leaves the page: {row.band.x0:.0f},{row.band.y0:.0f}–{row.band.x1:.0f},{row.band.y1:.0f}"
+            for row in self.rows()
+            if row.band.x0 < 0 or row.band.y0 < 0 or row.band.x1 > width or row.band.y1 > height
+        ]
 
     def _writing_height(self) -> float:
         """The page's writing height: the median word box height."""
@@ -277,16 +353,41 @@ class _Claims:
         return abs(other.cy - word.cy) <= self.unit / 4
 
 
-def _line_spans(adjustments: RowAdjustments, page_size: PageSize) -> list[tuple[float, float, float, float, float]]:
-    """Each drawn line's span and drawn height in page pixels: its x-extent,
-    y-extent and mean y — the measures the assignment uses. The lines are
-    normalised (0..1) where the reviewer drew them, so the page's size
-    measures them."""
-    spans: list[tuple[float, float, float, float, float]] = []
+@dataclass(frozen=True)
+class _Span:
+    """One drawn line measured onto the page: its x and y extents, its mean y
+    (which line a word sits nearest), and the slope it was drawn at.
+
+    A record rather than a five-tuple: the assignment, the annotation
+    discount and the validation each read different fields of the same
+    measure, and unpacking five anonymous numbers three times is how they get
+    read in the wrong order."""
+
+    x_lo: float
+    x_hi: float
+    y_lo: float
+    y_hi: float
+    mean_y: float
+    slope: float  # degrees from the line's first to its last point
+
+
+def _line_spans(adjustments: RowAdjustments, page_size: PageSize) -> list[_Span]:
+    """Each drawn line measured onto the page. The lines are normalised (0..1)
+    where the reviewer drew them, so the page's size measures them."""
+    spans: list[_Span] = []
     for line in adjustments.lines:
         xs = [point[0] * page_size.width for point in line]
         ys = [point[1] * page_size.height for point in line]
-        spans.append((min(xs), max(xs), min(ys), max(ys), sum(ys) / len(ys)))
+        spans.append(
+            _Span(
+                x_lo=min(xs),
+                x_hi=max(xs),
+                y_lo=min(ys),
+                y_hi=max(ys),
+                mean_y=sum(ys) / len(ys),
+                slope=math.degrees(math.atan2(ys[-1] - ys[0], xs[-1] - xs[0])),
+            )
+        )
     return spans
 
 

@@ -26,10 +26,11 @@ from PIL import Image, ImageOps
 from document.document import DOCUMENT_AGREED, DOCUMENT_REJECTED
 from document.page_size import PageSize
 from document.rectangle import Rectangle
-from document.row import Row
 from document.row_adjustments import RowAdjustments
 from document.stages import PageStatus
+from document.traces import Traces
 from document.words import Words
+from pipeline.api.row_correction import RowCorrection
 from pipeline.boundary import Boundary
 from pipeline.detect.reader import reading_for_page
 from pipeline.htr import htr_pages_vlm
@@ -313,7 +314,7 @@ def record_confirmation(
 # module's one vocabulary, each a thin file operation over the same batch tree; a
 # carrier class would be the object-model Phase 6 package restructure, not this change
 # lucidlint: ignore latent-class the batch-path vocabulary is this module's shape; the restructure is Phase 6
-def apply_row_adjustments(batch_id: str, page: str, adjustments: RowAdjustments, work_dir: Path) -> list[Row]:
+def apply_row_adjustments(batch_id: str, page: str, adjustments: RowAdjustments, work_dir: Path) -> RowCorrection:
     """The reviewer's drawn row lines -> the page's rows
     (`rows.adjust` over the words the read stage persisted, each with
     its own reading line, so an incomplete set of lines merges with the
@@ -322,6 +323,9 @@ def apply_row_adjustments(batch_id: str, page: str, adjustments: RowAdjustments,
     - ``<page>.row-adjustments.json`` — the drawn lines, as drawn;
     - ``<page>.rows-adjusted.json`` — the correction's rows, the artefact
       `Rows.to_dict` writes.
+
+    The same traces are validated (`Rows.validate`) in the same pass, so the
+    answer can name a drawing that caught no writing or a word it left out.
 
     A page whose words were never persisted (read before the read stage
     wrote them) cannot be corrected — ValueError, never a silent empty
@@ -337,11 +341,18 @@ def apply_row_adjustments(batch_id: str, page: str, adjustments: RowAdjustments,
         raise ValueError(f"no words for {page} — re-read the page, then draw its rows")
     words = Words.from_dict(json.loads(words_path.read_text(encoding="utf-8")))
     reading = RowsReading.from_dict(json.loads(rows_path.read_text(encoding="utf-8")))
-    rows = Rows.from_words(list(words), PageSize(reading.width, reading.height)).adjust(adjustments)
+    traces = Traces(
+        words=tuple(words),
+        adjustments=adjustments,
+        page_size=PageSize(reading.width, reading.height),
+    )
+    builder = Rows.from_traces(traces)
+    rows = builder.adjust(adjustments)
+    violations = tuple(builder.validate(traces))
     adjustments_json = json.dumps(adjustments.to_dict(), ensure_ascii=False, indent=1)
     atomic_write(readings.adjustments_path(page), adjustments_json + "\n")
     atomic_write(readings.adjusted_rows_path(page), json.dumps(Rows.to_dict(rows), ensure_ascii=False, indent=1) + "\n")
-    return rows
+    return RowCorrection(rows=rows, violations=violations)
 
 
 def safe_page_name(page: str) -> bool:

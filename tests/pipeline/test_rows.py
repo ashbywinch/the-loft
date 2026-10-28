@@ -21,6 +21,7 @@ from document.page_size import PageSize
 from document.rectangle import Rectangle
 from document.row import Row
 from document.row_adjustments import RowAdjustments
+from document.traces import Traces
 from document.word import Word
 from document.words import Words
 from pipeline.rows.rows import Rows
@@ -251,3 +252,66 @@ def test_a_rows_text_and_trust_stage_travel_with_the_wire() -> None:
     assert wire["rows"][0]["stage"] == "guess"
     assert Rows.from_dict(wire)[0].stage == "guess"
     assert Row.STAGES == ("", "raw", "guess", "confirmed")
+
+
+def test_a_clean_page_validates_silent() -> None:
+    """The folded jig's happy path: lines on the writing, every word in a row,
+    on the page — nothing to report."""
+    words = _words((100, 100, 200, 130), (300, 100, 400, 130))
+    traces = Traces(words=tuple(words), adjustments=_drawn(_line(100, 400, 115)), page_size=PAGE_SIZE)
+    assert Rows.from_traces(traces).validate(traces) == []
+
+
+def test_a_line_over_blank_paper_is_named() -> None:
+    """A drawn line that caught no writing — the reviewer drew in an empty
+    band — is a violation, not a silent empty row."""
+    words = _words((100, 100, 200, 130), (300, 100, 400, 130))
+    traces = Traces(
+        words=tuple(words),
+        adjustments=_drawn(_line(100, 400, 115), _line(100, 400, 700)),
+        page_size=PAGE_SIZE,
+    )
+    assert Rows.from_traces(traces).validate(traces) == ["line 2 claims no word"]
+
+
+def test_a_line_that_merges_two_reading_lines_is_named() -> None:
+    """One drawn line over writing the reader saw as two lines makes one row
+    of two rows' words — reported, so the reviewer can see what their stroke
+    did (the tight-schedule case is a deliberate merge, so this is a note,
+    not a refusal)."""
+    words = [Word(100, 100, 200, 130, line=0), Word(300, 160, 400, 190, line=1)]
+    # the reading saw two lines; one stroke between them claims both
+    traces = Traces(
+        words=tuple(words),
+        adjustments=_drawn([(0.1, 0.145), (0.4, 0.145)]),
+        page_size=PAGE_SIZE,
+    )
+    violations = Rows.from_traces(traces).validate(traces)
+    assert any("merges reading lines" in v for v in violations), violations
+
+
+def test_a_line_off_the_writing_slope_is_named() -> None:
+    """A stroke swiped diagonally across the page is not a row line (A5: the
+    writing runs within a few degrees)."""
+    words = _words((100, 100, 200, 130))
+    steep = [(0.1, 0.1), (0.9, 0.9)]
+    traces = Traces(words=tuple(words), adjustments=_drawn(steep), page_size=PAGE_SIZE)
+    violations = Rows.from_traces(traces).validate(traces)
+    assert any(v.startswith("line 1 runs at") for v in violations), violations
+
+
+def test_a_row_off_the_page_is_named() -> None:
+    """A word box the reader measured outside the image puts its row off the
+    page (A4)."""
+    words = _words((100, 100, 200, 130), (900, 100, 1200, 130))
+    traces = Traces(words=tuple(words), adjustments=_drawn(_line(100, 1200, 115)), page_size=PAGE_SIZE)
+    violations = Rows.from_traces(traces).validate(traces)
+    assert any(v.startswith("row 1 leaves the page") for v in violations), violations
+
+
+def test_a_discounted_annotation_is_not_a_violation() -> None:
+    """The annotation the correction deliberately unclaims (the asterisk) is
+    the ruling, not a miss — it must not be reported as ink left out."""
+    words = _words((100, 100, 500, 130), (200, 60, 230, 90))
+    traces = Traces(words=tuple(words), adjustments=_drawn(_line(100, 500, 115)), page_size=PAGE_SIZE)
+    assert Rows.from_traces(traces).validate(traces) == []

@@ -827,10 +827,15 @@ def build_app(
             return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
         try:
             adjustments = RowAdjustments.from_dict(dict(body) if body else {})
-            rows = apply_row_adjustments(batch_id, page, adjustments, work_dir)
+            correction = apply_row_adjustments(batch_id, page, adjustments, work_dir)
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)  # client errors are 4xx, never 500
-        return RowAdjustmentsAnswer(batch_id=batch_id, page=page, rows=Rows.to_dict(rows)["rows"]).to_dict()
+        return RowAdjustmentsAnswer(
+            batch_id=batch_id,
+            page=page,
+            rows=Rows.to_dict(correction.rows)["rows"],
+            violations=correction.violations,
+        ).to_dict()
 
     @app.post("/api/sync/confirmations")
     def sync_confirmations(payload: Mapping[str, Any], request: Request) -> Any:

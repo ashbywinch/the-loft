@@ -1392,6 +1392,32 @@ def test_row_adjustments_builds_and_persists_the_correction(server: ServerFixtur
     assert drawn["lines"] == [[[0.05, 0.278], [0.55, 0.278]]]
 
 
+def test_row_adjustments_names_a_drawing_that_caught_nothing(server: ServerFixture) -> None:
+    """The same request validates the traces (`Rows.validate`): a stroke over
+    blank paper is answered with the violation, so the surface can name it to
+    the person who drew it — the correction is still kept."""
+    _seed_row_page(server)
+    # a stroke far below both words (y 0.7 of 1600 = 1120px)
+    status, body = server.post(
+        "/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments",
+        {"lines": [[[0.05, 0.7], [0.55, 0.7]]]},
+    )
+    assert status == 200
+    assert body["violations"] == ["line 1 claims no word"]
+    guess = server.work_dir / "adopt-0001" / "ocr-guess"
+    assert (guess / "p1.row-adjustments.json").is_file()  # the drawing is kept
+
+
+def test_a_clean_correction_answers_no_violations(server: ServerFixture) -> None:
+    _seed_row_page(server)
+    status, body = server.post(
+        "/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments",
+        {"lines": [[[0.05, 0.278], [0.55, 0.278]]]},
+    )
+    assert status == 200
+    assert body["violations"] == []
+
+
 def test_row_adjustments_refuses_a_page_without_words(server: ServerFixture) -> None:
     """A page read before the words were persisted cannot be corrected —
     the refusal names the remedy instead of building empty rows."""

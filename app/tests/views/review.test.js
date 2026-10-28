@@ -1407,4 +1407,44 @@ describe("the rows check — 'Rows are right' records it", () => {
     expect(String(posted[0])).toContain("/api/sync/batch/b9/page/p1.jpg/row-adjustments");
     expect(JSON.parse(posted[1].body)).toEqual({ lines: [] });
   });
+
+  it("a drawing the server flags is named in the toolbar", async () => {
+    // Rows.validate answers the same request; the surface says what the stroke
+    // did, so the reviewer can correct it in place
+    fetch.mockImplementation(async (url) => {
+      if (String(url).includes("/row-adjustments")) {
+        return { ok: true, status: 200, json: async () => ({ rows: [], violations: ["line 1 claims no word"] }) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          batch_id: "b9",
+          label: "A page",
+          documents: [
+            {
+              pages: ["p1.jpg"],
+              texts: { "p1.jpg": "line one" },
+              layouts: { "p1.jpg": { page: "p1.jpg", width: 100, height: 100, lines: [], unmatched: [] } },
+              status: "review",
+            },
+          ],
+          processing: {},
+        }),
+      };
+    });
+    const main = document.createElement("main");
+    render(main, { arg: "b9", rest: ["review", "b9", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-page")).toBeTruthy());
+    const img = main.querySelector(".rv-page");
+    Object.defineProperty(img, "naturalWidth", { value: 100, configurable: true });
+    Object.defineProperty(img, "naturalHeight", { value: 1500, configurable: true });
+    img.dispatchEvent(new Event("load"));
+    await vi.waitFor(() => expect(main.querySelector(".rv-rowtools__right")).toBeTruthy());
+    main.querySelector(".rv-rowtools__right").click();
+    await vi.waitFor(() =>
+      expect(main.querySelector(".rv-rowtools__status").textContent).toBe("line 1 claims no word"),
+    );
+    expect(main.querySelector(".rv-rowtools").classList.contains("is-failed")).toBe(true);
+  });
 });

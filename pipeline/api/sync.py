@@ -57,14 +57,15 @@ ADJUSTMENTS_JSON = "row-adjustments.json"  # the reviewer's drawn row lines
 ADJUSTED_ROWS_JSON = "rows-adjusted.json"  # the correction's rows (the wire contract)
 
 
-def pages_to_check(readings: BatchReadings, pages: list[str]) -> int:
-    """How many of a batch's pages are waiting in the "Check the rows" queue.
+def pages_pending(readings: BatchReadings, pages: list[str]) -> list[str]:
+    """The batch's pages waiting in the "Check the rows" queue, in page order.
 
-    A page is waiting when it has draft rows and no recorded row check — the
-    derived `PageStatus.ROWS_PENDING` (`BatchReadings.page_status`). A page the
-    read stage has not reached yet is the machine's, not a person's, so it does
-    not count; neither does a page whose check is recorded."""
-    return sum(1 for page in pages if readings.page_status(page) is PageStatus.ROWS_PENDING)
+    A page waits when it has draft rows and no recorded row check — the derived
+    `PageStatus.ROWS_PENDING` (`BatchReadings.page_status`). A page the read
+    stage has not reached is the machine's, not a person's, and a page whose
+    check is recorded has left the queue. The list, not a count: the portal's
+    door opens the first one."""
+    return [page for page in pages if readings.page_status(page) is PageStatus.ROWS_PENDING]
 
 
 @dataclass(frozen=True)

@@ -412,8 +412,13 @@ async function renderBatchList(main, state) {
   const open = batches.filter(
     (b) => b.status !== "confirmed" && (b.boundaries ?? []).some((x) => x.status !== "confirmed"),
   );
+  // the portal's rows item (UR2): a page the read stage has finished waits on
+  // its check even when every document of the batch is already confirmed
+  const toCheck = batches.filter((b) => (b.pages_pending || []).length);
   const hasWork =
-    open.length > 0 || (state && (pendingImports(state).length > 0 || draftItems(state.items).length > 0));
+    toCheck.length > 0 ||
+    open.length > 0 ||
+    (state && (pendingImports(state).length > 0 || draftItems(state.items).length > 0));
   if (!hasWork) {
     renderError(main, "No review work waiting — everything is confirmed.");
     return;
@@ -424,6 +429,23 @@ async function renderBatchList(main, state) {
       el("div", { class: "rv-topbar-titles" }, [el("div", { class: "rv-tt" }, "Review")]),
     ]),
   );
+
+  if (toCheck.length) {
+    main.append(el("h2", { class: "rv-section-title" }, "Check the rows — pages the machine has read"));
+    const list = el("div", { class: "rv-list" });
+    for (const batch of toCheck) {
+      const count = batch.pages_pending.length;
+      const card = el("button", { class: "rv-card", onclick: () => navigate(`review/${batch.batch_id}`) }, [
+        el("div", { class: "rv-card-main" }, [
+          el("div", { class: "rv-card-title" }, batch.label || batch.batch_id),
+          el("div", { class: "rv-card-sub" }, `${count} page${count === 1 ? "" : "s"} to check`),
+        ]),
+        el("span", { class: "rv-chip" }, "Rows to check"),
+      ]);
+      list.append(card);
+    }
+    main.append(list);
+  }
 
   if (open.length) {
     main.append(

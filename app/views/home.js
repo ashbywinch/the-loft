@@ -4,6 +4,40 @@ import { el, header, itemCard, sectionTitle } from "../ui.js";
 import { monthDayDistance, sortByRecorded } from "../date.js";
 import { drafts, isMine, me, pendingImports, proposedPeople, published } from "../data.js";
 
+
+/** The portal's "Check the rows" item (UR2): how many of the batches' pages
+ *  wait on a check, and the surface of the first one — the page's own draw
+ *  view when the batch's boundaries locate it, else the batch's list. */
+export function rowsToCheck(batches) {
+  const open = (batches || []).filter((b) => b.status !== "confirmed" && (b.pages_pending || []).length);
+  const count = open.reduce((n, b) => n + b.pages_pending.length, 0);
+  if (!count) return null;
+  for (const batch of open) {
+    const boundaries = batch.boundaries || [];
+    for (let doc = 0; doc < boundaries.length; doc += 1) {
+      const page = (boundaries[doc].pages || []).findIndex((name) => batch.pages_pending.includes(name));
+      if (page >= 0) return { count, href: `#/review/${encodeURIComponent(batch.batch_id)}/${doc}/${page}` };
+    }
+    return { count, href: `#/review/${encodeURIComponent(batch.batch_id)}` };
+  }
+  return { count, href: "#/review" };
+}
+
+/** The portal's "Review the transcripts" item: the documents still awaiting
+ *  the review gate, and the first one's surface. */
+export function documentsToReview(batches) {
+  const waiting = (batches || [])
+    .filter((b) => b.status !== "confirmed")
+    .flatMap((batch) =>
+      (batch.boundaries || []).map((boundary, index) => ({ batch, boundary, index })),
+    )
+    .filter(({ boundary }) => boundary.status !== "confirmed");
+  if (!waiting.length) return null;
+  const first = waiting[0];
+  return { count: waiting.length, href: `#/review/${encodeURIComponent(first.batch.batch_id)}/${first.index}/0` };
+}
+
+
 function todayMoment(items) {
   const now = new Date();
   let best = null;
@@ -74,61 +108,64 @@ export function render(main, _ctx, state) {
       ]),
     ),
   );
-  // The review door appears when there are batches awaiting review — a
-  // different use case from browsing (user), but the same app
-  // and the same auth. The fetch is fire-and-forget: a 401 means the user
-  // isn't signed in (no review to show), and an empty response means no
-  // work to do.
-  let reviewSection = null;
+  // The portal (UR2): every pending human item with its count, each door
+  // opening the surface that clears it. The fetch is fire-and-forget: a 401
+  // means the user isn't signed in (no review work to show), and nothing
+  // pending means no portal.
+  const portalSection = el("section", { class: "block review-promo" });
   (async () => {
+    let batches;
     try {
       const res = await fetch("/api/sync/batches", { headers: { Accept: "application/json" } });
       if (!res.ok) return;
-      const data = await res.json();
-      const pending = (data.batches || []).filter((b) => b.status !== "confirmed");
-      if (!pending.length && !pendingImports(state).length) return;
-      const docCount = pending.reduce(
-        (n, b) => n + (b.boundaries || []).filter((x) => x.status !== "confirmed").length,
-        0,
-      );
-      const pageCount = pending.reduce((n, b) => n + (b.pages_to_check || 0), 0);
-      const importSessions = pendingImports(state);
-      const importCount = importSessions.length;
-      const allDrafts = drafts(state.items);
-      const signedIn = me(state);
-      const myDrafts = signedIn ? allDrafts.filter((d) => isMine(d, state)).length : allDrafts.length;
-      // every pending item reports itself — a note per kind, joined. (The
-      // identity count used to replace the whole note instead: it was
-      // unreachable dead code, since a pending import already put an import
-      // in `parts`. docs/UX.md's portal gives each kind its own door next.)
-      const people = importCount ? proposedPeople(state).length : 0;
-      const parts = [];
-      if (docCount) parts.push(`${docCount} document${docCount === 1 ? "" : "s"} to review`);
-      if (importCount) parts.push(`${importCount} import${importCount === 1 ? "" : "s"} to review`);
-      if (myDrafts) parts.push(`${myDrafts} draft${myDrafts === 1 ? "" : "s"} to review`);
-      if (pageCount) parts.push(`${pageCount} page${pageCount === 1 ? "" : "s"} to check`);
-      if (people) parts.push(`${people} identit${people === 1 ? "y" : "ies"} to confirm`);
-      const note = parts.join(", ");
-      reviewSection = el("section", { class: "block review-promo" }, [
-        el("a", { class: "review-card", href: "#/review" }, [
+      batches = (await res.json()).batches || [];
+    } catch {
+      // server unreachable — no portal; the browse surface still works
+      return;
+    }
+    const cards = [];
+    const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+    const rows = rowsToCheck(batches);
+    if (rows) cards.push({ href: rows.href, title: "Check the rows", note: `${plural(rows.count, "page")} to check` });
+    const documents = documentsToReview(batches);
+    if (documents) {
+      cards.push({
+        href: documents.href,
+        title: "Review the transcripts",
+        note: `${plural(documents.count, "document")} to review`,
+      });
+    }
+    // identities: the import session's proposals, and the unfinished stories
+    // ride this queue (PRD §9 F10)
+    const session = pendingImports(state)[0];
+    const allDrafts = drafts(state.items);
+    const myDrafts = me(state) ? allDrafts.filter((d) => isMine(d, state)) : allDrafts;
+    const people = proposedPeople(state).length;
+    const notes = [];
+    if (session) notes.push(people ? `${people} ${people === 1 ? "person" : "people"} to confirm` : "an import session to review");
+    if (myDrafts.length) {
+      notes.push(`${myDrafts.length} unfinished ${myDrafts.length === 1 ? "story" : "stories"}`);
+    }
+    if (notes.length) {
+      const target = session ? `#/import/${encodeURIComponent(session.id)}` : `#/item/${encodeURIComponent(myDrafts[0].id)}`;
+      cards.push({ href: target, title: "Identify people", note: notes.join(", ") });
+    }
+    if (!cards.length) return;
+    portalSection.replaceChildren(
+      ...cards.map(({ href, title, note }) =>
+        el("a", { class: "review-card", href }, [
           el("div", { class: "review-card-icon" }, "✓"),
           el("div", { class: "review-card-main" }, [
-            el("div", { class: "review-card-title" }, "Review"),
+            el("div", { class: "review-card-title" }, title),
             el("div", { class: "review-card-note" }, note),
           ]),
         ]),
-      ]);
-      // insert between the hero/moment/draft area and the doors
-      const heroSection = main.querySelector(".hero");
-      const doorSection = main.querySelector(".door-grid")?.parentElement;
-      if (heroSection && doorSection) {
-        main.insertBefore(reviewSection, doorSection);
-      } else {
-        main.append(reviewSection);
-      }
-    } catch {
-      // server unreachable — no review section, the browse surface still works
-    }
+      ),
+    );
+    // insert between the hero/moment/draft area and the doors
+    const doorSection = main.querySelector(".door-grid")?.parentElement;
+    if (doorSection) main.insertBefore(portalSection, doorSection);
+    else main.append(portalSection);
   })();
 
   main.append(

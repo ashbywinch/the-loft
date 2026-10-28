@@ -484,36 +484,47 @@ describe("the unfinished import session (user: the front page shows the session,
     expect(main.textContent).not.toContain("The document import");
   });
 
-  it("counts the pages waiting on a row check, not just the documents", async () => {
+  it("the rows door counts the pages waiting on a check and opens the first one's page", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
         ok: true,
         json: async () => ({
           batches: [
-            { batch_id: "batch-1", status: "pending", boundaries: [{ status: "draft" }], pages_to_check: 2 },
+            {
+              batch_id: "batch-1",
+              status: "pending",
+              boundaries: [{ status: "draft", pages: ["p1.jpg", "p2.jpg"] }],
+              pages_pending: ["p2.jpg"],
+            },
           ],
         }),
       })),
     );
     const main = document.createElement("main");
     render(main, {}, STATE);
-    await vi.waitFor(() => expect(main.querySelector(".review-card-note")).not.toBeNull());
-    const note = main.querySelector(".review-card-note").textContent;
-    expect(note).toContain("1 document");
-    expect(note).toContain("2 pages to check");
+    await vi.waitFor(() => expect(main.querySelector(".review-card")).not.toBeNull());
+    const card = main.querySelector(".review-card");
+    expect(card.querySelector(".review-card-title").textContent).toBe("Check the rows");
+    expect(card.querySelector(".review-card-note").textContent).toBe("1 page to check");
+    expect(card.getAttribute("href")).toBe("#/review/batch-1/0/1"); // the page, not just the batch
     vi.unstubAllGlobals();
   });
 
-  it("reports the pages to check beside the identities to confirm, not instead of them", async () => {
-    // the identity note used to replace the whole note (dead code: a pending
-    // import already put an import in it) — both facts are the reviewer's
+  it("each item is its own door — rows, transcripts and identities", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
         ok: true,
         json: async () => ({
-          batches: [{ batch_id: "batch-1", status: "pending", boundaries: [], pages_to_check: 2 }],
+          batches: [
+            {
+              batch_id: "batch-1",
+              status: "pending",
+              boundaries: [{ status: "draft", pages: ["p1.jpg"] }],
+              pages_pending: ["p1.jpg"],
+            },
+          ],
         }),
       })),
     );
@@ -523,18 +534,31 @@ describe("the unfinished import session (user: the front page shows the session,
       {},
       pendingState(
         [{ id: "import-documents", title: "The document import", status: "pending" }],
-        [
-          { id: "p-new", name: "A person", status: "proposed" },
-          { id: "p-known", name: "Another person", status: "confirmed" },
-        ],
+        [{ id: "p-new", name: "A person", status: "proposed" }],
         null,
       ),
     );
-    await vi.waitFor(() => expect(main.querySelector(".review-card-note")).not.toBeNull());
-    const note = main.querySelector(".review-card-note").textContent;
-    expect(note).toContain("1 import to review");
-    expect(note).toContain("2 pages to check");
-    expect(note).toContain("1 identity to confirm");
+    await vi.waitFor(() => expect(main.querySelectorAll(".review-card").length).toBe(3));
+    const cards = [...main.querySelectorAll(".review-card")];
+    const titles = cards.map((card) => card.querySelector(".review-card-title").textContent);
+    expect(titles).toEqual(["Check the rows", "Review the transcripts", "Identify people"]);
+    expect(cards[0].querySelector(".review-card-note").textContent).toBe("1 page to check");
+    expect(cards[1].querySelector(".review-card-note").textContent).toBe("1 document to review");
+    expect(cards[2].querySelector(".review-card-note").textContent).toBe("1 person to confirm");
+    expect(cards[2].getAttribute("href")).toBe("#/import/import-documents");
+    vi.unstubAllGlobals();
+  });
+
+  it("no portal when nothing is pending", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => ({ batches: [] }) })),
+    );
+    const main = document.createElement("main");
+    render(main, {}, STATE);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(main.querySelector(".review-card")).toBeNull();
     vi.unstubAllGlobals();
   });
 });

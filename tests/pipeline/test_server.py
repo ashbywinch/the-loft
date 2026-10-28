@@ -1109,7 +1109,7 @@ def test_sync_batches_lists_the_adopted_batches(server: ServerFixture) -> None:
     assert ids == ["adopt-0002", "adopt-0001"]  # newest first
 
 
-def test_sync_batches_counts_the_pages_waiting_on_a_row_check(server: ServerFixture) -> None:
+def test_sync_batches_lists_the_pages_waiting_on_a_row_check(server: ServerFixture) -> None:
     """A page waits on a person only once its draft rows exist: a read page
     with no recorded check is in the queue, a checked page has left it, and a
     page the read stage has not reached is the machine's, not a person's."""
@@ -1129,7 +1129,7 @@ def test_sync_batches_counts_the_pages_waiting_on_a_row_check(server: ServerFixt
     status, raw = server.get("/api/sync/batches", cookie=server.cookie)
     assert status == 200
     body = _json.loads(raw.decode("utf-8"))
-    assert body["batches"][0]["pages_to_check"] == 1  # p1 is checked; p2 waits; p3 has no reading
+    assert body["batches"][0]["pages_pending"] == ["p2.jpg"]  # p1 is checked, p3 has no reading
 
 
 def test_sync_page_requires_a_session(server: ServerFixture) -> None:

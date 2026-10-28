@@ -1448,3 +1448,35 @@ describe("the rows check — 'Rows are right' records it", () => {
     expect(main.querySelector(".rv-rowtools").classList.contains("is-failed")).toBe(true);
   });
 });
+
+describe("the review hub's portal sections", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("lists the pages waiting on a check, even when every document is confirmed", async () => {
+    // a batch whose boundaries are all confirmed still has pages to check:
+    // the rows item is the page's own queue (UR2)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          batches: [
+            {
+              batch_id: "b7",
+              label: "A pile",
+              status: "review",
+              boundaries: [{ status: "confirmed" }],
+              pages_pending: ["p1.jpg", "p2.jpg"],
+            },
+          ],
+        }),
+      })),
+    );
+    const main = document.createElement("main");
+    render(main, {}, { items: [], people: [], imports: [] });
+    await vi.waitFor(() => expect(main.textContent).toContain("Check the rows"));
+    expect(main.textContent).toContain("2 pages to check");
+    expect(main.textContent).toContain("A pile");
+  });
+});

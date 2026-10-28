@@ -2311,9 +2311,11 @@ summary:focus-visible {
   letter-spacing: 0.05em;
 }
 
-/* -- the review promo card above the doors (user, 2026-08-16) -- */
+/* -- the portal's doors above the doors (UR2): one card per pending item -- */
 .review-promo {
   padding: var(--gap-lg);
+  display: grid;
+  gap: var(--gap);
 }
 .review-card {
   display: flex;

@@ -29,7 +29,7 @@ from pathlib import Path
 
 from pipeline.adopt import IMAGE_EXTENSIONS, register_adopted
 from pipeline.adoption_result import AdoptionResult
-from pipeline.api.sync import BatchReadings, pages_to_check
+from pipeline.api.sync import BatchReadings, pages_pending
 from pipeline.batch_failure import BatchFailure
 from pipeline.batch_record import STATUS_PENDING
 from pipeline.chain import process
@@ -114,7 +114,7 @@ class Worker:
                 self.write_line(f"worker: {record.batch_id} FAILED — {failure.reason}")
                 continue
             processed.append(record.batch_id)
-            waiting = pages_to_check(BatchReadings(self.paths.work_dir, record.batch_id), list(record.pages))
+            waiting = len(pages_pending(BatchReadings(self.paths.work_dir, record.batch_id), list(record.pages)))
             self.write_line(f"worker: {record.batch_id} ran — {waiting} page(s) to check")
         return tuple(processed), tuple(failed)
 

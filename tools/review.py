@@ -130,7 +130,7 @@ planned leads, stop deliberating about further calls and emit the
 verdict. The ledger is only an INDEX of the tool results — it changes
 nothing about what counts as a finding: relationship/person lines in it
 are not evidence (the person-record rule), and a document the tools
-surfaced is STILL a finding to report even when the ledger lists it
+surfaced is STILL a finding to report even when the ledger lists it.
 Never re-analyse a decision
 you have already made, never re-plan a search you have already planned,
 and never restate the reviewer's statement back to yourself. If you

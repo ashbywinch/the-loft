@@ -38,7 +38,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The layout stage's strip path — its plan, postmortem and reopened seams (ink-projection line bands; the grouping read) | `docs/PLAN/strip-grouping-plan.md` |
 | Acting on lucidlint findings (fix-engine workflow, baseline, per-file checks) | `skill://lucidlint-workflow`; the repo's findings log at `docs/PLAN/lucidlint-review-log.md` |
 | Layout redesign requirements (the adjudication draft — layout-requirements-draft) | `docs/PLAN/layout-requirements-draft.md` |
-| The reader — how a page's writing is found and boxed, and its acceptance check | `docs/box-detection.md`; `pipeline/detect/reader.py`, `pipeline/rows/boxjig.py` |
+| The reader — how a page's writing is found and boxed, and its acceptance check | `docs/box-detection.md`; `pipeline/detect/reader.py`, and the check `Rows.validate` in `pipeline/rows/rows.py` |
 | The per-word detection internals (ink → connected marks, baseline/waistline measurement, the streak-rule drop) | `pipeline/detect/mark.py` (`find_marks`, `baseline_row`, `waistline_row`); the page ruler `pipeline/detect/ruler.py`; pinned by `tests/pipeline/test_reader.py` |
 | Showing the user a visual artifact (renders, maps, zooms, case sheets) | `.omp/skills/show-the-user/SKILL.md` — existing tooling only, LAN URL, self-check before presenting |
 | The segment/box review & edit UX (user stories, the box-issue taxonomy, the corner rulings) | `docs/PLAN/segment-review-stories.md` |
@@ -61,13 +61,14 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | Code conventions | `docs/coding-standards.md` |
 | Test conventions | `docs/testing-standards.md` |
 | Documentation conventions | `docs/writing-documentation.md` |
+| Writing or editing a prompt (the review, memory, transcription instructions) | `skill://prompt-craft`; the form rules are `docs/writing-documentation.md` |
 | Documentation structure — the required doc set, folder rules, discoverability | `docs/documentation-structure.md` |
 | UX standards (the reviewer rules and UX-process norms) | `docs/ux-standards.md` |
 | UX spec — the PRD's UX answers + the journeys to usability-test | `docs/UX.md` |
 | Real content (people, relationships, items, story text) | `archive/` — append-only, supersede never edit; regenerate `app/data` with `./loft publish` |
 | Demo content for fake instances | `tools/demo_data.py` — fictional only, never real names |
 
-Read the relevant doc before changing behavior. **Before any code change, read `docs/coding-standards.md` — it is the standing contract for how code is written here, not a reference to consult when in doubt** (2026-08-05: an entire session extended the record model without loading it — the class-over-dict rule it already contained went unread). **Before any documentation change, read `docs/writing-documentation.md`** (2026-08-05: the same session wrote standards and docs without loading the doc-standard — the pattern repeats until the contract is loaded first). The PRD's §10 principles are
+Read the relevant doc before changing behavior. **Before any code change, read `docs/coding-standards.md` — it is the standing contract for how code is written here, not a reference to consult when in doubt.** **Before any documentation change, read `docs/writing-documentation.md`.** **Before writing or editing any prompt, read `skill://prompt-craft`** — a prompt is an instruction an agent acts on, and the prompt modules carry no history lessons (`docs/writing-documentation.md` § "No history lessons"). The PRD's §10 principles are
 product law: the app arranges evidence, never interprets it; no censorship by
 default. Real content never lives in code (`docs/coding-standards.md`).
 

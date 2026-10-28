@@ -5,10 +5,11 @@ Every line of writing on a scan is found and boxed: the ink mask, its marks
 baselines, and each line's ink cut into boxes at column-sized gaps. The
 reviewer's traces compose on top.
 
-Run it, then the jig:
+Run it, then check the rows the reading makes: the invariants are
+`Rows.validate` (`pipeline/rows/rows.py`), the same check the correction
+runs on the reviewer's drawn lines:
 
-    .venv/bin/python tools/reader.py
-    .venv/bin/python tools/boxjig.py /tmp/trace
+    .venv/bin/python tools/reader.py   # the findings are in the terminal + /tmp/trace
 """
 
 from __future__ import annotations

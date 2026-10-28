@@ -468,9 +468,8 @@ def selfreport_words(
         places=", ".join(places) if places else "none",
     )
     call = transcribe if transcribe is not None else transcribe_image_vlm
-    # The second pass either runs or the page carries no flags (user,
-    # 2026-10-26): one retry, then carry on — no fallback, and no flag is
-    # not a claim of certainty.
+    # The second pass either runs or the page carries no flags: one retry,
+    # then carry on — no fallback, and no flag is not a claim of certainty.
     data: Any = None
     for attempt in (1, 2):
         try:

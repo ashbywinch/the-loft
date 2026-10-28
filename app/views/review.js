@@ -1239,7 +1239,7 @@ function renderRowBands(session) {
  *  reviewer sees immediately whether the line they drew did what they
  *  meant. A refusal (no words persisted, a malformed body) is surfaced,
  *  never silent. */
-async function syncRowAdjustments(session) {
+async function syncRowAdjustments(session, note = "") {
   const size = session.imgSize;
   // the page is the session's own position — never a stale local
   const page = session.batch.documents[session.docIndex]?.pages[session.pageIndex];
@@ -1254,7 +1254,10 @@ async function syncRowAdjustments(session) {
     const payload = await res.json();
     if (!res.ok) throw new Error(payload?.error || `row adjustment rejected (${res.status})`);
     session.adjustedRows = payload.rows;
-    setRowStatus(session, "");
+    // the write IS the check (`BatchReadings.page_status`: the page's two
+    // check files on disk) — the page leaves the "Check the rows" queue
+    session.rowChecked = true;
+    setRowStatus(session, note);
     renderRowBands(session);
   } catch (error) {
     console.error("review: the row correction failed — the page is unchanged", error);
@@ -1264,13 +1267,21 @@ async function syncRowAdjustments(session) {
   }
 }
 
-/** The toolbar's one line of state: how many lines are drawn, or why the
- *  last one did not take. */
+/** The row tools' one line of state at rest: a page whose check is recorded
+ *  says so (it has left the queue), a page with drawn lines counts them,
+ *  and an unchecked page with no lines says nothing. */
+export function rowToolsNote(strokes, checked) {
+  const drawn = (strokes || []).length;
+  if (drawn) return `${drawn} line${drawn === 1 ? "" : "s"}`;
+  return checked ? "checked" : "";
+}
+
+/** The toolbar's one line of state: the check's note, or how many lines are
+ *  drawn, or why the last one did not take. */
 function setRowStatus(session, message, failed = false) {
   const status = session.rowTools?.querySelector(".rv-rowtools__status");
   if (!status) return;
-  const drawn = (session.strokes || []).length;
-  status.textContent = message || (drawn ? `${drawn} line${drawn === 1 ? "" : "s"}` : "");
+  status.textContent = message || rowToolsNote(session.strokes, session.rowChecked);
   session.rowTools?.classList.toggle("is-failed", failed);
 }
 
@@ -1407,6 +1418,9 @@ function openViewer(session, imgBox) {
     session.drawRows = false;
     session.strokes = [];
     session.adjustedRows = doc.adjusted_rows?.[page]?.rows || null;
+    // the drafts payload carries the page's check only when BOTH check files
+    // are on disk (`_page_review_state`), which is exactly the status read
+    session.rowChecked = Boolean(doc.adjusted_rows?.[page]);
     const imageSize = { w: img.naturalWidth, h: img.naturalHeight };
     const drawLayer = el("svg", { class: "rv-draw", viewBox: `0 0 ${imageSize.w} ${imageSize.h}` });
     layer.append(drawLayer);
@@ -1421,7 +1435,11 @@ function openViewer(session, imgBox) {
       toggleDraw.classList.toggle("is-on", session.drawRows);
       setRowStatus(session, session.drawRows ? "draw over a row that is wrong; tap a line to delete it" : "");
     });
-    const clearBtn = el("button", { class: "btn rv-rowtools__clear", type: "button" }, ["Clear"]);
+    // "Clear lines" undoes the drawing; "The rows are right" records the
+    // check with whatever is drawn (none at all, when the draft rows are
+    // already correct — UR1.4: whether lines are needed is the reviewer's
+    // call). Both write the correction, so both leave the page checked.
+    const clearBtn = el("button", { class: "btn rv-rowtools__clear", type: "button" }, ["Clear lines"]);
     clearBtn.addEventListener("click", () => {
       session.strokes = [];
       drawStrokeLayer(session, session.drawLayer, [], false);
@@ -1429,10 +1447,17 @@ function openViewer(session, imgBox) {
       renderRowBands(session);
       syncRowAdjustments(session); // no lines: the draft rows are the rows
     });
+    const rightBtn = el("button", { class: "btn rv-rowtools__right", type: "button" }, ["Rows are right"]);
+    rightBtn.addEventListener("click", () => {
+      // the check as its own act: keep what is drawn, record the check even
+      // when nothing is — the page leaves the "Check the rows" queue
+      syncRowAdjustments(session);
+    });
     session.rowTools = el("div", { class: "rv-rowtools" }, [
       toggleDraw,
       el("span", { class: "rv-rowtools__status" }, []),
       clearBtn,
+      rightBtn,
     ]);
     // the toolbar sits inside the pane: a press on it is the toolbar's,
     // never the pane's (the pane's click would re-render the viewer and

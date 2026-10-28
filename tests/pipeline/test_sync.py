@@ -10,7 +10,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from document.stages import PageStatus
-from pipeline.api.sync import BatchReadings, pages_to_check
+from pipeline.api.sync import BatchReadings, pages_pending
 
 PAGE = "p1.jpg"
 
@@ -42,14 +42,14 @@ def test_each_marker_moves_the_page_to_its_stage(tmp_path: Path) -> None:
     assert readings.page_status(PAGE) is PageStatus.ROWS_ADJUSTED
 
 
-def test_the_queue_counts_the_pages_waiting_on_a_person(tmp_path: Path) -> None:
+def test_the_queue_lists_the_pages_waiting_on_a_person(tmp_path: Path) -> None:
     """Only a page the read stage has finished waits on a person: an unread
-    page and a checked page contribute nothing."""
+    page and a checked page are not in the list."""
     readings = _readings(tmp_path)
     for page in ("waiting.jpg", "checked.jpg"):
         _write(readings.words_path(page))
         _write(readings.rows_path(page))
     _write(readings.adjustments_path("checked.jpg"))
     _write(readings.adjusted_rows_path("checked.jpg"))
-    assert pages_to_check(readings, ["unread.jpg", "waiting.jpg", "checked.jpg"]) == 1
-    assert pages_to_check(readings, []) == 0
+    assert pages_pending(readings, ["unread.jpg", "waiting.jpg", "checked.jpg"]) == ["waiting.jpg"]
+    assert pages_pending(readings, []) == []

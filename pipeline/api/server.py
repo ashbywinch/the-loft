@@ -67,7 +67,7 @@ from pipeline.api.sync import (
     demote_stale_jobs,
     draft_payloads,
     page_job_state,
-    pages_to_check,
+    pages_pending,
     record_confirmation,
     reprocess_page_transcription,
     rotate_page,
@@ -676,7 +676,7 @@ def build_app(
             for batch in list_batches(registry_dir):
                 record = batch.to_dict()
                 readings = BatchReadings(work_dir, str(record["batch_id"]))
-                record["pages_to_check"] = pages_to_check(readings, list(record.get("pages") or {}))
+                record["pages_pending"] = pages_pending(readings, list(record.get("pages") or {}))
                 batches.append(record)
             return {"batches": batches}
         except RegistryError as exc:

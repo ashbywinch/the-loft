@@ -131,6 +131,42 @@ export function clearEdits(batchId, docIndex) {
     // nothing to clear
   }
 }
+
+// the document's own facts (title, date) persist like the edits do: a
+// reviewer who typed them and lost the page must not retype them, and a
+// confirmed document's facts live in the archive, so they clear on confirm
+const DOC_FACTS_KEY = "loft-review-docfacts";
+
+export function loadDocFacts(batchId, docIndex) {
+  try {
+    const all = JSON.parse(localStorage.getItem(DOC_FACTS_KEY) || "{}");
+    return all?.[batchId]?.[String(docIndex)] || null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveDocFacts(batchId, docIndex, facts) {
+  try {
+    const all = JSON.parse(localStorage.getItem(DOC_FACTS_KEY) || "{}");
+    all[batchId] = all[batchId] || {};
+    all[batchId][String(docIndex)] = facts;
+    localStorage.setItem(DOC_FACTS_KEY, JSON.stringify(all));
+  } catch {
+    // storage unavailable — the session still holds the facts
+  }
+}
+
+export function clearDocFacts(batchId, docIndex) {
+  try {
+    const all = JSON.parse(localStorage.getItem(DOC_FACTS_KEY) || "{}");
+    delete all?.[batchId]?.[String(docIndex)];
+    localStorage.setItem(DOC_FACTS_KEY, JSON.stringify(all));
+  } catch {
+    // nothing to clear
+  }
+}
+
 /** Save the current page\'s review state (scroll, view, selected line) to
  * localStorage so the reviewer never loses their place (VR9, VR17).
  * Keyed by batch + page index; expects the doc index to validate. */
@@ -951,7 +987,11 @@ function renderSurface(main, session) {
   // document 2 must never carry document 1's title into it.
   if (isLastPage) {
     session.docFacts = session.docFacts || {};
-    const facts = (session.docFacts[session.docIndex] ||= { title: doc.title || "", date: doc.date || "" });
+    const facts = (session.docFacts[session.docIndex] ||= loadDocFacts(batch.batchId, session.docIndex) || {
+      title: doc.title || "",
+      date: doc.date || "",
+    });
+    const persist = () => saveDocFacts(batch.batchId, session.docIndex, facts);
     actionBar.prepend(
       el("div", { class: "rv-docfacts" }, [
         el("input", {
@@ -962,6 +1002,7 @@ function renderSurface(main, session) {
           value: facts.title,
           oninput: (e) => {
             facts.title = e.target.value;
+            persist();
           },
         }),
         el("input", {
@@ -971,6 +1012,7 @@ function renderSurface(main, session) {
           value: facts.date,
           oninput: (e) => {
             facts.date = e.target.value;
+            persist();
           },
         }),
       ]),
@@ -2748,7 +2790,10 @@ async function confirmNext(session) {
     date_precision: date.length === 10 ? "exact" : date.length === 7 ? "month" : "year",
   };
   const pushed = await confirmDocument(payload);
-  if (pushed) clearEdits(batch.batchId, docIndex);
+  if (pushed) {
+    clearEdits(batch.batchId, docIndex);
+    clearDocFacts(batch.batchId, docIndex); // the facts are the archive's now
+  }
   doc.status = "confirmed";
   session.root
     .querySelector(".rv-txa")

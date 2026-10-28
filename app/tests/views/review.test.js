@@ -1530,3 +1530,45 @@ describe("confirming a document asks for its own facts (an item needs a title an
     expect(payload.date_precision).toBe("exact");
   });
 });
+
+describe("the document's facts survive a lost page and clear once agreed", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).includes("/confirmations")) {
+          return { ok: true, status: 200, json: async () => ({ ok: true, item_id: "doc-1963-05-14" }) };
+        }
+        return { ok: true, status: 200, json: async () => LONG_DOC("b6", 1) };
+      }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("types them once, restores them on a reload, and clears them when confirmed", async () => {
+    const main = document.createElement("main");
+    render(main, { arg: "b6", rest: ["review", "b6", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-docfacts")).toBeTruthy());
+    const title = main.querySelector(".rv-docfacts__title");
+    const date = main.querySelector(".rv-docfacts__date");
+    title.value = "A letter to Maman";
+    title.dispatchEvent(new Event("input", { bubbles: true }));
+    date.value = "1963-05-14";
+    date.dispatchEvent(new Event("input", { bubbles: true }));
+
+    // a lost page: the surface re-renders fresh, as a reload would
+    const again = document.createElement("main");
+    render(again, { arg: "b6", rest: ["review", "b6", "0", "0"] });
+    await vi.waitFor(() => expect(again.querySelector(".rv-docfacts")).toBeTruthy());
+    expect(again.querySelector(".rv-docfacts__title").value).toBe("A letter to Maman");
+    expect(again.querySelector(".rv-docfacts__date").value).toBe("1963-05-14");
+
+    again.querySelector(".rv-btn--primary").click();
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(true),
+    );
+    const stored = JSON.parse(localStorage.getItem("loft-review-docfacts") || "{}");
+    expect(stored?.["b6"]?.["0"]).toBeUndefined(); // the archive holds them now
+  });
+});

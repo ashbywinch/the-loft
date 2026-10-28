@@ -66,7 +66,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | UX standards (the reviewer rules and UX-process norms) | `docs/ux-standards.md` |
 | UX spec — the PRD's UX answers + the journeys to usability-test | `docs/UX.md` |
 | Real content (people, relationships, items, story text) | `archive/` — append-only, supersede never edit; regenerate `app/data` with `./loft publish` |
-| Where an artefact lives (the archive's legs: identities, items, sessions) | `docs/PLAN/archive-arrangement-proposal.md` (a proposal, not yet ruled) |
+| Where an artefact lives (the archive's legs: identities, items, sessions) | `docs/PLAN/archive-arrangement-proposal.md` |
 | Demo content for fake instances | `tools/demo_data.py` — fictional only, never real names |
 
 Read the relevant doc before changing behavior. **Before any code change, read `docs/coding-standards.md` — it is the standing contract for how code is written here, not a reference to consult when in doubt.** **Before any documentation change, read `docs/writing-documentation.md`.** **Before writing or editing any prompt, read `skill://prompt-craft`** — a prompt is an instruction an agent acts on, and the prompt modules carry no history lessons (`docs/writing-documentation.md` § "No history lessons"). The PRD's §10 principles are

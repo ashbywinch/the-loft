@@ -32,7 +32,7 @@ archive/
   documents/<date label>/<item id>/       one item
       item.json (+ -N versions)           the sidecar; append-only
       <content files>                     the scans, the photograph
-      transcript.txt                      the agreed Document (a transcribed item)
+      transcription.txt                   the agreed Document (the item's `transcription`)
 ```
 
 - **The identity tables stay at the root.** They are the final artefacts a
@@ -45,10 +45,11 @@ archive/
 - **`documents/` is the item leg**, replacing `assets/`: the date-partitioned
   tree `docs/object-model.md` already settles (N = 200, median split) — the
   partition is unchanged, the leg's name becomes what it holds.
-- **An item's folder holds its text.** A scanned document's `transcript.txt`
-  is the agreed Document; a story's text is its content file. Either way the
-  sidecar declares it, so a reader needs `item.json` and nothing else to know
-  what the item is.
+- **An item's folder holds its text, under the name the model already gives it**
+  (`tools/records.py` `CONTENT_FILES`: a story's `story.txt`, a scanned
+  document's `transcription.txt`, versioned with its sidecar). The agreed
+  Document IS the item's transcription — no new leg, no new file name — so a
+  reader needs `item.json` and nothing else to know what the item is.
 
 ## What feeds what
 
@@ -58,7 +59,7 @@ archive/
 | orient, marks, words, draft rows | `oriented/`, `<page>.words.json`, `<page>.rows.json` | `Loft/work/<batch>/` |
 | the row check | `<page>.row-adjustments.json`, `<page>.rows-adjusted.json` | `Loft/work/<batch>/` |
 | the reading | the page's rows and text (the draft Document) | `Loft/work/<batch>/` |
-| **agree the transcript** | `transcript.txt` in the item's folder; the registry's boundary status | **archive** + registry |
+| **agree the transcript** | `transcription.txt` in the item's folder (the item's `transcription` content); the registry's boundary status | **archive** + registry |
 | proposed entities | the identity tables' `pending` records | archive |
 | **agree the entities** | the same records, attested | archive |
 | the projection | `app/data` | `Loft/projection/` (derived, never in the archive) |
@@ -70,16 +71,17 @@ provenance survives without the archive holding pipeline state.
 ## What this changes in the code
 
 1. `record_confirmation` (`pipeline/api/sync.py`) writes the agreed text into
-   `work/<batch>/ocr-confirmed/` today. It must write the item's folder
-   instead, through the archive's write seam (`Archive`), minting the item at
-   agreement.
+   `work/<batch>/ocr-confirmed/` today. It must write the item's
+   `transcription.txt` instead, through the archive's write seam (`Archive`),
+   minting or attaching the item at agreement.
 2. `Archive.save_identity` keeps its shape; each table's leg becomes a
    parameter of the table's home rather than a bare root name.
-3. `publish` reads the same records and gains the transcript's path per item.
+3. `publish` reads the same records; the transcription is already one of the
+   item's content files, so the projection gains nothing new to find.
 
-## The decisions this proposal leaves open
+## The rulings
 
-| # | Question | Recommendation |
+| # | Question | Ruling |
 |---|---|---|
-| 1 | Does a session belong in the archive at all, or only in the workspace? | **In the archive, under `sessions/`** — the proposals a session carries must survive a workspace loss; the leg keeps it out of the reader's way |
-| 2 | Is the agreed transcript a content file of its item, or its own leg keyed by the batch? | **The item's content file** — the item is what the family agreed on; a batch is how it arrived |
+| 1 | Does a session belong in the archive at all, or only in the workspace? | **In the archive, under `sessions/`** (user, 2026-10-28) — the proposals a session carries must survive a workspace loss; the leg keeps it out of the reader's way |
+| 2 | Where does the agreed transcript live? | **The item's `transcription` content file** — the model already answers this (`tools/records.py` `CONTENT_FILES`): the agreed Document is the item's transcription, beside its sidecar. The item is minted or attached at agreement; the batch is provenance in the sidecar, not a coordinate the archive indexes by |

@@ -1124,6 +1124,29 @@ def test_sync_confirmations_supersede_the_item_on_re_agreement(server: ServerFix
     assert server.store.list("assets").count("assets/doc-1963-05-14-2/item.json") == 0
 
 
+def test_sync_confirmations_ignore_a_client_supplied_item_id(server: ServerFixture) -> None:
+    """The item id comes from the registry alone: a request carrying one must
+    neither adopt another document's item nor mint a document under a chosen
+    id."""
+    _seed_sync_batch(server)
+    payload = {
+        "batch_id": "adopt-0001",
+        "doc_index": 1,
+        "pages": ["p1.jpg"],
+        "text": "Chère Maman.",
+        "status": "confirmed",
+        "confirmed_at": "2026-08-14T00:00:00Z",
+        "title": "A letter to Maman",
+        "date": "1963-05-14",
+        "date_precision": "exact",
+        "item_id": "doc-1900-01-01",
+    }
+    status, body = server.post("/api/sync/confirmations", payload)
+    assert status == 200
+    assert body["item_id"] == "doc-1963-05-14"  # the document's own, never the client's
+    assert not [i for i in server.store.list("assets") if i.startswith("assets/doc-1900-01-01/")]
+
+
 def test_sync_confirmations_need_the_documents_own_facts(server: ServerFixture) -> None:
     """A document cannot become an item without a title and a date, so an
     agreement without them is refused, with the reason — never an untitled

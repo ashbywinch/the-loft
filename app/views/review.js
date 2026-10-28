@@ -947,10 +947,11 @@ function renderSurface(main, session) {
   const actionBar = el("div", { class: "rv-txa" }, [skipBtn, rejectBtn]);
   // the document's own facts, asked where the document is agreed: an item
   // cannot exist without a title and a date (the archive's item model), and
-  // only the reviewer knows them
+  // only the reviewer knows them. Keyed by document — a reviewer confirming
+  // document 2 must never carry document 1's title into it.
   if (isLastPage) {
-    session.docTitle = session.docTitle || doc.title || "";
-    session.docDate = session.docDate || doc.date || "";
+    session.docFacts = session.docFacts || {};
+    const facts = (session.docFacts[session.docIndex] ||= { title: doc.title || "", date: doc.date || "" });
     actionBar.prepend(
       el("div", { class: "rv-docfacts" }, [
         el("input", {
@@ -958,18 +959,18 @@ function renderSurface(main, session) {
           type: "text",
           placeholder: "this document is…",
           "aria-label": "Title for this document",
-          value: session.docTitle,
+          value: facts.title,
           oninput: (e) => {
-            session.docTitle = e.target.value;
+            facts.title = e.target.value;
           },
         }),
         el("input", {
           class: "field rv-docfacts__date",
           type: "date",
           "aria-label": "Date of this document",
-          value: session.docDate,
+          value: facts.date,
           oninput: (e) => {
-            session.docDate = e.target.value;
+            facts.date = e.target.value;
           },
         }),
       ]),
@@ -2726,8 +2727,9 @@ async function confirmNext(session) {
     renderSurface(session.root, session);
     return;
   }
-  const title = (session.docTitle || "").trim();
-  const date = (session.docDate || "").trim();
+  const facts = session.docFacts?.[session.docIndex] || {};
+  const title = (facts.title || "").trim();
+  const date = (facts.date || "").trim();
   if (!title || !date) {
     // the archive cannot hold a document without its own facts, and the
     // app never invents them

@@ -323,12 +323,12 @@ def record_confirmation(
     # unknown batch must fabricate nothing and raise RegistryError -> 4xx,
     # not leave a stray archive item behind.
     record = load_batch(batch_id, registry_dir)
-    # the registry knows which item this document already became — a
-    # re-agreement supersedes it, never mints a second (the request carries
-    # the boundary as the reviewer re-sent it, without the id)
+    # The registry is the ONLY source of the item id: a re-agreement
+    # supersedes the item its page set already became, and a client-supplied
+    # id is never trusted (it would let a request adopt someone else's item,
+    # and an id is a path segment).
     previous = next((b for b in record.boundaries or [] if b.pages == document.pages), None)
-    if previous is not None and not document.item_id:
-        document.item_id = previous.item_id
+    document.item_id = previous.item_id if previous is not None else ""
     item_id = ""
     if text is not None:
         item = archive.agree_document(

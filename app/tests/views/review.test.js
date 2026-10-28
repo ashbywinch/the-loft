@@ -1480,3 +1480,53 @@ describe("the review hub's portal sections", () => {
     expect(main.textContent).toContain("A pile");
   });
 });
+
+describe("confirming a document asks for its own facts (an item needs a title and a date)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).includes("/confirmations")) {
+          return { ok: true, status: 200, json: async () => ({ ok: true, item_id: "doc-1963-05-14" }) };
+        }
+        return { ok: true, status: 200, json: async () => LONG_DOC("b5", 2) };
+      }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  async function surface(main) {
+    render(main, { arg: "b5", rest: ["review", "b5", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-line")).toBeTruthy());
+    await vi.waitFor(() => expect(main.querySelector(".rv-docfacts")).toBeTruthy());
+  }
+
+  it("refuses to confirm without them, and says why — never an invented item", async () => {
+    const main = document.createElement("main");
+    await surface(main);
+    main.querySelector(".rv-btn--primary").click();
+    await vi.waitFor(() => expect(main.querySelector(".rv-docfacts").classList.contains("is-failed")).toBe(true));
+    expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(false);
+  });
+
+  it("sends the title and the date with the confirmation", async () => {
+    const main = document.createElement("main");
+    await surface(main);
+    const title = main.querySelector(".rv-docfacts__title");
+    const date = main.querySelector(".rv-docfacts__date");
+    title.value = "A letter to Maman";
+    title.dispatchEvent(new Event("input", { bubbles: true }));
+    date.value = "1963-05-14";
+    date.dispatchEvent(new Event("input", { bubbles: true }));
+    main.querySelector(".rv-btn--primary").click();
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(true),
+    );
+    const [, options] = fetch.mock.calls.find(([url]) => String(url).includes("/confirmations"));
+    const payload = JSON.parse(options.body);
+    expect(payload.title).toBe("A letter to Maman");
+    expect(payload.date).toBe("1963-05-14");
+    expect(payload.date_precision).toBe("exact");
+  });
+});

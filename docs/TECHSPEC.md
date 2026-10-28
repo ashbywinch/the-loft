@@ -525,7 +525,6 @@ Loft/
     oriented/page-NN.jpg           correct way up (Rule J, before any reading)
     ocr-raw/page-NN.txt            engine OCR, unverified
     ocr-guess/page-NN.txt          machine draft (transcription_status: draft)
-    ocr-confirmed/page-NN.txt      user-verified; archived on confirmation
   archive/                         the durable knowledge (confirmed only)
     assets/<item-id>/              item.json + page-NN.jpg + transcription.txt + thumbs
     people.json places.json orgs.json themes.json items.json ...
@@ -597,7 +596,7 @@ runnable, resumable, and replaceable.
 | `orient` | user pages → `work/<batch>/oriented/` (Rule J) | `importing` |
 | `ocr-raw` | oriented pages → `work/<batch>/ocr-raw/` (tesseract) | `importing` |
 | `ocr-guess` | ocr-raw → `work/<batch>/ocr-guess/` (vision model draft) | `importing` |
-| `review` | oriented + ocr-guess → `ocr-confirmed/` + `boundaries` (the IMPORT-PRD flow, user-paced) | `review` |
+| `review` | oriented + ocr-guess → the agreed document as an archive item (its `transcription.txt`) + `boundaries` (the IMPORT-PRD flow, user-paced) | `review` |
 | `catalog` | confirmed pages + transcript → `archive/assets/<id>/` (draft items) | `done` |
 | `publish` | archive → `projection/` (reduced-res) | — |
 
@@ -887,8 +886,8 @@ the confirmation arrives within one page load.
 
 *R4 — Idempotency.* Duplicate confirmations are harmless: the write seam
 (`record_confirmation`) replaces by pages (boundaries are identified by
-their page set; ocr-confirmed/<doc>.txt is an atomic overwrite). A
-duplicate POST produces the same final registry state.
+their page set, and the item the document became is superseded, not
+minted twice). A duplicate POST produces the same final registry state.
 
 *R5 — Long-outage resilience.* The frontend (cloud) also maintains a
 **server-side Outbox** (`pipeline/sync.py` `Outbox`) backed by the filesystem
@@ -930,9 +929,9 @@ review surface's store — the backend serves them on demand
 (`GET /api/sync/batch/{id}/drafts`: the ocr-guess texts + boundaries), and
 the frontend keeps its own copy while they await the reviewer. The
 confirmed outputs are pushed in real time to the backend
-(`POST /api/sync/confirmations`): validated against the model, appended to
-the work dir's ocr-confirmed + registry (status `confirmed`), the
-projection re-published. **The catch-up (user: "a sync
+(`POST /api/sync/confirmations`): validated against the model, the agreed
+document minted as an archive item (its `transcription.txt`) with the batch
+boundary in the registry (status `confirmed`), the projection re-published. **The catch-up (user: "a sync
 endpoint on the website for mopups"):** if the real-time push fails (the
 laptop is off), the confirmation stays in the frontend's outbox
 (`pipeline/sync.py` `Outbox` — atomic, append-only); the backend pulls

@@ -47,8 +47,10 @@ from pipeline.registry import load_batch, record_path
 from pipeline.rows.rows import Rows
 from pipeline.rows_reading import RowsReading
 from pipeline.store import PipelineStore
+from tools.archive import Archive
 from tools.atomic import atomic_write
-from tools.loft_paths import REGISTRY_DIR, WORK_DIR
+from tools.dated_fact import PRECISIONS
+from tools.loft_paths import REGISTRY_DIR
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 ROWS_JSON = "rows.json"  # the reading's rows file beside the guess (object-model Phase 1)
@@ -233,12 +235,27 @@ def validate_confirmation(payload: dict[str, Any]) -> dict[str, Any]:
     doc_index = payload["doc_index"]
     if isinstance(doc_index, bool) or not isinstance(doc_index, int) or doc_index < 1:
         raise ValueError(f"confirmation doc_index must be a positive integer, got {doc_index!r}")
-    # a rejection carries no corrected text — record_confirmation treats
-    # text=None as the rejection marker, so the validator must not demand a
-    # string for it
-    if payload["status"] != "rejected" and not isinstance(payload["text"], str):
-        raise ValueError("confirmation text must be a string")
+    _check_agreement(payload)
     return payload
+
+
+def _check_agreement(payload: dict[str, Any]) -> None:
+    """What an AGREED document needs beyond the shape: its text and its own
+    facts (a title and a date — an item cannot exist without them). A
+    rejection carries none of them."""
+    if payload["status"] == "confirmed":
+        if not isinstance(payload["text"], str):
+            raise ValueError("confirmation text must be a string")
+        title = payload.get("title")
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError("an agreed document needs a title")
+        if not isinstance(payload.get("date"), str) or not payload["date"].strip():
+            raise ValueError("an agreed document needs a date")
+        if payload.get("date_precision") not in PRECISIONS:
+            raise ValueError(
+                f"confirmation date_precision must be one of {sorted(PRECISIONS)}, "
+                f"got {payload.get('date_precision')!r}"
+            )
 
 
 class Outbox:
@@ -282,26 +299,47 @@ def record_confirmation(
     document: Boundary,
     text: str | None,
     *,
-    work_dir: Path = WORK_DIR,
+    archive: Archive,
+    title: str = "",
+    date: str = "",
+    date_precision: str = "",
     registry_dir: Path = REGISTRY_DIR,
-) -> None:
+) -> str:
     """The backend's single write path for a reviewed document — shared by
-    the CLI review gate and the sync receiver (TECHSPEC §16.15): the
-    confirmed text lands in ocr-confirmed/<doc>.txt and the registry's
-    boundaries are updated (replace-by-pages, append). ``text=None``
-    records a rejection — nothing is silently dropped. The batch id is
-    validated FIRST: it becomes a path segment, and the write must never
-    precede the guard."""
+    the CLI review gate and the sync receiver (TECHSPEC §16.15).
+
+    An agreed document becomes an archive item: the review's facts (title,
+    date) mint it, or supersede the item the document already became
+    (``document.item_id``), with the corrected text as the item's
+    transcription. The registry's boundary records the item and the review's
+    state (replace-by-pages, append) — the archive holds the agreed text, the
+    registry holds which page set it came from. ``text=None`` records a
+    rejection: nothing is minted and nothing is silently dropped. Returns the
+    item id (empty for a rejection). The batch id is validated FIRST: it
+    becomes a path segment, and no write precedes the guard."""
     if not BATCH_ID.match(batch_id):
         raise ValueError(f"invalid batch id: {batch_id!r}")
     # load (and so validate the batch was adopted) BEFORE any write — an
     # unknown batch must fabricate nothing and raise RegistryError -> 4xx,
-    # not leave a stray review-output file behind.
+    # not leave a stray archive item behind.
     record = load_batch(batch_id, registry_dir)
+    # the registry knows which item this document already became — a
+    # re-agreement supersedes it, never mints a second (the request carries
+    # the boundary as the reviewer re-sent it, without the id)
+    previous = next((b for b in record.boundaries or [] if b.pages == document.pages), None)
+    if previous is not None and not document.item_id:
+        document.item_id = previous.item_id
+    item_id = ""
     if text is not None:
-        confirmed_dir = work_dir / batch_id / "ocr-confirmed"
-        confirmed_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write(confirmed_dir / f"doc-{doc_index:02d}.txt", text)
+        item = archive.agree_document(
+            title=title,
+            date=date,
+            date_precision=date_precision,
+            text=text,
+            item_id=document.item_id,
+        )
+        item_id = item.id
+        document.item_id = item.id
         document.reviewed(DOCUMENT_AGREED)
     else:
         document.reviewed(DOCUMENT_REJECTED)
@@ -309,6 +347,7 @@ def record_confirmation(
     boundaries.append(document)
     record.boundaries = boundaries
     atomic_write(record_path(batch_id, registry_dir), json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n")
+    return item_id
 
 
 # the review seam's functions all take (batch_id, page, work_dir) — they are the

@@ -281,6 +281,62 @@ class Archive:
         Used by import (scans entering the archive) and the bootstrap."""
         self.store.write_new(self.content_path(item_id, filename), content)
 
+    def agree_document(
+        self,
+        *,
+        title: str,
+        date: str,
+        date_precision: str,
+        text: str,
+        item_id: str = "",
+    ) -> Item:
+        """The reviewed document becomes an archive item: its sidecar (title,
+        date, status) and the transcription as the item's own content file.
+        A document the review re-agrees supersedes the item it already became
+        (``item_id``), never mints a second.
+
+        The id is ``doc-<date>``, or ``doc-<date>-N`` when a document of that
+        date is already held — an id is minted once and never changes. The
+        sidecar carries no pipeline coordinates: the registry's boundary
+        records which item an agreed document became."""
+        if not title.strip():
+            raise ArchiveError("an agreed document needs a title")
+        new_id = item_id or self._document_id(date)
+        existing = self.get_item(new_id) if item_id else None
+        sidecar: dict[str, Any] = (
+            dict(existing.to_dict())
+            if existing is not None
+            else {
+                "id": new_id,
+                "type": "document",
+                "assets": [],
+                "people": [],
+                "places": [],
+                "themes": [],
+                "orgs": [],
+                "items": [],
+            }
+        )
+        sidecar.update({"title": title.strip(), "date": date, "date_precision": date_precision, "status": "catalogued"})
+        item = Item(sidecar)
+        try:
+            self.save_item(item, content={"transcription": text})
+        except ValueError as e:  # Item.from_dict's vocabulary and date checks
+            raise ArchiveError(f"the agreed document is not a valid item: {e}") from e
+        return item
+
+    def _document_id(self, date: str) -> str:
+        """The next free ``doc-<date>`` id (``-2``, ``-3`` … for documents of
+        the same date)."""
+        held = set(self.item_ids())
+        base = f"doc-{date}"
+        if base not in held:
+            return base
+        suffix = 2
+        while f"{base}-{suffix}" in held:
+            suffix += 1
+        return f"{base}-{suffix}"
+
     # -- writes ------------------------------------------------------------
 
     def save_item(self, item: Item, content: dict[str, str] | None = None) -> int:

@@ -1058,7 +1058,10 @@ def test_sync_confirmations_requires_a_session(server: ServerFixture) -> None:
     assert status == 401
 
 
-def test_sync_confirmations_records_and_reports(server: ServerFixture) -> None:
+def test_sync_confirmations_mint_the_archive_item(server: ServerFixture) -> None:
+    """An agreed document becomes an archive item: the title and date the
+    reviewer gave, and the corrected text as the item's transcription. The
+    registry's boundary carries the item it became."""
     _seed_sync_batch(server)
     status, body = server.post(
         "/api/sync/confirmations",
@@ -1069,16 +1072,21 @@ def test_sync_confirmations_records_and_reports(server: ServerFixture) -> None:
             "text": "Chère Maman.",
             "status": "confirmed",
             "confirmed_at": "2026-08-14T00:00:00Z",
+            "title": "A letter to Maman",
+            "date": "1963-05-14",
+            "date_precision": "exact",
         },
     )
     assert status == 200
-    assert body["ok"] is True
+    assert body["ok"] is True and body["item_id"] == "doc-1963-05-14"
     import json as _json
 
     record = _json.loads((server.registry_dir / "adopt-0001.json").read_text(encoding="utf-8"))
     assert record["boundaries"][0]["status"] == "confirmed"
-    confirmed = server.work_dir / "adopt-0001" / "ocr-confirmed" / "doc-01.txt"
-    assert confirmed.read_text(encoding="utf-8") == "Chère Maman."
+    assert record["boundaries"][0]["item_id"] == "doc-1963-05-14"
+    item = _json.loads(server.store.read("assets/doc-1963-05-14/item.json"))
+    assert item["title"] == "A letter to Maman" and item["date"] == "1963-05-14"
+    assert server.store.read("assets/doc-1963-05-14/transcription.txt") == "Chère Maman."
 
 
 def test_sync_confirmations_rejects_a_bad_shape(server: ServerFixture) -> None:
@@ -1087,6 +1095,56 @@ def test_sync_confirmations_rejects_a_bad_shape(server: ServerFixture) -> None:
         {"batch_id": "adopt-0001", "doc_index": 1, "pages": [], "text": "x"},
     )
     assert status == 400
+
+
+def test_sync_confirmations_supersede_the_item_on_re_agreement(server: ServerFixture) -> None:
+    """Re-agreeing the same document (a corrected text) supersedes its item —
+    one item per document, never a second one."""
+    _seed_sync_batch(server)
+    payload = {
+        "batch_id": "adopt-0001",
+        "doc_index": 1,
+        "pages": ["p1.jpg"],
+        "text": "Chère Maman.",
+        "status": "confirmed",
+        "confirmed_at": "2026-08-14T00:00:00Z",
+        "title": "A letter to Maman",
+        "date": "1963-05-14",
+        "date_precision": "exact",
+    }
+    first, body = server.post("/api/sync/confirmations", payload)
+    assert first == 200 and body["item_id"] == "doc-1963-05-14"
+    corrected = {**payload, "text": "Chère Maman, nous sommes arrivés."}
+    second, body = server.post("/api/sync/confirmations", corrected)
+    assert second == 200 and body["item_id"] == "doc-1963-05-14"
+    assert server.store.read("assets/doc-1963-05-14/transcription-2.txt") == "Chère Maman, nous sommes arrivés."
+    assert [i for i in server.store.list("assets") if i.startswith("assets/doc-1963-05-14/")].count(
+        "assets/doc-1963-05-14/item.json"
+    ) == 1
+    assert server.store.list("assets").count("assets/doc-1963-05-14-2/item.json") == 0
+
+
+def test_sync_confirmations_need_the_documents_own_facts(server: ServerFixture) -> None:
+    """A document cannot become an item without a title and a date, so an
+    agreement without them is refused, with the reason — never an untitled
+    item in the archive."""
+    _seed_sync_batch(server)
+    for missing in ({"title": ""}, {"date": ""}, {"date_precision": "sometimes"}):
+        payload = {
+            "batch_id": "adopt-0001",
+            "doc_index": 1,
+            "pages": ["p1.jpg"],
+            "text": "Chère Maman.",
+            "status": "confirmed",
+            "confirmed_at": "2026-08-14T00:00:00Z",
+            "title": "A letter",
+            "date": "1963-05-14",
+            "date_precision": "exact",
+            **missing,
+        }
+        status, body = server.post("/api/sync/confirmations", payload)
+        assert status == 400, (missing, body)
+    assert (server.registry_dir / "adopt-0001.json").is_file()
 
 
 def test_sync_batches_requires_a_session(server: ServerFixture) -> None:
@@ -1173,6 +1231,9 @@ def test_sync_pending_catch_up_round_trip(server: ServerFixture) -> None:
             "text": "Chère Maman.",
             "status": "confirmed",
             "confirmed_at": "2026-08-14T00:00:00Z",
+            "title": "A letter to Maman",
+            "date": "1963-05-14",
+            "date_precision": "exact",
         }
     )
     status, raw = server.get("/api/sync/pending", cookie=server.cookie)

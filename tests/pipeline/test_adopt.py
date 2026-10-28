@@ -115,13 +115,23 @@ def test_register_adopted_preserves_confirmed_content_on_change(tmp_path: Path) 
 
     from pipeline.api.sync import record_confirmation
     from pipeline.boundary import Boundary
+    from tools.archive import Archive
+    from tools.store import DiskStore
 
     folder = _pile(tmp_path)
     registry = tmp_path / "registry"
     result = register_adopted(folder, label="Box 1", registry_dir=registry)
     record = json.loads(result.path.read_text(encoding="utf-8"))
     record_confirmation(
-        record["batch_id"], 1, Boundary(pages=["a.jpg"]), "Chère Maman.", work_dir=tmp_path, registry_dir=registry
+        record["batch_id"],
+        1,
+        Boundary(pages=["a.jpg"]),
+        "Chère Maman.",
+        archive=Archive(DiskStore(tmp_path / "archive")),
+        title="A letter",
+        date="1963-05-14",
+        date_precision="exact",
+        registry_dir=registry,
     )
 
     Image.new("RGB", (8, 8), (0, 0, 255)).save(folder / "c.jpg", quality=88)
@@ -131,9 +141,8 @@ def test_register_adopted_preserves_confirmed_content_on_change(tmp_path: Path) 
     record = json.loads(result.path.read_text(encoding="utf-8"))
     assert record["content_changed"] is True
     assert record["boundaries"][0]["status"] == "confirmed"  # the confirmed text survives
-    confirmed = tmp_path / record["batch_id"] / "ocr-confirmed" / "doc-01.txt"
-    assert confirmed.exists()  # never cleared
-    assert confirmed.read_text(encoding="utf-8") == "Chère Maman."
+    agreed = tmp_path / "archive" / "assets" / "doc-1963-05-14" / "transcription.txt"
+    assert agreed.read_text(encoding="utf-8") == "Chère Maman."  # never cleared
 
 
 def test_register_adopted_clears_stages_when_nothing_confirmed(tmp_path: Path) -> None:

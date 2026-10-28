@@ -772,3 +772,55 @@ def test_concurrent_message_recording_loses_nothing() -> None:
     # update from a stale snapshot
     assert len(texts) == 30
     assert all(f"a-{i}" in texts and f"b-{i}" in texts for i in range(15))
+
+
+def test_an_agreed_document_becomes_an_item_with_its_transcription() -> None:
+    """The reviewed document mints an item dated to the document, its
+    transcription a content file of that item (the model's `transcription`
+    kind, versioned with the sidecar)."""
+    archive, store = make_archive()
+    item = archive.agree_document(
+        title="A letter from Peg",
+        date="1975-03-01",
+        date_precision="exact",
+        text="Dear Mum,\nwe arrived.",
+    )
+    assert item.id == "doc-1975-03-01"
+    assert item.type == "document" and item.status == "catalogued"
+    assert item.title == "A letter from Peg" and item.date == "1975-03-01"
+    sidecar = json.loads(store.read("assets/doc-1975-03-01/item.json"))
+    assert sidecar["assets"] == [{"kind": "transcription", "file": "transcription.txt", "caption": "The transcription"}]
+    assert store.read("assets/doc-1975-03-01/transcription.txt") == "Dear Mum,\nwe arrived."
+
+
+def test_a_second_document_of_the_same_date_gets_its_own_id() -> None:
+    archive, _ = make_archive()
+    first = archive.agree_document(title="One", date="1975-03-01", date_precision="exact", text="a")
+    second = archive.agree_document(title="Two", date="1975-03-01", date_precision="exact", text="b")
+    assert (first.id, second.id) == ("doc-1975-03-01", "doc-1975-03-01-2")
+
+
+def test_re_agreeing_supersedes_the_item_it_became() -> None:
+    """A corrected document supersedes its own item — the next version of the
+    same id, never a second item for one document."""
+    archive, store = make_archive()
+    item = archive.agree_document(title="A letter", date="1975-03-01", date_precision="exact", text="first")
+    archive.agree_document(
+        title="A letter from Peg",
+        date="1975-03-01",
+        date_precision="exact",
+        text="corrected",
+        item_id=item.id,
+    )
+    assert archive.item_ids() == ["doc-1975-03-01"]
+    superseded = archive.get_item(item.id)
+    assert superseded is not None and superseded.title == "A letter from Peg"
+    assert store.read("assets/doc-1975-03-01/transcription-2.txt") == "corrected"
+
+
+def test_an_agreed_document_needs_a_title_and_a_viable_date() -> None:
+    archive, _ = make_archive()
+    with pytest.raises(ArchiveError, match="needs a title"):
+        archive.agree_document(title="  ", date="1975-03-01", date_precision="exact", text="a")
+    with pytest.raises(ArchiveError, match="date is not parseable"):
+        archive.agree_document(title="A letter", date="1975-99-99", date_precision="exact", text="a")

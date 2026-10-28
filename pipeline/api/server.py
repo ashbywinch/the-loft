@@ -839,24 +839,30 @@ def build_app(
 
     @app.post("/api/sync/confirmations")
     def sync_confirmations(payload: Mapping[str, Any], request: Request) -> Any:
-        """The backend receiver: validate, record (ocr-confirmed + registry),
-        re-publish the projection. The frontend never writes the archive."""
+        """The backend receiver: validate, record (the agreed document becomes
+        its archive item; the registry records the review), re-publish the
+        projection. The frontend never writes the archive."""
         if session_user(request) is None:
             return JSONResponse(ErrorAnswer("sign in to send confirmations").to_dict(), status_code=401)
         try:
             confirmation = ConfirmationRequest.from_dict(payload)
-            record_confirmation(
+            item_id = record_confirmation(
                 confirmation.batch_id,
                 confirmation.doc_index,
                 confirmation.boundary,
                 confirmation.text,
-                work_dir=work_dir,
+                archive=archive,
+                title=confirmation.title,
+                date=confirmation.date,
+                date_precision=confirmation.date_precision,
                 registry_dir=registry_dir,
             )
-        except (TypeError, ValueError, RegistryError) as exc:
+        except (TypeError, ValueError, RegistryError, ArchiveError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)  # client errors are 4xx, never 500
         archive.publish(data_dir)
-        return ConfirmationAnswer(batch_id=confirmation.batch_id, doc_index=confirmation.doc_index).to_dict()
+        return ConfirmationAnswer(
+            batch_id=confirmation.batch_id, doc_index=confirmation.doc_index, item_id=item_id
+        ).to_dict()
 
     @app.get("/api/sync/pending")
     def sync_pending(request: Request) -> Any:

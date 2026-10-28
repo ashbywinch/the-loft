@@ -6,8 +6,8 @@ guess stage hands the noisy raw OCR plus the standing knowledge (people,
 places) and the batch label to the model, which returns per-page verbatim
 corrections AND document boundaries (a page opens a document at a greeting,
 closes it at a sign-off). review is the user's confirmation gate: each
-document's text is accepted, edited, or rejected, and the confirmed
-transcriptions land in work/<batch>/ocr-confirmed/.
+document's text is accepted, edited, or rejected, and an accepted document
+becomes an archive item: its transcription is the item's own content file
 
 Usage:
     python tools/pipeline.py process <batch-id>
@@ -56,7 +56,8 @@ from pipeline.rows_reading import RowsReading
 from pipeline.standing_knowledge import StandingKnowledge
 from pipeline.store import PipelineStore, text_sha256
 from pipeline.transcribe.transcripts import row_transcripts
-from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR
+from tools.archive import Archive
+from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR, LoftPaths
 from tools.store import DiskStore, StoreError  # noqa: F401 — the architecture test's store-layer marker
 
 PAGE_LIMIT = 30  # one guess call per batch; beyond this the context is too big — chunking is future work
@@ -325,7 +326,7 @@ class BatchRun(Batch):
 
     def clear_stale_stages(self, record: BatchRecord) -> None:
         """A content-changed pile (pages added/removed after adoption): the
-        regenerable stages are stale — clear them (NEVER ocr-confirmed) and
+        regenerable stages are stale — clear them (never the agreed items) and
         consume the flag so this run reprocesses the full current page set."""
         for stale in (self.paths.classify_path, self.paths.oriented_dir, self.paths.raw_dir, self.paths.guess_dir):
             if stale.is_file():
@@ -589,7 +590,7 @@ class BatchRun(Batch):
         """The machine stages. Stops at the review gate: the draft rows exist
         and each page waits on its row check (the derived `rows_pending`)."""
         # a content-changed pile (pages added/removed after adoption): the
-        # regenerable stages are stale — clear them (NEVER ocr-confirmed) and
+        # regenerable stages are stale — clear them (never the agreed items) and
         # consume the flag so this run reprocesses the full current page set
         if record.content_changed:
             self.clear_stale_stages(record)
@@ -1052,9 +1053,9 @@ def _read_multiline(prompt: str, readline: Callable[[str], str]) -> str:
 
 class ReviewGate(Batch):
     """The user's confirmation gate: accept, edit, or reject each document
-    of a guessed batch, landing the confirmed transcriptions in
-    ``work/<batch>/ocr-confirmed/``. review is the thin entry point; the
-    batch's paths and registry writes are inherited from Batch."""
+    of a guessed batch. An accepted document becomes an archive item (its
+    transcription is the item's content file); review is the thin entry
+    point, and the batch's paths and registry writes come from Batch."""
 
     def run(
         self,
@@ -1095,11 +1096,12 @@ class ReviewGate(Batch):
         line: Callable[[str], str],
         write_line: Callable[[str], None],
     ) -> None:
-        """The user's accept/edit/reject gate per document; the accepted text
-        lands in work/<batch>/ocr-confirmed/."""
+        """The user's accept/edit/reject gate per document. An accepted
+        document becomes an archive item: the gate asks for the document's own
+        facts (a title and a date — an item cannot exist without them), and
+        the agreed text lands as that item's transcription."""
         store = PipelineStore(self.work_dir)
-        confirmed_dir = self.paths.batch_work / "ocr-confirmed"
-        confirmed_dir.mkdir(parents=True, exist_ok=True)
+        archive = Archive(DiskStore(self.archive_dir))
         for index, document in enumerate(boundaries, start=1):
             text_pages = [
                 p for p in document.pages if store.exists(f"{self.batch_id}/ocr-guess/{Path(p).with_suffix('.txt')}")
@@ -1123,7 +1125,7 @@ class ReviewGate(Batch):
                     index,
                     document,
                     None,
-                    work_dir=self.work_dir,
+                    archive=archive,
                     registry_dir=self.registry_dir,
                 )
                 write_line(f"document {index} rejected")
@@ -1133,27 +1135,38 @@ class ReviewGate(Batch):
             )
             if answer == "e":
                 text = _read_multiline("paste the corrected text, '.' alone ends:\n", line)
-            record_confirmation(
+            title = line("title for this document: ").strip() or document.greeting or f"Document {index}"
+            date = line("date (YYYY-MM-DD): ").strip()
+            item_id = record_confirmation(
                 self.batch_id,
                 index,
                 document,
                 text,
-                work_dir=self.work_dir,
+                archive=archive,
+                title=title,
+                date=date,
+                date_precision="exact" if len(date) == 10 else "year",
                 registry_dir=self.registry_dir,
             )
-            write_line(f"document {index} confirmed -> {confirmed_dir / f'doc-{index:02d}.txt'}")
+            write_line(f"document {index} confirmed -> archive item {item_id}")
 
 
 def review(
     batch_id: str,
     *,
-    registry_dir: Path = REGISTRY_DIR,
-    work_dir: Path = WORK_DIR,
+    paths: LoftPaths | None = None,
     readline: Callable[[str], str] | None = None,
     write_line: Callable[[str], None] = print,
 ) -> None:
-    """The user's confirmation gate: accept, edit, or reject each document."""
-    ReviewGate(batch_id, work_dir=work_dir, registry_dir=registry_dir).run(readline=readline, write_line=write_line)
+    """The user's confirmation gate: accept, edit, or reject each document.
+    An accepted document becomes an item in the paths' archive."""
+    locations = paths or LoftPaths()
+    ReviewGate(
+        batch_id,
+        work_dir=locations.work_dir,
+        registry_dir=locations.registry_dir,
+        archive_dir=locations.archive_dir,
+    ).run(readline=readline, write_line=write_line)
 
 
 def cmd_guess(batch_id: str, pages: list[str], work_dir: Path, registry_dir: Path) -> int:

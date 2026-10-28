@@ -2020,6 +2020,23 @@ summary:focus-visible {
   display: flex;
   gap: var(--gap);
 }
+/* the document's own facts, asked at the confirm (an item cannot exist
+   without a title and a date) */
+.rv-docfacts {
+  display: flex;
+  gap: var(--gap);
+  align-items: center;
+  flex-wrap: wrap;
+}
+.rv-docfacts .field {
+  height: var(--control-h);
+}
+.rv-docfacts__title {
+  min-width: 14ch;
+}
+.rv-docfacts.is-failed .field {
+  border-color: #b3261e;
+}
 .rv-fn {
   display: inline-flex;
   align-items: center;

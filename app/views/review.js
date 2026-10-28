@@ -944,11 +944,38 @@ function renderSurface(main, session) {
     },
     isLastPage ? "✓ Confirm & Next →" : "Next page →",
   );
-  const actionBar = el("div", { class: "rv-txa" }, [
-    skipBtn,
-    rejectBtn,
-    el("div", { class: "rv-txa-right" }, [confirmBtn]),
-  ]);
+  const actionBar = el("div", { class: "rv-txa" }, [skipBtn, rejectBtn]);
+  // the document's own facts, asked where the document is agreed: an item
+  // cannot exist without a title and a date (the archive's item model), and
+  // only the reviewer knows them
+  if (isLastPage) {
+    session.docTitle = session.docTitle || doc.title || "";
+    session.docDate = session.docDate || doc.date || "";
+    actionBar.prepend(
+      el("div", { class: "rv-docfacts" }, [
+        el("input", {
+          class: "field rv-docfacts__title",
+          type: "text",
+          placeholder: "this document is…",
+          "aria-label": "Title for this document",
+          value: session.docTitle,
+          oninput: (e) => {
+            session.docTitle = e.target.value;
+          },
+        }),
+        el("input", {
+          class: "field rv-docfacts__date",
+          type: "date",
+          "aria-label": "Date of this document",
+          value: session.docDate,
+          oninput: (e) => {
+            session.docDate = e.target.value;
+          },
+        }),
+      ]),
+    );
+  }
+  actionBar.append(el("div", { class: "rv-txa-right" }, [confirmBtn]));
 
   root.append(topbar, rotate, split, actionBar);
   main.replaceChildren(root);
@@ -2699,6 +2726,14 @@ async function confirmNext(session) {
     renderSurface(session.root, session);
     return;
   }
+  const title = (session.docTitle || "").trim();
+  const date = (session.docDate || "").trim();
+  if (!title || !date) {
+    // the archive cannot hold a document without its own facts, and the
+    // app never invents them
+    session.root.querySelector(".rv-docfacts")?.classList.add("is-failed");
+    return;
+  }
   const payload = {
     batch_id: batch.batchId,
     doc_index: docIndex + 1, // 1-based, matches the CLI gate
@@ -2706,6 +2741,9 @@ async function confirmNext(session) {
     text: correctedDocumentText(doc, session.edits),
     status: "confirmed",
     confirmed_at: new Date().toISOString(),
+    title,
+    date,
+    date_precision: date.length === 10 ? "exact" : date.length === 7 ? "month" : "year",
   };
   const pushed = await confirmDocument(payload);
   if (pushed) clearEdits(batch.batchId, docIndex);

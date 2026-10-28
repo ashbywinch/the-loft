@@ -14,7 +14,7 @@ eight stages of the writing.
 | 3 | rows | Rows | `<page>.rows.json` | no |
 | 4 | rows_adjusted | Rows | the drawn lines + the corrected rows | yes |
 | 5 | transcripts_proposed | Document (draft) | the draft Document | no |
-| 6 | transcripts_agreed | Document (agreed) | `ocr-confirmed/<doc>.txt` + the registry record | yes |
+| 6 | transcripts_agreed | Document (agreed) | the item's `transcription.txt` + the registry record | yes |
 | 7 | entities_proposed | Person, Relationship, Place, Theme, Org | the identity tables (proposed records) | no |
 | 8 | entities_agreed | the same, agreed | the identity tables (agreed records) | yes |
 
@@ -88,7 +88,7 @@ class Stage(Enum):
         number=6,
         label="transcripts_agreed",
         produces="Document",
-        artefact="ocr-confirmed/<doc>.txt + the registry record",
+        artefact="the item's transcription.txt + the registry record",
         schemas=("Document",),
         human=True,
     )

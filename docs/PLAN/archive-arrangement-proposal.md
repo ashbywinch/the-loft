@@ -70,13 +70,16 @@ provenance survives without the archive holding pipeline state.
 
 ## What this changes in the code
 
-1. `record_confirmation` (`pipeline/api/sync.py`) writes the agreed text into
-   `work/<batch>/ocr-confirmed/` today. It must write the item's
-   `transcription.txt` instead, through the archive's write seam (`Archive`),
-   minting or attaching the item at agreement.
-2. `Archive.save_identity` keeps its shape; each table's leg becomes a
-   parameter of the table's home rather than a bare root name.
-3. `publish` reads the same records; the transcription is already one of the
+Landed: `record_confirmation` (`pipeline/api/sync.py`) writes the agreed text
+as the item's `transcription.txt` through the archive's write seam
+(`Archive.agree_document`), minting the item at agreement and superseding it
+on a re-agreement; the review gate asks for the document's title and date,
+and the registry's boundary carries the `item_id` it became.
+
+Still open:
+1. `Archive.save_identity` — the table legs as parameters of the table's
+   home (the identity tables sit at the root today).
+2. `publish` reads the same records; the transcription is already one of the
    item's content files, so the projection gains nothing new to find.
 
 ## The rulings

@@ -28,6 +28,7 @@ from pipeline.page_text import PageText
 from pipeline.registry import RegistryError
 from pipeline.rotation_scores import RotationScores
 from pipeline.store import PipelineStore
+from tools.loft_paths import LoftPaths
 
 
 def _reading() -> Reading:
@@ -206,25 +207,31 @@ def _review_batch(tmp_path: Path, answers: list[str]) -> tuple[Path, list[str]]:
         return next(answers_iter)
 
     review(
-        batch, registry_dir=registry, work_dir=tmp_path / "work", readline=fake_line, write_line=lines_written.append
+        batch,
+        paths=LoftPaths(registry_dir=registry, work_dir=tmp_path / "work", archive_dir=tmp_path / "archive"),
+        readline=fake_line,
+        write_line=lines_written.append,
     )
     return registry / f"{batch}.json", lines_written
 
 
-def test_review_accept_writes_the_confirmed_document(tmp_path: Path) -> None:
-    record_path, _ = _review_batch(tmp_path, ["\n"])
+def test_review_accept_mints_the_archive_item(tmp_path: Path) -> None:
+    record_path, _ = _review_batch(tmp_path, ["\n", "A letter from Zelda\n", "1963-05-14\n"])
     record = json.loads(record_path.read_text(encoding="utf-8"))
     assert record["status"] == "confirmed"
     assert record["boundaries"][0]["status"] == "confirmed"
-    confirmed = tmp_path / "work" / "adopt-0001" / "ocr-confirmed" / "doc-01.txt"
-    assert confirmed.read_text(encoding="utf-8") == "Dear Mum,\nLove, Zelda"
+    assert record["boundaries"][0]["item_id"] == "doc-1963-05-14"
+    item = json.loads((tmp_path / "archive" / "assets" / "doc-1963-05-14" / "item.json").read_text(encoding="utf-8"))
+    assert item["title"] == "A letter from Zelda"
+    transcription = tmp_path / "archive" / "assets" / "doc-1963-05-14" / "transcription.txt"
+    assert transcription.read_text(encoding="utf-8") == "Dear Mum,\nLove, Zelda"
 
 
 def test_review_reject_records_the_rejection(tmp_path: Path) -> None:
     record_path, _ = _review_batch(tmp_path, ["r\n"])
     record = json.loads(record_path.read_text(encoding="utf-8"))
     assert record["boundaries"][0]["status"] == "rejected"
-    assert not (tmp_path / "work" / "adopt-0001" / "ocr-confirmed" / "doc-01.txt").exists()
+    assert not (tmp_path / "archive" / "assets").exists()  # a rejection mints nothing
 
 
 def test_review_skips_photo_only_documents(tmp_path: Path) -> None:
@@ -250,11 +257,11 @@ def test_review_skips_photo_only_documents(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     lines_written: list[str] = []
+    answers = iter(["\n", "A letter\n", "1963-05-14\n"])
     review(
         batch,
-        registry_dir=registry,
-        work_dir=tmp_path / "work",
-        readline=lambda _prompt: "\n",
+        paths=LoftPaths(registry_dir=registry, work_dir=tmp_path / "work", archive_dir=tmp_path / "archive"),
+        readline=lambda _prompt: next(answers),
         write_line=lines_written.append,
     )
     record = json.loads((registry / f"{batch}.json").read_text(encoding="utf-8"))
@@ -262,10 +269,12 @@ def test_review_skips_photo_only_documents(tmp_path: Path) -> None:
     # replace-by-pages: only the reviewed document lands in the registry;
     # the unconfirmed photo doc is absent — the drafts default reads it
     # "review" until the identification flow claims it
-    assert record["boundaries"] == [{"pages": ["p2.jpg"], "greeting": None, "signoff": None, "status": "confirmed"}]
+    assert record["boundaries"] == [
+        {"pages": ["p2.jpg"], "greeting": None, "signoff": None, "status": "confirmed", "item_id": "doc-1963-05-14"}
+    ]
     assert any("no text to check" in line for line in lines_written)
-    confirmed = tmp_path / "work" / "adopt-0001" / "ocr-confirmed" / "doc-02.txt"
-    assert confirmed.read_text(encoding="utf-8") == "Dear Mum,"
+    transcription = tmp_path / "archive" / "assets" / "doc-1963-05-14" / "transcription.txt"
+    assert transcription.read_text(encoding="utf-8") == "Dear Mum,"
 
 
 def test_review_photo_only_batch_confirms_nothing(tmp_path: Path) -> None:
@@ -284,7 +293,12 @@ def test_review_photo_only_batch_confirms_nothing(tmp_path: Path) -> None:
     classify.write_text(_json.dumps({"p1.jpg": {"kind": "photo"}}), encoding="utf-8")
 
     lines: list[str] = []
-    review(batch, registry_dir=registry, work_dir=tmp_path / "work", readline=lambda _p: "r\n", write_line=lines.append)
+    review(
+        batch,
+        paths=LoftPaths(registry_dir=registry, work_dir=tmp_path / "work", archive_dir=tmp_path / "archive"),
+        readline=lambda _p: "r\n",
+        write_line=lines.append,
+    )
     assert any("no text pages" in line for line in lines)
 
 

@@ -49,7 +49,7 @@ Clear → the draft rows; a reload restores both the lines and the rows.
 |---|---|---|---|
 | 1.1 | `document/stages.py` — the Stage enum (object, artefact, human flag) + the Document and identity artefacts' schemas | **done** (this branch) | `document/stages.py`: the nine stages UR1 numbers 0–8, each with its object, its artefact, the `document/schemas.py` contracts that carry it, and its human flag; the page statuses (`new → oriented → marks → words → rows_draft → rows_pending`) name the stage they complete. `document/schemas.py`: the `Document`/`DocumentLine` contract — the states are a `Literal` (`review`/`confirmed`/`rejected`) and the writers/readers name them (`DOCUMENT_DRAFT`/`DOCUMENT_AGREED`/`DOCUMENT_REJECTED`), a line carries its box, its words, its kind and the line an injection follows. NO validator yet: a strict loader with no reader is dead weight, and the artefact's two entry shapes (the draft `{pages, greeting, signoff}` vs the registry's confirmed entry — the confirmation payload spread wholesale) are 1.3's to settle. The identity artefacts owed nothing — `tools/records.py` already types them (`Person`/`Place`/`Org`/`Relationship`, their tables, `validate_identity`). Tests: the stage list, numbering, human flags, contract names and status alignment (`tests/document/test_stages.py`) |
 | 1.2 | `Rows.from_words` — the agreed classmethod name (DR1) | done (PR #64) | the rename + the no-adjustments draft path live; the typed `Traces` name landed in `document/schemas.py`; the `Rows.validate(traces)` fold is 1.4's remainder |
-| 1.3 | Scan pickup (UR3): watcher + worker run orient → marks → words → draft rows → `rows_pending`. The row corrections are applied ON THE SERVER (`apply_row_adjustments` builds and persists them; the response is the apply the live merge needs). The server never contacts the worker — the worker picks the corrected rows up on its own next pass to transcribe them into the draft Document (the proposed-transcripts stage: each row's text, kind and injection target are read then) | the queue's **vocabulary and state read** landed (2026-10-27): `PageStatus.ROWS_ADJUSTED` names stage 4 completed, `rows_pending` is the one status that completes no stage (it waits — `PageStatus.awaits`), and `BatchReadings.page_status` derives the whole ladder from the stage artefacts (the marker rule: `oriented/<page>`, `<page>.words.json`, `<page>.rows.json`, then the reviewer's two check files). NOT started: the watcher and the worker that drive a dropped scan to `rows_pending` | a dropped scan reaches the check-rows queue with no manual step |
+| 1.3 | Scan pickup (UR3): watcher + worker run orient → marks → words → draft rows → `rows_pending`. The row corrections are applied ON THE SERVER (`apply_row_adjustments` builds and persists them; the response is the apply the live merge needs). The server never contacts the worker — the worker picks the corrected rows up on its own next pass to transcribe them into the draft Document (the proposed-transcripts stage: each row's text, kind and injection target are read then) | **landed (2026-10-27)**: `pipeline/worker.py`'s `Worker` — `pickup()` registers every pile in the scan area (adoption hashes in place; already-registered is a no-op), `run_pending()` runs each `pending` record through `BatchRun.process`, `watch(interval)` repeats the sweep, and `loft work [--watch N]` is the operator surface. The queue is the records; the page's status is the derived ladder (`BatchReadings.page_status`, 2026-10-27). Two seams closed on the way: a scan stages BESIDE the inbox (a directory in the scan area is a finished pile), and a pass that dies half-way puts its record back to `pending` — before this a failed pass stranded the batch in `importing`, where no sweep looked for it. Smoke on a scratch root: a dropped pile registers and runs; the pass fails loudly on a fake page and the next sweep retries it. The full machine pass (model + real scans) is the chain's own (its tests + the transcription eval). REMAINING half of this item: a user write does not yet mark its batch for re-processing and the proposed-transcripts stage is unbuilt — `apply_row_adjustments` persists the correction, but nothing sets the record to `pending`, and `process` would skip a page whose rows exist, so the corrected rows are not yet transcribed into the draft Document | a dropped scan reaches the check-rows queue with no manual step |
 | 1.4 | Drawing UI (stage 4) (design: `segment-review-stories.md`; the reference surface's rows flow) | mostly landed (PR #64): draw + live merge on lift + tap-to-delete + persistence through the row-adjustments seam; the `rows_pending` status is derived (1.3). Remaining: a control that records "the rows are right" as a check in its own right (today only drawing or Clear writes it), and the `Rows.validate(traces)` fold of `pipeline/rows/boxjig.py`'s A1–A7 invariants (then delete the jig) | drawing fixes a wrong row; the adjustment persists through the typed seams |
 | 1.5 | The portal: three doors + counts (rows to check / documents to review / identities proposed — unfinished memories ride the identities queue, per PRD §9 F10 / INGEST-PRD 2026-09-22) | **started** (2026-10-27): the review door carries "N pages to check", counted from the derived status (`pages_to_check` on `/api/sync/batches`) — a page the read stage has not reached is the machine's, not a person's. Remaining: the three separate doors and their routing | the home doors show the counts; each opens the right surface |
 | 1.6 | Identification review (stage 8): proposed entities from agreed Documents → confirmations into the identity tables | not started (depends on 1.5) | confirmations land in `IDENTITY_TABLES` |
@@ -95,6 +95,44 @@ conditions. So two eval families (the digs flow and the arc) are
 sample-dependent, and a green CI can depend on the draw: this needs a
 review-chat session that makes the walk's behaviour the thing the prompt
 holds to — not a feature PR, and not a widened condition.
+
+**The failed contradiction draw, read back in full.** The verdict is
+recoverable after the fact: the Cloudflare AI Gateway keeps each request and
+its response (`skill://cloudflare-ai-gateway-analytics`, logs
+`<id>/request`, `<id>/response` — the response includes the model's
+`reasoning`), so `build-and-test`'s failure at 2026-10-27T18:58:06Z could be
+read whole rather than guessed at. What it shows: the model
+(`deepseek/deepseek-v4-flash`, OpenRouter, provider Baidu — the same model on
+every call in the window, so no route fallback) HAD the record in its prompt
+(`item-war-record — Walter Whitlock died on 15 September 1916…`) and had
+already queried `person p-nora` and `attested p-walter`. Its reasoning chose
+`found: false` deliberately — "the reviewer says 'I thought it was Nora who
+died in the war' — that does not conflict with attested facts", and "the
+reviewer could be meaning a different Walter (like Walter Ellery born 1922)…
+we cannot assume they are referring to the same person" — and it deferred
+the ambiguity into the question ("which Walter you remember as alive — the
+one who died in the war in 1916, or the younger Walter…"). So the draw is a
+JUDGEMENT divergence on two prompt rules that collide on this fixture: "the
+wrong person for an attested death" flags, but "never flag a fact the archive
+simply doesn't have / when in doubt, no contradiction" reads Nora's missing
+death record as silence rather than denial, and the second Walter gives the
+model somewhere to defer to. Which rule wins — and whether the fixture should
+attest Nora's survival instead — is this slice's product call, not a feature
+PR's. The eval's own message now carries the verdict
+(`ReviewRun.verdict()`, `tests/pipeline/test_eval_review.py`) so the next
+draw is diagnosable from the CI log alone.
+
+**The ruling (user, 2026-10-27): the wrong person for an attested event IS
+the contradiction — the prompt says so now.** `tools/review.py`'s step 4
+names the collision and resolves it: an attested event carries its SUBJECT
+(the war record that Walter died is a fact ABOUT Walter), so a statement
+that gives that death to someone else contradicts it even though the archive
+holds no death record for the other person — silence about them is not
+permission to move the event onto them, and a same-name ambiguity buys no
+pass (ask which one in the question AND still flag). The persona's blanket
+"when in doubt, no contradiction" became "when the record is silent AND no
+attested event is displaced, no contradiction". Verified once, all review
+conditions plus the arc and the caching cross-check: 87 passed.
 
 ## 3. Layout and measurement seams (records: `strip-grouping-plan.md` postmortem; `geometry-experiments-log.md`; `design-decisions.md`)
 

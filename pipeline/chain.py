@@ -36,7 +36,7 @@ from document.page_size import PageSize
 from document.row import Row
 from document.words import Words
 from pipeline.api.sync import record_confirmation
-from pipeline.batch_record import BatchRecord
+from pipeline.batch_record import STATUS_PENDING, BatchRecord
 from pipeline.boundary import Boundary
 from pipeline.classify import route, run_classify
 from pipeline.detect.reader import Reading, reading_for_page
@@ -560,7 +560,11 @@ class BatchRun(Batch):
 
     def process(self, client: Callable[[str, str], str] | None = None) -> None:
         """Classify → orient (text pages) → route → HTR/tesseract → guess →
-        read (the page's rows: line boxes + text per row) → review."""
+        read (the page's rows: line boxes + text per row) → review.
+
+        A pass that dies half-way puts the registry record back to `pending`:
+        the batch is work again, not stranded in `importing` where the queue
+        (which is the records) never looks for it."""
         record = load_batch(self.batch_id, self.registry_dir)
         folder = record.path
         if not folder.is_dir():
@@ -570,7 +574,20 @@ class BatchRun(Batch):
             raise PipelineError(f"batch {self.batch_id} has no registered pages")
 
         self.update_status(record, STATUS_PROCESSING)
+        try:
+            self._run_stages(record, pages, client)
+        except Exception:
+            self.update_status(record, STATUS_PENDING)  # a failed pass is work again
+            raise
 
+    def _run_stages(
+        self,
+        record: BatchRecord,
+        pages: list[Path],
+        client: Callable[[str, str], str] | None,
+    ) -> None:
+        """The machine stages. Stops at the review gate: the draft rows exist
+        and each page waits on its row check (the derived `rows_pending`)."""
         # a content-changed pile (pages added/removed after adoption): the
         # regenerable stages are stale — clear them (NEVER ocr-confirmed) and
         # consume the flag so this run reprocesses the full current page set
@@ -590,7 +607,7 @@ class BatchRun(Batch):
 
         # 2. orient + tesseract raw, TEXT PAGES ONLY (rotations.json is the
         # completion marker — piles may hold PNG/TIFF pages, not only JPEGs)
-        self.orient_and_ocr(classification.text_pages, folder)
+        self.orient_and_ocr(classification.text_pages, record.path)
 
         # 3. route print vs cursive by the orientation density, recorded in classify.json
         cursive = self.route_pages(classification)

@@ -882,6 +882,19 @@ def build_app(
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"ok": True}
 
+    @app.get("/data/{rest:path}")
+    def projection_file(rest: str, request: Request) -> Any:
+        """The projection the app reads — served from the server's OWN data
+        directory, so `--data` means what it says (the app shell's static
+        mount would otherwise serve `app/data` whatever the flag held)."""
+        if session_user(request) is None:
+            return JSONResponse({"ok": False, "error": "sign in to read the archive"}, status_code=401)
+        root = data_dir.resolve()
+        path = (root / rest).resolve()
+        if root not in path.parents or not path.is_file():
+            return JSONResponse({"ok": False, "error": "no such data file"}, status_code=404)
+        return FileResponse(path)
+
     app.mount("/", StaticFiles(directory=str(app_dir), html=True), name="app")
     return app
 

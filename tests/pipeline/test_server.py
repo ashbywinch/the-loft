@@ -183,6 +183,18 @@ def server(tmp_path: Path) -> Iterator[ServerFixture]:
     fixture.close()
 
 
+def test_the_projection_is_served_from_the_servers_own_data_dir(server: ServerFixture) -> None:
+    """`--data` is what the browser reads: the app shell's static mount would
+    otherwise serve `app/data` regardless of the flag. Traversal is refused."""
+    status, raw = server.get("/data/index.json", cookie=server.cookie)
+    assert status == 200
+    assert json.loads(raw.decode("utf-8"))["items"][0]["id"] == "letter-1963-05-14"
+    status, _ = server.get("/data/../server.py", cookie=server.cookie)
+    assert status == 404
+    status, _ = server.get("/data/index.json")  # no session
+    assert status == 401
+
+
 def test_health(server: ServerFixture) -> None:
     status, body = server.get("/api/health")
     assert status == 200

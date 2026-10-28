@@ -123,14 +123,27 @@ of a doc that describes it. Prefer interfaces that make it easy to get right
 use them. The test is a living doc that fails when it lies; a written doc
 stays green when it goes stale.
 
-## No lectures on history
+## No history lessons — docs, comments, or prompts
 
-Never explain why a decision was made by describing the alternative that
-failed and the person who made it. "It's a constraint inherited from X's
-code" is a lecture. The reason is what matters; the history is noise. If
-a reader needs to know why, state the constraint: "this message format is
-required by the upstream API" — not "Bob chose this format in 2022 because
-the old parser couldn't handle".
+Never write the story of a past failure beside the rule that prevents it:
+no dates, no quoted wrong output, no "this used to break because…". Docs,
+code comments and **prompt text** are all in scope — a prompt is read by an
+agent that must act on the rule, and an anecdote spends its attention on
+the past instead.
+
+State the rule and the constraint behind it; delete the incident.
+
+- ✗ `Flag it when the statement gives an attested death to someone else
+  (2026-10-27: a draw answered "which Walter?" and left found=false).`
+- ✓ `Flag it when the statement gives an attested death to someone else,
+  even though the archive holds no death record for the other person.`
+- ✗ `# 2026-08-05: the validator used to skip empty lines, so …`
+- ✓ `# empty lines are validated: a blank row is still a row.`
+
+A dated status stamp in a plan or changelog ("done 2026-10-26") is a record,
+not a lesson — that is the one place a date belongs. Enforcement:
+`tests/test_prompt_hygiene.py` fails when a prompt module carries a dated
+anecdote.
 
 ## API keys never go in docs
 
@@ -201,6 +214,8 @@ fact and decision.
 - [ ] Commands replace descriptions where executable
 - [ ] Tables replace paragraphs where fields are consistent
 - [ ] Code shows a canonical ✗/✓ pair, not exhaustive cases
+- [ ] No history lesson — no date, no quoted wrong output, no "used to break"
+  (docs, comments, prompts alike)
 - [ ] Always-loaded files within the ~150–200 line ceiling
 
 ---

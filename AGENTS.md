@@ -61,13 +61,14 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | Code conventions | `docs/coding-standards.md` |
 | Test conventions | `docs/testing-standards.md` |
 | Documentation conventions | `docs/writing-documentation.md` |
+| Writing or editing a prompt (the review, memory, transcription instructions) | `skill://prompt-craft`; the form rules are `docs/writing-documentation.md` |
 | Documentation structure — the required doc set, folder rules, discoverability | `docs/documentation-structure.md` |
 | UX standards (the reviewer rules and UX-process norms) | `docs/ux-standards.md` |
 | UX spec — the PRD's UX answers + the journeys to usability-test | `docs/UX.md` |
 | Real content (people, relationships, items, story text) | `archive/` — append-only, supersede never edit; regenerate `app/data` with `./loft publish` |
 | Demo content for fake instances | `tools/demo_data.py` — fictional only, never real names |
 
-Read the relevant doc before changing behavior. **Before any code change, read `docs/coding-standards.md` — it is the standing contract for how code is written here, not a reference to consult when in doubt** (2026-08-05: an entire session extended the record model without loading it — the class-over-dict rule it already contained went unread). **Before any documentation change, read `docs/writing-documentation.md`** (2026-08-05: the same session wrote standards and docs without loading the doc-standard — the pattern repeats until the contract is loaded first). The PRD's §10 principles are
+Read the relevant doc before changing behavior. **Before any code change, read `docs/coding-standards.md` — it is the standing contract for how code is written here, not a reference to consult when in doubt.** **Before any documentation change, read `docs/writing-documentation.md`.** **Before writing or editing any prompt, read `skill://prompt-craft`** — a prompt is an instruction an agent acts on, and the prompt modules carry no history lessons (`docs/writing-documentation.md` § "No history lessons"). The PRD's §10 principles are
 product law: the app arranges evidence, never interprets it; no censorship by
 default. Real content never lives in code (`docs/coding-standards.md`).
 

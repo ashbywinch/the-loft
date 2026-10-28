@@ -256,8 +256,8 @@ class Knowledge:
 
     def place_named(self, name: str) -> Place | None:
         """The standing place whose name is this name — a story mention reuses
-        it, never mints a duplicate (the moored-barges ×3 came from minting one
-        id per story mention, 2026-08-05)."""
+        it, never mints a duplicate: one id per story mention mints the same
+        place many times."""
         wanted = name.strip().lower()
         if not wanted:
             return None
@@ -376,7 +376,7 @@ class _AssessmentReview:
         the archive for the name (the account says "Dad"; the extraction says
         "Otto", the record that carries that alias) links a person, place or
         object the narrator never named — and for a kinship term asserts exactly
-        the misattribution the ruling forbids (2026-08-05)."""
+        the misattribution the ruling forbids."""
         spoken = account.casefold()
         return [
             f"the extraction '{ex.name}' is linked to a record the account never names — "
@@ -499,9 +499,8 @@ class _AssessmentReview:
         narrator's own words stated it — a diary-style entry that really
         happened that day. The verbatim is the discriminator: "Today" / the
         date itself in the answer, never a fabricated value with no such
-        words. The events date must be the narrator's, never the telling day —
-        the model fabricating today as the event date is exactly how the
-        moment card came to serve "0 years ago this week" (2026-08-05)."""
+        words. The events date must be the narrator's, never the telling day:
+        a fabricated today would date the event on the day it was told."""
         violations: list[str] = []
         today = date.today().isoformat()
         todayish = ("today", "tonight", "this morning", "this evening", "this week", "just now", "now", "earlier today")
@@ -746,9 +745,7 @@ class StoryLinks:
     rules: the anchor and the kept extractions become refs (one per entity),
     a mention links to its standing record or mints a proposed record, and a
     catalogued story never confirms a link the reader cannot see — an item ref
-    is downgraded to ``proposed`` when its artifact is still a draft
-    (2026-08-05: story-2026-08-03-05 confirmed a draft object-sb-mirosa,
-    leaving a dangling link)."""
+    is downgraded to ``proposed`` when its artifact is still a draft."""
 
     def __init__(self, *, verified: bool, all_ids: set[str]) -> None:
         self.ref_status: RefStatus = "confirmed" if verified else "proposed"
@@ -860,8 +857,7 @@ class StoryLinks:
         """Artifacts are linked by title; a mention without a catalog match
         stays unresolved — never auto-create artifact records. A draft artifact
         is hidden from everyone but its owner, so a confirmed link to it would
-        dangle: it stays proposed until the artifact is catalogued
-        (2026-08-05)."""
+        dangle: it stays proposed until the artifact is catalogued."""
         item = knowledge.item(extraction.match) if extraction.match else None
         if item is None:
             return
@@ -942,8 +938,7 @@ class Story:
     (docs/PRD/MEMORIES.md): the sidecar's shape with typed links. The
     class owns the links invariant: a catalogued story never confirms a
     link the reader cannot see — an item ref is downgraded to ``proposed``
-    when its artifact is still a draft (2026-08-05: story-2026-08-03-05
-    confirmed a draft object-sb-mirosa, leaving a dangling link)."""
+    when its artifact is still a draft."""
 
     story_id: str
     title: str

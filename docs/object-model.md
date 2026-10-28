@@ -216,8 +216,8 @@ The house Python layout is a flat package at the repo root. The Loft's:
 
 **Tools** live in a top-level `tools/` for the moment — `scan` (the scanner
 driver). The box-invariant check is not a tool: it folded into the model as
-`Rows.validate` (`pipeline/rows/rows.py`, 2026-10-28 — the `BoxAudit` name
-this plan proposed never needed to exist), run by the correction and by
+`Rows.validate` (`pipeline/rows/rows.py`) — the name `BoxAudit` this plan
+proposed is not needed — run by the correction and by
 `tests/pipeline/test_rows.py`. `NumberedWords` lives where it is used:
 `loft/document/` (it renders a page's words).
 
@@ -292,8 +292,8 @@ framing that blessed the strip path is corrected in the same change.
 The strip stage's `layout.json` dies with it — and so does "layout" as a
 concept name: the rows are the reading (boxes, text, trust stage, kind
 per row), no `Layout` class exists, nothing validates a separate layout.
-The box-invariant check is `Rows.validate` (folded into the rows library
-2026-10-28), unrelated to any layout concept.
+The box-invariant check is `Rows.validate` (the rows library), unrelated to
+any layout concept.
 
 ## Settled — item 5: no batch; Archive owns its paths, Pipeline owns the work
 

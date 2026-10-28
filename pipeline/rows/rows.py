@@ -102,11 +102,10 @@ class Rows:
     def validate(self, traces: Traces) -> list[str]:
         """The row invariants, over these traces — one line per violation.
 
-        This is the acceptance check `boxjig` used to be, folded into the
-        library (2026-10-28). The jig compared the detector's BOXES against
-        the reviewer's yellow lines, the words and the page's surface; in the
-        object model a row's band IS its words' union and each word belongs to
-        exactly one row, so those comparisons (A1, A2, A3, A7) cannot fail.
+        The acceptance check for the boxes lives here rather than in a script
+        reading a saved trace. A row's band IS its words' union and each word
+        belongs to exactly one row, so the box-against-line comparisons (A1,
+        A2, A3, A7) cannot fail.
         What can still go wrong is the drawing and a word box's measurement:
 
         - a drawn line that claims no word (it missed the writing);

@@ -2,9 +2,8 @@
 
 Status: working. The reader is `pipeline/detect/reader.py`, the page's
 scale is `pipeline/detect/ruler.py`, and the acceptance check is
-`Rows.validate` (`pipeline/rows/rows.py`) — the invariants the old
-`boxjig.py` script held, now part of the library and run on every
-correction (`tests/pipeline/test_rows.py`). Tests: `tests/pipeline/test_reader.py`
+`Rows.validate` (`pipeline/rows/rows.py`), part of the library and run on
+every correction (`tests/pipeline/test_rows.py`). Tests: `tests/pipeline/test_reader.py`
 (synthetic pages) and `tests/pipeline/test_ruler.py` (the scale). The design
 work and the user rulings behind it are in
 `docs/PLAN/segment-review-stories.md`.
@@ -46,15 +45,13 @@ On the first real letter (page-01, 44 traced lines), the current version:
 | a box spanning two yellow lines | 0 | n/a |
 | words missed entirely | 1 | — |
 
-The table above is the 2026-09 measurement **record** — the jig that printed
-it was deleted when its invariants folded into `Rows.validate` (2026-10-28).
-The validation now runs where the rows are made: on every correction the
-reviewer draws (the answer names a stroke that caught no writing, one that
-merges two reading lines, a line off the writing's slope, or a row off the
-page), and in `tests/pipeline/test_rows.py` on synthetic pages. Three of the
-jig's checks (A1, A2, A3/A7: the boxes against the lines) cannot fail in the
-object model — a row's band IS its words' union and each word is in one row —
-so they are structure now, not a check.
+The table above is a measurement record, not a check. The validation runs
+where the rows are made — `Rows.validate`, on every correction the reviewer
+draws (the answer names a stroke that caught no writing, one that merges two
+reading lines, a line off the writing's slope, or a row off the page) and in
+`tests/pipeline/test_rows.py` on synthetic pages. The box-against-line checks
+cannot fail in the object model — a row's band IS its words' union and each
+word is in one row — so they are structure, not a check.
 
 ## The traps this work paid for
 

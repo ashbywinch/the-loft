@@ -6,7 +6,7 @@ decides whether a free-text answer addresses the exact claim under review
 (the walk's "your ex-husband" failure came from the old relation
 inference — a random ancestor resolved to the narrator's own spouse). The
 decision vocabulary is NOT the status vocabulary: "confirm" is a status,
-never an action (user, 2026-08-09).
+never an action.
 """
 
 from __future__ import annotations
@@ -131,9 +131,7 @@ verdict. The ledger is only an INDEX of the tool results — it changes
 nothing about what counts as a finding: relationship/person lines in it
 are not evidence (the person-record rule), and a document the tools
 surfaced is STILL a finding to report even when the ledger lists it
-(2026-10-02: a dig flow's verdict suppressed the attested death — the
-model read the ledger's sibling line as the only candidate, found it
-not evidence, and emptied the findings). Never re-analyse a decision
+Never re-analyse a decision
 you have already made, never re-plan a search you have already planned,
 and never restate the reviewer's statement back to yourself. If you
 catch yourself repeating a step, stop and emit the verdict."""
@@ -183,8 +181,7 @@ ToolResult = ToolError | ToolNote | ToolHit | list[ToolEntry]
 class _ReviewTools:
     """The review's read-only tool harness — owns the ReviewContext (the
     facts) every tool reads, the (args, facts) data clump the tool functions
-    used to thread. The model can look things up but never change them
-    (2026-08-09, user)."""
+    used to thread. The model can look things up but never change them."""
 
     # the read-only tools the model may call — method names, dispatched by
     # lookup (a chain of five identical-shaped branches is duplication)
@@ -228,12 +225,11 @@ class _ReviewTools:
     def attested(self, args: AttestedArgs) -> ToolResult:
         """The recorded items that mention the person — their attested facts.
         The sentences that MENTION the person are the part that attests the
-        fact, quotable verbatim (2026-08-09, user) — with the person's name
+        fact, quotable verbatim — with the person's name
         and first name as the needles. The item's structured involvement (its
         people ids) or the prose naming the person both count — real
-        transcriptions mention names, never ids. Case-insensitive (2026-08-11
-        review): OCR and captured text frequently differ in case, and the
-        quote extractor matches case-insensitively — an item whose only
+        transcriptions mention names, never ids. Case-insensitive: OCR and
+        captured text frequently differ in case, so an item whose only
         mention is lowercased must not be silently dropped at the door."""
         p = next((x for x in self._facts.people if x.id == args.id), None)
         needles = (p.name, p.name.split()[0]) if p else (args.id,)
@@ -304,19 +300,16 @@ def _tool_args(tool: str, raw: Mapping[str, Any]) -> ToolArgs | None:
 
 def run_tool(tool: str, args: ToolArgs | None, facts: ReviewContext) -> ToolResult:
     """The read-only tool harness — the model can look things up but never
-    change them (2026-08-09, user: give the AI the API so it can find out
-    the existing situation — the ad-hoc digging conversation). ``args`` is
-    the tool's own argument record — None for a tool the harness does not
-    have, answered with the error result. Public and documented so the tests
-    exercise the real harness, never a private symbol (2026-08-11 review:
-    the imports rule)."""
+    change them: the model digs up the existing situation, never edits it.
+    ``args`` is the tool's own argument record — None for a tool the harness
+    does not have, answered with the error result. Public and documented so
+    the tests exercise the real harness, never a private symbol."""
     return _ReviewTools(facts).run(tool, args)
 
 
 def assistant_message(verdict: ReviewVerdict, person: Person) -> str:
     """The assistant's rendered words for one investigation response — what
-    the family sees, verbatim (2026-08-09, user: "when you load a given
-    transcript, you see exactly what I saw"). The server builds the words;
+    the family sees, verbatim. The server builds the words;
     the app shows them unmodified; the record stores them. The model's
     internal note never surfaces."""
     parts: list[str] = []
@@ -395,12 +388,11 @@ def investigate(
     text = str(text or "").strip()
     if not text:
         raise ElicitationError("no answer given")
-    # The claim is the APP's question about the document the family uploaded
-    # (user, 2026-10-22: "the app is checking this, as part of a conversation in
-    # which the family are uploading a document about the war"). "The family is
-    # checking" read as the family asking, and left a statement about the
-    # document's own subject — a death in the war — looking like a different
-    # question entirely.
+    # The claim is the APP's question about the document the family uploaded:
+    # the app has read it and is checking what it says. "The family is
+    # checking" would read as the family asking, and a statement about the
+    # document's own subject — a death in the war — would look like a
+    # different question entirely.
     claim = f"whether {person.name} was related to the family"
     if person.relation:
         # family language, never the system's — the model echoes the claim's
@@ -419,7 +411,7 @@ def investigate(
         [
             f"Reviewer: {who or 'unknown'}",
             # the conversation's frame: the family uploaded a document, the app
-            # read it, and it is the app that is checking (2026-10-22)
+            # read it, and it is the app that is checking
             "The family have uploaded a document to the archive; the app has read "
             "it and is asking them to confirm what it says against what they know.",
             f"The claim under review: {claim}.",
@@ -455,10 +447,8 @@ def investigate(
             "relevance needs a PERSON or a FAMILY EVENT in the statement "
             "itself. A place alone — 'that house every summer', 'the garden' "
             "— is not enough, and an archive record sharing the place's word "
-            "does not make it so; never bridge a house or a holiday memory to "
-            "a visit record on the place alone (2026-10-28: a draw called "
-            "'we visited that house every summer' relevant because the "
-            "archive holds a Seascale visit). A place joins the claim only "
+            "does not make it so: never bridge a house or a holiday memory to "
+            "a visit record on the place alone. A place joins the claim only "
             "through a person or an event the statement also names ('we "
             "visited Walter in Seascale' — the relative is named). "
             "4. DECIDE CONTRADICTION. An attested event carries its SUBJECT: the "
@@ -470,9 +460,7 @@ def investigate(
             "the record's subject, never with a fact the archive lacks. A "
             "same-name ambiguity buys no pass either — if a second person shares "
             "the name, ask which one they mean in your question AND still flag "
-            "the conflict the record states (2026-10-27: a draw answered "
-            "'which Walter?' and left found=false; naming the wrong person for "
-            "an attested death is precisely the case this check exists for). "
+            "the conflict the record states. "
             "Flag it when the statement asserts something the attested facts "
             "deny: the wrong person for an attested death, disputing a confirmed "
             "relationship. Never flag a different version of an UNVERIFIED import "
@@ -493,8 +481,13 @@ def investigate(
             "they don't know and cannot recall (no memory, never met the person), "
             "do NOT ask them to remember again in any form: state what you will do "
             "with the claim instead — keep the guess as it stands, or record what "
-            "they remember — then end (2026-10-08: a re-ask to an exhausted "
-            "reviewer failed the eval; the conclusion is the required move). ",
+            "they remember — then end. The conclusion is a STATEMENT, never a "
+            "question: write no '?' in it, and let NOTHING follow it — no follow-up "
+            "question, no new lead to chase, no second sentence: the reviewer has "
+            "told you what they know. Offering the alternative is still a statement "
+            "— 'I'll leave it as Nora's brother unless you tell me otherwise' — "
+            "never an offer put as a question ('shall I leave it…?'), which is a "
+            "re-ask in another costume. ",
             "Then answer.",
             _TOOLS_DESC,
             # the conversation — the growing part — sits LAST so the
@@ -516,13 +509,13 @@ def investigate(
         "('the records list X as…', 'the war record says…'). The rule is never to introduce "
         "the process vocabulary yourself — if the REVIEWER uses a word like 'the import', you "
         "may use it back: echoing the family's own word is how they understand you, not a "
-        "violation (2026-08-15). You may "
+        "violation. You may "
         "investigate with the read-only tools, then return the verdict. You NEVER derive "
         "relationships, NEVER guess a kinship, NEVER infer who the reviewer is related to — "
         "the reviewer's own words are recorded verbatim or nothing is. Every word the family "
         "READS — each finding, the note, the question — is in the language the family writes "
-        "in (this archive's family writes English; a run has answered them in Chinese, "
-        "2026-10-27), and a quotation stays in the document's own words: never translated. "
+        "in (this archive's family writes English), and a quotation stays in the document's "
+        "own words: never translated. "
         "The contradiction "
         "check flags ONLY genuine conflicts with the archive's attested facts — never a "
         "different version of an unverified import guess, and never a fact the archive "
@@ -536,15 +529,12 @@ def investigate(
         '"detail": "<the attested fact that conflicts, or empty>"}, "confidence": '
         "\"<definitely|think_so|dont_know|think_not|definitely_not|unclear> — the REVIEWER's "
         'own certainty, never your assessment: a hedged "I think" is think_so, never '
-        'definitely (2026-08-15: the model upgraded "He was her brother, I think" to '
-        'definitely). The reviewer\'s words map: "fairly sure", "pretty sure", "I think", '
+        'definitely. The reviewer\'s words map: "fairly sure", "pretty sure", "I think", '
         '"probably" → think_so; "I know", "confident", "positive", "sure", "certain" → '
         'definitely; "maybe", '
         '"not sure" → unclear; ONLY a bare "I don\'t know" / "no idea" / "can\'t recall" '
-        '→ dont_know (2026-10-08: "fairly sure the import has it right" was filed as '
-        "dont_know). The reviewer's words ALWAYS decide — a reviewer sure of something "
-        'the archive cannot attest is still "sure", never dont_know (2026-10-08: the '
-        "record's silence was read as the reviewer's uncertainty)\", "
+        "→ dont_know. The reviewer's words ALWAYS decide — a reviewer sure of something "
+        'the archive cannot attest is still "sure", never dont_know.", '
         '"note": "<when relevant, one short sentence — the reason the answer seems right, in '
         'the family\'s own terms (e.g. "Grandma always said so"). When NOT relevant, the note '
         "is ONLY the topic the answer was about — a short phrase ('the house on Victoria "
@@ -552,8 +542,7 @@ def investigate(
         'explanation of why it is off-topic>", "findings": '
         '[{"text": "<the family reads these words: the family member is ALWAYS "you"/"your" — '
         '"your recollection", "what you said" — never "the reviewer", never "the participant", '
-        'never "the user" (2026-09-23: a finding said "This matches the reviewer\'s '
-        'recollection" and the persona guard redded the suite). One short sentence per '
+        'never "the user". One short sentence per '
         "meaningful thing the tools surfaced, naming the "
         "SPECIFIC document (its title from the tool results) and the fact — with the EXACT "
         "sentence from the document's quotes that attests it, verbatim in quotation marks "
@@ -564,13 +553,12 @@ def investigate(
         "itself (the import is not a document — only the tool results list real items; "
         "if the tools found no document for the point, do not make a finding about it — "
         "and NEVER an empty findings array after a search surfaced a document bearing on "
-        "the statement: that document IS a finding (2026-09-23: the dig flow's verdict "
-        "said findings:[] while the note confirmed the surviving record) — "
+        "the statement: that document IS a finding — "
         'and NEVER a bare absence like \\"no record connects X to Y\\": the findings report '
         "what the records DO show, not what they do not. A recollection is the family's "
         '— "Mum\'s recollection", "the recollection" — NEVER "the reviewer\'s". A PERSON '
         "record is not evidence either: its relation field is the import's guess, never a "
-        "finding (2026-08-10, R2: a robot's note is never an attestation — only items "
+        "finding (R2: a robot's note is never an attestation — only items "
         "with a transcription or story are documents. A DRAFT transcription "
         "(the tool results mark drafts with 'draft': true) is machine-read and "
         "UNVERIFIED: its sentences are never quoted as the document's own words — "
@@ -580,15 +568,12 @@ def investigate(
         "or an EVENT and the tools surface an item matching their statement, REPORT it — "
         "quote the item and ASK whether it is the same visit or person: the archive "
         "answers the family's lead even when the item does not settle the claim under "
-        "review (2026-08-10, the Seascale arc: the model searched, found the visit, and "
-        "dropped it because it concerned a different person than the claim — the family's "
-        'lead went unanswered)">", '
+        'review)">", '
         '"item_id": "<the document id from the tool results>"}, ...], '
         '"question": '
         '"<the genealogist next question to the reviewer, spoken to the family in their '
         'own words — never the process vocabulary: no "the import", no "the archive", no '
-        '"the records", no statuses, no "awaiting" (2026-09-23: an off-topic conclusion '
-        'leaked "the import listed him as Pearl\'s brother" to the family). Asked the way '
+        '"the records", no statuses, no "awaiting". Asked the way '
         "a hired researcher "
         'would — the provenance when the reviewer cited a source ("did she tell you that '
         'personally?"), the follow-up that would firm up the connection; or a short conclusion '
@@ -604,8 +589,7 @@ def investigate(
     prompt += (
         "\n\nThe verdict MUST contain ALL of these keys, spelled exactly as written — "
         "relevant, contradiction, confidence, note, findings, question — no others, "
-        "no misspellings, no missing keys (a misspelled key is a failed verdict, "
-        "2026-09-23)."
+        "no misspellings, no missing keys (a misspelled key is a failed verdict)."
     )
     tool_calls = 0
     trace: list[TraceStep] = []

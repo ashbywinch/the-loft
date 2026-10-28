@@ -2166,7 +2166,10 @@ summary:focus-visible {
   left: 12px;
   bottom: 12px;
   display: flex;
+  flex-wrap: wrap; /* four items on a phone: wrap upward rather than run off the edge */
+  align-items: center;
   gap: 8px;
+  max-width: calc(100% - 24px);
 }
 .rv-rowtools .btn {
   font-size: 20px;

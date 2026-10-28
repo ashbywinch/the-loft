@@ -21,6 +21,7 @@ import {
   outboxPending,
   rowAdjustmentBody,
   rowDeleteTolerance,
+  rowToolsNote,
   strokeAt,
   rowAdjustmentLine,
   strokesFromAdjustments,
@@ -1346,5 +1347,64 @@ describe("the row correction's pure half", () => {
     expect(rowDeleteTolerance(layout, 4642)).toBe(20); // half of 40
     expect(rowDeleteTolerance({ lines: [] }, 4642)).toBeCloseTo(4642 / 120, 5); // no layout: a page fraction
     expect(rowDeleteTolerance(null, 240)).toBe(12); // the floor
+  });
+});
+
+describe("the rows check — 'Rows are right' records it", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).includes("/row-adjustments")) {
+          return { ok: true, status: 200, json: async () => ({ rows: [] }) };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            batch_id: "b9",
+            label: "A page",
+            documents: [
+              {
+                pages: ["p1.jpg"],
+                texts: { "p1.jpg": "line one" },
+                layouts: { "p1.jpg": { page: "p1.jpg", width: 100, height: 100, lines: [], unmatched: [] } },
+                status: "review",
+              },
+            ],
+            processing: {},
+          }),
+        };
+      }),
+    );
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("says whether the page's check is recorded, or how many lines are drawn", () => {
+    expect(rowToolsNote([], false)).toBe("");
+    expect(rowToolsNote([], true)).toBe("checked");
+    expect(rowToolsNote([[{ x: 0, y: 1 }]], true)).toBe("1 line");
+    expect(rowToolsNote([[{ x: 0, y: 1 }], [{ x: 0, y: 2 }]], false)).toBe("2 lines");
+  });
+
+  it("the control posts the check with no lines, and the page then reads 'checked'", async () => {
+    const main = document.createElement("main");
+    render(main, { arg: "b9", rest: ["review", "b9", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-page")).toBeTruthy());
+    const img = main.querySelector(".rv-page");
+    Object.defineProperty(img, "naturalWidth", { value: 100, configurable: true });
+    Object.defineProperty(img, "naturalHeight", { value: 1500, configurable: true });
+    img.dispatchEvent(new Event("load"));
+    await vi.waitFor(() => expect(main.querySelector(".rv-rowtools__right")).toBeTruthy());
+    const status = main.querySelector(".rv-rowtools__status");
+    expect(status.textContent).toBe(""); // nothing drawn, not yet checked
+
+    main.querySelector(".rv-rowtools__right").click();
+
+    await vi.waitFor(() => expect(status.textContent).toBe("checked"));
+    const posted = fetch.mock.calls.find(([url]) => String(url).includes("/row-adjustments"));
+    expect(String(posted[0])).toContain("/api/sync/batch/b9/page/p1.jpg/row-adjustments");
+    expect(JSON.parse(posted[1].body)).toEqual({ lines: [] });
   });
 });

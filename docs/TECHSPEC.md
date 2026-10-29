@@ -863,7 +863,10 @@ seam) and appends to the archive (append-only holds in exactly one place),
 then re-publishes the projection. The frontend↔backend link rides Tailscale
 (the pattern this house already uses). Read path: the projection deploys to
 the static host for browse; the interactive flows read the standing
-knowledge (identity tables, work-stage texts) via the backend's API.
+knowledge (identity tables, work-stage texts) via the backend's API. The
+server serves `/data/*` from its OWN configured projection directory
+(`loft serve --data`), never from the app shell's folder — one source for
+what it publishes and what the browser reads.
 
 **The user's requirements:**
 

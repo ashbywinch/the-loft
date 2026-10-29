@@ -192,8 +192,14 @@ Two processes, clearly separated:
   for re-processing, and the worker picks that up on its next pass to
   transform the corrected rows into the draft Document (the
   proposed-transcripts stage — each row's text, kind and injection
-  target are read then, per the interjection ruling). The server never
-  contacts the worker — only the worker proceeds on its own next pass.
+  target are read then, per the interjection ruling). **Landed
+  (2026-10-29):** a drawn line requeues its batch (`apply_row_adjustments`
+  → `set_status`), and the read stage rebuilds the page's rows from the
+  drawn lines and reads them (`Transcriber`), writing them as the
+  reading's lines — so the transcript gate shows the corrected text. The
+  row's KIND and injection target are read by the transcriber but not yet
+  carried onto the Document (the interjection decision above). The server
+  never contacts the worker — only the worker proceeds on its own next pass.
 - **The front end** (the app) — reads the portal via the API and POSTs
   the user's decisions via the API; it holds no pipeline state.
 

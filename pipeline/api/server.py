@@ -832,8 +832,8 @@ def build_app(
             return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
         try:
             adjustments = RowAdjustments.from_dict(dict(body) if body else {})
-            correction = apply_row_adjustments(batch_id, page, adjustments, work_dir)
-        except ValueError as exc:
+            correction = apply_row_adjustments(batch_id, page, adjustments, work_dir, registry_dir=registry_dir)
+        except (RegistryError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)  # client errors are 4xx, never 500
         return RowAdjustmentsAnswer(
             batch_id=batch_id,

@@ -31,6 +31,7 @@ from document.stages import PageStatus
 from document.traces import Traces
 from document.words import Words
 from pipeline.api.row_correction import RowCorrection
+from pipeline.batch_record import STATUS_PENDING
 from pipeline.boundary import Boundary
 from pipeline.detect.reader import reading_for_page
 from pipeline.htr import htr_pages_vlm
@@ -45,7 +46,7 @@ from pipeline.layout import (
 from pipeline.model.unsure_word import UnsureWord
 from pipeline.model.vlm import orientation_report, selfreport_words
 from pipeline.page_image import PageImage
-from pipeline.registry import load_batch, record_path
+from pipeline.registry import load_batch, record_path, set_status
 from pipeline.rows.rows import Rows
 from pipeline.rows_reading import RowsReading
 from pipeline.store import PipelineStore
@@ -395,7 +396,14 @@ def identify_document(
 # module's one vocabulary, each a thin file operation over the same batch tree; a
 # carrier class would be the object-model Phase 6 package restructure, not this change
 # lucidlint: ignore latent-class the batch-path vocabulary is this module's shape; the restructure is Phase 6
-def apply_row_adjustments(batch_id: str, page: str, adjustments: RowAdjustments, work_dir: Path) -> RowCorrection:
+def apply_row_adjustments(
+    batch_id: str,
+    page: str,
+    adjustments: RowAdjustments,
+    work_dir: Path,
+    *,
+    registry_dir: Path = REGISTRY_DIR,
+) -> RowCorrection:
     """The reviewer's drawn row lines -> the page's rows
     (`rows.adjust` over the words the read stage persisted, each with
     its own reading line, so an incomplete set of lines merges with the
@@ -404,6 +412,12 @@ def apply_row_adjustments(batch_id: str, page: str, adjustments: RowAdjustments,
     - ``<page>.row-adjustments.json`` — the drawn lines, as drawn;
     - ``<page>.rows-adjusted.json`` — the correction's rows, the artefact
       `Rows.to_dict` writes.
+
+    The batch goes back in the worker's queue: the corrected rows have no text
+    yet, and the worker's next pass reads them into the page's reading (the
+    proposed-transcripts stage) — the server never contacts the worker. A
+    check with no lines ("rows are right") writes the same two files and
+    requeues nothing: there is nothing to re-read.
 
     The same traces are validated (`Rows.validate`) in the same pass, so the
     answer can name a drawing that caught no writing or a word it left out.
@@ -433,6 +447,8 @@ def apply_row_adjustments(batch_id: str, page: str, adjustments: RowAdjustments,
     adjustments_json = json.dumps(adjustments.to_dict(), ensure_ascii=False, indent=1)
     atomic_write(readings.adjustments_path(page), adjustments_json + "\n")
     atomic_write(readings.adjusted_rows_path(page), json.dumps(Rows.to_dict(rows), ensure_ascii=False, indent=1) + "\n")
+    if adjustments.lines:
+        _ = set_status(batch_id, STATUS_PENDING, registry_dir)
     return RowCorrection(rows=rows, violations=violations)
 
 

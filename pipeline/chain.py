@@ -19,12 +19,13 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import contextlib
+import hashlib
 import json
 import shutil
 import sys
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -34,8 +35,9 @@ from PIL import Image
 from document.document import DOCUMENT_AGREED
 from document.page_size import PageSize
 from document.row import Row
+from document.row_adjustments import RowAdjustments
 from document.words import Words
-from pipeline.api.sync import record_confirmation
+from pipeline.api.sync import BatchReadings, record_confirmation
 from pipeline.batch_record import (
     STATUS_CONFIRMED,
     STATUS_PENDING,
@@ -61,8 +63,9 @@ from pipeline.rows.rows import Rows
 from pipeline.rows_reading import RowsReading
 from pipeline.standing_knowledge import StandingKnowledge
 from pipeline.store import PipelineStore, text_sha256
-from pipeline.transcribe.transcripts import row_transcripts
+from pipeline.transcribe.transcripts import Transcriber, row_transcripts
 from tools.archive import Archive
+from tools.atomic import atomic_write
 from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR, LoftPaths
 from tools.store import DiskStore, StoreError  # noqa: F401 — the architecture test's store-layer marker
 
@@ -509,6 +512,7 @@ class BatchRun(Batch):
         text_pages: list[str],
         _reading: Callable[[Image.Image], Reading] = reading_for_page,
         _rows_text: Callable[[Path, Path], dict[int, str]] = row_transcripts,
+        _corrected_text: Callable[[Path, list[Row], Path], dict[int, str]] | None = None,
     ) -> None:
         """The reading stage: each text page's rows (line boxes from the
         fitted-lines chain), each row's writing READ from the model, and the
@@ -519,20 +523,31 @@ class BatchRun(Batch):
         in order, which put a sentence one row out wherever the page's rows and its
         text lines ran differently.
 
-        The drawn-lines correction (`rows.adjust`) groups the words, so a page
-        without them cannot be corrected — both files are written together. Written
-        as ``<page>.rows.json`` beside the guess; the review's draft seam reads the
-        rows, falling back to a strip-era ``layout.json`` for batches read before
-        this change. A page the reading returns NOTHING for is left unwritten (its
-        marker absent) and named on stderr: the marker rule — an artifact that
-        looks done but is empty is worse than a page to re-run."""
+        **A page the reviewer corrected is re-read.** The drawn lines persist in
+        ``<page>.row-adjustments.json``; when the reading does not carry their
+        sha, the page's rows are rebuilt from them, read row by row again, and
+        written as the reading's lines — so the transcript gate shows the text
+        the corrected rows produce, not the draft the geometry proposed. A page
+        whose reading is current is skipped; an empty correction ("rows are
+        right") is not a re-read. A page the reading returns NOTHING for is left
+        unwritten (its marker absent) and named on stderr: the marker rule — an
+        artifact that looks done but is empty is worse than a page to re-run."""
         store = PipelineStore(self.work_dir)
+        corrected_text = _corrected_text or _transcribe_rows
         for page in text_pages:
-            rows_path = self.paths.guess_dir / f"{Path(page).stem}.rows.json"
-            if rows_path.exists():
-                continue
+            stem = Path(page).stem
+            rows_path = self.paths.guess_dir / f"{stem}.rows.json"
+            existing = (
+                RowsReading.from_dict(json.loads(rows_path.read_text(encoding="utf-8"))) if rows_path.exists() else None
+            )
             image_path = self.paths.oriented_dir / page
             if not image_path.is_file():
+                continue
+            correction = self._pending_correction(page, existing)
+            if correction is not None:
+                self._read_corrected(page, image_path, existing, correction, corrected_text)
+                continue
+            if existing is not None:
                 continue
             reading = _reading(Image.open(image_path))
             rows = Rows.from_words(list(reading.words), PageSize(reading.width, reading.height)).rows()
@@ -546,7 +561,7 @@ class BatchRun(Batch):
                 if index is not None and 0 <= index < len(reading.lines):
                     reading.lines[index]["text"] = transcripts.get(row.number, "")
             store.write(
-                f"{self.batch_id}/ocr-guess/{Path(page).stem}.rows.json",
+                f"{self.batch_id}/ocr-guess/{stem}.rows.json",
                 json.dumps(
                     RowsReading(
                         page=page,
@@ -560,10 +575,79 @@ class BatchRun(Batch):
                 + "\n",
             )
             store.write(
-                f"{self.batch_id}/ocr-guess/{Path(page).stem}.words.json",
+                f"{self.batch_id}/ocr-guess/{stem}.words.json",
                 json.dumps(Words(reading.words).to_dict(), indent=1, ensure_ascii=False) + "\n",
             )
             print(f"read: {page} -> {len(reading.lines)} rows, {len(reading.words)} words, {len(transcripts)} read")
+
+    def _pending_correction(self, page: str, reading: RowsReading | None) -> RowAdjustments | None:
+        """The drawn lines the page's current reading does not carry yet.
+
+        None when there is no correction, when the correction is empty ("rows
+        are right" — nothing to re-read), or when the reading already carries
+        the same lines' sha. A corrupt correction file fails loudly: a page
+        silently read against lines nobody can parse is worse than a rerun."""
+        adjustments_path = BatchReadings(self.work_dir, self.batch_id).adjustments_path(page)
+        if not adjustments_path.is_file():
+            return None
+        try:
+            adjustments = RowAdjustments.from_dict(json.loads(adjustments_path.read_text(encoding="utf-8")))
+        except ValueError as exc:
+            raise PipelineError(f"{page}: unreadable row-adjustments: {exc}") from exc
+        if not adjustments.lines:
+            return None
+        if reading is not None and reading.corrected == _file_sha(adjustments_path):
+            return None
+        return adjustments
+
+    def _read_corrected(
+        self,
+        page: str,
+        image_path: Path,
+        existing: RowsReading | None,
+        adjustments: RowAdjustments,
+        corrected_text: Callable[[Path, list[Row], Path], dict[int, str]],
+    ) -> None:
+        """Read the reviewer's corrected rows and make them the page's reading.
+
+        The rows come from the persisted words + the drawn lines (the same
+        builder the app's live merge runs), each row is read as itself, and the
+        reading's lines ARE the corrected rows — so the transcript gate shows
+        their text and boxes. The correction's artefact carries the same text
+        and the drawn-lines sha, and the reading carries that sha too, so the
+        next pass does not read the page again."""
+        readings = BatchReadings(self.work_dir, self.batch_id)
+        words_path = readings.words_path(page)
+        if not words_path.is_file():
+            raise PipelineError(f"{page}: no words to re-read against — the read stage must write them first")
+        words = Words.from_dict(json.loads(words_path.read_text(encoding="utf-8")))
+        image = Image.open(image_path)
+        width, height = (existing.width, existing.height) if existing else (image.width, image.height)
+        rotation = existing.rotation if existing else 0
+        revision = (existing.revision if existing else 0) + 1
+        builder = Rows.from_words(list(words), PageSize(width, height))
+        rows = builder.adjust(adjustments)
+        texts = corrected_text(image_path, rows, self.paths.guess_dir)
+        filled = [replace(row, text=texts.get(row.number, ""), stage="raw") for row in rows]
+        reading = RowsReading(
+            page=page,
+            width=width,
+            height=height,
+            rotation=rotation,
+            revision=revision,
+            corrected=_file_sha(readings.adjustments_path(page)),
+            lines=[_row_line(index, row) for index, row in enumerate(filled)],
+        )
+        store = PipelineStore(self.work_dir)
+        store.write(
+            f"{self.batch_id}/ocr-guess/{Path(page).stem}.rows.json",
+            json.dumps(reading.to_dict(), indent=1, ensure_ascii=False) + "\n",
+        )
+        atomic_write(
+            readings.adjusted_rows_path(page),
+            json.dumps(Rows.to_dict(filled), ensure_ascii=False, indent=1) + "\n",
+        )
+        print(f"read: {page} re-read against {len(adjustments.lines)} drawn line(s) -> {len(filled)} rows")
 
     def process(self, client: Callable[[str, str], str] | None = None) -> None:
         """Classify → orient (text pages) → route → HTR/tesseract → guess →
@@ -740,6 +824,33 @@ def _reader_line(row: Row) -> int | None:
     return lines.pop() if len(lines) == 1 else None
 
 
+def _file_sha(path: Path) -> str:
+    """The sha256 of an artefact's bytes — the correction's identity, so a
+    reading can say which drawn lines it was built from."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _row_line(index: int, row: Row) -> dict[str, Any]:
+    """A corrected row as the reading's line record — the reader's own fields
+    (index, text, box, orientation, box_source, words), so the review surface
+    renders a corrected reading exactly like a draft one."""
+    return {
+        "index": index,
+        "text": row.text,
+        "box": [row.band.x0, row.band.y0, row.band.x1, row.band.y1],
+        "orientation": 0,
+        "box_source": "rows-adjusted",
+        "words": [],
+    }
+
+
+def _transcribe_rows(image_path: Path, rows: list[Row], out_dir: Path) -> dict[int, str]:
+    """The corrected rows' text: the same transcriber the draft rows use, over
+    the rows the reviewer's lines made."""
+    report = Transcriber(image_path=image_path, rows=rows, out_dir=out_dir).transcribe()
+    return {int(number): text for number, text in report.transcripts.items()}
+
+
 # a single call site — the stage paths and DI seams are the caller's locals
 # lucidlint: ignore long-param-list a parameter object would be ceremony for one entry point
 def _read_pages(
@@ -750,11 +861,14 @@ def _read_pages(
     batch_id: str,
     _reading: Callable[[Image.Image], Reading] = reading_for_page,
     _rows_text: Callable[[Path, Path], dict[int, str]] = row_transcripts,
+    _corrected_text: Callable[[Path, list[Row], Path], dict[int, str]] | None = None,
 ) -> None:
     """The reading stage's test-seam entry — the stage itself lives on
     BatchRun.read_pages (the batch's stage paths derive from work_dir +
     batch_id inside the run; guess_dir/oriented_dir are the seam's view)."""
-    BatchRun(batch_id, work_dir=work_dir).read_pages(text_pages, _reading=_reading, _rows_text=_rows_text)
+    BatchRun(batch_id, work_dir=work_dir).read_pages(
+        text_pages, _reading=_reading, _rows_text=_rows_text, _corrected_text=_corrected_text
+    )
 
 
 def _ambiguous_rotations(scores: dict[str, int]) -> bool:

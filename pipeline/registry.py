@@ -43,6 +43,8 @@ def set_status(batch_id: str, status: str, registry_dir: Path = REGISTRY_DIR) ->
     explicit requeue. The record is re-read first, so every other field
     survives; the processing stamp is cleared because no pass holds it now."""
     record = load_batch(batch_id, registry_dir)
+    if record.status == status and not record.started_at:
+        return record  # already in that state, and no pass to clear
     record.status = status
     record.started_at = ""
     store = PipelineStore(registry_dir)

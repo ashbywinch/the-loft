@@ -16,6 +16,7 @@ import pytest
 
 from pipeline.api.server import ServerConfig, create_server
 from pipeline.api.sync import Outbox
+from pipeline.registry import load_batch
 from tools.memory import ElicitationError
 from tools.records import Item, validate_identity
 from tools.store import ImmutableStoreError, MemoryStore
@@ -1418,10 +1419,26 @@ def test_sync_reread_retries_a_failed_re_read_without_reorienting(tmp_path: Path
     assert layout.get("rotation", 0) == 0
 
 
-def _seed_row_page(fixture: ServerFixture, batch_id: str = "adopt-0001") -> None:
-    """A page's reading with its words, ready to be corrected: the rows
-    reading (dims + one line) and the words the build groups."""
+def _seed_row_page(fixture: ServerFixture, batch_id: str = "adopt-0001", status: str = "review") -> None:
+    """A registered batch with one page's reading and words, ready to be
+    corrected: the rows reading (dims + one line) and the words the build
+    groups. The batch record is real — a correction requeues it."""
     import json as _json
+
+    fixture.registry_dir.mkdir(parents=True, exist_ok=True)
+    (fixture.registry_dir / f"{batch_id}.json").write_text(
+        _json.dumps(
+            {
+                "batch_id": batch_id,
+                "path": str(fixture.data_dir.parent / "scans" / batch_id),
+                "status": status,
+                "arrived_at": "2026-10-27T12:00:00+00:00",
+                "pages": {"p1.jpg": "hash-1"},
+                "fingerprint": ["hash-1"],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     guess = fixture.work_dir / batch_id / "ocr-guess"
     guess.mkdir(parents=True, exist_ok=True)
@@ -1512,6 +1529,27 @@ def test_a_clean_correction_answers_no_violations(server: ServerFixture) -> None
     )
     assert status == 200
     assert body["violations"] == []
+
+
+def test_a_drawn_line_puts_the_batch_back_in_the_workers_queue(server: ServerFixture) -> None:
+    """The corrected rows have no text yet: the worker must re-read them into
+    the reading, and the registry's status is its queue."""
+    _seed_row_page(server, status="review")
+    status, _ = server.post(
+        "/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments",
+        {"lines": [[[0.05, 0.278], [0.55, 0.278]]]},
+    )
+    assert status == 200
+    assert load_batch("adopt-0001", server.registry_dir).status == "pending"
+
+
+def test_a_check_with_no_lines_does_not_requeue(server: ServerFixture) -> None:
+    """ "Rows are right" writes the check and nothing to re-read: the batch
+    stays where it is."""
+    _seed_row_page(server, status="review")
+    status, _ = server.post("/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments", {"lines": []})
+    assert status == 200
+    assert load_batch("adopt-0001", server.registry_dir).status == "review"
 
 
 def test_row_adjustments_refuses_a_page_without_words(server: ServerFixture) -> None:

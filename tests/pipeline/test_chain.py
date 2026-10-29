@@ -6,6 +6,8 @@ the real scans."""
 from __future__ import annotations
 
 import json
+import os
+import socket
 from pathlib import Path
 from typing import override
 
@@ -644,7 +646,8 @@ def test_a_failed_pass_puts_the_batch_back_in_the_queue(tmp_path: Path) -> None:
 
 def test_a_processing_pass_stamps_when_it_started(tmp_path: Path) -> None:
     """The worker's sweep tells a live pass from a killed one by this stamp —
-    a pass that is killed cannot reset its own record."""
+    a pass that is killed cannot reset its own record — and on this host the
+    pid decides, so the stamp carries the process and its host."""
     registry = tmp_path / "registry"
     registry.mkdir()
     record = BatchRecord(batch_id="adopt-0001", path=tmp_path)
@@ -656,3 +659,5 @@ def test_a_processing_pass_stamps_when_it_started(tmp_path: Path) -> None:
     saved = json.loads((registry / "adopt-0001.json").read_text(encoding="utf-8"))
     assert saved["status"] == "importing"
     assert saved["started_at"]
+    assert saved["started_pid"] == os.getpid()
+    assert saved["started_host"] == socket.gethostname()

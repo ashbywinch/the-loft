@@ -21,7 +21,9 @@ import concurrent.futures
 import contextlib
 import hashlib
 import json
+import os
 import shutil
+import socket
 import sys
 import tempfile
 from collections.abc import Callable
@@ -300,12 +302,14 @@ class Batch:
         self.paths = BatchPaths(batch_work=work_dir / batch_id, batch_id=batch_id)
 
     def update_status(self, record: BatchRecord, status: str) -> None:
-        """Stamp the registry record's status and persist it. A processing
-        pass stamps when it started — the worker's sweep uses that to tell a
-        live pass from one that was killed."""
+        """Stamp the registry record's status and persist it. A processing pass
+        stamps when it started, its pid and its host — the worker's sweep uses
+        that to tell a live pass from one that was killed."""
         record.status = status
         if status == STATUS_PROCESSING:
             record.started_at = datetime.now(UTC).isoformat(timespec="seconds")
+            record.started_pid = os.getpid()
+            record.started_host = socket.gethostname()
         store = PipelineStore(self.registry_dir)
         store.write(f"{self.batch_id}.json", json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n")
 

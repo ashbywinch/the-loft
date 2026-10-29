@@ -23,6 +23,8 @@ server never contacts it, and it never serves HTTP.
 
 from __future__ import annotations
 
+import os
+import socket
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -47,6 +49,18 @@ def _has_pages(folder: Path) -> bool:
     return any(path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS for path in folder.rglob("*"))
 
 
+def _pid_alive(pid: int) -> bool:
+    """Whether a process with this pid exists — the liveness check for a pass
+    stamped on this host. PermissionError means it exists and is not ours."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 class Worker:
     """The batch processor: notice the scan area's piles, requeue a dead
     pass's batch, run the queue.
@@ -55,8 +69,9 @@ class Worker:
     seam that starts the chain's machine pass, so a test replaces the pass
     (a model and real images) without faking anything else."""
 
-    # a pass still stamped processing after this long is dead, not slow (the
-    # longest real pass measured is minutes; the grace is deliberately huge)
+    # a pass on ANOTHER host is given this long before it is presumed dead;
+    # on this host the pass's own pid decides (a killed pass cannot reset its
+    # own record, and a real pass can outlive any grace)
     stale_after_seconds = 6 * 60 * 60
 
     def __init__(
@@ -73,6 +88,7 @@ class Worker:
         self.write_line = write_line
         self._stale_after = self.stale_after_seconds if stale_after is None else stale_after
         self._now = now or (lambda: datetime.now(UTC))
+        self._host = socket.gethostname()
 
     def sweep(self) -> SweepReport:
         """One pass: register the scan area's piles, requeue a dead pass's
@@ -131,10 +147,17 @@ class Worker:
         return record
 
     def _pass_alive(self, record: BatchRecord, now: datetime) -> bool:
-        """Whether the record's processing pass may still be running: it
-        stamped a start recent enough to be inside the grace period."""
+        """Whether the record's processing pass may still be running.
+
+        On this host the pass's own process decides: a pid that is gone is a
+        dead pass, however recent the stamp (a killed pass cannot reset its
+        own record, and a real pass can outlive any grace). A pass stamped on
+        another host — or with no host, from before the stamp — is judged by
+        the grace period, since its pid means nothing here."""
         if not record.started_at:
-            return False  # written before the stamp existed — no live pass did
+            return False  # no stamp: no live pass wrote it
+        if record.started_host == self._host:
+            return bool(record.started_pid) and _pid_alive(record.started_pid)
         try:
             started = datetime.fromisoformat(record.started_at)
         except ValueError:

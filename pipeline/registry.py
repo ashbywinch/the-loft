@@ -47,6 +47,8 @@ def set_status(batch_id: str, status: str, registry_dir: Path = REGISTRY_DIR) ->
         return record  # already in that state, and no pass to clear
     record.status = status
     record.started_at = ""
+    record.started_pid = 0
+    record.started_host = ""
     store = PipelineStore(registry_dir)
     store.write(f"{batch_id}.json", json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n")
     return record

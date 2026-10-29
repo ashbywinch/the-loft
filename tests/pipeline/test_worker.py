@@ -10,6 +10,10 @@ that starts it is the worker's, so the tests subclass `Worker.run_batch`.
 from __future__ import annotations
 
 import json
+import os
+import socket
+import subprocess
+import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -31,11 +35,19 @@ def _pile(scan_area: Path, name: str = "scan-20261027-1200", pages: int = 2) -> 
     return folder
 
 
-def _record(registry_dir: Path, batch_id: str, status: str, arrived_at: str, started_at: str = "") -> None:
-    """A registry record, as an adoption or a scan leaves one (the processing
-    stamp only when the caller passes one)."""
+def _record(
+    registry_dir: Path,
+    batch_id: str,
+    status: str,
+    arrived_at: str,
+    started_at: str = "",
+    started_pid: int = 0,
+    started_host: str = "",
+) -> None:
+    """A registry record, as an adoption, a scan, or a running pass leaves one
+    (the stamp fields only when the caller passes them)."""
     registry_dir.mkdir(parents=True, exist_ok=True)
-    record = {
+    record: dict[str, object] = {
         "batch_id": batch_id,
         "path": str(registry_dir.parent / "scans" / batch_id),
         "status": status,
@@ -45,6 +57,10 @@ def _record(registry_dir: Path, batch_id: str, status: str, arrived_at: str, sta
     }
     if started_at:
         record["started_at"] = started_at
+    if started_pid:
+        record["started_pid"] = started_pid
+    if started_host:
+        record["started_host"] = started_host
     _ = (registry_dir / f"{batch_id}.json").write_text(json.dumps(record), encoding="utf-8")
 
 
@@ -198,6 +214,47 @@ def test_a_live_processing_pass_is_left_alone(tmp_path: Path) -> None:
     report = worker.sweep()
 
     assert report.requeued == ()
+    assert worker.ran == []
+
+
+def test_a_killed_pass_on_this_host_is_requeued_at_once(tmp_path: Path) -> None:
+    """The pid decides on the host that ran the pass: a killed pass is dead
+    however recent its stamp — a 40-minute read killed mid-run must not look
+    live for six hours."""
+    registry = tmp_path / "registry"
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    _record(
+        registry,
+        "batch-killed",
+        "importing",
+        "2026-10-29T11:59:00+00:00",
+        started_at="2026-10-29T11:59:00+00:00",
+        started_pid=dead.pid,
+        started_host=socket.gethostname(),
+    )
+    worker = _worker(tmp_path, now=lambda: NOW)
+
+    assert worker.sweep().requeued == ("batch-killed",)
+    assert worker.ran == ["batch-killed"]
+
+
+def test_a_live_pass_on_this_host_is_left_alone(tmp_path: Path) -> None:
+    """A pass whose process is alive is running, whatever its age: the sweep
+    must not start a second one over it."""
+    registry = tmp_path / "registry"
+    _record(
+        registry,
+        "batch-live",
+        "importing",
+        "2026-10-29T11:00:00+00:00",
+        started_at="2026-10-29T11:00:00+00:00",
+        started_pid=os.getpid(),
+        started_host=socket.gethostname(),
+    )
+    worker = _worker(tmp_path, now=lambda: NOW)  # an hour in — past the grace
+
+    assert worker.sweep().requeued == ()
     assert worker.ran == []
 
 

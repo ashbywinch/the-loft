@@ -47,9 +47,12 @@ batch runs the machine stages — orient, marks, words, the model guess and
 the reading — ending where a person takes over: each read page waits on
 its row check. `./loft work --watch 60` repeats that sweep every minute.
 The queue is the registry's records. A pass that dies half-way puts its
-batch back to `pending`, and a pass that is killed outright (its record left
-`importing` with a start stamp older than six hours, or with no stamp at all)
-is put back by the next sweep — the failure is printed with the batch's id.
+batch back to `pending`. A pass that is killed outright — its record left
+`importing` — is put back by the next sweep: on this host the pass's own pid
+decides (a dead pid is a dead pass, however recent the stamp), and a pass
+stamped on another machine is judged by a six-hour grace. A record with no
+stamp at all predates the stamping. The failure is printed with the batch's
+id.
 A batch a person has finished with, or one left `review` by a tool before the
 rows stage existed, re-enters the queue explicitly:
 `./loft work --requeue <batch-id>` (which requeues, then sweeps). `review`

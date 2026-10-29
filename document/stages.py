@@ -97,7 +97,7 @@ class Stage(Enum):
         label="entities_proposed",
         produces="Person, Relationship, Place, Theme, Org",
         artefact="the identity tables",
-        schemas=(),
+        schemas=("Person", "Place", "Identification", "Mention"),
         human=False,
     )
     ENTITIES_AGREED = StageFacts(
@@ -105,7 +105,7 @@ class Stage(Enum):
         label="entities_agreed",
         produces="Person, Relationship, Place, Theme, Org",
         artefact="the identity tables",
-        schemas=(),
+        schemas=("Person", "Place"),
         human=True,
     )
 

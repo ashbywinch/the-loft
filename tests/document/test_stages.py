@@ -18,7 +18,10 @@ from document.row import Row
 from document.row_adjustments import RowAdjustments
 from document.stages import PageStatus, Stage
 from document.words import Words
+from pipeline.identification import Identification
+from pipeline.mention import Mention
 from pipeline.rows.rows import Rows
+from tools.records import Person, Place
 
 # the PRD's stages (docs/PRD/pipeline-stages-spec.md UR1), in order
 PRD_STAGES = (
@@ -37,7 +40,21 @@ PRD_STAGES = (
 # may only name these. Each one owns its `from_dict`/`to_dict`, so there is no
 # bag of contracts beside them to look the names up in.
 CONTRACTS = {
-    contract.__name__ for contract in (Boxes, Document, DocumentLine, PageSize, Row, RowAdjustments, Rows, Words)
+    contract.__name__
+    for contract in (
+        Boxes,
+        Document,
+        DocumentLine,
+        PageSize,
+        Row,
+        RowAdjustments,
+        Rows,
+        Words,
+        Person,
+        Place,
+        Identification,
+        Mention,
+    )
 }
 
 

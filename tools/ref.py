@@ -15,10 +15,12 @@ from typing import Any, Literal, cast
 from tools.dated_fact import DatedFact
 
 # The link's confirmation status: proposed = guessed by an agent and awaiting
-# the review; confirmed = the owner's verified word. An absent status is an
-# asserted link with no review seam.
-RefStatus = Literal["confirmed", "proposed"]
-REF_STATUSES = ("confirmed", "proposed")
+# the review; estimated = the reviewer's own recollection, recorded as a
+# guess; confirmed = the owner's verified word. An absent status is an
+# asserted link with no review seam. The link carries the same vocabulary as
+# the record it points at, so a decided mention stops waiting on the review.
+RefStatus = Literal["confirmed", "proposed", "estimated"]
+REF_STATUSES = ("confirmed", "proposed", "estimated")
 
 
 @dataclass(frozen=True)

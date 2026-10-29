@@ -1528,3 +1528,160 @@ def test_row_adjustments_refuses_a_page_without_words(server: ServerFixture) -> 
     status, body = server.post("/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments", {"lines": []})
     assert status == 400
     assert "re-read" in body["error"]
+
+
+# -- identification (stages 7-8) -------------------------------------------
+
+
+class IdentifyChat:
+    """The model seam — a document's people and places, counted so a re-read
+    is visible."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def chat(self, system: str, user: str, *, thinking: bool = False) -> str:  # noqa: ARG002 — the harness signature
+        self.calls += 1
+        return json.dumps(
+            {
+                "people": [{"name": "Fern", "match": "p-fern", "quote": "Dear Fern"}],
+                "places": [{"name": "Seascale", "match": None, "quote": "we swam at Seascale"}],
+            }
+        )
+
+
+def _seed_document(server: ServerFixture) -> str:
+    """An agreed document naming a person and a place, and the standing
+    knowledge its pass resolves against."""
+    server.archive.save_identity(
+        "people",
+        validate_identity(
+            "people",
+            {"people": [{"id": "p-alex", "name": "Alex Hale"}, {"id": "p-fern", "name": "Fern"}], "relationships": []},
+        ),
+    )
+    server.archive.save_identity("places", validate_identity("places", {"places": []}))
+    server.archive.save_identity("themes", validate_identity("themes", {"themes": []}))
+    item = server.archive.agree_document(
+        title="A letter from Fern",
+        date="1971-05-01",
+        date_precision="exact",
+        text="Dear Fern, we swam at Seascale.",
+    )
+    return item.id
+
+
+def test_identify_reads_the_document_once_and_proposes_its_entities(server: ServerFixture) -> None:
+    chat = IdentifyChat()
+    server2 = ServerFixture(server.data_dir, server.store, client=chat)
+    try:
+        item_id = _seed_document(server2)
+        status, body = server2.post(f"/api/identify/document/{item_id}", {})
+        assert status == 200, body
+        # the standing record is untouched (confirmed); the document's ref is
+        # the proposal, and the new place is a proposed record
+        assert [p["id"] for p in body["people"]] == ["p-fern"]
+        assert [(p["id"], p["status"]) for p in body["places"]] == [("pl-seascale", "proposed")]
+        assert [ref["id"] for ref in body["item"]["people"]] == ["p-fern"]
+        assert [(ref["id"], ref["status"]) for ref in body["item"]["people"]] == [("p-fern", "proposed")]
+        assert [(ref["id"], ref["status"]) for ref in body["item"]["places"]] == [("pl-seascale", "proposed")]
+        assert body["pending"] == 2
+        # the document is read once: a second visit answers without a model call
+        status, again = server2.post(f"/api/identify/document/{item_id}", {})
+        assert status == 200
+        assert again["item"]["places"] == body["item"]["places"]
+        assert chat.calls == 1
+    finally:
+        server2.close()
+
+
+def test_identify_decide_lands_in_the_identity_table(server: ServerFixture) -> None:
+    chat = IdentifyChat()
+    server2 = ServerFixture(server.data_dir, server.store, client=chat)
+    try:
+        item_id = _seed_document(server2)
+        _ = server2.post(f"/api/identify/document/{item_id}", {})
+        status, body = server2.post(
+            "/api/identify/decide",
+            {"item_id": item_id, "kind": "place", "entity_id": "pl-seascale", "decision": "attested"},
+        )
+        assert status == 200, body
+        assert "status" not in body["entity"]  # a confirmed record omits the status key
+        assert body["message"] == "Done — Seascale is recorded as a fact."
+        assert body["pending"] == 1  # the person still waits
+        places = server2.archive.get_identity("places")
+        assert places is not None
+        confirmed = places.record("pl-seascale")
+        assert confirmed is not None and confirmed.status == "confirmed"
+        item = server2.archive.get_item(item_id)
+        assert item is not None and item.place_refs[0].status == "confirmed"
+    finally:
+        server2.close()
+
+
+def test_identify_decide_carries_the_familys_words_for_a_guess(server: ServerFixture) -> None:
+    chat = IdentifyChat()
+    server2 = ServerFixture(server.data_dir, server.store, client=chat)
+    try:
+        item_id = _seed_document(server2)
+        _ = server2.post(f"/api/identify/document/{item_id}", {})
+        basis = {"text": "we spent every summer there", "by": "Alex", "when": "2026-10-29"}
+        status, body = server2.post(
+            "/api/identify/decide",
+            {"item_id": item_id, "kind": "place", "entity_id": "pl-seascale", "decision": "estimated", "basis": basis},
+        )
+        assert status == 200, body
+        assert body["entity"]["status"] == "estimated"
+        assert body["entity"]["basis"] == basis
+        item = server2.archive.get_item(item_id)
+        assert item is not None and item.place_refs[0].status == "estimated"
+    finally:
+        server2.close()
+
+
+def test_identify_never_calls_a_confirmed_person_a_guess(server: ServerFixture) -> None:
+    """The mention is the document's; the person is already a fact — the
+    receipt says so and the mention stays confirmed."""
+    chat = IdentifyChat()
+    server2 = ServerFixture(server.data_dir, server.store, client=chat)
+    try:
+        item_id = _seed_document(server2)
+        _ = server2.post(f"/api/identify/document/{item_id}", {})
+        basis = {"text": "I think so", "by": "Alex", "when": "2026-10-29"}
+        status, body = server2.post(
+            "/api/identify/decide",
+            {"item_id": item_id, "kind": "person", "entity_id": "p-fern", "decision": "estimated", "basis": basis},
+        )
+        assert status == 200, body
+        assert body["message"] == "Done — Fern is already recorded as a fact."
+        item = server2.archive.get_item(item_id)
+        assert item is not None and item.people_refs[0].status == "confirmed"
+    finally:
+        server2.close()
+
+
+def test_identify_needs_the_ai(server: ServerFixture) -> None:
+    item_id = _seed_document(server)
+    status, body = server.post(f"/api/identify/document/{item_id}", {})
+    assert status == 503
+    assert "AI" in body["error"]
+
+
+def test_identify_requires_a_session(server: ServerFixture) -> None:
+    item_id = _seed_document(server)
+    status, _ = server.post(f"/api/identify/document/{item_id}", {}, cookie="")
+    assert status == 401
+
+
+def test_identify_unknown_document_404s(server: ServerFixture) -> None:
+    status, _ = server.post("/api/identify/document/doc-1970-01-01", {})
+    assert status == 404
+
+
+def test_identify_decide_rejects_a_bad_decision(server: ServerFixture) -> None:
+    item_id = _seed_document(server)
+    status, _ = server.post(
+        "/api/identify/decide",
+        {"item_id": item_id, "kind": "place", "entity_id": "pl-x", "decision": "maybe"},
+    )
+    assert status == 400

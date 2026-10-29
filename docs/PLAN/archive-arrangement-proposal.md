@@ -76,6 +76,12 @@ as the item's `transcription.txt` through the archive's write seam
 on a re-agreement; the review gate asks for the document's title and date,
 and the registry's boundary carries the `item_id` it became.
 
+The identification pass (WORK-PLAN §1.6) writes its proposed people and places
+into the identity tables, marked proposed, and the review's determination moves
+the document's mention and the table record together
+(`Archive.record_identification` / `decide_identification`) — the unagreed
+record sits inside the table it will join.
+
 Still open:
 1. `Archive.save_identity` — the table legs as parameters of the table's
    home (the identity tables sit at the root today).

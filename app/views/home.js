@@ -37,6 +37,21 @@ export function documentsToReview(batches) {
   return { count: waiting.length, href: `#/review/${encodeURIComponent(first.batch.batch_id)}/${first.index}/0` };
 }
 
+/** The portal's "Identify people/places" item (UR2): the agreed documents
+ *  with a transcription whose entities the family has not settled — never
+ *  read yet, or read with a mention still proposed — and the first one's
+ *  surface. The document itself is the record (its own `identified` flag and
+ *  its proposed refs), so this needs no batch registry. */
+export function documentsToIdentify(state) {
+  const waiting = (state.items || []).filter((item) => {
+    if (item.type !== "document" || !(item.transcription || "").trim()) return false;
+    const refs = [...(item.people || []), ...(item.places || [])];
+    return !item.identified || refs.some((ref) => ref.status === "proposed");
+  });
+  if (!waiting.length) return null;
+  return { count: waiting.length, href: `#/identify/${encodeURIComponent(waiting[0].id)}` };
+}
+
 
 function todayMoment(items) {
   const now = new Date();
@@ -133,6 +148,14 @@ export function render(main, _ctx, state) {
         href: documents.href,
         title: "Review the transcripts",
         note: `${plural(documents.count, "document")} to review`,
+      });
+    }
+    const entities = documentsToIdentify(state);
+    if (entities) {
+      cards.push({
+        href: entities.href,
+        title: "Identify people/places",
+        note: `${plural(entities.count, "document")} to identify`,
       });
     }
     // identities: the import session's proposals, and the unfinished stories

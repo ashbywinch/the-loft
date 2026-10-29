@@ -561,4 +561,33 @@ describe("the unfinished import session (user: the front page shows the session,
     expect(main.querySelector(".review-card")).toBeNull();
     vi.unstubAllGlobals();
   });
+
+  it("the identification door counts the documents whose entities wait", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => ({ batches: [] }) })),
+    );
+    const main = document.createElement("main");
+    render(main, {}, {
+      ...STATE,
+      items: [
+        ...STATE.items,
+        {
+          id: "doc-1971-05-01",
+          title: "A letter",
+          date: "1971-05-01",
+          type: "document",
+          transcription: "Dear Fern,",
+          people: [],
+          places: [],
+        },
+      ],
+    });
+    await vi.waitFor(() => expect(main.querySelector(".review-card")).not.toBeNull());
+    const card = main.querySelector(".review-card");
+    expect(card.querySelector(".review-card-title").textContent).toBe("Identify people/places");
+    expect(card.querySelector(".review-card-note").textContent).toBe("1 document to identify");
+    expect(card.getAttribute("href")).toBe("#/identify/doc-1971-05-01");
+    vi.unstubAllGlobals();
+  });
 });

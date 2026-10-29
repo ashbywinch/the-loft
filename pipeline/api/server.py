@@ -43,6 +43,9 @@ from pipeline.api.delete_request import DeleteRequest
 from pipeline.api.device_poll_request import DevicePollRequest
 from pipeline.api.error_answer import ErrorAnswer
 from pipeline.api.health_answer import HealthAnswer
+from pipeline.api.identify_answer import IdentifyAnswer
+from pipeline.api.identify_decide_answer import IdentifyDecideAnswer, receipt
+from pipeline.api.identify_decide_request import IdentifyDecideRequest
 from pipeline.api.narrator import Narrator
 from pipeline.api.page_processing_answer import PageProcessingAnswer
 from pipeline.api.received_request import ReceivedRequest
@@ -66,6 +69,7 @@ from pipeline.api.sync import (
     apply_row_adjustments,
     demote_stale_jobs,
     draft_payloads,
+    identify_document,
     page_job_state,
     pages_pending,
     record_confirmation,
@@ -74,6 +78,7 @@ from pipeline.api.sync import (
     safe_page_name,
     set_page_job,
 )
+from pipeline.identify import IdentificationError
 from pipeline.model.ai_client import AIClient
 from pipeline.registry import RegistryError, list_batches, load_batch
 from pipeline.rows.rows import Rows
@@ -862,6 +867,116 @@ def build_app(
         archive.publish(data_dir)
         return ConfirmationAnswer(
             batch_id=confirmation.batch_id, doc_index=confirmation.doc_index, item_id=item_id
+        ).to_dict()
+
+    # -- identification (stages 7-8) ---------------------------------------
+
+    def _identification_pending(item: Item) -> int:
+        """How many of the document's entities still wait on a decision — the
+        proposed refs. A confirmed or guessed one is settled (left for later
+        stays proposed: it still waits)."""
+        return sum(1 for ref in item.people_refs + item.place_refs if ref.status == "proposed")
+
+    def _identification_records(item: Item) -> tuple[tuple[Person, ...], tuple[Place, ...]]:
+        """The records the document's refs name — the surface renders their
+        names and the proposal's evidence beside each ref."""
+        people_table = archive.get_identity("people")
+        places_table = archive.get_identity("places")
+        people: list[Person] = []
+        places: list[Place] = []
+        for ref in item.people_refs:
+            person = people_table.record(ref.id) if people_table is not None else None
+            if person is not None:
+                people.append(person)
+        for ref in item.place_refs:
+            place = places_table.record(ref.id) if places_table is not None else None
+            if place is not None:
+                places.append(place)
+        return tuple(people), tuple(places)
+
+    def _identification_knowledge() -> Knowledge:
+        """The pass resolves names against the ARCHIVE's tables, not the
+        published projection: the projection is a cache, and a stale one
+        would let the pass mint a second id for a record the archive holds."""
+        people = archive.get_identity("people")
+        places = archive.get_identity("places")
+        return Knowledge(people=people.people if people else (), places=places.places if places else ())
+
+    @app.post("/api/identify/document/{item_id}")
+    def identify_item(item_id: str, request: Request) -> Any:
+        """The stage-7 pass for one agreed document (once), then its stage-8
+        state: the item's refs, the records they name, and the count still
+        waiting. A document already read is never re-read — the whole point
+        of the pass is that the review sees one reading, not a fresh draw
+        each visit."""
+        if session_user(request) is None:
+            return JSONResponse(ErrorAnswer("sign in to identify the documents").to_dict(), status_code=401)
+        item = archive.get_item(item_id)
+        if item is None or item.type != "document":
+            return JSONResponse(ErrorAnswer(f"no document {item_id}").to_dict(), status_code=404)
+        if not item.identified:
+            if client is None:
+                return JSONResponse(
+                    ErrorAnswer("the identification needs the AI — no model client is configured").to_dict(),
+                    status_code=503,
+                )
+            try:
+                identify_document(
+                    item_id,
+                    archive=archive,
+                    client=client,
+                    knowledge=_identification_knowledge(),
+                )
+            except IdentificationError as exc:
+                return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=502)
+            except ArchiveError as exc:
+                return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)
+            archive.publish(data_dir)
+            item = archive.get_item(item_id) or item
+        people, places = _identification_records(item)
+        return IdentifyAnswer(item=item, people=people, places=places, pending=_identification_pending(item)).to_dict()
+
+    @app.post("/api/identify/decide")
+    def identify_decide(body: Mapping[str, Any], request: Request) -> Any:
+        """One stage-8 determination: the mention on the document and the
+        record in the identity table move together (the archive's seam), and
+        the answer carries what remains."""
+        if session_user(request) is None:
+            return JSONResponse(ErrorAnswer("sign in to identify the documents").to_dict(), status_code=401)
+        try:
+            fields = IdentifyDecideRequest.from_dict(body)
+        except (TypeError, ValueError) as exc:
+            return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)
+        pre: Person | Place | None = None
+        if fields.kind == "person":
+            people_table = archive.get_identity("people")
+            pre = people_table.record(fields.entity_id) if people_table is not None else None
+        else:
+            places_table = archive.get_identity("places")
+            pre = places_table.record(fields.entity_id) if places_table is not None else None
+        name = pre.name if pre is not None else fields.entity_id
+        basis = DecisionBasis.from_dict(fields.basis).to_dict() if fields.basis else None
+        try:
+            record = archive.decide_identification(
+                fields.item_id, fields.kind, fields.entity_id, fields.decision, basis
+            )
+        except (KeyError, ValueError, ArchiveError) as exc:
+            return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)
+        if record is None:
+            return JSONResponse(ErrorAnswer(f"no {fields.kind} {fields.entity_id}").to_dict(), status_code=404)
+        archive.publish(data_dir)
+        item = archive.get_item(fields.item_id)
+        pending = _identification_pending(item) if item is not None else 0
+        return IdentifyDecideAnswer(
+            kind=fields.kind,
+            entity=record.to_dict(),
+            message=receipt(
+                name,
+                fields.decision,
+                basis,
+                confirmed=pre is not None and pre.status == "confirmed",
+            ),
+            pending=pending,
         ).to_dict()
 
     @app.get("/api/sync/pending")

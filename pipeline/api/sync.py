@@ -34,6 +34,8 @@ from pipeline.api.row_correction import RowCorrection
 from pipeline.boundary import Boundary
 from pipeline.detect.reader import reading_for_page
 from pipeline.htr import htr_pages_vlm
+from pipeline.identification import Identification
+from pipeline.identify import identify
 from pipeline.layout import (
     Layout,
     build_layout,
@@ -47,10 +49,12 @@ from pipeline.registry import load_batch, record_path
 from pipeline.rows.rows import Rows
 from pipeline.rows_reading import RowsReading
 from pipeline.store import PipelineStore
-from tools.archive import Archive
+from tools.archive import Archive, ArchiveError
 from tools.atomic import atomic_write
 from tools.dated_fact import PRECISIONS
 from tools.loft_paths import REGISTRY_DIR
+from tools.memory import ChatClient, Knowledge
+from tools.records import Item
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 ROWS_JSON = "rows.json"  # the reading's rows file beside the guess (object-model Phase 1)
@@ -348,6 +352,43 @@ def record_confirmation(
     record.boundaries = boundaries
     atomic_write(record_path(batch_id, registry_dir), json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n")
     return item_id
+
+
+def _agreed_text(archive: Archive, item: Item) -> str:
+    """The agreed transcription the identification reads — the item's
+    transcription content file, as its sidecar points at it."""
+    asset = next((a for a in item.assets if a.kind == "transcription"), None)
+    if asset is None:
+        return ""
+    return archive.read_content(item.id, asset.file) or ""
+
+
+def identify_document(
+    item_id: str,
+    *,
+    archive: Archive,
+    client: ChatClient,
+    knowledge: Knowledge,
+) -> Identification:
+    """The stage-7 pass for one agreed document: the model reads the
+    transcription, every named person and place lands as a ref on the item
+    (existing links kept, new ones proposed) and — when the archive does not
+    already hold the record — as a proposed record in its identity table; the
+    item's ``identified`` flag ends the pass. The proposals stage 8 reviews
+    are the result.
+
+    Raises ArchiveError for an unknown item or one with no transcription;
+    the caller decides whether the pass may run again (a read item must
+    never be re-read and its settled entities re-proposed)."""
+    item = archive.get_item(item_id)
+    if item is None:
+        raise ArchiveError(f"no item {item_id}")
+    text = _agreed_text(archive, item)
+    if not text.strip():
+        raise ArchiveError(f"{item_id} has no transcription to identify")
+    identification = identify(client, item=item, text=text, knowledge=knowledge)
+    archive.record_identification(identification)
+    return identification
 
 
 # the review seam's functions all take (batch_id, page, work_dir) — they are the

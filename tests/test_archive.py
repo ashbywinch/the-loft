@@ -10,7 +10,9 @@ from typing import override
 
 import pytest
 
+from pipeline.identification import Identification
 from tools.archive import SIDECAR, Archive, ArchiveError
+from tools.gone_place import GonePlace
 from tools.records import ImportsTable, Item, Person, Place, Session, validate_identity
 from tools.store import ImmutableStoreError, MemoryStore, StoreError
 
@@ -824,3 +826,192 @@ def test_an_agreed_document_needs_a_title_and_a_viable_date() -> None:
         archive.agree_document(title="  ", date="1975-03-01", date_precision="exact", text="a")
     with pytest.raises(ArchiveError, match="date is not parseable"):
         archive.agree_document(title="A letter", date="1975-99-99", date_precision="exact", text="a")
+
+
+# -- identification (stages 7-8): a document's entities and their decisions --
+
+
+def _identified_archive() -> tuple[Archive, MemoryStore]:
+    """An archive with the identity tables and one agreed document."""
+    archive, store = make_archive()
+    archive.save_identity(
+        "people", validate_identity("people", {"people": [{"id": "p-fern", "name": "Fern"}], "relationships": []})
+    )
+    archive.save_identity("places", validate_identity("places", {"places": []}))
+    _ = archive.agree_document(title="A letter", date="1971-05-01", date_precision="exact", text="Dear Fern,")
+    return archive, store
+
+
+def _proposal() -> Identification:
+    """One identified document: a standing person and a fresh place."""
+    return Identification(
+        item_id="doc-1971-05-01",
+        people=(Person.from_dict({"id": "p-fern", "name": "Fern"}),),
+        places=(
+            Place.from_dict(
+                {
+                    "id": "pl-seascale",
+                    "name": "Seascale",
+                    "status": "proposed",
+                    "note": "Mentioned in A letter — location unknown.",
+                }
+            ),
+        ),
+    )
+
+
+def test_identification_writes_proposed_refs_and_new_records() -> None:
+    """Stage 7's answer lands on the document (one proposed ref per mention),
+    in the identity tables (a new record proposed inside the table it would
+    join — never a queue of its own), and as the item's read flag, so the
+    document is never read twice for the same review."""
+    archive, _ = _identified_archive()
+
+    item = archive.record_identification(_proposal())
+
+    assert [ref.to_dict() for ref in item.people_refs] == [{"id": "p-fern", "status": "proposed"}]
+    assert [ref.to_dict() for ref in item.place_refs] == [{"id": "pl-seascale", "status": "proposed"}]
+    assert item.identified is True
+    stored = archive.get_item("doc-1971-05-01")
+    assert stored is not None and stored.identified is True  # persisted, not just in the answer
+    places = archive.get_identity("places")
+    assert places is not None
+    proposed = places.record("pl-seascale")
+    assert proposed is not None and proposed.status == "proposed"
+    people = archive.get_identity("people")
+    assert people is not None
+    # a standing record is never rewritten as a proposal
+    fern = people.record("p-fern")
+    assert fern is not None and fern.status == "confirmed"
+
+
+def test_identification_keeps_an_existing_link_and_its_status() -> None:
+    """A document that already names someone keeps that link: the pass adds
+    the entities it reads and never downgrades a confirmed link to a
+    proposal (a pre-existing archive's links survive the first read)."""
+    archive, _ = _identified_archive()
+    item = archive.get_item("doc-1971-05-01")
+    assert item is not None
+    sidecar = dict(item.to_dict())
+    sidecar["people"] = [{"id": "p-fern", "status": "confirmed"}]
+    archive.save_item(Item(sidecar))
+
+    read = archive.record_identification(_proposal())
+
+    links = {ref.id: ref.status for ref in read.people_refs}
+    assert links == {"p-fern": "confirmed"}  # the existing link wins
+    assert [ref.id for ref in read.place_refs] == ["pl-seascale"]  # the new one is added
+
+
+def test_attested_confirms_the_record_and_the_documents_mention() -> None:
+    archive, _ = _identified_archive()
+    _ = archive.record_identification(_proposal())
+
+    record = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "attested")
+
+    assert isinstance(record, Place) and record.status == "confirmed"
+    item = archive.get_item("doc-1971-05-01")
+    assert item is not None and item.place_refs[0].status == "confirmed"
+    places = archive.get_identity("places")
+    assert places is not None
+    confirmed = places.record("pl-seascale")
+    assert confirmed is not None and confirmed.status == "confirmed"
+
+
+def test_an_estimated_mention_records_the_familys_words() -> None:
+    archive, _ = _identified_archive()
+    _ = archive.record_identification(_proposal())
+    basis = {"text": "we spent summers there", "by": "Alex", "when": "2026-10-29"}
+
+    record = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "estimated", basis)
+
+    assert isinstance(record, Place) and record.status == "estimated"
+    assert record.basis == basis
+    item = archive.get_item("doc-1971-05-01")
+    assert item is not None and item.place_refs[0].status == "estimated"
+
+
+def test_deleting_a_mention_drops_an_unreferenced_proposal() -> None:
+    archive, _ = _identified_archive()
+    _ = archive.record_identification(_proposal())
+
+    gone = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "delete")
+
+    assert isinstance(gone, GonePlace) and gone.id == "pl-seascale"
+    item = archive.get_item("doc-1971-05-01")
+    assert item is not None and item.place_refs == ()
+    places = archive.get_identity("places")
+    assert places is not None and places.record("pl-seascale") is None
+
+
+def test_deleting_a_mention_never_deletes_a_confirmed_person() -> None:
+    """The mention is the document's link, not the person: deleting it
+    removes the link and leaves the family member alone."""
+    archive, _ = _identified_archive()
+    _ = archive.record_identification(_proposal())
+
+    kept = archive.decide_identification("doc-1971-05-01", "person", "p-fern", "delete")
+
+    assert isinstance(kept, Person) and kept.id == "p-fern"
+    item = archive.get_item("doc-1971-05-01")
+    assert item is not None and item.people_refs == ()
+    people = archive.get_identity("people")
+    assert people is not None and people.record("p-fern") is not None
+
+
+def test_a_confirmed_person_stays_a_fact_when_the_mention_is_guessed() -> None:
+    """A guess is the reviewer's uncertainty about the DOCUMENT's mention; a
+    person the archive already holds as confirmed is never downgraded."""
+    archive, _ = _identified_archive()
+    _ = archive.record_identification(_proposal())
+
+    record = archive.decide_identification(
+        "doc-1971-05-01", "person", "p-fern", "estimated", {"text": "I think so", "by": "Alex", "when": "2026-10-29"}
+    )
+
+    assert isinstance(record, Person) and record.status == "confirmed"
+    item = archive.get_item("doc-1971-05-01")
+    assert item is not None and item.people_refs[0].status == "confirmed"
+
+
+def test_deleting_a_mention_keeps_a_proposal_another_item_still_names() -> None:
+    """One document's delete is not the whole archive's: a proposal another
+    item still links stays proposed for that review."""
+    archive, _ = _identified_archive()
+    _ = archive.record_identification(_proposal())
+    archive.save_item(
+        Item.from_dict(
+            _item(
+                id="doc-1972-01-01",
+                type="document",
+                title="Another letter",
+                date="1972-01-01",
+                status="catalogued",
+                places=[{"id": "pl-seascale", "status": "proposed"}],
+            )
+        )
+    )
+
+    kept = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "delete")
+
+    assert isinstance(kept, Place) and kept.status == "proposed"
+    places = archive.get_identity("places")
+    assert places is not None and places.record("pl-seascale") is not None
+    item = archive.get_item("doc-1971-05-01")
+    assert item is not None and item.place_refs == ()
+
+
+def test_pending_changes_nothing() -> None:
+    archive, store = _identified_archive()
+    _ = archive.record_identification(_proposal())
+    before = store.read("assets/doc-1971-05-01/item-2.json")
+
+    record = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "pending")
+
+    assert isinstance(record, Place) and record.status == "proposed"
+    assert store.read("assets/doc-1971-05-01/item-2.json") == before  # no new version, nothing rewritten
+
+
+def test_deciding_an_unknown_entity_returns_none() -> None:
+    archive, _ = _identified_archive()
+    assert archive.decide_identification("doc-1971-05-01", "person", "p-ghost", "attested") is None

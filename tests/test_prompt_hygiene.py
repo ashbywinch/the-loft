@@ -28,6 +28,7 @@ def test_no_prompt_module_carries_a_dated_lesson() -> None:
         "tools/memory.py",
         "pipeline/model/vlm.py",
         "pipeline/transcribe/transcripts.py",
+        "pipeline/identify.py",
     )
     date = re.compile(r"\b20\d\d-\d\d\b")
     offenders = [

@@ -269,6 +269,9 @@ sequenceDiagram
    fixes wrong rows; the adjustments are already typed).
 5. The portal (hub extension + home's three doors).
 6. Stage 8 identification flow (depends on the portal routing).
+   **Landed (2026-10-29)** — the pass (`pipeline/identify.py`), the
+   confirmation seam and the `#/identify/<item>` surface; WORK-PLAN §1.6
+   records what remains (relationships/themes/orgs).
 
 
 Each step lands with the repo's test conventions; nothing changes

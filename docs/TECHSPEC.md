@@ -944,6 +944,24 @@ failed push. The transcription-verification UI itself is a separate
 ticket (frontend, third-party review libraries); the seams it consumes
 are these endpoints + the CLI review gate's shared write path.
 
+**The identification review (stages 7–8).** A document's agreed text is read
+once for the people and places it names. `POST /api/identify/document/{id}`
+runs the pass (`pipeline/identify.py`): the model names the entities, the pass
+resolves each against the archive's identity tables — a known name links its
+record, an unknown one mints a proposed record carrying the document's own
+words — and the result lands as refs on the item (existing links kept with
+their status, new ones proposed) and proposed records in
+`people.json`/`places.json` (an unagreed record sits marked inside the table
+it will join, never in a queue of its own). The item's own `identified` flag
+keeps the document from being read again; it lives beside the refs it produced,
+so a document that pre-dates the pass is read once on its first visit.
+`POST /api/identify/decide` records one determination (attested / estimated /
+pending / delete): the item's mention and the table record move together, a
+confirmed record is never deleted by a mention's delete, and a proposal
+another item still names stays. The portal's "Identify people/places" door
+counts the documents with a transcription whose entities still wait and opens
+the surface (`#/identify/<item id>`).
+
 ### 16.16 The transcription-validation review surface (spike-resolved)
 
 **Decision: the reviewer's alignment and confidence come from a

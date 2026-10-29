@@ -24,13 +24,17 @@ class Boundary:
     opened it, the sign-off that closed it, and the reviewer's state.
 
     ``status`` is None while no gate has decided — the wire's absent status,
-    which the review surface reads as the draft state."""
+    which the review surface reads as the draft state. ``item_id`` is the
+    archive item an agreed document became (empty until the identification
+    review mints it), so re-agreeing supersedes that item rather than minting
+    a second one."""
 
     pages: list[str]
     greeting: str | None = None
     signoff: str | None = None
     status: DocumentStatus | None = None
     confirmation: Confirmation | None = None
+    item_id: str = ""
 
     def __post_init__(self) -> None:
         if self.status is not None and self.status not in DOCUMENT_STATUSES:
@@ -76,6 +80,7 @@ class Boundary:
             signoff=raw.get("signoff"),
             status=None if status is None else str(status),  # type: ignore[arg-type]  # __post_init__ checks the vocabulary
             confirmation=Confirmation.from_dict(raw),
+            item_id=str(raw.get("item_id", "")),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -90,4 +95,6 @@ class Boundary:
             entry["status"] = self.status
         if self.confirmation is not None:
             entry.update(self.confirmation.to_dict())
+        if self.item_id:
+            entry["item_id"] = self.item_id
         return entry

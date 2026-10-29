@@ -25,7 +25,9 @@ from pipeline.boundary import Boundary
 from pipeline.detection import Detection
 from pipeline.layout import Layout, build_layout
 from pipeline.registry import RegistryError
+from tools.archive import Archive
 from tools.atomic import atomic_write
+from tools.store import DiskStore
 
 
 def _confirmation(**overrides: object) -> dict[str, object]:
@@ -36,6 +38,9 @@ def _confirmation(**overrides: object) -> dict[str, object]:
         "text": "Chère Maman.",
         "status": "confirmed",
         "confirmed_at": "2026-08-14T00:00:00Z",
+        "title": "A letter to Maman",
+        "date": "1963-05-14",
+        "date_precision": "exact",
         **overrides,
     }
 
@@ -248,28 +253,74 @@ def _registered_batch(tmp_path: Path, registry: Path) -> None:
     )
 
 
-def test_record_confirmation_writes_and_updates_the_registry(tmp_path: Path) -> None:
+def _archive(tmp_path: Path) -> Archive:
+    return Archive(DiskStore(tmp_path / "archive"))
+
+
+def test_record_confirmation_mints_the_item_and_updates_the_registry(tmp_path: Path) -> None:
     registry = tmp_path / "registry"
     _registered_batch(tmp_path, registry)
     document = Boundary(pages=["p1.jpg"])
 
-    record_confirmation("adopt-0001", 1, document, "Chère Maman.", work_dir=tmp_path, registry_dir=registry)
-    record_confirmation("adopt-0001", 2, Boundary(pages=["p2.jpg"]), None, work_dir=tmp_path, registry_dir=registry)
+    item_id = record_confirmation(
+        "adopt-0001",
+        1,
+        document,
+        "Chère Maman.",
+        archive=_archive(tmp_path),
+        title="A letter to Maman",
+        date="1963-05-14",
+        date_precision="exact",
+        registry_dir=registry,
+    )
+    rejection = record_confirmation(
+        "adopt-0001", 2, Boundary(pages=["p2.jpg"]), None, archive=_archive(tmp_path), registry_dir=registry
+    )
 
+    assert (item_id, rejection) == ("doc-1963-05-14", "")
     record = json.loads((registry / "adopt-0001.json").read_text(encoding="utf-8"))
     assert record["boundaries"] == [
-        {"pages": ["p1.jpg"], "greeting": None, "signoff": None, "status": "confirmed"},
+        {
+            "pages": ["p1.jpg"],
+            "greeting": None,
+            "signoff": None,
+            "status": "confirmed",
+            "item_id": "doc-1963-05-14",
+        },
         {"pages": ["p2.jpg"], "greeting": None, "signoff": None, "status": "rejected"},
     ]
-    assert (tmp_path / "adopt-0001" / "ocr-confirmed" / "doc-01.txt").read_text(encoding="utf-8") == "Chère Maman."
-    assert not (tmp_path / "adopt-0001" / "ocr-confirmed" / "doc-02.txt").exists()  # rejected leaves no text
+    transcription = tmp_path / "archive" / "assets" / "doc-1963-05-14" / "transcription.txt"
+    assert transcription.read_text(encoding="utf-8") == "Chère Maman."
+    assert (tmp_path / "archive" / "assets" / "doc-1963-05-14" / "item.json").is_file()
 
 
 def test_record_confirmation_replaces_by_pages(tmp_path: Path) -> None:
     registry = tmp_path / "registry"
     _registered_batch(tmp_path, registry)
-    record_confirmation("adopt-0001", 1, Boundary(pages=["p1.jpg"]), "v1", work_dir=tmp_path, registry_dir=registry)
-    record_confirmation("adopt-0001", 1, Boundary(pages=["p1.jpg"]), "v2", work_dir=tmp_path, registry_dir=registry)
+    archive = _archive(tmp_path)
+    first = Boundary(pages=["p1.jpg"])
+    record_confirmation(
+        "adopt-0001",
+        1,
+        first,
+        "v1",
+        archive=archive,
+        title="A letter",
+        date="1963-05-14",
+        date_precision="exact",
+        registry_dir=registry,
+    )
+    record_confirmation(
+        "adopt-0001",
+        1,
+        first,
+        "v2",
+        archive=archive,
+        title="A letter",
+        date="1963-05-14",
+        date_precision="exact",
+        registry_dir=registry,
+    )
     record = json.loads((registry / "adopt-0001.json").read_text(encoding="utf-8"))
     assert len(record["boundaries"]) == 1  # same pages → replaced, not duplicated
 
@@ -281,9 +332,17 @@ def test_record_confirmation_rejects_unknown_batch_without_writing(tmp_path: Pat
     registry.mkdir()
     with pytest.raises(RegistryError):
         record_confirmation(
-            "adopt-9999", 1, Boundary(pages=["p1.jpg"]), "text", work_dir=tmp_path, registry_dir=registry
+            "adopt-9999",
+            1,
+            Boundary(pages=["p1.jpg"]),
+            "text",
+            archive=_archive(tmp_path),
+            title="A letter",
+            date="1963-05-14",
+            date_precision="exact",
+            registry_dir=registry,
         )
-    assert not (tmp_path / "adopt-9999" / "ocr-confirmed").exists()  # nothing written for the unknown batch
+    assert not (tmp_path / "archive").exists()  # nothing minted for the unknown batch
 
 
 def test_safe_page_name_allows_phone_duplicate_suffixes(tmp_path: Path) -> None:

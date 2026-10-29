@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "../../views/identify.js";
-import { documentsToIdentify } from "../../views/home.js";
+import { documentsToIdentify } from "../../data.js";
 
 const STATE = {
   items: [
@@ -206,7 +206,7 @@ describe("the identification review — one document's people and places", () =>
   });
 });
 
-describe("the identification door (UR2)", () => {
+describe("the identification queue (UR2)", () => {
   const documentItem = (fields) => ({
     id: "doc-1971-05-01",
     type: "document",
@@ -216,20 +216,21 @@ describe("the identification door (UR2)", () => {
     ...fields,
   });
 
-  it("counts a document the pass has not read", () => {
-    const door = documentsToIdentify({ items: [documentItem({})] });
-    expect(door).toEqual({ count: 1, href: "#/identify/doc-1971-05-01" });
+  it("lists a document the pass has not read", () => {
+    expect(documentsToIdentify({ items: [documentItem({})] }).map((item) => item.id)).toEqual([
+      "doc-1971-05-01",
+    ]);
   });
 
-  it("counts a read document whose mentions still wait", () => {
-    const door = documentsToIdentify({
+  it("lists a read document whose mentions still wait", () => {
+    const waiting = documentsToIdentify({
       items: [documentItem({ identified: true, people: [{ id: "p-fern", status: "proposed" }] })],
     });
-    expect(door).toEqual({ count: 1, href: "#/identify/doc-1971-05-01" });
+    expect(waiting.map((item) => item.id)).toEqual(["doc-1971-05-01"]);
   });
 
   it("is settled when every mention is decided", () => {
-    const door = documentsToIdentify({
+    const waiting = documentsToIdentify({
       items: [
         documentItem({
           identified: true,
@@ -238,11 +239,11 @@ describe("the identification door (UR2)", () => {
         }),
       ],
     });
-    expect(door).toBeNull();
+    expect(waiting).toEqual([]);
   });
 
-  it("never routes to an item with no agreed transcription", () => {
-    expect(documentsToIdentify({ items: [documentItem({ type: "photo", transcription: "" })] })).toBeNull();
-    expect(documentsToIdentify({ items: [] })).toBeNull();
+  it("never lists an item with no agreed transcription", () => {
+    expect(documentsToIdentify({ items: [documentItem({ type: "photo", transcription: "" })] })).toEqual([]);
+    expect(documentsToIdentify({ items: [] })).toEqual([]);
   });
 });

@@ -84,6 +84,36 @@ export function pendingImports(state) {
   return (state.imports ?? []).filter((s) => s.status === "pending");
 }
 
+/** The portal's rows item: how many pages of the batches wait on the row
+ *  check (`/api/sync/batches` carries the page names, not a count). */
+export function pagesToCheck(batches) {
+  return (batches ?? []).reduce(
+    (count, batch) => count + (batch.status === "confirmed" ? 0 : (batch.pages_pending ?? []).length),
+    0,
+  );
+}
+
+/** The portal's transcripts item: the documents still awaiting the review
+ *  gate — a boundary not yet confirmed, in a batch not yet confirmed. */
+export function documentsToReview(batches) {
+  return (batches ?? [])
+    .filter((batch) => batch.status !== "confirmed")
+    .flatMap((batch) => batch.boundaries ?? [])
+    .filter((boundary) => boundary.status !== "confirmed").length;
+}
+
+/** The documents whose people and places still wait on the family (stage 8):
+ *  a document with a transcription that the identification pass has not read,
+ *  or that has a mention still proposed. The review hub lists them; the
+ *  front page only counts them behind its single review door. */
+export function documentsToIdentify(state) {
+  return (state.items ?? []).filter((item) => {
+    if (item.type !== "document" || !(item.transcription || "").trim()) return false;
+    const refs = [...(item.people ?? []), ...(item.places ?? [])];
+    return !item.identified || refs.some((ref) => ref.status === "proposed");
+  });
+}
+
 /** The signed-in identity — state.me comes from /api/auth/me at boot (the
  *  capture server mints it from a verified Google account; the static host
  *  has no API, so me is null and the archive stays browsable). The narrator

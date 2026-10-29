@@ -484,7 +484,7 @@ describe("the unfinished import session (user: the front page shows the session,
     expect(main.textContent).not.toContain("The document import");
   });
 
-  it("the rows door counts the pages waiting on a check and opens the first one's page", async () => {
+  it("one review door names the work waiting and opens the hub", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -504,65 +504,16 @@ describe("the unfinished import session (user: the front page shows the session,
     const main = document.createElement("main");
     render(main, {}, STATE);
     await vi.waitFor(() => expect(main.querySelector(".review-card")).not.toBeNull());
-    const card = main.querySelector(".review-card");
-    expect(card.querySelector(".review-card-title").textContent).toBe("Check the rows");
-    expect(card.querySelector(".review-card-note").textContent).toBe("1 page to check");
-    expect(card.getAttribute("href")).toBe("#/review/batch-1/0/1"); // the page, not just the batch
+    const cards = main.querySelectorAll(".review-card");
+    expect(cards).toHaveLength(1); // one door, not one per kind of work
+    const card = cards[0];
+    expect(card.querySelector(".review-card-title").textContent).toBe("Review");
+    expect(card.querySelector(".review-card-note").textContent).toBe("1 page to check · 1 document to review");
+    expect(card.getAttribute("href")).toBe("#/review");
     vi.unstubAllGlobals();
   });
 
-  it("each item is its own door — rows, transcripts and identities", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({
-          batches: [
-            {
-              batch_id: "batch-1",
-              status: "pending",
-              boundaries: [{ status: "draft", pages: ["p1.jpg"] }],
-              pages_pending: ["p1.jpg"],
-            },
-          ],
-        }),
-      })),
-    );
-    const main = document.createElement("main");
-    render(
-      main,
-      {},
-      pendingState(
-        [{ id: "import-documents", title: "The document import", status: "pending" }],
-        [{ id: "p-new", name: "A person", status: "proposed" }],
-        null,
-      ),
-    );
-    await vi.waitFor(() => expect(main.querySelectorAll(".review-card").length).toBe(3));
-    const cards = [...main.querySelectorAll(".review-card")];
-    const titles = cards.map((card) => card.querySelector(".review-card-title").textContent);
-    expect(titles).toEqual(["Check the rows", "Review the transcripts", "Identify people"]);
-    expect(cards[0].querySelector(".review-card-note").textContent).toBe("1 page to check");
-    expect(cards[1].querySelector(".review-card-note").textContent).toBe("1 document to review");
-    expect(cards[2].querySelector(".review-card-note").textContent).toBe("1 person to confirm");
-    expect(cards[2].getAttribute("href")).toBe("#/import/import-documents");
-    vi.unstubAllGlobals();
-  });
-
-  it("no portal when nothing is pending", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: true, json: async () => ({ batches: [] }) })),
-    );
-    const main = document.createElement("main");
-    render(main, {}, STATE);
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(main.querySelector(".review-card")).toBeNull();
-    vi.unstubAllGlobals();
-  });
-
-  it("the identification door counts the documents whose entities wait", async () => {
+  it("the review door counts the identification work too", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ ok: true, json: async () => ({ batches: [] }) })),
@@ -585,9 +536,21 @@ describe("the unfinished import session (user: the front page shows the session,
     });
     await vi.waitFor(() => expect(main.querySelector(".review-card")).not.toBeNull());
     const card = main.querySelector(".review-card");
-    expect(card.querySelector(".review-card-title").textContent).toBe("Identify people/places");
     expect(card.querySelector(".review-card-note").textContent).toBe("1 document to identify");
-    expect(card.getAttribute("href")).toBe("#/identify/doc-1971-05-01");
+    expect(card.getAttribute("href")).toBe("#/review");
+    vi.unstubAllGlobals();
+  });
+
+  it("no portal when nothing is pending", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, json: async () => ({ batches: [] }) })),
+    );
+    const main = document.createElement("main");
+    render(main, {}, STATE);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(main.querySelector(".review-card")).toBeNull();
     vi.unstubAllGlobals();
   });
 });

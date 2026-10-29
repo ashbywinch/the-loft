@@ -1479,6 +1479,38 @@ describe("the review hub's portal sections", () => {
     expect(main.textContent).toContain("2 pages to check");
     expect(main.textContent).toContain("A pile");
   });
+
+  it("lists the documents whose people and places wait, and opens the identification surface", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ batches: [] }) })),
+    );
+    const state = {
+      items: [
+        {
+          id: "doc-1971-05-01",
+          type: "document",
+          title: "A letter from Fern",
+          transcription: "Dear Fern,",
+          people: [],
+          places: [],
+        },
+      ],
+      people: [],
+      imports: [],
+    };
+    const main = document.createElement("main");
+    render(main, {}, state);
+    await vi.waitFor(() => expect(main.textContent).toContain("Identify people/places"));
+    expect(main.textContent).toContain("A letter from Fern");
+    expect(main.textContent).toContain("Read for people and places");
+    const card = [...main.querySelectorAll(".rv-card")].find((node) =>
+      node.textContent.includes("A letter from Fern"),
+    );
+    expect(card).toBeTruthy();
+    card.click();
+    expect(location.hash).toBe("#/identify/doc-1971-05-01");
+  });
 });
 
 describe("confirming a document asks for its own facts (an item needs a title and a date)", () => {

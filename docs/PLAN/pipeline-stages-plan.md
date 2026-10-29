@@ -122,8 +122,8 @@ no kind, no target. The plan:
 
 ## The portal — "work that needs doing"
 
-One list on the home screen (the review hub) enumerates every pending
-human item with counts, and each opens the right surface:
+One page (the review hub, `#/review`) enumerates every pending human item
+with counts, and each opens the right surface:
 
 | Portal item | Count shown | Opens |
 |---|---|---|
@@ -131,12 +131,15 @@ human item with counts, and each opens the right surface:
 | Review the transcripts | "2 documents need review" | the review gate (2) |
 | Identify people/places | "4 people, 1 place proposed" | the identification review (3) |
 
-`home.js` currently shows one promo door with "N documents + N imports +
-N drafts to review" (the review hub's own batches, imports and drafts).
-That promo extends to three doors — one per portal item above — each
-with its own count: the rows-to-check count comes from the pages whose
-rows have not been through the user's check; the review count already
-exists; the identification count comes from the proposed-entity queue.
+The front page carries ONE door to that page — "Review", naming the work
+waiting (pages to check · documents to review · documents to identify ·
+people to confirm · unfinished stories) — never a card per item: the
+per-item cards duplicated the hub's list and drifted from it (the portal's
+own third item, identification, was missing from the hub while a stale
+import-session card sat on the home page). The counts come from `app/data.js`
+(`pagesToCheck`, `documentsToReview`, `documentsToIdentify`,
+`proposedPeople`, `drafts`); the hub adds the import sessions and the
+unfinished stories, which ride the same queue (PRD §9 F10).
 
 ## Design task — the non-per-page artefacts
 

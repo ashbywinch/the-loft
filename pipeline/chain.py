@@ -36,7 +36,13 @@ from document.page_size import PageSize
 from document.row import Row
 from document.words import Words
 from pipeline.api.sync import record_confirmation
-from pipeline.batch_record import STATUS_PENDING, BatchRecord
+from pipeline.batch_record import (
+    STATUS_CONFIRMED,
+    STATUS_PENDING,
+    STATUS_PROCESSING,
+    STATUS_REVIEW,
+    BatchRecord,
+)
 from pipeline.boundary import Boundary
 from pipeline.classify import route, run_classify
 from pipeline.detect.reader import Reading, reading_for_page
@@ -81,10 +87,6 @@ AMBIGUITY_FLOOR = 5  # ...and it must clear this many strong words outright
 # the thinking-disable/budget params are ignored by the endpoint, so the
 # model must simply be one that answers.
 GUESS_MODEL = "dynamic/image"
-
-STATUS_PROCESSING = "importing"
-STATUS_REVIEW = "review"
-STATUS_CONFIRMED = "confirmed"
 
 
 def _standing_names(records: list[dict[str, Any]], with_aliases: bool = False) -> list[str]:
@@ -295,8 +297,12 @@ class Batch:
         self.paths = BatchPaths(batch_work=work_dir / batch_id, batch_id=batch_id)
 
     def update_status(self, record: BatchRecord, status: str) -> None:
-        """Stamp the registry record's status and persist it."""
+        """Stamp the registry record's status and persist it. A processing
+        pass stamps when it started — the worker's sweep uses that to tell a
+        live pass from one that was killed."""
         record.status = status
+        if status == STATUS_PROCESSING:
+            record.started_at = datetime.now(UTC).isoformat(timespec="seconds")
         store = PipelineStore(self.registry_dir)
         store.write(f"{self.batch_id}.json", json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n")
 

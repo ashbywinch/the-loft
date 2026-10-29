@@ -14,6 +14,7 @@ from PIL import Image
 
 from document.word import Word
 from document.words import Words
+from pipeline.batch_record import STATUS_PROCESSING, BatchRecord
 from pipeline.chain import (
     BatchRun,
     Classification,
@@ -580,3 +581,19 @@ def test_a_failed_pass_puts_the_batch_back_in_the_queue(tmp_path: Path) -> None:
 
     saved = json.loads((registry / f"{batch}.json").read_text(encoding="utf-8"))
     assert saved["status"] == "pending"
+
+
+def test_a_processing_pass_stamps_when_it_started(tmp_path: Path) -> None:
+    """The worker's sweep tells a live pass from a killed one by this stamp —
+    a pass that is killed cannot reset its own record."""
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    record = BatchRecord(batch_id="adopt-0001", path=tmp_path)
+
+    BatchRun(
+        "adopt-0001", registry_dir=registry, work_dir=tmp_path / "work", archive_dir=tmp_path / "archive"
+    ).update_status(record, STATUS_PROCESSING)
+
+    saved = json.loads((registry / "adopt-0001.json").read_text(encoding="utf-8"))
+    assert saved["status"] == "importing"
+    assert saved["started_at"]

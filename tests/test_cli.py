@@ -37,3 +37,11 @@ def test_work_is_wired_to_the_scan_pickup() -> None:
     args = build_parser().parse_args(["work", "--scan-area", "/tmp/scans", "--watch", "30"])
     assert args.scan_area == "/tmp/scans"
     assert args.watch == 30.0
+
+
+def test_work_can_requeue_one_batch_by_id() -> None:
+    """A legacy `review` batch (or one a dead pass left behind) re-enters the
+    queue explicitly; a plain sweep requeues nothing."""
+    args = build_parser().parse_args(["work", "--requeue", "adopt-20260813-201004"])
+    assert args.requeue == "adopt-20260813-201004"
+    assert build_parser().parse_args(["work"]).requeue == ""

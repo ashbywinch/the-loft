@@ -2122,11 +2122,6 @@ summary:focus-visible {
   inset: 0;
   pointer-events: none;
 }
-.rv-drawing .rv-draw {
-  pointer-events: auto;
-  touch-action: none;
-  cursor: crosshair;
-}
 .rv-stroke {
   fill: none;
   stroke: #e8b400;
@@ -2138,66 +2133,53 @@ summary:focus-visible {
 .rv-stroke--live {
   stroke-dasharray: 18 12;
 }
-.rv-bands {
+
+/* ---- the row review (docs/PLAN/row-review-ux.md): one page, the pipeline's
+   own row tints, and the reviewer's yellow lines over them. The tints are
+   RowTint records painted as SVG; the strokes are a highlighter, 11 screen px
+   at any zoom (--rv-inv is the layer's 1/scale). ---- */
+.rv-rows {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.rv-rows .rv-imgpane {
+  flex: 1 1 auto;
+  border-right: 0;
+}
+.rv-rows .rv-imgbox {
+  cursor: crosshair; /* the page is the tool: one finger draws */
+}
+.rv-tints,
+.rv-rows .rv-draw {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
 }
-.rv-rowband {
-  position: absolute;
-  border: 2px solid rgba(40, 110, 60, 0.75);
-  border-radius: 4px;
-  background: rgba(40, 140, 70, 0.14);
+.rv-tint path {
+  stroke: none;
 }
-.rv-rownum {
-  position: absolute;
-  left: -6px;
-  top: -22px;
-  min-width: 34px;
-  padding: 2px 6px;
-  border-radius: 10px;
-  background: rgba(40, 110, 60, 0.92);
-  color: #fff;
-  font-size: 20px;
-  line-height: 1.4;
-  text-align: center;
+.rv-rows .rv-stroke {
+  stroke: #fad21e; /* the pipeline's stroke yellow */
+  stroke-width: calc(11 * var(--rv-inv, 1) * 1px);
+  opacity: 0.62;
+  mix-blend-mode: multiply;
 }
-.rv-rowtools__status {
-  align-self: center;
-  font-size: 11px;
-  opacity: 0.75;
+.rv-rows .rv-stroke--live {
+  stroke-dasharray: none;
 }
-
-.rv-rowtools.is-failed .rv-rowtools__status {
-  color: #b3261e;
-  opacity: 1;
-}
-
-.rv-rowtools.is-busy .rv-rowtools__status::after {
-  content: " …";
-}
-
-.rv-rowtools {
-  position: absolute;
-  z-index: 5;
-  left: 12px;
-  bottom: 12px;
+.rv-rowbar {
+  flex: 0 0 auto;
   display: flex;
-  flex-wrap: wrap; /* four items on a phone: wrap upward rather than run off the edge */
-  align-items: center;
-  gap: 8px;
-  max-width: calc(100% - 24px);
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: var(--card);
+  border-top: 1px solid var(--line);
 }
-.rv-rowtools .btn {
-  font-size: 20px;
-  padding: 10px 14px;
-}
-.rv-rowtools__draw.is-on {
-  background: var(--accent);
-  color: var(--on-accent);
-}
-.rv-rowtools.is-busy {
-  opacity: 0.6;
+.rv-rowbar .rv-btn--primary {
+  flex: 1;
+  min-height: var(--control-h);
 }
 
 /* Phone portrait: the rotate prompt instead of the surface — and the

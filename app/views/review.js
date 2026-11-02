@@ -23,14 +23,7 @@
 import { el } from "../ui.js";
 import { navigate } from "../router.js";
 import { gateScreen } from "../gate.js";
-import {
-  documentsToIdentify,
-  drafts as draftItems,
-  isMine,
-  me,
-  pendingImports,
-  proposedPeople,
-} from "../data.js";
+import { documentsToIdentify, drafts as draftItems, isMine, me, pendingImports, proposedPeople } from "../data.js";
 
 const OUTBOX_KEY = "loft-review-outbox";
 const EDITS_KEY = "loft-review-edits";
@@ -480,13 +473,28 @@ async function renderBatchList(main, state) {
     const list = el("div", { class: "rv-list" });
     for (const batch of toCheck) {
       const count = batch.pages_pending.length;
-      const card = el("button", { class: "rv-card", onclick: () => navigate(`review/${batch.batch_id}`) }, [
-        el("div", { class: "rv-card-main" }, [
-          el("div", { class: "rv-card-title" }, batch.label || batch.batch_id),
-          el("div", { class: "rv-card-sub" }, `${count} page${count === 1 ? "" : "s"} to check`),
-        ]),
-        el("span", { class: "rv-chip" }, "Rows to check"),
-      ]);
+      // the card opens the first page still waiting — the row screen works
+      // one page at a time (docs/PLAN/row-review-ux.md)
+      const first = batch.pages_pending[0];
+      const docIndex = (batch.boundaries || []).findIndex((boundary) => (boundary.pages || []).includes(first));
+      const pageIndex = (batch.boundaries?.[docIndex]?.pages || []).indexOf(first);
+      const card = el(
+        "button",
+        {
+          class: "rv-card",
+          onclick: () =>
+            docIndex >= 0 && pageIndex >= 0
+              ? navigate(`#/rows/${batch.batch_id}/${docIndex}/${pageIndex}`)
+              : navigate(`review/${batch.batch_id}`),
+        },
+        [
+          el("div", { class: "rv-card-main" }, [
+            el("div", { class: "rv-card-title" }, batch.label || batch.batch_id),
+            el("div", { class: "rv-card-sub" }, `${count} page${count === 1 ? "" : "s"} to check`),
+          ]),
+          el("span", { class: "rv-chip" }, "Rows to check"),
+        ],
+      );
       list.append(card);
     }
     main.append(list);
@@ -543,9 +551,7 @@ async function renderBatchList(main, state) {
   // document the pass has not read is listed here too: opening it runs the
   // pass once.
   if (toIdentify.length) {
-    main.append(
-      el("h2", { class: "rv-section-title" }, "Identify people/places — the names a document carries"),
-    );
+    main.append(el("h2", { class: "rv-section-title" }, "Identify people/places — the names a document carries"));
     const list = el("div", { class: "rv-list" });
     for (const item of toIdentify) {
       const refs = [...(item.people ?? []), ...(item.places ?? [])];
@@ -1220,18 +1226,6 @@ export function strokeAt(strokes, point, tolerance) {
   return best;
 }
 
-/** How near a tap must land to delete a drawn line: half the page's own
- *  line height (a comfortable finger target), floored so a coarse layout
- *  still gives a usable one. */
-export function rowDeleteTolerance(layout, pageHeight) {
-  const heights = (layout?.lines || [])
-    .filter((l) => l.box)
-    .map((l) => l.box[3] - l.box[1])
-    .sort((a, b) => a - b);
-  const line = heights.length ? heights[Math.floor(heights.length / 2)] : pageHeight / 60;
-  return Math.max(line / 2, 12);
-}
-
 /** The persisted drawn lines (normalised) → original-px strokes for drawing
  *  back on a reopened page. */
 export function strokesFromAdjustments(adjustments, size) {
@@ -1317,105 +1311,6 @@ export function widthFitRect(paneW, paneH, rect) {
 }
 
 /** One SVG polyline per stroke, in page pixels (the layer's space). */
-function drawStrokeLayer(session, svg, strokes, live) {
-  svg.replaceChildren();
-  strokes.forEach((points) => {
-    if (points.length < 2) return;
-    const poly = el("polyline", {
-      class: "rv-stroke" + (live ? " rv-stroke--live" : ""),
-      points: points.map((p) => `${p.x},${p.y}`).join(" "),
-    });
-    svg.append(poly);
-  });
-}
-
-/** A client point → the page's own coordinates: through the view's scale
- *  and the display rotation (the inverse of the on-screen transform, so a
- *  drawn line lands where the reviewer's finger pointed). */
-function strokePoint(session, imgBox, clientX, clientY) {
-  const rect = imgBox.getBoundingClientRect();
-  const s = paneScale(session);
-  const x = session.view.x + (clientX - rect.left) / s;
-  const y = session.view.y + (clientY - rect.top) / s;
-  const f = displayFrame(viewRotation(session), session.imgSize.w, session.imgSize.h);
-  return displayToOriginal(f, x, y);
-}
-
-/** The corrected rows as tinted bands with their numbers — the reviewer
- *  sees what their lines made. Page-px, so the layer's transform places
- *  them like the line boxes. */
-function renderRowBands(session) {
-  const layer = session.bandLayer;
-  if (!layer) return;
-  layer.replaceChildren();
-  (session.adjustedRows || []).forEach((row, i) => {
-    const band = row.band;
-    const box = el("div", { class: "rv-rowband" });
-    box.style.left = `${band.x0}px`;
-    box.style.top = `${band.y0}px`;
-    box.style.width = `${band.x1 - band.x0}px`;
-    box.style.height = `${band.y1 - band.y0}px`;
-    box.append(el("span", { class: "rv-rownum" }, [String(row.number ?? i + 1)]));
-    layer.append(box);
-  });
-  session.rowTools?.classList.toggle("is-set", (session.adjustedRows || []).length > 0);
-}
-/** The drawn lines → the backend's correction (`Rows.from_words` over the
- *  page's persisted words, an incomplete set merging with the draft rows);
- *  the returned rows render as bands. Called on every finger-lift, so the
- *  reviewer sees immediately whether the line they drew did what they
- *  meant. A refusal (no words persisted, a malformed body) is surfaced,
- *  never silent. */
-async function syncRowAdjustments(session, note = "") {
-  const size = session.imgSize;
-  // the page is the session's own position — never a stale local
-  const page = session.batch.documents[session.docIndex]?.pages[session.pageIndex];
-  if (!size || !page) return;
-  const body = rowAdjustmentBody(session.strokes, size);
-  session.rowTools?.classList.add("is-busy");
-  try {
-    const res = await fetch(
-      `/api/sync/batch/${encodeURIComponent(session.batch.batchId)}/page/${encodeURIComponent(page)}/row-adjustments`,
-      { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) },
-    );
-    const payload = await res.json();
-    if (!res.ok) throw new Error(payload?.error || `row adjustment rejected (${res.status})`);
-    session.adjustedRows = payload.rows;
-    // the write IS the check (`BatchReadings.page_status`: the page's two
-    // check files on disk) — the page leaves the "Check the rows" queue
-    session.rowChecked = true;
-    // the server validates the traces too (`Rows.validate`): a line that
-    // caught no writing, or ink it left in no row, is named to the person
-    // who drew it — the drawing is kept, so it can be corrected in place
-    const violation = (payload.violations || [])[0];
-    setRowStatus(session, violation || note, Boolean(violation));
-    renderRowBands(session);
-  } catch (error) {
-    console.error("review: the row correction failed — the page is unchanged", error);
-    setRowStatus(session, String(error?.message || error), true);
-  } finally {
-    session.rowTools?.classList.remove("is-busy");
-  }
-}
-
-/** The row tools' one line of state at rest: a page whose check is recorded
- *  says so (it has left the queue), a page with drawn lines counts them,
- *  and an unchecked page with no lines says nothing. */
-export function rowToolsNote(strokes, checked) {
-  const drawn = (strokes || []).length;
-  if (drawn) return `${drawn} line${drawn === 1 ? "" : "s"}`;
-  return checked ? "checked" : "";
-}
-
-/** The toolbar's one line of state: the check's note, or how many lines are
- *  drawn, or why the last one did not take. */
-function setRowStatus(session, message, failed = false) {
-  const status = session.rowTools?.querySelector(".rv-rowtools__status");
-  if (!status) return;
-  status.textContent = message || rowToolsNote(session.strokes, session.rowChecked);
-  session.rowTools?.classList.toggle("is-failed", failed);
-}
-
 /** The wheel's two behaviors: PAN when the view shows a slice of the
  *  writing (the transcript-follow works), ZOOM when the view shows ~all
  *  of the writing's vertical extent — the degenerate state where the pan
@@ -1540,70 +1435,7 @@ function openViewer(session, imgBox) {
       // the image "wouldn't let me scroll up at all" (user).
       session.contentTop = bandAnchor(layout) - bandMargin(layout);
     }
-    // The row tools + the stroke layer: the reviewer's drawn row lines (the
-    // correction's input — `Rows.from_words` groups the page's words by
-    // them, merging an incomplete set with the draft rows) live in a
-    // page-px SVG above the image; the corrected rows tint the page
-    // beneath. The mode is explicit: panning and drawing never fight for
-    // the same finger.
-    session.drawRows = false;
-    session.strokes = [];
-    session.adjustedRows = doc.adjusted_rows?.[page]?.rows || null;
-    // the drafts payload carries the page's check only when BOTH check files
-    // are on disk (`_page_review_state`), which is exactly the status read
-    session.rowChecked = Boolean(doc.adjusted_rows?.[page]);
-    const imageSize = { w: img.naturalWidth, h: img.naturalHeight };
-    const drawLayer = el("svg", { class: "rv-draw", viewBox: `0 0 ${imageSize.w} ${imageSize.h}` });
-    layer.append(drawLayer);
-    session.drawLayer = drawLayer;
-    const bandLayer = el("div", { class: "rv-bands" });
-    layer.append(bandLayer);
-    session.bandLayer = bandLayer;
-    const toggleDraw = el("button", { class: "btn rv-rowtools__draw", type: "button" }, ["Draw rows"]);
-    toggleDraw.addEventListener("click", () => {
-      session.drawRows = !session.drawRows;
-      imgBox.classList.toggle("rv-drawing", session.drawRows);
-      toggleDraw.classList.toggle("is-on", session.drawRows);
-      setRowStatus(session, session.drawRows ? "draw over a row that is wrong; tap a line to delete it" : "");
-    });
-    // "Clear lines" undoes the drawing; "The rows are right" records the
-    // check with whatever is drawn (none at all, when the draft rows are
-    // already correct — UR1.4: whether lines are needed is the reviewer's
-    // call). Both write the correction, so both leave the page checked.
-    const clearBtn = el("button", { class: "btn rv-rowtools__clear", type: "button" }, ["Clear lines"]);
-    clearBtn.addEventListener("click", () => {
-      session.strokes = [];
-      drawStrokeLayer(session, session.drawLayer, [], false);
-      session.adjustedRows = null;
-      renderRowBands(session);
-      syncRowAdjustments(session); // no lines: the draft rows are the rows
-    });
-    const rightBtn = el("button", { class: "btn rv-rowtools__right", type: "button" }, ["Rows are right"]);
-    rightBtn.addEventListener("click", () => {
-      // the check as its own act: keep what is drawn, record the check even
-      // when nothing is — the page leaves the "Check the rows" queue
-      syncRowAdjustments(session);
-    });
-    session.rowTools = el("div", { class: "rv-rowtools" }, [
-      toggleDraw,
-      el("span", { class: "rv-rowtools__status" }, []),
-      clearBtn,
-      rightBtn,
-    ]);
-    // the toolbar sits inside the pane: a press on it is the toolbar's,
-    // never the pane's (the pane's click would re-render the viewer and
-    // reset the drawing mode the reviewer just entered)
-    for (const type of ["pointerdown", "click"]) {
-      session.rowTools.addEventListener(type, (e) => e.stopPropagation());
-    }
-    imgBox.append(session.rowTools);
-    // a reopened page shows what the reviewer drew and the rows it made —
-    // and holds them, so a tap can still delete them
-    session.strokes = strokesFromAdjustments(doc.row_adjustments?.[page], imageSize);
-    drawStrokeLayer(session, drawLayer, session.strokes, false);
-    renderRowBands(session);
-    setRowStatus(session, "");
-    renderRowBands(session);
+
     // Restore the resume position: the scroll, image view,
     // selected line, and read rotation from the last session on this page.
     const saved = loadResumePosition(batch.batchId, page);
@@ -1681,15 +1513,9 @@ function openViewer(session, imgBox) {
   const pointers = new Map();
   let dragStart = null;
   let pinchStart = null;
-  let drawing = null; // the stroke in progress (page-px points)
   const onMove = (e) => {
     if (!pointers.has(e.pointerId) || !session.view) return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (drawing && pointers.size === 1) {
-      drawing.push(strokePoint(session, imgBox, e.clientX, e.clientY));
-      drawStrokeLayer(session, session.drawLayer, [...session.strokes, drawing], true);
-      return;
-    }
     if (pointers.size === 1 && dragStart) {
       const s = paneScale(session);
       session.view.x = dragStart.view.x - (e.clientX - dragStart.x) / s;
@@ -1713,27 +1539,6 @@ function openViewer(session, imgBox) {
     }
   };
   const onUp = (e) => {
-    if (drawing && pointers.size === 1) {
-      // the stroke ends with this finger. A line merges with the draft
-      // rows on the spot; a tap (too short to be a line) instead deletes
-      // the line it lands on — the reviewer's wrong line goes, and they
-      // redraw it immediately.
-      const stroke = drawing;
-      drawing = null;
-      let changed = true;
-      if (rowAdjustmentLine(stroke, session.imgSize)) {
-        session.strokes.push(stroke);
-      } else {
-        const at = strokeAt(session.strokes, stroke[0], rowDeleteTolerance(session.layout, session.imgSize.h));
-        if (at === null)
-          changed = false; // a tap on no line: nothing to do
-        else session.strokes.splice(at, 1);
-      }
-      if (changed) {
-        drawStrokeLayer(session, session.drawLayer, session.strokes, false);
-        syncRowAdjustments(session);
-      }
-    }
     pointers.delete(e.pointerId);
     dragStart = null;
     pinchStart = null;
@@ -1746,18 +1551,12 @@ function openViewer(session, imgBox) {
   const onDown = (e) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
     pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (session.drawRows && pointers.size === 1) {
-      // draw mode: one finger draws a row line; panning yields to it
-      drawing = [strokePoint(session, imgBox, e.clientX, e.clientY)];
-      dragStart = null;
-      pinchStart = null;
-    } else if (pointers.size === 1) {
+    if (pointers.size === 1) {
       dragStart = { view: { ...session.view }, x: e.clientX, y: e.clientY };
       pinchStart = null;
     } else if (pointers.size === 2) {
       const [a, b] = [...pointers.values()];
       dragStart = null;
-      drawing = null; // a second finger is a pinch, never a stroke
       pinchStart = { dist: Math.hypot(a.x - b.x, a.y - b.y) };
     }
     window.addEventListener("pointermove", onMove);

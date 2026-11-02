@@ -47,6 +47,7 @@ from pipeline.model.unsure_word import UnsureWord
 from pipeline.model.vlm import orientation_report, selfreport_words
 from pipeline.page_image import PageImage
 from pipeline.registry import load_batch, record_path, set_status
+from pipeline.rows.render import row_tints
 from pipeline.rows.rows import Rows
 from pipeline.rows_reading import RowsReading
 from pipeline.store import PipelineStore
@@ -449,7 +450,7 @@ def apply_row_adjustments(
     atomic_write(readings.adjusted_rows_path(page), json.dumps(Rows.to_dict(rows), ensure_ascii=False, indent=1) + "\n")
     if adjustments.lines:
         _ = set_status(batch_id, STATUS_PENDING, registry_dir)
-    return RowCorrection(rows=rows, violations=violations)
+    return RowCorrection(rows=rows, violations=violations, tints=row_tints(rows))
 
 
 def safe_page_name(page: str) -> bool:
@@ -462,12 +463,14 @@ def safe_page_name(page: str) -> bool:
 @dataclass(frozen=True)
 class PageReviewState:
     """A batch's persisted per-page review data: the reviewer's drawn
-    corrections and the validated reading layouts, each keyed by page."""
+    corrections, the validated reading layouts, and the tints the row screen
+    paints, each keyed by page."""
 
     layouts: dict[str, Any]
     layout_errors: dict[str, Any]
     adjustments: dict[str, Any]
     adjusted_rows: dict[str, Any]
+    tints: dict[str, Any]
 
 
 def _page_review_state(readings: BatchReadings, pages: list[str]) -> PageReviewState:
@@ -478,12 +481,17 @@ def _page_review_state(readings: BatchReadings, pages: list[str]) -> PageReviewS
     else the strip-era layout.json — validated BEFORE serving (fail-fast,
     2026-08-17: a degenerate or out-of-image box must NEVER reach the
     review surface — the page gets no layout, its text still shows, and
-    a loud marker instead of wrong boxes)."""
+    a loud marker instead of wrong boxes).
+
+    The tints are the rows the screen shows, as `RowTint` records: the
+    correction's rows when one was drawn, else the reading's rows. The screen
+    paints those rectangles; it never re-derives the colour or the geometry."""
     guess_dir = readings.guess_dir
     layouts: dict[str, Any] = {}
     layout_errors: dict[str, Any] = {}
     adjustments: dict[str, Any] = {}
     adjusted_rows: dict[str, Any] = {}
+    tints: dict[str, Any] = {}
     for page in pages:
         drawn_path = readings.adjustments_path(page)
         corrected_path = readings.adjusted_rows_path(page)
@@ -492,9 +500,12 @@ def _page_review_state(readings: BatchReadings, pages: list[str]) -> PageReviewS
             adjusted_rows[page] = json.loads(corrected_path.read_text(encoding="utf-8"))
         rows_path = guess_dir / Path(page).with_suffix(f".{ROWS_JSON}")
         if rows_path.exists():
-            # the reading's rows — the object-model Phase-1 source;
+            # the reading's layout — the object-model Phase-1 source;
             # already the shape the review surface consumes
             layouts[page] = json.loads(rows_path.read_text(encoding="utf-8"))
+            tints[page] = _page_tints(
+                readings.words_path(page), RowsReading.from_dict(layouts[page]), adjusted_rows.get(page)
+            )
             continue
         # strip-era fallback: batches read before the rows redirect
         # keep their layout.json, still validated before serving
@@ -512,7 +523,21 @@ def _page_review_state(readings: BatchReadings, pages: list[str]) -> PageReviewS
         layout_errors=layout_errors,
         adjustments=adjustments,
         adjusted_rows=adjusted_rows,
+        tints=tints,
     )
+
+
+def _page_tints(words_path: Path, reading: RowsReading, corrected: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """The tints the row screen paints for one page: the correction's rows
+    when one was drawn, else the machine's rows built from the page's own
+    words. A page with no persisted words has no tints — its note says why."""
+    if corrected is not None:
+        return row_tints(Rows.from_dict(corrected))
+    if not words_path.exists():
+        return []
+    words = Words.from_dict(json.loads(words_path.read_text(encoding="utf-8")))
+    rows = Rows.from_words(list(words), PageSize(reading.width, reading.height)).rows()
+    return row_tints(rows)
 
 
 def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
@@ -564,6 +589,7 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
                 "orientations": orientations,
                 "row_adjustments": state.adjustments,
                 "adjusted_rows": state.adjusted_rows,
+                "tints": state.tints,
                 **boundary.to_dict(),
             }
         )

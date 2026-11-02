@@ -73,3 +73,10 @@ Semantic tokens only — components never hard-code values:
 - `.map-ring` (+ `.map-ring-wide`) — the uncertainty ring for imprecise
   places: translucent fill, soft stroke, sized by precision tier; a pin is
   only ever drawn for a point that IS the place.
+- `.rv-rows` / `.rv-tints` / `.rv-tint path` — the row review's page-only
+  surface (`#/rows/…`): the pipeline's tint records painted as SVG paths
+  (fill and opacity from the record), one page and one primary control in
+  `.rv-rowbar`. The reviewer's lines are `.rv-stroke` scoped to `.rv-rows`
+  (the pipeline's stroke yellow, 11 screen px, multiply) — a highlighter over
+  the paper, never one of the row tints. There is no toolbar, no row number
+  and no mode on this screen (docs/PLAN/row-review-ux.md).

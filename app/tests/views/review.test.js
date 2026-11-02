@@ -20,8 +20,6 @@ import {
   outboxDrop,
   outboxPending,
   rowAdjustmentBody,
-  rowDeleteTolerance,
-  rowToolsNote,
   strokeAt,
   rowAdjustmentLine,
   strokesFromAdjustments,
@@ -1339,114 +1337,6 @@ describe("the row correction's pure half", () => {
     expect(strokeAt(strokes, { x: 350, y: 600 }, 20)).toBeNull(); // between the lines
     expect(strokeAt([], { x: 350, y: 500 }, 20)).toBeNull();
   });
-
-  it("the delete target is half the page's line height, floored", () => {
-    const layout = {
-      lines: [{ box: [0, 100, 500, 140] }, { box: [0, 160, 500, 200] }, { box: [0, 220, 500, 260] }],
-    };
-    expect(rowDeleteTolerance(layout, 4642)).toBe(20); // half of 40
-    expect(rowDeleteTolerance({ lines: [] }, 4642)).toBeCloseTo(4642 / 120, 5); // no layout: a page fraction
-    expect(rowDeleteTolerance(null, 240)).toBe(12); // the floor
-  });
-});
-
-describe("the rows check — 'Rows are right' records it", () => {
-  beforeEach(() => {
-    localStorage.clear();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url) => {
-        if (String(url).includes("/row-adjustments")) {
-          return { ok: true, status: 200, json: async () => ({ rows: [] }) };
-        }
-        return {
-          ok: true,
-          status: 200,
-          json: async () => ({
-            batch_id: "b9",
-            label: "A page",
-            documents: [
-              {
-                pages: ["p1.jpg"],
-                texts: { "p1.jpg": "line one" },
-                layouts: { "p1.jpg": { page: "p1.jpg", width: 100, height: 100, lines: [], unmatched: [] } },
-                status: "review",
-              },
-            ],
-            processing: {},
-          }),
-        };
-      }),
-    );
-  });
-  afterEach(() => vi.unstubAllGlobals());
-
-  it("says whether the page's check is recorded, or how many lines are drawn", () => {
-    expect(rowToolsNote([], false)).toBe("");
-    expect(rowToolsNote([], true)).toBe("checked");
-    expect(rowToolsNote([[{ x: 0, y: 1 }]], true)).toBe("1 line");
-    expect(rowToolsNote([[{ x: 0, y: 1 }], [{ x: 0, y: 2 }]], false)).toBe("2 lines");
-  });
-
-  it("the control posts the check with no lines, and the page then reads 'checked'", async () => {
-    const main = document.createElement("main");
-    render(main, { arg: "b9", rest: ["review", "b9", "0", "0"] });
-    await vi.waitFor(() => expect(main.querySelector(".rv-page")).toBeTruthy());
-    const img = main.querySelector(".rv-page");
-    Object.defineProperty(img, "naturalWidth", { value: 100, configurable: true });
-    Object.defineProperty(img, "naturalHeight", { value: 1500, configurable: true });
-    img.dispatchEvent(new Event("load"));
-    await vi.waitFor(() => expect(main.querySelector(".rv-rowtools__right")).toBeTruthy());
-    const status = main.querySelector(".rv-rowtools__status");
-    expect(status.textContent).toBe(""); // nothing drawn, not yet checked
-
-    main.querySelector(".rv-rowtools__right").click();
-
-    await vi.waitFor(() => expect(status.textContent).toBe("checked"));
-    const posted = fetch.mock.calls.find(([url]) => String(url).includes("/row-adjustments"));
-    expect(String(posted[0])).toContain("/api/sync/batch/b9/page/p1.jpg/row-adjustments");
-    expect(JSON.parse(posted[1].body)).toEqual({ lines: [] });
-  });
-
-  it("a drawing the server flags is named in the toolbar", async () => {
-    // Rows.validate answers the same request; the surface says what the stroke
-    // did, so the reviewer can correct it in place
-    fetch.mockImplementation(async (url) => {
-      if (String(url).includes("/row-adjustments")) {
-        return { ok: true, status: 200, json: async () => ({ rows: [], violations: ["line 1 claims no word"] }) };
-      }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({
-          batch_id: "b9",
-          label: "A page",
-          documents: [
-            {
-              pages: ["p1.jpg"],
-              texts: { "p1.jpg": "line one" },
-              layouts: { "p1.jpg": { page: "p1.jpg", width: 100, height: 100, lines: [], unmatched: [] } },
-              status: "review",
-            },
-          ],
-          processing: {},
-        }),
-      };
-    });
-    const main = document.createElement("main");
-    render(main, { arg: "b9", rest: ["review", "b9", "0", "0"] });
-    await vi.waitFor(() => expect(main.querySelector(".rv-page")).toBeTruthy());
-    const img = main.querySelector(".rv-page");
-    Object.defineProperty(img, "naturalWidth", { value: 100, configurable: true });
-    Object.defineProperty(img, "naturalHeight", { value: 1500, configurable: true });
-    img.dispatchEvent(new Event("load"));
-    await vi.waitFor(() => expect(main.querySelector(".rv-rowtools__right")).toBeTruthy());
-    main.querySelector(".rv-rowtools__right").click();
-    await vi.waitFor(() =>
-      expect(main.querySelector(".rv-rowtools__status").textContent).toBe("line 1 claims no word"),
-    );
-    expect(main.querySelector(".rv-rowtools").classList.contains("is-failed")).toBe(true);
-  });
 });
 
 describe("the review hub's portal sections", () => {
@@ -1504,9 +1394,7 @@ describe("the review hub's portal sections", () => {
     await vi.waitFor(() => expect(main.textContent).toContain("Identify people/places"));
     expect(main.textContent).toContain("A letter from Fern");
     expect(main.textContent).toContain("Read for people and places");
-    const card = [...main.querySelectorAll(".rv-card")].find((node) =>
-      node.textContent.includes("A letter from Fern"),
-    );
+    const card = [...main.querySelectorAll(".rv-card")].find((node) => node.textContent.includes("A letter from Fern"));
     expect(card).toBeTruthy();
     card.click();
     expect(location.hash).toBe("#/identify/doc-1971-05-01");
@@ -1552,9 +1440,7 @@ describe("confirming a document asks for its own facts (an item needs a title an
     date.value = "1963-05-14";
     date.dispatchEvent(new Event("input", { bubbles: true }));
     main.querySelector(".rv-btn--primary").click();
-    await vi.waitFor(() =>
-      expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(true),
-    );
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(true));
     const [, options] = fetch.mock.calls.find(([url]) => String(url).includes("/confirmations"));
     const payload = JSON.parse(options.body);
     expect(payload.title).toBe("A letter to Maman");
@@ -1597,9 +1483,7 @@ describe("the document's facts survive a lost page and clear once agreed", () =>
     expect(again.querySelector(".rv-docfacts__date").value).toBe("1963-05-14");
 
     again.querySelector(".rv-btn--primary").click();
-    await vi.waitFor(() =>
-      expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(true),
-    );
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(true));
     const stored = JSON.parse(localStorage.getItem("loft-review-docfacts") || "{}");
     expect(stored?.["b6"]?.["0"]).toBeUndefined(); // the archive holds them now
   });

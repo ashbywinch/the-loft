@@ -1468,6 +1468,51 @@ def _seed_row_page(fixture: ServerFixture, batch_id: str = "adopt-0001", status:
     )
 
 
+def test_sync_drafts_carries_the_rows_tints(server: ServerFixture) -> None:
+    """The row screen's tints come with the drafts: the machine's rows built
+    from the page's own words, as RowTint records (the colour and the
+    rectangles each row is painted as). The screen draws these; it never
+    re-derives a colour or a join band."""
+    import json as _json
+
+    _seed_sync_batch(server)
+    guess = server.work_dir / "adopt-0001" / "ocr-guess"
+    (guess / "p1.rows.json").write_text(
+        _json.dumps(
+            {
+                "page": "p1.jpg",
+                "width": 600,
+                "height": 1600,
+                "rotation": 0,
+                "revision": 1,
+                "lines": [{"index": 0, "text": "one two", "box": [50, 400, 550, 500], "words": []}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (guess / "p1.words.json").write_text(
+        _json.dumps(
+            {
+                "words": [
+                    {"x0": 60, "y0": 420, "x1": 160, "y1": 470, "line": 0, "baseline": 470, "waistline": 420},
+                    {"x0": 200, "y0": 420, "x1": 300, "y1": 470, "line": 0, "baseline": 470, "waistline": 420},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    status, raw = server.get("/api/sync/batch/adopt-0001/drafts", cookie=server.cookie)
+    assert status == 200
+    tints = _json.loads(raw.decode("utf-8"))["documents"][0]["tints"]["p1.jpg"]
+    assert len(tints) == 1, "one reading line, one tint"
+    assert tints[0]["colour"][3] == 55, "the pipeline's tint alpha"
+    assert tints[0]["rects"][:2] == [
+        {"x0": 60.0, "y0": 420.0, "x1": 160.0, "y1": 470.0},
+        {"x0": 200.0, "y0": 420.0, "x1": 300.0, "y1": 470.0},
+    ]
+    assert len(tints[0]["rects"]) == 3, "two word boxes and the band joining them"
+
+
 def test_row_adjustments_requires_a_session(server: ServerFixture) -> None:
     status, _ = server.post("/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments", {"lines": []}, cookie="")
     assert status == 401
@@ -1503,6 +1548,17 @@ def test_row_adjustments_builds_and_persists_the_correction(server: ServerFixtur
     assert _json.loads((guess / "p1.rows-adjusted.json").read_text())["rows"] == rows  # the file IS the response
     drawn = _json.loads((guess / "p1.row-adjustments.json").read_text())
     assert drawn["lines"] == [[[0.05, 0.278], [0.55, 0.278]]]
+    # the answer carries the rows' tints, and a reopened page serves the
+    # CORRECTION's tints (not the proposal it replaced)
+    assert body["tints"][0]["colour"][3] == 55
+    assert body["tints"][0]["rects"][:2] == rows[0]["word_boxes"]
+    (guess / "boundaries.json").write_text(
+        _json.dumps([{"pages": ["p1.jpg"], "greeting": "", "signoff": None}]), encoding="utf-8"
+    )
+    (guess / "p1.txt").write_text("one two", encoding="utf-8")
+    status, raw = server.get("/api/sync/batch/adopt-0001/drafts", cookie=server.cookie)
+    assert status == 200
+    assert _json.loads(raw.decode("utf-8"))["documents"][0]["tints"]["p1.jpg"] == body["tints"]
 
 
 def test_row_adjustments_names_a_drawing_that_caught_nothing(server: ServerFixture) -> None:

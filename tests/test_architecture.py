@@ -100,7 +100,6 @@ def test_the_pipeline_layer_routes_data_through_the_store() -> None:
         "htr.py",
         "adopt.py",
         "classify.py",
-        "ocr.py",
     )
     for name in pipeline_tools:
         source = _source(name)

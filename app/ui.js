@@ -1,5 +1,5 @@
 import { identityElement } from "./identity.js";
-import { assetUrl, typeLabel } from "./data.js";
+import { assetUrl, isImageAsset, typeLabel } from "./data.js";
 import { dateLabel } from "./date.js";
 import { decadeBands } from "./connections.js";
 import { goBack } from "./router.js";
@@ -78,7 +78,8 @@ export function sectionTitle(text) {
 }
 
 export function itemCard(item, subtitle = null) {
-  const first = item.assets?.[0];
+  // the card's thumbnail is a page image; a PDF-only item has none
+  const first = (item.assets ?? []).find((asset) => isImageAsset(asset.file));
   // a told memory is stamped as such — its events date and its telling date
   // both appear, so it never reads as a scanned document (user)
   const told =

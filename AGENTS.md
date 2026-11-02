@@ -43,6 +43,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | Showing the user a visual artifact (renders, maps, zooms, case sheets) | `.omp/skills/show-the-user/SKILL.md` — existing tooling only, LAN URL, self-check before presenting |
 | The segment/box review & edit UX (user stories, the box-issue taxonomy, the corner rulings) | `docs/PLAN/segment-review-stories.md` |
 | The row review's phone surface (the purpose, the two colour layers, the draw→redraw loop; PROPOSED) | `docs/PLAN/row-review-ux.md` |
+| The page categories (photograph, writing printed/handwritten, postcard face, form, drawing) and what each implies for the read | `docs/PLAN/page-categories.md` |
 | How a drawn row line corrects a page (replace a covered row; claim only the words the line runs along; leave the rest) | `docs/PLAN/row-correction-rule.md`; `pipeline/rows/rows.py` (`_Claims`) |
 |Interview/observation instruments|`docs/DISCOVERY.md`, private session records|
 | The story-capture flow spec ("Add your memory") | `docs/PRD/MEMORIES.md` |

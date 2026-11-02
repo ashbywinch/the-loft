@@ -20,11 +20,14 @@ from document.stages import PageStatus, Stage
 from document.words import Words
 from pipeline.identification import Identification
 from pipeline.mention import Mention
+from pipeline.page_classification import PageClassification
 from pipeline.rows.rows import Rows
 from tools.records import Person, Place
 
-# the PRD's stages (docs/PRD/pipeline-stages-spec.md UR1), in order
+# the PRD's stages (docs/PRD/pipeline-stages-spec.md UR1), in order — the
+# categorisation runs before them (it decides which of them apply)
 PRD_STAGES = (
+    "classify",
     "orient",
     "marks",
     "words",
@@ -43,6 +46,7 @@ CONTRACTS = {
     contract.__name__
     for contract in (
         Boxes,
+        PageClassification,
         Document,
         DocumentLine,
         PageSize,
@@ -63,8 +67,9 @@ def test_the_stages_are_the_prds_list_in_order() -> None:
 
 
 def test_the_stages_are_numbered_as_the_prd_numbers_them() -> None:
-    """UR1 numbers them 0–8: orient, then the eight stages of the writing."""
-    assert [stage.facts.number for stage in Stage] == list(range(len(PRD_STAGES)))
+    """UR1 numbers the writing's stages 0–8; the categorisation runs before
+    them (number −1) and decides which of them apply."""
+    assert [stage.facts.number for stage in Stage] == [-1, *range(len(PRD_STAGES) - 1)]
 
 
 def test_the_human_stages_are_the_users_decisions() -> None:
@@ -110,12 +115,14 @@ def test_the_page_statuses_are_the_scan_pickups_sequence() -> None:
     person's check is recorded."""
     assert [status.value for status in PageStatus] == [
         "new",
+        "classified",
         "oriented",
         "marks",
         "words",
         "rows_draft",
         "rows_pending",
         "rows_adjusted",
+        "transcripts_proposed",
     ]
 
 

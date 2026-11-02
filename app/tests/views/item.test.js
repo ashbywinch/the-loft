@@ -74,6 +74,24 @@ describe("item view", () => {
     expect(main.querySelector('.lens-img[src=""]')).toBeNull();
   });
 
+  it("links a PDF source document instead of rendering it as an image", () => {
+    // the CWGC record and the London Gazette are source documents: a PDF is
+    // not a page image, so the lens links it and never requests it as <img>
+    const main = document.createElement("main");
+    const item = makeItem({
+      assets: [
+        { kind: "page", file: "page-1.pdf", caption: "CWGC casualty record 310883" },
+        { kind: "page", file: "page-1.svg", caption: "Page 1" },
+      ],
+    });
+    render(main, { arg: "item-x", query: new URLSearchParams() }, state([item]));
+    const images = [...main.querySelectorAll("img.lens-img")];
+    expect(images.every((img) => !String(img.getAttribute("src")).endsWith(".pdf"))).toBe(true);
+    const link = main.querySelector('.lens-sources a[href="data/assets/item-x/page-1.pdf"]');
+    expect(link).toBeTruthy();
+    expect(link.textContent).toContain("CWGC casualty record 310883");
+  });
+
   it("renders the first asset image when one exists", () => {
     const main = document.createElement("main");
     const item = makeItem({ assets: [{ kind: "page", file: "page-1.svg", caption: "Page 1" }] });

@@ -1511,6 +1511,43 @@ def test_a_document_is_ready_for_transcription_only_after_its_row_check(server: 
     assert doc["ready"] is True and doc["pages_ready"] == ["p1.jpg"]
 
 
+def test_a_categorised_page_that_no_later_stage_has_touched_is_classified(server: ServerFixture) -> None:
+    """The categorisation is the first stage: its entry is the page's status
+    until orient (or the printed read) moves it on — a photo ends here."""
+    import json as _json
+
+    _seed_row_page(server)
+    (server.work_dir / "adopt-0001" / "classify.json").write_text(
+        _json.dumps({"p1.jpg": {"kind": "photo", "confidences": {"photo": 0.9}}}), encoding="utf-8"
+    )
+    (server.work_dir / "adopt-0001" / "ocr-guess" / "p1.rows.json").unlink()  # no reading: nothing later ran
+    (server.work_dir / "adopt-0001" / "ocr-guess" / "p1.words.json").unlink()
+    from document.stages import PageStatus
+    from pipeline.api.sync import BatchReadings
+
+    readings = BatchReadings(server.work_dir, "adopt-0001")
+    assert readings.page_status("p1.jpg") is PageStatus.CLASSIFIED
+
+
+def test_a_printed_page_is_ready_for_review_without_a_row_check(server: ServerFixture) -> None:
+    """A printed page is read directly (no rows): its marker makes it ready, so
+    the transcription review holds it without a row check ever being recorded."""
+    import json as _json
+
+    _seed_two_page_document(server)
+    guess = server.work_dir / "adopt-0001" / "ocr-guess"
+    (guess / "p1.printed.json").write_text(_json.dumps({"page": "p1.jpg", "chars": 12}), encoding="utf-8")
+    (guess / "p2.printed.json").write_text(_json.dumps({"page": "p2.jpg", "chars": 11}), encoding="utf-8")
+    (guess / "p1.txt").write_text("printed one", encoding="utf-8")
+    (guess / "p2.txt").write_text("printed two", encoding="utf-8")
+    status, raw = server.get("/api/sync/batches", cookie=server.cookie)
+    body = _json.loads(raw.decode("utf-8"))["batches"][0]
+    assert body["documents_ready"] == [0] and body["documents_partial"] == []
+    status, raw = server.get("/api/sync/batch/adopt-0001/drafts", cookie=server.cookie)
+    doc = _json.loads(raw.decode("utf-8"))["documents"][0]
+    assert doc["pages_ready"] == ["p1.jpg", "p2.jpg"] and doc["ready"] is True
+
+
 def test_a_partly_checked_document_is_reviewable_page_by_page(server: ServerFixture) -> None:
     """The transcript stage runs per page: one checked page of a two-page
     document opens that page for review, its sibling still waits on the check,

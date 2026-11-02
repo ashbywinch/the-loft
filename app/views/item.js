@@ -4,7 +4,7 @@ import { el, header, chip, itemCard } from "../ui.js";
 import { memoriesSection, openDraft } from "../memories.js";
 import { linkMentions } from "../people.js";
 import { renderMarkdown } from "../markdown.js";
-import { assetUrl, catalogued, isMine, published as publishedItems, typeLabel } from "../data.js";
+import { assetUrl, catalogued, isImageAsset, isMine, published as publishedItems, typeLabel } from "../data.js";
 import { clarificationsFor, evidenceFor, referencedBy } from "../connections.js";
 import { dateLabel, sortByDate, yearOf } from "../date.js";
 import { canGoBackInApp } from "../router.js";
@@ -51,7 +51,10 @@ export function render(main, ctx, state) {
   // --- the viewer: artifact first, readability on demand ---
   let zoomed = false;
   let assetIndex = 0;
-  const assets = item.assets ?? [];
+  // a source document (the CWGC record, the London Gazette) is a PDF: the
+  // lens shows page IMAGES and links the source, never an <img> of a PDF
+  const assets = (item.assets ?? []).filter((entry) => isImageAsset(entry.file));
+  const sources = (item.assets ?? []).filter((entry) => !isImageAsset(entry.file));
   const asset = assets[0] ?? null;
   // No asset → no <img> at all: src="" would make the browser request the
   // current page URL and render a broken-image icon. The caption carries the
@@ -60,7 +63,7 @@ export function render(main, ctx, state) {
   const assetTitle = el(
     "div",
     { class: "lens-caption" },
-    asset?.caption ?? (asset ? "" : "No scans yet — catalogued, scans pending."),
+    asset?.caption ?? (asset || sources.length ? "" : "No scans yet — catalogued, scans pending."),
   );
   const zoomBtn = asset ? el("button", { class: "lens-btn" }, "🔍 Zoom") : null;
   const viewer = el("div", { class: "lens" }, [img, assetTitle, zoomBtn]);
@@ -88,6 +91,17 @@ export function render(main, ctx, state) {
   main.append(
     el("section", {}, [
       viewer,
+      sources.length
+        ? el(
+            "div",
+            { class: "lens-sources" },
+            sources.map((entry) =>
+              el("a", { class: "lens-btn", href: assetUrl(item.id, entry.file), target: "_blank", rel: "noopener" }, [
+                `Open the source document — ${entry.caption || entry.file}`,
+              ]),
+            ),
+          )
+        : null,
       assets.length > 1
         ? el("div", { class: "lens-nav" }, [
             el("button", { class: "lens-btn", onclick: () => showAsset(assetIndex - 1) }, "‹ Previous"),

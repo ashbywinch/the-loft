@@ -1,18 +1,20 @@
-"""Content routing for batches: photo/drawing vs text, and within text,
-cursive vs print (TECHSPEC §16.14; MULTI-DOC-IMPORT-PRD.md R11–R12).
+"""Content routing for batches: the PAGE CATEGORY, from the vision model
+(TECHSPEC §16.14; docs/PLAN/page-categories.md).
 
-A vision-model call decides text vs photo vs drawing: the reader that sees
-the page also names its kind, one small call per raw page (user,
-2026-10-26: the local CLIP classifier and its torch stack are gone).
-Within text pages, the tesseract strong-word density measured at
-orientation decides cursive vs print — print OCRs well under tesseract,
-cursive does not (real data: cursive pages scored 7–58 strong words, the
-printed reference 1185). Photos and drawings are flagged as image items
-and never transcribed.
+One small call per raw page names what it is — a photograph, printed writing,
+handwriting, a postcard face, a form, or a drawing — and, for the two page
+shapes that may be either, how its writing was made (printed or handwritten).
+The reader that sees the page names it (user, 2026-10-26: the local CLIP
+classifier and its torch stack are gone).
+
+The category decides the read (`read_route`): photographs and drawings are not
+read; printed pages take one direct transcription; handwriting and handwritten
+postcard faces take the row pipeline; a form is read as structure. The old
+tesseract strong-word density route is gone: the category answers "printed or
+handwriting" before any OCR runs.
 
 Usage:
-    python tools/classify.py <batch-id>          # classify the raw pages
-    python tools/classify.py <batch-id> --route  # + the density routing
+    python -m pipeline.classify <batch-id>
 """
 
 from __future__ import annotations
@@ -31,12 +33,38 @@ from pipeline.store import PipelineStore
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
-DENSITY_THRESHOLD = 200  # strong words per page: cursive measured 7–58, printed reference 1185
+
+def category_of(entry: dict[str, Any]) -> str:
+    """A classify record's category, old spellings included: a record written
+    before the 2026-11-02 vocabulary says "text"/"photo", and is read as the
+    category it names, never rewritten."""
+    kind = str(entry.get("kind", "")).strip().lower()
+    return LEGACY_KINDS.get(kind, kind)
 
 
-def route(density: int, threshold: int = DENSITY_THRESHOLD) -> str:
-    """Print OCRs well under tesseract, cursive does not — the density decides."""
-    return "print" if density >= threshold else "cursive"
+def read_route(entry: dict[str, Any]) -> str:
+    """How a page is read, by its category — the one routing rule:
+
+    - a photograph or a drawing: nothing to transcribe;
+    - printed writing: one direct VLM read;
+    - handwriting: the row pipeline (auto rows, then the human row check);
+    - a postcard face: printed faces take the direct read; handwritten ones the
+      row pipeline (their two orientations are the reviewer's lines' problem
+      when the auto detection is bad);
+    - a form: a structured read (labels and values), whatever the medium — a
+      form read as prose loses its meaning.
+    A page whose category was never recorded (the legacy "text") is read as
+    handwriting, the safe route."""
+    kind = category_of(entry)
+    if kind == "printed":
+        return "direct"
+    if kind == "postcard_face":
+        return "direct" if entry.get("medium") == "printed" else "rows"
+    if kind == "form":
+        return "structured"
+    if kind == "handwriting":
+        return "rows"
+    return "none"
 
 
 def classify_pages(
@@ -49,14 +77,37 @@ def classify_pages(
     return {str(page.relative_to(root)): classifier(page) for page in pages}
 
 
-CONTENT_KINDS = ("text", "photo", "drawing")
+# the PAGE CATEGORIES (docs/PLAN/page-categories.md): what one scan is. A
+# document type (letter, postcard, form) is derived from the pages a group holds.
+# printing is writing too: the hand script is its own category, and printed
+# text its own; a postcard face or a form is a page SHAPE whose writing may be
+# either, so those two carry the medium
+CONTENT_KINDS = ("photograph", "printed", "handwriting", "postcard_face", "form", "drawing")
+MEDIUMS = ("printed", "handwritten")
+# the categories that carry writing to read; the rest carry none (a photograph's
+# image is the evidence; a drawing's labels are not a transcription)
+TEXT_KINDS = ("printed", "handwriting", "postcard_face", "form")
+# what the categories were called before 2026-11-02 — the classify records on
+# disk carry the old names, and a record is never rewritten to a new spelling
+LEGACY_KINDS = {"text": "handwriting", "photo": "photograph"}
+
+# how a page's writing is read, by its category (docs/PLAN/page-categories.md):
+# no text / one direct VLM read / the row pipeline (auto rows + the human row
+# check) / a structured read (labels and values)
+READ_ROUTES = ("none", "direct", "rows", "structured")
+# the two page SHAPES whose writing may be printed or handwritten
+MEDIUM_SHAPES = ("postcard_face", "form")
 
 PAGE_KIND_PROMPT = (
     "What does this scanned page SHOW? Reply with JSON only: "
-    '{"kind": "text"|"photo"|"drawing", "confidence": <0.0-1.0>}. '
+    '{"kind": "text"|"photo"|"drawing", "confidence": <0.0-1.0>, '
+    '"medium": "printed"|"handwritten"|null}. '
     '"text": writing to be read — a letter, a form, a list, a transcript; '
     '"photo": a picture of people, places or things — a snapshot, a postcard, '
     'however it was scanned; "drawing": an illustration or sketch. '
+    'For "text", "medium" is the writing itself: "printed" for type, print or '
+    'typescript; "handwritten" for pen or pencil, however neat. It is null for '
+    "a photo or a drawing. "
     'Judge the page\'s content, never its paper: a scanned letter is "text" '
     "even though the scan is photographic. The confidence is your own."
 )
@@ -82,11 +133,14 @@ def classify_page(
     try:
         kind = str(raw["kind"]).strip().lower()
         confidence = float(raw["confidence"])
+        medium = None if raw.get("medium") is None else str(raw["medium"]).strip().lower()
     except (KeyError, TypeError, ValueError) as e:
         raise VlmError(f"unusable classification: {answer.answer[:120]!r}") from e
     if kind not in CONTENT_KINDS or not 0.0 <= confidence <= 1.0:
         raise VlmError(f"unusable classification: {answer.answer[:120]!r}")
-    return PageClassification.from_confidences({kind: confidence})
+    if kind in MEDIUM_SHAPES and medium is not None and medium not in MEDIUMS:
+        raise VlmError(f"unusable medium: {answer.answer[:120]!r}")
+    return PageClassification.from_confidences({kind: confidence}, medium)
 
 
 def run_classify(

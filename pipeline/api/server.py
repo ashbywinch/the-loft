@@ -724,7 +724,13 @@ def build_app(
                 # the transcription stage runs on checked rows: a page still
                 # carrying draft rows is not reviewable words yet, and a
                 # strip-era page has no reading to check at all
-                pages_ready = [p for p in text_pages if readings.page_status(p) is PageStatus.ROWS_ADJUSTED]
+                # a printed page is ready when its direct read exists: it has
+                # no rows to check: its stage-5 text exists
+                pages_ready = [
+                    p
+                    for p in text_pages
+                    if readings.page_status(p) in (PageStatus.ROWS_ADJUSTED, PageStatus.TRANSCRIPTS_PROPOSED)
+                ]
                 documents.append(
                     {
                         **document,

@@ -140,3 +140,9 @@ export function isMine(draft, state) {
   if (!mine?.person) return false;
   return draft.told_by === mine.person;
 }
+
+/** Whether an asset file is a page image the app can render. A PDF is a
+ *  source document, not an image — the viewer links it instead. */
+export function isImageAsset(file) {
+  return /\.(jpe?g|png|webp|gif|svg)$/i.test(String(file ?? ""));
+}

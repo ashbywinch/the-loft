@@ -1,13 +1,14 @@
-"""The ingest chain driver: orient → raw OCR → model guess → boundaries →
-user confirmation, per registered batch (TECHSPEC §16.13/§16.14).
+"""The ingest chain driver: classify → orient → read → review.
+The user's confirmation, per registered batch (TECHSPEC §16.13/§16.14).
 
-process runs the machine stages and leaves the batch awaiting review; the
-guess stage hands the noisy raw OCR plus the standing knowledge (people,
-places) and the batch label to the model, which returns per-page verbatim
-corrections AND document boundaries (a page opens a document at a greeting,
-closes it at a sign-off). review is the user's confirmation gate: each
-document's text is accepted, edited, or rejected, and an accepted document
-becomes an archive item: its transcription is the item's own content file
+`process` runs the machine stages and leaves the batch awaiting review. The
+page's CATEGORY decides its read (docs/PLAN/page-categories.md): a photograph
+or a drawing is not read; printed writing takes one direct VLM transcription;
+a form is read as structure; handwriting (and a handwritten postcard face)
+takes the row pipeline — orient, rows, the human row check, then the
+transcription review. A pile's pages form one document; `review` is the user's
+confirmation gate: each document's text is accepted, edited, or rejected, and
+an accepted document becomes an archive item: its transcription is the item's own content file
 
 Usage:
     python tools/pipeline.py process <batch-id>
@@ -17,16 +18,13 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import concurrent.futures
-import contextlib
 import hashlib
 import json
 import os
 import shutil
 import socket
 import sys
-import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -48,50 +46,30 @@ from pipeline.batch_record import (
     BatchRecord,
 )
 from pipeline.boundary import Boundary
-from pipeline.classify import route, run_classify
+from pipeline.classify import TEXT_KINDS, category_of, read_route, run_classify
 from pipeline.detect.reader import Reading, reading_for_page
 from pipeline.grouping import score_boundaries
-from pipeline.htr import htr_pages_vlm
 from pipeline.model.ai_client import AIClient, AIClientError
-from pipeline.model.vlm import VlmError, line_orientation_degrees
-from pipeline.ocr import orient_pages
+from pipeline.orient import orient_pages
 from pipeline.page_flag import PageFlag
-from pipeline.page_image import PageImage
 from pipeline.page_text import PageText
 from pipeline.registry import RegistryError as PipelineError
 from pipeline.registry import load_batch, record_path
-from pipeline.rotation_scores import RotationScores
 from pipeline.rows.rows import Rows
 from pipeline.rows_reading import RowsReading
 from pipeline.standing_knowledge import StandingKnowledge
-from pipeline.store import PipelineStore, text_sha256
+from pipeline.store import PipelineStore
+from pipeline.transcribe.printed import printed_transcript, structured_transcript
 from pipeline.transcribe.transcripts import Transcriber, row_transcripts
 from tools.archive import Archive
 from tools.atomic import atomic_write
 from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR, LoftPaths
 from tools.store import DiskStore, StoreError  # noqa: F401 — the architecture test's store-layer marker
 
-PAGE_LIMIT = 30  # one guess call per batch; beyond this the context is too big — chunking is future work
-GUESS_PAGE_CHUNK = 5  # the guess re-emits each page's corrected text; the OUTPUT size binds — 5 pages of
-# verbatim text + JSON fits the client's max_tokens.
-
-# The multi-orientation gate (PRD VR15): a page whose arbiter
-# scores suggest text in more than one direction gets the vision model's
-# orientation report — and only then. The second-best rotation must carry
-# a meaningful share of the winner's strong words (the postcard's 0:16 /
-# 270:9 splits; a clean page's losers are near zero).
-AMBIGUITY_RATIO = 0.25  # the second-best rotation's share of the winner
+BOUNDARY_MODEL = "deepseek-v4-flash"  # the chat model that judges document boundaries
+PAGE_LIMIT = 30  # one boundary call per batch; beyond this the context is too big
+GUESS_PAGE_CHUNK = 5  # pages per boundary call (the answer echoes each page's flags)
 AMBIGUITY_FLOOR = 5  # ...and it must clear this many strong words outright
-
-# The guess model: the default chat model (deepseek-v4-flash) reasons
-# UNBOUNDED on the correction tasks — 12K-24K tokens of pure
-# reasoning, finish_reason "length", zero content, an empty response.
-# The vision model
-# (mimo-v2.5, the pipeline's proven model — it completes the same prompt
-# with finish_reason "stop") is the completing choice on this endpoint;
-# the thinking-disable/budget params are ignored by the endpoint, so the
-# model must simply be one that answers.
-GUESS_MODEL = "dynamic/image"
 
 
 def _standing_names(records: list[dict[str, Any]], with_aliases: bool = False) -> list[str]:
@@ -106,55 +84,51 @@ def _standing_names(records: list[dict[str, Any]], with_aliases: bool = False) -
     return out
 
 
-def _guess_prompt(page_texts: list[PageText], label: str, people: list[str], places: list[str]) -> tuple[str, str]:
-    """The system + user prompt for the guess stage — verbatim discipline
-    (IMPORT-PRD Rule L), boundary detection by greeting/sign-off, standing
-    knowledge as context."""
+def _boundary_prompt(page_texts: list[PageText], label: str, people: list[str], places: list[str]) -> tuple[str, str]:
+    """The system + user prompt for the document-boundary judgement.
+
+    The reads own the text — this call does not transcribe; it decides where a
+    document STARTS (a greeting, an address block, a date opening a letter) and
+    ENDS (a sign-off, a signature). The grouping scorer then weighs that against
+    the physical evidence (duplex sides, paper size, page numbers)."""
     system = (
-        "You are the transcription assistant for a family archive. You correct noisy "
-        "OCR of scanned family letters.\n"
-        "Rules:\n"
-        "- VERBATIM: the document's own words, nothing added, nothing removed. Fix OCR "
-        "noise (mangled words, split lines) but never paraphrase, never add words or "
-        "punctuation the page lacks, never correct spelling.\n"
-        "- Keep the page's line and paragraph structure.\n"
-        '- A page you cannot read at all: text "" — never invent content.\n'
-        "- Detect document boundaries: a page STARTS a document when it opens a letter "
-        '(a greeting such as "Dear X", an address block, a date beginning a new '
-        'letter); a page ENDS one at a sign-off ("Yours, X", a signature, the close '
-        "of a letter).\n"
+        "You group scanned family pages into documents. Each page's text has been read "
+        "already; do not correct or rewrite it.\n"
+        '- A page STARTS a document when it opens a letter (a greeting such as "Dear X", '
+        "an address block, a date beginning a new letter); a page ENDS one at a sign-off "
+        '("Yours, X", a signature, the close of a letter).\n'
+        "- A page that continues a letter starts and ends nothing.\n"
         f"Context — known family people: {', '.join(people) or 'none'}. "
         f"Known places: {', '.join(places) or 'none'}. Batch: {label or 'unlabelled'}.\n"
-        'Output JSON only: {"pages": [{"page": "<filename>", "text": "<verbatim '
-        'corrected text>", "starts_document": true/false, "ends_document": true/false, '
+        'Output JSON only: {"pages": [{"page": "<filename>", "text": "", '
+        '"starts_document": true/false, "ends_document": true/false, '
         '"greeting": "<text or null>", "signoff": "<text or null>"}]}'
     )
     blocks = "\n\n".join(f"Page {one.page}:\n{one.text}" for one in page_texts)
-    user = f"Here is the tesseract OCR of the batch's pages.\n\n{blocks}"
+    user = f"Here is the vision model's reading of each page.\n\n{blocks}"
     return system, user
 
 
-def guess_pages(
+def page_flags(
     page_texts: list[PageText],
     label: str,
     people: list[str],
     places: list[str],
     client: Callable[[str, str], str],
 ) -> list[PageFlag]:
-    """One model call: corrected verbatim text + boundary flags per page.
+    """One model call: the document-boundary flags per page.
 
-    ``client`` is the chat seam (AIClient.chat shape); injectable for tests.
-    """
+    ``client`` is the chat seam (AIClient.chat shape); injectable for tests."""
     if len(page_texts) > PAGE_LIMIT:
         raise PipelineError(
-            f"batch has {len(page_texts)} pages — the guess stage handles up to {PAGE_LIMIT} per call; "
+            f"batch has {len(page_texts)} pages — the boundary call handles up to {PAGE_LIMIT} per call; "
             "chunking is future work"
         )
-    system, user = _guess_prompt(page_texts, label, people, places)
+    system, user = _boundary_prompt(page_texts, label, people, places)
     try:
         raw = client(system, user)
     except AIClientError as exc:
-        raise PipelineError(f"model guess failed: {exc}") from exc
+        raise PipelineError(f"the boundary call failed: {exc}") from exc
     try:
         payload = json.loads(raw)
         pages = payload["pages"]
@@ -167,18 +141,6 @@ def guess_pages(
         except ValueError as exc:
             raise PipelineError(f"model returned a malformed page entry: {entry!r}") from exc
     return out
-
-
-def apply_routes(classify: dict[str, Any], rotations: dict[str, RotationScores]) -> dict[str, Any]:
-    """Add the print/cursive route to each text page from its orientation
-    density; photo/drawing pages get no route (never transcribed)."""
-    for name, entry in classify.items():
-        if entry.get("kind") == "text":
-            scores = rotations.get(name)
-            entry["route"] = route(scores.strong if scores is not None else 0)
-        else:
-            entry["route"] = None
-    return classify
 
 
 class BatchPaths:
@@ -209,66 +171,6 @@ class BatchPaths:
     @property
     def boundaries_path(self) -> Path:
         return self.guess_dir / "boundaries.json"
-
-    def guess_is_stale(self, text_pages: list[str]) -> bool:
-        """Is the existing guess stale? Two failure modes: (1) individual page
-        .txt files were cleared (a bad read run) — the boundaries may
-        exist while the artifacts they promise are gone; (2) the RAW
-        transcriptions the guess was built from changed (a re-orientation
-        regenerated ocr-raw) — the recorded input fingerprints no longer
-        match. Existence of boundaries alone is a lie of a completion proxy —
-        a stale guess must be re-run, not silently reused (2026-08-20)."""
-        missing = [name for name in text_pages if not (self.guess_dir / Path(name).with_suffix(".txt")).exists()]
-        stale_inputs = self.guess_inputs_changed(text_pages)
-        if not missing and not stale_inputs:
-            return False
-        reasons = []
-        if missing:
-            reasons.append(f"{len(missing)} page(s) missing")
-        if stale_inputs:
-            reasons.append("raw transcriptions changed")
-        print(f"WARNING: guess stale ({'; '.join(reasons)}) — deleting stale boundaries and re-running guess")
-        self.boundaries_path.unlink(missing_ok=True)
-        # Also clear any stale orientation reports that reference the old text
-        for name in missing:
-            ori = self.guess_dir / Path(name).with_suffix(".orientation.json")
-            if ori.exists():
-                ori.unlink()
-        return True
-
-    def guess_inputs_changed(self, text_pages: list[str]) -> bool:
-        """Did the raw transcriptions the guess was built from change? The
-        boundaries.json records each raw text's fingerprint; a mismatch means
-        the guess reflects an older reading (2026-08-20: a re-orientation
-        regenerated ocr-raw, but the guess still carried the pre-fix text). A
-        boundaries file without the fingerprint field (pre-2026-08-20) cannot
-        prove its inputs and is treated as stale once."""
-        inputs_path = self.boundaries_path.with_suffix(".inputs.json")
-        if not inputs_path.exists():
-            return True  # pre-fingerprint boundaries cannot prove their inputs
-        try:
-            recorded = json.loads(inputs_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return True
-        if not recorded:
-            return True
-        for name in text_pages:
-            raw_txt = self.raw_dir / Path(name).with_suffix(".txt")
-            if not raw_txt.exists():
-                continue  # the missing-check above handles absent artifacts
-            current = text_sha256(raw_txt.read_text(encoding="utf-8"))
-            if recorded.get(name) != current:
-                return True
-        return False
-
-
-def _guess_is_stale(page_names: list[str], raw_dir: Path, guess_dir: Path, boundaries_path: Path) -> bool:
-    """Is the existing guess stale? The check lives on BatchPaths — the
-    seam's guess_dir is the batch work root, whose raw/boundaries paths the
-    check derives (raw_dir and boundaries_path are the batch's view of it).
-    page_names: each test seam names its own view of the batch's pages, so
-    the frozen seam signatures do not fuse into a data clump."""
-    return BatchPaths(batch_work=guess_dir.parent, batch_id=guess_dir.parent.name).guess_is_stale(page_names)
 
 
 @dataclass(frozen=True)
@@ -314,7 +216,7 @@ class Batch:
         store.write(f"{self.batch_id}.json", json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n")
 
     def standing_knowledge(self) -> StandingKnowledge:
-        """The archive's people and places names — the context the guess
+        """The archive's people and places names — the context a read
         works from (the batch's archive_dir is its own state here)."""
         store = PipelineStore(self.archive_dir)
         people = (
@@ -332,8 +234,8 @@ class Batch:
 
 class BatchRun(Batch):
     """The machine stages of one batch's ingest — classify → orient (text
-    pages) → route → HTR/tesseract → guess → read — plus the surgical
-    recovery guess (cmd_guess). The record, stage paths and DI seams the
+    pages) → read — the reader is the vision model, and the page text is its rows'
+    read and its per-page row check. The record, stage paths and DI seams the
     module functions threaded are this object's state; process is the thin
     entry point."""
 
@@ -361,155 +263,171 @@ class BatchRun(Batch):
             run_classify(self.batch_id, registry_dir=self.registry_dir, work_dir=self.work_dir)
             print(f"classified {len(pages)} page(s) -> {self.paths.classify_path}")
         classify = json.loads(store.read_latest(rel_classify))
-        text_pages = [name for name, entry in classify.items() if entry.get("kind") == "text"]
-        image_pages = [name for name, entry in classify.items() if entry.get("kind") != "text"]
+        text_pages = [name for name, entry in classify.items() if category_of(entry) in TEXT_KINDS]
+        image_pages = [name for name, entry in classify.items() if category_of(entry) not in TEXT_KINDS]
         if image_pages:
-            print(f"{len(image_pages)} page(s) are images — no transcription")
+            print(f"{len(image_pages)} page(s) carry no writing — no transcription")
         return Classification(classify, text_pages, image_pages)
 
-    def orient_and_ocr(self, text_pages: list[str], folder: Path) -> None:
-        """Orient the text pages and run tesseract raw OCR (rotations.json is
-        the completion marker — piles may hold PNG/TIFF pages, not only JPEGs)."""
-        store = PipelineStore(self.work_dir)
-        if not store.exists(f"{self.batch_id}/oriented/rotations.json"):
-            oriented = orient_pages([folder / name for name in text_pages], self.paths.oriented_dir, root=folder)
-            self.paths.raw_dir.mkdir(parents=True, exist_ok=True)
-            for page in oriented:
-                store.write(f"{self.batch_id}/ocr-raw/{Path(page.name).with_suffix('.txt')}", page.text)
-            store.write(
-                f"{self.batch_id}/oriented/rotations.json",
-                json.dumps(
-                    {page.name: RotationScores(page.degrees, page.strong, page.scores).to_dict() for page in oriented},
-                    indent=1,
-                    ensure_ascii=False,
-                )
-                + "\n",
-            )
-            rotated = sum(1 for page in oriented if page.degrees != 0)
-            print(f"oriented + raw OCR: {len(oriented)} page(s), {rotated} rotated -> {self.paths.batch_work}")
-        else:
-            print("oriented + raw OCR already present — reusing")
+    def rows_pages(self, classification: Classification) -> list[str]:
+        """The pages that take the row pipeline: the category routes them to
+        rows, and they have not been read directly already (a printed or
+        structured marker is the page's stage-5 completion — re-reading it
+        through the row chain would undo it)."""
+        return [
+            name
+            for name in classification.text_pages
+            if read_route(classification.classify[name]) == "rows"
+            and not (self.paths.guess_dir / f"{Path(name).stem}.printed.json").is_file()
+            and not (self.paths.guess_dir / f"{Path(name).stem}.structured.json").is_file()
+        ]
 
-    def route_pages(self, classification: Classification) -> list[str]:
-        """Route print vs cursive by the orientation density, recorded in
-        classify.json; returns the cursive page names."""
-        store = PipelineStore(self.work_dir)
-        rotations = {
-            name: RotationScores.from_dict(entry)
-            for name, entry in json.loads(store.read_latest(f"{self.batch_id}/oriented/rotations.json")).items()
-        }
-        apply_routes(classification.classify, rotations)
-        store.write(
-            f"{self.batch_id}/classify.json",
-            json.dumps(classification.classify, indent=1, ensure_ascii=False) + "\n",
-        )
-        cursive = [name for name, entry in classification.classify.items() if entry.get("route") == "cursive"]
-        if cursive:
-            print(
-                f"routing: {len(cursive)} cursive page(s) -> HTR, "
-                f"{len(classification.text_pages) - len(cursive)} print -> tesseract"
-            )
-        return cursive
+    def orient_pages(self, text_pages: list[str], folder: Path) -> None:
+        """Turn the text pages' writing upright into ``oriented/`` — the vision
+        model names each page's rotation (pipeline/orient.py). Nothing else is
+        measured here: the reader is the VLM's."""
+        if all((self.paths.oriented_dir / name).is_file() for name in text_pages):
+            print("orientation already present — reusing")
+            return
+        written = orient_pages([folder / name for name in text_pages], self.paths.oriented_dir)
+        print(f"oriented: {len(written)} page(s) -> {self.paths.oriented_dir}")
 
-    def transcribe_cursive(self, cursive: list[str]) -> None:
-        """Transcribe the cursive pages (the 2026-08-14 decision: the vision
-        model — the only backend since 2026-09-23, when the local orli+TrOCR
-        privacy mode was removed as unused)."""
-        if cursive:
-            cursive_pages = [PageImage(name, self.paths.oriented_dir / name) for name in cursive]
-            knowledge = self.standing_knowledge()
-            with contextlib.suppress(PipelineError):
-                label = load_batch(self.batch_id, self.registry_dir).label
-            htr_pages_vlm(
-                cursive_pages,
-                self.paths.raw_dir,
-                people=knowledge.people,
-                places=knowledge.places,
-                label=label,
-            )
-
-    def run_guess(
+    def write_boundaries(
         self,
         classification: Classification,
         record: BatchRecord,
-        client: Callable[[str, str], str] | None,
+        client: Callable[[str, str], str] | None = None,
     ) -> None:
-        """The model guess on the TEXT pages only (chunked past PAGE_LIMIT — a
-        multi-page document spanning a chunk boundary is split, a noted
-        limitation; postcards and letters within a chunk group correctly),
-        then the grouping scorer over the FULL page sequence (photos
-        included) — the duplex/paper/page-number evidence the model never
-        sees decides the boundaries (tools/grouping.py, 2026-08-17)."""
+        """Group the FULL page sequence (photos included) into documents: the
+        model's boundary judgement over each page's reading, then the grouping
+        scorer's evidence hierarchy — duplex sides, paper size, page numbers,
+        the model's flags. The text is the reads' own: this stage decides
+        boundaries, never text."""
         store = PipelineStore(self.work_dir)
         reg_store = PipelineStore(self.registry_dir)
-        raw_texts = [
-            PageText(name, store.read_latest(f"{self.batch_id}/ocr-raw/{Path(name).with_suffix('.txt')}"))
-            for name in classification.text_pages
-        ]
+        texts: dict[str, str | None] = {}
+        for name in sorted(record.pages):
+            if name in classification.text_pages:
+                texts[name] = store.read_latest(f"{self.batch_id}/ocr-guess/{Path(name).with_suffix('.txt')}")
+            else:
+                texts[name] = None
+
         knowledge = self.standing_knowledge()
-        chat = client if client is not None else AIClient(model=GUESS_MODEL, max_tokens=12000, timeout=900.0).chat
+        chat = client if client is not None else AIClient(model=BOUNDARY_MODEL, max_tokens=12000, timeout=900.0).chat
+        page_texts = [PageText(name, texts[name] or "") for name in classification.text_pages]
         flags: list[PageFlag] = []
-        # each iteration calls guess_pages — a model inference with side effects — and extends
+        # each iteration calls page_flags — a model inference with side effects — and extends
         # with its result; a comprehension would bury the side-effecting call inside an expression
         # lucidlint: ignore loop-pipeline side-effecting model call per iteration, not a pure build
-        for start in range(0, len(raw_texts), GUESS_PAGE_CHUNK):
+        for start in range(0, len(page_texts), GUESS_PAGE_CHUNK):
             flags.extend(
-                guess_pages(
-                    raw_texts[start : start + GUESS_PAGE_CHUNK],
+                page_flags(
+                    page_texts[start : start + GUESS_PAGE_CHUNK],
                     record.label,
                     knowledge.people,
                     knowledge.places,
                     chat,
                 )
             )
-        self.paths.guess_dir.mkdir(parents=True, exist_ok=True)
-        # the model echoes page names — they become file paths; a name
-        # outside the registered set is dropped from the writes AND the
-        # grouping, so boundaries.json never references an untrusted page
-        # (2026-08-15 review: the drop guarded only the writes, and the
-        # old group_documents still received every flag — the review gate
-        # then crashed on the missing .txt or read outside guess_dir via ../)
         known_flags = [flag for flag in flags if flag.page in classification.text_pages]
         for flag in flags:
             if flag.page not in classification.text_pages:
-                print(f"guess returned an unknown page {flag.page!r} — dropped")
-        for flag in known_flags:
-            store.write(f"{self.batch_id}/ocr-guess/{Path(flag.page).with_suffix('.txt')}", flag.text)
-        # the grouping scorer (2026-08-17): the full page sequence, the
-        # classify kinds, the paper sizes, and the corrected texts feed the
-        # evidence hierarchy — duplex sides > paper size > page numbers >
-        # the model's flags. Photo pages enter the documents (the postcard's
-        # picture side is page 1 of its document, acceptance 21).
+                print(f"the boundary call returned an unknown page {flag.page!r} — dropped")
         folder = record.path
         dims: dict[str, PageSize] = {}
         for rel in sorted(record.pages):
             with Image.open(folder / rel) as im:
                 dims[rel] = PageSize(im.width, im.height)
-        flags_by_page = {flag.page: flag for flag in known_flags}
-        texts: dict[str, str | None] = {flag.page: flag.text for flag in known_flags}
         boundaries = score_boundaries(
             sorted(record.pages),
-            {page: str(entry.get("kind", "text")) for page, entry in classification.classify.items()},
+            {page: category_of(entry) for page, entry in classification.classify.items()},
             dims,
             texts,
-            flags_by_page,
+            {flag.page: flag for flag in known_flags},
         )
-        inputs = {
-            name: text_sha256(store.read_latest(f"{self.batch_id}/ocr-raw/{Path(name).with_suffix('.txt')}"))
-            for name in classification.text_pages
-        }
+        self.paths.guess_dir.mkdir(parents=True, exist_ok=True)
         store.write(
             f"{self.batch_id}/ocr-guess/boundaries.json",
             json.dumps([boundary.to_dict() for boundary in boundaries], indent=1, ensure_ascii=False) + "\n",
         )
-        store.write(f"{self.batch_id}/ocr-guess/boundaries.inputs.json", json.dumps(inputs, ensure_ascii=False))
-        # seed the registry record with the full boundaries so the review
-        # surface's batch list shows the correct pending count (the registry
-        # is the status' home; the guess stage's boundaries.json is the
-        # pipeline's output, never the registry — 2026-08-15)
         record.boundaries = boundaries
         reg_store.write(f"{self.batch_id}.json", json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n")
-        print(f"model guess: {len(flags)} page(s), {len(boundaries)} document(s) -> {self.paths.guess_dir}")
+        print(f"boundaries: {len(boundaries)} document(s) from {len(record.pages)} page(s)")
+
+    def printed_pages(
+        self,
+        pages: list[str] | None = None,
+        _transcribe: Callable[[Path], tuple[str, Any]] = printed_transcript,
+    ) -> None:
+        """Read PRINTED pages: one vision call per page, no rows, no marks.
+
+        A printed page is already lines; the row pipeline's ink measurement is
+        for handwriting and its bars would only invent geometry. Each page's
+        text lands as ``ocr-guess/<page>.txt`` beside a ``<page>.printed.json``
+        marker; the marker makes a re-run idempotent."""
+        self._direct_read(pages, "printed", _transcribe)
+
+    def structured_pages(
+        self,
+        pages: list[str] | None = None,
+        _transcribe: Callable[[Path], tuple[str, Any]] = structured_transcript,
+    ) -> None:
+        """Read FORM pages: one structured vision call per page (labels and
+        their values, as a markdown table) — a form's meaning is the pairing,
+        so a prose read would lose it. Marker: ``<page>.structured.json``."""
+        self._direct_read(pages, "structured", _transcribe)
+
+    def _direct_read(
+        self,
+        pages: list[str] | None,
+        read: str,
+        transcribe: Callable[[Path], tuple[str, Any]],
+    ) -> None:
+        """The direct-read stages' one loop: a page read in a single vision call
+        (printed prose, or a form's structure), its text and marker written, and
+        one document boundary over the pages read. Idempotent per page — a page
+        whose marker exists is never paid for twice."""
+        record = load_batch(self.batch_id, self.registry_dir)
+        work_pages = pages or list(record.pages or {})
+        if not work_pages:
+            raise PipelineError(f"no pages to read in batch {self.batch_id}")
+        self.update_status(record, STATUS_PROCESSING)
+        store = PipelineStore(self.work_dir)
+        read_pages: list[str] = []
+        for page in work_pages:
+            stem = Path(page).stem
+            marker = f"{self.batch_id}/ocr-guess/{stem}.{read}.json"
+            if store.exists(marker):
+                print(f"{read}: {page} already read — skipped")
+                continue
+            image = self.paths.oriented_dir / page
+            if not image.is_file():
+                image = Path(record.path) / page
+            if not image.is_file():
+                print(f"{read}: {page} has no image — skipped", file=sys.stderr)
+                continue
+            text, answer = transcribe(image)
+            store.write(f"{self.batch_id}/ocr-guess/{stem}.txt", text + "\n")
+            store.write(
+                marker, json.dumps({"page": page, "chars": len(text), **answer.to_dict()}, ensure_ascii=False) + "\n"
+            )
+            read_pages.append(page)
+            print(f"{read}: {page} -> {len(text)} chars")
+        if read_pages:
+            # one document over the pages read, with no greeting/signoff guesses
+            # (that is the review's question)
+            boundary = Boundary(pages=read_pages)
+            store.write(
+                f"{self.batch_id}/ocr-guess/boundaries.json",
+                json.dumps([boundary.to_dict()], indent=1, ensure_ascii=False) + "\n",
+            )
+            record = load_batch(self.batch_id, self.registry_dir)
+            record.boundaries = [boundary]
+            PipelineStore(self.registry_dir).write(
+                f"{self.batch_id}.json", json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n"
+            )
+        self.update_status(load_batch(self.batch_id, self.registry_dir), STATUS_REVIEW)
+        print(f"{read}: {len(read_pages)} page(s) read — batch {self.batch_id} awaiting review")
 
     def read_pages(
         self,
@@ -582,6 +500,10 @@ class BatchRun(Batch):
                 f"{self.batch_id}/ocr-guess/{stem}.words.json",
                 json.dumps(Words(reading.words).to_dict(), indent=1, ensure_ascii=False) + "\n",
             )
+            # the page's TEXT is its rows' reading, in order — the review
+            # surface's drafts read this file (the guess stage, which used to
+            # write it, is gone)
+            store.write(f"{self.batch_id}/ocr-guess/{stem}.txt", _page_text(reading.lines) + "\n")
             print(f"read: {page} -> {len(reading.lines)} rows, {len(reading.words)} words, {len(transcripts)} read")
 
     def _pending_correction(self, page: str, reading: RowsReading | None) -> RowAdjustments | None:
@@ -647,15 +569,20 @@ class BatchRun(Batch):
             f"{self.batch_id}/ocr-guess/{Path(page).stem}.rows.json",
             json.dumps(reading.to_dict(), indent=1, ensure_ascii=False) + "\n",
         )
+        store.write(f"{self.batch_id}/ocr-guess/{Path(page).stem}.txt", _page_text(reading.lines) + "\n")
         atomic_write(
             readings.adjusted_rows_path(page),
             json.dumps(Rows.to_dict(filled), ensure_ascii=False, indent=1) + "\n",
         )
         print(f"read: {page} re-read against {len(adjustments.lines)} drawn line(s) -> {len(filled)} rows")
 
-    def process(self, client: Callable[[str, str], str] | None = None) -> None:
-        """Classify → orient (text pages) → route → HTR/tesseract → guess →
-        read (the page's rows: line boxes + text per row) → review.
+    def process(
+        self,
+        client: Callable[[str, str], str] | None = None,
+        _printed: Callable[[Path], tuple[str, Any]] | None = None,
+    ) -> None:
+        """Classify → orient → read (the category decides: the direct read, the
+        structured read, or the page's rows) → review.
 
         A pass that dies half-way puts the registry record back to `pending`:
         the batch is work again, not stranded in `importing` where the queue
@@ -670,7 +597,7 @@ class BatchRun(Batch):
 
         self.update_status(record, STATUS_PROCESSING)
         try:
-            self._run_stages(record, pages, client)
+            self._run_stages(record, pages, client, _printed=_printed)
         except Exception:
             self.update_status(record, STATUS_PENDING)  # a failed pass is work again
             raise
@@ -680,6 +607,7 @@ class BatchRun(Batch):
         record: BatchRecord,
         pages: list[Path],
         client: Callable[[str, str], str] | None,
+        _printed: Callable[[Path], tuple[str, Any]] | None = None,
     ) -> None:
         """The machine stages. Stops at the review gate: the draft rows exist
         and each page waits on its row check (the derived `rows_pending`)."""
@@ -700,111 +628,33 @@ class BatchRun(Batch):
             )
             return
 
-        # 2. orient + tesseract raw, TEXT PAGES ONLY (rotations.json is the
-        # completion marker — piles may hold PNG/TIFF pages, not only JPEGs)
-        self.orient_and_ocr(classification.text_pages, record.path)
+        # the CATEGORY decides the read (docs/PLAN/page-categories.md): printed
+        # writing is one direct VLM read; a form is a structured read; handwriting
+        # and a handwritten postcard face take the row pipeline (auto rows, then
+        # the human check); a photograph or a drawing is not read at all. A page
+        # already read directly is never re-read through the row chain.
+        direct = [n for n in classification.text_pages if read_route(classification.classify[n]) == "direct"]
+        structured = [n for n in classification.text_pages if read_route(classification.classify[n]) == "structured"]
+        if direct:
+            self.printed_pages(pages=direct, _transcribe=_printed or printed_transcript)
+        if structured:
+            self.structured_pages(pages=structured)
+        kept = self.rows_pages(classification)
+        if len(kept) != len(classification.text_pages):
+            classification = replace(classification, text_pages=kept)
+        if not kept:
+            return
 
-        # 3. route print vs cursive by the orientation density, recorded in classify.json
-        cursive = self.route_pages(classification)
-
-        # 4. transcribe the cursive pages (the 2026-08-14 decision: the vision
-        #    model — the only backend since 2026-09-23)
-        self.transcribe_cursive(cursive)
-
-        # 5. model guess on the TEXT pages only (chunked past PAGE_LIMIT — a
-        # multi-page document spanning a chunk boundary is split, a noted
-        # limitation; postcards and letters within a chunk group correctly)
-        if self.paths.boundaries_path.exists() and not self.paths.guess_is_stale(classification.text_pages):
-            print("guess already present — reusing")
-        else:
-            self.run_guess(classification, record, client)
+        # 2. turn the pages upright (the vision model names the rotation)
+        self.orient_pages(classification.text_pages, record.path)
 
         # 6. read the pages into rows (object-model Phase 1: the strip
-        # stage's layout is gone — the reading is the marks → fitted-lines
-        # chain, and the page's guess text maps onto the rows in order).
+        # stage's layout is gone — the reading is the marks → fitted-lines chain).
         self.read_pages(classification.text_pages)
 
+        self.write_boundaries(classification, record, client)
         self.update_status(record, STATUS_REVIEW)
         print(f"batch {self.batch_id} awaiting review (make confirm ARGS={self.batch_id!r})")
-
-    def recover_guess(self, pages: list[str]) -> int:
-        """Surgical recovery (2026-08-20): re-run the VLM guess for specific
-        pages, then regenerate boundaries from the full page set. The guess
-        stage previously could only run as part of the whole ``process`` chain —
-        fixing one page re-paid model calls for every page. ``pages`` limits
-        which pages get re-transcribed; the boundaries regen still sees the
-        full set (the grouping scorer needs the whole sequence)."""
-        record = load_batch(self.batch_id, self.registry_dir)
-        if not self.paths.classify_path.exists():
-            print(f"guess: no classify.json for {self.batch_id} — run `pipeline process` once first", file=sys.stderr)
-            return 1
-        classify = json.loads(PipelineStore(self.work_dir).read_latest(f"{self.batch_id}/classify.json"))
-        text_pages: list[str] = [name for name, entry in classify.items() if entry.get("kind") == "text"]
-        if pages:
-            requested = {p if p.endswith(".jpg") else p + ".jpg" for p in pages}
-            unknown = requested - set(text_pages)
-            if unknown:
-                print(f"guess: not text pages: {', '.join(sorted(unknown))}", file=sys.stderr)
-                return 2
-            cursive = [p for p in requested if classify.get(p, {}).get("route") == "cursive"]
-            if not cursive:
-                print(
-                    "guess: none of the requested pages are routed cursive — nothing to re-transcribe", file=sys.stderr
-                )
-                return 2
-        else:
-            cursive = [name for name in text_pages if classify.get(name, {}).get("route") == "cursive"]
-
-        knowledge = self.standing_knowledge()
-        label = record.label
-        htr_pages_vlm(
-            [PageImage(name, self.paths.oriented_dir / name) for name in cursive],
-            self.paths.raw_dir,
-            people=knowledge.people,
-            places=knowledge.places,
-            label=label,
-        )
-
-        image_pages = [name for name, entry in classify.items() if entry.get("kind") != "text"]
-        self.regenerate_boundaries(Classification(classify, text_pages, image_pages), record)
-        print(f"guess: {len(cursive)} page(s) re-transcribed, boundaries regenerated")
-        return 0
-
-    def regenerate_boundaries(self, classification: Classification, record: BatchRecord) -> None:
-        """Regenerate boundaries from the full set — the grouping scorer needs
-        the whole sequence (photos included), the classify kinds, the image
-        sizes, and the texts. Same call pattern as run_guess (2026-08-20)."""
-        store = PipelineStore(self.work_dir)
-        reg_store = PipelineStore(self.registry_dir)
-        folder = record.path
-        dims: dict[str, PageSize] = {}
-        for rel in sorted(record.pages):
-            with Image.open(folder / rel) as im:
-                dims[rel] = PageSize(im.width, im.height)
-        texts: dict[str, str | None] = {
-            name: (self.paths.raw_dir / Path(name).with_suffix(".txt")).read_text(encoding="utf-8")
-            for name in classification.text_pages
-        }
-        boundaries = score_boundaries(
-            sorted(record.pages),
-            {page: str(entry.get("kind", "text")) for page, entry in classification.classify.items()},
-            dims,
-            texts,
-            {},
-        )
-        boundaries_path = self.paths.boundaries_path
-        boundaries_path.parent.mkdir(parents=True, exist_ok=True)
-        inputs = {
-            name: text_sha256((self.paths.raw_dir / Path(name).with_suffix(".txt")).read_text(encoding="utf-8"))
-            for name in classification.text_pages
-        }
-        store.write(
-            f"{self.batch_id}/ocr-guess/boundaries.json",
-            json.dumps([boundary.to_dict() for boundary in boundaries], indent=1, ensure_ascii=False) + "\n",
-        )
-        store.write(f"{self.batch_id}/ocr-guess/boundaries.inputs.json", json.dumps(inputs, ensure_ascii=False))
-        record.boundaries = boundaries
-        reg_store.write(f"{self.batch_id}.json", json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n")
 
 
 def process(
@@ -815,9 +665,15 @@ def process(
     archive_dir: Path = ARCHIVE_DIR,
     client: Callable[[str, str], str] | None = None,
 ) -> None:
-    """Classify → orient (text pages) → route → HTR/tesseract → guess →
-    read (the page's rows: line boxes + text per row) → review."""
+    """Classify → orient → read (the category decides: direct read, structured
+    read, or the page's rows) → review."""
     BatchRun(batch_id, work_dir=work_dir, registry_dir=registry_dir, archive_dir=archive_dir).process(client)
+
+
+def _page_text(lines: Sequence[Mapping[str, Any]]) -> str:
+    """The page's text as its rows read it: each line's own reading, in the
+    reading's order, blank lines dropped."""
+    return "\n".join(str(line.get("text", "")).strip() for line in lines if str(line.get("text", "")).strip())
 
 
 def _reader_line(row: Row) -> int | None:
@@ -873,293 +729,6 @@ def _read_pages(
     BatchRun(batch_id, work_dir=work_dir).read_pages(
         text_pages, _reading=_reading, _rows_text=_rows_text, _corrected_text=_corrected_text
     )
-
-
-def _ambiguous_rotations(scores: dict[str, int]) -> bool:
-    """The arbiter's strong-word counts suggest text in more than one
-    direction (PRD VR15): the second-best rotation carries a meaningful
-    share of the winner's words — the postcard's {0: 16, 270: 9} splits,
-    while a clean page's losers sit near zero."""
-    vals = sorted((int(scores.get(str(k), 0)) for k in (0, 90, 180, 270)), reverse=True)
-    if len(vals) < 2 or vals[0] <= 0:
-        return False
-    return vals[1] >= max(AMBIGUITY_FLOOR, AMBIGUITY_RATIO * vals[0])
-
-
-class OrientationReporter:
-    """The per-page multi-direction orientation report (PRD VR15): for pages
-    whose arbiter scores suggest text in more than one direction, the vision
-    model LOCATES the known transcription — or the clip path measures each
-    line's exact angle — and the sidecar lands in
-    ``ocr-guess/<stem>.orientation.json`` for the layout stage; failures
-    accumulate in ``orientation.failed.json``. The batch's store + id, which
-    the report helpers threaded as parameters, are this object's state."""
-
-    def __init__(self, store: PipelineStore, batch_id: str) -> None:
-        self.store = store
-        self.batch_id = batch_id
-
-    def write_hints(
-        self,
-        text_pages: list[str],
-        oriented_dir: Path,
-        guess_dir: Path,
-        orientation_report_fn: Callable[[Path, str], dict[str, Any]],
-    ) -> None:
-        """For pages whose arbiter scores suggest more than one text
-        direction, ask the vision model to LOCATE the page's known
-        transcription (the guess's corrected text — the model assigns each
-        line its box + orientation) and store it
-        (``ocr-guess/<stem>.orientation.json``) for the layout stage. A
-        single-dominant page gets no report — the plain single-orientation
-        layout suffices; the report runs only where the scores already
-        suspect more than one direction (PRD VR15, 2026-08-17). A
-        single-direction report (the model disagrees) also writes nothing —
-        the layout stage then takes the plain path."""
-        if not self.store.exists(f"{self.batch_id}/oriented/rotations.json"):
-            return
-        rotations = {
-            name: RotationScores.from_dict(entry)
-            for name, entry in json.loads(self.store.read_latest(f"{self.batch_id}/oriented/rotations.json")).items()
-        }
-        failures_rel = f"{self.batch_id}/ocr-guess/orientation.failed.json"
-        failures: list[dict[str, Any]] = []
-        if self.store.exists(failures_rel):
-            # a corrupt failure log fails loudly — never silently reset the trail
-            failures = json.loads(self.store.read_latest(failures_rel))
-        for page in text_pages:
-            out_rel = f"{self.batch_id}/ocr-guess/{Path(page).stem}.orientation.json"
-            if self.store.exists(out_rel):
-                continue  # idempotent — re-running process must not re-pay the model call
-            page_scores = rotations.get(page)
-            if page_scores is None or not _ambiguous_rotations(page_scores.scores):
-                continue
-            guess_text = ""
-            txt_rel = f"{self.batch_id}/ocr-guess/{Path(page).stem}.txt"
-            if self.store.exists(txt_rel):
-                guess_text = self.store.read_latest(txt_rel)
-            # The clip path (2026-08-20): when the transcription returned
-            # per-line geometry, clip each in-bounds line and classify its
-            # EXACT angle — ~600 tokens and ~6s per line, vs the full-page
-            # location call that burned 64K reasoning tokens with zero
-            # content. The full-page call remains the fallback for pages the
-            # transcription gave no geometry.
-            clip_report = self.try_clip_report(page, oriented_dir)
-            try:
-                report = (
-                    clip_report if clip_report is not None else orientation_report_fn(oriented_dir / page, guess_text)
-                )
-            # the seam is a Callable (anything may raise): the failure is recorded
-            # (orientation.failed.json) and the layout falls back; the next pass
-            # retries (nothing marks it done)
-            # lucidlint: ignore broad-except a failed report must not kill the batch — recorded, falls back, retried
-            except Exception as exc:
-                self.record_failure(failures, failures_rel, page, exc)
-                continue
-            self.commit(out_rel, page, report)
-
-    def report_boxes(self, page: str) -> dict[int, list[float]]:
-        """The located report's per-line boxes (normalized 0-1000) — the clip
-        path's fallback when the transcription gave no geometry (the
-        postcard, 2026-08-20: the model LOCATED the known text, and the clip
-        classifier measures its exact angle). {} = nothing located."""
-        report_rel = f"{self.batch_id}/ocr-guess/{Path(page).stem}.orientation.json"
-        if not self.store.exists(report_rel):
-            return {}
-        try:
-            report = json.loads(self.store.read_latest(report_rel))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        boxes: dict[int, list[float]] = {}
-        located = (report.get("lines") or []) if isinstance(report, dict) else []
-        for ln in located:
-            if isinstance(ln, dict) and isinstance(ln.get("index"), int) and ln.get("box"):
-                boxes[int(ln["index"])] = ln["box"]
-        return boxes
-
-    def clip_source_boxes(self, page: str) -> dict[int, list[float]]:
-        """The boxes the clip path clips (extracted from _try_clip_report
-        2026-08-20 when the fallback pushed its cyclomatic complexity over
-        lucidlint's bar): the transcription's own per-line geometry, else the
-        located report's boxes — the transcription gave no geometry (the
-        postcard), the model LOCATED the known text, and the clip classifier
-        measures its exact angle. {} = nothing to clip (the full-page call
-        then stands)."""
-        raw_marker = f"{self.batch_id}/ocr-raw/{Path(page).stem}.vlm.json"
-        if not self.store.exists(raw_marker):
-            return {}
-        try:
-            marker = json.loads(self.store.read_latest(raw_marker))
-        except (OSError, json.JSONDecodeError):
-            return {}
-        boxes: dict[int, list[float]] = {}
-        vlm_lines = marker.get("lines") if isinstance(marker, dict) else None
-        if vlm_lines:
-            for position, ln in enumerate(vlm_lines):
-                if isinstance(ln, dict) and "box" in ln:
-                    boxes[position] = ln["box"]
-        if not boxes:
-            # the transcription gave no per-line geometry — the located
-            # report's boxes stand in (the model located the known text)
-            boxes = self.report_boxes(page)
-        return boxes
-
-    def try_clip_report(
-        self,
-        page: str,
-        oriented_dir: Path,
-        *,
-        classify: Callable[[Path], float] | None = None,
-    ) -> dict[str, Any] | None:
-        """The clip path's envelope: read the transcription geometry and build
-        the per-line clip-and-classify report, or return None (the full-page
-        call then stands). None on ANY failure — the contract is "no clip
-        report", never a crash; a missing marker or malformed geometry simply
-        falls back. When the transcription gave NO geometry (the postcard,
-        2026-08-20), the EXISTING report's located boxes stand in — the model
-        located the known text, and the clip classifier can measure its
-        EXACT angle (the 90-vs-270 flip the full-page estimate cannot
-        resolve)."""
-        boxes = self.clip_source_boxes(page)
-        if not boxes:
-            return None
-        try:
-            return _clip_orientation_report(oriented_dir / page, boxes, classify=classify)
-        # the clip path's only failure types: tempfile/PIL (OSError) and the
-        # classifier (VlmError); a clip failure falls back to the full-page call
-        except (VlmError, OSError) as exc:
-            print(f"layout: clip orientation failed for {page} — falling back: {str(exc)[:120]}", file=sys.stderr)
-            return None
-
-    def commit(self, out_rel: str, page: str, report: dict[str, Any]) -> None:
-        """Write the report sidecar when the model reports more than one
-        direction. The v3 report's multi-direction evidence lives in the
-        LINES' degrees (the model locates the known text; the
-        orientation_hint may be empty) — the sidecar must be written either
-        way (2026-08-17: the eval caught the hints-only check dropping an
-        ambiguous page back to the plain layout)."""
-        hints = report.get("orientation_hint", []) if isinstance(report, dict) else []
-        degrees = {int(h.get("degrees")) for h in hints if h.get("degrees") in (0, 90, 180, 270)}
-        located = report.get("lines", []) if isinstance(report, dict) else []
-        degrees |= {int(ln.get("degrees")) for ln in located if ln.get("degrees") in (0, 90, 180, 270)}
-        if len(degrees) >= 2:
-            self.store.write(out_rel, json.dumps(report, ensure_ascii=False) + "\n")
-            print(f"layout: orientation report for {page} — {sorted(degrees)}")
-
-    def record_failure(
-        self,
-        failures: list[dict[str, Any]],
-        failures_rel: str,
-        page: str,
-        exc: Exception,
-    ) -> None:
-        """Record a failed orientation report (accumulating across passes —
-        each attempt appends, so repeated failures build a diagnosable trail)
-        and CONTINUE: the layout stage still runs for the page via the
-        single-orientation fallback (transcription boxes + the dominant
-        rotation). The next process pass retries the report (no report exists,
-        so nothing marks it done). 2026-08-20: the heavy location task burns
-        64K reasoning tokens with no content, non-deterministically — the
-        batch must stay usable through it."""
-        entry = {
-            "page": page,
-            "at": datetime.now(UTC).isoformat(),
-            "attempt": len([f for f in failures if f.get("page") == page]) + 1,
-            "error": str(exc)[:1000],
-        }
-        failures.append(entry)
-        self.store.write(failures_rel, json.dumps(failures, indent=1, ensure_ascii=False) + "\n")
-        print(
-            f"layout: orientation report FAILED for {page} (attempt {entry['attempt']}) — "
-            f"continuing with the single-orientation fallback: {str(exc)[:160]}",
-            file=sys.stderr,
-        )
-
-
-def _clip_orientation_report(
-    image: Path,
-    norm_boxes: dict[int, list[float]],
-    *,
-    classify: Callable[[Path], float] | None = None,
-    _max_workers: int = 4,
-) -> dict[str, Any]:
-    """The per-line clip-and-classify report: for each in-bounds
-    transcription box, clip the line from the image and ask the model the
-    EXACT clockwise angle. Returns the report shape the layout consumes
-    (``{"lines": [{index, box, degrees}]}``). Out-of-bounds or degenerate
-    boxes are DROPPED — the model's normalized geometry sometimes exceeds
-    the canvas (page-12's refusal), and such a line cannot be clipped and
-    must not anchor the layout."""
-    classify_fn = classify if classify is not None else line_orientation_degrees
-    img = Image.open(image)
-    img.load()  # PIL lazy-loads on crop; concurrent crops race the load (OSError: truncated)
-    w, h = img.size
-
-    def _classify_one(index: int, norm_box: list[float]) -> dict[str, Any] | None:
-        x0, y0, x1, y1 = (
-            norm_box[0] / 1000 * w,
-            norm_box[1] / 1000 * h,
-            norm_box[2] / 1000 * w,
-            norm_box[3] / 1000 * h,
-        )
-        if x0 < 0 or y0 < 0 or x1 > w or y1 > h or x1 <= x0 or y1 <= y0:
-            return None  # out-of-bounds or degenerate — cannot clip, must not anchor
-        crop = img.crop((x0, y0, x1, y1))
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            crop.save(tmp, format="JPEG", quality=85)
-            tmp_path = Path(tmp.name)
-        try:
-            try:
-                degrees = classify_fn(tmp_path)
-            except (VlmError, OSError):
-                return None
-        finally:
-            tmp_path.unlink(missing_ok=True)
-        cardinal = int(round(degrees / 90)) * 90 % 360
-        return {"index": index, "box": list(norm_box), "degrees": cardinal}
-
-    lines: list[dict[str, Any]] = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=_max_workers) as pool:
-        futures = [pool.submit(_classify_one, i, b) for i, b in sorted(norm_boxes.items())]
-        for future in concurrent.futures.as_completed(futures):
-            result = future.result()
-            if result is not None:
-                lines.append(result)
-    lines.sort(key=lambda ln: ln["index"])
-    # "source": "clip" tells the layout stage the per-line degrees are
-    # measured from the actual text (exact angles) — trusted over the
-    # rec-pass orientations (2026-08-20: a mirrored-pass artifact
-    # labeled page-03's horizontal lines 90°).
-    return {"orientation_hint": [], "source": "clip", "lines": lines}
-
-
-def _write_orientation_hints(
-    text_pages: list[str],
-    batch_work: Path,
-    oriented_dir: Path,
-    guess_dir: Path,
-    orientation_report_fn: Callable[[Path, str], dict[str, Any]],
-) -> None:
-    """The multi-direction orientation report driver's test-seam entry — the
-    stage lives on OrientationReporter.write_hints (the batch's store and id
-    derive from the work root + batch folder name)."""
-    OrientationReporter(PipelineStore(batch_work.parent), batch_work.name).write_hints(
-        text_pages, oriented_dir, guess_dir, orientation_report_fn
-    )
-
-
-def _try_clip_report(
-    store: PipelineStore,
-    batch_id: str,
-    page: str,
-    oriented_dir: Path,
-    *,
-    classify: Callable[[Path], float] | None = None,
-) -> dict[str, Any] | None:
-    """The clip path's envelope — test-seam entry; the envelope lives on
-    OrientationReporter.try_clip_report (the store and batch id the seam
-    passes are its state)."""
-    return OrientationReporter(store, batch_id).try_clip_report(page, oriented_dir, classify=classify)
 
 
 def _read_multiline(prompt: str, readline: Callable[[str], str]) -> str:
@@ -1293,11 +862,11 @@ def review(
     ).run(readline=readline, write_line=write_line)
 
 
-def cmd_guess(batch_id: str, pages: list[str], work_dir: Path, registry_dir: Path) -> int:
-    """Surgical recovery (2026-08-20): re-run the VLM guess for specific
-    pages, then regenerate boundaries from the full page set — the recovery
-    lives on BatchRun.recover_guess."""
-    return BatchRun(batch_id, work_dir=work_dir, registry_dir=registry_dir).recover_guess(pages)
+def cmd_printed(batch_id: str) -> int:
+    """Read a printed pile: the VLM transcribes each page directly — no rows,
+    no ink measurement (handwriting's machinery, which printed text defeats)."""
+    BatchRun(batch_id).printed_pages()
+    return 0
 
 
 def _add_batch_command(sub, name: str, help_text: str, fn: Callable[..., Any]) -> Any:
@@ -1312,20 +881,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="pipeline", description="The ingest chain per batch")
     sub = parser.add_subparsers(dest="command", required=True)
     _add_batch_command(sub, name="process", help_text="orient + raw OCR + model guess + boundaries", fn=process)
-    p = _add_batch_command(
-        sub,
-        name="guess",
-        help_text="surgical recovery: re-transcribe specific pages, regen boundaries",
-        fn=cmd_guess,
-    )
-    p.add_argument("pages", nargs="*", help="page names (e.g. page-02); empty = all cursive pages")
     _add_batch_command(sub, name="review", help_text="user confirmation gate for the guessed text", fn=review)
+    _add_batch_command(
+        sub,
+        name="printed",
+        help_text="read a PRINTED pile: one VLM transcription per page, no rows",
+        fn=cmd_printed,
+    )
     args = parser.parse_args(argv)
     try:
-        if args.command == "guess":
-            args.fn(args.batch_id, args.pages, WORK_DIR, REGISTRY_DIR)
-        else:
-            args.fn(args.batch_id)
+        args.fn(args.batch_id)
     except PipelineError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

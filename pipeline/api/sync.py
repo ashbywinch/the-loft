@@ -89,7 +89,9 @@ def document_readiness(pages_by_document: list[list[str]], readings: BatchReadin
     for index, pages in enumerate(pages_by_document):
         if not pages:
             continue
-        passed = sum(readings.page_status(page) is PageStatus.ROWS_ADJUSTED for page in pages)
+        passed = sum(
+            readings.page_status(page) in (PageStatus.ROWS_ADJUSTED, PageStatus.TRANSCRIPTS_PROPOSED) for page in pages
+        )
         if passed == len(pages):
             ready.append(index)
         elif passed:
@@ -127,6 +129,16 @@ class BatchReadings:
         """The correction's rows (the wire contract)."""
         return self.guess_dir / Path(page).with_suffix(f".{ADJUSTED_ROWS_JSON}")
 
+    def printed_path(self, page: str) -> Path:
+        """The page's direct-read marker — printed prose, or a form's structure
+        (stage 5 written without rows)."""
+        stem = self.guess_dir / Path(page).stem
+        for read in ("printed", "structured"):
+            path = stem.with_suffix(f".{read}.json")
+            if path.is_file():
+                return path
+        return stem.with_suffix(".printed.json")
+
     def oriented_path(self, page: str) -> Path:
         """The oriented page image (the orient stage's marker)."""
         return self.work_dir / self.batch_id / "oriented" / page
@@ -145,13 +157,33 @@ class BatchReadings:
         write — so no page is ever read back in either."""
         if self.checked(page):
             return PageStatus.ROWS_ADJUSTED
+        if self.printed_path(page).is_file():
+            # the page's draft text exists (the printed read wrote it directly):
+            # stage 5 is complete, and there are no rows to check — the marker
+            # is checked before the rows path because such a page has none
+            return PageStatus.TRANSCRIPTS_PROPOSED
         if self.rows_path(page).is_file():
             return PageStatus.ROWS_PENDING
         if self.words_path(page).is_file():
             return PageStatus.WORDS
         if self.oriented_path(page).is_file():
             return PageStatus.ORIENTED
+        if self.classified(page):
+            return PageStatus.CLASSIFIED
         return PageStatus.NEW
+
+    def classified(self, page: str) -> bool:
+        """Whether the categoriser has an entry for the page (classify.json) —
+        the page's category is known, and no later stage has touched it yet."""
+        store = PipelineStore(self.work_dir)
+        rel = f"{self.batch_id}/classify.json"
+        if not store.exists(rel):
+            return False
+        try:
+            entries = json.loads(store.read_latest(rel))
+        except (ValueError, OSError):
+            return False
+        return page in entries
 
     def rebuild_rotated_layout(
         self,

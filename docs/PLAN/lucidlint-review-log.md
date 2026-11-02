@@ -712,12 +712,14 @@ through functions, not knowledge re-derived independently. Proposed rules
 (the first two would have caught this pass):
 
 1. **`repeated-literal`** — a string literal used ≥3 times across ≥2 modules
-   (path components, marker suffixes, prompt fragments): "this vocabulary has
-   one home; find it or create it". The repo's architecture test now enforces
-   it for the stage layout specifically; the linter can generalise it.
+   (path components, marker suffixes, prompt fragments), reported as a GROUP
+   that names the latent value class: "this vocabulary has one home; find it
+   or create it". Filed: https://github.com/ashbywinch/lucidlint/issues/60
 2. **`sibling-value-class`** — two classes in one package sharing ≥2 fields
    and ≥2 derived accessors (here `(work_dir, batch_id)` and the same path
    methods) without a containment edge: "one of these is the duplicate".
+   Filed: https://github.com/ashbywinch/lucidlint/issues/61
 3. **`duplicate` at a lower, cross-module threshold** (dice ≥ 0.7, module
    pairs only) as a warn, to surface near-copies like `_as_lines` vs
    `parse_transcription_response`.
+   Filed: https://github.com/ashbywinch/lucidlint/issues/62

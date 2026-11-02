@@ -76,6 +76,21 @@ def pages_pending(readings: BatchReadings, pages: list[str]) -> list[str]:
     return [page for page in pages if readings.page_status(page) is PageStatus.ROWS_PENDING]
 
 
+def documents_ready(pages_by_document: list[list[str]], readings: BatchReadings) -> list[int]:
+    """The document indexes whose pages have ALL passed the row check.
+
+    The transcription review is the stage after the row check: a document
+    whose page still carries draft rows (or has not been read at all) is not
+    reviewable words yet, and one whose pages were read under the old
+    pipeline has no reading to check — both stay before the gate. The list is
+    the door's own rule, not a UI guess."""
+    return [
+        index
+        for index, pages in enumerate(pages_by_document)
+        if pages and all(readings.page_status(page) is PageStatus.ROWS_ADJUSTED for page in pages)
+    ]
+
+
 @dataclass(frozen=True)
 class BatchReadings:
     """One batch's reading files on disk — the one place the ocr-guess

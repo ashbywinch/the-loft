@@ -235,6 +235,7 @@ describe("the batch list renders the real batches", () => {
               status: "review",
               pages: { a: 1, b: 2 },
               boundaries: [{ pages: ["a"], status: null }],
+              documents_ready: [0],
             },
             {
               batch_id: "b-done",
@@ -250,9 +251,41 @@ describe("the batch list renders the real batches", () => {
     const main = document.createElement("main");
     render(main, { name: "review" });
     await vi.waitFor(() => expect(main.textContent).toContain("First pile"));
-    expect(main.textContent).toContain("0 of 1 confirmed");
+    expect(main.textContent).toContain("1 of 1 documents ready to review · 0 confirmed");
     expect(main.textContent).not.toContain("Old pile");
     expect(main.textContent).not.toContain("No batches");
+    vi.unstubAllGlobals();
+  });
+
+  it("a batch whose pages have not passed the row check is named as such, never offered", async () => {
+    // the strip-era piles: boundaries and text, but no page was read as rows,
+    // so there is nothing to review as words yet (the transcription stage is
+    // after the row check)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          batches: [
+            {
+              batch_id: "b-legacy",
+              label: "PhotoScan",
+              status: "review",
+              pages: { a: 1, b: 2 },
+              boundaries: [{ pages: ["a"], status: null }],
+              documents_ready: [],
+              pages_pending: [],
+            },
+          ],
+        }),
+      }),
+    );
+    const main = document.createElement("main");
+    render(main, { name: "review" });
+    await vi.waitFor(() => expect(main.textContent).toContain("PhotoScan"));
+    expect(main.textContent).toContain("Before the row check");
+    expect(main.textContent).not.toContain("Transcriptions — check the machine's reading");
     vi.unstubAllGlobals();
   });
 

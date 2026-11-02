@@ -1468,6 +1468,47 @@ def _seed_row_page(fixture: ServerFixture, batch_id: str = "adopt-0001", status:
     )
 
 
+def test_a_document_is_ready_for_transcription_only_after_its_row_check(server: ServerFixture) -> None:
+    """The transcription stage sits after the row check: the batches answer
+    says which documents may be reviewed as words, and a page still carrying
+    draft rows (or never read — the strip-era pages) is before the gate."""
+    import json as _json
+
+    _seed_row_page(server)
+    (server.registry_dir / "adopt-0001.json").write_text(
+        _json.dumps(
+            {
+                "batch_id": "adopt-0001",
+                "path": str(server.data_dir),
+                "status": "review",
+                "arrived_at": "2026-10-27T12:00:00+00:00",
+                "pages": {"p1.jpg": "hash-1"},
+                "fingerprint": ["hash-1"],
+                "boundaries": [{"pages": ["p1.jpg"], "greeting": None, "signoff": None}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    guess = server.work_dir / "adopt-0001" / "ocr-guess"
+    (guess / "p1.txt").write_text("one two", encoding="utf-8")
+    (guess / "boundaries.json").write_text(
+        _json.dumps([{"pages": ["p1.jpg"], "greeting": "", "signoff": None}]), encoding="utf-8"
+    )
+    status, raw = server.get("/api/sync/batches", cookie=server.cookie)
+    assert status == 200
+    assert _json.loads(raw.decode("utf-8"))["batches"][0]["documents_ready"] == []
+    status, raw = server.get("/api/sync/batch/adopt-0001/drafts", cookie=server.cookie)
+    assert _json.loads(raw.decode("utf-8"))["documents"][0]["ready"] is False
+
+    # the reviewer's check (even with no drawn lines) is what opens the gate
+    status, _ = server.post("/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments", {"lines": []})
+    assert status == 200
+    status, raw = server.get("/api/sync/batches", cookie=server.cookie)
+    assert _json.loads(raw.decode("utf-8"))["batches"][0]["documents_ready"] == [0]
+    status, raw = server.get("/api/sync/batch/adopt-0001/drafts", cookie=server.cookie)
+    assert _json.loads(raw.decode("utf-8"))["documents"][0]["ready"] is True
+
+
 def test_sync_drafts_carries_the_rows_tints(server: ServerFixture) -> None:
     """The row screen's tints come with the drafts: the machine's rows built
     from the page's own words, as RowTint records (the colour and the

@@ -96,10 +96,13 @@ export function pagesToCheck(batches) {
 /** The portal's transcripts item: the documents still awaiting the review
  *  gate — a boundary not yet confirmed, in a batch not yet confirmed. */
 export function documentsToReview(batches) {
+  // the transcription review is the stage AFTER the row check: a batch's
+  // `documents_ready` lists the documents whose pages are all checked, and
+  // only those are reviewable words (docs/PLAN/row-correction-rule.md; a
+  // strip-era batch has none — its pages were never read as rows)
   return (batches ?? [])
     .filter((batch) => batch.status !== "confirmed")
-    .flatMap((batch) => batch.boundaries ?? [])
-    .filter((boundary) => boundary.status !== "confirmed").length;
+    .reduce((count, batch) => count + (batch.documents_ready ?? []).length, 0);
 }
 
 /** The documents whose people and places still wait on the family (stage 8):

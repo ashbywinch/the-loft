@@ -445,8 +445,15 @@ async function renderBatchList(main, state) {
   // the empty message appears only when there is genuinely no review work
   // anywhere — state is always the app state object, so `!state` never
   // fires
-  const open = batches.filter(
-    (b) => b.status !== "confirmed" && (b.boundaries ?? []).some((x) => x.status !== "confirmed"),
+  // The transcription review is the stage AFTER the row check: only a batch
+  // whose documents have all their pages checked is reviewable words. A batch
+  // with boundaries but none ready is waiting on the row check (its pages may
+  // predate the reader entirely — the strip-era piles), so it is named as
+  // such, never offered as transcription work.
+  const isOpen = (b) => b.status !== "confirmed" && (b.boundaries ?? []).some((x) => x.status !== "confirmed");
+  const open = batches.filter((b) => isOpen(b) && (b.documents_ready ?? []).length > 0);
+  const beforeGate = batches.filter(
+    (b) => isOpen(b) && (b.boundaries ?? []).length > 0 && (b.documents_ready ?? []).length === 0,
   );
   // the portal's rows item (UR2): a page the read stage has finished waits on
   // its check even when every document of the batch is already confirmed
@@ -455,6 +462,7 @@ async function renderBatchList(main, state) {
   const hasWork =
     toCheck.length > 0 ||
     open.length > 0 ||
+    beforeGate.length > 0 ||
     toIdentify.length > 0 ||
     (state && (pendingImports(state).length > 0 || draftItems(state.items).length > 0));
   if (!hasWork) {
@@ -508,14 +516,39 @@ async function renderBatchList(main, state) {
     for (const batch of open) {
       const boundaries = batch.boundaries || [];
       const confirmed = boundaries.filter((b) => b.status === "confirmed").length;
-      const pages = Object.keys(batch.pages || {}).length;
-      const progress = boundaries.length ? `${confirmed} of ${boundaries.length} confirmed` : `${pages} pages`;
+      const ready = (batch.documents_ready ?? []).length;
+      const progress = `${ready} of ${boundaries.length} documents ready to review · ${confirmed} confirmed`;
       const card = el("button", { class: "rv-card", onclick: () => navigate(`review/${batch.batch_id}`) }, [
         el("div", { class: "rv-card-main" }, [
           el("div", { class: "rv-card-title" }, batch.label || batch.batch_id),
           el("div", { class: "rv-card-sub" }, progress),
         ]),
         el("span", { class: "rv-chip" }, confirmed && confirmed === boundaries.length ? "Reviewed" : "Awaiting review"),
+      ]);
+      list.append(card);
+    }
+    main.append(list);
+  }
+
+  // Batches whose documents sit before the row check: nothing to review as
+  // words yet — the pages need their rows checked (or, when they predate the
+  // reader, re-reading) before the transcription queue can hold them.
+  if (beforeGate.length) {
+    main.append(el("h2", { class: "rv-section-title" }, "Before the row check — pages not yet read as rows"));
+    const list = el("div", { class: "rv-list" });
+    for (const batch of beforeGate) {
+      const boundaries = (batch.boundaries || []).length;
+      const pages = Object.keys(batch.pages || {}).length;
+      const card = el("button", { class: "rv-card", onclick: () => navigate(`review/${batch.batch_id}`) }, [
+        el("div", { class: "rv-card-main" }, [
+          el("div", { class: "rv-card-title" }, batch.label || batch.batch_id),
+          el(
+            "div",
+            { class: "rv-card-sub" },
+            `${boundaries} documents · ${pages} pages — no page has passed the row check`,
+          ),
+        ]),
+        el("span", { class: "rv-chip" }, "Before the row check"),
       ]);
       list.append(card);
     }
@@ -632,9 +665,19 @@ async function renderBatch(main, batchId, state, initial = null) {
     root.append(el("button", { class: "rv-btn", onclick: () => renderBatchList(root, state) }, "← Back to review"));
     return;
   }
-  // a URL with the surface's position (a refresh) restores it directly
+  // The transcription stage sits after the row check: a document whose pages
+  // have not passed it is not reviewable words yet, however someone reached
+  // this URL (the hub does not offer it; a deep link must not either).
+  const beforeGate = (doc) => doc?.ready === false;
   if (initial) {
     const { doc, page } = initial;
+    if (Number.isInteger(doc) && doc >= 0 && doc < documents.length && beforeGate(documents[doc])) {
+      root.append(
+        el("div", { class: "rv-note" }, "This document's pages have not passed the row check — check its rows first."),
+      );
+      root.append(el("button", { class: "rv-btn", onclick: () => navigate("review") }, "← Review"));
+      return;
+    }
     if (Number.isInteger(doc) && doc >= 0 && doc < documents.length) {
       const session = makeSession({ batchId, label: data.label, documents, processing: data.processing || {} }, doc);
       session.pageIndex = Math.min(Math.max(page, 0), documents[doc].pages.length - 1);
@@ -653,13 +696,25 @@ async function renderBatch(main, batchId, state, initial = null) {
   });
   const awaiting = documents
     .map((doc, i) => ({ doc, i }))
-    .filter(({ doc }) => doc.status !== "confirmed" && doc.status !== "rejected");
+    .filter(({ doc }) => doc.status !== "confirmed" && doc.status !== "rejected" && !beforeGate(doc));
+  const waiting = documents.map((doc, i) => ({ doc, i })).filter(({ doc }) => beforeGate(doc));
+  if (waiting.length) {
+    root.append(
+      el(
+        "div",
+        { class: "rv-note" },
+        `${waiting.length} document${waiting.length === 1 ? "" : "s"} in this batch cannot be reviewed as words yet — their pages have not passed the row check.`,
+      ),
+    );
+  }
   if (!awaiting.length) {
     root.append(
       el(
         "div",
         { class: "rv-note" },
-        `All ${documents.length} document${documents.length === 1 ? "" : "s"} in this batch ${documents.length === 1 ? "is" : "are"} confirmed.`,
+        waiting.length
+          ? "No document in this batch is past the row check."
+          : `All ${documents.length} document${documents.length === 1 ? "" : "s"} in this batch ${documents.length === 1 ? "is" : "are"} confirmed.`,
       ),
     );
     return;

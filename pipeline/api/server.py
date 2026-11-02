@@ -34,6 +34,7 @@ from fastapi.staticfiles import StaticFiles
 
 from document.document import DOCUMENT_DRAFT
 from document.row_adjustments import RowAdjustments
+from document.stages import PageStatus
 from pipeline.api import auth
 from pipeline.api.assess_request import AssessRequest
 from pipeline.api.batch_drafts_answer import BatchDraftsAnswer
@@ -68,6 +69,7 @@ from pipeline.api.sync import (
     Outbox,
     apply_row_adjustments,
     demote_stale_jobs,
+    documents_ready,
     draft_payloads,
     identify_document,
     page_job_state,
@@ -682,6 +684,9 @@ def build_app(
                 record = batch.to_dict()
                 readings = BatchReadings(work_dir, str(record["batch_id"]))
                 record["pages_pending"] = pages_pending(readings, list(record.get("pages") or {}))
+                record["documents_ready"] = documents_ready(
+                    [list(boundary.get("pages") or []) for boundary in record.get("boundaries") or []], readings
+                )
                 batches.append(record)
             return {"batches": batches}
         except RegistryError as exc:
@@ -712,11 +717,19 @@ def build_app(
                 texts = document.get("texts") or {}
                 if not texts:
                     continue
+                text_pages = [p for p in document.get("pages", []) if p in texts]
+                readings = BatchReadings(work_dir, batch_id)
                 documents.append(
                     {
                         **document,
-                        "pages": [p for p in document.get("pages", []) if p in texts],
+                        "pages": text_pages,
                         "status": by_pages.get(tuple(document.get("pages", [])), DOCUMENT_DRAFT),
+                        # the transcription stage sits after the row check:
+                        # a document whose text pages are still waiting on it
+                        # is not reviewable words yet (strip-era pages have no
+                        # reading to check — they stay before the gate too)
+                        "ready": bool(text_pages)
+                        and all(readings.page_status(p) is PageStatus.ROWS_ADJUSTED for p in text_pages),
                     }
                 )
             return BatchDraftsAnswer(

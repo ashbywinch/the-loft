@@ -496,6 +496,7 @@ describe("the unfinished import session (user: the front page shows the session,
               status: "pending",
               boundaries: [{ status: "draft", pages: ["p1.jpg", "p2.jpg"] }],
               pages_pending: ["p2.jpg"],
+              documents_ready: [0],
             },
           ],
         }),
@@ -519,21 +520,25 @@ describe("the unfinished import session (user: the front page shows the session,
       vi.fn(async () => ({ ok: true, json: async () => ({ batches: [] }) })),
     );
     const main = document.createElement("main");
-    render(main, {}, {
-      ...STATE,
-      items: [
-        ...STATE.items,
-        {
-          id: "doc-1971-05-01",
-          title: "A letter",
-          date: "1971-05-01",
-          type: "document",
-          transcription: "Dear Fern,",
-          people: [],
-          places: [],
-        },
-      ],
-    });
+    render(
+      main,
+      {},
+      {
+        ...STATE,
+        items: [
+          ...STATE.items,
+          {
+            id: "doc-1971-05-01",
+            title: "A letter",
+            date: "1971-05-01",
+            type: "document",
+            transcription: "Dear Fern,",
+            people: [],
+            places: [],
+          },
+        ],
+      },
+    );
     await vi.waitFor(() => expect(main.querySelector(".review-card")).not.toBeNull());
     const card = main.querySelector(".review-card");
     expect(card.querySelector(".review-card-note").textContent).toBe("1 document to identify");

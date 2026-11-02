@@ -56,6 +56,21 @@ them; it never re-groups the page.
    pass is one row; two strokes over one line split it between them by
    proximity).
 
+## What the check gates
+
+The row check is the gate the transcription stage sits behind: a page's reading
+is the machine's proposal, and the reviewer's check (`page-01.row-adjustments.json`
+plus `rows-adjusted.json`, both written by any correction — an empty one
+included) is what makes its rows the page's rows. So a document is reviewable
+**as words** only when every one of its text pages is past the check
+(`PageStatus.ROWS_ADJUSTED`). The batches answer carries the list
+(`documents_ready`), the drafts answer marks each document (`ready`), and the
+review hub shows a batch with none ready — the strip-era piles, never read as
+rows — under "Before the row check", never as transcription work (user,
+2026-11-02: text from before the gate was being offered as reviewable). The
+check is per page, not per document: one checked page does not unlock its
+document's other pages.
+
 ## What a stroke can express
 
 | The reviewer's intent | The stroke | Result |

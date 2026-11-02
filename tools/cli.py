@@ -210,10 +210,6 @@ class _WorkCommand:
         return 0
 
     def watch(self, resync: float) -> int:
-        print(
-            f"worker: watching changes under {self.paths.scan_area}, the registry and the work tree "
-            f"— a resync every {resync:g}s (Ctrl-C stops)"
-        )
         try:
             self.worker.watch(resync)
         except KeyboardInterrupt:  # the operator's stop is this command's exit, not a crash

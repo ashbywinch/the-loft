@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import socket
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -208,20 +209,20 @@ class Worker:
         self.write_line(
             f"worker: watching {', '.join(str(root) for root in roots)} — a resync every {resync:g}s (Ctrl-C stops)"
         )
+        self._resync()
         events = watch(
             *roots,
             debounce=debounce_ms,
-            step=int(resync * 1000),
+            step=2000,  # a tick every 2 s: an empty set is the resync's clock
             yield_on_timeout=True,
-            rust_timeout=500,
+            rust_timeout=5000,
         )
+        last_resync = time.monotonic()
         for changes in events:
             if not changes:
-                report = self.sweep()
-                self.write_line(
-                    f"worker: resync — {len(report.adoptions)} pile(s) seen, "
-                    f"{len(report.processed)} batch(es) had work, {len(report.failed)} failed"
-                )
+                if time.monotonic() - last_resync >= resync:
+                    self._resync()
+                    last_resync = time.monotonic()
                 continue
             batch_ids, scan_touched = self._batch_ids(changes)
             if scan_touched:
@@ -237,6 +238,15 @@ class Worker:
                 failure = self._reconcile_one(batch_id)
                 if failure is not None:
                     self.write_line(f"worker: {batch_id} FAILED — {failure}")
+
+    def _resync(self) -> None:
+        """A full sweep — the safety net a missed event, a restart or a lost
+        marker is corrected by."""
+        report = self.sweep()
+        self.write_line(
+            f"worker: resync — {len(report.adoptions)} pile(s) seen, "
+            f"{len(report.processed)} batch(es) had work, {len(report.failed)} failed"
+        )
 
     def _reconcile_one(self, batch_id: str) -> str | None:
         """Reconcile one batch from an event, skipping it while it is already

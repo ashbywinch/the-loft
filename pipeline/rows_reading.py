@@ -26,13 +26,16 @@ class RowsReading:
 
     The rotate rewrites the record in place (the rotation, the dims and every
     line's box), so this one is mutable — the reading IS the state a rotate
-    advances."""
+    advances. ``corrected`` is the sha256 of the drawn row lines this reading
+    was built from (empty for a draft reading): the read stage compares it with
+    the correction on disk and re-reads only when they differ."""
 
     page: str
     width: int
     height: int
     rotation: int = 0
     revision: int = 1
+    corrected: str = ""
     lines: LineRecords = field(default_factory=list)
 
     @classmethod
@@ -44,12 +47,13 @@ class RowsReading:
             height=int(raw["height"]),
             rotation=int(raw.get("rotation", 0)),
             revision=int(raw.get("revision", 1)),
+            corrected=str(raw.get("corrected", "")),
             lines=list(raw.get("lines") or []),
         )
 
     def to_dict(self) -> dict[str, Any]:
         """The reading as the rows.json artefact."""
-        return {
+        out: dict[str, Any] = {
             "page": self.page,
             "width": self.width,
             "height": self.height,
@@ -57,3 +61,6 @@ class RowsReading:
             "revision": self.revision,
             "lines": list(self.lines),
         }
+        if self.corrected:
+            out["corrected"] = self.corrected
+        return out

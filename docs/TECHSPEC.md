@@ -816,6 +816,19 @@ keep the queue honest: a pass that dies half-way writes its record back to
 looks), and a scan stages beside the inbox rather than in it (a directory
 in the scan area is a finished pile, and the worker adopts every one).
 
+**A corrected page is re-read on the worker's next pass.** The reviewer's drawn
+lines persist as `ocr-guess/<stem>.row-adjustments.json`; the write marks the
+batch `pending` (the server never contacts the worker), and the read stage
+rebuilds the page's rows from the persisted words + those lines, reads each row
+as itself, and writes them as the reading's lines (`box_source: rows-adjusted`)
+with the drawn lines' sha in `corrected`. The transcript gate then shows the
+corrected text. Three rules keep it cheap and honest: a check with no lines
+("rows are right") requeues nothing; a reading whose `corrected` equals the
+file's sha is skipped (the same lines are never re-read); and a corrupt
+correction file fails loudly rather than reading the page against lines nobody
+can parse. Only corrected pages re-read — an unchanged page keeps its draft
+reading.
+
 **The model-API contract (the client side of the Cloudflare gateway).**
 The VLM client must send a User-Agent the gateway's WAF accepts
 (`opencode/1.14.20`), and must give reasoning models `max_tokens` headroom
@@ -863,7 +876,10 @@ seam) and appends to the archive (append-only holds in exactly one place),
 then re-publishes the projection. The frontend↔backend link rides Tailscale
 (the pattern this house already uses). Read path: the projection deploys to
 the static host for browse; the interactive flows read the standing
-knowledge (identity tables, work-stage texts) via the backend's API.
+knowledge (identity tables, work-stage texts) via the backend's API. The
+server serves `/data/*` from its OWN configured projection directory
+(`loft serve --data`), never from the app shell's folder — one source for
+what it publishes and what the browser reads.
 
 **The user's requirements:**
 
@@ -940,6 +956,32 @@ the website marks them received. Nothing confirmed is ever lost to a
 failed push. The transcription-verification UI itself is a separate
 ticket (frontend, third-party review libraries); the seams it consumes
 are these endpoints + the CLI review gate's shared write path.
+
+**The identification review (stages 7–8).** A document's agreed text is read
+once for the people and places it names. `POST /api/identify/document/{id}`
+runs the pass (`pipeline/identify.py`): the model names the entities, the pass
+resolves each against the archive's identity tables — a known name links its
+record, an unknown one mints a proposed record carrying the document's own
+words — and the result lands as refs on the item (existing links kept with
+their status, new ones proposed) and proposed records in
+`people.json`/`places.json` (an unagreed record sits marked inside the table
+it will join, never in a queue of its own). The item's own `identified` flag
+keeps the document from being read again; it lives beside the refs it produced,
+so a document that pre-dates the pass is read once on its first visit.
+`POST /api/identify/decide` records one determination (attested / estimated /
+pending / delete): the item's mention and the table record move together, a
+confirmed record is never deleted by a mention's delete, and a proposal
+another item still names stays. The portal's "Identify people/places" door
+counts the documents with a transcription whose entities still wait and opens
+the surface (`#/identify/<item id>`).
+
+**Its UX is not settled.** The built surface lists every pending mention with
+the four determinations; the agreed experience is the review chat's walk, one
+entity at a time (PRD §9 R1, R4; `pipeline-stages-plan.md` — the entities
+"enter the review chat"), which is unbuilt. The outstanding work and its
+acceptance are WORK-PLAN §2. What is settled is the seam this section
+specifies: read once, the determination writes the mention and the table
+together, append-only.
 
 ### 16.16 The transcription-validation review surface (spike-resolved)
 

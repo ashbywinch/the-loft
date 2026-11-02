@@ -21,6 +21,9 @@ class RegistryError(RuntimeError):
     """A registry or batch operation failed; the message is the plain-language line."""
 
 
+# the registry's vocabulary is the one pair (batch_id, registry_dir): every
+# seam function takes it, and a Registry class would wrap plain file reads
+# lucidlint: ignore latent-class the pair is this module's seam shape; a class is the Phase 6 restructure
 def record_path(batch_id: str, registry_dir: Path = REGISTRY_DIR) -> Path:
     if not _BATCH_ID.match(batch_id):
         raise RegistryError(f"invalid batch id: {batch_id!r}")
@@ -33,6 +36,22 @@ def load_batch(batch_id: str, registry_dir: Path = REGISTRY_DIR) -> BatchRecord:
     if not store.exists(name):
         raise RegistryError(f"no registry record for batch {batch_id!r} — adopt it first")
     return _read_record(name, store)
+
+
+def set_status(batch_id: str, status: str, registry_dir: Path = REGISTRY_DIR) -> BatchRecord:
+    """Move one batch's queue state and persist it — the write path for an
+    explicit requeue. The record is re-read first, so every other field
+    survives; the processing stamp is cleared because no pass holds it now."""
+    record = load_batch(batch_id, registry_dir)
+    if record.status == status and not record.started_at:
+        return record  # already in that state, and no pass to clear
+    record.status = status
+    record.started_at = ""
+    record.started_pid = 0
+    record.started_host = ""
+    store = PipelineStore(registry_dir)
+    store.write(f"{batch_id}.json", json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n")
+    return record
 
 
 def list_batches(registry_dir: Path = REGISTRY_DIR) -> list[BatchRecord]:

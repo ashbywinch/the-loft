@@ -6,6 +6,8 @@ the real scans."""
 from __future__ import annotations
 
 import json
+import os
+import socket
 from pathlib import Path
 from typing import override
 
@@ -14,6 +16,7 @@ from PIL import Image
 
 from document.word import Word
 from document.words import Words
+from pipeline.batch_record import STATUS_PROCESSING, BatchRecord
 from pipeline.chain import (
     BatchRun,
     Classification,
@@ -104,6 +107,65 @@ def test_a_page_the_reading_returns_nothing_for_is_left_unwritten(tmp_path: Path
 
     assert not (guess / "p1.rows.json").exists(), "an empty reading was recorded as done"
     assert not (guess / "p1.words.json").exists(), "the words were written without a reading"
+
+
+def test_a_corrected_page_is_re_read_into_the_reading(tmp_path: Path) -> None:
+    """The reviewer's drawn lines are the rows the page is read against: the
+    reading's lines ARE the corrected rows, carrying their own text, and the
+    correction's sha closes the loop so the next pass does not read again."""
+    guess, oriented = _page(tmp_path)
+    reading = _reading()
+    _read_pages(
+        ["p1.jpg"],
+        guess,
+        oriented,
+        tmp_path,
+        "adopt-0003",
+        _reading=lambda _image: reading,
+        _rows_text=lambda _image, _out: {1: "the draft row"},
+    )
+    (guess / "p1.row-adjustments.json").write_text(
+        json.dumps({"lines": [[[0.0, 0.125], [1.0, 0.125]]]}), encoding="utf-8"
+    )
+    calls: list[int] = []
+
+    def corrected(_image, rows, _out):
+        calls.append(len(rows))
+        return {row.number: f"corrected {row.number}" for row in rows}
+
+    _read_pages(
+        ["p1.jpg"],
+        guess,
+        oriented,
+        tmp_path,
+        "adopt-0003",
+        _reading=lambda _image: reading,
+        _rows_text=lambda _image, _out: {1: "the draft row"},
+        _corrected_text=corrected,
+    )
+
+    assert calls == [1]  # the page was re-read once, against the drawn line
+    stored = json.loads(PipelineStore(tmp_path).read_latest("adopt-0003/ocr-guess/p1.rows.json"))
+    assert stored["lines"][0]["text"] == "corrected 1"
+    assert stored["lines"][0]["box_source"] == "rows-adjusted"
+    assert stored["revision"] == 2  # the draft reading's next version
+    assert stored["corrected"]  # the drawn lines this reading was built from
+    corrected_rows = json.loads((guess / "p1.rows-adjusted.json").read_text(encoding="utf-8"))
+    assert corrected_rows["rows"][0]["text"] == "corrected 1"
+    assert corrected_rows["rows"][0]["stage"] == "raw"
+
+    # the reading now carries these lines: the same correction is not re-read
+    _read_pages(
+        ["p1.jpg"],
+        guess,
+        oriented,
+        tmp_path,
+        "adopt-0003",
+        _reading=lambda _image: reading,
+        _rows_text=lambda _image, _out: {1: "the draft row"},
+        _corrected_text=corrected,
+    )
+    assert calls == [1]
 
 
 def _flag(page: str, starts: bool = False, ends: bool = False, **extra: object) -> dict[str, object]:
@@ -580,3 +642,22 @@ def test_a_failed_pass_puts_the_batch_back_in_the_queue(tmp_path: Path) -> None:
 
     saved = json.loads((registry / f"{batch}.json").read_text(encoding="utf-8"))
     assert saved["status"] == "pending"
+
+
+def test_a_processing_pass_stamps_when_it_started(tmp_path: Path) -> None:
+    """The worker's sweep tells a live pass from a killed one by this stamp —
+    a pass that is killed cannot reset its own record — and on this host the
+    pid decides, so the stamp carries the process and its host."""
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    record = BatchRecord(batch_id="adopt-0001", path=tmp_path)
+
+    BatchRun(
+        "adopt-0001", registry_dir=registry, work_dir=tmp_path / "work", archive_dir=tmp_path / "archive"
+    ).update_status(record, STATUS_PROCESSING)
+
+    saved = json.loads((registry / "adopt-0001.json").read_text(encoding="utf-8"))
+    assert saved["status"] == "importing"
+    assert saved["started_at"]
+    assert saved["started_pid"] == os.getpid()
+    assert saved["started_host"] == socket.gethostname()

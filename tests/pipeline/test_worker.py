@@ -10,13 +10,18 @@ that starts it is the worker's, so the tests subclass `Worker.run_batch`.
 from __future__ import annotations
 
 import json
+import os
+import socket
+import subprocess
+import sys
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import override
 
 import pytest
 
-from pipeline.registry import load_batch
+from pipeline.registry import RegistryError, load_batch
 from pipeline.worker import Worker
 from tools.loft_paths import LoftPaths
 
@@ -30,10 +35,19 @@ def _pile(scan_area: Path, name: str = "scan-20261027-1200", pages: int = 2) -> 
     return folder
 
 
-def _record(registry_dir: Path, batch_id: str, status: str, arrived_at: str) -> None:
-    """A registry record, as an adoption or a scan leaves one."""
+def _record(
+    registry_dir: Path,
+    batch_id: str,
+    status: str,
+    arrived_at: str,
+    started_at: str = "",
+    started_pid: int = 0,
+    started_host: str = "",
+) -> None:
+    """A registry record, as an adoption, a scan, or a running pass leaves one
+    (the stamp fields only when the caller passes them)."""
     registry_dir.mkdir(parents=True, exist_ok=True)
-    record = {
+    record: dict[str, object] = {
         "batch_id": batch_id,
         "path": str(registry_dir.parent / "scans" / batch_id),
         "status": status,
@@ -41,6 +55,12 @@ def _record(registry_dir: Path, batch_id: str, status: str, arrived_at: str) -> 
         "pages": {"p1.jpg": "hash-1"},
         "fingerprint": ["hash-1"],
     }
+    if started_at:
+        record["started_at"] = started_at
+    if started_pid:
+        record["started_pid"] = started_pid
+    if started_host:
+        record["started_host"] = started_host
     _ = (registry_dir / f"{batch_id}.json").write_text(json.dumps(record), encoding="utf-8")
 
 
@@ -54,8 +74,9 @@ class _Ran(Worker):
         *,
         write_line: Callable[[str], None] = print,
         fail: tuple[str, ...] = (),
+        now: Callable[[], datetime] | None = None,
     ) -> None:
-        super().__init__(paths, write_line=write_line)
+        super().__init__(paths, write_line=write_line, now=now)
         self.ran: list[str] = []
         self._fail = fail
 
@@ -77,8 +98,8 @@ def _paths(tmp_path: Path) -> LoftPaths:
     )
 
 
-def _worker(tmp_path: Path, *, fail: tuple[str, ...] = ()) -> _Ran:
-    return _Ran(_paths(tmp_path), write_line=lambda line: None, fail=fail)
+def _worker(tmp_path: Path, *, fail: tuple[str, ...] = (), now: Callable[[], datetime] | None = None) -> _Ran:
+    return _Ran(_paths(tmp_path), write_line=lambda line: None, fail=fail, now=now)
 
 
 def test_a_dropped_pile_is_registered_and_run(tmp_path: Path) -> None:
@@ -156,3 +177,107 @@ def test_watch_sweeps_until_interrupted(tmp_path: Path) -> None:
         worker.watch(30, _sleep=_sleep)
     assert waits == [30, 30, 30]
     assert len(worker.ran) == 3  # the third sweep ran before its wait
+
+
+NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
+
+
+def test_a_dead_processing_batch_goes_back_in_the_queue(tmp_path: Path) -> None:
+    """A pass that is killed leaves the record `importing` and the queue never
+    looks at it again. A record with no stamp was written before the stamping
+    existed — no live pass wrote it — so the sweep returns it."""
+    registry = tmp_path / "registry"
+    _record(registry, "batch-stuck", "importing", "2026-08-13T20:10:04+00:00")
+    worker = _worker(tmp_path, now=lambda: NOW)
+
+    report = worker.sweep()
+
+    assert report.requeued == ("batch-stuck",)
+    assert worker.ran == ["batch-stuck"]
+
+
+def test_a_stale_processing_stamp_is_dead(tmp_path: Path) -> None:
+    registry = tmp_path / "registry"
+    _record(registry, "batch-stuck", "importing", "2026-10-29T00:00:00+00:00", started_at="2026-10-29T00:00:00+00:00")
+    worker = _worker(tmp_path, now=lambda: NOW)  # 12 h later — past the grace
+
+    assert worker.sweep().requeued == ("batch-stuck",)
+
+
+def test_a_live_processing_pass_is_left_alone(tmp_path: Path) -> None:
+    """A pass stamped inside the grace period may still be running: the sweep
+    must not start a second one over it."""
+    registry = tmp_path / "registry"
+    _record(registry, "batch-live", "importing", "2026-10-29T11:30:00+00:00", started_at="2026-10-29T11:30:00+00:00")
+    worker = _worker(tmp_path, now=lambda: NOW)
+
+    report = worker.sweep()
+
+    assert report.requeued == ()
+    assert worker.ran == []
+
+
+def test_a_killed_pass_on_this_host_is_requeued_at_once(tmp_path: Path) -> None:
+    """The pid decides on the host that ran the pass: a killed pass is dead
+    however recent its stamp — a 40-minute read killed mid-run must not look
+    live for six hours."""
+    registry = tmp_path / "registry"
+    dead = subprocess.Popen([sys.executable, "-c", "pass"])
+    dead.wait()
+    _record(
+        registry,
+        "batch-killed",
+        "importing",
+        "2026-10-29T11:59:00+00:00",
+        started_at="2026-10-29T11:59:00+00:00",
+        started_pid=dead.pid,
+        started_host=socket.gethostname(),
+    )
+    worker = _worker(tmp_path, now=lambda: NOW)
+
+    assert worker.sweep().requeued == ("batch-killed",)
+    assert worker.ran == ["batch-killed"]
+
+
+def test_a_live_pass_on_this_host_is_left_alone(tmp_path: Path) -> None:
+    """A pass whose process is alive is running, whatever its age: the sweep
+    must not start a second one over it."""
+    registry = tmp_path / "registry"
+    _record(
+        registry,
+        "batch-live",
+        "importing",
+        "2026-10-29T11:00:00+00:00",
+        started_at="2026-10-29T11:00:00+00:00",
+        started_pid=os.getpid(),
+        started_host=socket.gethostname(),
+    )
+    worker = _worker(tmp_path, now=lambda: NOW)  # an hour in — past the grace
+
+    assert worker.sweep().requeued == ()
+    assert worker.ran == []
+
+
+def test_a_reviewed_batch_is_never_requeued_automatically(tmp_path: Path) -> None:
+    """`review` may be a person mid-gate: only an explicit requeue touches it."""
+    registry = tmp_path / "registry"
+    _record(registry, "batch-reviewed", "review", "2026-08-13T20:10:24+00:00")
+
+    assert _worker(tmp_path, now=lambda: NOW).sweep().requeued == ()
+
+
+def test_requeue_puts_a_reviewed_batch_back(tmp_path: Path) -> None:
+    registry = tmp_path / "registry"
+    _record(registry, "batch-legacy", "review", "2026-08-13T20:10:24+00:00")
+    worker = _worker(tmp_path, now=lambda: NOW)
+
+    worker.requeue("batch-legacy")
+    assert load_batch("batch-legacy", registry).status == "pending"
+    report = worker.sweep()
+    assert report.requeued == ()  # already pending, not demoted
+    assert worker.ran == ["batch-legacy"]
+
+
+def test_requeue_an_unknown_batch_fails_loudly(tmp_path: Path) -> None:
+    with pytest.raises(RegistryError, match="no registry record"):
+        _worker(tmp_path, now=lambda: NOW).requeue("batch-ghost")

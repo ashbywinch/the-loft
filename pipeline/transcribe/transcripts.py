@@ -144,17 +144,10 @@ class Transcriber:
     def transcribe(self) -> TranscriptionReport:
         """One page, one model call, and every checkable condition measured."""
         image = Image.open(self.image_path)
-        size = PageSize(image.width, image.height)
-        # the rows the reviewer's drawn lines make, when they exist: the reading
+        # the rows THIS pass transcribes are the caller's: the draft rows over a
+        # live parse, or the reviewer's corrected rows on a re-read — the reading
         # happens against the CORRECT rows, never the draft the geometry proposed
-        # with a fixture directory the reader is shown the CORRECT rows — the words
-        # a reviewer's lines were adjudicated against, and those lines applied —
-        # rather than the draft the geometry proposed over a live parse
-        words = words_from(self.fixture / "words.json") if self.fixture else words_for(self.image_path, image)
-        builder = Rows.from_words(words, size)
-        rows = (
-            builder.adjust(drawn_lines(self.fixture / "user-row-adjustments.json")) if self.fixture else builder.rows()
-        )
+        rows = self.rows
         if not rows:
             # a page the reader found no writing on: no strips to cut, no call to
             # pay for, and nothing to record — the stage leaves its marker unwritten
@@ -247,7 +240,12 @@ class Transcriber:
         return {
             read.number: read.text
             for read in transcribe_rows_alone(
-                self.image_path, numbers=needing, fixture=self.fixture, call=self.call, out_dir=self.out_dir
+                self.image_path,
+                numbers=needing,
+                rows=self.rows,
+                fixture=self.fixture,
+                call=self.call,
+                out_dir=self.out_dir,
             )
         }
 
@@ -321,10 +319,14 @@ def row_transcripts(
     return {int(number): text for number, text in report.transcripts.items()}
 
 
+# one helper for the masked crops: which rows, over which row set, what reads
+# them, where the crops and answers go — the seams are the tests' and the eval's
+# lucidlint: ignore long-param-list a parameter object would be ceremony for one helper's DI seams
 def transcribe_rows_alone(
     image_path: Path,
     *,
     numbers: list[int],
+    rows: list[Any] | None = None,
     fixture: Path | None = None,
     call: Callable[..., VlmAnswer] | None = None,
     out_dir: Path = OUT_DIR,
@@ -338,11 +340,15 @@ def transcribe_rows_alone(
     keeps only the row's own words, everything else painted over in the paper's
     colour, and the piece is alone; the running transcript gives it the thread
     of the letter.
+
+    ``rows`` is the pass's own row set (the corrected rows on a re-read); the
+    fixture's words + drawn lines are the eval's way of stating the same set.
     """
     image = Image.open(image_path)
-    words = words_from(fixture / "words.json") if fixture else words_for(image_path, image)
-    builder = Rows.from_words(words, PageSize(image.width, image.height))
-    rows = builder.adjust(drawn_lines(fixture / "user-row-adjustments.json")) if fixture else builder.rows()
+    if rows is None:
+        words = words_from(fixture / "words.json") if fixture else words_for(image_path, image)
+        builder = Rows.from_words(words, PageSize(image.width, image.height))
+        rows = builder.adjust(drawn_lines(fixture / "user-row-adjustments.json")) if fixture else builder.rows()
     ordered = sorted(rows, key=lambda row: row.number)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = image_path.stem

@@ -23,7 +23,14 @@
 import { el } from "../ui.js";
 import { navigate } from "../router.js";
 import { gateScreen } from "../gate.js";
-import { drafts as draftItems, isMine, me, pendingImports, proposedPeople } from "../data.js";
+import {
+  documentsToIdentify,
+  drafts as draftItems,
+  isMine,
+  me,
+  pendingImports,
+  proposedPeople,
+} from "../data.js";
 
 const OUTBOX_KEY = "loft-review-outbox";
 const EDITS_KEY = "loft-review-edits";
@@ -451,9 +458,11 @@ async function renderBatchList(main, state) {
   // the portal's rows item (UR2): a page the read stage has finished waits on
   // its check even when every document of the batch is already confirmed
   const toCheck = batches.filter((b) => (b.pages_pending || []).length);
+  const toIdentify = state ? documentsToIdentify(state) : [];
   const hasWork =
     toCheck.length > 0 ||
     open.length > 0 ||
+    toIdentify.length > 0 ||
     (state && (pendingImports(state).length > 0 || draftItems(state.items).length > 0));
   if (!hasWork) {
     renderError(main, "No review work waiting — everything is confirmed.");
@@ -528,6 +537,32 @@ async function renderBatchList(main, state) {
       });
       main.append(list);
     }
+  }
+
+  // Identify people/places — an agreed document's mentions (stage 8). A
+  // document the pass has not read is listed here too: opening it runs the
+  // pass once.
+  if (toIdentify.length) {
+    main.append(
+      el("h2", { class: "rv-section-title" }, "Identify people/places — the names a document carries"),
+    );
+    const list = el("div", { class: "rv-list" });
+    for (const item of toIdentify) {
+      const refs = [...(item.people ?? []), ...(item.places ?? [])];
+      const proposed = refs.filter((ref) => ref.status === "proposed").length;
+      const sub = item.identified
+        ? `${proposed} ${proposed === 1 ? "mention" : "mentions"} awaiting a decision`
+        : "Read for people and places";
+      const card = el("button", { class: "rv-card", onclick: () => navigate(`identify/${item.id}`) }, [
+        el("div", { class: "rv-card-main" }, [
+          el("div", { class: "rv-card-title" }, item.title || item.id),
+          el("div", { class: "rv-card-sub" }, sub),
+        ]),
+        el("span", { class: "rv-chip" }, "Identities"),
+      ]);
+      list.append(card);
+    }
+    main.append(list);
   }
 
   // Drafts — unfinished stories (user: "Drafts ARE review work")

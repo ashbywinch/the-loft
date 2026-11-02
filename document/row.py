@@ -85,6 +85,15 @@ class Row:
             "stage": self.stage,
         }
 
+    def tint_rects(self) -> tuple[Rectangle, ...]:
+        """The rectangles the row is tinted as: each word's box in left-to-right
+        order, then the minimal band joining each neighbouring pair — no
+        outline. The geometry `pipeline.rows.render` draws and the review
+        screen draws in SVG: one rule, two surfaces."""
+        boxes = sorted((word.rect for word in self.word_boxes), key=lambda box: box.x0)
+        bands = [first.join_band(second) for first, second in zip(boxes, boxes[1:], strict=False)]
+        return (*boxes, *bands)
+
 
 def _box(record: Any, what: str) -> Rectangle:
     """One wire box record as its rectangle, `what` naming where it sat."""

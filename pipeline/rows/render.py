@@ -20,8 +20,8 @@ import PIL
 from PIL import Image, ImageDraw, ImageFont
 
 from document.colour import Colour
-from document.rectangle import Rectangle
 from document.row import Row
+from document.row_tint import RowTint
 
 # Pillow 9.2 added the size argument to ImageFont.load_default - earlier
 # Pillows take no size. A version capability, checked once - never an
@@ -53,33 +53,13 @@ def _stroke_font() -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
     return ImageFont.load_default()
 
 
-def join_band(left: Rectangle, right: Rectangle) -> Rectangle:
-    """The band joining two adjacent words of one row: as tall as the shorter
-    word, centred on the two words' vertical overlap (or their centres when
-    they do not overlap)."""
-    width = right.x0 - left.x1
-    if width <= 0:
-        return Rectangle(left.x1, min(left.y1, right.y1), left.x1, min(left.y1, right.y1))
-    top = max(left.y0, right.y0)
-    bottom = min(left.y1, right.y1)
-    if bottom <= top:  # no vertical overlap: centre on the gap midpoint
-        centre = (left.y1 + right.y0) / 2
-        top, bottom = centre, centre
-    height = min(left.height, right.height)
-    mid = (top + bottom) / 2
-    return Rectangle(left.x1, mid - height / 2, right.x0, mid + height / 2)
-
-
-def tint_row(draw: ImageDraw.ImageDraw, boxes: Sequence[Rectangle], row: Sequence[int], colour: Colour) -> None:
+def tint_row(draw: ImageDraw.ImageDraw, row: Row, colour: Colour) -> None:
     """One row as tinted rectangles: each word's bounds, joined by the minimal
-    bands. No outline: the ink stays the loudest thing on the page."""
-    ordered = sorted(row, key=lambda i: boxes[i].x0)
-    for first, second in zip(ordered, ordered[1:], strict=False):
-        band = join_band(boxes[first], boxes[second])
-        draw.rectangle([band.x0, band.y0, band.x1, band.y1], fill=colour)
-    for index in ordered:
-        box = boxes[index]
-        draw.rectangle([box.x0, box.y0, box.x1, box.y1], fill=colour)
+    bands (`Row.tint_rects`, the same rectangles the review screen draws). No
+    outline: the ink stays the loudest thing on the page."""
+    tint = RowTint.of(row, colour)
+    for rect in tint.rects:
+        draw.rectangle([rect.x0, rect.y0, rect.x1, rect.y1], fill=tint.colour)
 
 
 def render_rows(
@@ -100,9 +80,7 @@ def render_rows(
     overlay = Image.new("RGBA", page_rgba.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     for row_index, row in enumerate(rows):
-        colour = style.colour(row_index)
-        rects = [word.rect for word in row.word_boxes]
-        tint_row(draw, rects, list(range(len(rects))), colour)
+        tint_row(draw, row, style.colour(row_index))
     canvas = Image.alpha_composite(page_rgba, overlay)
     if strokes is not None:
         draw = ImageDraw.Draw(canvas)

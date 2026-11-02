@@ -30,6 +30,7 @@ from tools.asset import Asset
 from tools.date_mention import DateMention
 from tools.dated_fact import PRECISIONS, DatedFact, viable_date
 from tools.gone_person import GonePerson
+from tools.gone_place import GonePlace
 from tools.ref import Ref
 from tools.split_item import SplitItem
 from tools.theme import Theme
@@ -116,6 +117,25 @@ def _status(raw: Mapping[str, Any]) -> Literal["confirmed", "proposed", "estimat
     return cast(Literal["confirmed", "proposed", "estimated"], status)
 
 
+def _basis(raw: Mapping[str, Any], key: str = "basis") -> dict[str, str] | None:
+    """The evidence a record states — a person's or place's ``basis``
+    {text, by, when, note?}: for an estimate, the reviewer's own words;
+    for an identification's proposal, the document's own words. An empty
+    text is not a basis (the field is absent or it says something)."""
+    basis = raw.get(key)
+    if basis is None:
+        return None
+    text = str(basis.get("text", "")).strip()
+    if not text:
+        raise ValueError(f"invalid {key}: {basis!r} — the text is required")
+    return {
+        "text": text,
+        "by": str(basis.get("by", "")).strip(),
+        "when": str(basis.get("when", "")).strip(),
+        **({"note": str(basis["note"]).strip()} if basis.get("note") else {}),
+    }
+
+
 TRecord = TypeVar("TRecord")
 
 
@@ -182,17 +202,7 @@ class Person:
             email = str(email).strip().lower()
             if not EMAIL_RE.fullmatch(email):
                 raise ValueError(f"invalid email: {email!r}")
-        basis = raw.get("basis")
-        if basis is not None:
-            text = str(basis.get("text", "")).strip()
-            if not text:
-                raise ValueError(f"invalid basis: {basis!r} — the text is required")
-            basis = {
-                "text": text,
-                "by": str(basis.get("by", "")).strip(),
-                "when": str(basis.get("when", "")).strip(),
-                **({"note": str(basis["note"]).strip()} if basis.get("note") else {}),
-            }
+        basis = _basis(raw)
         return cls(
             id=record_id,
             name=_require(raw, "name"),
@@ -252,7 +262,8 @@ class Place:
     Person). Coordinates stay null until they are known; the note is honest
     provenance, never padding. ``address`` is the written form (house name,
     street, town). Households live on the people as residence events
-    (GEDCOM X alignment), not on the place."""
+    (GEDCOM X alignment), not on the place. ``basis`` is the evidence a
+    review recorded (see Person)."""
 
     id: str
     name: str
@@ -265,6 +276,7 @@ class Place:
     y: int | None = None
     address: str = ""
     status: Literal["confirmed", "proposed", "estimated"] = "confirmed"
+    basis: dict[str, str] | None = None
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Place:
@@ -286,6 +298,7 @@ class Place:
             y=raw.get("y"),
             address=str(raw.get("address", "")),
             status=_status(raw),
+            basis=_basis(raw),
         )
 
     def as_proposed(self) -> Place:
@@ -305,6 +318,8 @@ class Place:
             out["address"] = self.address
         if self.status != "confirmed":
             out["status"] = self.status
+        if self.basis is not None:
+            out["basis"] = dict(self.basis)
         return out
 
 
@@ -469,12 +484,49 @@ class PlacesTable:
         """Is this id in the table?"""
         return any(p.id == place_id for p in self.places)
 
+    def record(self, place_id: str) -> Place | None:
+        """The table's record for one id, or None — the id is the identity."""
+        return next((p for p in self.places if p.id == place_id), None)
+
     def with_record(self, place: Place) -> PlacesTable:
         """The table with *place* replacing its own record — or appended when
         the id is new."""
         if self.has(place.id):
             return replace(self, places=tuple(place if p.id == place.id else p for p in self.places))
         return replace(self, places=self.places + (place,))
+
+    def dismissed(self, place_id: str) -> PlacesTable:
+        """The table without *place_id*. A missing place fails loudly (never
+        a silent no-op); the delete determination applies to whoever the
+        table holds, confirmed or not."""
+        if self.record(place_id) is None:
+            raise KeyError(f"no place {place_id}")
+        return replace(self, places=tuple(p for p in self.places if p.id != place_id))
+
+    def resolved(
+        self, place_id: str, decision: str, basis: dict[str, str] | None
+    ) -> tuple[PlacesTable, Place | GonePlace | None]:
+        """The table after one review determination, and the record as it now
+        stands — the same vocabulary as PeopleTable.resolved (see the
+        comment there): ``attested`` -> confirmed, ``estimated`` -> the
+        status estimated with the recorded basis, ``pending`` -> nothing
+        changes, ``delete`` -> the place leaves the table."""
+        place = self.record(place_id)
+        if place is None:
+            return self, None
+        if decision == "pending":
+            return self, place
+        if decision == "delete":
+            return self.dismissed(place_id), GonePlace(place_id)
+        if decision == "estimated":
+            if basis is None or not str(basis.get("text", "")).strip():
+                raise ValueError(f"estimated needs a basis: {place_id}")
+            updated = replace(place, status="estimated", basis=basis)
+            return self.with_record(updated), updated
+        if decision == "attested":
+            updated = place.as_confirmed()
+            return self.with_record(updated), updated
+        raise ValueError(f"unknown decision: {decision!r}")
 
 
 @dataclass(frozen=True)
@@ -904,6 +956,14 @@ class Item:
         return bool(self.raw.get("sensitive"))
 
     @property
+    def identified(self) -> bool:
+        """Has the identification pass read this document? The flag sits
+        beside the refs it produced, so a document pre-dating the pass (or
+        agreed outside the batch pipeline) still reads as unread until it is
+        read once — and a re-agreement, which reuses the sidecar, keeps it."""
+        return bool(self.raw.get("identified"))
+
+    @property
     def people_refs(self) -> tuple[Ref, ...]:
         return _refs(self.raw, "people")
 
@@ -977,6 +1037,9 @@ class Item:
         sensitive = raw.get("sensitive")
         if sensitive is not None and not isinstance(sensitive, bool):
             raise ValueError("sensitive must be a boolean")
+        identified = raw.get("identified")
+        if identified is not None and not isinstance(identified, bool):
+            raise ValueError("identified must be a boolean")
         clarification = _story_flag(
             raw,
             item_type,

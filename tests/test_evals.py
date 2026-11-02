@@ -32,9 +32,12 @@ import pytest
 
 import pipeline.evals.eval_review as review_evals
 import tools.eval_memory as memory_evals
+from pipeline.identification import Identification
+from pipeline.identify import identify
 from pipeline.model.ai_client import AIClient, AIClientError
 from tools.assessment import Assessment
 from tools.memory import ASSESS_MAX_TOKENS, Knowledge
+from tools.records import Item, Person
 from tools.review_verdict import ReviewVerdict
 
 
@@ -144,3 +147,91 @@ def test_memory_contract(memory_outputs: dict[str, Assessment], flow: memory_eva
 def test_memory_flow_conditions(memory_outputs: dict[str, Assessment], flow: memory_evals.MemoryFlow) -> None:
     errors = flow.assert_(memory_outputs[flow.name])
     assert not errors, "\n".join(errors)
+
+
+# -- the identification flow (stage 7) --------------------------------------
+
+# a fictional letter (never real content) naming a family member the
+# knowledge holds, a stranger, a bare kinship term, and a place
+IDENTIFICATION_LETTER = (
+    "My dear Fern,\n\n"
+    "We came down to Seascale again this summer — Owen Pryce drove us over. "
+    "Mum was too tired to come, so it was just the three of us on the sands.\n\n"
+    "Your loving sister,\nHarriet"
+)
+
+
+@pytest.fixture(scope="session")
+def identification_output(client: AIClient) -> Identification:
+    """Run the stage-7 pass ONCE and cache it — the condition tests share
+    this one reading (evals run once; a failed condition is fixed in the
+    prompt, never re-sampled)."""
+    item = Item.from_dict(
+        {
+            "id": "doc-1971-05-01",
+            "type": "document",
+            "title": "A letter from Harriet",
+            "date": "1971-05-01",
+            "date_precision": "exact",
+            "status": "catalogued",
+            "assets": [],
+            "people": [],
+            "places": [],
+            "themes": [],
+        }
+    )
+    knowledge = Knowledge(
+        people=(Person.from_dict({"id": "p-fern", "name": "Fern", "aliases": ["mamie"]}),),
+        places=(),
+    )
+    return identify(client, item=item, text=IDENTIFICATION_LETTER, knowledge=knowledge)
+
+
+@pytest.mark.eval
+def test_identification_names_the_letters_people(identification_output: Identification) -> None:
+    """The reader finds the letter's people, not just the salutation."""
+    names = {person.name for person in identification_output.people}
+    assert {"Fern", "Owen Pryce"} <= names, f"people read: {sorted(names)}"
+
+
+@pytest.mark.eval
+def test_identification_links_a_known_name_and_never_mints_it_again(identification_output: Identification) -> None:
+    """A name the archive holds links to its record; the pass never creates a
+    second record for it."""
+    fern = [person for person in identification_output.people if person.name == "Fern"]
+    assert [person.id for person in fern] == ["p-fern"], fern
+
+
+@pytest.mark.eval
+def test_identification_proposes_a_stranger_with_the_documents_words(identification_output: Identification) -> None:
+    """A stranger is proposed, never asserted, and the proposal carries the
+    document's own words as its evidence."""
+    owen = next((person for person in identification_output.people if person.name == "Owen Pryce"), None)
+    assert owen is not None, [person.name for person in identification_output.people]
+    assert owen.status == "proposed"
+    assert owen.basis is not None and owen.basis["text"] in IDENTIFICATION_LETTER
+
+
+@pytest.mark.eval
+def test_identification_finds_the_place(identification_output: Identification) -> None:
+    assert [place.name for place in identification_output.places] == ["Seascale"]
+
+
+@pytest.mark.eval
+def test_identification_never_matches_a_bare_kinship_term(identification_output: Identification) -> None:
+    """The family's word "Mum" is never a record match, whatever the alias."""
+    for person in identification_output.people:
+        if person.name == "Mum":
+            assert person.id != "p-fern", "a kinship term resolved to the standing record"
+
+
+@pytest.mark.eval
+def test_identification_asserts_nothing(identification_output: Identification) -> None:
+    """Nothing the machine reads is confirmed: each freshly minted record is a
+    proposal, and every mention the document gains is proposed. A matched
+    standing record keeps its own status (it was not the pass's to change)."""
+    standing = {"p-fern"}
+    minted = [person for person in identification_output.people if person.id not in standing]
+    assert minted and all(person.status == "proposed" for person in minted)
+    assert all(place.status == "proposed" for place in identification_output.places)
+    assert all(ref.status == "proposed" for ref in identification_output.people_refs())

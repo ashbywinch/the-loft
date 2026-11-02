@@ -23,17 +23,20 @@ server never contacts it, and it never serves HTTP.
 
 from __future__ import annotations
 
+import os
+import socket
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pipeline.adopt import IMAGE_EXTENSIONS, register_adopted
 from pipeline.adoption_result import AdoptionResult
 from pipeline.api.sync import BatchReadings, pages_pending
 from pipeline.batch_failure import BatchFailure
-from pipeline.batch_record import STATUS_PENDING
+from pipeline.batch_record import STATUS_PENDING, STATUS_PROCESSING, BatchRecord
 from pipeline.chain import process
-from pipeline.registry import list_batches
+from pipeline.registry import list_batches, set_status
 from pipeline.sweep_report import SweepReport
 from tools.loft_paths import LoftPaths
 
@@ -46,12 +49,30 @@ def _has_pages(folder: Path) -> bool:
     return any(path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS for path in folder.rglob("*"))
 
 
+def _pid_alive(pid: int) -> bool:
+    """Whether a process with this pid exists — the liveness check for a pass
+    stamped on this host. PermissionError means it exists and is not ours."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 class Worker:
-    """The batch processor: notice the scan area's piles, run the queue.
+    """The batch processor: notice the scan area's piles, requeue a dead
+    pass's batch, run the queue.
 
     `paths` is the whole of where it reads and writes; `run_batch` is the one
     seam that starts the chain's machine pass, so a test replaces the pass
     (a model and real images) without faking anything else."""
+
+    # a pass on ANOTHER host is given this long before it is presumed dead;
+    # on this host the pass's own pid decides (a killed pass cannot reset its
+    # own record, and a real pass can outlive any grace)
+    stale_after_seconds = 6 * 60 * 60
 
     def __init__(
         self,
@@ -59,16 +80,23 @@ class Worker:
         *,
         client: Callable[[str, str], str] | None = None,
         write_line: Callable[[str], None] = print,
+        stale_after: float | None = None,
+        now: Callable[[], datetime] | None = None,
     ) -> None:
         self.paths = paths
         self.client = client
         self.write_line = write_line
+        self._stale_after = self.stale_after_seconds if stale_after is None else stale_after
+        self._now = now or (lambda: datetime.now(UTC))
+        self._host = socket.gethostname()
 
     def sweep(self) -> SweepReport:
-        """One pass: register the scan area's piles, then run the queue."""
+        """One pass: register the scan area's piles, requeue a dead pass's
+        batch, then run the queue."""
         adoptions = self.pickup()
+        requeued = self.requeue_dead()
         processed, failed = self.run_pending()
-        return SweepReport(adoptions=adoptions, processed=processed, failed=failed)
+        return SweepReport(adoptions=adoptions, processed=processed, failed=failed, requeued=requeued)
 
     def pickup(self) -> tuple[AdoptionResult, ...]:
         """Register every complete pile in the scan area.
@@ -90,6 +118,53 @@ class Worker:
                 self.write_line(f"pickup: {folder.name} — {result.outcome}")
             adopted.append(result)
         return tuple(adopted)
+
+    def requeue_dead(self) -> tuple[str, ...]:
+        """Put a batch whose processing pass is gone back in the queue.
+
+        A pass that RAISES resets its own record; one that is killed (the
+        terminal closed, a power cut) leaves `processing`, and the queue —
+        which is the status — never looks at it again. A record stamped older
+        than the grace period is dead; a record with no stamp predates the
+        stamping and is dead by definition. `review` is never touched: it may
+        be a person's work in progress."""
+        requeued: list[str] = []
+        now = self._now()
+        for record in list_batches(self.paths.registry_dir):
+            if record.status != STATUS_PROCESSING or self._pass_alive(record, now):
+                continue
+            _ = set_status(record.batch_id, STATUS_PENDING, self.paths.registry_dir)
+            self.write_line(f"requeue: {record.batch_id} — its pass is gone; back in the queue")
+            requeued.append(record.batch_id)
+        return tuple(requeued)
+
+    def requeue(self, batch_id: str) -> BatchRecord:
+        """Put one batch back in the queue, whatever it was doing — the
+        explicit re-entry for a batch a person has finished with (a legacy
+        `review` from before the rows stage) or one a crash left behind."""
+        record = set_status(batch_id, STATUS_PENDING, self.paths.registry_dir)
+        self.write_line(f"requeue: {record.batch_id} — back in the queue")
+        return record
+
+    def _pass_alive(self, record: BatchRecord, now: datetime) -> bool:
+        """Whether the record's processing pass may still be running.
+
+        On this host the pass's own process decides: a pid that is gone is a
+        dead pass, however recent the stamp (a killed pass cannot reset its
+        own record, and a real pass can outlive any grace). A pass stamped on
+        another host — or with no host, from before the stamp — is judged by
+        the grace period, since its pid means nothing here."""
+        if not record.started_at:
+            return False  # no stamp: no live pass wrote it
+        if record.started_host == self._host:
+            return bool(record.started_pid) and _pid_alive(record.started_pid)
+        try:
+            started = datetime.fromisoformat(record.started_at)
+        except ValueError:
+            return False  # an unreadable stamp is no evidence of a live pass
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=UTC)
+        return (now - started).total_seconds() < self._stale_after
 
     def run_pending(self) -> tuple[tuple[str, ...], tuple[BatchFailure, ...]]:
         """Run every pending batch; one failure never holds the queue.

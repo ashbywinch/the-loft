@@ -24,6 +24,7 @@ import uvicorn
 
 from pipeline.api.server import Server, ServerConfig, build_app, lan_addresses
 from pipeline.model.ai_client import AIClient, AIClientError
+from pipeline.registry import RegistryError
 from pipeline.worker import Worker
 from tools.anchor import Anchor
 from tools.archive import Archive
@@ -158,10 +159,17 @@ def cmd_capture_memory(args: argparse.Namespace) -> int:
 
 
 def cmd_work(args: argparse.Namespace) -> int:
-    """The scan pickup (UR3): register the scan area's piles and run the machine
-    stages, which stop where a person takes over — the page's row check."""
+    """The scan pickup (UR3): requeue when the operator says so, register the
+    scan area's piles, and run the machine stages — which stop where a person
+    takes over, at the page's row check."""
     paths = LoftPaths(scan_area=Path(args.scan_area))
     worker = Worker(paths)
+    if args.requeue:
+        try:
+            _ = worker.requeue(args.requeue)
+        except RegistryError as exc:
+            print(f"worker: {exc}")
+            return 1
     if args.watch:
         print(f"worker: watching {paths.scan_area} — a sweep every {args.watch:g}s (Ctrl-C stops)")
         try:
@@ -172,8 +180,8 @@ def cmd_work(args: argparse.Namespace) -> int:
         return 0
     report = worker.sweep()
     print(
-        f"worker: {len(report.adoptions)} pile(s) seen, {len(report.processed)} batch(es) ran, "
-        f"{len(report.failed)} failed"
+        f"worker: {len(report.adoptions)} pile(s) seen, {len(report.requeued)} requeued, "
+        f"{len(report.processed)} batch(es) ran, {len(report.failed)} failed"
     )
     return 1 if report.failed else 0
 
@@ -282,6 +290,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--scan-area", default=str(USER_SCAN_AREA), help="the folder the scanner drops piles into")
     p.add_argument("--watch", type=float, default=0.0, help="repeat a sweep every N seconds (0 = one sweep)")
+    p.add_argument(
+        "--requeue",
+        default="",
+        metavar="BATCH_ID",
+        help="put one batch back in the queue before the sweep (a batch a person has finished with, or a dead pass)",
+    )
 
     p = sub.add_parser(
         "gedcom",

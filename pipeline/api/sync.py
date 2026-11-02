@@ -31,9 +31,12 @@ from document.stages import PageStatus
 from document.traces import Traces
 from document.words import Words
 from pipeline.api.row_correction import RowCorrection
+from pipeline.batch_record import STATUS_PENDING
 from pipeline.boundary import Boundary
 from pipeline.detect.reader import reading_for_page
 from pipeline.htr import htr_pages_vlm
+from pipeline.identification import Identification
+from pipeline.identify import identify
 from pipeline.layout import (
     Layout,
     build_layout,
@@ -43,14 +46,16 @@ from pipeline.layout import (
 from pipeline.model.unsure_word import UnsureWord
 from pipeline.model.vlm import orientation_report, selfreport_words
 from pipeline.page_image import PageImage
-from pipeline.registry import load_batch, record_path
+from pipeline.registry import load_batch, record_path, set_status
 from pipeline.rows.rows import Rows
 from pipeline.rows_reading import RowsReading
 from pipeline.store import PipelineStore
-from tools.archive import Archive
+from tools.archive import Archive, ArchiveError
 from tools.atomic import atomic_write
 from tools.dated_fact import PRECISIONS
 from tools.loft_paths import REGISTRY_DIR
+from tools.memory import ChatClient, Knowledge
+from tools.records import Item
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 ROWS_JSON = "rows.json"  # the reading's rows file beside the guess (object-model Phase 1)
@@ -350,11 +355,55 @@ def record_confirmation(
     return item_id
 
 
+def _agreed_text(archive: Archive, item: Item) -> str:
+    """The agreed transcription the identification reads — the item's
+    transcription content file, as its sidecar points at it."""
+    asset = next((a for a in item.assets if a.kind == "transcription"), None)
+    if asset is None:
+        return ""
+    return archive.read_content(item.id, asset.file) or ""
+
+
+def identify_document(
+    item_id: str,
+    *,
+    archive: Archive,
+    client: ChatClient,
+    knowledge: Knowledge,
+) -> Identification:
+    """The stage-7 pass for one agreed document: the model reads the
+    transcription, every named person and place lands as a ref on the item
+    (existing links kept, new ones proposed) and — when the archive does not
+    already hold the record — as a proposed record in its identity table; the
+    item's ``identified`` flag ends the pass. The proposals stage 8 reviews
+    are the result.
+
+    Raises ArchiveError for an unknown item or one with no transcription;
+    the caller decides whether the pass may run again (a read item must
+    never be re-read and its settled entities re-proposed)."""
+    item = archive.get_item(item_id)
+    if item is None:
+        raise ArchiveError(f"no item {item_id}")
+    text = _agreed_text(archive, item)
+    if not text.strip():
+        raise ArchiveError(f"{item_id} has no transcription to identify")
+    identification = identify(client, item=item, text=text, knowledge=knowledge)
+    archive.record_identification(identification)
+    return identification
+
+
 # the review seam's functions all take (batch_id, page, work_dir) — they are the
 # module's one vocabulary, each a thin file operation over the same batch tree; a
 # carrier class would be the object-model Phase 6 package restructure, not this change
 # lucidlint: ignore latent-class the batch-path vocabulary is this module's shape; the restructure is Phase 6
-def apply_row_adjustments(batch_id: str, page: str, adjustments: RowAdjustments, work_dir: Path) -> RowCorrection:
+def apply_row_adjustments(
+    batch_id: str,
+    page: str,
+    adjustments: RowAdjustments,
+    work_dir: Path,
+    *,
+    registry_dir: Path = REGISTRY_DIR,
+) -> RowCorrection:
     """The reviewer's drawn row lines -> the page's rows
     (`rows.adjust` over the words the read stage persisted, each with
     its own reading line, so an incomplete set of lines merges with the
@@ -363,6 +412,12 @@ def apply_row_adjustments(batch_id: str, page: str, adjustments: RowAdjustments,
     - ``<page>.row-adjustments.json`` — the drawn lines, as drawn;
     - ``<page>.rows-adjusted.json`` — the correction's rows, the artefact
       `Rows.to_dict` writes.
+
+    The batch goes back in the worker's queue: the corrected rows have no text
+    yet, and the worker's next pass reads them into the page's reading (the
+    proposed-transcripts stage) — the server never contacts the worker. A
+    check with no lines ("rows are right") writes the same two files and
+    requeues nothing: there is nothing to re-read.
 
     The same traces are validated (`Rows.validate`) in the same pass, so the
     answer can name a drawing that caught no writing or a word it left out.
@@ -392,6 +447,8 @@ def apply_row_adjustments(batch_id: str, page: str, adjustments: RowAdjustments,
     adjustments_json = json.dumps(adjustments.to_dict(), ensure_ascii=False, indent=1)
     atomic_write(readings.adjustments_path(page), adjustments_json + "\n")
     atomic_write(readings.adjusted_rows_path(page), json.dumps(Rows.to_dict(rows), ensure_ascii=False, indent=1) + "\n")
+    if adjustments.lines:
+        _ = set_status(batch_id, STATUS_PENDING, registry_dir)
     return RowCorrection(rows=rows, violations=violations)
 
 

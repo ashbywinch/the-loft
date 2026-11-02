@@ -17,7 +17,13 @@ from typing import Any
 from document.document import DOCUMENT_AGREED
 from pipeline.boundary import Boundary
 
+# The queue vocabulary — the record's status IS the queue (the worker runs the
+# pending ones). ``processing`` is the one transient: a live pass writes it
+# with ``started_at``, and a pass that raises puts its record back to pending.
 STATUS_PENDING = "pending"  # the state a fresh adoption's record starts in
+STATUS_PROCESSING = "importing"  # a machine pass is running (the wire's word)
+STATUS_REVIEW = "review"  # the machine stages are done — a person's turn
+STATUS_CONFIRMED = "confirmed"  # the reviewer agreed every document in it
 
 
 @dataclass
@@ -30,6 +36,9 @@ class BatchRecord:
     source: str = ""
     status: str = STATUS_PENDING
     arrived_at: str = ""
+    started_at: str = ""  # when the current (or last) processing pass began
+    started_pid: int = 0  # the machine pass's process, and the host it ran on
+    started_host: str = ""
     pages: dict[str, str] = field(default_factory=dict)
     fingerprint: list[str] = field(default_factory=list)
     boundaries: list[Boundary] | None = None
@@ -46,6 +55,9 @@ class BatchRecord:
             source=str(raw.get("source", "")),
             status=str(raw.get("status", STATUS_PENDING)),
             arrived_at=str(raw.get("arrived_at", "")),
+            started_at=str(raw.get("started_at", "")),
+            started_pid=int(raw.get("started_pid", 0)),
+            started_host=str(raw.get("started_host", "")),
             pages={str(page): str(sha) for page, sha in (raw.get("pages") or {}).items()},
             fingerprint=[str(sha) for sha in raw.get("fingerprint") or []],
             boundaries=None if boundaries is None else [Boundary.from_dict(boundary) for boundary in boundaries],
@@ -62,6 +74,9 @@ class BatchRecord:
             "source": self.source,
             "status": self.status,
             "arrived_at": self.arrived_at,
+            "started_at": self.started_at,
+            "started_pid": self.started_pid,
+            "started_host": self.started_host,
             "pages": dict(self.pages),
             "fingerprint": list(self.fingerprint),
             "boundaries": None if self.boundaries is None else [boundary.to_dict() for boundary in self.boundaries],
@@ -85,6 +100,9 @@ class BatchRecord:
         self.pages = dict(pages)
         self.fingerprint = list(fingerprint)
         self.status = STATUS_PENDING
+        self.started_at = ""  # a requeued batch holds no pass
+        self.started_pid = 0
+        self.started_host = ""
         self.content_changed = True
         if not self.confirmed_boundaries():
             self.boundaries = None

@@ -42,6 +42,8 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The per-word detection internals (ink → connected marks, baseline/waistline measurement, the streak-rule drop) | `pipeline/detect/mark.py` (`find_marks`, `baseline_row`, `waistline_row`); the page ruler `pipeline/detect/ruler.py`; pinned by `tests/pipeline/test_reader.py` |
 | Showing the user a visual artifact (renders, maps, zooms, case sheets) | `.omp/skills/show-the-user/SKILL.md` — existing tooling only, LAN URL, self-check before presenting |
 | The segment/box review & edit UX (user stories, the box-issue taxonomy, the corner rulings) | `docs/PLAN/segment-review-stories.md` |
+| The row review's phone surface (the purpose, the two colour layers, the draw→redraw loop; PROPOSED) | `docs/PLAN/row-review-ux.md` |
+| How a drawn row line corrects a page (replace a covered row; claim only the words the line runs along; leave the rest) | `docs/PLAN/row-correction-rule.md`; `pipeline/rows/rows.py` (`_Claims`) |
 |Interview/observation instruments|`docs/DISCOVERY.md`, private session records|
 | The story-capture flow spec ("Add your memory") | `docs/PRD/MEMORIES.md` |
 | The artifact-import flow spec + its rules (A–S) | `docs/PRD/IMPORT-PRD.md` — the ingest-side planning spec: `docs/PRD/INGEST-PRD.md` |

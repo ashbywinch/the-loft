@@ -23,6 +23,8 @@ acceptance), then the pointed design doc for the item.
 | `INGEST-PLAN.md` | the claim-model review's design — WORK-PLAN §2 |
 | `strip-grouping-plan.md` | the layout stage's strip path — SERVED 2026-09-09 + postmortem; seams in WORK-PLAN §3 |
 | `segment-review-stories.md` | the review structure-tools stories — adjudicated; the build is WORK-PLAN 1.4/1.6 |
+| `row-review-ux.md` | the row review's phone surface — PROPOSED: the purpose, the pipeline's colours over the page, the reviewer's yellow lines, draw→redraw |
+| `row-correction-rule.md` | how a drawn line edits a mostly-right page — LANDED: replace a covered row, claim only the words the line runs along, leave everything else |
 | `layout-requirements-draft.md` | the layout requirements — adjudicated + landed (VR19–24; TECHSPEC §16.17) |
 | `single-pass-landing-plan.md` | the §16.17 landing — complete 2026-09-22 |
 | `row-data-migration-plan.md` | user-lines → rows library — landed 2026-09-19 |

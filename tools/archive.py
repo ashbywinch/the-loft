@@ -22,9 +22,11 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast, overload
 
+from pipeline.identification import Identification
 from tools.anchor import Anchor
 from tools.asset import Asset
 from tools.gone_person import GonePerson
+from tools.gone_place import GonePlace
 from tools.memory import Knowledge, Memory, StoryRequest
 from tools.projection import Projection, projection_json
 from tools.records import (
@@ -46,6 +48,7 @@ from tools.records import (
     split_content,
     validate_identity,
 )
+from tools.ref import Ref
 from tools.store import FileStore
 
 SIDECAR = "item.json"
@@ -59,6 +62,17 @@ def _valid_record_id(record_id: str) -> str:
     if not is_valid_record_id(record_id):
         raise ArchiveError(f"invalid record id: {record_id!r}")
     return record_id
+
+
+def _merged_refs(existing: tuple[Ref, ...], proposed: tuple[Ref, ...]) -> tuple[Ref, ...]:
+    """The document's links after one identification read: every existing
+    link keeps its own status (a confirmed link is never downgraded to a
+    proposal), and a proposed link is added only for an entity the document
+    does not already name."""
+    by_id = {ref.id: ref for ref in existing}
+    for ref in proposed:
+        by_id.setdefault(ref.id, ref)
+    return tuple(by_id.values())
 
 
 def _versioned_path(label: str, subject: str, base: str, version: int) -> str:
@@ -336,6 +350,187 @@ class Archive:
         while f"{base}-{suffix}" in held:
             suffix += 1
         return f"{base}-{suffix}"
+
+    # -- identification (stages 7-8) ---------------------------------------
+
+    def record_identification(self, identification: Identification) -> Item:
+        """The identification pass's proposals become the document's state:
+        the item's refs (merged with the links it already carries — an
+        existing link keeps its status, so a pre-existing confirmed link is
+        never downgraded to a proposal), the new records in the identity
+        tables (proposed — an unagreed record sits marked inside the table it
+        will join), and the item's ``identified`` flag, which keeps the
+        document from being read again.
+
+        The tables go first: a crash after them leaves proposals nothing
+        references (harmless), while the item first would leave refs to
+        records that do not exist — which publish refuses."""
+        item = self.get_item(identification.item_id)
+        if item is None:
+            raise ArchiveError(f"no item {identification.item_id}")
+
+        def add_people(table: PeopleTable | None) -> PeopleTable:
+            if table is None:
+                raise ArchiveError("archive has no people identity table")
+            updated = table
+            for person in identification.people:
+                if person.status == "proposed":
+                    updated = updated.with_record(person)
+            return updated
+
+        def add_places(table: PlacesTable | None) -> PlacesTable:
+            if table is None:
+                raise ArchiveError("archive has no places identity table")
+            updated = table
+            for place in identification.places:
+                if place.status == "proposed":
+                    updated = updated.with_record(place)
+            return updated
+
+        self._mutate_identity("people", add_people)
+        self._mutate_identity("places", add_places)
+
+        sidecar = dict(item.to_dict())
+        sidecar["people"] = [ref.to_dict() for ref in _merged_refs(item.people_refs, identification.people_refs())]
+        sidecar["places"] = [ref.to_dict() for ref in _merged_refs(item.place_refs, identification.place_refs())]
+        sidecar["identified"] = True
+        self.save_item(Item(sidecar))
+        return Item(sidecar)
+
+    def decide_identification(
+        self,
+        item_id: str,
+        kind: Literal["person", "place"],
+        record_id: str,
+        decision: str,
+        basis: dict[str, str] | None = None,
+    ) -> Person | Place | GonePerson | GonePlace | None:
+        """One stage-8 determination for one entity a document names: the
+        item's ref and the identity table's record move together.
+
+        The determinations are PeopleTable.resolved's vocabulary. A record
+        the archive already holds as confirmed is never deleted by a
+        mention's delete — only the mention goes; a proposed record is
+        dismissed once no other item references it, so deleting one
+        document's mention never removes a person another document (or a
+        story) still names. Returns the record as it now stands — None for
+        an id the table does not hold."""
+        item_id = _valid_record_id(item_id)
+        record_id = _valid_record_id(record_id)
+        if decision not in ("attested", "estimated", "pending", "delete"):
+            raise ValueError(f"unknown decision: {decision!r}")
+        if kind not in ("person", "place"):
+            raise ValueError(f"unknown identification kind: {kind!r}")
+        item = self.get_item(item_id)
+        if item is None:
+            raise ArchiveError(f"no item {item_id}")
+        refs_key = "people" if kind == "person" else "places"
+
+        if kind == "person":
+            people_table = self.get_identity("people")
+            if people_table is None:
+                raise ArchiveError("archive has no people identity table")
+            record: Person | Place | None = people_table.record(record_id)
+        else:
+            places_table = self.get_identity("places")
+            if places_table is None:
+                raise ArchiveError("archive has no places identity table")
+            record = places_table.record(record_id)
+        if record is None:
+            return None
+        if decision == "pending":
+            return record
+
+        refs = item.people_refs if kind == "person" else item.place_refs
+        if decision == "delete":
+            decided = tuple(ref for ref in refs if ref.id != record_id)
+        else:
+            # a record the archive already holds as confirmed stays a fact on
+            # the mention too: "record as a guess" never downgrades an
+            # attested person to the document's guess
+            status: Literal["confirmed", "estimated"] = (
+                "confirmed" if decision == "attested" or record.status == "confirmed" else "estimated"
+            )
+            decided = tuple(replace(ref, status=status) if ref.id == record_id else ref for ref in refs)
+        sidecar = dict(item.to_dict())
+        sidecar[refs_key] = [ref.to_dict() for ref in decided]
+        self.save_item(Item(sidecar))
+
+        if decision == "delete" and record.status == "proposed":
+            # the mention may be the only evidence: drop a proposal nothing
+            # else references, keep one another item still names
+            if not self._referencing_catalogued(record_id, refs_key):
+                self._dismiss_proposal(kind, record_id)
+                return GonePerson(record_id) if kind == "person" else GonePlace(record_id)
+            return record
+        if record.status == "confirmed":
+            return record  # an attested record never becomes a guess
+        return self._resolve_proposal(kind, record_id, decision, basis)
+
+    def _dismiss_proposal(self, kind: Literal["person", "place"], record_id: str) -> None:
+        """Remove one proposed record from its table — the delete
+        determination's table half."""
+        if kind == "person":
+
+            def dismiss_people(table: PeopleTable | None) -> PeopleTable:
+                if table is None:
+                    raise ArchiveError("archive has no people identity table")
+                return table.dismissed(record_id)
+
+            self._mutate_identity("people", dismiss_people)
+        else:
+
+            def dismiss_places(table: PlacesTable | None) -> PlacesTable:
+                if table is None:
+                    raise ArchiveError("archive has no places identity table")
+                return table.dismissed(record_id)
+
+            self._mutate_identity("places", dismiss_places)
+
+    def _resolve_proposal(
+        self,
+        kind: Literal["person", "place"],
+        record_id: str,
+        decision: str,
+        basis: dict[str, str] | None,
+    ) -> Person | Place | GonePerson | GonePlace | None:
+        """Apply one determination to a proposed record and return it as it
+        now stands — the table's own rule, made atomic here."""
+        if kind == "person":
+            return self._resolve_person_proposal(record_id, decision, basis)
+        return self._resolve_place_proposal(record_id, decision, basis)
+
+    def _resolve_person_proposal(
+        self, record_id: str, decision: str, basis: dict[str, str] | None
+    ) -> Person | GonePerson | None:
+        """PeopleTable.resolved, applied inside the archive's lock."""
+        resolved: list[Person | GonePerson | None] = []
+
+        def apply(table: PeopleTable | None) -> PeopleTable:
+            if table is None:
+                raise ArchiveError("archive has no people identity table")
+            updated, record = table.resolved(record_id, decision, basis)
+            resolved.append(record)
+            return updated
+
+        self._mutate_identity("people", apply)
+        return resolved[0] if resolved else None
+
+    def _resolve_place_proposal(
+        self, record_id: str, decision: str, basis: dict[str, str] | None
+    ) -> Place | GonePlace | None:
+        """PlacesTable.resolved, applied inside the archive's lock."""
+        resolved: list[Place | GonePlace | None] = []
+
+        def apply(table: PlacesTable | None) -> PlacesTable:
+            if table is None:
+                raise ArchiveError("archive has no places identity table")
+            updated, record = table.resolved(record_id, decision, basis)
+            resolved.append(record)
+            return updated
+
+        self._mutate_identity("places", apply)
+        return resolved[0] if resolved else None
 
     # -- writes ------------------------------------------------------------
 

@@ -19,6 +19,7 @@ import { render as letters } from "./views/letters.js";
 import { render as search } from "./views/search.js";
 import { render as curator } from "./views/curator.js";
 import { render as importReview } from "./views/import.js";
+import { render as identify } from "./views/identify.js";
 import { render as review, cleanup as cleanupReview } from "./views/review.js";
 
 const ROUTES = {
@@ -38,6 +39,7 @@ const ROUTES = {
   search,
   curator,
   import: importReview,
+  identify,
   review,
 };
 

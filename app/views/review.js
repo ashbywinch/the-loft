@@ -451,10 +451,12 @@ async function renderBatchList(main, state) {
   // predate the reader entirely — the strip-era piles), so it is named as
   // such, never offered as transcription work.
   const isOpen = (b) => b.status !== "confirmed" && (b.boundaries ?? []).some((x) => x.status !== "confirmed");
-  const open = batches.filter((b) => isOpen(b) && (b.documents_ready ?? []).length > 0);
-  const beforeGate = batches.filter(
-    (b) => isOpen(b) && (b.boundaries ?? []).length > 0 && (b.documents_ready ?? []).length === 0,
-  );
+  // a document with ANY checked page is reviewable words for those pages (the
+  // transcription stage runs per page); confirming it whole waits for all of
+  // them, which the surface enforces
+  const started = (b) => (b.documents_ready ?? []).length + (b.documents_partial ?? []).length;
+  const open = batches.filter((b) => isOpen(b) && started(b) > 0);
+  const beforeGate = batches.filter((b) => isOpen(b) && (b.boundaries ?? []).length > 0 && started(b) === 0);
   // the portal's rows item (UR2): a page the read stage has finished waits on
   // its check even when every document of the batch is already confirmed
   const toCheck = batches.filter((b) => (b.pages_pending || []).length);
@@ -517,7 +519,10 @@ async function renderBatchList(main, state) {
       const boundaries = batch.boundaries || [];
       const confirmed = boundaries.filter((b) => b.status === "confirmed").length;
       const ready = (batch.documents_ready ?? []).length;
-      const progress = `${ready} of ${boundaries.length} documents ready to review · ${confirmed} confirmed`;
+      const partial = (batch.documents_partial ?? []).length;
+      const progress = `${ready} of ${boundaries.length} documents ready to review${
+        partial ? ` · ${partial} partly checked` : ""
+      } · ${confirmed} confirmed`;
       const card = el("button", { class: "rv-card", onclick: () => navigate(`review/${batch.batch_id}`) }, [
         el("div", { class: "rv-card-main" }, [
           el("div", { class: "rv-card-title" }, batch.label || batch.batch_id),
@@ -648,7 +653,18 @@ async function renderBatch(main, batchId, state, initial = null) {
   // delivery state, so this cannot reorient a page the reviewer didn't
   // press — VR10 AC13); fire-and-forget: the batch list renders now
   void deliverOwed();
-  const documents = data.documents || [];
+  // a document's checked pages are its reviewable pages: the unchecked ones
+  // carry the machine's draft rows, so they wait (the transcript stage is
+  // after the row check). The document itself can only be confirmed once
+  // EVERY page is past the check.
+  const documents = (data.documents || []).map((doc) => {
+    // an answer without the field predates the gate: every page counts as
+    // checked (the server always sends it)
+    const readyPages = doc.pages_ready ?? doc.pages ?? [];
+    const waitingPages = (doc.pages || []).filter((p) => !readyPages.includes(p));
+    if (!waitingPages.length) return doc;
+    return { ...doc, pages: (doc.pages || []).filter((p) => readyPages.includes(p)), waitingPages };
+  });
   const confirmed = documents.filter((d) => d.status === "confirmed").length;
   const root = el("div", { class: "rv" }, [
     el("div", { class: "rv-topbar" }, [
@@ -668,7 +684,10 @@ async function renderBatch(main, batchId, state, initial = null) {
   // The transcription stage sits after the row check: a document whose pages
   // have not passed it is not reviewable words yet, however someone reached
   // this URL (the hub does not offer it; a deep link must not either).
-  const beforeGate = (doc) => doc?.ready === false;
+  // after the mapping above, `doc.pages` IS the checked pages: a document with
+  // none has nothing reviewable yet (it is before the row check), while one
+  // with some can be reviewed page by page
+  const beforeGate = (doc) => !(doc?.pages ?? []).length;
   if (initial) {
     const { doc, page } = initial;
     if (Number.isInteger(doc) && doc >= 0 && doc < documents.length && beforeGate(documents[doc])) {
@@ -703,7 +722,7 @@ async function renderBatch(main, batchId, state, initial = null) {
       el(
         "div",
         { class: "rv-note" },
-        `${waiting.length} document${waiting.length === 1 ? "" : "s"} in this batch cannot be reviewed as words yet — their pages have not passed the row check.`,
+        `${waiting.length} document${waiting.length === 1 ? "" : "s"} in this batch cannot be reviewed as words yet — no page has passed the row check.`,
       ),
     );
   }
@@ -713,7 +732,7 @@ async function renderBatch(main, batchId, state, initial = null) {
         "div",
         { class: "rv-note" },
         waiting.length
-          ? "No document in this batch is past the row check."
+          ? "No page in this batch is past the row check yet."
           : `All ${documents.length} document${documents.length === 1 ? "" : "s"} in this batch ${documents.length === 1 ? "is" : "are"} confirmed.`,
       ),
     );
@@ -1081,7 +1100,20 @@ function renderSurface(main, session) {
   // cannot exist without a title and a date (the archive's item model), and
   // only the reviewer knows them. Keyed by document — a reviewer confirming
   // document 2 must never carry document 1's title into it.
-  if (isLastPage) {
+  if (isLastPage && doc.waitingPages?.length) {
+    // the document is confirmed whole, and these pages still carry the
+    // machine's draft rows — name them instead of offering the confirm
+    actionBar.prepend(
+      el(
+        "div",
+        { class: "rv-note rv-waiting" },
+        `${doc.waitingPages.length} page${doc.waitingPages.length === 1 ? "" : "s"} of this document (${doc.waitingPages.join(", ")}) ${
+          doc.waitingPages.length === 1 ? "has" : "have"
+        } not passed the row check — check the rows to finish it.`,
+      ),
+    );
+  }
+  if (isLastPage && !doc.waitingPages?.length) {
     session.docFacts = session.docFacts || {};
     const facts = (session.docFacts[session.docIndex] ||= loadDocFacts(batch.batchId, session.docIndex) || {
       title: doc.title || "",
@@ -2642,6 +2674,12 @@ function rejectDoc(session) {
 async function confirmNext(session) {
   const { batch, docIndex } = session;
   const doc = batch.documents[docIndex];
+  if (session.pageIndex >= doc.pages.length - 1 && doc.waitingPages?.length) {
+    // the archive holds a document whole: its unchecked pages must pass the
+    // row check before this one can be confirmed
+    session.root.querySelector(".rv-waiting")?.classList.add("is-failed");
+    return;
+  }
   const page = doc.pages[session.pageIndex];
   const pageState = (batch.processing || {})[page];
   if (pageState === "transcribing" || (session.rotation ?? 0) !== 0) return;

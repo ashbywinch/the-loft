@@ -76,19 +76,25 @@ def pages_pending(readings: BatchReadings, pages: list[str]) -> list[str]:
     return [page for page in pages if readings.page_status(page) is PageStatus.ROWS_PENDING]
 
 
-def documents_ready(pages_by_document: list[list[str]], readings: BatchReadings) -> list[int]:
-    """The document indexes whose pages have ALL passed the row check.
+def document_readiness(pages_by_document: list[list[str]], readings: BatchReadings) -> tuple[list[int], list[int]]:
+    """The documents past the row check: ``(fully ready, partly ready)``.
 
-    The transcription review is the stage after the row check: a document
-    whose page still carries draft rows (or has not been read at all) is not
-    reviewable words yet, and one whose pages were read under the old
-    pipeline has no reading to check — both stay before the gate. The list is
-    the door's own rule, not a UI guess."""
-    return [
-        index
-        for index, pages in enumerate(pages_by_document)
-        if pages and all(readings.page_status(page) is PageStatus.ROWS_ADJUSTED for page in pages)
-    ]
+    The transcription stage runs per page on checked rows, so a document with
+    some pages checked can be tested page by page; confirming it as a whole
+    still waits for every page (the surface refuses). A document whose pages
+    were read under the old pipeline has no reading to check — it is in
+    neither list, i.e. before the gate."""
+    ready: list[int] = []
+    partial: list[int] = []
+    for index, pages in enumerate(pages_by_document):
+        if not pages:
+            continue
+        passed = sum(readings.page_status(page) is PageStatus.ROWS_ADJUSTED for page in pages)
+        if passed == len(pages):
+            ready.append(index)
+        elif passed:
+            partial.append(index)
+    return ready, partial
 
 
 @dataclass(frozen=True)

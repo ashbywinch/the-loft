@@ -69,7 +69,7 @@ from pipeline.api.sync import (
     Outbox,
     apply_row_adjustments,
     demote_stale_jobs,
-    documents_ready,
+    document_readiness,
     draft_payloads,
     identify_document,
     page_job_state,
@@ -684,9 +684,11 @@ def build_app(
                 record = batch.to_dict()
                 readings = BatchReadings(work_dir, str(record["batch_id"]))
                 record["pages_pending"] = pages_pending(readings, list(record.get("pages") or {}))
-                record["documents_ready"] = documents_ready(
+                ready, partial = document_readiness(
                     [list(boundary.get("pages") or []) for boundary in record.get("boundaries") or []], readings
                 )
+                record["documents_ready"] = ready
+                record["documents_partial"] = partial
                 batches.append(record)
             return {"batches": batches}
         except RegistryError as exc:
@@ -719,17 +721,17 @@ def build_app(
                     continue
                 text_pages = [p for p in document.get("pages", []) if p in texts]
                 readings = BatchReadings(work_dir, batch_id)
+                # the transcription stage runs on checked rows: a page still
+                # carrying draft rows is not reviewable words yet, and a
+                # strip-era page has no reading to check at all
+                pages_ready = [p for p in text_pages if readings.page_status(p) is PageStatus.ROWS_ADJUSTED]
                 documents.append(
                     {
                         **document,
                         "pages": text_pages,
                         "status": by_pages.get(tuple(document.get("pages", [])), DOCUMENT_DRAFT),
-                        # the transcription stage sits after the row check:
-                        # a document whose text pages are still waiting on it
-                        # is not reviewable words yet (strip-era pages have no
-                        # reading to check — they stay before the gate too)
-                        "ready": bool(text_pages)
-                        and all(readings.page_status(p) is PageStatus.ROWS_ADJUSTED for p in text_pages),
+                        "pages_ready": pages_ready,
+                        "ready": bool(text_pages) and len(pages_ready) == len(text_pages),
                     }
                 )
             return BatchDraftsAnswer(

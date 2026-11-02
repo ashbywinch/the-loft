@@ -61,15 +61,23 @@ them; it never re-groups the page.
 The row check is the gate the transcription stage sits behind: a page's reading
 is the machine's proposal, and the reviewer's check (`page-01.row-adjustments.json`
 plus `rows-adjusted.json`, both written by any correction — an empty one
-included) is what makes its rows the page's rows. So a document is reviewable
-**as words** only when every one of its text pages is past the check
-(`PageStatus.ROWS_ADJUSTED`). The batches answer carries the list
-(`documents_ready`), the drafts answer marks each document (`ready`), and the
-review hub shows a batch with none ready — the strip-era piles, never read as
-rows — under "Before the row check", never as transcription work (user,
-2026-11-02: text from before the gate was being offered as reviewable). The
-check is per page, not per document: one checked page does not unlock its
-document's other pages.
+included) is what makes its rows the page's rows. The transcription stage runs
+**per page**, so a page past the check (`PageStatus.ROWS_ADJUSTED`) is
+reviewable words on its own; a page still carrying draft rows is not.
+
+- The batches answer carries `documents_ready` (every page checked) and
+  `documents_partial` (some pages checked).
+- The drafts answer carries each document's `pages_ready` and `ready`.
+- The review surface opens a partly checked document on its checked pages only,
+  and refuses the whole-document confirmation while any page waits — the
+  archive holds a document whole, so a page still before the gate is named at
+  the point of confirmation rather than quietly cut out.
+- The hub shows a batch with no checked page — the strip-era piles, never read
+  as rows — under "Before the row check", never as transcription work (user,
+  2026-11-02: text from before the gate was being offered as reviewable).
+
+One checked page is therefore enough to test the rest of the pipeline on that
+page (user's intent); it is not enough to confirm the document.
 
 ## What a stroke can express
 

@@ -1504,9 +1504,69 @@ def test_a_document_is_ready_for_transcription_only_after_its_row_check(server: 
     status, _ = server.post("/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments", {"lines": []})
     assert status == 200
     status, raw = server.get("/api/sync/batches", cookie=server.cookie)
-    assert _json.loads(raw.decode("utf-8"))["batches"][0]["documents_ready"] == [0]
+    body = _json.loads(raw.decode("utf-8"))["batches"][0]
+    assert body["documents_ready"] == [0] and body["documents_partial"] == []
     status, raw = server.get("/api/sync/batch/adopt-0001/drafts", cookie=server.cookie)
-    assert _json.loads(raw.decode("utf-8"))["documents"][0]["ready"] is True
+    doc = _json.loads(raw.decode("utf-8"))["documents"][0]
+    assert doc["ready"] is True and doc["pages_ready"] == ["p1.jpg"]
+
+
+def test_a_partly_checked_document_is_reviewable_page_by_page(server: ServerFixture) -> None:
+    """The transcript stage runs per page: one checked page of a two-page
+    document opens that page for review, its sibling still waits on the check,
+    and the batches answer names the document as partly checked (the surface
+    refuses a whole-document confirmation until every page is past it)."""
+    import json as _json
+
+    _seed_two_page_document(server)
+    status, raw = server.get("/api/sync/batches", cookie=server.cookie)
+    body = _json.loads(raw.decode("utf-8"))["batches"][0]
+    assert body["documents_ready"] == [] and body["documents_partial"] == []  # nothing checked
+
+    # check the first page only
+    status, _ = server.post("/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments", {"lines": []})
+    assert status == 200
+    status, raw = server.get("/api/sync/batches", cookie=server.cookie)
+    body = _json.loads(raw.decode("utf-8"))["batches"][0]
+    assert body["documents_partial"] == [0] and body["documents_ready"] == []
+    status, raw = server.get("/api/sync/batch/adopt-0001/drafts", cookie=server.cookie)
+    doc = _json.loads(raw.decode("utf-8"))["documents"][0]
+    assert doc["pages_ready"] == ["p1.jpg"] and doc["ready"] is False
+
+
+def _seed_two_page_document(fixture: ServerFixture, batch_id: str = "adopt-0001") -> None:
+    """One document over two pages, both read (rows + words), neither checked."""
+    import json as _json
+
+    _seed_row_page(fixture, batch_id)
+    guess = fixture.work_dir / batch_id / "ocr-guess"
+    rows = _json.loads((guess / "p1.rows.json").read_text())
+    rows["page"] = "p2.jpg"
+    (guess / "p2.rows.json").write_text(_json.dumps(rows), encoding="utf-8")
+    words = _json.loads((guess / "p1.words.json").read_text())
+    for word in words["words"]:
+        word["x0"] += 400
+        word["x1"] += 400
+    (guess / "p2.words.json").write_text(_json.dumps(words), encoding="utf-8")
+    (guess / "p2.txt").write_text("three four", encoding="utf-8")
+    (guess / "p1.txt").write_text("one two", encoding="utf-8")
+    (guess / "boundaries.json").write_text(
+        _json.dumps([{"pages": ["p1.jpg", "p2.jpg"], "greeting": "", "signoff": None}]), encoding="utf-8"
+    )
+    (fixture.registry_dir / f"{batch_id}.json").write_text(
+        _json.dumps(
+            {
+                "batch_id": batch_id,
+                "path": str(fixture.data_dir),
+                "status": "review",
+                "arrived_at": "2026-10-27T12:00:00+00:00",
+                "pages": {"p1.jpg": "hash-1", "p2.jpg": "hash-2"},
+                "fingerprint": ["hash-1", "hash-2"],
+                "boundaries": [{"pages": ["p1.jpg", "p2.jpg"], "greeting": None, "signoff": None}],
+            }
+        ),
+        encoding="utf-8",
+    )
 
 
 def test_sync_drafts_carries_the_rows_tints(server: ServerFixture) -> None:

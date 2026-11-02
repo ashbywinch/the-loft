@@ -289,6 +289,36 @@ describe("the batch list renders the real batches", () => {
     vi.unstubAllGlobals();
   });
 
+  it("a partly checked document is listed, so its checked pages can be reviewed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          batches: [
+            {
+              batch_id: "b-partly",
+              label: "Half-checked pile",
+              status: "review",
+              pages: { a: 1, b: 2 },
+              boundaries: [{ pages: ["a", "b"], status: null }],
+              documents_ready: [],
+              documents_partial: [0],
+              pages_pending: ["b"],
+            },
+          ],
+        }),
+      }),
+    );
+    const main = document.createElement("main");
+    render(main, { name: "review" });
+    await vi.waitFor(() => expect(main.textContent).toContain("Half-checked pile"));
+    expect(main.textContent).toContain("partly checked");
+    expect(main.textContent).not.toContain("Before the row check — pages not yet read as rows");
+    vi.unstubAllGlobals();
+  });
+
   it("offers the sign-in gate on a 401", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 401 }));
     const main = document.createElement("main");
@@ -1369,6 +1399,58 @@ describe("the row correction's pure half", () => {
     expect(strokeAt(strokes, { x: 600, y: 700 }, 20)).toBe(1); // a vertex
     expect(strokeAt(strokes, { x: 350, y: 600 }, 20)).toBeNull(); // between the lines
     expect(strokeAt([], { x: 350, y: 500 }, 20)).toBeNull();
+  });
+});
+
+describe("a document whose pages have not all passed the row check", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reviews only the checked pages, and refuses to confirm the document whole", async () => {
+    // the transcript stage runs per page on checked rows; the archive holds a
+    // document whole, so the sibling page must pass the check before confirm
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).includes("/confirmations")) {
+          return { ok: true, status: 200, json: async () => ({ ok: true }) };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            batch_id: "b-half",
+            label: "Half-checked",
+            processing: {},
+            documents: [
+              {
+                pages: ["a.jpg", "b.jpg"],
+                texts: { "a.jpg": "checked page text", "b.jpg": "unchecked page text" },
+                layouts: {},
+                pages_ready: ["a.jpg"],
+                ready: false,
+                status: "draft",
+              },
+            ],
+          }),
+        };
+      }),
+    );
+    const main = document.createElement("main");
+    render(main, { arg: "b-half", rest: ["review", "b-half", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-page")).toBeTruthy());
+    const img = main.querySelector(".rv-page");
+    Object.defineProperty(img, "naturalWidth", { value: 100, configurable: true });
+    Object.defineProperty(img, "naturalHeight", { value: 1500, configurable: true });
+    img.dispatchEvent(new Event("load"));
+    await vi.waitFor(() => expect(main.querySelector(".rv-waiting")).toBeTruthy());
+    expect(main.querySelector(".rv-waiting").textContent).toContain("b.jpg");
+    // only the checked page is in the review
+    const confirm = main.querySelector(".rv-txa .rv-btn--primary");
+    expect(confirm.textContent).toContain("Confirm");
+    confirm.click();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(false);
+    expect(main.querySelector(".rv-waiting").classList.contains("is-failed")).toBe(true);
   });
 });
 

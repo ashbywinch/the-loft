@@ -39,6 +39,7 @@ const PARENTS = {
   theme: "themes",
   story: "stories",
   review: "review", // an arg'd review route's parent is the review hub
+  rows: "review", // the row screen's parent is the review hub
   identify: "home", // a document's identification surface's parent is home
 };
 

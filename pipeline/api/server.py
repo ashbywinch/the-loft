@@ -840,6 +840,7 @@ def build_app(
             page=page,
             rows=Rows.to_dict(correction.rows)["rows"],
             violations=correction.violations,
+            tints=correction.tints,
         ).to_dict()
 
     @app.post("/api/sync/confirmations")

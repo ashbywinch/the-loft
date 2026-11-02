@@ -15,6 +15,7 @@ from __future__ import annotations
 import colorsys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import PIL
 from PIL import Image, ImageDraw, ImageFont
@@ -51,6 +52,13 @@ def _stroke_font() -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
     if _PILLOW_HAS_SIZEABLE_DEFAULT_FONT:
         return ImageFont.load_default(size=52)
     return ImageFont.load_default()
+
+
+def row_tints(rows: Sequence[Row], style: RenderStyle = DEFAULT_STYLE) -> list[dict[str, Any]]:
+    """The rows as their wire tint records, in reading order — the colour and
+    the rectangles each row is drawn as. The pipeline paints them here; the
+    review screen draws the same records in SVG."""
+    return [RowTint.of(row, style.colour(index)).to_dict() for index, row in enumerate(rows)]
 
 
 def tint_row(draw: ImageDraw.ImageDraw, row: Row, colour: Colour) -> None:

@@ -21,6 +21,7 @@ import { render as curator } from "./views/curator.js";
 import { render as importReview } from "./views/import.js";
 import { render as identify } from "./views/identify.js";
 import { render as review, cleanup as cleanupReview } from "./views/review.js";
+import { render as rowsReview } from "./views/rows.js";
 
 const ROUTES = {
   home,
@@ -41,6 +42,7 @@ const ROUTES = {
   import: importReview,
   identify,
   review,
+  rows: rowsReview,
 };
 
 /** The identity at boot: null = unknown, {authenticated:

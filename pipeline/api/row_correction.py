@@ -9,14 +9,17 @@ them.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 from document.row import Row
 
 
 @dataclass(frozen=True)
 class RowCorrection:
-    """One page's correction: the rows, and the violations the traces hold."""
+    """One page's correction: the rows, the violations the traces hold, and the
+    rows' tints (`RowTint` records) the screen paints."""
 
     rows: list[Row]
     violations: tuple[str, ...] = ()
+    tints: list[dict[str, Any]] = field(default_factory=list)

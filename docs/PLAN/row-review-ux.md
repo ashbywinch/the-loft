@@ -1,13 +1,12 @@
 # Row review — the phone screen (design record)
 
-Status: **PROPOSED** for the screen; the renderer refactor in §5.1 is LANDED
-(`document/row_tint.py`, `Row.tint_rects`, `join_band` moved), so the rules
-the screen consumes are the pipeline's own. The screen was built and walked
-as a mockup at 390×844 — a local working artefact, not in the repo: it serves
-a real page and its OCR words, which never enter the public checkout. Its
-`server.py` answers `POST /rows` with `RowTint` records built by the
-pipeline's classes, and the page draws them in SVG, so the mockup carried no
-colour or band code of its own.
+Status: **LANDED (2026-11-02)**. The screen is `app/views/rows.js`
+(`#/rows/<batch>/<doc>/<page>`), the tints ride the drafts payload
+(`tints[page]`, built by `row_tints` in `pipeline/rows/render.py`), and the
+old row tools left the transcription surface. It was designed and walked as a
+local mockup first (not in the repo: it serves a real page and its OCR words);
+the mockup painted `RowTint` records in SVG and carried no colour or band code
+of its own, which is exactly what the app does now.
 
 The reviewer's own lines are **yellow, like a highlighter**, over the page; the
 machine's rows are tinted in **different colours**, so the two layers and the
@@ -255,7 +254,8 @@ Each step is shippable on its own; nothing below changes `Rows.adjust`,
 
 `Rows.adjust`, `Rows.validate` and the correction's request are unchanged.
 
-### 5.3 `app/views/review.js`
+### 5.3 `app/views/rows.js` (as built — the screen is its own module, not a
+`review.js` variant; the transcription surface only lost its row tools)
 
 | Where | Change |
 |---|---|

@@ -975,6 +975,14 @@ another item still names stays. The portal's "Identify people/places" door
 counts the documents with a transcription whose entities still wait and opens
 the surface (`#/identify/<item id>`).
 
+**Its UX is not settled.** The built surface lists every pending mention with
+the four determinations; the agreed experience is the review chat's walk, one
+entity at a time (PRD §9 R1, R4; `pipeline-stages-plan.md` — the entities
+"enter the review chat"), which is unbuilt. The outstanding work and its
+acceptance are WORK-PLAN §2. What is settled is the seam this section
+specifies: read once, the determination writes the mention and the table
+together, append-only.
+
 ### 16.16 The transcription-validation review surface (spike-resolved)
 
 **Decision: the reviewer's alignment and confidence come from a

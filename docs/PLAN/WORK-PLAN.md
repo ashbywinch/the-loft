@@ -65,6 +65,23 @@ landed** — the review chat still runs the disposition-first walk; the
 review-chat findings R1–R14 (`ux-fixes-plan.md`) stay open until these
 land.
 
+**The identification surface is the same defect in another place.**
+`#/identify/<item>` (`app/views/identify.js`) renders every proposed
+person/place at once, each with four buttons: a form that asks every question
+whether or not the answer can change anything (PRD §9 R1 "a conversation with
+a hired genealogist, not a form"; R4 "one question at a time"), where the
+stage plan says the entities "enter the review chat"
+(`pipeline-stages-plan.md` — "Identify people/places (stage 8)"). The fix is
+Slice 1's walk over the document's mentions: one entity at a time, the
+document's own sentence as the evidence (R2), the four dispositions as
+consequence-named options (R5), "not sure" routed to the family's own words,
+and a closing message saying what changed. Resuming needs no new state — the
+walk starts at the first mention still `proposed`. The genealogist's own
+follow-up questions (R3), conflicts before recording (R6) and the persisted
+transcript (R7) come with Slices 1–3; the decision seam under the surface is
+right (read once, append-only table writes, tested). Found by the PR-Agent
+review of PR #85 (2026-11-02).
+
 Unfinished memories (PRD §9 F10) enter this same review — the same
 queue, the same walk (INGEST-PRD ruling: an unfinished
 memory may simply have more to tell; the conversation is the same one

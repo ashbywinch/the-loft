@@ -27,6 +27,7 @@ from document.rectangle import Rectangle
 from pipeline.evals.eval_geometry import CropLine, CropReading, PageSize, assemble_crop_grid, grid_crops
 from pipeline.layout import Layout, load_layout_store
 from pipeline.layout_line import LayoutLine
+from pipeline.model.config import VISION_MODEL
 from pipeline.model.transcription import Transcription
 from pipeline.model.vlm import (
     DEFAULT_BASE_URL,
@@ -260,7 +261,7 @@ def run(
     work_dir: Path,
     cols: int = 2,
     rows: int = 3,
-    model: str = "dynamic/image",
+    model: str = VISION_MODEL,
     base_url: str = DEFAULT_BASE_URL,
     api_key: str | None = None,
 ) -> CropGridReport:
@@ -323,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cols", type=int, default=2)
     parser.add_argument("--rows", type=int, default=3)
     parser.add_argument("--work-dir", type=Path, default=WORK_DIR)
-    parser.add_argument("--model", default="dynamic/image", help="the model to trial")
+    parser.add_argument("--model", default=VISION_MODEL, help="the model to trial")
     parser.add_argument("--base-url", default=None, help="the API base (default: the gateway)")
     parser.add_argument(
         "--api-key",

@@ -50,6 +50,7 @@ from pipeline.classify import TEXT_KINDS, category_of, read_route, run_classify
 from pipeline.detect.reader import Reading, reading_for_page
 from pipeline.grouping import score_boundaries
 from pipeline.model.ai_client import AIClient, AIClientError
+from pipeline.model.config import BOUNDARY_MODEL as BOUNDARY_MODEL_FROM_CONFIG
 from pipeline.orient import orient_pages
 from pipeline.page_flag import PageFlag
 from pipeline.page_text import PageText
@@ -66,7 +67,7 @@ from tools.atomic import atomic_write
 from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR, LoftPaths
 from tools.store import DiskStore, StoreError  # noqa: F401 — the architecture test's store-layer marker
 
-BOUNDARY_MODEL = "deepseek/deepseek-v4-flash"  # judges document boundaries (<provider>/<model>)
+BOUNDARY_MODEL = BOUNDARY_MODEL_FROM_CONFIG  # judges document boundaries (<provider>/<model>)
 PAGE_LIMIT = 30  # one boundary call per batch; beyond this the context is too big
 GUESS_PAGE_CHUNK = 5  # pages per boundary call (the answer echoes each page's flags)
 AMBIGUITY_FLOOR = 5  # ...and it must clear this many strong words outright

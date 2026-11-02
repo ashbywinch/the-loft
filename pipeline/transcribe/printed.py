@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from pipeline.model.config import VISION_MODEL
 from pipeline.model.transcription import Transcription
 from pipeline.model.vlm import VLM_FORMAT_PLAIN, VLM_SYSTEM, transcribe_image_vlm
 from pipeline.model.vlm_answer import VlmAnswer
@@ -43,7 +44,7 @@ def _as_lines(answer: str) -> str:
         return text  # not JSON after all — the answer IS the transcription
 
 
-def printed_transcript(image: Path, *, model: str = "dynamic/image") -> tuple[str, VlmAnswer]:
+def printed_transcript(image: Path, *, model: str = VISION_MODEL) -> tuple[str, VlmAnswer]:
     """One printed page transcribed: the page's text and the call's cost."""
     answer = transcribe_image_vlm(image, model=model, system=VLM_SYSTEM, user_text=printed_prompt())
     return _as_lines(answer.answer), answer
@@ -65,7 +66,7 @@ def structured_prompt() -> str:
     return f"{note}\n\n{VLM_FORMAT_PLAIN}"
 
 
-def structured_transcript(image: Path, *, model: str = "dynamic/image") -> tuple[str, VlmAnswer]:
+def structured_transcript(image: Path, *, model: str = VISION_MODEL) -> tuple[str, VlmAnswer]:
     """One form page read as structure: the table text and the call's cost."""
     answer = transcribe_image_vlm(image, model=model, system=VLM_SYSTEM, user_text=structured_prompt())
     return _as_lines(answer.answer), answer

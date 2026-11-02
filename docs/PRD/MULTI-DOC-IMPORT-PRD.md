@@ -4,6 +4,37 @@
 - **Mechanics home:** `docs/TECHSPEC.md` §16 (implementation details live there, not here)
 - **Related:** the artifact-identification flow `docs/PRD/IMPORT-PRD.md`; the document-ingest review `docs/PRD/INGEST-PRD.md`; the story flow `docs/PRD/MEMORIES.md`
 
+## Terms (the words this document uses)
+
+- **Scan area** — the user's own folders (`<disk>/scans`). Everything here is
+  theirs: the pipeline only reads it, and may not write, rename or delete in it.
+- **Pile** — one folder of scanned page images in the scan area: "the envelope
+  of letters I put through the scanner", "the box of photos", "the folder the
+  scanning app wrote". A pile is *what the user made*; it carries no meaning of
+  ours beyond being one arrival.
+- **Batch** — our record of one arrival: the registry file that names the
+  pile's pages (by content hash), its label, and the status of its machine
+  stages. A batch is *what we made* of a pile; its id is ours, not the user's.
+  A pile that is moved keeps its batch (the pages are recognised by content);
+  a pile whose pages change is the same batch with its derived stages cleared.
+- **Page** — one scanned image in a pile (an image file), the unit every
+  machine stage works on: it is classified, oriented, read, and checked on its
+  own.
+- **Document** — one piece of writing the pages turn out to be (a letter with
+  its second sheet, a postcard with a message, one despatch over several
+  pages). A pile may hold many documents; one document may span pages. The
+  **grouping** stage decides which pages belong together.
+- **Grouping** — the stage that turns a batch's pages into documents: a model
+  judges where each page starts and ends a document, and a scorer weighs that
+  against page numbers, greetings and sign-offs, paper size and duplex sides.
+  It is a *proposal*; the reviewer confirms or corrects the documents in the
+  transcription review.
+- **Container / inbox** — a folder the user uses to hold other folders (e.g.
+  `scans/Loft/inbox/`, holding one folder per pile). It is not itself a pile;
+  its children are. (Today the adoption treats any folder with images beneath
+  it as one pile, so a container of piles registers as one large batch — the
+  parent-folder case.)
+
 ## 1. Purpose
 
 Physical piles of documents (envelopes of letters, boxes, photo batches)

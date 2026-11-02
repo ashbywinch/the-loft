@@ -23,22 +23,16 @@ from typing import Any, final
 from pipeline.model.backoff import Backoff
 from pipeline.model.chat_message import ChatMessage
 from pipeline.model.chat_request import ChatRequest
+from pipeline.model.config import CHAT_MODEL, GATEWAY_BASE_URL
 from pipeline.model.http_headers import USER_AGENT, HttpHeaders
 
 logger = logging.getLogger(__name__)
 
-# The environment provides the Cloudflare AI Gateway URL and token. The
-# OPENAI_BASE_URL convention is the standard (litellm, OpenAI SDK, all
-# compatible clients) — the local proxy at :9123/v1 adds repo metadata
-# and timeout headers. OPENAI_API_KEY is the Cloudflare gateway token.
-# Fallback: the OpenCode endpoint (the legacy direct route).
-_DEFAULT_URL = os.environ.get("OPENAI_BASE_URL")
-if _DEFAULT_URL:
-    DEFAULT_BASE_URL: str = _DEFAULT_URL
-else:
-    DEFAULT_BASE_URL = "https://opencode.ai/zen/go/v1"
-
-DEFAULT_MODEL = "dynamic/fallback2"
+# The endpoint and the model aliases live in pipeline/model/config.py — the one
+# file that names the models. It is the Cloudflare AI Gateway (OPENAI_BASE_URL
+# from the operator's environment; OPENAI_API_KEY is the gateway token).
+DEFAULT_BASE_URL: str = GATEWAY_BASE_URL
+DEFAULT_MODEL = CHAT_MODEL
 
 # Providers whose api keys opencode may have stored in its auth.json.
 AUTH_JSON_PROVIDER_HINTS = ("opencode-go", "opencode")

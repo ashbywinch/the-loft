@@ -19,6 +19,7 @@ from typing import Any
 
 from PIL import Image
 
+from pipeline.model.config import VISION_MODEL
 from pipeline.model.vlm import VlmError, extract_json, transcribe_image_vlm
 
 ROTATIONS = (0, 90, 180, 270)
@@ -31,7 +32,7 @@ _PROMPT = (
 )
 
 
-def page_rotation(image: Path, *, model: str = "dynamic/image", urlopen: Any = None) -> int:
+def page_rotation(image: Path, *, model: str = VISION_MODEL, urlopen: Any = None) -> int:
     """The clockwise rotation (0/90/180/270) that makes the page's text upright."""
     answer = transcribe_image_vlm(
         image,

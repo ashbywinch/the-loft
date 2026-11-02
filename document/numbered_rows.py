@@ -23,7 +23,7 @@ import math
 from PIL import Image, ImageDraw
 
 from document.colour import Colour
-from document.rectangle import Rectangle, overlaps
+from document.rectangle import Rectangle
 from document.row import Row
 from document.span import Span
 from pipeline.rows.render import RenderStyle
@@ -398,7 +398,7 @@ class NumberedRows:
 # already has) and the other two are the lists it must stay clear of
 def _fits(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> bool:
     """Whether a number's box would cover ink or another number."""
-    return not any(overlaps(box, other) for other in [*ink, *placed])
+    return not any(box.overlaps(other) for other in [*ink, *placed])
 
 
 def _in_lane(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> Rectangle:

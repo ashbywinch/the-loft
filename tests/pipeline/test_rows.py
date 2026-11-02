@@ -228,6 +228,61 @@ def test_a_drawn_line_replaces_the_draft_row_it_covers() -> None:
     assert rows[0].id == "seg-1" and rows[0].kind == "body"
 
 
+def test_a_partial_line_leaves_the_rest_of_its_row() -> None:
+    """A line over part of one row edits that row: the words it passes over
+    form the drawn row, and the words it did not pass over stay together as
+    their reading line's row. The line joins nothing to itself that it did
+    not go through (user 2026-11-02)."""
+    words = _words((100, 100, 200, 130), (300, 100, 400, 130), (500, 100, 600, 130), (700, 100, 800, 130), line=1)
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(100, 400, 115)))
+    assert len(rows) == 2, f"the row's untouched words lost their row: {len(rows)} rows"
+    assert [b.x0 for b in rows[0].word_boxes] == [100, 300], "the drawn row is not the words the line crossed"
+    assert [b.x0 for b in rows[1].word_boxes] == [500, 700], "the rest of the row was reallocated"
+
+
+def test_a_line_does_not_claim_the_row_below() -> None:
+    """A stroke along one row claims the words it passes over, not every word
+    within a writing height of it: the row below, 15px away, keeps its words
+    (the halo did claim it — user 2026-11-02)."""
+    words = _words((100, 100, 200, 130), (300, 100, 400, 130), (100, 145, 200, 175), (300, 145, 400, 175))
+    words[2].line = 2
+    words[3].line = 2
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(100, 400, 115)))
+    assert [b.x0 for b in rows[0].word_boxes] == [100, 300], "the drawn row lost or took a word"
+    assert [b.x0 for b in rows[1].word_boxes] == [100, 300], "the row below lost its words to the line"
+    assert len(rows) == 2, f"a row vanished: {len(rows)} rows"
+
+
+def test_a_second_line_leaves_the_row_above_alone() -> None:
+    """Two corrections in sequence: each one changes its own row only. After
+    the second line the row above still has every word it had (user
+    2026-11-02: drawing a line below it used to blank it)."""
+    words = _words((100, 100, 200, 130), (300, 100, 400, 130), (100, 300, 200, 330), (300, 300, 400, 330), line=1)
+    words[2].line = 2
+    words[3].line = 2
+    builder = Rows.from_words(words, PAGE_SIZE)
+    first = builder.adjust(_drawn(_line(100, 400, 315)))
+    second = builder.adjust(_drawn(_line(100, 400, 315), _line(100, 400, 115)))
+    assert [len(row.word_boxes) for row in first] == [2, 2], first
+    assert [len(row.word_boxes) for row in second] == [2, 2], second
+    assert [[b.x0 for b in row.word_boxes] for row in second] == [[100, 300], [100, 300]]
+
+
+def test_a_line_drawn_between_two_rows_claims_nothing() -> None:
+    """A stroke in the gutter is not a row line: it passes over no word, so
+    the rows stay as they were and the drawing is reported (the touch is
+    what makes a stroke a row's, not a halo around it)."""
+    words = _words((100, 100, 200, 130), (300, 100, 400, 130), (100, 160, 200, 190), (300, 160, 400, 190), line=1)
+    words[2].line = 2
+    words[3].line = 2
+    drawn = _drawn(_line(100, 400, 145))
+    traces = Traces(words=tuple(words), adjustments=drawn, page_size=PAGE_SIZE)
+    rows = Rows.from_traces(traces).adjust(drawn)
+    assert [b.x0 for b in rows[0].word_boxes] == [100, 300]
+    assert [b.x0 for b in rows[1].word_boxes] == [100, 300]
+    assert Rows.from_traces(traces).validate(traces) == ["line 1 claims no word"]
+
+
 def test_a_rows_text_and_trust_stage_travel_with_the_wire() -> None:
     """Per-row text and its R7 trust stage are the row's own — carried in the
     artefact beside its words, so a confirmation survives beside its
@@ -275,15 +330,16 @@ def test_a_line_over_blank_paper_is_named() -> None:
 
 
 def test_a_line_that_merges_two_reading_lines_is_named() -> None:
-    """One drawn line over writing the reader saw as two lines makes one row
-    of two rows' words — reported, so the reviewer can see what their stroke
-    did (the tight-schedule case is a deliberate merge, so this is a note,
-    not a refusal)."""
-    words = [Word(100, 100, 200, 130, line=0), Word(300, 160, 400, 190, line=1)]
-    # the reading saw two lines; one stroke between them claims both
+    """One drawn line passing over the writing the reader saw as two lines
+    makes one row of both — reported, so the reviewer can see what their
+    stroke did (the tight-schedule case is a deliberate merge, so this is a
+    note, not a refusal). The two lines sit 10px apart: a stroke drawn
+    through both boxes claims both, which is what a merge is."""
+    words = [Word(100, 100, 200, 130, line=0), Word(300, 140, 400, 170, line=1)]
+    # the reading saw two lines; one stroke through both claims both
     traces = Traces(
         words=tuple(words),
-        adjustments=_drawn([(0.1, 0.145), (0.4, 0.145)]),
+        adjustments=_drawn([(0.1, 0.135), (0.4, 0.135)]),
         page_size=PAGE_SIZE,
     )
     violations = Rows.from_traces(traces).validate(traces)

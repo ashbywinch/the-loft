@@ -18,7 +18,7 @@ from document.rectangle import Rectangle
 from document.row import Row
 from document.word import Word
 from pipeline.detect.mark import WordGeometry
-from pipeline.rows.render import join_band, render_rows
+from pipeline.rows.render import render_rows
 
 SPACING = 67.6
 
@@ -211,7 +211,7 @@ def test_a_refused_word_draws_no_lines() -> None:
 
 
 def test_join_band_height_is_the_shorter_word() -> None:
-    band = join_band(Rectangle(0, 10, 40, 40), Rectangle(60, 30, 100, 50))
+    band = Rectangle(x0=0, y0=10, x1=40, y1=40).join_band(Rectangle(x0=60, y0=30, x1=100, y1=50))
     assert band.x0 == 40
     assert band.x1 == 60
     assert band.height == 20  # min(30, 20)
@@ -221,7 +221,7 @@ def test_join_band_height_is_the_shorter_word() -> None:
 
 
 def test_join_band_without_vertical_overlap_centres_on_the_midpoint() -> None:
-    band = join_band(Rectangle(0, 0, 40, 20), Rectangle(60, 90, 100, 110))
+    band = Rectangle(x0=0, y0=0, x1=40, y1=20).join_band(Rectangle(x0=60, y0=90, x1=100, y1=110))
     assert band.height == 20  # min(20, 20)
     assert band.y0 == 45
     assert band.y1 == 65

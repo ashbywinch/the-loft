@@ -22,7 +22,7 @@ from document.colour import Colour
 from document.numbered_rows import PILL_INSET as PILL_GAP
 from document.numbered_rows import PILL_POINTER, NumberedRows
 from document.page_size import PageSize
-from document.rectangle import Rectangle, overlaps
+from document.rectangle import Rectangle
 from document.row import Row
 from pipeline.rows.rows import Rows
 from pipeline.transcribe.transcripts import drawn_lines, words_from
@@ -51,7 +51,7 @@ def test_no_number_covers_another_number() -> None:
     boxes = NumberedRows._pill_boxes(rows)
     for index, box in enumerate(boxes):
         for other in boxes[index + 1 :]:
-            assert not overlaps(box, other), f"numbers at {box} and {other} cover each other"
+            assert not box.overlaps(other), f"numbers at {box} and {other} cover each other"
 
 
 def test_no_number_covers_the_writing() -> None:
@@ -63,7 +63,7 @@ def test_no_number_covers_the_writing() -> None:
     ink = _ink(rows)
     for box in boxes:
         for word in ink:
-            assert not overlaps(box, word), f"number at {box} covers the word at {word}"
+            assert not box.overlaps(word), f"number at {box} covers the word at {word}"
 
 
 def test_every_row_is_numbered_once() -> None:
@@ -100,7 +100,7 @@ def test_a_row_with_no_room_either_side_goes_to_the_margin() -> None:
     boxes = NumberedRows._pill_boxes(rows)
     assert len(boxes) == 1
     ink = [w.rect for w in words]
-    assert not any(overlaps(boxes[0], word) for word in ink), "the number was left over the writing"
+    assert not any(boxes[0].overlaps(word) for word in ink), "the number was left over the writing"
 
 
 def _word(x0: float, y0: float, x1: float, y1: float):
@@ -120,7 +120,7 @@ def test_ten_rows_never_share_a_number() -> None:
     assert len(boxes) == 10
     for index, box in enumerate(boxes):
         for other in boxes[index + 1 :]:
-            assert not overlaps(box, other)
+            assert not box.overlaps(other)
 
 
 def test_the_bands_hold_every_number_and_all_the_writing() -> None:

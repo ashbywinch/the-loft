@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+from PIL import Image
+
 from pipeline.chain import BatchRun
 from pipeline.model.token_usage import TokenUsage
 from pipeline.model.vlm_answer import VlmAnswer
@@ -12,7 +14,7 @@ def _seed(tmp_path: Path) -> BatchRun:
     pile = tmp_path / "pile"
     registry.mkdir()
     pile.mkdir()
-    (pile / "p1.jpg").write_bytes(b"fake image")
+    Image.new("RGB", (10, 12), "white").save(pile / "p1.jpg")  # the grouping measures a real page
     (registry / "b1.json").write_text(
         json.dumps(
             {
@@ -27,6 +29,15 @@ def _seed(tmp_path: Path) -> BatchRun:
         )
     )
     return BatchRun("b1", work_dir=work, registry_dir=registry)
+
+
+def _one_document(_system: str, _user: str) -> str:
+    """The boundary call's answer for a one-page pile."""
+    import json
+
+    return json.dumps(
+        {"pages": [{"page": "p1.jpg", "text": "PRINTED PAGE", "starts_document": True, "ends_document": True}]}
+    )
 
 
 def test_the_process_pass_routes_a_printed_page_by_its_category(tmp_path: Path) -> None:
@@ -45,7 +56,7 @@ def test_the_process_pass_routes_a_printed_page_by_its_category(tmp_path: Path) 
         calls.append(image)
         return "PRINTED PAGE", VlmAnswer("raw", TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2))
 
-    run.process(_printed=fake)
+    run.process(client=_one_document, _printed=fake)
     assert len(calls) == 1
     assert (run.work_dir / "b1" / "ocr-guess" / "p1.txt").read_text() == "PRINTED PAGE\n"
     after = json.loads((run.registry_dir / "b1.json").read_text())

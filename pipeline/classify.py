@@ -22,7 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Any
 
@@ -100,15 +100,18 @@ MEDIUM_SHAPES = ("postcard_face", "form")
 
 PAGE_KIND_PROMPT = (
     "What does this scanned page SHOW? Reply with JSON only: "
-    '{"kind": "text"|"photo"|"drawing", "confidence": <0.0-1.0>, '
-    '"medium": "printed"|"handwritten"|null}. '
-    '"text": writing to be read — a letter, a form, a list, a transcript; '
-    '"photo": a picture of people, places or things — a snapshot, a postcard, '
-    'however it was scanned; "drawing": an illustration or sketch. '
-    'For "text", "medium" is the writing itself: "printed" for type, print or '
-    'typescript; "handwritten" for pen or pencil, however neat. It is null for '
-    "a photo or a drawing. "
-    'Judge the page\'s content, never its paper: a scanned letter is "text" '
+    '{"kind": "photograph"|"printed"|"handwriting"|"postcard_face"|"form"|"drawing", '
+    '"confidence": <0.0-1.0>, "medium": "printed"|"handwritten"|null}. '
+    '"photograph": a picture of people, places or things — a snapshot, however it was scanned; '
+    '"printed": writing made by type, print or typescript — a typed letter, a newspaper, a caption; '
+    '"handwriting": writing made by hand — pen or pencil, however neat; '
+    '"postcard_face": the picture side of a postcard, with or without a printed caption or a handwritten message; '
+    '"form": a form — printed labels and the entries filled against them; '
+    '"drawing": an illustration or sketch, not a photograph. '
+    'For "postcard_face" and "form", "medium" names the writing on the page: '
+    '"printed" for type or print, "handwritten" for pen or pencil, null when it carries none. '
+    "It is null for every other kind. "
+    'Judge the page\'s content, never its paper: a scanned printed letter is "printed" '
     "even though the scan is photographic. The confidence is your own."
 )
 
@@ -149,8 +152,15 @@ def run_classify(
     registry_dir: Path = REGISTRY_DIR,
     work_dir: Path = WORK_DIR,
     classifier: Callable[[Path], PageClassification] | None = None,
+    reclassify: Collection[str] = (),
 ) -> Path:
-    """Classify a batch's RAW pages (before orientation — photos need neither)."""
+    """Classify a batch's RAW pages (before orientation — photos need neither).
+
+    Idempotent: a page with a classification is left alone, and the call is a
+    no-op when every page has one. ``reclassify`` names pages whose record is
+    stale (a classification from before the category vocabulary, which cannot
+    route a read); those are classified again and the file is rewritten with
+    the new answers merged in."""
     record = load_batch(batch_id, registry_dir)
     folder = record.path
     pages = sorted((folder / rel) for rel in record.pages)
@@ -159,13 +169,19 @@ def run_classify(
     classify_path = work_dir / batch_id / "classify.json"
     store = PipelineStore(work_dir)
     store_path = str(classify_path.relative_to(work_dir))
-    if store.exists(store_path):
-        return classify_path  # idempotent
+    existing: dict[str, Any] = json.loads(store.read_latest(store_path)) if store.exists(store_path) else {}
+    todo = [
+        page
+        for page in pages
+        if str(page.relative_to(folder)) not in existing or str(page.relative_to(folder)) in set(reclassify)
+    ]
+    if not todo:
+        return classify_path
     classify = classifier if classifier is not None else classify_page
-    results = classify_pages(pages, classify, folder)
+    results = classify_pages(todo, classify, folder)
+    merged = {**existing, **{name: result.to_dict() for name, result in results.items()}}
     classify_path.parent.mkdir(parents=True, exist_ok=True)
-    wire = {name: record.to_dict() for name, record in results.items()}
-    store.write(store_path, json.dumps(wire, indent=1, ensure_ascii=False) + "\n")
+    store.write(store_path, json.dumps(merged, indent=1, ensure_ascii=False) + "\n")
     return classify_path
 
 

@@ -66,7 +66,7 @@ from tools.atomic import atomic_write
 from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR, LoftPaths
 from tools.store import DiskStore, StoreError  # noqa: F401 — the architecture test's store-layer marker
 
-BOUNDARY_MODEL = "deepseek-v4-flash"  # the chat model that judges document boundaries
+BOUNDARY_MODEL = "deepseek/deepseek-v4-flash"  # judges document boundaries (<provider>/<model>)
 PAGE_LIMIT = 30  # one boundary call per batch; beyond this the context is too big
 GUESS_PAGE_CHUNK = 5  # pages per boundary call (the answer echoes each page's flags)
 AMBIGUITY_FLOOR = 5  # ...and it must clear this many strong words outright
@@ -291,6 +291,26 @@ class BatchRun(Batch):
             return
         written = orient_pages([folder / name for name in text_pages], self.paths.oriented_dir)
         print(f"oriented: {len(written)} page(s) -> {self.paths.oriented_dir}")
+
+    def read_all(
+        self,
+        classification: Classification,
+        _printed: Callable[[Path], tuple[str, Any]] | None = None,
+    ) -> list[str]:
+        """Read every page the category says has writing: printed pages take
+        the direct read, forms the structured read, and the rest the row
+        pipeline (auto rows, then the human check). A page already read
+        directly is never re-read through the row chain."""
+        direct = [n for n in classification.text_pages if read_route(classification.classify[n]) == "direct"]
+        structured = [n for n in classification.text_pages if read_route(classification.classify[n]) == "structured"]
+        if direct:
+            self.printed_pages(pages=direct, _transcribe=_printed or printed_transcript)
+        if structured:
+            self.structured_pages(pages=structured)
+        kept = self.rows_pages(classification)
+        if kept:
+            self.read_pages(kept)
+        return kept
 
     def write_boundaries(
         self,
@@ -628,29 +648,16 @@ class BatchRun(Batch):
             )
             return
 
-        # the CATEGORY decides the read (docs/PLAN/page-categories.md): printed
-        # writing is one direct VLM read; a form is a structured read; handwriting
-        # and a handwritten postcard face take the row pipeline (auto rows, then
-        # the human check); a photograph or a drawing is not read at all. A page
-        # already read directly is never re-read through the row chain.
-        direct = [n for n in classification.text_pages if read_route(classification.classify[n]) == "direct"]
-        structured = [n for n in classification.text_pages if read_route(classification.classify[n]) == "structured"]
-        if direct:
-            self.printed_pages(pages=direct, _transcribe=_printed or printed_transcript)
-        if structured:
-            self.structured_pages(pages=structured)
-        kept = self.rows_pages(classification)
-        if len(kept) != len(classification.text_pages):
-            classification = replace(classification, text_pages=kept)
-        if not kept:
-            return
+        # 2. turn the ROW pages upright (the vision model names each rotation);
+        # a direct or structured read reads the page image itself, so
+        # orientation is the row pipeline's need only
+        row_pages = [n for n in classification.text_pages if read_route(classification.classify[n]) == "rows"]
+        self.orient_pages(row_pages, record.path)
 
-        # 2. turn the pages upright (the vision model names the rotation)
-        self.orient_pages(classification.text_pages, record.path)
-
-        # 6. read the pages into rows (object-model Phase 1: the strip
-        # stage's layout is gone — the reading is the marks → fitted-lines chain).
-        self.read_pages(classification.text_pages)
+        # 3. the CATEGORY decides the read (docs/PLAN/page-categories.md):
+        # printed writing is one direct VLM read; a form a structured read;
+        # handwriting and a handwritten postcard face the row pipeline
+        _ = self.read_all(classification, _printed=_printed)
 
         self.write_boundaries(classification, record, client)
         self.update_status(record, STATUS_REVIEW)

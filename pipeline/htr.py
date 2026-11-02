@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from pipeline.artefacts import BatchArtefacts
 from pipeline.model.vlm import parse_transcription_response, transcribe_image_vlm, transcription_system_with_context
 from pipeline.page_image import PageImage
 from pipeline.store import PipelineStore, file_sha256
@@ -88,7 +89,8 @@ def htr_pages_vlm(
         reading = parse_transcription_response(answer.answer)
         plain, boxes = reading.text, reading.boxes
         atomic_write(out, plain)  # backward compat — callers read from the old path
-        PipelineStore(store_root).write(str(Path(batch_id) / "ocr-guess" / out.name), plain)
+        artefacts = BatchArtefacts(store_root, batch_id)
+        PipelineStore(store_root).write(artefacts.relative(artefacts.guess_dir / out.name), plain)
         marker_data: dict[str, Any] = answer.usage.to_dict()
         marker_data["input_sha"] = input_sha
         if boxes is not None:
@@ -102,7 +104,7 @@ def htr_pages_vlm(
                 TranscriptionLine(text=plain.split("\n")[i], box=boxes[i]).to_dict() for i in sorted(boxes)
             ]
         PipelineStore(store_root).write(
-            str(Path(batch_id) / "ocr-guess" / marker.name), json.dumps(marker_data, ensure_ascii=False)
+            artefacts.relative(artefacts.guess_dir / marker.name), json.dumps(marker_data, ensure_ascii=False)
         )
         atomic_write(marker, json.dumps(marker_data, ensure_ascii=False))  # backward compat — marker.exists()
         previous = plain

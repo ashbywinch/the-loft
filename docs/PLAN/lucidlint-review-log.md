@@ -683,3 +683,41 @@ refactor happened but never WHERE. The five rules above are the missing
 "where": module cohesion, dead symbols, name collisions, near-duplicates,
 restating docstrings — all implementable on the AST the tool already
 walks, all deterministic, and all would have fired unprompted.
+
+## 2026-11-02 — why the artefact-layout duplication went unflagged
+
+The session centralised the stage layout (one `pipeline/artefacts.py`) after
+finding `ocr-guess/...` and `oriented/...` spelled in eight modules, with two
+predicates for "has this page been read?" that disagreed. Lucidlint did not
+suggest it, and the reason is structural:
+
+- its duplication rule is `duplicate` — dice ≥ 0.9 on *structural skeleton
+  bigrams of function bodies*, warn severity. The duplicates here were the
+  same knowledge written differently (`work_dir / batch_id / "ocr-guess"` vs
+  an f-string, a `Path.with_suffix` vs a concatenation), so dice stayed far
+  below 0.9 and the gate ignores warns anyway;
+- `data-clump`/`strewing`/`partition`/`misplaced-method` all infer a class
+  from *one function signature set, within one module*. Our duplication was
+  cross-module and went through methods on two different classes
+  (`BatchPaths` in `chain.py`, `BatchReadings` in `api/sync.py`), so no
+  parameter pair repeated and no `self.<attr>` call-out appeared;
+- `duplicate-field` is the nearest rule, but it requires a *containment*
+  edge between the two classes; these two merely shared `(work_dir,
+  batch_id)`, so it never fired;
+- no rule treats a repeated *string literal* (`"ocr-guess"`, `"rows.json"`,
+  the prompt house rules) as vocabulary that needs one home.
+
+So the tool's model of "a class waiting to be extracted" covers data flowing
+through functions, not knowledge re-derived independently. Proposed rules
+(the first two would have caught this pass):
+
+1. **`repeated-literal`** — a string literal used ≥3 times across ≥2 modules
+   (path components, marker suffixes, prompt fragments): "this vocabulary has
+   one home; find it or create it". The repo's architecture test now enforces
+   it for the stage layout specifically; the linter can generalise it.
+2. **`sibling-value-class`** — two classes in one package sharing ≥2 fields
+   and ≥2 derived accessors (here `(work_dir, batch_id)` and the same path
+   methods) without a containment edge: "one of these is the duplicate".
+3. **`duplicate` at a lower, cross-module threshold** (dice ≥ 0.7, module
+   pairs only) as a warn, to surface near-copies like `_as_lines` vs
+   `parse_transcription_response`.

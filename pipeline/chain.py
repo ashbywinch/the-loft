@@ -38,6 +38,7 @@ from document.row import Row
 from document.row_adjustments import RowAdjustments
 from document.words import Words
 from pipeline.api.sync import BatchReadings, record_confirmation
+from pipeline.artefacts import BatchArtefacts
 from pipeline.batch_record import (
     STATUS_CONFIRMED,
     STATUS_PENDING,
@@ -144,36 +145,6 @@ def page_flags(
     return out
 
 
-class BatchPaths:
-    """One batch's machine-stage paths — derived from ``work/<batch>`` — and
-    the staleness checks that live on them. The stage paths the module
-    functions threaded as separate parameters are this object's state."""
-
-    def __init__(self, batch_work: Path, batch_id: str) -> None:
-        self.batch_work = batch_work
-        self.batch_id = batch_id
-
-    @property
-    def classify_path(self) -> Path:
-        return self.batch_work / "classify.json"
-
-    @property
-    def oriented_dir(self) -> Path:
-        return self.batch_work / "oriented"
-
-    @property
-    def raw_dir(self) -> Path:
-        return self.batch_work / "ocr-raw"
-
-    @property
-    def guess_dir(self) -> Path:
-        return self.batch_work / "ocr-guess"
-
-    @property
-    def boundaries_path(self) -> Path:
-        return self.guess_dir / "boundaries.json"
-
-
 @dataclass(frozen=True)
 class Classification:
     """The per-page photo/text classification of a batch, with the page
@@ -202,7 +173,7 @@ class Batch:
         self.work_dir = work_dir
         self.registry_dir = registry_dir
         self.archive_dir = archive_dir
-        self.paths = BatchPaths(batch_work=work_dir / batch_id, batch_id=batch_id)
+        self.artefacts = BatchArtefacts(work_dir, batch_id)
 
     def update_status(self, record: BatchRecord, status: str) -> None:
         """Stamp the registry record's status and persist it. A processing pass
@@ -244,7 +215,13 @@ class BatchRun(Batch):
         """A content-changed pile (pages added/removed after adoption): the
         regenerable stages are stale — clear them (never the agreed items) and
         consume the flag so this run reprocesses the full current page set."""
-        for stale in (self.paths.classify_path, self.paths.oriented_dir, self.paths.raw_dir, self.paths.guess_dir):
+        stale_stages = (
+            self.artefacts.classify,
+            self.artefacts.oriented_dir,
+            self.artefacts.raw_dir,
+            self.artefacts.guess_dir,
+        )
+        for stale in stale_stages:
             if stale.is_file():
                 stale.unlink(missing_ok=True)
             elif stale.is_dir():
@@ -262,7 +239,7 @@ class BatchRun(Batch):
             print("classification already present — reusing")
         else:
             run_classify(self.batch_id, registry_dir=self.registry_dir, work_dir=self.work_dir)
-            print(f"classified {len(pages)} page(s) -> {self.paths.classify_path}")
+            print(f"classified {len(pages)} page(s) -> {self.artefacts.classify}")
         classify = json.loads(store.read_latest(rel_classify))
         text_pages = [name for name, entry in classify.items() if category_of(entry) in TEXT_KINDS]
         image_pages = [name for name, entry in classify.items() if category_of(entry) not in TEXT_KINDS]
@@ -279,19 +256,19 @@ class BatchRun(Batch):
             name
             for name in classification.text_pages
             if read_route(classification.classify[name]) == "rows"
-            and not (self.paths.guess_dir / f"{Path(name).stem}.printed.json").is_file()
-            and not (self.paths.guess_dir / f"{Path(name).stem}.structured.json").is_file()
+            and not (self.artefacts.guess_dir / f"{Path(name).stem}.printed.json").is_file()
+            and not (self.artefacts.guess_dir / f"{Path(name).stem}.structured.json").is_file()
         ]
 
     def orient_pages(self, text_pages: list[str], folder: Path) -> None:
         """Turn the text pages' writing upright into ``oriented/`` — the vision
         model names each page's rotation (pipeline/orient.py). Nothing else is
         measured here: the reader is the VLM's."""
-        if all((self.paths.oriented_dir / name).is_file() for name in text_pages):
+        if all((self.artefacts.oriented_dir / name).is_file() for name in text_pages):
             print("orientation already present — reusing")
             return
-        written = orient_pages([folder / name for name in text_pages], self.paths.oriented_dir)
-        print(f"oriented: {len(written)} page(s) -> {self.paths.oriented_dir}")
+        written = orient_pages([folder / name for name in text_pages], self.artefacts.oriented_dir)
+        print(f"oriented: {len(written)} page(s) -> {self.artefacts.oriented_dir}")
 
     def read_all(
         self,
@@ -329,7 +306,7 @@ class BatchRun(Batch):
         texts: dict[str, str | None] = {}
         for name in sorted(record.pages):
             if name in classification.text_pages:
-                texts[name] = store.read_latest(f"{self.batch_id}/ocr-guess/{Path(name).with_suffix('.txt')}")
+                texts[name] = store.read_latest(self.artefacts.relative(self.artefacts.text(name)))
             else:
                 texts[name] = None
 
@@ -366,9 +343,9 @@ class BatchRun(Batch):
             texts,
             {flag.page: flag for flag in known_flags},
         )
-        self.paths.guess_dir.mkdir(parents=True, exist_ok=True)
+        self.artefacts.guess_dir.mkdir(parents=True, exist_ok=True)
         store.write(
-            f"{self.batch_id}/ocr-guess/boundaries.json",
+            self.artefacts.relative(self.artefacts.boundaries),
             json.dumps([boundary.to_dict() for boundary in boundaries], indent=1, ensure_ascii=False) + "\n",
         )
         record.boundaries = boundaries
@@ -416,21 +393,21 @@ class BatchRun(Batch):
         store = PipelineStore(self.work_dir)
         read_pages: list[str] = []
         for page in work_pages:
-            stem = Path(page).stem
-            marker = f"{self.batch_id}/ocr-guess/{stem}.{read}.json"
-            if store.exists(marker):
+            marker = self.artefacts.marker(page, read)
+            if store.exists(self.artefacts.relative(marker)):
                 print(f"{read}: {page} already read — skipped")
                 continue
-            image = self.paths.oriented_dir / page
+            image = self.artefacts.oriented_dir / page
             if not image.is_file():
                 image = Path(record.path) / page
             if not image.is_file():
                 print(f"{read}: {page} has no image — skipped", file=sys.stderr)
                 continue
             text, answer = transcribe(image)
-            store.write(f"{self.batch_id}/ocr-guess/{stem}.txt", text + "\n")
+            store.write(self.artefacts.relative(self.artefacts.text(page)), text + "\n")
             store.write(
-                marker, json.dumps({"page": page, "chars": len(text), **answer.to_dict()}, ensure_ascii=False) + "\n"
+                self.artefacts.relative(marker),
+                json.dumps({"page": page, "chars": len(text), **answer.to_dict()}, ensure_ascii=False) + "\n",
             )
             read_pages.append(page)
             print(f"{read}: {page} -> {len(text)} chars")
@@ -439,7 +416,7 @@ class BatchRun(Batch):
             # (that is the review's question)
             boundary = Boundary(pages=read_pages)
             store.write(
-                f"{self.batch_id}/ocr-guess/boundaries.json",
+                self.artefacts.relative(self.artefacts.boundaries),
                 json.dumps([boundary.to_dict()], indent=1, ensure_ascii=False) + "\n",
             )
             record = load_batch(self.batch_id, self.registry_dir)
@@ -479,11 +456,11 @@ class BatchRun(Batch):
         corrected_text = _corrected_text or _transcribe_rows
         for page in text_pages:
             stem = Path(page).stem
-            rows_path = self.paths.guess_dir / f"{stem}.rows.json"
+            rows_path = self.artefacts.guess_dir / f"{stem}.rows.json"
             existing = (
                 RowsReading.from_dict(json.loads(rows_path.read_text(encoding="utf-8"))) if rows_path.exists() else None
             )
-            image_path = self.paths.oriented_dir / page
+            image_path = self.artefacts.oriented_dir / page
             if not image_path.is_file():
                 continue
             correction = self._pending_correction(page, existing)
@@ -494,7 +471,7 @@ class BatchRun(Batch):
                 continue
             reading = _reading(Image.open(image_path))
             rows = Rows.from_words(list(reading.words), PageSize(reading.width, reading.height)).rows()
-            transcripts = _rows_text(image_path, self.paths.guess_dir) if rows else {}
+            transcripts = _rows_text(image_path, self.artefacts.guess_dir) if rows else {}
             if rows and not transcripts:
                 print(f"read: {page} SKIPPED — the reading returned nothing (re-run to retry)")
                 continue
@@ -504,7 +481,7 @@ class BatchRun(Batch):
                 if index is not None and 0 <= index < len(reading.lines):
                     reading.lines[index]["text"] = transcripts.get(row.number, "")
             store.write(
-                f"{self.batch_id}/ocr-guess/{stem}.rows.json",
+                self.artefacts.relative(self.artefacts.marker(page, "rows")),
                 json.dumps(
                     RowsReading(
                         page=page,
@@ -518,13 +495,13 @@ class BatchRun(Batch):
                 + "\n",
             )
             store.write(
-                f"{self.batch_id}/ocr-guess/{stem}.words.json",
+                self.artefacts.relative(self.artefacts.marker(page, "words")),
                 json.dumps(Words(reading.words).to_dict(), indent=1, ensure_ascii=False) + "\n",
             )
             # the page's TEXT is its rows' reading, in order — the review
             # surface's drafts read this file (the guess stage, which used to
             # write it, is gone)
-            store.write(f"{self.batch_id}/ocr-guess/{stem}.txt", _page_text(reading.lines) + "\n")
+            store.write(self.artefacts.relative(self.artefacts.text(page)), _page_text(reading.lines) + "\n")
             print(f"read: {page} -> {len(reading.lines)} rows, {len(reading.words)} words, {len(transcripts)} read")
 
     def _pending_correction(self, page: str, reading: RowsReading | None) -> RowAdjustments | None:
@@ -574,7 +551,7 @@ class BatchRun(Batch):
         revision = (existing.revision if existing else 0) + 1
         builder = Rows.from_words(list(words), PageSize(width, height))
         rows = builder.adjust(adjustments)
-        texts = corrected_text(image_path, rows, self.paths.guess_dir)
+        texts = corrected_text(image_path, rows, self.artefacts.guess_dir)
         filled = [replace(row, text=texts.get(row.number, ""), stage="raw") for row in rows]
         reading = RowsReading(
             page=page,
@@ -587,10 +564,10 @@ class BatchRun(Batch):
         )
         store = PipelineStore(self.work_dir)
         store.write(
-            f"{self.batch_id}/ocr-guess/{Path(page).stem}.rows.json",
+            self.artefacts.relative(self.artefacts.marker(page, "rows")),
             json.dumps(reading.to_dict(), indent=1, ensure_ascii=False) + "\n",
         )
-        store.write(f"{self.batch_id}/ocr-guess/{Path(page).stem}.txt", _page_text(reading.lines) + "\n")
+        store.write(self.artefacts.relative(self.artefacts.text(page)), _page_text(reading.lines) + "\n")
         atomic_write(
             readings.adjusted_rows_path(page),
             json.dumps(Rows.to_dict(filled), ensure_ascii=False, indent=1) + "\n",
@@ -781,14 +758,14 @@ class ReviewGate(Batch):
         batch — nothing to transcribe (2026-08-14 final review: `make confirm`
         must not error on it). A missing guess raises."""
         store = PipelineStore(self.work_dir)
-        if not store.exists(f"{self.batch_id}/ocr-guess/boundaries.json"):
+        if not store.exists(self.artefacts.relative(self.artefacts.boundaries)):
             if store.exists(f"{self.batch_id}/classify.json"):
                 classify = json.loads(store.read_latest(f"{self.batch_id}/classify.json"))
                 if not any(entry.get("kind") == "text" for entry in classify.values()):
                     write_line(f"batch {self.batch_id}: no text pages — nothing to confirm")
                     return None
             raise PipelineError(f"no guess for batch {self.batch_id} — run process first")
-        entries = json.loads(store.read_latest(f"{self.batch_id}/ocr-guess/boundaries.json"))
+        entries = json.loads(store.read_latest(self.artefacts.relative(self.artefacts.boundaries)))
         return [Boundary.from_dict(entry) for entry in entries]
 
     def confirm_documents(
@@ -804,9 +781,7 @@ class ReviewGate(Batch):
         store = PipelineStore(self.work_dir)
         archive = Archive(DiskStore(self.archive_dir))
         for index, document in enumerate(boundaries, start=1):
-            text_pages = [
-                p for p in document.pages if store.exists(f"{self.batch_id}/ocr-guess/{Path(p).with_suffix('.txt')}")
-            ]
+            text_pages = [p for p in document.pages if store.exists(self.artefacts.relative(self.artefacts.text(p)))]
             if not text_pages:
                 # a photo-only item — nothing to transcribe; its people/places
                 # identification is a separate flow (user, 2026-08-17)
@@ -816,7 +791,7 @@ class ReviewGate(Batch):
             if document.greeting:
                 write_line(f"greeting: {document.greeting}")
             for page in text_pages:
-                txt_rel = f"{self.batch_id}/ocr-guess/{Path(page).with_suffix('.txt')}"
+                txt_rel = self.artefacts.relative(self.artefacts.text(page))
                 if store.exists(txt_rel):
                     write_line(f"--- {page} ---\n{store.read_latest(txt_rel)}")
             answer = line("accept (Enter) / edit (e) / reject (r): ").strip().lower()
@@ -831,9 +806,7 @@ class ReviewGate(Batch):
                 )
                 write_line(f"document {index} rejected")
                 continue
-            text = "\n".join(
-                store.read_latest(f"{self.batch_id}/ocr-guess/{Path(p).with_suffix('.txt')}") for p in text_pages
-            )
+            text = "\n".join(store.read_latest(self.artefacts.relative(self.artefacts.text(p))) for p in text_pages)
             if answer == "e":
                 text = _read_multiline("paste the corrected text, '.' alone ends:\n", line)
             title = line("title for this document: ").strip() or document.greeting or f"Document {index}"

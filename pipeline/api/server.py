@@ -80,6 +80,7 @@ from pipeline.api.sync import (
     safe_page_name,
     set_page_job,
 )
+from pipeline.artefacts import BatchArtefacts
 from pipeline.identify import IdentificationError
 from pipeline.model.ai_client import AIClient
 from pipeline.registry import RegistryError, list_batches, load_batch
@@ -760,7 +761,7 @@ def build_app(
             return JSONResponse(ErrorAnswer("sign in to read the pages").to_dict(), status_code=401)
         if not BATCH_ID.match(batch_id) or not safe_page_name(page):
             return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
-        image = work_dir / batch_id / "oriented" / page
+        image = BatchArtefacts(work_dir, batch_id).oriented(page)
         if not image.is_file():
             # a photo/drawing page skips orientation entirely (the grouping
             # scorer puts the postcard's picture side into its document —

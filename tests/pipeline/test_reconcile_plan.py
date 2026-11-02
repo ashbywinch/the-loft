@@ -138,3 +138,18 @@ def test_a_stage_is_journalled_after_it_runs(tmp_path: Path) -> None:
 
 def _refuse() -> None:
     raise RuntimeError("the model refused")
+
+
+def test_a_marker_is_the_reads_receipt(tmp_path: Path) -> None:
+    """A page whose read marker exists is read, even if the text beside it is
+    missing — the marker is written AFTER the text, and the stage skips it, so
+    the plan must not demand a re-read (they used to disagree)."""
+    work = tmp_path / "work"
+    record = _record(work)
+    batch = record.batch_id
+    _artefact(
+        work, batch, "classify.json", json.dumps({"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}})
+    )
+    _artefact(work, batch, "ocr-guess/p1.printed.json", "{}")  # marker present, text missing
+    plan = missing_stages(record, work)
+    assert "read" not in plan.stages

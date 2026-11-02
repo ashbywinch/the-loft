@@ -117,3 +117,21 @@ def test_the_pipeline_layer_routes_data_through_the_store() -> None:
     # the store, registry.py reads through the store too.
     registry = _source("registry.py")
     assert "from pipeline.store import" in registry, "registry.py must read through the store, not via Path.read_text"
+
+
+def test_the_stage_layout_is_spelled_in_one_module() -> None:
+    """The artefact layout lives in `pipeline/artefacts.py` and nowhere else.
+
+    The pipeline and the API used to each spell `ocr-guess/...` and
+    `oriented/...` themselves, and the spellings disagreed about what "read"
+    means — the reconciler demanded a stage the stage itself skipped
+    (2026-11-02). One module owns the layout; every other file asks it."""
+    offenders: list[str] = []
+    for path in (*(PIPELINE.rglob("*.py")), *(TOOLS.rglob("*.py"))):
+        if path.name == "artefacts.py" or "test" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for spelling in ('"ocr-guess"', "'ocr-guess'", '"oriented"', "'oriented'"):
+            if spelling in text:
+                offenders.append(f"{path.relative_to(ROOT)}: {spelling}")
+    assert offenders == [], f"the stage layout is spelled outside pipeline/artefacts.py: {offenders}"

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+from pipeline.artefacts import BatchArtefacts
 from pipeline.layout import Layout, load_layout_store
 from pipeline.store import PipelineStore
 from tools.loft_paths import WORK_DIR
@@ -48,13 +49,14 @@ def main(argv: list[str] | None = None) -> int:
     batches = argv if argv else [p.name for p in sorted(WORK_DIR.iterdir()) if p.is_dir()]
     store = PipelineStore(WORK_DIR)
     for batch in batches:
-        guess_dir = WORK_DIR / batch / "ocr-guess"
+        artefacts = BatchArtefacts(WORK_DIR, batch)
+        guess_dir = artefacts.guess_dir
         if not guess_dir.is_dir():
             continue
         sheets = guess_dir / "layout-sheets"
         for layout_path in sorted(guess_dir.glob("*.layout.json")):
             page = layout_path.name.replace(".layout.json", "")
-            image_path = WORK_DIR / batch / "oriented" / f"{page}.jpg"
+            image_path = artefacts.oriented(f"{page}.jpg")
             if not image_path.is_file():
                 continue
             try:

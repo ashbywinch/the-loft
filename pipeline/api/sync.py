@@ -31,6 +31,7 @@ from document.stages import PageStatus
 from document.traces import Traces
 from document.words import Words
 from pipeline.api.row_correction import RowCorrection
+from pipeline.artefacts import BatchArtefacts
 from pipeline.batch_record import STATUS_PENDING
 from pipeline.boundary import Boundary
 from pipeline.detect.reader import reading_for_page
@@ -58,11 +59,6 @@ from tools.loft_paths import REGISTRY_DIR
 from tools.memory import ChatClient, Knowledge
 from tools.records import Item
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
-
-ROWS_JSON = "rows.json"  # the reading's rows file beside the guess (object-model Phase 1)
-WORDS_JSON = "words.json"  # the reading's words, written beside the rows
-ADJUSTMENTS_JSON = "row-adjustments.json"  # the reviewer's drawn row lines
-ADJUSTED_ROWS_JSON = "rows-adjusted.json"  # the correction's rows (the wire contract)
 
 
 def pages_pending(readings: BatchReadings, pages: list[str]) -> list[str]:
@@ -110,38 +106,37 @@ class BatchReadings:
     batch_id: str
 
     @property
+    def artefacts(self) -> BatchArtefacts:
+        """The batch's stage layout — the one place it is written."""
+        return BatchArtefacts(self.work_dir, self.batch_id)
+
+    @property
     def guess_dir(self) -> Path:
-        return self.work_dir / self.batch_id / "ocr-guess"
+        return self.artefacts.guess_dir
 
     def rows_path(self, page: str) -> Path:
         """The reading's rows file (the proposal)."""
-        return self.guess_dir / Path(page).with_suffix(f".{ROWS_JSON}")
+        return self.artefacts.marker(page, "rows")
 
     def words_path(self, page: str) -> Path:
         """The reading's words (what the drawn-lines correction groups)."""
-        return self.guess_dir / f"{Path(page).stem}.{WORDS_JSON}"
+        return self.artefacts.marker(page, "words")
 
     def adjustments_path(self, page: str) -> Path:
         """The reviewer's drawn row lines."""
-        return self.guess_dir / Path(page).with_suffix(f".{ADJUSTMENTS_JSON}")
+        return self.artefacts.adjustments(page)
 
     def adjusted_rows_path(self, page: str) -> Path:
         """The correction's rows (the wire contract)."""
-        return self.guess_dir / Path(page).with_suffix(f".{ADJUSTED_ROWS_JSON}")
+        return self.artefacts.adjusted_rows(page)
 
     def printed_path(self, page: str) -> Path:
-        """The page's direct-read marker — printed prose, or a form's structure
-        (stage 5 written without rows)."""
-        stem = self.guess_dir / Path(page).stem
-        for read in ("printed", "structured"):
-            path = stem.with_suffix(f".{read}.json")
-            if path.is_file():
-                return path
-        return stem.with_suffix(".printed.json")
+        """The page's direct-read marker — printed prose, or a form's structure."""
+        return self.artefacts.direct_marker(page)
 
     def oriented_path(self, page: str) -> Path:
         """The oriented page image (the orient stage's marker)."""
-        return self.work_dir / self.batch_id / "oriented" / page
+        return self.artefacts.oriented(page)
 
     def checked(self, page: str) -> bool:
         """Whether the reviewer's row check is recorded — the drawn lines AND
@@ -551,7 +546,7 @@ def _page_review_state(readings: BatchReadings, pages: list[str]) -> PageReviewS
         if drawn_path.exists() and corrected_path.exists():
             adjustments[page] = json.loads(drawn_path.read_text(encoding="utf-8"))
             adjusted_rows[page] = json.loads(corrected_path.read_text(encoding="utf-8"))
-        rows_path = guess_dir / Path(page).with_suffix(f".{ROWS_JSON}")
+        rows_path = readings.rows_path(page)
         if rows_path.exists():
             # the reading's layout — the object-model Phase-1 source;
             # already the shape the review surface consumes
@@ -691,7 +686,7 @@ def _recover_crashed_layout(
                         int(layout.height or image.height),
                     )
                     vlm_text = "\n".join(line.text for line in layout.lines)
-                    selfreport_path = work_dir / batch_id / "ocr-guess" / Path(page).with_suffix(".selfreport.json")
+                    selfreport_path = BatchReadings(work_dir, batch_id).artefacts.marker(page, "selfreport")
                     selfreport = (
                         [UnsureWord.from_dict(entry) for entry in json.loads(selfreport_path.read_text())]
                         if selfreport_path.exists()
@@ -804,14 +799,14 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
         raise ValueError("invalid batch or page name")
     quarters = int(quarters) % QUARTERS_PER_TURN
     readings = BatchReadings(work_dir, batch_id)
-    image_path = work_dir / batch_id / "oriented" / page
+    image_path = readings.artefacts.oriented(page)
     rows_path = readings.rows_path(page)
     layout_path = readings.guess_dir / Path(page).with_suffix(".layout.json")
     if not image_path.is_file():
         raise ValueError(f"no such page: {page}")
     if not rows_path.is_file() and not layout_path.is_file():
         raise ValueError(f"no reading for {page} — the read stage must run before a rotate")
-    journal_path = work_dir / batch_id / "oriented" / f"{Path(page).stem}.rotate.json"
+    journal_path = readings.artefacts.oriented_dir / f"{Path(page).stem}.rotate.json"
     reading = readings.load_reading(page, journal_path, image_path)
     current = _rotation_of(reading) % FULL_ROTATION_DEGREES
     words: Words | None = None
@@ -859,7 +854,7 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
 
 
 def _job_state_path(batch_id: str, work_dir: Path) -> Path:
-    return work_dir / batch_id / "ocr-guess" / ".jobs.json"
+    return BatchArtefacts(work_dir, batch_id).guess_dir / ".jobs.json"
 
 
 def page_job_state(batch_id: str, work_dir: Path) -> dict[str, str]:
@@ -958,9 +953,9 @@ def reprocess_page_transcription(
     silent wrong answer."""
     if not BATCH_ID.match(batch_id) or not safe_page_name(page):
         raise ValueError("invalid batch or page name")
-    guess_dir = work_dir / batch_id / "ocr-guess"
-    image_path = work_dir / batch_id / "oriented" / page
-    rows_path = guess_dir / Path(page).with_suffix(f".{ROWS_JSON}")
+    guess_dir = BatchArtefacts(work_dir, batch_id).guess_dir
+    image_path = BatchArtefacts(work_dir, batch_id).oriented(page)
+    rows_path = BatchArtefacts(work_dir, batch_id).marker(page, "rows")
     if not image_path.is_file():
         raise ValueError(f"no such page: {page}")
     try:

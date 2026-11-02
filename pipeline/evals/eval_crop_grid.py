@@ -24,6 +24,7 @@ from typing import Any
 from PIL import Image
 
 from document.rectangle import Rectangle
+from pipeline.artefacts import BatchArtefacts
 from pipeline.evals.eval_geometry import CropLine, CropReading, PageSize, assemble_crop_grid, grid_crops
 from pipeline.layout import Layout, load_layout_store
 from pipeline.layout_line import LayoutLine
@@ -267,7 +268,7 @@ def run(
 ) -> CropGridReport:
     """Read the page's crops, stitch, and report — the geometry
     experiment's ledger for one page."""
-    image_path = work_dir / batch_id / "oriented" / f"{page}.jpg"
+    image_path = BatchArtefacts(work_dir, batch_id).oriented(f"{page}.jpg")
     store = PipelineStore(work_dir)
     layout = load_layout_store(store, f"{batch_id}/ocr-guess/{page}.layout.json")
     with Image.open(image_path) as im:
@@ -310,9 +311,9 @@ def run(
     # the model-scoped saves — the trial runs several models on the same
     # page; each keeps its own assembled layout + report
     slug = model.replace("/", "-").replace("@", "")
-    out = work_dir / batch_id / "ocr-guess" / f"{page}.cropgrid-{slug}.json"
+    out = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-{slug}.json"
     out.write_text(json.dumps(assembled.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
-    report_path = work_dir / batch_id / "ocr-guess" / f"{page}.cropgrid-report-{slug}.json"
+    report_path = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-report-{slug}.json"
     report_path.write_text(json.dumps(report.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
     return report
 

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pipeline.artefacts import BatchArtefacts
 from pipeline.batch_record import BatchRecord
 from pipeline.classify import LEGACY_KINDS, category_of, read_route
 from pipeline.store import PipelineStore
@@ -38,7 +39,7 @@ class GapFinder:
     each returns its stage and reason, or nothing when the stage is current."""
 
     def __init__(self, record: BatchRecord, work_dir: Path) -> None:
-        self.work = work_dir / record.batch_id
+        self.artefacts = BatchArtefacts(work_dir, record.batch_id)
         self.pages = sorted(record.pages)
         self.classify = classification_of(work_dir, record.batch_id)
 
@@ -69,19 +70,21 @@ class GapFinder:
         """A direct or structured read reads the page image itself: only the
         row pipeline needs the page turned upright first."""
         row_pages = [name for name in self._writing_pages() if read_route(self.classify[name]) == "rows"]
-        unoriented = [name for name in row_pages if not (self.work / "oriented" / name).is_file()]
+        unoriented = [name for name in row_pages if not self.artefacts.oriented(name).is_file()]
         if not unoriented:
             return []
         return [("orient", f"orient: {len(unoriented)} page(s) are not oriented, e.g. {unoriented[0]!r}")]
 
     def _read_gap(self) -> list[tuple[str, str]]:
-        unread = [name for name in self._writing_pages() if not _page_read(self.work, name, self.classify[name])]
+        unread = [
+            name for name in self._writing_pages() if not self.artefacts.is_read(name, read_route(self.classify[name]))
+        ]
         if not unread:
             return []
         return [("read", f"read: {len(unread)} page(s) have no text, e.g. {unread[0]!r}")]
 
     def _group_gap(self) -> list[tuple[str, str]]:
-        if (self.work / "ocr-guess" / "boundaries.json").is_file():
+        if self.artefacts.boundaries.is_file():
             return []
         return [("group", "group: no boundaries.json — the pile's documents are not grouped")]
 
@@ -104,18 +107,3 @@ def classification_of(work_dir: Path, batch_id: str) -> dict[str, Any]:
     except (ValueError, OSError):
         return {}
     return entries if isinstance(entries, dict) else {}
-
-
-def _page_read(work: Path, page: str, entry: dict[str, Any]) -> bool:
-    """Whether a page's own text exists — the read's completion marker per
-    category (the direct read's marker, or the row read's files)."""
-    stem = Path(page).stem
-    route = read_route(entry)
-    text = (work / "ocr-guess" / f"{stem}.txt").is_file()
-    if route == "direct":
-        return text and (work / "ocr-guess" / f"{stem}.printed.json").is_file()
-    if route == "structured":
-        return text and (work / "ocr-guess" / f"{stem}.structured.json").is_file()
-    if route == "rows":
-        return text and (work / "ocr-guess" / f"{stem}.rows.json").is_file()
-    return True  # no writing to read

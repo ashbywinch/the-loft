@@ -235,6 +235,7 @@ describe("the batch list renders the real batches", () => {
               status: "review",
               pages: { a: 1, b: 2 },
               boundaries: [{ pages: ["a"], status: null }],
+              documents_ready: [0],
             },
             {
               batch_id: "b-done",
@@ -250,9 +251,71 @@ describe("the batch list renders the real batches", () => {
     const main = document.createElement("main");
     render(main, { name: "review" });
     await vi.waitFor(() => expect(main.textContent).toContain("First pile"));
-    expect(main.textContent).toContain("0 of 1 confirmed");
+    expect(main.textContent).toContain("1 of 1 documents ready to review · 0 confirmed");
     expect(main.textContent).not.toContain("Old pile");
     expect(main.textContent).not.toContain("No batches");
+    vi.unstubAllGlobals();
+  });
+
+  it("a batch whose pages have not passed the row check is named as such, never offered", async () => {
+    // the strip-era piles: boundaries and text, but no page was read as rows,
+    // so there is nothing to review as words yet (the transcription stage is
+    // after the row check)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          batches: [
+            {
+              batch_id: "b-legacy",
+              label: "PhotoScan",
+              status: "review",
+              pages: { a: 1, b: 2 },
+              boundaries: [{ pages: ["a"], status: null }],
+              documents_ready: [],
+              pages_pending: [],
+            },
+          ],
+        }),
+      }),
+    );
+    const main = document.createElement("main");
+    render(main, { name: "review" });
+    await vi.waitFor(() => expect(main.textContent).toContain("PhotoScan"));
+    expect(main.textContent).toContain("Before the row check");
+    expect(main.textContent).not.toContain("Transcriptions — check the machine's reading");
+    vi.unstubAllGlobals();
+  });
+
+  it("a partly checked document is listed, so its checked pages can be reviewed", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          batches: [
+            {
+              batch_id: "b-partly",
+              label: "Half-checked pile",
+              status: "review",
+              pages: { a: 1, b: 2 },
+              boundaries: [{ pages: ["a", "b"], status: null }],
+              documents_ready: [],
+              documents_partial: [0],
+              pages_pending: ["b"],
+            },
+          ],
+        }),
+      }),
+    );
+    const main = document.createElement("main");
+    render(main, { name: "review" });
+    await vi.waitFor(() => expect(main.textContent).toContain("Half-checked pile"));
+    expect(main.textContent).toContain("partly checked");
+    expect(main.textContent).not.toContain("Before the row check — pages not yet read as rows");
     vi.unstubAllGlobals();
   });
 
@@ -1339,6 +1402,69 @@ describe("the row correction's pure half", () => {
   });
 });
 
+describe("a document whose pages have not all passed the row check", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reviews the checked pages and approves them one at a time", async () => {
+    // the transcript stage runs per page on checked rows; approval is per
+    // page, so the checked page is approved now and the document completes
+    // when its sibling has passed its check too
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url) => {
+        if (String(url).includes("/confirmations")) {
+          return { ok: true, status: 200, json: async () => ({ ok: true }) };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            batch_id: "b-half",
+            label: "Half-checked",
+            processing: {},
+            documents: [
+              {
+                pages: ["a.jpg", "b.jpg"],
+                texts: { "a.jpg": "checked page text", "b.jpg": "unchecked page text" },
+                layouts: {},
+                pages_ready: ["a.jpg"],
+                ready: false,
+                status: "draft",
+              },
+            ],
+          }),
+        };
+      }),
+    );
+    const main = document.createElement("main");
+    render(main, { arg: "b-half", rest: ["review", "b-half", "0", "0"] });
+    await vi.waitFor(() => expect(main.querySelector(".rv-page")).toBeTruthy());
+    const img = main.querySelector(".rv-page");
+    Object.defineProperty(img, "naturalWidth", { value: 100, configurable: true });
+    Object.defineProperty(img, "naturalHeight", { value: 1500, configurable: true });
+    img.dispatchEvent(new Event("load"));
+    await vi.waitFor(() => expect(main.querySelector(".rv-waiting")).toBeTruthy());
+    expect(main.querySelector(".rv-waiting").textContent).toContain("b.jpg");
+    // only the checked page is in the review; the archive needs the
+    // document's own facts before it can hold any page of it
+    const title = main.querySelector(".rv-docfacts__title");
+    const date = main.querySelector(".rv-docfacts__date");
+    title.value = "A letter";
+    title.dispatchEvent(new Event("input", { bubbles: true }));
+    date.value = "1915-05-02";
+    date.dispatchEvent(new Event("input", { bubbles: true }));
+    const confirm = main.querySelector(".rv-txa .rv-btn--primary");
+    expect(confirm.textContent).toContain("Confirm");
+    confirm.click();
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => String(url).includes("/approvals"))).toBe(true));
+    const [, options] = fetch.mock.calls.find(([url]) => String(url).includes("/approvals"));
+    const payload = JSON.parse(options.body);
+    expect(payload.page).toBe("a.jpg");
+    expect(payload.text).toBe("checked page text");
+    expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(false);
+  });
+});
+
 describe("the review hub's portal sections", () => {
   afterEach(() => vi.unstubAllGlobals());
 
@@ -1440,10 +1566,11 @@ describe("confirming a document asks for its own facts (an item needs a title an
     date.value = "1963-05-14";
     date.dispatchEvent(new Event("input", { bubbles: true }));
     main.querySelector(".rv-btn--primary").click();
-    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(true));
-    const [, options] = fetch.mock.calls.find(([url]) => String(url).includes("/confirmations"));
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => String(url).includes("/approvals"))).toBe(true));
+    const [, options] = fetch.mock.calls.find(([url]) => String(url).includes("/approvals"));
     const payload = JSON.parse(options.body);
     expect(payload.title).toBe("A letter to Maman");
+    expect(payload.page).toBeTruthy();
     expect(payload.date).toBe("1963-05-14");
     expect(payload.date_precision).toBe("exact");
   });
@@ -1483,7 +1610,7 @@ describe("the document's facts survive a lost page and clear once agreed", () =>
     expect(again.querySelector(".rv-docfacts__date").value).toBe("1963-05-14");
 
     again.querySelector(".rv-btn--primary").click();
-    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(true));
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => String(url).includes("/approvals"))).toBe(true));
     const stored = JSON.parse(localStorage.getItem("loft-review-docfacts") || "{}");
     expect(stored?.["b6"]?.["0"]).toBeUndefined(); // the archive holds them now
   });

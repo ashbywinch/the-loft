@@ -1,18 +1,20 @@
-"""Content routing for batches: photo/drawing vs text, and within text,
-cursive vs print (TECHSPEC §16.14; MULTI-DOC-IMPORT-PRD.md R11–R12).
+"""Content routing for batches: the PAGE CATEGORY, from the vision model
+(TECHSPEC §16.14; docs/PLAN/page-categories.md).
 
-A vision-model call decides text vs photo vs drawing: the reader that sees
-the page also names its kind, one small call per raw page (user,
-2026-10-26: the local CLIP classifier and its torch stack are gone).
-Within text pages, the tesseract strong-word density measured at
-orientation decides cursive vs print — print OCRs well under tesseract,
-cursive does not (real data: cursive pages scored 7–58 strong words, the
-printed reference 1185). Photos and drawings are flagged as image items
-and never transcribed.
+One small call per raw page names what it is — a photograph, printed writing,
+handwriting, a postcard face, a form, or a drawing — and, for the two page
+shapes that may be either, how its writing was made (printed or handwritten).
+The reader that sees the page names it (user, 2026-10-26: the local CLIP
+classifier and its torch stack are gone).
+
+The category decides the read (`read_route`): photographs and drawings are not
+read; printed pages take one direct transcription; handwriting and handwritten
+postcard faces take the row pipeline; a form is read as structure. The old
+tesseract strong-word density route is gone: the category answers "printed or
+handwriting" before any OCR runs.
 
 Usage:
-    python tools/classify.py <batch-id>          # classify the raw pages
-    python tools/classify.py <batch-id> --route  # + the density routing
+    python -m pipeline.classify <batch-id>
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from pathlib import Path
 from typing import Any
 
@@ -31,12 +33,38 @@ from pipeline.store import PipelineStore
 from tools.loft_paths import REGISTRY_DIR, WORK_DIR
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
-DENSITY_THRESHOLD = 200  # strong words per page: cursive measured 7–58, printed reference 1185
+
+def category_of(entry: dict[str, Any]) -> str:
+    """A classify record's category, old spellings included: a record written
+    before the 2026-11-02 vocabulary says "text"/"photo", and is read as the
+    category it names, never rewritten."""
+    kind = str(entry.get("kind", "")).strip().lower()
+    return LEGACY_KINDS.get(kind, kind)
 
 
-def route(density: int, threshold: int = DENSITY_THRESHOLD) -> str:
-    """Print OCRs well under tesseract, cursive does not — the density decides."""
-    return "print" if density >= threshold else "cursive"
+def read_route(entry: dict[str, Any]) -> str:
+    """How a page is read, by its category — the one routing rule:
+
+    - a photograph or a drawing: nothing to transcribe;
+    - printed writing: one direct VLM read;
+    - handwriting: the row pipeline (auto rows, then the human row check);
+    - a postcard face: printed faces take the direct read; handwritten ones the
+      row pipeline (their two orientations are the reviewer's lines' problem
+      when the auto detection is bad);
+    - a form: a structured read (labels and values), whatever the medium — a
+      form read as prose loses its meaning.
+    A page whose category was never recorded (the legacy "text") is read as
+    handwriting, the safe route."""
+    kind = category_of(entry)
+    if kind == "printed":
+        return "direct"
+    if kind == "postcard_face":
+        return "direct" if entry.get("medium") == "printed" else "rows"
+    if kind == "form":
+        return "structured"
+    if kind == "handwriting":
+        return "rows"
+    return "none"
 
 
 def classify_pages(
@@ -49,15 +77,41 @@ def classify_pages(
     return {str(page.relative_to(root)): classifier(page) for page in pages}
 
 
-CONTENT_KINDS = ("text", "photo", "drawing")
+# the PAGE CATEGORIES (docs/PLAN/page-categories.md): what one scan is. A
+# document type (letter, postcard, form) is derived from the pages a group holds.
+# printing is writing too: the hand script is its own category, and printed
+# text its own; a postcard face or a form is a page SHAPE whose writing may be
+# either, so those two carry the medium
+CONTENT_KINDS = ("photograph", "printed", "handwriting", "postcard_face", "form", "drawing")
+MEDIUMS = ("printed", "handwritten")
+# the categories that carry writing to read; the rest carry none (a photograph's
+# image is the evidence; a drawing's labels are not a transcription)
+TEXT_KINDS = ("printed", "handwriting", "postcard_face", "form")
+# what the categories were called before 2026-11-02 — the classify records on
+# disk carry the old names, and a record is never rewritten to a new spelling
+LEGACY_KINDS = {"text": "handwriting", "photo": "photograph"}
+
+# how a page's writing is read, by its category (docs/PLAN/page-categories.md):
+# no text / one direct VLM read / the row pipeline (auto rows + the human row
+# check) / a structured read (labels and values)
+READ_ROUTES = ("none", "direct", "rows", "structured")
+# the two page SHAPES whose writing may be printed or handwritten
+MEDIUM_SHAPES = ("postcard_face", "form")
 
 PAGE_KIND_PROMPT = (
     "What does this scanned page SHOW? Reply with JSON only: "
-    '{"kind": "text"|"photo"|"drawing", "confidence": <0.0-1.0>}. '
-    '"text": writing to be read — a letter, a form, a list, a transcript; '
-    '"photo": a picture of people, places or things — a snapshot, a postcard, '
-    'however it was scanned; "drawing": an illustration or sketch. '
-    'Judge the page\'s content, never its paper: a scanned letter is "text" '
+    '{"kind": "photograph"|"printed"|"handwriting"|"postcard_face"|"form"|"drawing", '
+    '"confidence": <0.0-1.0>, "medium": "printed"|"handwritten"|null}. '
+    '"photograph": a picture of people, places or things — a snapshot, however it was scanned; '
+    '"printed": writing made by type, print or typescript — a typed letter, a newspaper, a caption; '
+    '"handwriting": writing made by hand — pen or pencil, however neat; '
+    '"postcard_face": the picture side of a postcard, with or without a printed caption or a handwritten message; '
+    '"form": a form — printed labels and the entries filled against them; '
+    '"drawing": an illustration or sketch, not a photograph. '
+    'For "postcard_face" and "form", "medium" names the writing on the page: '
+    '"printed" for type or print, "handwritten" for pen or pencil, null when it carries none. '
+    "It is null for every other kind. "
+    'Judge the page\'s content, never its paper: a scanned printed letter is "printed" '
     "even though the scan is photographic. The confidence is your own."
 )
 
@@ -82,11 +136,14 @@ def classify_page(
     try:
         kind = str(raw["kind"]).strip().lower()
         confidence = float(raw["confidence"])
+        medium = None if raw.get("medium") is None else str(raw["medium"]).strip().lower()
     except (KeyError, TypeError, ValueError) as e:
         raise VlmError(f"unusable classification: {answer.answer[:120]!r}") from e
     if kind not in CONTENT_KINDS or not 0.0 <= confidence <= 1.0:
         raise VlmError(f"unusable classification: {answer.answer[:120]!r}")
-    return PageClassification.from_confidences({kind: confidence})
+    if kind in MEDIUM_SHAPES and medium is not None and medium not in MEDIUMS:
+        raise VlmError(f"unusable medium: {answer.answer[:120]!r}")
+    return PageClassification.from_confidences({kind: confidence}, medium)
 
 
 def run_classify(
@@ -95,8 +152,15 @@ def run_classify(
     registry_dir: Path = REGISTRY_DIR,
     work_dir: Path = WORK_DIR,
     classifier: Callable[[Path], PageClassification] | None = None,
+    reclassify: Collection[str] = (),
 ) -> Path:
-    """Classify a batch's RAW pages (before orientation — photos need neither)."""
+    """Classify a batch's RAW pages (before orientation — photos need neither).
+
+    Idempotent: a page with a classification is left alone, and the call is a
+    no-op when every page has one. ``reclassify`` names pages whose record is
+    stale (a classification from before the category vocabulary, which cannot
+    route a read); those are classified again and the file is rewritten with
+    the new answers merged in."""
     record = load_batch(batch_id, registry_dir)
     folder = record.path
     pages = sorted((folder / rel) for rel in record.pages)
@@ -105,13 +169,19 @@ def run_classify(
     classify_path = work_dir / batch_id / "classify.json"
     store = PipelineStore(work_dir)
     store_path = str(classify_path.relative_to(work_dir))
-    if store.exists(store_path):
-        return classify_path  # idempotent
+    existing: dict[str, Any] = json.loads(store.read_latest(store_path)) if store.exists(store_path) else {}
+    todo = [
+        page
+        for page in pages
+        if str(page.relative_to(folder)) not in existing or str(page.relative_to(folder)) in set(reclassify)
+    ]
+    if not todo:
+        return classify_path
     classify = classifier if classifier is not None else classify_page
-    results = classify_pages(pages, classify, folder)
+    results = classify_pages(todo, classify, folder)
+    merged = {**existing, **{name: result.to_dict() for name, result in results.items()}}
     classify_path.parent.mkdir(parents=True, exist_ok=True)
-    wire = {name: record.to_dict() for name, record in results.items()}
-    store.write(store_path, json.dumps(wire, indent=1, ensure_ascii=False) + "\n")
+    store.write(store_path, json.dumps(merged, indent=1, ensure_ascii=False) + "\n")
     return classify_path
 
 

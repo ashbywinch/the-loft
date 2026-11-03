@@ -322,7 +322,7 @@ OCR transcription drafts, photo labeling, theme/entity discovery, TTS — the `p
 
 ```
 boxes → the user's scan area (their folders — adopted by hash, §16.13)
-      → workspace/work/<batch>/ (oriented → raw OCR → OCR guess → confirmed)
+      → workspace/work/<batch>/ (oriented → read → confirmed)
       → tools/import  [prompt: date] → archive/assets/<id>/ (sidecars + JPEGs + thumbs)
       → tools/upload-drive            → Google Drive (the archive's home)
       → loft publish                 → app/data projection → static host → phone
@@ -523,8 +523,7 @@ Loft/
   registry/<batch-id>.json         one record per adopted user folder
   work/<batch-id>/                 derived stages, in trust order
     oriented/page-NN.jpg           correct way up (Rule J, before any reading)
-    ocr-raw/page-NN.txt            engine OCR, unverified
-    ocr-guess/page-NN.txt          machine draft (transcription_status: draft)
+    ocr-guess/page-NN.txt          the page's text, read by the vision model (transcription_status: draft)
   archive/                         the durable knowledge (confirmed only)
     assets/<item-id>/              item.json + page-NN.jpg + transcription.txt + thumbs
     people.json places.json orgs.json themes.json items.json ...
@@ -593,69 +592,51 @@ runnable, resumable, and replaceable.
 |---|---|---|
 | `capture` (tools/scan.py) | scanner → pages in the user area + registry record (label, hashes) | `pending` |
 | `adopt` | an external/preexisting folder → registry record (register-in-place) | `pending` |
-| `orient` | user pages → `work/<batch>/oriented/` (Rule J) | `importing` |
-| `ocr-raw` | oriented pages → `work/<batch>/ocr-raw/` (tesseract) | `importing` |
-| `ocr-guess` | ocr-raw → `work/<batch>/ocr-guess/` (vision model draft) | `importing` |
-| `review` | oriented + ocr-guess → the agreed document as an archive item (its `transcription.txt`) + `boundaries` (the IMPORT-PRD flow, user-paced) | `review` |
+| `classify` | raw pages → `work/<batch>/classify.json` — each page's CATEGORY: photograph, printed, handwriting, postcard face, form, drawing (one vision call per page) | `importing` |
+| `orient` | the pages with writing → `work/<batch>/oriented/` (the vision model names each page's rotation) | `importing` |
+| `read` | the pages' text, routed by their category: printed → one direct VLM transcription; a form → a structured read (labels and values, as a markdown table); handwriting and a handwritten postcard face → the row pipeline (auto rows, the human row check, the transcription review) | `importing` |
+| `group` | the documents: the model judges boundaries over the pages' readings, then the scorer weighs duplex sides, paper size, page numbers and those flags | `boundaries.json` |
+| `review` | oriented + read → the agreed document as an archive item (its `transcription.txt`) + `boundaries` (the IMPORT-PRD flow, user-paced) | `review` |
 | `catalog` | confirmed pages + transcript → `archive/assets/<id>/` (draft items) | `done` |
 | `publish` | archive → `projection/` (reduced-res) | — |
 
 **Parallelism.** Batches are independent; stages within a batch are
-sequential (orient before any reading; ocr-raw before ocr-guess). The
+sequential (classify before orient; orient before the read). The
 driver walks the registry and fans out per-batch stage jobs, so capture
 runs while orient/OCR process earlier batches (scan-ahead, §16.11) and the
 user reviews batch *N* while the machine works *N+1*. Each component
 re-runs idempotently (its output stage is a cache; re-running regenerates
 it) and never touches the user's area.
 
-**Content routing (requirements R10–R12).** Batches are mixed:
-cursive letters, print, photographs, drawings. A `classify` stage runs
-FIRST (before orientation — photos need neither orientation nor OCR): a
-local zero-shot image classifier (open_clip, MobileCLIP-S0) decides
-photo/drawing vs text page; within text, the orientation stage's tesseract
-strong-word density (rotations.json) decides print vs cursive (real data:
-cursive pages 7–58 strong words, the printed reference 1185). Photos and
-drawings are flagged as image items and never transcribed. Orientation and
-OCR run only on text pages.
+**Content routing (requirements R10–R12).** Batches are mixed: handwritten
+letters, print, photographs, drawings, postcards, forms. A `classify` stage
+runs FIRST (before orientation — a photograph needs neither orientation nor a
+read): one vision call per page names its category, and for the two page shapes
+that may be either (a postcard face, a form) how its writing was made —
+printed or handwritten. The category decides the read
+(`docs/PLAN/page-categories.md`): photographs and drawings are not read;
+printed pages take one direct VLM transcription; a form is read as structure;
+handwriting (and a handwritten postcard face) takes the row pipeline. There is
+no second OCR engine: the density route and the tesseract read are gone (user,
+2026-11-02 — the VLM is the only reader).
 
-**Orientation (Rule J, mechanism).** The `orient` stage reads each text
-page in all four rotations and keeps the read whose tesseract strong-word
-density is highest (per-word confidence ≥ 60, psm 6): the LSTM was trained
-on upright text, so a rotated read fragments words and scores low.
-Deterministic and self-verifying by construction — every explicit
-orientation detector was dropped: the vision models gave
-contradictory LEFT/RIGHT answers on an upright page, and tesseract's own
-OSD misreported an upright page as 180°.
+**Orientation (Rule J, mechanism).** The `orient` stage asks the vision model
+which clockwise rotation makes each page's writing upright
+(`pipeline/orient.py`) and turns the page into `oriented/`. One small call per
+page, thinking off. The earlier arbiter — four tesseract reads per page, the
+one with the most strong words winning — was removed with the OCR engine it
+depended on.
 
-**The HTR stage uses the field's tooling, not hand-rolled line detection
-(user: "is there not prior art?").** Cursive pages are read by
-the established historical-document stack — kraken (7.x, PP-OCRv6-based
-models trained on historical handwritten AND printed text) with the orli
-layout model for text-line baselines and reading order. The user's layout
-cases (a corner text box, a `}` joining two lines with an annotation,
-marginal notes, a printed form filled in cursive) are precisely what
-trained layout detection exists for; a projection-based line splitter is
-the naive approach and is not used. The pipeline order becomes:
-`classify → orient (text pages) → route → htr (cursive) / tesseract
-(print) → guess → review`.
-
-    **The transcription backend decision (user: "let's stop
-    there, this is good enough").** After an evidence comparison on the
-    family's own pages, the default transcription backend for cursive/mixed
-    pages is the **vision-language model** (`pipeline/vlm.py`, the opencode-go
-    vision role mimo-v2.5) — not a specialist OCR API. The evidence on real
-    pages: near-perfect pure-cursive and mixed-layout transcription
-    (page-03's callout box, postmark, address and salutation all read
-    correctly); ~85% word accuracy on the medal card's hardest element
-    (handwritten digits in a dense form); ~11K tokens/page (~$2–15 per
-    1,000 pages at mid-tier rates). The local orli+TrOCR stack behind the
-    same seam (segmentation passable, recognition garbage on the test
-    pages) was removed as unused; the specialist OCR APIs
-    (Azure Read — removed as dead code, never referenced;
-    Transkribus — UI-bound on individual plans, ~10× the price) likewise
-    never shipped into the seam. The per-page VLM output
-    is recorded in a sidecar (`ocr-raw/<stem>.vlm.json`, the token usage) so
-    re-runs skip transcribed pages and the cost is auditable.
+**The transcription backend (decided).** Every page's text comes from the
+**vision-language model** (`pipeline/model/vlm.py`): one call per page for
+printed text, one per row for handwriting, one structured call for a form.
+The evidence on the family's own pages: near-perfect pure-cursive and
+mixed-layout transcription (page-03's callout box, postmark, address and
+salutation all read correctly); ~85% word accuracy on the medal card's hardest
+element (handwritten digits in a dense form); ~11K tokens/page. The local
+specialist stacks (orli+TrOCR, PaddleOCR) and the tesseract OCR engine were
+removed as unused — two readers meant two truths, and only the VLM reads the
+family's cursive.
 
 **Scan UX (decided direction).** The capture command takes the run's name
 at scan time: `make scan-docs ARGS="--label 'Box 1 — Letters 1977'"`, or a
@@ -674,30 +655,28 @@ state and the landing record: `docs/PLAN/single-pass-landing-plan.md`.
 ```mermaid
 flowchart TB
     subgraph ingest["make ingest — pipeline.process"]
-        A["adopt / scan"] --> B["classify — photos/drawings skip"]
-        B --> C["orient — one rotation per page (Rule J)"]
-        C --> D["ocr-raw — tesseract"]
-        D --> E["route — print vs cursive"]
-        E --> F["transcribe — the vision model (cursive)"]
-        F --> G["guess — corrected transcription (vision model)"]
-        G --> H["group — full-sequence boundaries (scored grouping)"]
+        A["adopt / scan"] --> B["classify — the page's category (vision model)"]
+        B --> C["orient — one rotation per page (vision model)"]
+        C --> D{"the category"}
+        D -->|printed| E["direct read — one VLM transcription"]
+        D -->|form| F["structured read — labels and values"]
+        D -->|handwriting / postcard face| G["rows — the reader, then the human row check"]
+        E --> H["read — the page's text"]
+        F --> H
+        G --> H
     end
-    H --> L["layout — boxes + per-word flags"]
-    L --> R["review — boxes + draft text + flags"]
+    H --> R["review — the draft text, page by page"]
     R --> P["archive"]
 ```
 
 | Phase | What it does | Output |
 |---|---|---|
 | adopt / scan | register the pages | registry record + `pages` |
-| classify | photo/drawing vs text (open_clip) | `classify.json` |
-| orient | the one best rotation per page (Rule J arbiter) | `oriented/` + `rotations.json` |
-| ocr-raw | tesseract read of the oriented page | `ocr-raw/*.txt` |
-| route | print vs cursive from strong-word density | `classify.json` |
-| transcribe | the vision model reads cursive pages | `ocr-raw/*.vlm.json` |
-| guess | corrected transcription per page (the vision model) | `ocr-guess/*.txt` |
-| **group** | **full-sequence grouping by physical evidence: duplex sides, paper size, page numbers, the model's flags (pipeline/grouping.py)** | **`boundaries.json` — the grouping scorer supersedes the model's text-only grouping** |
-| **layout** | **the §16.17 single pass — every segment's text, box, and orientation in one VLM call + build_layout** | **`ocr-guess/*.layout.json`** |
+| classify | the page's category and, for a postcard face or a form, its medium (vision model) | `classify.json` |
+| orient | the rotation that puts the page's writing upright (vision model) | `oriented/` |
+| read (direct) | printed text, line for line, in one VLM call | `ocr-guess/*.txt` |
+| read (structured) | a form's labels and values, as a markdown table, in one VLM call | `ocr-guess/*.txt` |
+| read (rows) | handwriting: the reader's rows and words, the human row check, then the transcription review | `ocr-guess/*.rows.json`, `*.words.json`, `*.txt` |
 | review | the reviewer verifies/corrects the draft | confirmed text |
 
 **The VR14 gap — RESOLVED.** The layout stage — the producer of the
@@ -769,21 +748,20 @@ pass) rather than a separate call, to avoid the extra ~12K tokens.
 ### 16.14.2 Pipeline reliability — completion markers, fail-loud, and surgical recovery
 
 **Completion markers.** Each stage treats an output artifact's existence as
-its completion marker: `ocr-raw/<stem>.vlm.json` marks the transcription,
-`ocr-guess/<stem>.txt` the guess, `boundaries.json` the grouping, and
-`ocr-guess/<stem>.layout.json` the layout. Re-running a stage skips pages
-whose marker exists — that is what makes re-runs cheap.
+its completion marker: `classify.json` the category, `oriented/<page>` the
+rotation, `ocr-guess/<stem>.rows.json` + `.words.json` the row read,
+`ocr-guess/<stem>.printed.json` / `.structured.json` a direct read,
+`ocr-guess/<stem>.txt` the page's text, and `boundaries.json` the document
+grouping. Re-running a stage skips pages whose marker exists — that is what
+makes re-runs cheap.
 
 **The marker rule: existence of the marker alone is not completion.** A
 marker promises its artifact; a marker whose artifact is missing or empty
 is a stale or partial write and must be re-done, not "reused". Concretely:
-`htr_pages_vlm` skips only when BOTH the `.vlm.json` and a non-empty
-`.txt` exist; `process` re-runs the guess when any text page's `.txt` is
-missing (the stale `boundaries.json` is deleted and regenerated); the
-layout stage refuses (exit 2) to build a page with no guess text when that
-page was explicitly requested, and skips with a stderr summary otherwise.
-A layout written from geometry alone
-over a cleared guess is the canonical failure this rule prevents.
+a direct read skips a page only when both its marker and a non-empty
+`.txt` exist; the row read skips a page whose `.rows.json` exists and is
+current; and `process` re-reads a page whose artefacts are incomplete
+rather than trusting a marker alone.
 
 **Fail-loud over silent no-op.** A stage that cannot do its job for a
 requested input fails loudly with the remedy in the message. Never a
@@ -794,27 +772,44 @@ looks done but isn't.
 whole batch. The pipeline exposes per-page stage commands:
 
 ```bash
-make pipeline ARGS="guess <batch> [page...]"   # re-transcribe pages + regen boundaries
-make pipeline ARGS="layout <batch> [page...]"  # layout specific pages only
+make pipeline ARGS="process <batch>"        # the whole chain
+make pipeline ARGS="printed <batch>"        # a printed pile: one direct read per page
 ```
 
-`guess` re-transcribes only the named pages (empty = all cursive) then
-regenerates boundaries from the full set (the grouping scorer needs the
-whole sequence). `layout` runs the single-pass layout stage (§16.17) for
-the named pages only, inheriting its fail-loud missing-input check. The general
-`process <batch>` remains the whole-chain entry point.
+`process <batch>` is the whole-chain entry point and the one the worker
+sweeps; `printed <batch>` re-reads a printed or structured pile directly
+(idempotent per page).
 
 **The worker owns the machine stages** (`pipeline/worker.py`, `loft work`;
-UR3). The registry's records are its queue: a record with status `pending`
-(a fresh scan, an adoption, or a pile whose content changed) is work, and
-a sweep registers every pile in the scan area and runs each pending batch
-through `process`. A page's status is never stored — it is derived from
-the stage artefacts (`BatchReadings.page_status`, §16.14.2's marker rule),
-so the "Check the rows" queue reads the artefacts, not a field. Two rules
-keep the queue honest: a pass that dies half-way writes its record back to
-`pending` (a crash in `importing` would strand the batch where no sweep
-looks), and a scan stages beside the inbox rather than in it (a directory
-in the scan area is a finished pile, and the worker adopts every one).
+UR3). A batch is work while a stage artefact is MISSING — not while its
+status says so. `pipeline/stage_table.py` owns the stage order and each stage's gap
+check, and reads one batch's artefacts to name the stages still missing: `classify` (no entry, or one
+in the pre-category spelling), `orient` (the row pages' uprights),
+`read` (the category's own marker), `group` (no `boundaries.json`).
+`pipeline/reconcile.py` (`Reconciler`) runs exactly those, in order, after
+re-planning on the new categories once `classify` has run; it journals each
+stage's outcome to `work/<batch>/events.jsonl` and logs the reason and the
+duration. Nothing is retried: a failure is journalled and raised, and the
+batch waits for the next trigger or resync.
+
+The triggers are `Worker.watch`: a change under the scan area, the registry
+or the work tree maps to its batch and that batch is reconciled then (a batch
+already in flight is skipped, so the reconciler's own writes cannot feed back
+into it); a quiet interval is a full resync, and one runs at startup.
+`loft work` is one resync, `loft work --plan` prints each batch's gap and runs
+nothing, `loft work --batch <id>` reconciles one. `pipeline/artefacts.py` is
+the one place the layout is written (guarded by `tests/test_architecture.py`),
+and `pipeline/model/config.py` names every model and the Cloudflare AI Gateway
+endpoint.
+
+A page's status is never stored — it is derived from the stage artefacts
+(`BatchReadings.page_status`, §16.14.2's marker rule), so the review queue
+reads the artefacts, not a field. Only the batch's queue state is written,
+through the chain's one status writer, which stamps the pass (pid, host,
+time). Two rules keep the queue honest: a pass that dies half-way writes its
+record back to `pending` (a crash in `importing` would strand the batch), and
+a scan stages beside the inbox rather than in it (a directory in the scan
+area is a finished pile, and the worker adopts every one).
 
 **A corrected page is re-read on the worker's next pass.** The reviewer's drawn
 lines persist as `ocr-guess/<stem>.row-adjustments.json`; the write marks the

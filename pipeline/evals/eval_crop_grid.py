@@ -24,9 +24,11 @@ from typing import Any
 from PIL import Image
 
 from document.rectangle import Rectangle
+from pipeline.artefacts import BatchArtefacts
 from pipeline.evals.eval_geometry import CropLine, CropReading, PageSize, assemble_crop_grid, grid_crops
 from pipeline.layout import Layout, load_layout_store
 from pipeline.layout_line import LayoutLine
+from pipeline.model.config import VISION_MODEL
 from pipeline.model.transcription import Transcription
 from pipeline.model.vlm import (
     DEFAULT_BASE_URL,
@@ -260,13 +262,13 @@ def run(
     work_dir: Path,
     cols: int = 2,
     rows: int = 3,
-    model: str = "dynamic/image",
+    model: str = VISION_MODEL,
     base_url: str = DEFAULT_BASE_URL,
     api_key: str | None = None,
 ) -> CropGridReport:
     """Read the page's crops, stitch, and report — the geometry
     experiment's ledger for one page."""
-    image_path = work_dir / batch_id / "oriented" / f"{page}.jpg"
+    image_path = BatchArtefacts(work_dir, batch_id).oriented(f"{page}.jpg")
     store = PipelineStore(work_dir)
     layout = load_layout_store(store, f"{batch_id}/ocr-guess/{page}.layout.json")
     with Image.open(image_path) as im:
@@ -309,9 +311,9 @@ def run(
     # the model-scoped saves — the trial runs several models on the same
     # page; each keeps its own assembled layout + report
     slug = model.replace("/", "-").replace("@", "")
-    out = work_dir / batch_id / "ocr-guess" / f"{page}.cropgrid-{slug}.json"
+    out = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-{slug}.json"
     out.write_text(json.dumps(assembled.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
-    report_path = work_dir / batch_id / "ocr-guess" / f"{page}.cropgrid-report-{slug}.json"
+    report_path = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-report-{slug}.json"
     report_path.write_text(json.dumps(report.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
     return report
 
@@ -323,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cols", type=int, default=2)
     parser.add_argument("--rows", type=int, default=3)
     parser.add_argument("--work-dir", type=Path, default=WORK_DIR)
-    parser.add_argument("--model", default="dynamic/image", help="the model to trial")
+    parser.add_argument("--model", default=VISION_MODEL, help="the model to trial")
     parser.add_argument("--base-url", default=None, help="the API base (default: the gateway)")
     parser.add_argument(
         "--api-key",

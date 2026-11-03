@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 
+from document.word import Word
 from pipeline.api.sync import (
     Outbox,
     demote_stale_jobs,
@@ -22,8 +23,11 @@ from pipeline.api.sync import (
     validate_confirmation,
 )
 from pipeline.boundary import Boundary
+from pipeline.detect.reader import Reading
 from pipeline.detection import Detection
 from pipeline.layout import Layout, build_layout
+from pipeline.model.token_usage import TokenUsage
+from pipeline.model.vlm_answer import VlmAnswer
 from pipeline.registry import RegistryError
 from tools.archive import Archive
 from tools.atomic import atomic_write
@@ -505,6 +509,7 @@ def test_rotate_page_is_idempotent_and_cumulative(tmp_path: Path) -> None:
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
+    (batch / "classify.json").write_text('{"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}')
     build_layout(
         "p1.jpg",
         600,
@@ -544,6 +549,7 @@ def test_reprocess_failure_marks_the_page(tmp_path: Path) -> None:
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
+    (batch / "classify.json").write_text('{"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}')
     build_layout(
         "p1.jpg",
         600,
@@ -553,12 +559,67 @@ def test_reprocess_failure_marks_the_page(tmp_path: Path) -> None:
     ).write(batch / "ocr-guess" / "p1.layout.json")
     set_page_job("adopt-0001", "p1.jpg", "transcribing", tmp_path)
 
+    registry = _registry(tmp_path)
+
     def boom(image, **kw):
         raise RuntimeError("vision model unreachable")
 
     with pytest.raises(RuntimeError, match="unreachable"):
-        reprocess_page_transcription("adopt-0001", "p1.jpg", tmp_path, transcribe=boom)
+        reprocess_page_transcription("adopt-0001", "p1.jpg", tmp_path, registry_dir=registry, transcribe=boom)
     assert page_job_state("adopt-0001", tmp_path) == {"p1.jpg": "failed"}
+
+
+def test_a_re_read_reads_the_page_again_through_the_pipeline(tmp_path: Path) -> None:
+    """The re-read IS a re-read: it clears the page's receipts, runs the same
+    read step the batch runs, and leaves the page read (so the next pass does
+    not read it again)."""
+    batch = tmp_path / "adopt-0001"
+    (batch / "oriented").mkdir(parents=True)
+    (batch / "ocr-guess").mkdir(parents=True)
+    Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
+    classify = {"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}
+    (batch / "classify.json").write_text(json.dumps(classify))
+    # a stale read: the old text and its receipt
+    (batch / "ocr-guess" / "p1.txt").write_text("OLD TEXT\n")
+    (batch / "ocr-guess" / "p1.printed.json").write_text("{}")
+    registry = _registry(tmp_path)
+    calls: list[Path] = []
+
+    def fresh(image: Path) -> tuple[str, VlmAnswer]:
+        calls.append(image)
+        return "NEW TEXT", VlmAnswer("raw", TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2))
+
+    reprocess_page_transcription(
+        "adopt-0001",
+        "p1.jpg",
+        tmp_path,
+        registry_dir=registry,
+        transcribe=fresh,
+        selfreport=lambda *_a, **_k: [],
+        orientation_report_fn=lambda _image, _text: {},
+    )
+    assert calls == [batch / "oriented" / "p1.jpg"]
+    assert (batch / "ocr-guess" / "p1.txt").read_text() == "NEW TEXT\n"
+    assert (batch / "ocr-guess" / "p1.printed.json").is_file()
+    assert page_job_state("adopt-0001", tmp_path) == {}
+
+
+def _registry(tmp_path: Path) -> Path:
+    """A batch record, as adoption leaves one (the read step loads it)."""
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    pile = tmp_path / "pile"
+    pile.mkdir()
+    record = {
+        "batch_id": "adopt-0001",
+        "path": str(pile),
+        "status": "review",
+        "arrived_at": "2026-01-01T00:00:00+00:00",
+        "pages": {"p1.jpg": "hash-1"},
+        "fingerprint": ["hash-1"],
+    }
+    (registry / "adopt-0001.json").write_text(json.dumps(record))
+    return registry
 
 
 def test_set_page_job_clears_when_empty(tmp_path: Path) -> None:
@@ -587,6 +648,7 @@ def test_rotate_page_accepts_desired_zero_rotate_back(tmp_path: Path) -> None:
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
+    (batch / "classify.json").write_text('{"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}')
     build_layout(
         "p1.jpg",
         600,
@@ -612,6 +674,7 @@ def test_rotate_page_recovers_a_half_rotated_crash(tmp_path: Path) -> None:
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
+    (batch / "classify.json").write_text('{"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}')
     build_layout(
         "p1.jpg",
         600,
@@ -650,6 +713,7 @@ def test_rotate_page_discards_a_premature_journal(tmp_path: Path) -> None:
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
+    (batch / "classify.json").write_text('{"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}')
     build_layout(
         "p1.jpg",
         600,
@@ -698,3 +762,48 @@ def test_drafts_carry_the_persisted_row_correction(tmp_path: Path) -> None:
 
     assert drafts[0]["row_adjustments"]["p1.jpg"] == drawn
     assert drafts[0]["adjusted_rows"]["p1.jpg"] == corrected
+
+
+def test_a_handwriting_re_read_redetects_the_rows(tmp_path: Path) -> None:
+    """Handwriting: the re-read re-runs ROW DETECTION on the image as it is now.
+
+    The reviewer's drawn lines belong to the previous orientation, so they go
+    with the old reading; the fresh reading proposes the rows again and the
+    page's text is the rows' new reading."""
+    batch = tmp_path / "adopt-0001"
+    (batch / "oriented").mkdir(parents=True)
+    (batch / "ocr-guess").mkdir(parents=True)
+    Image.new("L", (40, 40), 255).save(batch / "oriented" / "p1.jpg")
+    classify = {"p1.jpg": {"kind": "handwriting", "confidences": {"handwriting": 0.9}}}
+    (batch / "classify.json").write_text(json.dumps(classify))
+    # the stale read and the reviewer's correction on the OLD orientation
+    (batch / "ocr-guess" / "p1.txt").write_text("OLD TEXT\n")
+    (batch / "ocr-guess" / "p1.rows.json").write_text("{}")
+    (batch / "ocr-guess" / "p1.words.json").write_text("{}")
+    (batch / "ocr-guess" / "p1.row-adjustments.json").write_text("{}")
+    (batch / "ocr-guess" / "p1.rows-adjusted.json").write_text("{}")
+    registry = _registry(tmp_path)
+    fresh_reading = Reading(
+        lines=[{"box": [0.0, 0.0, 40.0, 20.0], "text": "", "box_source": "reader", "words": [0]}],
+        words=[Word(1.0, 1.0, 9.0, 9.0, line=0, baseline=9.0, waistline=1.0)],
+        width=40,
+        height=40,
+    )
+
+    reprocess_page_transcription(
+        "adopt-0001",
+        "p1.jpg",
+        tmp_path,
+        registry_dir=registry,
+        reading=lambda _image: fresh_reading,
+        rows_text=lambda _image, _out: {1: "FRESH ROW"},
+        selfreport=lambda *_a, **_k: [],
+        orientation_report_fn=lambda _image, _text: {},
+    )
+    guess = batch / "ocr-guess"
+    assert (guess / "p1.txt").read_text() == "FRESH ROW\n"
+    rows = json.loads((guess / "p1.rows.json").read_text())
+    assert rows["lines"][0]["text"] == "FRESH ROW"
+    assert (guess / "p1.words.json").is_file()
+    assert not (guess / "p1.row-adjustments.json").exists()  # drawn on the old orientation
+    assert not (guess / "p1.rows-adjusted.json").exists()

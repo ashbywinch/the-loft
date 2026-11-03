@@ -295,6 +295,10 @@ class Archive:
         Used by import (scans entering the archive) and the bootstrap."""
         self.store.write_new(self.content_path(item_id, filename), content)
 
+    # the params ARE the document's identity (title, date, precision), its text
+    # and its item id — a facts object would be a second shape for the same
+    # fields at every caller (the review gate, the approval, the tests)
+    # lucidlint: ignore long-param-list the document's identity is its arguments
     def agree_document(
         self,
         *,
@@ -303,6 +307,7 @@ class Archive:
         date_precision: str,
         text: str,
         item_id: str = "",
+        status: str = "catalogued",
     ) -> Item:
         """The reviewed document becomes an archive item: its sidecar (title,
         date, status) and the transcription as the item's own content file.
@@ -331,7 +336,7 @@ class Archive:
                 "items": [],
             }
         )
-        sidecar.update({"title": title.strip(), "date": date, "date_precision": date_precision, "status": "catalogued"})
+        sidecar.update({"title": title.strip(), "date": date, "date_precision": date_precision, "status": status})
         item = Item(sidecar)
         try:
             self.save_item(item, content={"transcription": text})

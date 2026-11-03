@@ -50,6 +50,7 @@ from document.transcript import Transcript, TranscriptError
 from document.word import Word
 from document.words import Words
 from pipeline.detect.reader import reading_for_page
+from pipeline.model.config import VISION_MODEL
 from pipeline.model.token_usage import TokenUsage
 from pipeline.model.vlm import VlmOptions, transcribe_images_vlm
 from pipeline.model.vlm_answer import VlmAnswer
@@ -198,7 +199,7 @@ class Transcriber:
             # the endpoint and the model the transcript ACTUALLY used, and how long it
             # took: a run that answers in under a second is not reading a page
             endpoint=_endpoint(),
-            model=self.model or "dynamic/image",
+            model=self.model or VISION_MODEL,
             seconds=round(seconds, 1),
             rows=len(rows),
             words=sum(len(row.word_boxes) for row in rows),

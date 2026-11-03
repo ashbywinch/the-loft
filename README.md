@@ -42,11 +42,18 @@ launch spec.
 ### The worker (scan pickup, UR3)
 
 `./loft work` is one sweep: every pile in the scan area is registered
-(adoption hashes it where it sits and never modifies it) and every `pending`
-batch runs the machine stages — orient, marks, words, the model guess and
-the reading — ending where a person takes over: each read page waits on
-its row check. `./loft work --watch 60` repeats that sweep every minute.
-The queue is the registry's records. A pass that dies half-way puts its
+(adoption hashes it where it sits and never modifies it) and every batch is
+reconciled — the engine stages whose artefacts are missing are run, and no
+finished stage is ever re-run, so the sweep ends where a person takes over:
+each read page waits on its row check. The queue is the artefacts plus the
+registry's records.
+
+`./loft work --watch 600` is the long-running mode: a change under the scan
+area, the registry or the work tree is mapped to its batch and that batch is
+reconciled then; a quiet interval is a full resync, the safety net for a
+missed event or a lost marker. `./loft work --plan` prints each batch's
+missing stages (and the reason for each) without running anything;
+`./loft work --batch <batch-id>` reconciles one batch. A pass that dies half-way puts its
 batch back to `pending`. A pass that is killed outright — its record left
 `importing` — is put back by the next sweep: on this host the pass's own pid
 decides (a dead pid is a dead pass, however recent the stamp), and a pass
@@ -60,8 +67,8 @@ itself is never touched automatically — it may be someone's work in progress.
 
 For a worker that survives daemon restarts, the launch spec (same rule as
 the server above): **name:** `loft-worker` · **application:** `./loft` ·
-**args:** `work --watch 60` · **cwd:** repo root · **detached:** `true` ·
-**ready:** the banner `worker: watching`.
+**args:** `work --watch 600` · **cwd:** repo root · **detached:** `true` ·
+**ready:** the banner `worker: watching` (the watch reconciles on changes; 600 s is the resync interval).
 
 ## Documents
 

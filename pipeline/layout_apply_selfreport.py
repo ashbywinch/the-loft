@@ -13,6 +13,7 @@ import json
 import sys
 from pathlib import Path
 
+from pipeline.artefacts import BatchArtefacts
 from pipeline.layout import Layout, is_struck, normalize
 from pipeline.model.unsure_word import UnsureWord
 from pipeline.store import PipelineStore
@@ -57,7 +58,7 @@ def apply_selfreport(layout: Layout, selfreport: list[UnsureWord] | None) -> Lay
 
 def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path) -> int:
     """Apply the self-report to every layout that has one."""
-    guess_dir = work_dir / batch_id / "ocr-guess"
+    guess_dir = BatchArtefacts(work_dir, batch_id).guess_dir
     if not guess_dir.is_dir():
         print(f"layout-apply: no guess dir for batch {batch_id!r}", file=sys.stderr)
         return 1

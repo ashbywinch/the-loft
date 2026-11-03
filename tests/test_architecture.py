@@ -12,7 +12,7 @@ source to final (user). The rules:
 - the read-only derived layers (projection, memory) never write the
   identity tables;
 - the domain imports the store, never the HTTP layer;
-- the pipeline layer (layout, htr, registry, adopt, classify, sync, ocr)
+- the pipeline layer (layout, registry, adopt, classify, sync)
   routes all data persistence through the store or archive — never
   atomic_write or Path.read/write directly to the archive paths.
 """
@@ -97,10 +97,8 @@ def test_the_pipeline_layer_routes_data_through_the_store() -> None:
         "layout.py",
         "layout_apply_selfreport.py",
         "sync.py",
-        "htr.py",
         "adopt.py",
         "classify.py",
-        "ocr.py",
     )
     for name in pipeline_tools:
         source = _source(name)
@@ -118,3 +116,22 @@ def test_the_pipeline_layer_routes_data_through_the_store() -> None:
     # the store, registry.py reads through the store too.
     registry = _source("registry.py")
     assert "from pipeline.store import" in registry, "registry.py must read through the store, not via Path.read_text"
+
+
+def test_the_stage_layout_is_spelled_in_one_module() -> None:
+    """The artefact layout lives in `pipeline/artefacts.py` and nowhere else.
+
+    The pipeline and the API used to each spell `ocr-guess/...` and
+    `oriented/...` themselves, and the spellings disagreed about what "read"
+    means — the reconciler demanded a stage the stage itself skipped
+    (2026-11-02). One module owns the layout; every other file asks it."""
+    offenders: list[str] = []
+    for path in (*(PIPELINE.rglob("*.py")), *(TOOLS.rglob("*.py"))):
+        if path.name == "artefacts.py" or "test" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8")
+        spellings = ('"ocr-guess"', "'ocr-guess'", '"oriented"', "'oriented'", '"boundaries.json"', "'boundaries.json'")
+        for spelling in spellings:
+            if spelling in text:
+                offenders.append(f"{path.relative_to(ROOT)}: {spelling}")
+    assert offenders == [], f"the stage layout is spelled outside pipeline/artefacts.py: {offenders}"

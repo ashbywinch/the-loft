@@ -8,6 +8,7 @@ eight stages of the writing.
 
 | # | stage | makes | artefact | human |
 |---|---|---|---|---|
+| — | classify | PageClassification | `classify.json` | no |
 | 0 | orient | Page | `oriented/<page>` | no |
 | 1 | marks | Marks | in memory — nothing persisted | no |
 | 2 | words | Words | `<page>.words.json` | no |
@@ -26,7 +27,9 @@ a test resolves every name.
 
 A page's progress through the stages is a `PageStatus` — the scan pickup's
 `new -> oriented -> marks -> words -> rows_draft -> rows_pending ->
-rows_adjusted`. `rows_pending` is the one status that names no completion: it
+rows_adjusted`, and then `transcripts_proposed` once the page's draft text
+exists (a printed page reaches that one directly — its stages 1–4 do not
+apply, because the geometry exists to group handwriting). `rows_pending` is the one status that names no completion: it
 is the page waiting in the "Check the rows" queue, and `rows_adjusted` is the
 same stage once the person's check is recorded (drawn lines or the decision
 that none are needed — the queue cannot tell them apart). The statuses the
@@ -58,8 +61,20 @@ class StageFacts:
 
 
 class Stage(Enum):
-    """The stages an image passes through, in the PRD's order (0–8)."""
+    """The stages an image passes through, in the PRD's order (0–8) — with the
+    categorisation before them: a page is first CATEGORISED (photo, drawing, or
+    writing in print or hand — `classify.json`), and the category decides which
+    of the later stages apply (a photo has none; a printed page skips the
+    geometry stages; handwriting takes the full chain)."""
 
+    CLASSIFY = StageFacts(
+        number=-1,
+        label="classify",
+        produces="PageClassification",
+        artefact="classify.json",
+        schemas=("PageClassification",),
+        human=False,
+    )
     ORIENT = StageFacts(number=0, label="orient", produces="Page", artefact="oriented/<page>", schemas=(), human=False)
     MARKS = StageFacts(number=1, label="marks", produces="Marks", artefact=None, schemas=(), human=False)
     WORDS = StageFacts(
@@ -143,12 +158,14 @@ class PageStatus(Enum):
     confirmed, the same thing to the queue — and is then `rows_adjusted`."""
 
     NEW = "new"
+    CLASSIFIED = "classified"  # the page's category is known (stage: classify)
     ORIENTED = "oriented"
     MARKS = "marks"
     WORDS = "words"
     ROWS_DRAFT = "rows_draft"
     ROWS_PENDING = "rows_pending"
     ROWS_ADJUSTED = "rows_adjusted"
+    TRANSCRIPTS_PROPOSED = "transcripts_proposed"  # the page's draft text exists (stage 5)
 
     @property
     def stage(self) -> Stage | None:
@@ -182,11 +199,13 @@ class PageStatus(Enum):
 # vocabularies cannot drift apart unremarked (a test pins every status)
 _STAGE_OF_STATUS: Mapping[PageStatus, Stage] = MappingProxyType(
     {
+        PageStatus.CLASSIFIED: Stage.CLASSIFY,
         PageStatus.ORIENTED: Stage.ORIENT,
         PageStatus.MARKS: Stage.MARKS,
         PageStatus.WORDS: Stage.WORDS,
         PageStatus.ROWS_DRAFT: Stage.ROWS,
         PageStatus.ROWS_ADJUSTED: Stage.ROWS_ADJUSTED,
+        PageStatus.TRANSCRIPTS_PROPOSED: Stage.TRANSCRIPTS_PROPOSED,
     }
 )
 _STATUS_OF_STAGE: Mapping[Stage, PageStatus] = MappingProxyType(

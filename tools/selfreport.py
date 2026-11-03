@@ -20,6 +20,7 @@ import json
 import sys
 from pathlib import Path
 
+from pipeline.artefacts import BatchArtefacts
 from pipeline.model.vlm import selfreport_words
 from tools.atomic import atomic_write
 from tools.selfreport_driver import run_cli
@@ -51,8 +52,9 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path) -> in
     """Self-report every page with a guess text, in parallel (the VLM call
     is IO-bound — threads are the right concurrency model). Returns 0 on
     success, or 1 when a page's call fails."""
-    guess_dir = work_dir / batch_id / "ocr-guess"
-    oriented_dir = work_dir / batch_id / "oriented"
+    artefacts = BatchArtefacts(work_dir, batch_id)
+    guess_dir = artefacts.guess_dir
+    oriented_dir = artefacts.oriented_dir
     if not guess_dir.is_dir() or not oriented_dir.is_dir():
         print(f"selfreport: no guess/oriented dirs for batch {batch_id!r}", file=sys.stderr)
         return 1

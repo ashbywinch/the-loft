@@ -360,12 +360,27 @@ async function postConfirmation(payload) {
   if (!res.ok) throw new Error(`confirmation rejected (${res.status})`);
 }
 
+async function postApproval(payload) {
+  const res = await fetch("/api/sync/approvals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`approval rejected (${res.status})`);
+}
+
+/** Push one queued item to the endpoint it belongs to: a page approval or a
+ *  document-level confirmation/rejection. */
+async function postPayload(payload) {
+  return payload.kind === "approval" ? postApproval(payload) : postConfirmation(payload);
+}
+
 /** Push a confirmation; on failure it stays in the outbox. The outbox is
  *  retried on every subsequent confirm and on the batch screen. Returns
  *  whether the backend recorded it. */
 async function confirmDocument(payload) {
   try {
-    await postConfirmation(payload);
+    await postPayload(payload);
   } catch (error) {
     console.warn("review: push failed — kept in the outbox", error);
     outboxAdd(payload);
@@ -380,7 +395,7 @@ async function confirmDocument(payload) {
 async function retryOutbox() {
   for (const item of outboxPending()) {
     try {
-      await postConfirmation(item);
+      await postPayload(item);
       outboxDrop(item);
     } catch {
       return; // still unreachable — leave the rest
@@ -445,9 +460,18 @@ async function renderBatchList(main, state) {
   // the empty message appears only when there is genuinely no review work
   // anywhere — state is always the app state object, so `!state` never
   // fires
-  const open = batches.filter(
-    (b) => b.status !== "confirmed" && (b.boundaries ?? []).some((x) => x.status !== "confirmed"),
-  );
+  // The transcription review is the stage AFTER the row check: only a batch
+  // whose documents have all their pages checked is reviewable words. A batch
+  // with boundaries but none ready is waiting on the row check (its pages may
+  // predate the reader entirely — the strip-era piles), so it is named as
+  // such, never offered as transcription work.
+  const isOpen = (b) => b.status !== "confirmed" && (b.boundaries ?? []).some((x) => x.status !== "confirmed");
+  // a document with ANY checked page is reviewable words for those pages (the
+  // transcription stage runs per page); confirming it whole waits for all of
+  // them, which the surface enforces
+  const started = (b) => (b.documents_ready ?? []).length + (b.documents_partial ?? []).length;
+  const open = batches.filter((b) => isOpen(b) && started(b) > 0);
+  const beforeGate = batches.filter((b) => isOpen(b) && (b.boundaries ?? []).length > 0 && started(b) === 0);
   // the portal's rows item (UR2): a page the read stage has finished waits on
   // its check even when every document of the batch is already confirmed
   const toCheck = batches.filter((b) => (b.pages_pending || []).length);
@@ -455,6 +479,7 @@ async function renderBatchList(main, state) {
   const hasWork =
     toCheck.length > 0 ||
     open.length > 0 ||
+    beforeGate.length > 0 ||
     toIdentify.length > 0 ||
     (state && (pendingImports(state).length > 0 || draftItems(state.items).length > 0));
   if (!hasWork) {
@@ -508,14 +533,42 @@ async function renderBatchList(main, state) {
     for (const batch of open) {
       const boundaries = batch.boundaries || [];
       const confirmed = boundaries.filter((b) => b.status === "confirmed").length;
-      const pages = Object.keys(batch.pages || {}).length;
-      const progress = boundaries.length ? `${confirmed} of ${boundaries.length} confirmed` : `${pages} pages`;
+      const ready = (batch.documents_ready ?? []).length;
+      const partial = (batch.documents_partial ?? []).length;
+      const progress = `${ready} of ${boundaries.length} documents ready to review${
+        partial ? ` · ${partial} partly checked` : ""
+      } · ${confirmed} confirmed`;
       const card = el("button", { class: "rv-card", onclick: () => navigate(`review/${batch.batch_id}`) }, [
         el("div", { class: "rv-card-main" }, [
           el("div", { class: "rv-card-title" }, batch.label || batch.batch_id),
           el("div", { class: "rv-card-sub" }, progress),
         ]),
         el("span", { class: "rv-chip" }, confirmed && confirmed === boundaries.length ? "Reviewed" : "Awaiting review"),
+      ]);
+      list.append(card);
+    }
+    main.append(list);
+  }
+
+  // Batches whose documents sit before the row check: nothing to review as
+  // words yet — the pages need their rows checked (or, when they predate the
+  // reader, re-reading) before the transcription queue can hold them.
+  if (beforeGate.length) {
+    main.append(el("h2", { class: "rv-section-title" }, "Before the row check — pages not yet read as rows"));
+    const list = el("div", { class: "rv-list" });
+    for (const batch of beforeGate) {
+      const boundaries = (batch.boundaries || []).length;
+      const pages = Object.keys(batch.pages || {}).length;
+      const card = el("button", { class: "rv-card", onclick: () => navigate(`review/${batch.batch_id}`) }, [
+        el("div", { class: "rv-card-main" }, [
+          el("div", { class: "rv-card-title" }, batch.label || batch.batch_id),
+          el(
+            "div",
+            { class: "rv-card-sub" },
+            `${boundaries} documents · ${pages} pages — no page has passed the row check`,
+          ),
+        ]),
+        el("span", { class: "rv-chip" }, "Before the row check"),
       ]);
       list.append(card);
     }
@@ -615,7 +668,18 @@ async function renderBatch(main, batchId, state, initial = null) {
   // delivery state, so this cannot reorient a page the reviewer didn't
   // press — VR10 AC13); fire-and-forget: the batch list renders now
   void deliverOwed();
-  const documents = data.documents || [];
+  // a document's checked pages are its reviewable pages: the unchecked ones
+  // carry the machine's draft rows, so they wait (the transcript stage is
+  // after the row check). The document itself can only be confirmed once
+  // EVERY page is past the check.
+  const documents = (data.documents || []).map((doc) => {
+    // an answer without the field predates the gate: every page counts as
+    // checked (the server always sends it)
+    const readyPages = doc.pages_ready ?? doc.pages ?? [];
+    const waitingPages = (doc.pages || []).filter((p) => !readyPages.includes(p));
+    if (!waitingPages.length) return doc;
+    return { ...doc, pages: (doc.pages || []).filter((p) => readyPages.includes(p)), waitingPages };
+  });
   const confirmed = documents.filter((d) => d.status === "confirmed").length;
   const root = el("div", { class: "rv" }, [
     el("div", { class: "rv-topbar" }, [
@@ -632,9 +696,22 @@ async function renderBatch(main, batchId, state, initial = null) {
     root.append(el("button", { class: "rv-btn", onclick: () => renderBatchList(root, state) }, "← Back to review"));
     return;
   }
-  // a URL with the surface's position (a refresh) restores it directly
+  // The transcription stage sits after the row check: a document whose pages
+  // have not passed it is not reviewable words yet, however someone reached
+  // this URL (the hub does not offer it; a deep link must not either).
+  // after the mapping above, `doc.pages` IS the checked pages: a document with
+  // none has nothing reviewable yet (it is before the row check), while one
+  // with some can be reviewed page by page
+  const beforeGate = (doc) => !(doc?.pages ?? []).length;
   if (initial) {
     const { doc, page } = initial;
+    if (Number.isInteger(doc) && doc >= 0 && doc < documents.length && beforeGate(documents[doc])) {
+      root.append(
+        el("div", { class: "rv-note" }, "This document's pages have not passed the row check — check its rows first."),
+      );
+      root.append(el("button", { class: "rv-btn", onclick: () => navigate("review") }, "← Review"));
+      return;
+    }
     if (Number.isInteger(doc) && doc >= 0 && doc < documents.length) {
       const session = makeSession({ batchId, label: data.label, documents, processing: data.processing || {} }, doc);
       session.pageIndex = Math.min(Math.max(page, 0), documents[doc].pages.length - 1);
@@ -653,13 +730,25 @@ async function renderBatch(main, batchId, state, initial = null) {
   });
   const awaiting = documents
     .map((doc, i) => ({ doc, i }))
-    .filter(({ doc }) => doc.status !== "confirmed" && doc.status !== "rejected");
+    .filter(({ doc }) => doc.status !== "confirmed" && doc.status !== "rejected" && !beforeGate(doc));
+  const waiting = documents.map((doc, i) => ({ doc, i })).filter(({ doc }) => beforeGate(doc));
+  if (waiting.length) {
+    root.append(
+      el(
+        "div",
+        { class: "rv-note" },
+        `${waiting.length} document${waiting.length === 1 ? "" : "s"} in this batch cannot be reviewed as words yet — no page has passed the row check.`,
+      ),
+    );
+  }
   if (!awaiting.length) {
     root.append(
       el(
         "div",
         { class: "rv-note" },
-        `All ${documents.length} document${documents.length === 1 ? "" : "s"} in this batch ${documents.length === 1 ? "is" : "are"} confirmed.`,
+        waiting.length
+          ? "No page in this batch is past the row check yet."
+          : `All ${documents.length} document${documents.length === 1 ? "" : "s"} in this batch ${documents.length === 1 ? "is" : "are"} confirmed.`,
       ),
     );
     return;
@@ -1026,7 +1115,22 @@ function renderSurface(main, session) {
   // cannot exist without a title and a date (the archive's item model), and
   // only the reviewer knows them. Keyed by document — a reviewer confirming
   // document 2 must never carry document 1's title into it.
+  if (isLastPage && doc.waitingPages?.length) {
+    // the document is confirmed whole, and these pages still carry the
+    // machine's draft rows — name them instead of offering the confirm
+    actionBar.prepend(
+      el(
+        "div",
+        { class: "rv-note rv-waiting" },
+        `${doc.waitingPages.length} page${doc.waitingPages.length === 1 ? "" : "s"} of this document (${doc.waitingPages.join(", ")}) ${
+          doc.waitingPages.length === 1 ? "has" : "have"
+        } not passed the row check — check the rows to finish it.`,
+      ),
+    );
+  }
   if (isLastPage) {
+    // the facts are asked even while sibling pages wait: this page is
+    // approved on its own, and the item exists from the first approval
     session.docFacts = session.docFacts || {};
     const facts = (session.docFacts[session.docIndex] ||= loadDocFacts(batch.batchId, session.docIndex) || {
       title: doc.title || "",
@@ -2612,18 +2716,21 @@ async function confirmNext(session) {
     session.root.querySelector(".rv-docfacts")?.classList.add("is-failed");
     return;
   }
-  const payload = {
+  // approval is per page: a checked page never waits for its siblings. The
+  // backend assembles the document's item from the approved pages and
+  // catalogues it once every text page is approved.
+  const base = {
+    kind: "approval",
     batch_id: batch.batchId,
-    doc_index: docIndex + 1, // 1-based, matches the CLI gate
-    pages: doc.pages,
-    text: correctedDocumentText(doc, session.edits),
-    status: "confirmed",
-    confirmed_at: new Date().toISOString(),
     title,
     date,
     date_precision: date.length === 10 ? "exact" : date.length === 7 ? "month" : "year",
   };
-  const pushed = await confirmDocument(payload);
+  let pushed = true;
+  for (const page of doc.pages) {
+    const approval = { ...base, page, text: correctedPageText(doc, page, session.edits) };
+    if (!(await confirmDocument(approval))) pushed = false;
+  }
   if (pushed) {
     clearEdits(batch.batchId, docIndex);
     clearDocFacts(batch.batchId, docIndex); // the facts are the archive's now
@@ -2635,9 +2742,11 @@ async function confirmNext(session) {
       el(
         "div",
         { class: "rv-note rv-note--ok" },
-        pushed
-          ? `Document ${docIndex + 1} of ${batch.documents.length} saved to the family archive.`
-          : "Saved on this device — will sync when the archive's computer is reachable.",
+        !pushed
+          ? "Saved on this device — will sync when the archive's computer is reachable."
+          : doc.waitingPages?.length
+            ? `Page${doc.pages.length === 1 ? "" : "s"} ${doc.pages.join(", ")} approved — the document completes when ${doc.waitingPages.join(", ")} ${doc.waitingPages.length === 1 ? "is" : "are"} approved too.`
+            : `Document ${docIndex + 1} of ${batch.documents.length} saved to the family archive.`,
       ),
     );
   // advance to the next document still awaiting review — the confirmed/

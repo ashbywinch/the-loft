@@ -24,7 +24,7 @@ import uvicorn
 
 from pipeline.api.server import Server, ServerConfig, build_app, lan_addresses
 from pipeline.model.ai_client import AIClient, AIClientError
-from pipeline.registry import RegistryError
+from pipeline.registry import RegistryError, list_batches
 from pipeline.worker import Worker
 from tools.anchor import Anchor
 from tools.archive import Archive
@@ -116,10 +116,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
             # Watch only the backend source — the whole-repo watch scans and
             # reloads on .venv/conda-tools churn, and uvicorn's reload-exclude
             # patterns can't match mid-path dirs (Path.match is right-aligned;
-            # absolute patterns are rejected outright). Narrow
-            # roots are the honest fix: tools/ + tests/ are all the backend
-            # has; the frontend is served without a build step.
-            reload_dirs=[str(ROOT / "tools"), str(ROOT / "tests")],
+            # absolute patterns are rejected outright). Narrow roots are the
+            # honest fix: tools/ + pipeline/ are the backend (editing a test
+            # must not bounce the server, and a pipeline edit must reload it);
+            # the frontend is served without a build step.
+            reload_dirs=[str(ROOT / "tools"), str(ROOT / "pipeline")],
             host=args.host,
             port=args.port,
             log_level="info",
@@ -158,32 +159,89 @@ def cmd_capture_memory(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_work(args: argparse.Namespace) -> int:
-    """The scan pickup (UR3): requeue when the operator says so, register the
-    scan area's piles, and run the machine stages — which stop where a person
-    takes over, at the page's row check."""
-    paths = LoftPaths(scan_area=Path(args.scan_area))
-    worker = Worker(paths)
-    if args.requeue:
+class _WorkCommand:
+    """The operator's one surface over the worker: requeue, plan, reconcile one
+    batch, watch, or one sweep — the paths and the worker travel together."""
+
+    def __init__(self, paths: LoftPaths, worker: Worker) -> None:
+        self.paths = paths
+        self.worker = worker
+
+    def requeue(self, batch_id: str) -> int:
         try:
-            _ = worker.requeue(args.requeue)
+            _ = self.worker.requeue(batch_id)
         except RegistryError as exc:
             print(f"worker: {exc}")
             return 1
-    if args.watch:
-        print(f"worker: watching {paths.scan_area} — a sweep every {args.watch:g}s (Ctrl-C stops)")
+        return 0
+
+    def selected(self, batch_id: str) -> list[Any]:
+        """The registry records this command is about: all of them, or the one."""
+        return [
+            record for record in list_batches(self.paths.registry_dir) if not batch_id or record.batch_id == batch_id
+        ]
+
+    def plan(self, batch_id: str) -> int:
+        """Print every batch's gap (or one batch's) and run nothing."""
+        selected = self.selected(batch_id)
+        if batch_id and not selected:
+            print(f"worker: no batch {batch_id!r} in the registry")
+            return 1
+        plans = [self.worker.reconciler.plan_batch(record) for record in selected]
+        for plan in plans:
+            if plan.stages:
+                print(f"{plan.batch_id}: {', '.join(plan.stages)}")
+                for reason in plan.reasons:
+                    print(f"  {reason}")
+        print(f"worker: {sum(1 for plan in plans if plan.stages)} of {len(plans)} batch(es) need work")
+        return 0
+
+    def reconcile(self, batch_id: str) -> int:
+        """Reconcile one batch: the missed-stage write for one pile."""
+        selected = self.selected(batch_id)
+        if not selected:
+            print(f"worker: no batch {batch_id!r} in the registry")
+            return 1
         try:
-            worker.watch(args.watch)
+            plan = self.worker.reconciler.run(selected[0])
+        except Exception as exc:  # one batch's failure is the command's failure, reported whole
+            print(f"worker: {batch_id} FAILED — {type(exc).__name__}: {exc}")
+            return 1
+        print(f"worker: {batch_id} — {', '.join(plan.stages) or 'nothing to do'}")
+        return 0
+
+    def watch(self, resync: float) -> int:
+        try:
+            self.worker.watch(resync)
         except KeyboardInterrupt:  # the operator's stop is this command's exit, not a crash
             print("worker: stopped")
             return 0
         return 0
-    report = worker.sweep()
-    print(
-        f"worker: {len(report.adoptions)} pile(s) seen, {len(report.requeued)} requeued, "
-        f"{len(report.processed)} batch(es) ran, {len(report.failed)} failed"
-    )
-    return 1 if report.failed else 0
+
+    def sweep(self) -> int:
+        report = self.worker.sweep()
+        print(
+            f"worker: {len(report.adoptions)} pile(s) seen, {len(report.requeued)} requeued, "
+            f"{len(report.processed)} batch(es) ran, {len(report.failed)} failed"
+        )
+        return 1 if report.failed else 0
+
+
+def cmd_work(args: argparse.Namespace) -> int:
+    """The scan pickup (UR3): requeue when the operator says so, register the
+    scan area's piles, and reconcile the machine stages — which stop where a
+    person takes over, at the page's row check."""
+    paths = LoftPaths(scan_area=Path(args.scan_area))
+    command = _WorkCommand(paths, Worker(paths))
+    if args.requeue:
+        return command.requeue(args.requeue)
+    if args.plan:
+        return command.plan(args.batch)
+    if args.batch:
+        return command.reconcile(args.batch)
+    if args.watch:
+        return command.watch(args.watch)
+    return command.sweep()
 
 
 def cmd_gedcom(args: argparse.Namespace) -> int:
@@ -289,7 +347,18 @@ def build_parser() -> argparse.ArgumentParser:
         fn=cmd_work,
     )
     p.add_argument("--scan-area", default=str(USER_SCAN_AREA), help="the folder the scanner drops piles into")
-    p.add_argument("--watch", type=float, default=0.0, help="repeat a sweep every N seconds (0 = one sweep)")
+    p.add_argument("--batch", default="", help="work one batch only (its id, as the registry names it)")
+    p.add_argument(
+        "--plan",
+        action="store_true",
+        help="print what each batch still needs, run nothing",
+    )
+    p.add_argument(
+        "--watch",
+        type=float,
+        default=0.0,
+        help="reconcile on file changes, with a full resync every N seconds (0 = one sweep)",
+    )
     p.add_argument(
         "--requeue",
         default="",

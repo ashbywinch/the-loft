@@ -34,7 +34,9 @@ from fastapi.staticfiles import StaticFiles
 
 from document.document import DOCUMENT_DRAFT
 from document.row_adjustments import RowAdjustments
+from document.stages import PageStatus
 from pipeline.api import auth
+from pipeline.api.approval import ApprovalContext, DocumentFacts, approve_page
 from pipeline.api.assess_request import AssessRequest
 from pipeline.api.batch_drafts_answer import BatchDraftsAnswer
 from pipeline.api.confirmation_answer import ConfirmationAnswer
@@ -68,6 +70,7 @@ from pipeline.api.sync import (
     Outbox,
     apply_row_adjustments,
     demote_stale_jobs,
+    document_readiness,
     draft_payloads,
     identify_document,
     page_job_state,
@@ -78,6 +81,7 @@ from pipeline.api.sync import (
     safe_page_name,
     set_page_job,
 )
+from pipeline.artefacts import BatchArtefacts
 from pipeline.identify import IdentificationError
 from pipeline.model.ai_client import AIClient
 from pipeline.registry import RegistryError, list_batches, load_batch
@@ -682,6 +686,11 @@ def build_app(
                 record = batch.to_dict()
                 readings = BatchReadings(work_dir, str(record["batch_id"]))
                 record["pages_pending"] = pages_pending(readings, list(record.get("pages") or {}))
+                ready, partial = document_readiness(
+                    [list(boundary.get("pages") or []) for boundary in record.get("boundaries") or []], readings
+                )
+                record["documents_ready"] = ready
+                record["documents_partial"] = partial
                 batches.append(record)
             return {"batches": batches}
         except RegistryError as exc:
@@ -712,11 +721,25 @@ def build_app(
                 texts = document.get("texts") or {}
                 if not texts:
                     continue
+                text_pages = [p for p in document.get("pages", []) if p in texts]
+                readings = BatchReadings(work_dir, batch_id)
+                # the transcription stage runs on checked rows: a page still
+                # carrying draft rows is not reviewable words yet, and a
+                # strip-era page has no reading to check at all
+                # a printed page is ready when its direct read exists: it has
+                # no rows to check: its stage-5 text exists
+                pages_ready = [
+                    p
+                    for p in text_pages
+                    if readings.page_status(p) in (PageStatus.ROWS_ADJUSTED, PageStatus.TRANSCRIPTS_PROPOSED)
+                ]
                 documents.append(
                     {
                         **document,
-                        "pages": [p for p in document.get("pages", []) if p in texts],
+                        "pages": text_pages,
                         "status": by_pages.get(tuple(document.get("pages", [])), DOCUMENT_DRAFT),
+                        "pages_ready": pages_ready,
+                        "ready": bool(text_pages) and len(pages_ready) == len(text_pages),
                     }
                 )
             return BatchDraftsAnswer(
@@ -739,7 +762,7 @@ def build_app(
             return JSONResponse(ErrorAnswer("sign in to read the pages").to_dict(), status_code=401)
         if not BATCH_ID.match(batch_id) or not safe_page_name(page):
             return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
-        image = work_dir / batch_id / "oriented" / page
+        image = BatchArtefacts(work_dir, batch_id).oriented(page)
         if not image.is_file():
             # a photo/drawing page skips orientation entirely (the grouping
             # scorer puts the postcard's picture side into its document —
@@ -768,7 +791,15 @@ def build_app(
                 label = None
                 with contextlib.suppress(RegistryError):
                     label = load_batch(batch_id, registry_dir).label
-                reprocess_page_transcription(batch_id, page, work_dir, people=people, places=places, label=label)
+                reprocess_page_transcription(
+                    batch_id,
+                    page,
+                    work_dir,
+                    registry_dir=registry_dir,
+                    people=people,
+                    places=places,
+                    label=label,
+                )
             # The background thread's terminal handler — logger.exception
             # lucidlint: ignore swallow is the observable surface; the thread ends
             except Exception:
@@ -842,6 +873,41 @@ def build_app(
             violations=correction.violations,
             tints=correction.tints,
         ).to_dict()
+
+    @app.post("/api/sync/approvals")
+    def sync_approvals(payload: Mapping[str, Any], request: Request) -> Any:
+        """The per-page approval: one page's text is agreed on its own; the
+        document's item is minted as a draft from the approved pages and is
+        catalogued when every text page is approved."""
+        if session_user(request) is None:
+            return JSONResponse(ErrorAnswer("sign in to approve pages").to_dict(), status_code=401)
+        try:
+            batch_id = str(payload["batch_id"])
+            page = str(payload["page"])
+            text = str(payload["text"])
+            approval = approve_page(
+                batch_id,
+                page,
+                text,
+                context=ApprovalContext(archive, work_dir, registry_dir),
+                facts=DocumentFacts(
+                    title=str(payload.get("title", "")),
+                    date=str(payload.get("date", "")),
+                    date_precision=str(payload.get("date_precision", "")),
+                    by=str(getattr(session_user(request), "email", "") or ""),
+                ),
+            )
+        except (KeyError, TypeError, ValueError, RegistryError, ArchiveError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        archive.publish(data_dir)
+        return {
+            "batch_id": batch_id,
+            "page": approval.page,
+            "item_id": approval.item_id,
+            "document_complete": approval.document_complete,
+            "pages_approved": approval.pages_approved,
+            "pages_total": approval.pages_total,
+        }
 
     @app.post("/api/sync/confirmations")
     def sync_confirmations(payload: Mapping[str, Any], request: Request) -> Any:

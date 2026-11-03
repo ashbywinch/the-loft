@@ -20,7 +20,10 @@ from pathlib import Path
 from typing import override
 
 import pytest
+from watchfiles import Change
 
+from pipeline.batch_record import BatchRecord
+from pipeline.reconcile import Plan, Reconciler
 from pipeline.registry import RegistryError, load_batch
 from pipeline.worker import Worker
 from tools.loft_paths import LoftPaths
@@ -64,27 +67,23 @@ def _record(
     _ = (registry_dir / f"{batch_id}.json").write_text(json.dumps(record), encoding="utf-8")
 
 
-class _Ran(Worker):
-    """A worker whose machine pass is the test's: it records the batch ids it
-    was asked to run, and can be told to fail one."""
+class _RecordingReconciler(Reconciler):
+    """The reconciler with only the model-run stage replaced: planning stays
+    real, so these tests pin which batches the sweep finds work in."""
 
-    def __init__(
-        self,
-        paths: LoftPaths,
-        *,
-        write_line: Callable[[str], None] = print,
-        fail: tuple[str, ...] = (),
-        now: Callable[[], datetime] | None = None,
-    ) -> None:
-        super().__init__(paths, write_line=write_line, now=now)
+    def __init__(self, paths: LoftPaths, *, fail: tuple[str, ...] = ()) -> None:
+        super().__init__(paths, write_line=lambda line: None)
         self.ran: list[str] = []
         self._fail = fail
 
     @override
-    def run_batch(self, batch_id: str) -> None:
-        self.ran.append(batch_id)
-        if batch_id in self._fail:
+    def run(self, record: BatchRecord) -> Plan:
+        plan = self.plan_batch(record)
+        if plan.stages:
+            self.ran.append(record.batch_id)
+        if record.batch_id in self._fail:
             raise RuntimeError("the model refused the page")
+        return plan
 
 
 def _paths(tmp_path: Path) -> LoftPaths:
@@ -98,8 +97,20 @@ def _paths(tmp_path: Path) -> LoftPaths:
     )
 
 
-def _worker(tmp_path: Path, *, fail: tuple[str, ...] = (), now: Callable[[], datetime] | None = None) -> _Ran:
-    return _Ran(_paths(tmp_path), write_line=lambda line: None, fail=fail, now=now)
+def _worker(tmp_path: Path, *, fail: tuple[str, ...] = (), now: Callable[[], datetime] | None = None) -> Worker:
+    paths = _paths(tmp_path)
+    return Worker(
+        paths,
+        write_line=lambda line: None,
+        now=now,
+        reconciler=_RecordingReconciler(paths, fail=fail),
+    )
+
+
+def _ran(worker: Worker) -> list[str]:
+    """The batches the test's reconciler was asked to run."""
+    assert isinstance(worker.reconciler, _RecordingReconciler)
+    return worker.reconciler.ran
 
 
 def test_a_dropped_pile_is_registered_and_run(tmp_path: Path) -> None:
@@ -137,15 +148,46 @@ def test_a_folder_with_no_pages_is_not_a_pile(tmp_path: Path) -> None:
     assert report.processed == ()
 
 
-def test_only_a_pending_batch_is_run(tmp_path: Path) -> None:
-    """The registry's status IS the queue: a reviewed batch is not re-run."""
+def _complete_batch(tmp_path: Path, batch_id: str, status: str, arrived_at: str) -> None:
+    """A batch whose machine stages are all done — a page classified, oriented
+    and read, and its pile grouped — as the artefacts leave it."""
     registry = tmp_path / "registry"
-    _record(registry, "batch-reviewed", "review", "2026-10-27T13:00:00+00:00")
-    _record(registry, "batch-pending", "pending", "2026-10-27T12:00:00+00:00")
+    _record(registry, batch_id, status, arrived_at)
+    work = tmp_path / "work" / batch_id
+    (work / "oriented").mkdir(parents=True)
+    (work / "ocr-guess").mkdir(parents=True)
+    _ = (work / "classify.json").write_text(
+        json.dumps({"p1.jpg": {"kind": "photograph", "confidences": {"photograph": 0.9}}}), encoding="utf-8"
+    )
+    _ = (work / "ocr-guess" / "boundaries.json").write_text("[]", encoding="utf-8")
+
+
+def test_a_batch_with_no_gap_is_left_alone(tmp_path: Path) -> None:
+    """A finished batch is not re-run: planning sees no missing stage."""
+    _complete_batch(tmp_path, "batch-done", "review", "2026-10-27T13:00:00+00:00")
     worker = _worker(tmp_path)
     report = worker.sweep()
-    assert worker.ran == ["batch-pending"]
-    assert report.processed == ("batch-pending",)
+    assert _ran(worker) == []
+    assert report.processed == ()
+
+
+def test_a_reviewed_batch_with_a_gap_is_reconciled(tmp_path: Path) -> None:
+    """The Gazette case: a `review` batch whose grouping never ran is not in
+    the pending queue, and the gap is what the reconciler notices."""
+    registry = tmp_path / "registry"
+    _record(registry, "batch-review", "review", "2026-10-27T13:00:00+00:00")
+    work = tmp_path / "work" / "batch-review"
+    (work / "oriented").mkdir(parents=True)
+    (work / "ocr-guess").mkdir(parents=True)
+    _ = (work / "classify.json").write_text(
+        json.dumps({"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}), encoding="utf-8"
+    )
+    _ = (work / "ocr-guess" / "p1.printed.json").write_text("{}", encoding="utf-8")
+    _ = (work / "ocr-guess" / "p1.txt").write_text("TEXT", encoding="utf-8")
+    worker = _worker(tmp_path)
+    report = worker.sweep()
+    assert _ran(worker) == ["batch-review"]  # group is missing
+    assert report.processed == ("batch-review",)
 
 
 def test_a_failing_batch_is_reported_and_the_queue_continues(tmp_path: Path) -> None:
@@ -155,28 +197,29 @@ def test_a_failing_batch_is_reported_and_the_queue_continues(tmp_path: Path) -> 
     _record(registry, "batch-b", "pending", "2026-10-27T11:00:00+00:00")
     worker = _worker(tmp_path, fail=("batch-a",))
     report = worker.sweep()
-    assert worker.ran == ["batch-a", "batch-b"]  # newest first, both attempted
+    assert _ran(worker) == ["batch-a", "batch-b"]  # newest first, both attempted
     assert [failure.batch_id for failure in report.failed] == ["batch-a"]
     assert report.failed[0].reason == "RuntimeError: the model refused the page"
     assert report.processed == ("batch-b",)
 
 
-def test_watch_sweeps_until_interrupted(tmp_path: Path) -> None:
-    """The long-running mode: a sweep, the interval's wait, a sweep — the wait
-    is the seam, so the test drives it without a clock."""
-    worker = _worker(tmp_path)
-    _pile(tmp_path / "scans")
-    waits: list[float] = []
-
-    def _sleep(seconds: float) -> None:
-        waits.append(seconds)
-        if len(waits) == 3:
-            raise RuntimeError("stop the watch loop")
-
-    with pytest.raises(RuntimeError, match="stop the watch loop"):
-        worker.watch(30, _sleep=_sleep)
-    assert waits == [30, 30, 30]
-    assert len(worker.ran) == 3  # the third sweep ran before its wait
+def test_a_changed_path_names_its_batch(tmp_path: Path) -> None:
+    """The watch turns a file change into the batch it concerns: a work-tree
+    path, a registry record (base or a versioned copy), and the scan area."""
+    paths = _paths(tmp_path)
+    batch = "adopt-20261027-120000"
+    _record(paths.registry_dir, batch, "review", "2026-10-27T12:00:00+00:00")
+    (paths.work_dir / batch / "ocr-guess").mkdir(parents=True)
+    (paths.scan_area / "pile").mkdir(parents=True)
+    worker = Worker(paths, write_line=lambda line: None)
+    changes = {
+        (Change.added, str(paths.work_dir / batch / "ocr-guess" / "p1.txt")),
+        (Change.modified, str(paths.registry_dir / f"{batch}-2.json")),
+        (Change.added, str(paths.scan_area / "pile" / "p1.jpg")),
+    }
+    batches, scan_touched = worker._batch_ids(changes)
+    assert batches == {batch}
+    assert scan_touched is True
 
 
 NOW = datetime(2026, 10, 29, 12, 0, tzinfo=UTC)
@@ -193,7 +236,7 @@ def test_a_dead_processing_batch_goes_back_in_the_queue(tmp_path: Path) -> None:
     report = worker.sweep()
 
     assert report.requeued == ("batch-stuck",)
-    assert worker.ran == ["batch-stuck"]
+    assert _ran(worker) == ["batch-stuck"]
 
 
 def test_a_stale_processing_stamp_is_dead(tmp_path: Path) -> None:
@@ -214,7 +257,7 @@ def test_a_live_processing_pass_is_left_alone(tmp_path: Path) -> None:
     report = worker.sweep()
 
     assert report.requeued == ()
-    assert worker.ran == []
+    assert _ran(worker) == []
 
 
 def test_a_killed_pass_on_this_host_is_requeued_at_once(tmp_path: Path) -> None:
@@ -236,7 +279,7 @@ def test_a_killed_pass_on_this_host_is_requeued_at_once(tmp_path: Path) -> None:
     worker = _worker(tmp_path, now=lambda: NOW)
 
     assert worker.sweep().requeued == ("batch-killed",)
-    assert worker.ran == ["batch-killed"]
+    assert _ran(worker) == ["batch-killed"]
 
 
 def test_a_live_pass_on_this_host_is_left_alone(tmp_path: Path) -> None:
@@ -255,7 +298,7 @@ def test_a_live_pass_on_this_host_is_left_alone(tmp_path: Path) -> None:
     worker = _worker(tmp_path, now=lambda: NOW)  # an hour in — past the grace
 
     assert worker.sweep().requeued == ()
-    assert worker.ran == []
+    assert _ran(worker) == []
 
 
 def test_a_reviewed_batch_is_never_requeued_automatically(tmp_path: Path) -> None:
@@ -275,9 +318,38 @@ def test_requeue_puts_a_reviewed_batch_back(tmp_path: Path) -> None:
     assert load_batch("batch-legacy", registry).status == "pending"
     report = worker.sweep()
     assert report.requeued == ()  # already pending, not demoted
-    assert worker.ran == ["batch-legacy"]
+    assert _ran(worker) == ["batch-legacy"]
 
 
 def test_requeue_an_unknown_batch_fails_loudly(tmp_path: Path) -> None:
     with pytest.raises(RegistryError, match="no registry record"):
         _worker(tmp_path, now=lambda: NOW).requeue("batch-ghost")
+
+
+def test_a_folder_of_piles_is_adopted_as_its_piles(tmp_path: Path) -> None:
+    """An inbox folder (no images of its own) is not a pile: its child folders
+    are, one batch each."""
+    inbox = tmp_path / "scans" / "inbox"
+    for name in ("pile-a", "pile-b"):
+        folder = inbox / name
+        folder.mkdir(parents=True)
+        (folder / f"{name}-01.jpg").write_bytes(f"page {name}".encode())  # distinct content: a different pile
+    worker = _worker(tmp_path)
+    report = worker.sweep()
+    records = [load_batch(result.path.stem, tmp_path / "registry") for result in report.adoptions]
+    assert sorted(str(record.path) for record in records) == sorted([str(inbox / "pile-a"), str(inbox / "pile-b")])
+
+
+def test_a_pile_whose_scans_sit_in_a_subfolder_is_one_pile(tmp_path: Path) -> None:
+    """A folder with no images of its own but scans in a subfolder is adopted
+    at the folder that holds them — one pile, not one per level."""
+    dated = tmp_path / "scans" / "dad" / "2026-08-17"
+    dated.mkdir(parents=True)
+    (dated / "scan-01.jpg").write_bytes(b"\xff\xd8 page")
+    (dated / "scan-02.jpg").write_bytes(b"\xff\xd8 page")
+    worker = _worker(tmp_path)
+    report = worker.sweep()
+    assert len(report.adoptions) == 1
+    record = load_batch(report.adoptions[0].path.stem, tmp_path / "registry")
+    assert record.path == dated
+    assert sorted(record.pages) == ["scan-01.jpg", "scan-02.jpg"]

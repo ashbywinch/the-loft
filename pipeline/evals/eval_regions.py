@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from pipeline.artefacts import BatchArtefacts
 from pipeline.evals.eval_crop_grid import read_crop
 from pipeline.evals.eval_geometry import CropReading
 from pipeline.layout import Layout
@@ -125,7 +126,7 @@ def run(
     """The column-region read: the ink's columns as the crops, each read
     at its orientation, the boxes stitched — the experiment's ledger for
     one page."""
-    image_path = work_dir / batch_id / "oriented" / f"{page}.jpg"
+    image_path = BatchArtefacts(work_dir, batch_id).oriented(f"{page}.jpg")
     with Image.open(image_path) as im:
         width, height = im.size
     ink = ink_y_range(image_path)
@@ -177,9 +178,9 @@ def run(
         elapsed_s=round(elapsed, 1),
     )
     slug = model.replace("/", "-").replace("@", "")
-    out = work_dir / batch_id / "ocr-guess" / f"{page}.regions-{slug}.json"
+    out = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.regions-{slug}.json"
     out.write_text(json.dumps(assembled.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
-    report_path = work_dir / batch_id / "ocr-guess" / f"{page}.regions-report-{slug}.json"
+    report_path = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.regions-report-{slug}.json"
     report_path.write_text(json.dumps(report.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
     return report
 

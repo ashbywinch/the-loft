@@ -30,6 +30,7 @@ from pipeline.model.ai_client import DEFAULT_BASE_URL, find_api_key
 from pipeline.model.chat_message import ChatMessage
 from pipeline.model.chat_request import ChatRequest
 from pipeline.model.chat_response import ChatResponse
+from pipeline.model.config import VISION_MODEL
 from pipeline.model.http_headers import USER_AGENT, HttpHeaders
 from pipeline.model.image_content import ImageContent
 from pipeline.model.orientation_report import OrientationReport
@@ -232,7 +233,7 @@ class VlmOptions:
     URL, with which key and budgets (the object model's `VlmOptions`). One
     value travels, so a call takes two arguments however many knobs it has."""
 
-    model: str = "dynamic/image"
+    model: str = VISION_MODEL
     system: str = VLM_SYSTEM
     user_text: str | None = None
     base_url: str = DEFAULT_BASE_URL
@@ -297,7 +298,7 @@ def transcribe_images_vlm(images: list[Path], *, options: VlmOptions | None = No
 def transcribe_image_vlm(
     image: Path,
     *,
-    model: str = "dynamic/image",
+    model: str = VISION_MODEL,
     system: str = VLM_SYSTEM,
     user_text: str | None = None,
     base_url: str = DEFAULT_BASE_URL,

@@ -47,10 +47,27 @@ from tools.loft_paths import LoftPaths
 DEFAULT_PATHS = LoftPaths()  # the install's locations; a caller passes its own for a scratch tree
 
 
-def _has_pages(folder: Path) -> bool:
-    """Whether the folder holds a page image (the adoption's own extension
-    set, so a folder adoption would refuse is not offered to it)."""
-    return any(path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS for path in folder.rglob("*"))
+def _is_pile(folder: Path) -> bool:
+    """Whether the folder IS a pile: it holds a page image directly.
+
+    A folder with no images of its own is a folder OF piles (the scan area's
+    inbox shape: `scans/Loft/inbox/<pile>/`), not a pile — adopting it would
+    make one batch of several piles. Descend into it and adopt its children
+    instead; a pile that keeps its scans in a subfolder (`pile/2026-08-17/`)
+    is reached the same way, because the folder that holds the images is the
+    pile."""
+    return any(path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS for path in folder.iterdir())
+
+
+def _piles_under(folder: Path) -> list[Path]:
+    """The piles a scan-area folder holds: itself when it holds images
+    directly, else its child folders that do (recursively)."""
+    if _is_pile(folder):
+        return [folder]
+    piles: list[Path] = []
+    for child in sorted(path for path in folder.iterdir() if path.is_dir()):
+        piles.extend(_piles_under(child))
+    return piles
 
 
 def _pid_alive(pid: int) -> bool:
@@ -146,9 +163,10 @@ class Worker:
         if not self.paths.scan_area.is_dir():
             return ()
         adopted: list[AdoptionResult] = []
+        piles: list[Path] = []
         for folder in sorted(path for path in self.paths.scan_area.iterdir() if path.is_dir()):
-            if not _has_pages(folder):
-                continue
+            piles.extend(_piles_under(folder))
+        for folder in piles:
             result = register_adopted(folder, registry_dir=self.paths.registry_dir, work_dir=self.paths.work_dir)
             if result.outcome != "already-registered":
                 self.write_line(f"pickup: {folder.name} — {result.outcome}")

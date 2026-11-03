@@ -360,12 +360,27 @@ async function postConfirmation(payload) {
   if (!res.ok) throw new Error(`confirmation rejected (${res.status})`);
 }
 
+async function postApproval(payload) {
+  const res = await fetch("/api/sync/approvals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`approval rejected (${res.status})`);
+}
+
+/** Push one queued item to the endpoint it belongs to: a page approval or a
+ *  document-level confirmation/rejection. */
+async function postPayload(payload) {
+  return payload.kind === "approval" ? postApproval(payload) : postConfirmation(payload);
+}
+
 /** Push a confirmation; on failure it stays in the outbox. The outbox is
  *  retried on every subsequent confirm and on the batch screen. Returns
  *  whether the backend recorded it. */
 async function confirmDocument(payload) {
   try {
-    await postConfirmation(payload);
+    await postPayload(payload);
   } catch (error) {
     console.warn("review: push failed — kept in the outbox", error);
     outboxAdd(payload);
@@ -380,7 +395,7 @@ async function confirmDocument(payload) {
 async function retryOutbox() {
   for (const item of outboxPending()) {
     try {
-      await postConfirmation(item);
+      await postPayload(item);
       outboxDrop(item);
     } catch {
       return; // still unreachable — leave the rest
@@ -1113,7 +1128,9 @@ function renderSurface(main, session) {
       ),
     );
   }
-  if (isLastPage && !doc.waitingPages?.length) {
+  if (isLastPage) {
+    // the facts are asked even while sibling pages wait: this page is
+    // approved on its own, and the item exists from the first approval
     session.docFacts = session.docFacts || {};
     const facts = (session.docFacts[session.docIndex] ||= loadDocFacts(batch.batchId, session.docIndex) || {
       title: doc.title || "",
@@ -2674,12 +2691,6 @@ function rejectDoc(session) {
 async function confirmNext(session) {
   const { batch, docIndex } = session;
   const doc = batch.documents[docIndex];
-  if (session.pageIndex >= doc.pages.length - 1 && doc.waitingPages?.length) {
-    // the archive holds a document whole: its unchecked pages must pass the
-    // row check before this one can be confirmed
-    session.root.querySelector(".rv-waiting")?.classList.add("is-failed");
-    return;
-  }
   const page = doc.pages[session.pageIndex];
   const pageState = (batch.processing || {})[page];
   if (pageState === "transcribing" || (session.rotation ?? 0) !== 0) return;
@@ -2705,18 +2716,21 @@ async function confirmNext(session) {
     session.root.querySelector(".rv-docfacts")?.classList.add("is-failed");
     return;
   }
-  const payload = {
+  // approval is per page: a checked page never waits for its siblings. The
+  // backend assembles the document's item from the approved pages and
+  // catalogues it once every text page is approved.
+  const base = {
+    kind: "approval",
     batch_id: batch.batchId,
-    doc_index: docIndex + 1, // 1-based, matches the CLI gate
-    pages: doc.pages,
-    text: correctedDocumentText(doc, session.edits),
-    status: "confirmed",
-    confirmed_at: new Date().toISOString(),
     title,
     date,
     date_precision: date.length === 10 ? "exact" : date.length === 7 ? "month" : "year",
   };
-  const pushed = await confirmDocument(payload);
+  let pushed = true;
+  for (const page of doc.pages) {
+    const approval = { ...base, page, text: correctedPageText(doc, page, session.edits) };
+    if (!(await confirmDocument(approval))) pushed = false;
+  }
   if (pushed) {
     clearEdits(batch.batchId, docIndex);
     clearDocFacts(batch.batchId, docIndex); // the facts are the archive's now
@@ -2728,9 +2742,11 @@ async function confirmNext(session) {
       el(
         "div",
         { class: "rv-note rv-note--ok" },
-        pushed
-          ? `Document ${docIndex + 1} of ${batch.documents.length} saved to the family archive.`
-          : "Saved on this device — will sync when the archive's computer is reachable.",
+        !pushed
+          ? "Saved on this device — will sync when the archive's computer is reachable."
+          : doc.waitingPages?.length
+            ? `Page${doc.pages.length === 1 ? "" : "s"} ${doc.pages.join(", ")} approved — the document completes when ${doc.waitingPages.join(", ")} ${doc.waitingPages.length === 1 ? "is" : "are"} approved too.`
+            : `Document ${docIndex + 1} of ${batch.documents.length} saved to the family archive.`,
       ),
     );
   // advance to the next document still awaiting review — the confirmed/

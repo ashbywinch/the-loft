@@ -1405,9 +1405,10 @@ describe("the row correction's pure half", () => {
 describe("a document whose pages have not all passed the row check", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("reviews only the checked pages, and refuses to confirm the document whole", async () => {
-    // the transcript stage runs per page on checked rows; the archive holds a
-    // document whole, so the sibling page must pass the check before confirm
+  it("reviews the checked pages and approves them one at a time", async () => {
+    // the transcript stage runs per page on checked rows; approval is per
+    // page, so the checked page is approved now and the document completes
+    // when its sibling has passed its check too
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url) => {
@@ -1444,13 +1445,23 @@ describe("a document whose pages have not all passed the row check", () => {
     img.dispatchEvent(new Event("load"));
     await vi.waitFor(() => expect(main.querySelector(".rv-waiting")).toBeTruthy());
     expect(main.querySelector(".rv-waiting").textContent).toContain("b.jpg");
-    // only the checked page is in the review
+    // only the checked page is in the review; the archive needs the
+    // document's own facts before it can hold any page of it
+    const title = main.querySelector(".rv-docfacts__title");
+    const date = main.querySelector(".rv-docfacts__date");
+    title.value = "A letter";
+    title.dispatchEvent(new Event("input", { bubbles: true }));
+    date.value = "1915-05-02";
+    date.dispatchEvent(new Event("input", { bubbles: true }));
     const confirm = main.querySelector(".rv-txa .rv-btn--primary");
     expect(confirm.textContent).toContain("Confirm");
     confirm.click();
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => String(url).includes("/approvals"))).toBe(true));
+    const [, options] = fetch.mock.calls.find(([url]) => String(url).includes("/approvals"));
+    const payload = JSON.parse(options.body);
+    expect(payload.page).toBe("a.jpg");
+    expect(payload.text).toBe("checked page text");
     expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(false);
-    expect(main.querySelector(".rv-waiting").classList.contains("is-failed")).toBe(true);
   });
 });
 
@@ -1555,10 +1566,11 @@ describe("confirming a document asks for its own facts (an item needs a title an
     date.value = "1963-05-14";
     date.dispatchEvent(new Event("input", { bubbles: true }));
     main.querySelector(".rv-btn--primary").click();
-    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(true));
-    const [, options] = fetch.mock.calls.find(([url]) => String(url).includes("/confirmations"));
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => String(url).includes("/approvals"))).toBe(true));
+    const [, options] = fetch.mock.calls.find(([url]) => String(url).includes("/approvals"));
     const payload = JSON.parse(options.body);
     expect(payload.title).toBe("A letter to Maman");
+    expect(payload.page).toBeTruthy();
     expect(payload.date).toBe("1963-05-14");
     expect(payload.date_precision).toBe("exact");
   });
@@ -1598,7 +1610,7 @@ describe("the document's facts survive a lost page and clear once agreed", () =>
     expect(again.querySelector(".rv-docfacts__date").value).toBe("1963-05-14");
 
     again.querySelector(".rv-btn--primary").click();
-    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => String(url).includes("/confirmations"))).toBe(true));
+    await vi.waitFor(() => expect(fetch.mock.calls.some(([url]) => String(url).includes("/approvals"))).toBe(true));
     const stored = JSON.parse(localStorage.getItem("loft-review-docfacts") || "{}");
     expect(stored?.["b6"]?.["0"]).toBeUndefined(); // the archive holds them now
   });

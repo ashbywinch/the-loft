@@ -324,3 +324,32 @@ def test_requeue_puts_a_reviewed_batch_back(tmp_path: Path) -> None:
 def test_requeue_an_unknown_batch_fails_loudly(tmp_path: Path) -> None:
     with pytest.raises(RegistryError, match="no registry record"):
         _worker(tmp_path, now=lambda: NOW).requeue("batch-ghost")
+
+
+def test_a_folder_of_piles_is_adopted_as_its_piles(tmp_path: Path) -> None:
+    """An inbox folder (no images of its own) is not a pile: its child folders
+    are, one batch each."""
+    inbox = tmp_path / "scans" / "inbox"
+    for name in ("pile-a", "pile-b"):
+        folder = inbox / name
+        folder.mkdir(parents=True)
+        (folder / f"{name}-01.jpg").write_bytes(f"page {name}".encode())  # distinct content: a different pile
+    worker = _worker(tmp_path)
+    report = worker.sweep()
+    records = [load_batch(result.path.stem, tmp_path / "registry") for result in report.adoptions]
+    assert sorted(str(record.path) for record in records) == sorted([str(inbox / "pile-a"), str(inbox / "pile-b")])
+
+
+def test_a_pile_whose_scans_sit_in_a_subfolder_is_one_pile(tmp_path: Path) -> None:
+    """A folder with no images of its own but scans in a subfolder is adopted
+    at the folder that holds them — one pile, not one per level."""
+    dated = tmp_path / "scans" / "dad" / "2026-08-17"
+    dated.mkdir(parents=True)
+    (dated / "scan-01.jpg").write_bytes(b"\xff\xd8 page")
+    (dated / "scan-02.jpg").write_bytes(b"\xff\xd8 page")
+    worker = _worker(tmp_path)
+    report = worker.sweep()
+    assert len(report.adoptions) == 1
+    record = load_batch(report.adoptions[0].path.stem, tmp_path / "registry")
+    assert record.path == dated
+    assert sorted(record.pages) == ["scan-01.jpg", "scan-02.jpg"]

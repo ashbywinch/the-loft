@@ -27,14 +27,3 @@ GATEWAY_BASE_URL: str = os.environ.get(GATEWAY_VAR, "")
 VISION_MODEL = "dynamic/image"  # classify, orient, printed and structured reads
 CHAT_MODEL = "dynamic/fallback2"  # the general chat default
 BOUNDARY_MODEL = "deepseek/deepseek-v4-flash"  # the document-boundary judgment
-
-
-def gateway_base_url() -> str:
-    """The endpoint every call uses; a missing value is a configuration error,
-    stated as one rather than silently falling back to another provider."""
-    if not GATEWAY_BASE_URL:
-        raise RuntimeError(
-            "no model endpoint: set OPENAI_BASE_URL to the Cloudflare AI Gateway's /compat URL "
-            "(scripts/model-env.sh loads .env for you)"
-        )
-    return GATEWAY_BASE_URL

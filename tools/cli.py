@@ -116,10 +116,11 @@ def cmd_serve(args: argparse.Namespace) -> int:
             # Watch only the backend source — the whole-repo watch scans and
             # reloads on .venv/conda-tools churn, and uvicorn's reload-exclude
             # patterns can't match mid-path dirs (Path.match is right-aligned;
-            # absolute patterns are rejected outright). Narrow
-            # roots are the honest fix: tools/ + tests/ are all the backend
-            # has; the frontend is served without a build step.
-            reload_dirs=[str(ROOT / "tools"), str(ROOT / "tests")],
+            # absolute patterns are rejected outright). Narrow roots are the
+            # honest fix: tools/ + pipeline/ are the backend (editing a test
+            # must not bounce the server, and a pipeline edit must reload it);
+            # the frontend is served without a build step.
+            reload_dirs=[str(ROOT / "tools"), str(ROOT / "pipeline")],
             host=args.host,
             port=args.port,
             log_level="info",

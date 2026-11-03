@@ -28,7 +28,7 @@ from pipeline.batch_record import STATUS_PROCESSING, STATUS_REVIEW, BatchRecord
 from pipeline.chain import BatchRun
 from pipeline.classify import LEGACY_KINDS, run_classify
 from pipeline.reconcile_plan import Plan, classification_of, missing_stages
-from pipeline.registry import list_batches, set_status
+from pipeline.registry import list_batches, load_batch
 from tools.loft_paths import LoftPaths
 
 __all__ = ["Plan", "Reconciler", "missing_stages"]
@@ -78,7 +78,7 @@ class Reconciler:
             registry_dir=self.paths.registry_dir,
             archive_dir=self.paths.archive_dir,
         )
-        _ = set_status(record.batch_id, STATUS_PROCESSING, self.paths.registry_dir)
+        run.update_status(record, STATUS_PROCESSING)  # stamps the pass (pid, host, time)
         started = datetime.now(UTC)
         if "classify" in plan.stages:
             self._stage(
@@ -112,7 +112,7 @@ class Reconciler:
                 self._stage(
                     record.batch_id, stage, reason, lambda: run.write_boundaries(classification, record, self.client)
                 )
-        _ = set_status(record.batch_id, STATUS_REVIEW, self.paths.registry_dir)
+        run.update_status(load_batch(record.batch_id, self.paths.registry_dir), STATUS_REVIEW)
         took_ms = int((datetime.now(UTC) - started).total_seconds() * 1000)
         self.write_line(f"reconcile: {record.batch_id} — {', '.join(plan.stages)} done in {took_ms} ms")
         self._journal(

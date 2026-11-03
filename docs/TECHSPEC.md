@@ -781,16 +781,35 @@ sweeps; `printed <batch>` re-reads a printed or structured pile directly
 (idempotent per page).
 
 **The worker owns the machine stages** (`pipeline/worker.py`, `loft work`;
-UR3). The registry's records are its queue: a record with status `pending`
-(a fresh scan, an adoption, or a pile whose content changed) is work, and
-a sweep registers every pile in the scan area and runs each pending batch
-through `process`. A page's status is never stored — it is derived from
-the stage artefacts (`BatchReadings.page_status`, §16.14.2's marker rule),
-so the "Check the rows" queue reads the artefacts, not a field. Two rules
-keep the queue honest: a pass that dies half-way writes its record back to
-`pending` (a crash in `importing` would strand the batch where no sweep
-looks), and a scan stages beside the inbox rather than in it (a directory
-in the scan area is a finished pile, and the worker adopts every one).
+UR3). A batch is work while a stage artefact is MISSING — not while its
+status says so. `pipeline/reconcile_plan.py` (`GapFinder`) reads one batch's
+artefacts and names the stages still missing: `classify` (no entry, or one
+in the pre-category spelling), `orient` (the row pages' uprights),
+`read` (the category's own marker), `group` (no `boundaries.json`).
+`pipeline/reconcile.py` (`Reconciler`) runs exactly those, in order, after
+re-planning on the new categories once `classify` has run; it journals each
+stage's outcome to `work/<batch>/events.jsonl` and logs the reason and the
+duration. Nothing is retried: a failure is journalled and raised, and the
+batch waits for the next trigger or resync.
+
+The triggers are `Worker.watch`: a change under the scan area, the registry
+or the work tree maps to its batch and that batch is reconciled then (a batch
+already in flight is skipped, so the reconciler's own writes cannot feed back
+into it); a quiet interval is a full resync, and one runs at startup.
+`loft work` is one resync, `loft work --plan` prints each batch's gap and runs
+nothing, `loft work --batch <id>` reconciles one. `pipeline/artefacts.py` is
+the one place the layout is written (guarded by `tests/test_architecture.py`),
+and `pipeline/model/config.py` names every model and the Cloudflare AI Gateway
+endpoint.
+
+A page's status is never stored — it is derived from the stage artefacts
+(`BatchReadings.page_status`, §16.14.2's marker rule), so the review queue
+reads the artefacts, not a field. Only the batch's queue state is written,
+through the chain's one status writer, which stamps the pass (pid, host,
+time). Two rules keep the queue honest: a pass that dies half-way writes its
+record back to `pending` (a crash in `importing` would strand the batch), and
+a scan stages beside the inbox rather than in it (a directory in the scan
+area is a finished pile, and the worker adopts every one).
 
 **A corrected page is re-read on the worker's next pass.** The reviewer's drawn
 lines persist as `ocr-guess/<stem>.row-adjustments.json`; the write marks the

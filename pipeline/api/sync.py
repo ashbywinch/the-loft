@@ -598,7 +598,7 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
         raise ValueError(f"invalid batch id: {batch_id!r}")
     readings = BatchReadings(work_dir, batch_id)
     guess_dir = readings.guess_dir
-    boundaries_path = guess_dir / "boundaries.json"
+    boundaries_path = BatchArtefacts(work_dir, batch_id).boundaries
     if not boundaries_path.exists():
         return []
     # the registry's own boundary records: the document's artefact fields plus

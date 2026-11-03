@@ -67,8 +67,8 @@ itself is never touched automatically — it may be someone's work in progress.
 
 For a worker that survives daemon restarts, the launch spec (same rule as
 the server above): **name:** `loft-worker` · **application:** `./loft` ·
-**args:** `work --watch 60` · **cwd:** repo root · **detached:** `true` ·
-**ready:** the banner `worker: watching`.
+**args:** `work --watch 600` · **cwd:** repo root · **detached:** `true` ·
+**ready:** the banner `worker: watching` (the watch reconciles on changes; 600 s is the resync interval).
 
 ## Documents
 

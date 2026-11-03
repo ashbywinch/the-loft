@@ -131,7 +131,8 @@ def test_the_stage_layout_is_spelled_in_one_module() -> None:
         if path.name == "artefacts.py" or "test" in path.parts:
             continue
         text = path.read_text(encoding="utf-8")
-        for spelling in ('"ocr-guess"', "'ocr-guess'", '"oriented"', "'oriented'"):
+        spellings = ('"ocr-guess"', "'ocr-guess'", '"oriented"', "'oriented'", '"boundaries.json"', "'boundaries.json'")
+        for spelling in spellings:
             if spelling in text:
                 offenders.append(f"{path.relative_to(ROOT)}: {spelling}")
     assert offenders == [], f"the stage layout is spelled outside pipeline/artefacts.py: {offenders}"

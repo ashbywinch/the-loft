@@ -64,7 +64,7 @@ text.
    rows / structured (`read_route`): `process` sends printed pages to
    `printed_pages`, forms to `structured_pages`, handwriting and handwritten
    postcard faces down the row chain, and photographs/drawings nowhere.
-   `pipeline/ocr.py` (the tesseract arbiter and the density route) and the
+   the removed OCR path (`pipeline/ocr.py`, the tesseract arbiter and the density route) and the
    guess stage are gone; orientation is the vision model's own call
    (`pipeline/orient.py`), and a page's text is its read's text.
 3. A postcard face's two orientations want per-region detection or the human's

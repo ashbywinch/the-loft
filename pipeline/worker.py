@@ -2,20 +2,22 @@
 
 `docs/PRD/pipeline-stages-spec.md` UR3 and `docs/PLAN/pipeline-stages-plan.md`:
 scans arrive, the backend notices them itself, and the machine stages run —
-orient, marks, words, draft rows — so a page lands in the "Check the rows"
-queue with no manual step. Two facts make this a sweep rather than a
-pipeline of its own:
+classify, orient, read, group — so a page lands in the review queue with no
+manual step. Two facts shape this module:
 
-- **the registry's records ARE the queue**: a record is work while its
-  status is `pending` (a fresh scan, a fresh adoption, or a pile whose
-  content changed);
+- **the artefacts ARE the queue**: a batch is work while a stage artefact is
+  missing, whatever its registry status (a fresh adoption, a `review` batch
+  whose grouping never ran, a page whose read was lost). `Reconciler` plans
+  that gap and runs only it; the worker supplies the batch list, the
+  liveness rule, and the triggers;
 - **a page's status is derived** from its stage artefacts
-  (`BatchReadings.page_status`), never stored, so this module decides only
-  what to RUN — it writes no status field that could go stale.
+  (`BatchReadings.page_status`), never stored, so no status field can go
+  stale. Only the batch's queue state (`pending`/`processing`/`review`) is
+  written, through the chain's one status writer, which stamps the pass.
 
-Every step is idempotent: adoption hashes a pile it has already seen and
-the chain skips a page whose stage artefacts exist. A sweep is therefore
-safe to repeat, and a crash costs at most the batch in flight.
+Every step is idempotent: adoption hashes a pile it has already seen and a
+stage skips a page whose artefact exists. A sweep is therefore safe to
+repeat, and a crash costs at most the batch in flight.
 
 The worker is a separate process from the API server (the plan's seam): the
 server never contacts it, and it never serves HTTP.

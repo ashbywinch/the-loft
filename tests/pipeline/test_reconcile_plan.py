@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
+from PIL import Image
 
 from pipeline.batch_record import BatchRecord
 from pipeline.reconcile import Reconciler, plan_for
@@ -166,3 +168,45 @@ def test_a_batch_with_nothing_missing_is_left_alone(tmp_path: Path) -> None:
     assert plan.stages == ()
     assert lines == [f"reconcile: {batch} — nothing to do"]
     assert not (paths.work_dir / batch / "events.jsonl").exists()
+
+
+def test_the_reconciler_runs_only_the_gap(tmp_path: Path) -> None:
+    """The reconciler completes exactly the missing stage: a batch that is
+    classified and read but not grouped makes one boundary call and no page
+    read; a batch with nothing missing calls neither seam."""
+    paths = LoftPaths(
+        scan_area=tmp_path / "scans",
+        registry_dir=tmp_path / "registry",
+        work_dir=tmp_path / "work",
+        archive_dir=tmp_path / "archive",
+    )
+    record = _record(paths.work_dir)
+    batch = record.batch_id
+    Image.new("RGB", (10, 12), "white").save(record.path / "p1.jpg")  # the grouping measures a real page
+    _artefact(
+        paths.work_dir,
+        batch,
+        "classify.json",
+        json.dumps({"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}),
+    )
+    _artefact(paths.work_dir, batch, "ocr-guess/p1.printed.json", "{}")
+    _artefact(paths.work_dir, batch, "ocr-guess/p1.txt", "READ ALREADY")
+    reads: list[Path] = []
+    boundaries: list[tuple[str, str]] = []
+
+    def vision(image: Path) -> Any:
+        reads.append(image)
+        raise AssertionError("the page is already read: the reconciler must not pay for it again")
+
+    def chat(system: str, user: str) -> str:
+        boundaries.append((system, user))
+        return json.dumps(
+            {"pages": [{"page": "p1.jpg", "text": "READ ALREADY", "starts_document": True, "ends_document": True}]}
+        )
+
+    reconciler = Reconciler(paths, write_line=lambda line: None, client=chat, printed=vision)
+    plan = reconciler.run(record)
+    assert plan.stages == ("group",)
+    assert reads == []  # the read is current: the vision seam was never called
+    assert len(boundaries) == 1
+    assert (paths.work_dir / batch / "ocr-guess" / "boundaries.json").is_file()

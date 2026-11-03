@@ -80,10 +80,12 @@ class Reconciler:
         *,
         write_line: Callable[[str], None] = print,
         client: Callable[[str, str], str] | None = None,
+        printed: Callable[[Path], Any] | None = None,
     ) -> None:
         self.paths = paths
         self.write_line = write_line
         self.client = client
+        self.printed = printed  # the vision read's seam (page → (text, answer))
 
     # ---- planning -------------------------------------------------------
     def plan(self) -> list[Plan]:
@@ -118,7 +120,7 @@ class Reconciler:
             _ = run_plan(
                 run,
                 record,
-                inputs=StageInputs(client=self.client),
+                inputs=StageInputs(client=self.client, printed=self.printed),
                 on_stage=log.announce,
                 on_done=log.finished,
             )

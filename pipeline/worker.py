@@ -31,6 +31,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from watchfiles import Change, watch
 
@@ -108,6 +109,7 @@ class Worker:
         stale_after: float | None = None,
         now: Callable[[], datetime] | None = None,
         reconciler: Reconciler | None = None,
+        printed: Callable[[Path], Any] | None = None,
     ) -> None:
         self.paths = paths
         self.client = client
@@ -117,7 +119,7 @@ class Worker:
         self._host = socket.gethostname()
         # the seam, as a parameter: the reconciler plans and runs one batch;
         # this worker owns the batch list, the live-pass rule and the triggers
-        self.reconciler = reconciler or Reconciler(paths, write_line=write_line, client=client)
+        self.reconciler = reconciler or Reconciler(paths, write_line=write_line, client=client, printed=printed)
         self._inflight: set[str] = set()
 
     def sweep(self) -> SweepReport:

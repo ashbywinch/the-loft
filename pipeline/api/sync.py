@@ -34,8 +34,7 @@ from pipeline.api.row_correction import RowCorrection
 from pipeline.artefacts import BatchArtefacts
 from pipeline.batch_record import STATUS_PENDING
 from pipeline.boundary import Boundary
-from pipeline.detect.reader import reading_for_page
-from pipeline.htr import htr_pages_vlm
+from pipeline.classify import read_route
 from pipeline.identification import Identification
 from pipeline.identify import identify
 from pipeline.layout import (
@@ -46,16 +45,17 @@ from pipeline.layout import (
 )
 from pipeline.model.unsure_word import UnsureWord
 from pipeline.model.vlm import orientation_report, selfreport_words
-from pipeline.page_image import PageImage
 from pipeline.registry import load_batch, record_path, set_status
 from pipeline.rows.render import row_tints
 from pipeline.rows.rows import Rows
 from pipeline.rows_reading import RowsReading
+from pipeline.stage_table import classification_of
 from pipeline.store import PipelineStore
+from pipeline.transcribe.printed import printed_transcript, structured_transcript
 from tools.archive import Archive, ArchiveError
 from tools.atomic import atomic_write
 from tools.dated_fact import PRECISIONS
-from tools.loft_paths import REGISTRY_DIR
+from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR
 from tools.memory import ChatClient, Knowledge
 from tools.records import Item
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
@@ -924,94 +924,159 @@ def _write_multi_sidecar(
         )
 
 
+def _restore_rotation(rows_path: Path, rotation: int) -> None:
+    """Carry the page's recorded rotation onto the fresh row reading (the read
+    step does not record one; the review's overlay uses it)."""
+    if not rotation or not rows_path.is_file():
+        return
+    rows = json.loads(rows_path.read_text(encoding="utf-8"))
+    rows["rotation"] = rotation
+    atomic_write(rows_path, json.dumps(rows, ensure_ascii=False, indent=1) + "\n")
+
+
+def _batch_run(
+    batch_id: str,
+    work_dir: Path,
+    *,
+    registry_dir: Path | None,
+    archive_dir: Path | None,
+) -> Any:
+    """The read step's runtime for one page. Imported here because
+    `pipeline.chain` imports this module for BatchReadings — a top-level import
+    would be a cycle."""
+    # lucidlint: ignore inline-import the cycle breaker: chain imports sync for BatchReadings
+    from pipeline.chain import BatchRun
+
+    return BatchRun(
+        batch_id,
+        work_dir=work_dir,
+        registry_dir=registry_dir or REGISTRY_DIR,
+        archive_dir=archive_dir or ARCHIVE_DIR,
+    )
+
+
+def _reread_page(
+    run: Any,
+    artefacts: BatchArtefacts,
+    page: str,
+    *,
+    transcribe: Any,
+    rows_text: Callable[[Path, Path], dict[int, str]] | None,
+    reading: Callable[[Any], Any] | None,
+) -> None:
+    """Delete the page's read receipts and run the batch's own read for it.
+
+    For handwriting this re-runs ROW DETECTION on the image as it is now: the
+    reviewer's drawn lines (and the rows they made) are deleted with the
+    receipts, because lines drawn on the previous orientation describe boxes
+    that no longer exist — the fresh reading must propose the rows again."""
+    rows_path = artefacts.marker(page, "rows")
+    rotation = 0
+    if rows_path.is_file():
+        rotation = int(json.loads(rows_path.read_text(encoding="utf-8")).get("rotation", 0))
+    for receipt in artefacts.read_receipts(page):
+        receipt.unlink(missing_ok=True)
+    for suffix in (".selfreport.json", ".vlm.json", ".orientation.json"):
+        (artefacts.guess_dir / Path(page).with_suffix(suffix)).unlink(missing_ok=True)
+    route = read_route(classification_of(artefacts).get(page, {}))
+    if route == "direct":
+        run.printed_pages([page], _transcribe=transcribe or printed_transcript, provisional_boundary=False)
+    elif route == "structured":
+        run.structured_pages([page], _transcribe=transcribe or structured_transcript, provisional_boundary=False)
+    elif route == "rows":
+        # the row detection is the re-read: its lines come from the image as it
+        # is now, never from the correction drawn against the old orientation
+        artefacts.adjustments(page).unlink(missing_ok=True)
+        artefacts.adjusted_rows(page).unlink(missing_ok=True)
+        # the cycle breaker, again: the row read's default reader lives in chain
+        # lucidlint: ignore inline-import the cycle breaker: chain imports sync for BatchReadings
+        from pipeline.chain import reading_for_page, row_transcripts
+
+        run.read_pages(
+            [page],
+            _reading=reading or reading_for_page,
+            _rows_text=rows_text or row_transcripts,
+        )
+        _restore_rotation(rows_path, rotation)
+
+
+@dataclass(frozen=True)
+class _PageImage:
+    """A page and its oriented image — the pair the sidecar writers need."""
+
+    page: str
+    image_path: Path
+
+
+def _write_page_sidecars(
+    artefacts: BatchArtefacts,
+    image: _PageImage,
+    *,
+    selfreport: Callable[..., list[UnsureWord]] | None,
+    orientation_report_fn: Callable[[Path, str], dict[str, Any]] | None,
+    people: list[str] | None,
+    places: list[str] | None,
+) -> None:
+    """The review surface's per-page sidecars, from the new text."""
+    new_text = artefacts.text(image.page).read_text(encoding="utf-8")
+    report = (
+        selfreport(image.image_path, new_text, people=people, places=places)
+        if selfreport
+        else selfreport_words(image.image_path, new_text, people=people, places=places)
+    )
+    atomic_write(
+        artefacts.marker(image.page, "selfreport"),
+        json.dumps([word.to_dict() for word in report], ensure_ascii=False, indent=1) + "\n",
+    )
+    # a multi-direction orientation report writes the sidecar the review reads
+    _write_multi_sidecar(image.page, image.image_path, artefacts.guess_dir, new_text, orientation_report_fn)
+
+
 def reprocess_page_transcription(
     batch_id: str,
     page: str,
     work_dir: Path,
     *,
+    registry_dir: Path | None = None,
+    archive_dir: Path | None = None,
     transcribe: Any = None,
+    rows_text: Callable[[Path, Path], dict[int, str]] | None = None,
+    reading: Callable[[Any], Any] | None = None,
     selfreport: Callable[..., list[UnsureWord]] | None = None,
     orientation_report_fn: Callable[[Path, str], dict[str, Any]] | None = None,
     people: list[str] | None = None,
     places: list[str] | None = None,
     label: str | None = None,
 ) -> None:
-    """The slow half of the orientation fix: re-read the page's text with
-    the vision model on the CORRECTED image (2026-08-16 — the old
-    transcription was read from the upside-down page, which is unreliable:
-    page-02's first line read "At last venture this form is the building
-    of a" vs the corrected page's "A new venture this term is the holding
-    of a"). Runs as the backend's async job after the fast rotation; the
-    page's job state marks it while it runs. The second pass does better
-    (2026-08-17): the reviewer's rotate IS the signal the first pass
-    missed an orientation, so the orientation report re-runs on the
-    corrected image and the reading is rebuilt with FRESH boxes — never
-    the old remapped ones.
-    ``transcribe``/``selfreport``/``orientation_report_fn`` are the
-    injectable seams for tests. On failure the page is marked
-    "failed" — the stale text stays visible with the warning, never a
-    silent wrong answer."""
+    """Re-read one page from its CORRECTED image after a rotation.
+
+    The re-read is a re-read: the page's read receipts are deleted, then the
+    SAME read step the batch uses runs for the page, chosen by its category
+    (printed → the direct read, a form → the structured read, handwriting →
+    the row read). The self-report and the multi-direction orientation sidecar
+    the review surface reads are refreshed from the new text, and the page's
+    recorded rotation is carried onto the fresh row reading.
+
+    Runs as the backend's async job; the page's job state marks it while it
+    runs. ``transcribe``/``rows_text``/``selfreport``/``orientation_report_fn``
+    are the injectable seams. On failure the page is marked "failed" — the
+    stale text stays visible with the warning, never a silent wrong answer."""
     if not BATCH_ID.match(batch_id) or not safe_page_name(page):
         raise ValueError("invalid batch or page name")
-    guess_dir = BatchArtefacts(work_dir, batch_id).guess_dir
-    image_path = BatchArtefacts(work_dir, batch_id).oriented(page)
-    rows_path = BatchArtefacts(work_dir, batch_id).marker(page, "rows")
+    artefacts = BatchArtefacts(work_dir, batch_id)
+    image_path = artefacts.oriented(page)
     if not image_path.is_file():
         raise ValueError(f"no such page: {page}")
     try:
-        rotation = 0
-        if rows_path.exists():
-            rotation = int(json.loads(rows_path.read_text(encoding="utf-8")).get("rotation", 0))
-        elif (guess_dir / Path(page).with_suffix(".layout.json")).is_file():
-            # strip-era fallback: carry the old layout's recorded rotation
-            layout_path = guess_dir / Path(page).with_suffix(".layout.json")
-            layout = load_layout_store(PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
-            rotation = int(layout.extra.get("rotation", 0))
-        # force the re-read: drop the markers the pipeline's skip logic uses
-        raw_dir = guess_dir
-        for suffix in (".txt", ".vlm.json", ".selfreport.json", ".orientation.json"):
-            (raw_dir / Path(page).with_suffix(suffix)).unlink(missing_ok=True)
-        htr_pages_vlm(
-            [PageImage(page, image_path)],
-            raw_dir,
-            transcribe=transcribe,
+        run = _batch_run(batch_id, work_dir, registry_dir=registry_dir, archive_dir=archive_dir)
+        _reread_page(run, artefacts, page, transcribe=transcribe, rows_text=rows_text, reading=reading)
+        _write_page_sidecars(
+            artefacts,
+            _PageImage(page, image_path),
+            selfreport=selfreport,
+            orientation_report_fn=orientation_report_fn,
             people=people,
             places=places,
-            label=label,
-            # the reprocess's own root — never the global WORK_DIR
-            # (the hermetic tests, 2026-08-29)
-            store_root=work_dir,
-        )
-        new_text = (raw_dir / Path(page).with_suffix(".txt")).read_text(encoding="utf-8")
-        report = (
-            selfreport(image_path, new_text, people=people, places=places)
-            if selfreport
-            else selfreport_words(image_path, new_text, people=people, places=places)
-        )
-        report_path = raw_dir / Path(page).with_suffix(".selfreport.json")
-        atomic_write(report_path, json.dumps([word.to_dict() for word in report], ensure_ascii=False, indent=1) + "\n")
-        # the fresh orientation report on the CORRECTED image — a
-        # multi-direction report writes the sidecar the layout stage reads
-        _write_multi_sidecar(page, image_path, raw_dir, new_text, orientation_report_fn)
-        # the fresh reading on the CORRECTED image — rows, not a layout:
-        # the line boxes come from the marks chain, the text re-mapped;
-        # the reading's words are written beside them (the drawn-lines
-        # correction groups those words)
-        reading = reading_for_page(ImageOps.exif_transpose(Image.open(image_path)))
-        text_lines = [ln for ln in new_text.splitlines() if ln.strip()]
-        for i, line in enumerate(reading.lines):
-            line["text"] = text_lines[i] if i < len(text_lines) else ""
-        new_rows = RowsReading(
-            page=page,
-            width=reading.width,
-            height=reading.height,
-            rotation=rotation,
-            lines=reading.lines,
-        )
-        atomic_write(rows_path, json.dumps(new_rows.to_dict(), ensure_ascii=False, indent=1) + "\n")
-        atomic_write(
-            BatchReadings(work_dir, batch_id).words_path(page),
-            json.dumps(Words(reading.words).to_dict(), ensure_ascii=False, indent=1) + "\n",
         )
         set_page_job(batch_id, page, None, work_dir)
     # lucidlint: ignore broad-except the stage's terminal boundary — mark failed on ANY error, then re-raise

@@ -45,7 +45,7 @@ class EngineView:
     @classmethod
     def of(cls, record: BatchRecord, work_dir: Path) -> EngineView:
         artefacts = BatchArtefacts(work_dir, record.batch_id)
-        return cls(artefacts, record.path, tuple(sorted(record.pages)), _classification(artefacts))
+        return cls(artefacts, record.path, tuple(sorted(record.pages)), classification_of(artefacts))
 
     def fresh(self, record: BatchRecord) -> EngineView:
         """The view after a stage ran (the classification may have changed)."""
@@ -213,7 +213,7 @@ def _boundaries(artefacts: BatchArtefacts) -> list[dict[str, Any]] | None:
     return [entry for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else None
 
 
-def _classification(artefacts: BatchArtefacts) -> dict[str, Any]:
+def classification_of(artefacts: BatchArtefacts) -> dict[str, Any]:
     """The batch's classify.json, or an empty mapping when none exists or it
     is unreadable."""
     if not artefacts.classify.is_file():

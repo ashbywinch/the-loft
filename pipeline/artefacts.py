@@ -85,6 +85,15 @@ class BatchArtefacts:
         """The correction's rows (the wire contract)."""
         return self.guess_dir / f"{Path(page).stem}.{ADJUSTED_ROWS}"
 
+    def read_receipts(self, page: str) -> tuple[Path, ...]:
+        """Everything that says this page's read is done: its text and every
+        read marker. Deleting these makes the read step run for the page again
+        — the honest form of "re-read this page"."""
+        return (
+            self.text(page),
+            *(self.marker(page, kind) for kind in ("printed", "structured", "rows", "words")),
+        )
+
     def direct_marker(self, page: str) -> Path:
         """The page's direct-read marker, whichever read wrote it (printed
         prose, or a form's structure); the printed path when there is none."""

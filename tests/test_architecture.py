@@ -12,7 +12,7 @@ source to final (user). The rules:
 - the read-only derived layers (projection, memory) never write the
   identity tables;
 - the domain imports the store, never the HTTP layer;
-- the pipeline layer (layout, htr, registry, adopt, classify, sync, ocr)
+- the pipeline layer (layout, registry, adopt, classify, sync)
   routes all data persistence through the store or archive — never
   atomic_write or Path.read/write directly to the archive paths.
 """
@@ -97,7 +97,6 @@ def test_the_pipeline_layer_routes_data_through_the_store() -> None:
         "layout.py",
         "layout_apply_selfreport.py",
         "sync.py",
-        "htr.py",
         "adopt.py",
         "classify.py",
     )

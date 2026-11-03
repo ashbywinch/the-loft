@@ -790,7 +790,15 @@ def build_app(
                 label = None
                 with contextlib.suppress(RegistryError):
                     label = load_batch(batch_id, registry_dir).label
-                reprocess_page_transcription(batch_id, page, work_dir, people=people, places=places, label=label)
+                reprocess_page_transcription(
+                    batch_id,
+                    page,
+                    work_dir,
+                    registry_dir=registry_dir,
+                    people=people,
+                    places=places,
+                    label=label,
+                )
             # The background thread's terminal handler — logger.exception
             # lucidlint: ignore swallow is the observable surface; the thread ends
             except Exception:

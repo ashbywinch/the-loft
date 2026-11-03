@@ -36,6 +36,7 @@ from document.document import DOCUMENT_DRAFT
 from document.row_adjustments import RowAdjustments
 from document.stages import PageStatus
 from pipeline.api import auth
+from pipeline.api.approval import ApprovalContext, DocumentFacts, approve_page
 from pipeline.api.assess_request import AssessRequest
 from pipeline.api.batch_drafts_answer import BatchDraftsAnswer
 from pipeline.api.confirmation_answer import ConfirmationAnswer
@@ -872,6 +873,41 @@ def build_app(
             violations=correction.violations,
             tints=correction.tints,
         ).to_dict()
+
+    @app.post("/api/sync/approvals")
+    def sync_approvals(payload: Mapping[str, Any], request: Request) -> Any:
+        """The per-page approval: one page's text is agreed on its own; the
+        document's item is minted as a draft from the approved pages and is
+        catalogued when every text page is approved."""
+        if session_user(request) is None:
+            return JSONResponse(ErrorAnswer("sign in to approve pages").to_dict(), status_code=401)
+        try:
+            batch_id = str(payload["batch_id"])
+            page = str(payload["page"])
+            text = str(payload["text"])
+            approval = approve_page(
+                batch_id,
+                page,
+                text,
+                context=ApprovalContext(archive, work_dir, registry_dir),
+                facts=DocumentFacts(
+                    title=str(payload.get("title", "")),
+                    date=str(payload.get("date", "")),
+                    date_precision=str(payload.get("date_precision", "")),
+                    by=str(getattr(session_user(request), "email", "") or ""),
+                ),
+            )
+        except (KeyError, TypeError, ValueError, RegistryError, ArchiveError) as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        archive.publish(data_dir)
+        return {
+            "batch_id": batch_id,
+            "page": approval.page,
+            "item_id": approval.item_id,
+            "document_complete": approval.document_complete,
+            "pages_approved": approval.pages_approved,
+            "pages_total": approval.pages_total,
+        }
 
     @app.post("/api/sync/confirmations")
     def sync_confirmations(payload: Mapping[str, Any], request: Request) -> Any:

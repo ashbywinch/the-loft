@@ -77,6 +77,10 @@ class BatchArtefacts:
         """One read marker (``printed``, ``structured``, ``rows``, ``words``)."""
         return self.guess_dir / f"{Path(page).stem}.{kind}.json"
 
+    def agreed(self, page: str) -> Path:
+        """The reviewer's approval of this page's text (the transcript approval)."""
+        return self.marker(page, "agreed")
+
     def adjustments(self, page: str) -> Path:
         """The reviewer's drawn row lines."""
         return self.guess_dir / f"{Path(page).stem}.{ADJUSTMENTS}"

@@ -17,6 +17,7 @@ import pytest
 from pipeline.api.server import ServerConfig, create_server
 from pipeline.api.sync import Outbox
 from pipeline.registry import load_batch
+from tools.archive import Archive
 from tools.memory import ElicitationError
 from tools.records import Item, validate_identity
 from tools.store import ImmutableStoreError, MemoryStore
@@ -1917,3 +1918,69 @@ def test_identify_decide_rejects_a_bad_decision(server: ServerFixture) -> None:
         {"item_id": item_id, "kind": "place", "entity_id": "pl-x", "decision": "maybe"},
     )
     assert status == 400
+
+
+def _item_text(archive: Archive, item_id: str) -> str:
+    item = archive.get_item(item_id)
+    assert item is not None
+    asset = next(a for a in item.assets if a.kind == "transcription")
+    return archive.read_content(item.id, asset.file) or ""
+
+
+def _seed_approval_batch(fixture: ServerFixture) -> None:
+    """A two-page document read and grouped, waiting for the review."""
+    import json as _json
+
+    batch = fixture.work_dir / "adopt-0001"
+    guess = batch / "ocr-guess"
+    guess.mkdir(parents=True)
+    classify = {
+        "p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}},
+        "p2.jpg": {"kind": "printed", "confidences": {"printed": 0.9}},
+    }
+    (batch / "classify.json").write_text(_json.dumps(classify), encoding="utf-8")
+    for page, text in (("p1", "PAGE ONE"), ("p2", "PAGE TWO")):
+        (guess / f"{page}.txt").write_text(text, encoding="utf-8")
+        (guess / f"{page}.printed.json").write_text("{}", encoding="utf-8")
+    (guess / "boundaries.json").write_text(_json.dumps([{"pages": ["p1.jpg", "p2.jpg"]}]), encoding="utf-8")
+    fixture.registry_dir.mkdir(parents=True)
+    (fixture.registry_dir / "adopt-0001.json").write_text(
+        _json.dumps(
+            {
+                "batch_id": "adopt-0001",
+                "path": str(fixture.data_dir),
+                "status": "review",
+                "arrived_at": "2026-01-01T00:00:00+00:00",
+                "pages": {"p1.jpg": "hash-1", "p2.jpg": "hash-2"},
+                "boundaries": [{"pages": ["p1.jpg", "p2.jpg"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_sync_approvals_require_a_session(server: ServerFixture) -> None:
+    status, _ = server.post("/api/sync/approvals", {"batch_id": "adopt-0001"}, cookie="")
+    assert status == 401
+
+
+def test_sync_approvals_take_one_page_then_catalogue_the_document(server: ServerFixture) -> None:
+    """The reviewer approves page 1 while page 2 waits: the item exists as a
+    draft holding page 1; page 2's approval completes it, catalogued, as the
+    same item."""
+
+    _seed_approval_batch(server)
+    facts = {"batch_id": "adopt-0001", "title": "A letter", "date": "1915-05-02", "date_precision": "exact"}
+    status, first = server.post("/api/sync/approvals", {**facts, "page": "p1.jpg", "text": "PAGE ONE"})
+    assert status == 200 and first["document_complete"] is False
+    item_id = first["item_id"]
+    archive = Archive(server.store)
+    item = archive.get_item(item_id)
+    assert item is not None and item.status == "draft"
+    assert _item_text(archive, item_id) == "PAGE ONE"
+
+    status, second = server.post("/api/sync/approvals", {**facts, "page": "p2.jpg", "text": "PAGE TWO"})
+    assert status == 200 and second["document_complete"] is True and second["item_id"] == item_id
+    item = archive.get_item(item_id)
+    assert item is not None and item.status == "catalogued"
+    assert _item_text(archive, item_id) == "PAGE ONE\n\nPAGE TWO"

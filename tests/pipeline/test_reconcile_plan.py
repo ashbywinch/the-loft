@@ -11,7 +11,6 @@ import json
 from pathlib import Path
 
 import pytest
-from PIL import UnidentifiedImageError
 
 from pipeline.batch_record import BatchRecord
 from pipeline.reconcile import Reconciler, plan_for
@@ -136,8 +135,12 @@ def test_a_failing_stage_is_journalled_and_raised(tmp_path: Path) -> None:
     _artefact(paths.work_dir, batch, "classify.json", classify)
     _artefact(paths.work_dir, batch, "ocr-guess/p1.printed.json", "{}")
     _artefact(paths.work_dir, batch, "ocr-guess/p1.txt", "TEXT")
-    reconciler = Reconciler(paths, write_line=lambda line: None)
-    with pytest.raises(UnidentifiedImageError):  # grouping measures the page; it is not an image
+
+    def refuse(_system: str, _user: str) -> str:
+        raise RuntimeError("the boundary call refused")
+
+    reconciler = Reconciler(paths, write_line=lambda line: None, client=refuse)
+    with pytest.raises(RuntimeError, match="refused"):  # the stage's own failure, journalled
         reconciler.run(record)
     events = [json.loads(line) for line in (paths.work_dir / batch / "events.jsonl").read_text().splitlines()]
     assert events[0]["stage"] == "group" and events[0]["action"] == "run"

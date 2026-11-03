@@ -17,8 +17,6 @@ from pipeline.batch_record import BatchRecord
 from pipeline.classify import LEGACY_KINDS, category_of, read_route
 from pipeline.store import PipelineStore
 
-# the machine stages a batch may still need, in dependency order
-STAGES = ("classify", "orient", "read", "group")
 # the categories whose pages carry writing to read
 TEXT_KINDS = ("printed", "handwriting", "postcard_face", "form")
 

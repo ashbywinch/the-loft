@@ -8,13 +8,14 @@ reconciler asks that question per batch, runs the missing stages, and logs each
 decision — it never re-runs a stage whose artefact is current, and never
 reprocesses the workspace to find work.
 
-Two triggers, one loop (the controller pattern): a filesystem WATCH turns a
-change under `work/`, the registry or the scan area into the batch it concerns
-(events are coalesced, and a batch already being run is skipped — that is the
-self-write suppression: the reconciler's own writes do not feed back into it);
-a periodic RESYNC plans every batch, so a missed event, a restart or a stage
-whose marker was lost is corrected. Planning is a handful of `stat`s per page —
-no model call — so the resync is cheap.
+This module has no loop of its own: it is the plan-and-run half. The loop —
+the triggers — is `Worker.watch` (`pipeline/worker.py`): a filesystem change
+under `work/`, the registry or the scan area is mapped to the batch it
+concerns and `Reconciler.run` is called then (a batch already in flight is
+skipped — the self-write suppression: the reconciler's own writes do not feed
+back into it); a periodic resync calls it for every batch, so a missed event,
+a restart or a stage whose marker was lost is corrected. Planning is a handful
+of `stat`s per page — no model call — so the resync is cheap.
 """
 
 from __future__ import annotations

@@ -59,6 +59,7 @@ from pipeline.registry import RegistryError as PipelineError
 from pipeline.registry import load_batch, record_path
 from pipeline.rows.rows import Rows
 from pipeline.rows_reading import RowsReading
+from pipeline.stage_table import EngineView, StageInputs, run_plan
 from pipeline.standing_knowledge import StandingKnowledge
 from pipeline.store import PipelineStore
 from pipeline.transcribe.printed import printed_transcript, structured_transcript
@@ -230,15 +231,16 @@ class BatchRun(Batch):
         self.update_status(record, STATUS_PROCESSING)
         print("content changed since adoption — regenerable stages cleared; confirmed transcriptions preserved")
 
-    def classify_pages(self, pages: list[Path]) -> Classification:
-        """The per-page photo/text classification — run when absent; a pile's
-        photos/drawings skip orientation + OCR entirely."""
+    def classify_pages(self, pages: list[Path], *, reclassify: Sequence[str] = ()) -> Classification:
+        """The per-page category classification — run when absent, and for the
+        named pages whose record is stale (a pre-category spelling); a pile's
+        photos/drawings skip orientation and the read entirely."""
         store = PipelineStore(self.work_dir)
         rel_classify = f"{self.batch_id}/classify.json"
-        if store.exists(rel_classify):
+        if store.exists(rel_classify) and not reclassify:
             print("classification already present — reusing")
         else:
-            run_classify(self.batch_id, registry_dir=self.registry_dir, work_dir=self.work_dir)
+            run_classify(self.batch_id, registry_dir=self.registry_dir, work_dir=self.work_dir, reclassify=reclassify)
             print(f"classified {len(pages)} page(s) -> {self.artefacts.classify}")
         classify = json.loads(store.read_latest(rel_classify))
         text_pages = [name for name, entry in classify.items() if category_of(entry) in TEXT_KINDS]
@@ -282,9 +284,13 @@ class BatchRun(Batch):
         direct = [n for n in classification.text_pages if read_route(classification.classify[n]) == "direct"]
         structured = [n for n in classification.text_pages if read_route(classification.classify[n]) == "structured"]
         if direct:
-            self.printed_pages(pages=direct, _transcribe=_printed or printed_transcript)
+            self.printed_pages(
+                pages=direct,
+                _transcribe=_printed or printed_transcript,
+                provisional_boundary=False,
+            )
         if structured:
-            self.structured_pages(pages=structured)
+            self.structured_pages(pages=structured, provisional_boundary=False)
         kept = self.rows_pages(classification)
         if kept:
             self.read_pages(kept)
@@ -305,10 +311,13 @@ class BatchRun(Batch):
         reg_store = PipelineStore(self.registry_dir)
         texts: dict[str, str | None] = {}
         for name in sorted(record.pages):
-            if name in classification.text_pages:
-                texts[name] = store.read_latest(self.artefacts.relative(self.artefacts.text(name)))
-            else:
+            if name not in classification.text_pages:
                 texts[name] = None
+                continue
+            rel = self.artefacts.relative(self.artefacts.text(name))
+            # a marker without its text is a damaged read, not a reason to
+            # crash the pass: the grouping works from what is there
+            texts[name] = store.read_latest(rel) if store.exists(rel) else ""
 
         knowledge = self.standing_knowledge()
         chat = client if client is not None else AIClient(model=BOUNDARY_MODEL, max_tokens=12000, timeout=900.0).chat
@@ -356,6 +365,8 @@ class BatchRun(Batch):
         self,
         pages: list[str] | None = None,
         _transcribe: Callable[[Path], tuple[str, Any]] = printed_transcript,
+        *,
+        provisional_boundary: bool = True,
     ) -> None:
         """Read PRINTED pages: one vision call per page, no rows, no marks.
 
@@ -363,23 +374,27 @@ class BatchRun(Batch):
         for handwriting and its bars would only invent geometry. Each page's
         text lands as ``ocr-guess/<page>.txt`` beside a ``<page>.printed.json``
         marker; the marker makes a re-run idempotent."""
-        self._direct_read(pages, "printed", _transcribe)
+        self._direct_read(pages, "printed", _transcribe, provisional_boundary=provisional_boundary)
 
     def structured_pages(
         self,
         pages: list[str] | None = None,
         _transcribe: Callable[[Path], tuple[str, Any]] = structured_transcript,
+        *,
+        provisional_boundary: bool = True,
     ) -> None:
         """Read FORM pages: one structured vision call per page (labels and
         their values, as a markdown table) — a form's meaning is the pairing,
         so a prose read would lose it. Marker: ``<page>.structured.json``."""
-        self._direct_read(pages, "structured", _transcribe)
+        self._direct_read(pages, "structured", _transcribe, provisional_boundary=provisional_boundary)
 
     def _direct_read(
         self,
         pages: list[str] | None,
         read: str,
         transcribe: Callable[[Path], tuple[str, Any]],
+        *,
+        provisional_boundary: bool,
     ) -> None:
         """The direct-read stages' one loop: a page read in a single vision call
         (printed prose, or a form's structure), its text and marker written, and
@@ -394,7 +409,7 @@ class BatchRun(Batch):
         read_pages: list[str] = []
         for page in work_pages:
             marker = self.artefacts.marker(page, read)
-            if store.exists(self.artefacts.relative(marker)):
+            if self.artefacts.is_read(page, "direct"):
                 print(f"{read}: {page} already read — skipped")
                 continue
             image = self.artefacts.oriented_dir / page
@@ -411,13 +426,14 @@ class BatchRun(Batch):
             )
             read_pages.append(page)
             print(f"{read}: {page} -> {len(text)} chars")
-        if read_pages:
-            # one document over the pages read, with no greeting/signoff guesses
-            # (that is the review's question)
+        if read_pages and provisional_boundary:
+            # a standalone printed read still needs a document to review; the
+            # full pass leaves grouping to the group stage, and the flag says
+            # this boundary is a placeholder, not a grouping
             boundary = Boundary(pages=read_pages)
             store.write(
                 self.artefacts.relative(self.artefacts.boundaries),
-                json.dumps([boundary.to_dict()], indent=1, ensure_ascii=False) + "\n",
+                json.dumps([{**boundary.to_dict(), "provisional": True}], indent=1, ensure_ascii=False) + "\n",
             )
             record = load_batch(self.batch_id, self.registry_dir)
             record.boundaries = [boundary]
@@ -615,30 +631,23 @@ class BatchRun(Batch):
         if record.content_changed:
             self.clear_stale_stages(record)
 
-        # 1. classify FIRST (on the raw pages): photos/drawings skip orientation + OCR entirely
-        classification = self.classify_pages(pages)
-
-        if not classification.text_pages:
-            self.update_status(record, STATUS_REVIEW)
+        # the stage order and the gap checks are pipeline/stage_table.py's: this
+        # pass runs every stage whose artefact says it is missing, and the
+        # reconciler's gap run is the same loop.
+        ran = run_plan(self, record, inputs=StageInputs(client=client, printed=_printed))
+        view = EngineView.of(record, self.work_dir)
+        if not view.text_pages():
+            # reload: the stages write the registry record themselves (grouping
+            # records the boundaries); a stale object would clobber that write
+            self.update_status(load_batch(self.batch_id, self.registry_dir), STATUS_REVIEW)
             print(
                 f"batch {self.batch_id}: no text pages — review the classification "
                 "(make confirm will show nothing to transcribe)"
             )
             return
-
-        # 2. turn the ROW pages upright (the vision model names each rotation);
-        # a direct or structured read reads the page image itself, so
-        # orientation is the row pipeline's need only
-        row_pages = [n for n in classification.text_pages if read_route(classification.classify[n]) == "rows"]
-        self.orient_pages(row_pages, record.path)
-
-        # 3. the CATEGORY decides the read (docs/PLAN/page-categories.md):
-        # printed writing is one direct VLM read; a form a structured read;
-        # handwriting and a handwritten postcard face the row pipeline
-        _ = self.read_all(classification, _printed=_printed)
-
-        self.write_boundaries(classification, record, client)
-        self.update_status(record, STATUS_REVIEW)
+        if not ran:
+            print(f"batch {self.batch_id}: every stage current — nothing re-run")
+        self.update_status(load_batch(self.batch_id, self.registry_dir), STATUS_REVIEW)
         print(f"batch {self.batch_id} awaiting review (make confirm ARGS={self.batch_id!r})")
 
 
@@ -806,7 +815,12 @@ class ReviewGate(Batch):
                 )
                 write_line(f"document {index} rejected")
                 continue
-            text = "\n".join(store.read_latest(self.artefacts.relative(self.artefacts.text(p))) for p in text_pages)
+            text = "\n".join(
+                store.read_latest(self.artefacts.relative(self.artefacts.text(p)))
+                if store.exists(self.artefacts.relative(self.artefacts.text(p)))
+                else ""
+                for p in text_pages
+            )
             if answer == "e":
                 text = _read_multiline("paste the corrected text, '.' alone ends:\n", line)
             title = line("title for this document: ").strip() or document.greeting or f"Document {index}"

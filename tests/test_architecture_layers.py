@@ -51,7 +51,6 @@ PIPELINE = (
     "text",
     "trace",
     "vlm",
-    "vlm_cache",
     "word_numbering",
 )
 SERVER = (

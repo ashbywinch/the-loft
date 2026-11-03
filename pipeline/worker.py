@@ -78,6 +78,10 @@ class Worker:
     # own record, and a real pass can outlive any grace)
     stale_after_seconds = 6 * 60 * 60
 
+    # the seams are all optional-with-defaults (a client, a log sink, a clock,
+    # a stale grace, an injected reconciler) — one options object would only
+    # move them
+    # lucidlint: ignore long-param-list the constructor is the test seams' home
     def __init__(
         self,
         paths: LoftPaths = DEFAULT_PATHS,
@@ -86,6 +90,7 @@ class Worker:
         write_line: Callable[[str], None] = print,
         stale_after: float | None = None,
         now: Callable[[], datetime] | None = None,
+        reconciler: Reconciler | None = None,
     ) -> None:
         self.paths = paths
         self.client = client
@@ -93,7 +98,9 @@ class Worker:
         self._stale_after = self.stale_after_seconds if stale_after is None else stale_after
         self._now = now or (lambda: datetime.now(UTC))
         self._host = socket.gethostname()
-        self.reconciler = Reconciler(paths, write_line=write_line, client=client)
+        # the seam, as a parameter: the reconciler plans and runs one batch;
+        # this worker owns the batch list, the live-pass rule and the triggers
+        self.reconciler = reconciler or Reconciler(paths, write_line=write_line, client=client)
         self._inflight: set[str] = set()
 
     def sweep(self) -> SweepReport:

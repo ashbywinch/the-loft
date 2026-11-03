@@ -11,10 +11,10 @@ import json
 from pathlib import Path
 
 import pytest
+from PIL import UnidentifiedImageError
 
 from pipeline.batch_record import BatchRecord
-from pipeline.reconcile import Reconciler
-from pipeline.reconcile_plan import missing_stages
+from pipeline.reconcile import Reconciler, plan_for
 from tools.loft_paths import LoftPaths
 
 
@@ -53,7 +53,7 @@ def test_a_complete_batch_needs_nothing(tmp_path: Path) -> None:
     _artefact(work, batch, "ocr-guess/p1.txt", "text")
     _artefact(work, batch, "ocr-guess/p1.rows.json", "{}")
     _artefact(work, batch, "ocr-guess/boundaries.json", "[]")
-    plan = missing_stages(record, work)
+    plan = plan_for(record, work)
     assert plan.stages == ()
     assert plan.reasons == ()
 
@@ -61,7 +61,7 @@ def test_a_complete_batch_needs_nothing(tmp_path: Path) -> None:
 def test_a_missing_classification_is_the_first_gap(tmp_path: Path) -> None:
     work = tmp_path / "work"
     record = _record(work, pages=("p1.jpg", "p2.jpg"))
-    plan = missing_stages(record, work)
+    plan = plan_for(record, work)
     assert plan.stages[0] == "classify"
     assert "2 page(s) have no category" in plan.reasons[0]
 
@@ -76,7 +76,7 @@ def test_a_printed_page_needs_no_row_read(tmp_path: Path) -> None:
     _artefact(work, batch, "oriented/p1.jpg", "upright")
     _artefact(work, batch, "ocr-guess/p1.txt", "text")
     _artefact(work, batch, "ocr-guess/p1.printed.json", "{}")
-    plan = missing_stages(record, work)
+    plan = plan_for(record, work)
     assert plan.stages == ("group",)  # read is done; only the pile's grouping remains
 
 
@@ -89,7 +89,7 @@ def test_an_old_vocabulary_record_is_reclassified(tmp_path: Path) -> None:
     _artefact(work, batch, "classify.json", json.dumps({"p1.jpg": {"kind": "text", "confidences": {"text": 0.9}}}))
     _artefact(work, batch, "oriented/p1.jpg", "upright")
     _artefact(work, batch, "ocr-guess/p1.txt", "text")
-    plan = missing_stages(record, work)
+    plan = plan_for(record, work)
     assert plan.stages[0] == "classify"
     assert "old category" in plan.reasons[0]
 
@@ -103,53 +103,63 @@ def test_a_direct_read_needs_no_orientation(tmp_path: Path) -> None:
     _artefact(
         work, batch, "classify.json", json.dumps({"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}})
     )
-    plan = missing_stages(record, work)
+    plan = plan_for(record, work)
     assert "orient" not in plan.stages
 
 
 def test_missing_grouping_alone_is_one_stage(tmp_path: Path) -> None:
-    work = tmp_path / "work"
-    record = _record(work)
-    batch = record.batch_id
-    _artefact(
-        work, batch, "classify.json", json.dumps({"p1.jpg": {"kind": "photograph", "confidences": {"photograph": 0.9}}})
-    )
-    plan = missing_stages(record, work)
-    assert plan.stages == ("group",)  # a photograph has nothing to orient or read
-
-
-def test_a_stage_is_journalled_after_it_runs(tmp_path: Path) -> None:
-    """The journal records the OUTCOME: a stage that ran is `done`; one that
-    raised is `failed` with its error, and the error still reaches the caller."""
-    paths = LoftPaths(
-        scan_area=tmp_path / "scans",
-        registry_dir=tmp_path / "registry",
-        work_dir=tmp_path / "work",
-        archive_dir=tmp_path / "archive",
-    )
-    reconciler = Reconciler(paths, write_line=lambda line: None)
-    reconciler._stage("batch", "group", "group: no boundaries.json", lambda: None)
-    with pytest.raises(RuntimeError, match="the model refused"):
-        reconciler._stage("batch", "read", "read: no text", _refuse)
-    events = [json.loads(line) for line in (paths.work_dir / "batch" / "events.jsonl").read_text().splitlines()]
-    assert [(event["stage"], event["action"]) for event in events] == [("group", "done"), ("read", "failed")]
-    assert events[1]["error"] == "RuntimeError: the model refused"
-
-
-def _refuse() -> None:
-    raise RuntimeError("the model refused")
-
-
-def test_a_marker_is_the_reads_receipt(tmp_path: Path) -> None:
-    """A page whose read marker exists is read, even if the text beside it is
-    missing — the marker is written AFTER the text, and the stage skips it, so
-    the plan must not demand a re-read (they used to disagree)."""
+    """A pile that is read but not grouped needs the one stage: grouping."""
     work = tmp_path / "work"
     record = _record(work)
     batch = record.batch_id
     _artefact(
         work, batch, "classify.json", json.dumps({"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}})
     )
-    _artefact(work, batch, "ocr-guess/p1.printed.json", "{}")  # marker present, text missing
-    plan = missing_stages(record, work)
-    assert "read" not in plan.stages
+    _artefact(work, batch, "ocr-guess/p1.printed.json", "{}")
+    _artefact(work, batch, "ocr-guess/p1.txt", "TEXT")
+    plan = plan_for(record, work)
+    assert plan.stages == ("group",)
+
+
+def test_a_failing_stage_is_journalled_and_raised(tmp_path: Path) -> None:
+    """A stage that cannot run is journalled with its error, and the failure
+    reaches the caller — nothing is swallowed and nothing is retried."""
+    paths = LoftPaths(
+        scan_area=tmp_path / "scans",
+        registry_dir=tmp_path / "registry",
+        work_dir=tmp_path / "work",
+        archive_dir=tmp_path / "archive",
+    )
+    record = _record(paths.work_dir)
+    batch = record.batch_id
+    classify = json.dumps({"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}})
+    _artefact(paths.work_dir, batch, "classify.json", classify)
+    _artefact(paths.work_dir, batch, "ocr-guess/p1.printed.json", "{}")
+    _artefact(paths.work_dir, batch, "ocr-guess/p1.txt", "TEXT")
+    reconciler = Reconciler(paths, write_line=lambda line: None)
+    with pytest.raises(UnidentifiedImageError):  # grouping measures the page; it is not an image
+        reconciler.run(record)
+    events = [json.loads(line) for line in (paths.work_dir / batch / "events.jsonl").read_text().splitlines()]
+    assert events[0]["stage"] == "group" and events[0]["action"] == "run"
+    assert events[-1]["action"] == "failed" and "Error" in events[-1]["error"]
+
+
+def test_a_batch_with_nothing_missing_is_left_alone(tmp_path: Path) -> None:
+    """A complete batch logs one line and journals nothing: no work, no write."""
+    paths = LoftPaths(
+        scan_area=tmp_path / "scans",
+        registry_dir=tmp_path / "registry",
+        work_dir=tmp_path / "work",
+        archive_dir=tmp_path / "archive",
+    )
+    record = _record(paths.work_dir)
+    batch = record.batch_id
+    photograph = json.dumps({"p1.jpg": {"kind": "photograph", "confidences": {"photograph": 0.9}}})
+    _artefact(paths.work_dir, batch, "classify.json", photograph)
+    _artefact(paths.work_dir, batch, "ocr-guess/boundaries.json", "[]")
+    lines: list[str] = []
+    reconciler = Reconciler(paths, write_line=lines.append)
+    plan = reconciler.run(record)
+    assert plan.stages == ()
+    assert lines == [f"reconcile: {batch} — nothing to do"]
+    assert not (paths.work_dir / batch / "events.jsonl").exists()

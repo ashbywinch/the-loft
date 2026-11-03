@@ -782,8 +782,8 @@ sweeps; `printed <batch>` re-reads a printed or structured pile directly
 
 **The worker owns the machine stages** (`pipeline/worker.py`, `loft work`;
 UR3). A batch is work while a stage artefact is MISSING — not while its
-status says so. `pipeline/reconcile_plan.py` (`GapFinder`) reads one batch's
-artefacts and names the stages still missing: `classify` (no entry, or one
+status says so. `pipeline/stage_table.py` owns the stage order and each stage's gap
+check, and reads one batch's artefacts to name the stages still missing: `classify` (no entry, or one
 in the pre-category spelling), `orient` (the row pages' uprights),
 `read` (the category's own marker), `group` (no `boundaries.json`).
 `pipeline/reconcile.py` (`Reconciler`) runs exactly those, in order, after

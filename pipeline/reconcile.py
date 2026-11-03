@@ -1,42 +1,74 @@
 """The reconciler: what a batch still needs, and only that.
 
 The machine stages are idempotent and their artefacts are their own markers, so
-"what does this batch need?" is a question the filesystem answers: a page whose
-`oriented/<page>` is missing needs orientation; one whose reading is missing
-needs the read; a batch with no `boundaries.json` needs grouping. The
-reconciler asks that question per batch, runs the missing stages, and logs each
-decision — it never re-runs a stage whose artefact is current, and never
-reprocesses the workspace to find work.
+"what does this batch need?" is a question the filesystem answers.
+`pipeline/stage_table.py` owns the stage order and the gap checks; this module
+turns them into the operator's two operations for one batch: `plan_batch`
+(report the gap) and `run` (complete it, journalling each outcome).
 
-This module has no loop of its own: it is the plan-and-run half. The loop —
-the triggers — is `Worker.watch` (`pipeline/worker.py`): a filesystem change
-under `work/`, the registry or the scan area is mapped to the batch it
-concerns and `Reconciler.run` is called then (a batch already in flight is
-skipped — the self-write suppression: the reconciler's own writes do not feed
-back into it); a periodic resync calls it for every batch, so a missed event,
-a restart or a stage whose marker was lost is corrected. Planning is a handful
-of `stat`s per page — no model call — so the resync is cheap.
+This module has no loop of its own: the triggers are `Worker.watch`
+(`pipeline/worker.py`). A filesystem change under `work/`, the registry or the
+scan area maps to the batch it concerns and `Reconciler.run` is called then (a
+batch already in flight is skipped — the self-write suppression: the
+reconciler's own writes do not feed back into it); a periodic resync calls it
+for every batch, so a missed event, a restart or a stage whose marker was lost
+is corrected. Planning is a handful of `stat`s per page — no model call — so
+the resync is cheap.
 """
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from pipeline.batch_record import STATUS_PROCESSING, STATUS_REVIEW, BatchRecord
 from pipeline.chain import BatchRun
-from pipeline.classify import LEGACY_KINDS, run_classify
-from pipeline.reconcile_plan import Plan, classification_of, missing_stages
 from pipeline.registry import list_batches, load_batch
+from pipeline.stage_table import EngineView, StageInputs, plan_stages, run_plan
 from tools.loft_paths import LoftPaths
 
-__all__ = ["Plan", "Reconciler", "missing_stages"]
+__all__ = ["Plan", "Reconciler", "plan_for"]
+
+
+@dataclass(frozen=True)
+class Plan:
+    """What one batch needs: the stages, and one reason line per stage."""
+
+    batch_id: str
+    stages: tuple[str, ...]
+    reasons: tuple[str, ...]
+
+
+def plan_for(record: BatchRecord, work_dir: Path) -> Plan:
+    """The batch's gap, from the one stage table (never calls a model)."""
+    gaps = plan_stages(EngineView.of(record, work_dir))
+    return Plan(record.batch_id, tuple(spec.name for spec, _ in gaps), tuple(reason for _, reason in gaps))
+
+
+class _RunJournal:
+    """One batch run's log lines and journal entries — the callbacks the stage
+    loop calls, not closures over the run's locals."""
+
+    def __init__(self, reconciler: Reconciler, batch_id: str) -> None:
+        self.reconciler = reconciler
+        self.batch_id = batch_id
+        self.done: list[str] = []
+
+    def announce(self, name: str, reason: str) -> None:
+        self.reconciler.write_line(f"  {reason}")
+        self.reconciler._journal(self.batch_id, {"stage": name, "action": "run", "reason": reason})
+
+    def finished(self, name: str, duration_ms: int) -> None:
+        self.done.append(name)
+        self.reconciler._journal(self.batch_id, {"stage": name, "action": "done", "duration_ms": duration_ms})
 
 
 class Reconciler:
-    """The reconciler's one loop: plan a batch from its artefacts, run the gap.
+    """Plan one batch from its artefacts, then run the gap.
 
     ``write_line`` is the operator's log (one line per decision); the same
     events are appended to the batch's journal (``work/<batch>/events.jsonl``),
@@ -56,12 +88,12 @@ class Reconciler:
     # ---- planning -------------------------------------------------------
     def plan(self) -> list[Plan]:
         """Every batch's gap, the registry being the list of batches."""
-        return [missing_stages(record, self.paths.work_dir) for record in list_batches(self.paths.registry_dir)]
+        return [plan_for(record, self.paths.work_dir) for record in list_batches(self.paths.registry_dir)]
 
     def plan_batch(self, record: BatchRecord) -> Plan:
         """The stages this batch still needs, with the reason for each. Never
         writes and never calls a model."""
-        return missing_stages(record, self.paths.work_dir)
+        return plan_for(record, self.paths.work_dir)
 
     # ---- running --------------------------------------------------------
     def run(self, record: BatchRecord) -> Plan:
@@ -81,69 +113,30 @@ class Reconciler:
         )
         run.update_status(record, STATUS_PROCESSING)  # stamps the pass (pid, host, time)
         started = datetime.now(UTC)
-        if "classify" in plan.stages:
-            self._stage(
-                record.batch_id,
-                "classify",
-                plan.reasons[plan.stages.index("classify")],
-                lambda: run_classify(
-                    record.batch_id,
-                    registry_dir=self.paths.registry_dir,
-                    work_dir=self.paths.work_dir,
-                    reclassify=self._stale_pages(record),
-                ),
-            )
-            # the classification decides the read, so the plan is re-made on the
-            # new categories before anything downstream runs
-            replanned = missing_stages(record, self.paths.work_dir)
-            if replanned.stages != plan.stages:
-                self.write_line(f"  replanned after classify: {', '.join(replanned.stages) or 'nothing'}")
-                plan = replanned
-        classification = run.classify_pages([record.path / name for name in sorted(record.pages)])
-        for stage, reason in zip(plan.stages, plan.reasons, strict=True):
-            if stage == "classify":
-                continue  # done above, on the pages that needed it
-            if stage == "orient":
-                self._stage(
-                    record.batch_id, stage, reason, lambda: run.orient_pages(classification.text_pages, record.path)
-                )
-            elif stage == "read":
-                self._stage(record.batch_id, stage, reason, lambda: run.read_all(classification))
-            elif stage == "group":
-                self._stage(
-                    record.batch_id, stage, reason, lambda: run.write_boundaries(classification, record, self.client)
-                )
-        run.update_status(load_batch(record.batch_id, self.paths.registry_dir), STATUS_REVIEW)
-        took_ms = int((datetime.now(UTC) - started).total_seconds() * 1000)
-        self.write_line(f"reconcile: {record.batch_id} — {', '.join(plan.stages)} done in {took_ms} ms")
-        self._journal(
-            record.batch_id,
-            {"action": "reconciled", "stages": list(plan.stages), "duration_ms": took_ms},
-        )
-        return plan
-
-    def _stage(self, batch_id: str, stage: str, reason: str, action: Callable[[], Any]) -> None:
-        """Run one stage, logging its reason first and journalling the outcome
-        — a failure is journalled with its error and raised, never retried
-        here."""
-        self.write_line(f"  {reason}")
-        started = datetime.now(UTC)
+        log = _RunJournal(self, record.batch_id)
         try:
-            _ = action()
+            _ = run_plan(
+                run,
+                record,
+                inputs=StageInputs(client=self.client),
+                on_stage=log.announce,
+                on_done=log.finished,
+            )
         except Exception as exc:
             self._journal(
-                batch_id,
-                {"stage": stage, "action": "failed", "reason": reason, "error": f"{type(exc).__name__}: {exc}"},
+                record.batch_id,
+                {
+                    "stage": plan.stages[len(log.done)] if len(log.done) < len(plan.stages) else "reconcile",
+                    "action": "failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                },
             )
             raise
+        run.update_status(load_batch(record.batch_id, self.paths.registry_dir), STATUS_REVIEW)
         took_ms = int((datetime.now(UTC) - started).total_seconds() * 1000)
-        self._journal(batch_id, {"stage": stage, "action": "done", "reason": reason, "duration_ms": took_ms})
-
-    def _stale_pages(self, record: BatchRecord) -> list[str]:
-        """The pages whose classification is missing or carries the old
-        vocabulary — the ones a re-run must classify again."""
-        current = classification_of(self.paths.work_dir, record.batch_id)
-        return [name for name in record.pages if name not in current or current[name].get("kind") in LEGACY_KINDS]
+        self.write_line(f"reconcile: {record.batch_id} — {', '.join(log.done)} done in {took_ms} ms")
+        self._journal(record.batch_id, {"action": "reconciled", "stages": log.done, "duration_ms": took_ms})
+        return Plan(record.batch_id, tuple(log.done), plan.reasons[: len(log.done)])
 
     def _journal(self, batch_id: str, event: dict[str, Any]) -> None:
         """Append one event to the batch's journal — the durable log of what

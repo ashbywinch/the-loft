@@ -111,3 +111,23 @@ def test_the_row_pipeline_skips_a_page_already_read_directly(tmp_path: Path) -> 
     }
     rows = run.rows_pages(Classification(classify, ["p1.jpg", "p2.jpg"], []))
     assert rows == ["p2.jpg"]
+
+
+def test_a_page_with_a_marker_is_not_paid_for_again(tmp_path: Path) -> None:
+    """The marker is the read's receipt (written after the text): the process
+    pass must not re-read a page whose marker exists, even when its text file
+    is missing — a re-read would be a second paid call for the same page."""
+    run = _seed(tmp_path)
+    guess = run.work_dir / "b1"
+    guess.mkdir(parents=True, exist_ok=True)
+    (guess / "classify.json").write_text(json.dumps({"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.99}}}))
+    (guess / "ocr-guess").mkdir(parents=True, exist_ok=True)
+    (guess / "ocr-guess" / "p1.printed.json").write_text("{}")  # marker, no p1.txt
+    calls: list[Path] = []
+
+    def fake(image: Path) -> tuple[str, VlmAnswer]:
+        calls.append(image)
+        return "PRINTED PAGE", VlmAnswer("raw", TokenUsage(prompt_tokens=1, completion_tokens=1, total_tokens=2))
+
+    run.process(client=_one_document, _printed=fake)
+    assert calls == []  # the receipt stands; the pass does not pay twice

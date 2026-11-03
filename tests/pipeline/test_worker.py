@@ -99,9 +99,12 @@ def _paths(tmp_path: Path) -> LoftPaths:
 
 def _worker(tmp_path: Path, *, fail: tuple[str, ...] = (), now: Callable[[], datetime] | None = None) -> Worker:
     paths = _paths(tmp_path)
-    worker = Worker(paths, write_line=lambda line: None, now=now)
-    worker.reconciler = _RecordingReconciler(paths, fail=fail)
-    return worker
+    return Worker(
+        paths,
+        write_line=lambda line: None,
+        now=now,
+        reconciler=_RecordingReconciler(paths, fail=fail),
+    )
 
 
 def _ran(worker: Worker) -> list[str]:
@@ -177,8 +180,10 @@ def test_a_reviewed_batch_with_a_gap_is_reconciled(tmp_path: Path) -> None:
     (work / "oriented").mkdir(parents=True)
     (work / "ocr-guess").mkdir(parents=True)
     _ = (work / "classify.json").write_text(
-        json.dumps({"p1.jpg": {"kind": "photograph", "confidences": {"photograph": 0.9}}}), encoding="utf-8"
+        json.dumps({"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}), encoding="utf-8"
     )
+    _ = (work / "ocr-guess" / "p1.printed.json").write_text("{}", encoding="utf-8")
+    _ = (work / "ocr-guess" / "p1.txt").write_text("TEXT", encoding="utf-8")
     worker = _worker(tmp_path)
     report = worker.sweep()
     assert _ran(worker) == ["batch-review"]  # group is missing

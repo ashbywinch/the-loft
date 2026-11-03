@@ -308,7 +308,7 @@ def test_a_failed_pass_puts_the_batch_back_in_the_queue(tmp_path: Path) -> None:
 
     class _Broken(BatchRun):
         @override
-        def classify_pages(self, pages: list[Path]) -> Classification:
+        def classify_pages(self, pages: list[Path], **_kwargs: object) -> Classification:
             raise RuntimeError("the classifier died")
 
     registry = tmp_path / "registry"

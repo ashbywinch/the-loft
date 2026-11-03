@@ -44,7 +44,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The segment/box review & edit UX (user stories, the box-issue taxonomy, the corner rulings) | `docs/PLAN/segment-review-stories.md` |
 | The row review's phone surface (the purpose, the two colour layers, the draw→redraw loop; PROPOSED) | `docs/PLAN/row-review-ux.md` |
 | The page categories (photograph, writing printed/handwritten, postcard face, form, drawing) and what each implies for the read | `docs/PLAN/page-categories.md` |
-| What a batch still needs, and the stage that completes it (the reconciler, the watch, the resync, `loft work --plan/--batch`) | `pipeline/reconcile_plan.py` (`GapFinder`), `pipeline/reconcile.py` (`Reconciler`); `pipeline/worker.py` (`Worker.watch`); TECHSPEC §16.14.2 |
+| What a batch still needs, and the stage that completes it (the reconciler, the watch, the resync, `loft work --plan/--batch`) | `pipeline/stage_table.py` (the stage order and each stage's gap check), `pipeline/reconcile.py` (`Reconciler: plan + run`), `pipeline/worker.py` (`Worker.watch`); TECHSPEC §16.14.2 |
 | The stage layout on disk — the one place every artefact path is written | `pipeline/artefacts.py` (`BatchArtefacts`); the guard test is `tests/test_architecture.py` |
 | Which model is used where, and the Cloudflare AI Gateway endpoint | `pipeline/model/config.py` (`VISION_MODEL`, `CHAT_MODEL`, `BOUNDARY_MODEL`) |
 | How a drawn row line corrects a page (replace a covered row; claim only the words the line runs along; leave the rest) | `docs/PLAN/row-correction-rule.md`; `pipeline/rows/rows.py` (`_Claims`) |

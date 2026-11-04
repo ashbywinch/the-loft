@@ -57,6 +57,20 @@ The remote app's data is published to **R2**, served through **one origin**:
   **Cloudflare Access service token**. The app shell is on Pages and changes
   rarely.
 
+**What a release carries.** Two halves:
+
+- **Browse:** `index.json` (the cards), `people.json`, `places.json`,
+  `orgs.json`, `themes.json`, `transcripts.json`, the published search index,
+  and the view images. Small enough to hold offline after one load.
+- **Review:** `review/index.json` (the open claims and the batch/document
+  strip) and one `review/<document_id>.json` per open document — its pages,
+  rows, boxes and flags. A confirmed document is readable from browse; it is
+  not republished as a review payload. To correct one, the reviewer reopens
+  it: the command creates a claim, and the next release carries the payload.
+  The remote review is the pending queue; the reopen's payload arrives when
+  the laptop is on.
+- **Never:** originals, the event log, the operational tables.
+
 **The backend app is TS.** The existing chat/identify/re-read logic is ported to
 the Worker; the port is accepted, not a reason to add another host. The
 laptop's Python service stays the LAN writer.

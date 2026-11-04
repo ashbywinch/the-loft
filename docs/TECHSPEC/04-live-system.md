@@ -300,6 +300,10 @@ The invariants:
   sees their edit before it is applied. The read model is republished after
   each drain and on a schedule; it carries `published_at`, and the UI shows
   its age and the count of pending commands.
+- **Review payload.** The release's review half is the open claims:
+  `review/index.json` plus one payload per open document. A confirmed
+  document is read from browse; a reopen command creates a claim and the next
+  release carries its payload.
 - **Parked commands.** A command that cannot apply is listed in the remote
   UI under its author, with its payload and the newer version it collided
   with. It is not reduced to an anonymous count.

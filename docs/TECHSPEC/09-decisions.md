@@ -1,7 +1,7 @@
 # Decisions
 
 > Component of `docs/TECHSPEC.md`. Status: **register**. The live-system
-> decisions (D1–D41) are proposed; the pre-§17 decisions (§12/§15) are
+> decisions (D1–D42) are proposed; the pre-§17 decisions (§12/§15) are
 > history.
 
 ## The register
@@ -144,6 +144,11 @@ decisions survive all three. The blast radius is at the bottom.
   first-party and there is no CORS or signed URL. Images are content-addressed,
   served `immutable`, and cached at the edge and in the browser. The free
   Worker request budget is ample at family scale, and repeat views are free.
+- **D42 [domain] — The release's review half is the open claims only.** The
+  release carries the browse projection and, per open document, its pages,
+  rows, boxes and flags. A confirmed document is in browse; a reopen command
+  creates a claim and the next release carries its payload. The archive's
+  whole row set is never published.
 
 
 ## Blast radius
@@ -162,7 +167,7 @@ decisions survive all three. The blast radius is at the bottom.
 
 These are kept for the record: the 2060 reader, the sidecar rationale, the
 old hosting choice. They are not the live design. Where they disagree with
-D1–D41, the live decision wins.
+D1–D42, the live decision wins.
 ## 12. Decisions to confirm (your review)
 
 | # | Decision | Recommendation |

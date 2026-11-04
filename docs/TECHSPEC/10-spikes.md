@@ -148,8 +148,10 @@ hash/migration, draft exclusion, command rebuild — follow.
     person the laptop confirms.
 
 27. **Read-model publish.** Upload a release, flip `current.json`; a partial
-    upload leaves the old pointer; the app reads the new release; a rollback
-    re-points; the R2 CORS/Access credentials hold.
+    upload leaves the old pointer; the app reads the new release through the
+    Worker; a rollback re-points; Access and the R2 token hold. Measure the
+    release size and publish time for a 50k-page archive: browse + the open
+    claims, never the whole row set.
 
 28. **View-image transcription.** One 300 DPI handwriting page: the VLM's
     per-row text on the view image vs the original. Acceptance: the view image

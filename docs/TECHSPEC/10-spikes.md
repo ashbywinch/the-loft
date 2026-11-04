@@ -133,3 +133,10 @@ hash/migration, draft exclusion, command rebuild — follow.
    `ExportView` without SQL.
 6. **Read models at scale.** Timeline, person page, review queue and search
    at 10,000 items, with cursor pagination.
+
+## The Cloudflare backend (`00-deployments.md`, `04-live-system.md`)
+
+25. **Worker chat parity.** The remote chat and identify flows on the Worker
+    match the laptop's Python review on the tested cases; the prompt/context
+    is shared or ported; the model key stays in the Worker; the laptop
+    re-validates every applied result.

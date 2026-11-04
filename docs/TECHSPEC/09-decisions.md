@@ -24,19 +24,20 @@ decisions survive all three. The blast radius is at the bottom.
 - **D2 [shape] — One host writes.** The laptop's Loft service is the only writer
   of domain state, and every write goes through its seam inside a
   `BEGIN IMMEDIATE` transaction. The worker and the sync agent are
-  clients, not second writers; the managed backend never writes domain state.
+  clients, not second writers; the Cloudflare backend never writes domain state.
 - **D3 [shape] — Remote writes are commands.** Immutable, UUID-keyed,
   `entity_version`-checked, applied idempotently by the laptop.
-- **D4 [shape] — The managed backend is replaceable for reads.** The published
+- **D4 [shape] — The Cloudflare backend is replaceable for reads.** The published
   read model plus the caller's pending commands. It is the only copy of
   commands not yet pulled, so the outbox table is durable, replicated and
   never trimmed.
-- **D5 [shape] — Originals stay home; the words do not.** Scan pixels and
-  full-resolution images stay on the big disk. Transcripts, stories,
-  memories and review chat live in the managed backend behind family auth, and so
-  do legible derivatives sized per page category (row review needs a
-  legible tier, not a thumbnail). The resolution table is signed off
-  before the remote review surface ships.
+- **D5 [shape] — Originals stay home; the words and usable images do not.**
+  Scan pixels and full-resolution images stay on the big disk. Transcripts,
+  stories, memories and review chat live in the Cloudflare backend behind
+  family auth. The remote site serves a **usable browse image** for every
+  item (not a thumbnail), a higher-resolution derivative for the review
+  queue, and thumbnails only for the grid. The resolution table is signed
+  off before the remote review surface ships.
 - **D6 [shape] — Nightly, tiered, verified.** Nightly dumps and archive export;
   retention by tier; the export must be able to rebuild the DB.
 - **D7 [schema] — SQLite at home.** No server database on the laptop;
@@ -85,7 +86,7 @@ decisions survive all three. The blast radius is at the bottom.
   browsable item, identity, theme and relationship; confirmed text but no
   drafts, proposals or model reasoning; sensitive items included and indexed;
   accounts and emails excluded. The hosted browse applies the family's
-  visibility rule, not the archive. The managed backend holds the
+  visibility rule, not the archive. The Cloudflare backend holds the
   working state behind family auth.
 - **D24 [domain] — A bad release is contained by withdrawal and compensation, not by
   a restore.** The nightly backup is the fallback.
@@ -127,7 +128,7 @@ decisions survive all three. The blast radius is at the bottom.
 | Change | Revisit |
 |---|---|
 | The remote becomes a server | `[shape]`: D1–D6, D11, D13, D17, D20, D22; `04-live-system.md` §17.5–17.6, §17.11 |
-| The managed backend is replaced | `[shape]`: D4, D5, D11, D13; the static app's SDK calls; the outbox and read-model adapters |
+| The Cloudflare backend/services are replaced | `[shape]`: D4, D5, D11, D13; the static app's API calls; the outbox and read-model adapters |
 | The laptop becomes a home server | `[shape]`: D2, D6, D12; `00-deployments.md` |
 | SQLite becomes Postgres | `[schema]`: D1, D7, D14, D16, D18, D27; `05-schema.md`, `06-schema-ddl.md` |
 | The code layout moves to `loft/` | `[interface]`: D31–D36; `08-code-organisation.md` |

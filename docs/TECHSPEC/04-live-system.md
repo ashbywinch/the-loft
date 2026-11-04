@@ -40,7 +40,7 @@ browsers.
   including accepting edits.
 - An edit made remotely must reach the plain-text archive without a
   bidirectional merge.
-- Web-sized images may leave the house; full-resolution originals may not.
+- **Usable browse images** may leave the house; full-resolution originals may not. A thumbnail-only remote site is not acceptable.
 - Backup and export run nightly, with retention — not continuously.
 
 ### 17.2 The shape
@@ -72,21 +72,22 @@ flowchart LR
     Dumps["Nightly DB dumps<br/>+ snapshots"]
   end
 
-  subgraph RemoteSite["Remote — static app + managed backend"]
+  subgraph RemoteSite["Remote — static app + Cloudflare backend"]
     direction TB
     Static["Remote static web app<br/>HTML/JS/CSS · no server code"]
-    Backend["Managed backend<br/>Postgres · Storage · Auth"]
-    Snapshot["Published read model<br/>tables/JSON + images"]
-    Outbox["Outbox table<br/>commands, keyed by UUID"]
-    Media["Object storage<br/>web-sized derivatives<br/>staged uploads"]
-    Auth["Google OAuth"]
+    Backend["Cloudflare backend<br/>Worker + D1"]
+    Snapshot["Published read model<br/>Pages / R2"]
+    Outbox["Outbox table<br/>D1, keyed by UUID"]
+    Media["Cloudflare R2<br/>browse images · thumbnails<br/>review derivatives"]
+    Auth["Cloudflare Access"]
+    Model["Cloudflare AI Gateway"]
 
-    Static -->|"reads"| Backend
+    Static -->|"reads read model"| Snapshot
     Static -->|"writes command"| Backend
-    Static -->|"uploads"| Backend
-    Backend --- Snapshot
+    Static -->|"fetches images"| Media
+    Static --- Auth
+    Backend -->|"model calls"| Model
     Backend --- Outbox
-    Backend --- Media
     Backend --- Auth
   end
 
@@ -97,7 +98,7 @@ flowchart LR
   Export -->|"writes"| Archive
   Export -->|"writes"| Dumps
   Originals -->|"originals (full-res on LAN)"| Service
-  Sync -->|"publish read model"| Backend
+  Sync -->|"publish read model"| Snapshot
   Sync -->|"upload derivatives"| Media
   Outbox -->|"drain"| Sync
   LAN <-->|"read / write"| Service
@@ -105,7 +106,7 @@ flowchart LR
 ```
 
 The rule in one sentence: **the laptop writes the database and publishes a
-read model to the managed backend; the remote is a static app that reads it
+read model to Pages/R2; the remote is a static app that reads it
 and writes commands to the backend's outbox; the big disk receives the
 nightly human archive and operational backup.** The full deployment table is
 `00-deployments.md`.
@@ -120,12 +121,12 @@ nightly human archive and operational backup.** The full deployment table is
 | **Sync agent** | laptop | pulls the outbox, applies commands through the write seam, publishes the read model and derivatives | write the archive or open the DB directly |
 | **Exporter** | laptop | nightly operational backup, human archive, verification, retention | serve reads |
 | **Archive disk** | big disk | full-resolution originals; the human archive; the operational backup | be written by the app |
-| **Remote static app** | CDN | the static UI; reads the published read model; writes commands to the backend; uploads to storage | run server code |
-| **Managed backend** | Supabase | the published read model, the outbox, auth, staged uploads | write domain state |
-| **Snapshot** | managed backend | the last published read model and manifest | be the only copy |
-| **Outbox** | managed backend | immutable commands keyed by UUID | be edited or deleted |
-| **Derivative store** | managed storage | derivatives at the per-category resolution, staged uploads | hold originals |
-| **Browser** | LAN or anywhere | reads; writes; optimistic pending state | be the source of truth |
+| **Remote static app** | Cloudflare Pages | the static UI; reads the published read model; writes commands to the backend; fetches images from R2 | run server code |
+| **Cloudflare backend** | Worker + D1 | chat/identify calls, the outbox, auth validation, accounts | write the archive |
+| **Snapshot** | Pages / R2 | the last published read model and manifest | be the only copy |
+| **Outbox** | D1 | immutable commands keyed by UUID | be edited or deleted |
+| **Derivative store** | R2 | browse images, thumbnails, review derivatives | hold originals |
+| **Browser** | LAN or anywhere | reads; writes; optimistic pending state; a local outbox while the backend is down | be the source of truth |
 
 **Object model.** The domain nouns do not change: `Item`, `Person`,
 `Place`, `Org`, `Theme`, `Relationship`, `Document`, `Page`, `Row`,
@@ -134,7 +135,7 @@ nightly human archive and operational backup.** The full deployment table is
 `Outbox` (the durable queue of commands), `Snapshot` (the published read
 model), `SyncAgent` (pull–apply–publish), `Exporter` (the archive
 materialiser and backup), `ArchiveImport` (the rebuild), `Derivative` (one
-web-sized image), `Asset` (the catalogued original or derivative),
+browse image), `Asset` (the catalogued original or derivative),
 `RemoteApp` (the static UI) and `Backend` (the managed dependency).
 `Archive` keeps its name but changes job: it is the plain-text
 materialisation, not the live store. The noun ownership is
@@ -142,25 +143,25 @@ materialisation, not the live store. The noun ownership is
 
 ### 17.4 What lives where
 
-| Capability | Laptop | Managed backend / static app | Big disk |
+| Capability | Laptop | Cloudflare backend / static app | Big disk |
 |---|---|---|---|
 | Authoritative writes | ✓ (only) | — | — |
 | Browse / search (LAN) | ✓ | — | — |
-| Browse / search (remote) | — | ✓ static app reads the published model | — |
-| Transcript edit / confirm | applies | static app writes a command to the backend | confirmed text only |
+| Browse / search (remote) | — | ✓ static app reads Pages/R2 | — |
+| Transcript edit / confirm | applies | static app writes a command to the Worker | confirmed text only |
 | Row drawing | applies and re-reads | static app writes a command | working state (not archived) |
 | Add story / memory | applies | static app writes a command | confirmed text only |
 | Identity decisions | applies | static app writes a command | confirmed/estimated only |
-| Photo upload | pulls original | browser uploads to managed storage; the laptop pulls | keeps original |
+| Photo upload | pulls original | browser uploads to R2; the laptop pulls | keeps original |
 | Scan · classify · orient · read · rows · transcribe | ✓ | — | reads originals |
 | Full-resolution images | serves on LAN | — (never stored) | stores |
-| Web-sized derivatives | generates | serves from managed storage | — |
-| Read model | produces | stores the published model | — |
-| Remote command queue | drains | stores in the backend outbox | — |
+| Browse images / derivatives | generates | served from R2 (usable resolution, not thumbnails) | — |
+| Read model | produces | Pages/R2 serve the published model | — |
+| Remote command queue | drains | D1 outbox | — |
 | Operational backup | produces | — | stores |
 | Human archive | produces | — | stores |
 | Retention / trim | ✓ | — | ✓ |
-| Auth | LAN session | managed Google OAuth | — |
+| Auth | LAN session | Cloudflare Access (Google) | — |
 
 The two deliberate omissions: **no pipeline work off-site** (it needs the
 scanner and the originals), and **no full-resolution originals off-site**.
@@ -192,8 +193,8 @@ enforced in the schema, not by convention: a re-read refuses to replace
 a human row set newer than its input (`page_rows.source`, `pages.revision`),
 instead of deleting the reviewer's corrections as the as-built path does.
 
-**W3 — remote.** Browser → the static app → the managed backend's outbox
-table (one immutable `Command`) → `202` with the command id. The author
+**W3 — remote.** Browser → the static app → the Cloudflare backend's D1
+outbox (one immutable `Command`) → `202` with the command id. The author
 sees the edit immediately as pending; everyone else sees the published read
 model.
 
@@ -223,7 +224,8 @@ sequenceDiagram
   autonumber
   actor R as Remote reviewer
   participant C as Remote static app
-  participant B as Managed backend
+  participant B as Cloudflare backend
+  participant P as Pages / R2
   participant O as Outbox table
   participant L as Laptop sync agent
   participant S as Loft service
@@ -231,7 +233,7 @@ sequenceDiagram
   participant X as Exporter
 
   R->>C: edit transcript (base entity_version 12)
-  C->>B: insert command (SDK)
+  C->>B: insert command (Worker API)
   B->>O: store {uuid, base 12}
   B-->>C: stored
   C-->>R: 202 accepted (pending)
@@ -245,19 +247,19 @@ sequenceDiagram
     D-->>S: commit + event(s)
     S-->>L: applied
     L->>L: advance applied_through
-    L->>B: publish read model + derivatives
+    L->>P: publish read model + images
   else no row changed
     S-->>L: stale
     S->>D: command/rejected (retryable)
-    Note over B: the next read model carries needs_attention
+    Note over P: the next read model carries needs_attention
   end
 
   X->>D: nightly read of changed records
   X->>X: next sidecar and content versions + manifest
 ```
 
-**W4 — uploads.** Browser → the static app → managed storage (staging) plus
-an outbox command referencing the object and its sha256. The laptop pulls
+**W4 — uploads.** Browser → the static app → R2 (staging) plus an outbox
+command referencing the object and its sha256. The laptop pulls
 the object, re-hashes it, writes the original to the big disk, generates
 derivatives, and records the asset. The staged object is deleted after the
 laptop confirms. This is the only path by which a new original can enter the
@@ -290,15 +292,15 @@ The invariants:
 ### 17.6 Read paths
 
 - **LAN.** Loft service → `LiveStore`. Always current.
-- **Remote.** The static app reads the managed backend's published read
-  model, plus an overlay of the caller's own pending commands, so an author
+- **Remote.** The static app reads the Pages/R2 published read model,
+  plus an overlay of the caller's own pending commands, so an author
   sees their edit before it is applied. The read model is republished after
   each drain and on a schedule; it carries `published_at`, and the UI shows
   its age and the count of pending commands.
 - **Parked commands.** A command that cannot apply is listed in the remote
   UI under its author, with its payload and the newer version it collided
   with. It is not reduced to an anonymous count.
-- **Media.** The managed storage serves `Derivative` objects. A request for
+- **Media.** R2 serves the browse images and derivatives. A request for
   an original on the remote site is refused with the honest answer: the
   original is in the house. The LAN serves originals normally.
 - **Search.** SQLite FTS5 in the live DB; the index is part of the published
@@ -317,8 +319,8 @@ records" rule, applied to a backend that is sometimes unreachable.
 | **Folder sync** (Syncthing, Dropbox, Drive) | Moves the append-only discipline to sync-time reconciliation. The `imports-27` collision is the cautionary tale: two writers computed the same next version and one user's words were lost. |
 | **CRDT / local-first merge** (Automerge, Yjs) | Good for concurrent text, but the domain needs validation, identity and one audit order; a CRDT still needs a server-side validator, so the complexity is added without removing the writer. Possible later for the transcript text field alone. |
 | **Cloud-authoritative database** (Postgres/Supabase live) | The simplest live UX, but the truth moves off-site and the laptop becomes a materialiser; "sync back to the local disk" becomes a replication problem. It is the clean upgrade path if remote freshness ever outweighs local truth. |
-| **Remote app server** (the old two-app shape) | A server off-site would only serve the static app's reads and accept its writes — a second deployment, a live attack surface and a second writer, for no domain capability the managed backend does not already provide. |
-| **Remote static app + managed backend (chosen)** | The static app is the only code we deploy; the backend supplies reads, the outbox, auth and uploads. It cannot validate domain writes itself, so the laptop re-validates every command on apply. That is the cost of no off-site server, and it is the shape in `00-deployments.md`. |
+| **Remote app server** (the old two-app shape) | A server off-site would only serve the static app's reads and accept its writes — a second deployment, a live attack surface and a second writer, for no domain capability the Cloudflare backend does not already provide. |
+| **Remote static app + Cloudflare backend (chosen)** | The static app reads Pages/R2 and writes commands to a Worker; D1 holds the outbox and chat state; Access gates the family; AI Gateway holds the model. No server we operate runs off-site. It cannot validate domain writes itself, so the laptop re-validates every command on apply. That is the cost of no server, and it is the shape in `00-deployments.md`. |
 
 The chosen pattern's cost is freshness, and the architecture makes it
 visible rather than hiding it: the read model's age and the pending count
@@ -354,8 +356,8 @@ operational backup and the nightly dumps (`07-exports.md`).
 | Failure | Still works | At risk | Recovery |
 |---|---|---|---|
 | Laptop off | The remote reads the last published read model; remote edits queue; the author sees their own pending edit | No scans, no new derivatives, no export; the read model ages | Nothing lost; the outbox drains on the next run |
-| Managed backend down | LAN reads and writes; the browser's local outbox holds the edit | Remote reads and writes | The outbox is durable; the browser retries on reconnect |
-| Managed backend lost | LAN works; the laptop's DB remains | Commands not yet pulled | The outbox is replicated; the read model is rebuilt from the laptop |
+| Cloudflare backend down | LAN reads and writes; the static read model and images still load; the browser's local outbox holds the edit | Remote chat and writes | The outbox is durable; the browser retries on reconnect |
+| Cloudflare backend lost | LAN works; the static read model and images still load; the laptop's DB remains | Commands not yet pulled | The outbox is exported; the read model and images are rebuilt from the laptop |
 | Laptop lost | The big disk and the off-site dump survive | Up to one night of DB writes; originals if the disk is lost | Restore the newest dump, then replay the outbox from the restored cursor; copy originals from backup |
 | Big disk lost | The DB and the off-site dump survive | Full-resolution originals unless backed up | 3-2-1 backup is still a separate requirement; the DB does not save the originals |
 | Nightly failed or missed | LAN and remote keep working | The archive and its off-site copy age; the DB is still the live truth | Catch-up run on the next start; `last_verified_export_at` and a banner after N missed nights |
@@ -376,41 +378,39 @@ operational backup and the nightly dumps (`07-exports.md`).
   family archive, not a social feed), `busy_timeout=5000`,
   `wal_autocheckpoint=1000`, `recursive_triggers=ON`. No foreign keys; the
   write seam is the integrity check.
-- **The remote is a static web app; the managed backend is the only
-  off-site dependency.** The static app serves the review UI and reads the
-  published read model; the backend supplies reads, the outbox, auth and
-  storage. There is no off-site application server: the laptop's apply is
-  the domain validation the static app cannot perform.
-- **The outbox is a table in the managed backend, keyed by UUID.** The
-  backend is durable and managed; we run no queue service. The command row
+- **The remote is a static web app plus a small Cloudflare backend.** The
+  static app reads Pages/R2; the Worker runs the chat/identify calls, the
+  outbox and auth validation; D1 holds the working state; Access gates the
+  family; AI Gateway holds the model. There is no server we operate: the
+  laptop's apply is the domain validation the static app cannot perform.
+- **The outbox is a D1 table, keyed by UUID.** D1 is durable and managed;
+  we run no queue service. The command row
   is immutable, and the laptop's `applied_through` cursor is the progress
   state. It is never trimmed: it is the replay source after a restore, and
   it is small.
-- **The published read model is a set of tables/JSON plus images, uploaded
-  atomically.** The laptop builds it from the SQLite DB; the backend serves
-  it. The pointer flips only when every referenced part is present.
+- **The published read model is static JSON plus R2 images, uploaded
+  atomically.** The laptop builds it from the SQLite DB; Pages/R2 serve it. The pointer flips only when every referenced part is present.
 - **Derivatives are generated on the laptop and uploaded.** On-the-fly
   resizing at the edge would add a service and put the original one hop
   from the internet.
-- **Auth is the managed backend's Google OAuth.** The LAN keeps the same
-  session model; the static app never sees the client secret.
-- **Search is SQLite FTS5 in the live DB**, carried in the published read
-  model; the service probes FTS5 at startup and fails loudly rather than
-  silently degrading to no search.
+- **Auth is Cloudflare Access (Google).** The LAN keeps the same session
+  model; the static app never sees the client secret.
+- **Search is SQLite FTS5 in the live DB**; the published read model
+  carries a client-searchable index. The service probes FTS5 at startup and
+  fails loudly rather than silently degrading to no search.
 
-**Security posture.** The managed backend holds the words, so it is treated
-as a trusted-but-limited surface, not a public one:
+**Security posture.** The Cloudflare backend, D1 and R2 hold the words and
+images, so they are treated as trusted-but-limited surfaces, not public:
 
 - Object-storage buckets are private; reads use short-lived signed URLs;
   writes use a server-side credential the browser never sees.
-- The managed backend's row-level security and the static app gate access;
-  the laptop validates a command's schema, actor and role again before
-  applying. A compromised backend credential cannot inject an arbitrary
+- Cloudflare Access and the Worker gate access; the laptop validates a
+  command's schema, actor and role again before applying. A compromised backend credential cannot inject an arbitrary
   domain write.
 - Staged uploads have a quota, an allowed MIME set, a sha256 check and a
   short lifetime; the laptop deletes the staged object after the pull.
 - The LAN service binds to the tailnet/LAN, never a port-forward; the static
-  site and the managed backend are the only public surfaces.
+  site and the Worker are the only public surfaces.
 - The laptop's disk is encrypted at rest (the whole corpus now lives on
   it); the nightly off-site copy is encrypted with a family-held key
   recorded with the media, never a vendor key.
@@ -430,7 +430,7 @@ proposed.
 | **P2 — "no database"** | Superseded | The browser still has no DB; the laptop now has one, because the structured features are worth it. |
 | **§3 — "no server database"** | Superseded | The folder is no longer the live store; it is the export. |
 | **§12 — SQLite rejected as "database lock-in"** | Superseded | SQLite is in the stdlib, carries one of the strongest documented longevity commitments of any format, and the plain-text export remains the hedge. |
-| **§16.15 — backend owns the write seam; frontend proposes** | Retained in shape, inverted in direction | The laptop is still the write seam; the managed backend is now the read model and outbox, not a live proposer to a reachable backend. |
+| **§16.15 — backend owns the write seam; frontend proposes** | Retained in shape, inverted in direction | The laptop is still the write seam; the Cloudflare backend is now the read model and outbox, not a live proposer to a reachable backend. |
 | **§16.12 — Supabase as the live multi-user store** | Not adopted | It puts the truth off-site; the same structured features are served by SQLite at home. |
 | **PRD §3/§11 — version chains on disk; the prior version survives** | Satisfied by the DB, not the disk tree | `events` + `content` are the append-only chain: every prior version is an event row plus an immutable blob, and a withdrawal is a new event. The human archive is confirmed current state; the operational backup carries the full history and content. The PRD's disk-chain *format* is superseded; its durability *requirement* is met in the DB. |
 | **`docs/sqlite-projection-plan.md`** | Superseded | It made the archive the system of record and the DB a projection. This section makes the DB the record and the archive the export. The document is retained as history. |

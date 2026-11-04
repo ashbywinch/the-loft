@@ -1,6 +1,6 @@
 <!-- Component of docs/TECHSPEC.md. See the index for the status. -->
 
-Status: **mixed** — §3–§4 are the legacy file format (superseded by the human archive in `07-exports.md`); §5–§11 are current.
+Status: **mixed** — §3–§4 and the Drive-era hosting text in §7–§8 are legacy (superseded by `00-deployments.md` and `04-live-system.md`); §5–§6 and §9–§11 remain current.
 
 ## 3. Archive layout (the legacy file format)
 
@@ -194,10 +194,10 @@ Capture: `<input type="file" capture>` or MediaDevices; auto-sequence naming (`l
 
 ## 7. Privacy & security
 
-- **No PIN — authentication is the archive account; the projection is family-only, not public** (user: "it's a website, not a bank card"; PRD F6: no public surface at all until accounts land, §15 — the earlier "open by design" posture is superseded). The projection carries metadata, thumbnails, stories and transcriptions — **transcription hosting is the product** (PRD §6, §10); full-res scans sit behind Google sign-in with the family's archive account.
+- **No PIN — authentication is the archive account; the projection is family-only, not public** (user: "it's a website, not a bank card"; PRD F6: no public surface at all until accounts land, §15 — the earlier "open by design" posture is superseded). The projection carries metadata, **usable browse images**, stories and transcriptions — **transcription hosting is the product** (PRD §6, §10); full-resolution scans stay at home.
 - **No analytics, no telemetry, no third-party CDNs** for archive content. System font stack (or self-hosted fonts). Street view is the only external fetch.
 - **The archive lives in Google Drive (its home), accessed via Google sign-in to a dedicated family archive account.** Files remain plain and open (PRD §18.8); real authentication gates full-res — stronger than the courtesy PIN on the public projection.
-- **Future ML/OCR runs locally** — on-device or the household server. No third-party cloud processing of family content, ever.
+- **Model calls go through the family's chosen gateway** (Cloudflare AI Gateway today). There is no requirement to run models locally; the content is family-only and the family chooses the cloud posture per document. The scanner, originals and image work stay at home because the hardware is there, not because the model must.
 
 ---
 
@@ -205,7 +205,7 @@ Capture: `<input type="file" capture>` or MediaDevices; auto-sequence naming (`l
 
 - First meaningful paint ≤ 2 s on 4G; initial JS/CSS ≤ 100 KB.
 - **Timeline:** decade → year rows → week rows; DOM virtualization (only visible rows in the DOM); 60 fps scroll; precision-aware placement.
-- **Images:** thumbnails in every list; full-res swap on open; `loading="lazy"` + `decoding="async"`.
+- **Images:** thumbnails in every list; the **usable browse image** on open; full resolution on the LAN; `loading="lazy"` + `decoding="async"`.
 - **Index:** `index.json` (metadata only) loads first; `transcripts.json` (heavy text) lazy-loads when search or reading needs it. Budget: ~2–5 MB index + ~5–10 MB transcripts at 10k items — segmented by decade if it grows beyond.
 
 ---
@@ -213,7 +213,7 @@ Capture: `<input type="file" capture>` or MediaDevices; auto-sequence naming (`l
 ## 9. PWA & offline
 
 - Manifest + service worker. Cache: app shell (always), index/people/places/themes (first load), thumbnails (LRU), full-res images (on demand).
-- **Honest boundary:** the site's projection — metadata + thumbnails — is fully cacheable, so the whole *browsable* archive works offline on any device. Full-res exists only in the archive (Drive), read via API when authenticated. The review path needs network — it is a cloud client by design.
+- **Honest boundary:** the site's projection — metadata + browse images — is cacheable, so the whole *browsable* archive works offline on any device. Full-res exists only in the archive at home. The review path needs network — it is a cloud client by design.
 
 ---
 

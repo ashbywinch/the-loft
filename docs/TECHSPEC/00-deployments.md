@@ -4,30 +4,60 @@
 > statement of the deployment shape; a component that implies a different
 > shape is wrong.
 
-There are **three code deployments and one managed dependency**. No
-application server runs off-site.
+There are **four code deployments and four managed services**. No server
+we operate runs off-site; the remote backend is a serverless function.
 
 | Deployment | Runs | Owns |
 |---|---|---|
 | **Local web service** (laptop) | `loft serve` — FastAPI, `LiveStore`, the write seam | the SQLite database, the LAN API, capture/review/browse |
 | **Local OS daemon** (laptop) | `loft work --watch`, `loft sync`, `loft export` | scan pickup, the pipeline, the outbox drain, the nightly human archive and operational backup |
-| **Remote static web app** (CDN/static host) | HTML/JS/CSS + the published read model | browse and the remote review surface; **no server code** |
-| **Managed backend** (dependency: Supabase) | Postgres, Storage, Auth, Realtime | the published read model, the command outbox, auth, staged uploads |
+| **Remote static web app** (Cloudflare Pages) | HTML/JS/CSS + the published read model | browse, the review surface; reads the model; writes commands to the backend; **no server code** |
+| **Remote backend app** (Cloudflare Worker + D1) | one small API: chat/identify, command outbox, auth validation | the working state and the model calls; **no server to operate** |
 
-## The remote deployment is a static web app
+| Managed service | Role |
+|---|---|
+| **Cloudflare Access** | family-only auth (Google); no auth code |
+| **Cloudflare D1** | the tiny database: outbox, chat sessions, accounts |
+| **Cloudflare R2** | the browse images, thumbnails and review derivatives |
+| **Cloudflare AI Gateway** | the model gateway; the key lives in the Worker |
 
-It does not run FastAPI, does not answer reads from a live server, and does
-not receive uploads itself. It:
+## The remote backend app
 
-- reads the **published read model** through the managed backend's SDK;
-- writes commands to the managed backend's **outbox table**;
-- sends uploads to the managed backend's **storage**;
-- authenticates through the managed backend's **Google OAuth**.
+It is a **Worker**, not a server: it holds the model key, accepts commands
+into D1, runs the chat and identify calls over the published facts, and
+serves the laptop's outbox pull. It does not write the archive; the laptop
+is still the only writer of domain state. The static app is separate and
+has no server code.
 
-No service code we operate runs off-site. The managed backend is a
-dependency, not a deployment of our code. If the managed backend is
-replaced, the static app's SDK calls change; the local service and the
-daemon do not.
+The Worker is the piece that makes chat and remote writes work while the
+laptop is off. The laptop applies the queued commands and republishes the
+read model when it returns.
+
+**The backend app is JS/TS.** The existing chat/identify logic is Python;
+it is ported to the Worker or shared as prompt/context data. The laptop's
+Python service stays the LAN writer. That is the code cost of the Cloudflare
+shape; a Python serverless host is the alternative if reusing the prompt
+code matters more than one vendor and one free tier.
+
+## Images
+
+The remote site must be **readable**, not a thumbnail gallery:
+
+- **R2 stores the usable browse image for every item** — the page at a
+  reading resolution, not a thumbnail.
+- **Thumbnails** are the grid preview only; opening an item loads the
+  browse image.
+- **The review queue** gets a higher-resolution derivative for the pages in
+  progress (row review needs to see the writing).
+- **Full-resolution originals stay on the big disk at home.**
+- R2's free tier is **10 GB**. The laptop measures the browse derivatives
+  and sizes them to fit (WebP/AVIF, a reading resolution that still reads).
+  If the archive outgrows it, the answer is a more efficient derivative or
+  an explicit product decision — never a thumbnail-only site.
+
+Images are served from R2 (behind Access or short-lived signed URLs), not
+proxied through the Worker: the Worker's 100k requests/day is for commands
+and chat, not image bytes.
 
 ## The local web service and the local daemon are separate processes
 
@@ -47,9 +77,13 @@ use the same persistence boundary (`08-code-organisation.md`).
 |---|---|
 | `LiveStore`, `Change`, the event log, the projections, the content store | Local web service |
 | Worker, reconciler, scanner | Local OS daemon |
-| Sync agent, exporter, retention | Local OS daemon |
-| `Snapshot` / read model, `Outbox` table, derivatives, staged uploads, auth | Managed backend |
-| The static app, the remote review surface | Remote static web app |
+| Sync agent, exporter, retention, derivative generation | Local OS daemon |
+| `Snapshot` / read model | Cloudflare Pages/R2 |
+| `Outbox` (commands), chat sessions, accounts | Cloudflare D1 |
+| `Backend` (chat/identify, auth validation) | Cloudflare Worker |
+| `Derivative`, `Asset` bytes | Cloudflare R2 |
+| `Auth` | Cloudflare Access |
+| `Model` calls | Cloudflare AI Gateway |
 | The human archive, the operational backup | Local OS daemon writes; the big disk stores |
 
 A noun that is not in this table does not exist. The `[shape]` decisions in
@@ -60,9 +94,9 @@ survive a change of deployment.
 
 | Change | Revisit |
 |---|---|
-| The remote stops being static (a server appears) | `[shape]`: D3, D4, D11, D17, D20, D22; `04-live-system.md` §17.5–17.6, §17.11 |
-| The managed backend is replaced | `[shape]`: D4, D5, D11, D13; the SDK calls in the static app; the outbox and read-model adapters |
-| The laptop is replaced by a home server | the deployment table; the daemon/service split; `[shape]` D2, D6, D12 |
+| The remote backend leaves Cloudflare | `[shape]`: D3, D4, D11, D17, D20, D22; the Worker/D1 adapters; the Access/signed-URL image path |
+| The managed services are replaced | `[shape]`: D4, D5, D11, D13; the static app's SDK/API calls; the image URLs |
+| The laptop becomes a home server | the deployment table; the daemon/service split; `[shape]` D2, D6, D12 |
 | The database is replaced (SQLite → Postgres) | `[schema]`: D1, D7, D14, D16, D18, D27; `05-schema.md`/`06-schema-ddl.md` |
 | The code layout moves to `loft/` | `[interface]`: D31–D36; `08-code-organisation.md` |
 

@@ -157,9 +157,9 @@ anyone else; curation is a role anyone can hold, not a person record.
   another scanned document to a visitor (user).
 - **Privacy:** the AI's reading never happens on the reader's device;
   family content leaves the household machine only for the explicitly
-  requested AI call (house rule; §7 — no third-party cloud processing of
-  family content). The family chooses the posture — cloud by default or
-  local-only.
+  requested AI call, through the family's chosen gateway. The family
+  chooses the posture — cloud is the default; there is no requirement to
+  run models locally.
 - **Append-only:** a memory lands wherever the app stores its info —
   local archive today, hosted later — under the archive's append-only rule
   (PRD §3 non-goal; mechanics in `TECHSPEC.md` §3).

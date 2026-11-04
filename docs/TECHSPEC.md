@@ -6,18 +6,21 @@ The components live in `docs/TECHSPEC/`.
 
 ## Read this first: the deployments
 
-There are **three code deployments and one managed dependency**:
+There are **four code deployments and four managed services**:
 
 - **Local web service** (laptop) — FastAPI, `LiveStore`, the only writer of
   domain state; serves the LAN.
 - **Local OS daemon** (laptop) — scanner pickup, the pipeline, the outbox
   drain, the nightly human archive and operational backup.
-- **Remote static web app** (CDN) — HTML/JS/CSS and the published read model;
-  **no server code**.
-- **Managed backend** (dependency: Supabase Postgres/Storage/Auth) — the
-  remote read model, the command outbox, auth and staged uploads.
+- **Remote static web app** (Cloudflare Pages) — HTML/JS/CSS and the
+  published read model; **no server code**.
+- **Remote backend app** (Cloudflare Worker + D1) — the chat/identify calls,
+  the command outbox and auth validation; serverless, no server to operate.
+- **Managed services** (Cloudflare) — Access (auth), D1 (the tiny database),
+  R2 (browse images), AI Gateway (the model).
 
-No application server we operate runs off-site. The full table, the noun
+No server we operate runs off-site. The remote static app is exactly that;
+the backend app is one small serverless function. The full table, the noun
 ownership and the blast radius: **`docs/TECHSPEC/00-deployments.md`**.
 
 ## Status vocabulary

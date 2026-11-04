@@ -425,7 +425,7 @@ import sessions — they bind every screen and every data decision:
 
 **Performance (at 10,000 items / 50,000 images):**
 - First meaningful paint ≤ 2 s on 4G; initial JS/CSS payload ≤ 100 KB (the stack decision is `TECHSPEC.md` §15's).
-- Scrolling at 60 fps; images lazy-loaded as thumbnails, full-resolution swap on open.
+- Scrolling at 60 fps; images lazy-loaded as thumbnails, with a **usable browse image** on open — the site must be readable, not a thumbnail gallery; full resolution stays on the LAN.
 - Index loads incrementally (decade/year segments), never one giant fetch.
 - Runtime reads ride the family-only projection only — the app **never reads the archive directly** (the front end proposes through the sync contract; the backend records; full-res placement TBD, §15). The phone stores nothing.
 
@@ -438,6 +438,16 @@ import sessions — they bind every screen and every data decision:
 **Privacy:** **no public sharing of anything whatsoever** — all access is family-only; the mechanism is TBD (accounts, §15). Zero analytics. The app **never reads the archive directly**: all reading rides the family-only projection; the front end proposes through the sync contract, and the backend records (§7).
 
 **Durability:** archive = plain files, open formats; per-item sidecars; a README written for a reader in 2060; backup = 3-2-1 with a copy in a second household; **the folder outlives the app — the app is disposable by design (see §18).**
+
+**Remote media (user):** every item's page images are browsable from the remote site at a **usable reading resolution** — not thumbnails. The laptop generates the browse derivative and publishes it; thumbnails are only the grid preview; full-resolution originals stay at home. The review queue's pages get a higher-resolution derivative for the work in progress. A thumbnail-only site is not an acceptable cost saving.
+
+**Hosting and cost (user):** the remote side runs at **zero hosting cost** on free-tier managed services — a static app, a small serverless backend, a tiny database, and object storage for the browse images. The home box is the only server we operate; the remote backend is serverless. The image budget is the binding constraint; the laptop measures the browse derivatives and sizes them to fit the free tier. If the archive outgrows it, the remedy is a more efficient derivative or an explicit product decision — never a thumbnail-only site.
+
+**Complexity (user):** the remote backend is deliberately small — one serverless API, one tiny database, one auth gate, static reads. It must not duplicate the archive's domain logic: the laptop remains the only writer; the backend queues commands, runs the chat and identify calls, and nothing else. Minimal code and minimal operations are requirements, not preferences.
+
+**Remote availability (user):** viewing, the review surfaces, and the **chat/identify flows work while the home laptop is off**. Only applying a queued command to the archive waits for the laptop. The remote side is not a thin proxy to the laptop.
+
+**ML (user):** there is **no requirement to run models locally**. Model calls go through the family's chosen gateway (Cloudflare AI Gateway today); the content is family-only; the family chooses the cloud posture per document. The pipeline's image work stays on the laptop because the scanner and originals are there, not because the model must.
 
 **Resilience — append-only writes are the mechanism (user):** a change never overwrites an existing record; it appends the next version. The append-only chain now lives in the database (`events` + `content`, TECHSPEC §18): every prior version is an immutable event plus an immutable content blob, a correction is a new event, and a bad release is contained by the event log and repaired by compensation, not by a restore. The **human archive on disk** is the confirmed current-state snapshot (one `item.json` per item, no version suffixes); the **operational backup** carries the full event log and content store. Never delete, squash, or "clean up" the event log.
 
@@ -489,7 +499,7 @@ import sessions — they bind every screen and every data decision:
 ## 15. Open Questions (from the interview)
 
 1. **App name — RESOLVED (working):** *The Loft* (user approved); revisitable before launch.
-2. **Hosting — RESOLVED (user; revised R14):** the durable archive lives at home beside the scanner (direct USB, R14); the browsable site — viewing, transcription verification, and the identity review — is hosted so it stays available when the home machine is off; nothing confirmed is lost if a sync fails. Google Drive is the **backup mirror**, never the live home — the annual export to a second household and external media remains the durability ritual. **Cousins:** invite-able later via accounts; per-contributor folders / a merge is the seam (deployment mechanics: `TECHSPEC.md`).
+2. **Hosting — RESOLVED (user; revised R14):** the durable archive lives at home beside the scanner (direct USB, R14); the browsable site — viewing, transcription verification, the identity review, and the chat/story capture — is hosted so it stays available when the home machine is off; **zero hosting cost on free-tier managed services** (a static app, a small serverless backend, a tiny database, and object storage for the browse images); nothing confirmed is lost if a sync fails. Google Drive is the **backup mirror**, never the live home — the annual export to a second household and external media remains the durability ritual. **Cousins:** invite-able later via accounts; per-contributor folders / a merge is the seam (deployment mechanics: `TECHSPEC.md`).
 3. **Photo volume — RESOLVED:** hundreds of physical photos to scan; thousands of digital photos exist (younger family members) but are **human-curated before import** (curation gate, §7).
 4. **Audio/video — RESOLVED:** some recordings likely exist but probably unrecoverable; **BBC archive is a research lead**; the schema stays future-proofed.
 5. **Back-of-photo writing — RESOLVED:** happens but rare → capture default is front-first; back captured when writing is noticed.
@@ -499,7 +509,7 @@ import sessions — they bind every screen and every data decision:
 9. **The elders and the app — RESOLVED (via plan):** yes — elders may be shown familiar photos, via Show mode (`docs/PLAN/PLAN.md` Slice 3); the family decides when, and it is never a dependency. (Sensitive; see §4.)
 10. **Private letters** — are any letters/items not for the future user's eyes (e.g., while he's a child), and should the app support per-item privacy flags? (Currently everything is household-private; this is about *within*-family boundaries over time.)
 11. **Sensitive-item timing — DEFERRED (decision recorded):** anti-censorship is the default; sensitive items stay catalogued and searchable; *when* they surface for younger readers is decided at prototype stage with the full collection in view (user).
-12. **ML appetite & hosting — RESOLVED (user):** photo-labeling (people/pets/boats), theme discovery, and **handwriting OCR for transcription drafts** are wanted; the transcription uses the vision model (cloud) — the local-only mode was removed as unusable for the family's pages (the privacy posture is the family's choice of the cloud mode per document — user); imperfect suggestions are accepted with family confirmation (the propose/confirm seam).
+12. **ML appetite & hosting — RESOLVED (user):** photo-labeling (people/pets/boats), theme discovery, and **handwriting OCR for transcription drafts** are wanted; the transcription uses the vision model (cloud) — the local-only mode was removed as unusable for the family's pages (the privacy posture is the family's choice of the cloud mode per document — user); **there is no requirement to run models locally**; model calls go through the family's chosen gateway; imperfect suggestions are accepted with family confirmation (the propose/confirm seam).
 13. **Accounts — TBD (required):** family-only access needs accounts; the mechanism is undecided — per-person roles, how ages are established, how elders get in without friction.
 14. **Full-res placement — TBD:** confirm where full-res images live (the family-only projection vs the backend's workspace) so no read path depends on the backup mirror.
 15. **Age filter (late stage):** optional age-filtering of artifacts; establishing user ages is TBD (likely via accounts).

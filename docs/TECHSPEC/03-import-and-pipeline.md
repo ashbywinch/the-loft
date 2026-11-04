@@ -517,7 +517,7 @@ always recoverable, and the append-only invariant is enforced at the write
 seam rather than hoped for.
 
 
-**Decisions — RESOLVED (user):** managed Postgres + pgvector on **Supabase**; **a small number of family curators** (a simple per-field last-write-wins + audit-log conflict story suffices; the far-future possibility of hosting *other families* that must never see our content is a tenant-isolation seam — the existing contributor-ID namespacing, §14 — and is not built now); the generation batch runs on **the reviewer's laptop**.
+**Decisions — superseded (2026-11-04):** the live store is SQLite on the laptop; the remote backend is a small serverless app plus a tiny database; the model is a gateway call, not a local batch. The old Supabase/laptop-generation decision is history; see `00-deployments.md`.
 
 ### 16.16 The transcription-validation review surface (spike-resolved)
 

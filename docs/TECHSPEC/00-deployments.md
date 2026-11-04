@@ -35,17 +35,24 @@ read model when it returns.
 
 ## The read model
 
-The remote app's data is published to **R2**, not served by a server:
+The remote app's data is published to **R2**, served through **one origin**:
 
+- The app is at `archive.<domain>` (Cloudflare Pages). The Worker answers
+  `/api/*` (commands, chat, identify, re-read) and `/img/<sha>` on the same
+  hostname. **Cloudflare Access protects the hostname once**; the session
+  cookie is first-party, so the app's fetches and its `<img>` requests are
+  authorized with no CORS and no signed URL.
 - Each publish is a **release**: the laptop uploads the release's JSON and
   images under a versioned prefix (`releases/<seq>/…`), then flips a small
-  `current.json` pointer. The app reads the pointer, then the release's JSON;
-  the images are content-addressed under the release.
+  `current.json` pointer. The Worker reads the pointer and the release from
+  R2 through a binding; the app never talks to R2 directly.
 - A partial upload never goes live: the pointer still names the previous
   release. A rollback re-points to the previous release.
-- The pointer and the release JSON are served from R2 behind Access (or
-  short-lived signed URLs); the app's fetch includes credentials; R2's CORS
-  policy allows the Pages origin. Images are fetched by `<img>`.
+- **Images are content-addressed and immutable.** The Worker serves
+  `/img/<sha>` with `Cache-Control: public, max-age=31536000, immutable` and
+  caches the object at the edge (`caches.default`); the browser keeps each
+  image after the first view. Repeat views cost neither a Worker request nor
+  an R2 read.
 - The laptop uses an **R2 API token** for the upload; the outbox pull uses a
   **Cloudflare Access service token**. The app shell is on Pages and changes
   rarely.
@@ -72,14 +79,16 @@ The remote site must be **readable and checkable**, not a thumbnail gallery:
   archive outgrows the budget, the answer is a more efficient encode or an
   explicit product decision — never a thumbnail-only site.
 
-Images are served from R2 (behind Access or short-lived signed URLs), not
-proxied through the Worker: the Worker's 100k requests/day is for commands
-and chat, not image bytes.
+**Images are served by the Worker on the same origin**, at `/img/<sha>`,
+from R2. That is one authorized hostname (Access once), no CORS, and no
+signed URL to mint or expire. The immutable cache header plus the browser
+cache means the first view of an image is the only one that touches the
+Worker.
 
 ## Authentication
 
-**Remote:** Cloudflare Access (Google) in front of Pages and the Worker; the
-family allowlist is the Access policy.
+**Remote:** Cloudflare Access (Google) in front of the one hostname (Pages
+and the Worker's routes); the family allowlist is the Access policy.
 
 **Home:** the local service uses Google OAuth with the same family allowlist —
 HTTPS, `HttpOnly`/`Secure`/`SameSite=Strict` cookies, CSRF, short sessions
@@ -127,7 +136,7 @@ survive a change of deployment.
 
 | Change | Revisit |
 |---|---|
-| The remote backend leaves Cloudflare | `[shape]`: D3, D4, D11, D17, D20, D22; the Worker/D1 adapters; the Access/signed-URL image path |
+| The remote backend leaves Cloudflare | `[shape]`: D3, D4, D11, D17, D20, D22; the Worker/D1 adapters; the Access + `/img` path |
 | The managed services are replaced | `[shape]`: D4, D5, D11, D13; the static app's SDK/API calls; the image URLs |
 | The auth provider changes | `[shape]`: D37, D38; the Access policy, the home Google client, the account mirror |
 | The laptop becomes a home server | the deployment table; the daemon/service split; `[shape]` D2, D6, D12 |

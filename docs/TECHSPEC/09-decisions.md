@@ -1,7 +1,7 @@
 # Decisions
 
 > Component of `docs/TECHSPEC.md`. Status: **register**. The live-system
-> decisions (D1–D40) are proposed; the pre-§17 decisions (§12/§15) are
+> decisions (D1–D41) are proposed; the pre-§17 decisions (§12/§15) are
 > history.
 
 ## The register
@@ -138,6 +138,12 @@ decisions survive all three. The blast radius is at the bottom.
   re-reads corrected rows from the published view image and queues the text.
   Identify reads the transcript, not the scan. The laptop applies every
   result.
+- **D41 [shape] — The remote is one origin; the Worker serves the images.**
+  Pages serves the app at `archive.<domain>`; the Worker answers `/api/*` and
+  `/img/<sha>` on the same hostname; Access protects it once, so cookies are
+  first-party and there is no CORS or signed URL. Images are content-addressed,
+  served `immutable`, and cached at the edge and in the browser. The free
+  Worker request budget is ample at family scale, and repeat views are free.
 
 
 ## Blast radius
@@ -156,7 +162,7 @@ decisions survive all three. The blast radius is at the bottom.
 
 These are kept for the record: the 2060 reader, the sidecar rationale, the
 old hosting choice. They are not the live design. Where they disagree with
-D1–D40, the live decision wins.
+D1–D41, the live decision wins.
 ## 12. Decisions to confirm (your review)
 
 | # | Decision | Recommendation |

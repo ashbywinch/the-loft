@@ -158,3 +158,10 @@ hash/migration, draft exclusion, command rebuild — follow.
     archive's page count fits the 10 GB budget, or the derivative is tuned. If
     the view does not hold, the page waits for the laptop — there is no second
     review tier.
+
+29. **One-origin Access and image caching.** Put the Pages app and the
+    Worker routes on one hostname behind Access; sign in once; load an image
+    through `/img/<sha>`; confirm the cookie authorizes both the API and the
+    `<img>`, the immutable header caches at the edge and in the browser, and a
+    second view costs no Worker request. Confirm the free request budget holds
+    for a day's family use.

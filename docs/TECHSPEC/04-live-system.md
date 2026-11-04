@@ -294,17 +294,19 @@ The invariants:
 ### 17.6 Read paths
 
 - **LAN.** Loft service → `LiveStore`. Always current.
-- **Remote.** The static app reads `current.json` and the release from R2,
-  plus an overlay of the caller's own pending commands, so an author
+- **Remote.** The static app reads the release through the Worker, which reads
+  `current.json` and the release from R2, plus an overlay of the caller's own
+  pending commands, so an author
   sees their edit before it is applied. The read model is republished after
   each drain and on a schedule; it carries `published_at`, and the UI shows
   its age and the count of pending commands.
 - **Parked commands.** A command that cannot apply is listed in the remote
   UI under its author, with its payload and the newer version it collided
   with. It is not reduced to an anonymous count.
-- **Media.** R2 serves the view images. A request for
-  an original on the remote site is refused with the honest answer: the
-  original is in the house. The LAN serves originals normally.
+- **Media.** The Worker serves the view images at `/img/<sha>` on the app's
+  own origin (content-addressed, immutable-cached; no CORS, no signed URL). A
+  request for an original on the remote site is refused with the honest
+  answer: the original is in the house. The LAN serves originals normally.
 - **Search.** SQLite FTS5 in the live DB; the index is part of the published
   read model, so remote search works on the published state.
 
@@ -470,8 +472,9 @@ projection is rebuildable.
 **Security posture.** The Cloudflare backend, D1 and R2 hold the words and
 images, so they are treated as trusted-but-limited surfaces, not public:
 
-- Object-storage buckets are private; reads use short-lived signed URLs;
-  writes use a server-side credential the browser never sees.
+- Object-storage buckets are private; reads go through the Worker's `/img`
+  and `/model` routes behind Access; writes use a server-side credential the
+  browser never sees.
 - Cloudflare Access and the Worker gate access; the laptop validates a
   command's schema, actor and role again before applying. A compromised backend credential cannot inject an arbitrary
   domain write.

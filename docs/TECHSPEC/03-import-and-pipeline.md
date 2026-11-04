@@ -1,11 +1,9 @@
 <!-- Component of docs/TECHSPEC.md. See the index for the status. -->
 
-Status: **current**, except §16.12/§16.15, which are in `99-history.md`.
+Status: **current for §16.13–§16.17** (the capture pipeline, the reading path and the review surface). §16.1–§16.11 is the import-flow record, not the live architecture.
 
 ## 16. Import flow (capture → archive → app)
 
-> §16.12 (the old multi-user store direction) and §16.15 (the old two-app
-> deployment) are superseded; they live in `99-history.md`.
 
 **Status:** draft — PLAN/PLAN.md Phase 1 deliverable. The flow is specified in `docs/PRD/IMPORT-PRD.md` (rules A–N, questions Q1–Q7, the staged review, the landed model additions); this section stays the normative home and the private worked-example review remains the real-import baseline. Family-instance facts live in the private interview records, referenced here.
 
@@ -280,7 +278,7 @@ runnable, resumable, and replaceable.
 **Parallelism.** Batches are independent; stages within a batch are
 sequential (classify before orient; orient before the read). The
 driver walks the registry and fans out per-batch stage jobs, so capture
-runs while orient/OCR process earlier batches (scan-ahead, §16.11) and the
+runs while orient/read process earlier batches (scan-ahead, §16.11) and the
 user reviews batch *N* while the machine works *N+1*. Each component
 re-runs idempotently (its output stage is a cache; re-running regenerates
 it) and never touches the user's area.
@@ -294,26 +292,23 @@ printed or handwritten. The category decides the read
 (`docs/PLAN/page-categories.md`): photographs and drawings are not read;
 printed pages take one direct VLM transcription; a form is read as structure;
 handwriting (and a handwritten postcard face) takes the row pipeline. There is
-no second OCR engine: the density route and the tesseract read are gone (user,
-2026-11-02 — the VLM is the only reader).
+no second OCR engine: the VLM is the only reader; the row pipeline's geometry
+is the ink reader's (§16.17).
 
 **Orientation (Rule J, mechanism).** The `orient` stage asks the vision model
 which clockwise rotation makes each page's writing upright
 (`pipeline/orient.py`) and turns the page into `oriented/`. One small call per
-page, thinking off. The earlier arbiter — four tesseract reads per page, the
-one with the most strong words winning — was removed with the OCR engine it
-depended on.
+page, thinking off. The page's rotation is the orient stage's output; the
+reading runs on the oriented image.
 
 **The transcription backend (decided).** Every page's text comes from the
 **vision-language model** (`pipeline/model/vlm.py`): one call per page for
-printed text, one per row for handwriting, one structured call for a form.
+printed text, one call per band of rows for handwriting, one structured call for a form.
 The evidence on the family's own pages: near-perfect pure-cursive and
 mixed-layout transcription (page-03's callout box, postmark, address and
 salutation all read correctly); ~85% word accuracy on the medal card's hardest
-element (handwritten digits in a dense form); ~11K tokens/page. The local
-specialist stacks (orli+TrOCR, PaddleOCR) and the tesseract OCR engine were
-removed as unused — two readers meant two truths, and only the VLM reads the
-family's cursive.
+element (handwritten digits in a dense form); ~11K tokens/page. The VLM is the only reader; the ink reader supplies the geometry
+(§16.17).
 
 **Scan UX (decided direction).** The capture command takes the run's name
 at scan time: `make scan-docs ARGS="--label 'Box 1 — Letters 1977'"`, or a
@@ -322,12 +317,14 @@ on it?"). The name is the folder the scans land in, and — when the user
 enters one — it is also written into the registry record at scan time and
 rides through to the review prompts.
 
-### 16.14.1 The pipeline picture and the layout stage
+### 16.14.1 The pipeline picture
 
-**The layout stage now makes one VLM call per page** (per-line segments with
-text, orientation, and boxes; paddleocr is gone from the layout path — the
-description above predates the single-pass redesign). The current verified
-state and the landing record: `docs/PLAN/single-pass-landing-plan.md`.
+**The pipeline picture.** A scan is classified, oriented, and read by the
+path its category calls for: a printed page is read directly by the VLM; a
+form is read as labels and values; a handwriting or postcard page goes through
+the reading path in §16.17 — the ink reader's rows, the VLM's per-row text,
+and the reviewer's row check. The boxes and words the review surface uses are
+the reading's; the VLM supplies text and kinds, not boxes.
 
 ```mermaid
 flowchart TB
@@ -356,13 +353,10 @@ flowchart TB
 | read (rows) | handwriting: the reader's rows and words, the human row check, then the transcription review | `ocr-guess/*.rows.json`, `*.words.json`, `*.txt` |
 | review | the reviewer verifies/corrects the draft | confirmed text |
 
-**The VR14 gap — RESOLVED.** The layout stage — the producer of the
-bounding boxes and per-word confidence flags the review surface needs
-(VR1/VR4) — is now `process` step 6 (`tools/layout_stage.py`, the main
-venv; the §16.17 single pass replaced the PaddleOCR detector). The old
-failure — a batch reaching review with draft text, no boxes and no flags
-(batch `adopt-20260813-201024`) — is the stage's own fail-loud refusal
-now, never something the review works around by hand.
+**The review surface's boxes.** The boxes and per-word flags the review
+surface needs are the reading path's output (§16.17): the ink reader supplies
+the line and word geometry; the VLM supplies the text and the self-report
+flags. A page that reaches review without a reading is a stage failure.
 
 **The grouping scorer (VR6 — the grouping is part of the review; AC21 —
 two-sided item).** The guess stage's model groups TEXT pages only by
@@ -390,415 +384,69 @@ photo-only documents and shows only the TEXT pages of each document
 (the picture side stays in the structure for the future people/places
 identification flow, but the review never pages through a photo).
 
-**Multi-orientation pages (PRD VR15) — the postcard finding.** A
-postcard with text running in several directions defeats the single-
-rotation assumptions: running the layout pass on one (`adopt-20260813-
-201024`, page `1697568038221-…`) produced 21 lines with mis-associated
-boxes (a "our visit to you" line box 10×10 px), 32 unmatched detection
-fragments, and 45 flagged words — the per-orientation text is garbled
-rather than separated. The design direction (user): the vision
-model reports, in a structured way, the text orientations present on the
-page (with regions); detection and reading then run **per region** at the
-region's orientation, and a region's boxes are admitted only when the
-reading at that orientation produced real text — never on shape alone, so
-an accidental upside-down pass's boxes are discarded. This is the
-candidate approach for VR15; it is being prototyped on the postcard.
-
-**Prototype outcome (the postcard).** The approach was tried
-end to end: one vision-model call returned the transcription + a
-structured `orientation_hint` (text at 0° and 270°, with regions — the
-model sees multi-direction text reliably); then a detection pass ran at
-each reported orientation and a line was admitted only when the
-recognizer read real text there (rec score ≥ 0.85 and ≥ 2 letters), with
-its box remapped to the original image. It works: the 270° block's text
-(`HERNSPETH HOUSE,`, `HARBOTTLE, MORPETH`, `With Greetings and`) is
-admitted in the 270° pass with correct in-image boxes, while
-wrong-orientation reads (`Bbesrwishesl`, `Greetig and`) are rejected.
-Two follow-ups before this is production-ready: (1) **line assembly** —
-the recognizer emits word fragments on rotated text, so admitted pieces
-must be merged into lines (as `build_layout` already does for single
-orientation); (2) **admission tuning** — single-letter pieces (the
-stamp's "E R") are dropped by the ≥2-letter rule; and the orientation
-report should be folded into the existing transcription call (one model
-pass) rather than a separate call, to avoid the extra ~12K tokens.
-
-### 16.14.2 Pipeline reliability — completion markers, fail-loud, and surgical recovery
-
-**Completion markers.** Each stage treats an output artifact's existence as
-its completion marker: `classify.json` the category, `oriented/<page>` the
-rotation, `ocr-guess/<stem>.rows.json` + `.words.json` the row read,
-`ocr-guess/<stem>.printed.json` / `.structured.json` a direct read,
-`ocr-guess/<stem>.txt` the page's text, and `boundaries.json` the document
-grouping. Re-running a stage skips pages whose marker exists — that is what
-makes re-runs cheap.
-
-**The marker rule: existence of the marker alone is not completion.** A
-marker promises its artifact; a marker whose artifact is missing or empty
-is a stale or partial write and must be re-done, not "reused". Concretely:
-a direct read skips a page only when both its marker and a non-empty
-`.txt` exist; the row read skips a page whose `.rows.json` exists and is
-current; and `process` re-reads a page whose artefacts are incomplete
-rather than trusting a marker alone.
-
-**Fail-loud over silent no-op.** A stage that cannot do its job for a
-requested input fails loudly with the remedy in the message. Never a
-geometry-only build, never a "reused" corrupt guess, never an output that
-looks done but isn't.
-
-**Surgical recovery.** Fixing one page must not re-pay model calls for the
-whole batch. The pipeline exposes per-page stage commands:
-
-```bash
-make pipeline ARGS="process <batch>"        # the whole chain
-make pipeline ARGS="printed <batch>"        # a printed pile: one direct read per page
-```
-
-`process <batch>` is the whole-chain entry point and the one the worker
-sweeps; `printed <batch>` re-reads a printed or structured pile directly
-(idempotent per page).
-
-**The worker owns the machine stages** (`pipeline/worker.py`, `loft work`;
-UR3). A batch is work while a stage artefact is MISSING — not while its
-status says so. `pipeline/stage_table.py` owns the stage order and each stage's gap
-check, and reads one batch's artefacts to name the stages still missing: `classify` (no entry, or one
-in the pre-category spelling), `orient` (the row pages' uprights),
-`read` (the category's own marker), `group` (no `boundaries.json`).
-`pipeline/reconcile.py` (`Reconciler`) runs exactly those, in order, after
-re-planning on the new categories once `classify` has run; it journals each
-stage's outcome to `work/<batch>/events.jsonl` and logs the reason and the
-duration. Nothing is retried: a failure is journalled and raised, and the
-batch waits for the next trigger or resync.
-
-The triggers are `Worker.watch`: a change under the scan area, the registry
-or the work tree maps to its batch and that batch is reconciled then (a batch
-already in flight is skipped, so the reconciler's own writes cannot feed back
-into it); a quiet interval is a full resync, and one runs at startup.
-`loft work` is one resync, `loft work --plan` prints each batch's gap and runs
-nothing, `loft work --batch <id>` reconciles one. `pipeline/artefacts.py` is
-the one place the layout is written (guarded by `tests/test_architecture.py`),
-and `pipeline/model/config.py` names every model and the Cloudflare AI Gateway
-endpoint.
-
-A page's status is never stored — it is derived from the stage artefacts
-(`BatchReadings.page_status`, §16.14.2's marker rule), so the review queue
-reads the artefacts, not a field. Only the batch's queue state is written,
-through the chain's one status writer, which stamps the pass (pid, host,
-time). Two rules keep the queue honest: a pass that dies half-way writes its
-record back to `pending` (a crash in `importing` would strand the batch), and
-a scan stages beside the inbox rather than in it (a directory in the scan
-area is a finished pile, and the worker adopts every one).
-
-**A corrected page is re-read on the worker's next pass.** The reviewer's drawn
-lines persist as `ocr-guess/<stem>.row-adjustments.json`; the write marks the
-batch `pending` (the server never contacts the worker), and the read stage
-rebuilds the page's rows from the persisted words + those lines, reads each row
-as itself, and writes them as the reading's lines (`box_source: rows-adjusted`)
-with the drawn lines' sha in `corrected`. The transcript gate then shows the
-corrected text. Three rules keep it cheap and honest: a check with no lines
-("rows are right") requeues nothing; a reading whose `corrected` equals the
-file's sha is skipped (the same lines are never re-read); and a corrupt
-correction file fails loudly rather than reading the page against lines nobody
-can parse. Only corrected pages re-read — an unchanged page keeps its draft
-reading.
-
-**The model-API contract (the client side of the Cloudflare gateway).**
-The VLM client must send a User-Agent the gateway's WAF accepts
-(`opencode/1.14.20`), and must give reasoning models `max_tokens` headroom
-(≥32000 for vision/geometry tasks — a reasoning model with a small budget
-returns `finish_reason: "length"` and zero content). HTTP errors surface
-with the response body; empty-content and budget-exhaustion failures are
-raised as actionable `VlmError`s. See the `cloudflare-ai-gateway` skill
-for the route-side configuration.
-
-**Versioned persistence.** All pipeline artifact writes go through
-`PipelineStore` (`pipeline/pipeline_store.py`), which preserves the previous
-version at `-2.ext` before overwriting the base path — an overwrite is
-always recoverable, and the append-only invariant is enforced at the write
-seam rather than hoped for.
-
-
-**Decisions — superseded (2026-11-04):** the live store is SQLite on the laptop; the remote backend is a small serverless app plus a tiny database; the model is a gateway call, not a local batch. The old Supabase/laptop-generation decision is history; see `00-deployments.md`.
-
-### 16.16 The transcription-validation review surface (spike-resolved)
-
-**Decision: the reviewer's alignment and confidence come from a
-real text-detection network, not the transcription model.** The VLM
-transcribes the words; the ink reader (`pipeline/detect/reader.py`, the
-single-pass stage — §16.17) supplies the geometry. The spike
-proved the mechanism on the live pages (page-03 of adopt-20260813-201004):
-40 detected line boxes, all containing real text (ink check); per-line
-recognition confidence spanning 0.60–1.00; per-word boxes via
-`return_word_box=True`.
-
-**Amendment (user-approved): the FLAG SOURCE is the
-transcription model's own self-report, not the cross-reader agreement.**
-Full-batch data showed the detector's rec model garbles every cursive line
-(75–90% of lines flagged, rec confidence high throughout — confidently
-wrong), so cross-reader disagreement carried almost no discriminative
-information. One extra VLM call per page (`tools/selfreport.py`, ~17k
-tokens) has the model review its own numbered transcription and mark the
-words it is least sure of, or that read oddly in context — page-01: 3
-flagged words vs the cross-reader's 154. The ~~struck~~ markers (crossed-out
-words the VLM left in) always flag. **There is no fallback** (user,
-2026-10-26): when the self-report does not run it is retried once, and if it
-still does not run the page carries no flags — no flag is not a claim of
-certainty, and the cross-reader agreement it once fell back to compared the
-words with a recognition engine that no longer exists. The transcription
-prompt also carries the standing knowledge (people/places), the pile label,
-and the previous page's text to help it read (user).
-
-**Why not the alternatives (spike evidence):**
-
-| Candidate | Result |
-|---|---|
-| The VLM's own bboxes/confidence (mimo-v2.5, Qwen2.5-VL, Gemini 3.7) | Hallucinated — boxes crop to blank pixels, positions drift between calls, confidence is uniform 0.9–0.99 |
-| Horizontal ink projection | Merges the dense handwriting — page-01 segments into 6 bands with a median height of 330px |
-| kraken segment (D-FINE model) | Upstream registry gap — `DFINEModel is not in model registry` (same class as the PP-OCRv6 recognition gap documented in §16.14) |
-| kraken legacy `.mlmodel` | Recognition-only (CTCLoss), no segmentation |
-| Azure Document Intelligence | Unavailable — no subscription yet (account verification passes; no subscription in the tenant drop-down) |
-
-**The layout pass.** Per batch, after orientation (§16.14), the ink reader
-(`pipeline/detect/reader.py`) finds each oriented page's writing — line
-boxes, per-word boxes, and the page's own writing scale — and the VLM's
-transcription (the guess stage's `ocr-guess/`) supplies the words. No
-recognition engine runs: the reader measures ink; it does not read (the
-zero-rec ruling, 2026-09-22). The layout JSON (`layout.json` per page,
-written atomically) sits beside the guess text; the confirmation/review
-seams are unchanged (`04-live-system.md` §17.5).
-
-**The association (content-based, not positional).** The reader and the VLM
-order the page differently (the spike: the detector placed the
-letterhead/address after the P.S. block; the VLM read the body first), so
-line boxes map to VLM transcription lines by **best text similarity** of
-their normalized texts — word-set overlap above a threshold wins, ties
-broken by reading order. Within a matched pair, the per-word flags come from
-the model's self-report (amendment above). When the transcription carried
-its own per-line boxes, those anchor their lines directly. Word boxes
-without a confident line match are still carried (their geometry is real)
-with a line confidence of 0.
-
-**The fail-fast box guard (VR14 — every page reaches the review with
-valid boxes).** A layout with a degenerate or out-of-image box must never
-reach the review surface — the reviewer must never see a box that doesn't
-correspond to the page. Two boundaries enforce this:
-
-- *Write-time:* `write_layout` runs `validate_layout` before persisting.
-  A line whose box is degenerate (x1 ≤ x0 or y1 ≤ y0) or outside the image
-  (with a 4 px tolerance) raises `ValueError` — the layout is never
-  written (VR14 — a bad layout cannot be persisted).
-- *Serve-time:* `draft_payloads` runs `validate_layout` on every layout
-  before serving it. A layout that fails validation is excluded from the
-  drafts payload; the page keeps its text but loses its boxes, and the
-  `layout_errors` dict names the violation per page. The review surface
-  shows a loud note (VR14 — the reviewer never sees wrong boxes, even
-  from a pre-existing bad layout on disk).
-
-**The front-end surface (VR1/VR4 of the review PRD).** The drafts payload
-(`draft_payloads`, `04-live-system.md` §17.5) gains the per-page layout: each transcription
-line's box + per-word confidence. The review view renders the page image
-(with the boxes as selectable regions) beside the transcription; selecting a
-line highlights its box and vice versa (VR1); low-confidence words are
-visually flagged (VR4). The reviewer's corrections edit the VLM text — the
-boxes stay anchored to the page geometry, not to the corrected words.
-
-**The viewer.** The page-image pane is a plain `<img>` inside a
-transform-scaled layer (one `translate(...) scale(...) rotate(...)`; the
-line boxes are absolutely-positioned children of the same layer, so they
-stay pinned through pan/zoom/rotation by construction). The view is a
-rectangle in display pixels (the rotated image's axes); drag-pan, pinch and
-the Fit/−/+ buttons update it; the initial view is a width-fit band anchored
-at the writing's first line box (the scanned top margin is blank) or the
-detector's first unmatched line on a page whose content association found
-no boxes. The plain `<img>` decodes and paints in any browser, so a
-screenshot or a canvas pixel-read can verify the actual pixels — the
-perceptual-success standard (ux-standards P15) forbids an unverifiable
-render. The deep-zoom pyramid stays a future step (OpenSeadragon 6.1.0:
-BSD-3, zero-dependency vanilla, native overlays).
-The transcription pane, confidence flags, and confirm/reject controls are
-our vanilla code. The full transcription apps from the research
-(eScriptorium, FromThePage) are rejected: different stacks (Django+Vue,
-Rails+IIIF) contradicting the vanilla decision; Transkribus is proprietary.
-
-**The orientation fix.** The orientation arbiter cannot read
-cursive, so an upside-down handwritten page passes review as "correctly
-oriented" — and a transcription read from the wrong-way page is unreliable
-(page-02's first line read "At last venture this form is the building of
-a" before the fix vs "A new venture this term is the holding of a" after —
-two independent readers agree on the corrected reading). The review's ↻
-press is therefore a PIPELINE correction, not a view toggle, and it is
-built for the sync's reality (the front end and back end are different
-boxes; the backend may be off; no image travels — it is never uploaded, the
-backend has it):
-
-- **The press is local first**: the view rotates instantly; the intent is
-  the DESIRED cumulative rotation in quarter-turns, queued in a
-  localStorage outbox (the same offline seam as the confirmations) and
-  committed on navigation — multiple presses coalesce (a half-corrected
-  first press never triggers a reprocess), and a wrong correction is just
-  another intent.
-- **The backend applies an idempotent delta**: the layout records the
-  cumulative applied rotation ("rotation"), the intent is the desired
-  absolute, so a retried intent is a no-op and offline queues cannot
-  over-rotate on redelivery.
-- **The fast half is synchronous**: the image rotates (a rigid box remap,
-  no re-OCR) — the corrected page shows immediately.
-- **The slow half is the async job**: the page's text is re-read by the
-  vision model on the corrected image (the old reading is stale), the
-  self-report re-runs, the layout rebuilds. The drafts payload carries a
-  per-page job state; the surface greys the document with a note, blocks
-  the confirm, and polls — the reviewer navigates on meanwhile. A server
-  restart mid-job demotes the page to "failed" (the stale text stays
-  visible WITH the warning — never a silent half-done page). The stale
-  local edits for the re-read page are cleared on completion.
-
-**The navigation model.** The review surface shows two nested
-sequences — pages inside a document, documents inside the batch — as ONE
-compact strip under the top bar: the batch's documents as chips showing
-the document's greeting (or a numbered fallback), with ✓ confirmed and ✗
-rejected status marks; the current document's pages as numbered chips (the
-current page filled; a red dot marks pages with lines still to check). Tap
-a chip to navigate. The strip replaces the top-bar subtitle and the
-Prev/Next page buttons: the document boundary is visible before the last
-page, and a cross-page "Next flagged" jump is visible before it happens
-(the flag dot shows where it lands). Numbers and status marks only — no
-added words (prior art: spatial page maps — CHI space-filling thumbnails;
-per-page review status — FromThePage). Flagged words render with a wavy red
-underline (the spell-check convention) at rest, not only in edit.
-
-**The reading order (VR15, AC20 — coherent, not dislocating).** The
-transcription presents the text in a coherent order: lines from the same
-block of writing (a paragraph, a callout box, a marginal note) are kept
-together, and lines from different blocks are not mixed even if they
-happen to be at the same height on the page. The layout achieves this
-by running a detection pass per orientation (the multi-orientation layout
-anchors lines from each pass separately), then ordering the combined
-lines by orientation (0° first, then 90°, 180°, 270°) — the reading
-direction the user naturally expects. Within each orientation group, the
-lines stay in the detector's reading order (top-to-bottom in the
-rotated frame), so a callout box's lines stay together and are not
-interleaved with the main text column. The initial display shows the
-page the way the pipeline determined is right-way-up — the printed
-writing upright (the oriented image).
-
-**The three outcomes (VR5 — confirm or reject; VR17 — defer; AC30 — no
-action is irrevocable).** Every document reaches one of three states, and
-none is irrevocable:
-
-- **Confirmed** — the reviewer is confident in the transcription. The
-  document is published to the archive and removed from the pending queue
-  ("✓ Confirm & Next →" button). The confirm button is always available
-  (it is not blocked by unchecked lines, unverified lines, or any other
-  pre-condition — the reviewer's own confidence is the only gate; VR5,
-  AC27, AC28).
-- **Rejected** — the document does not belong in the archive (an
-  accidental import such as petrol receipts, an unreadable scan, one too
-  embarrassing to keep — user). The rejection is a
-  soft-delete: the document moves to a recoverable bin and leaves the
-  pending queue; the reviewer can bring it back. Not yet implemented.
-- **Deferred** — the document belongs in the archive but the reviewer
-  cannot finish it now (needs to ask a family member, come back later).
-  It stays in the pending queue, unconfirmed ("Skip →" button,
-  implemented).
-
-**The correction interaction (grounded in the prior art).** The
-reviewer's correction model follows Trove/Transkribus: **per-line inline
-editing anchored to the image**. Selecting a transcription line enters edit
-on that line (the text becomes directly editable in place) while the line's
-box stays highlighted on the image — the image pane keeps the current line's
-region in view (auto-pan/zoom to the box), so the reviewer compares the
-line's letters against the original while typing. The flagged low-confidence
-words are the entry points (WordCheck-style): the reviewer can jump to the
-next flagged word. Trove's per-line +/− (split/merge lines) applies where
-the detector merged two lines (§16.16 open item). Corrections change only
-the edited line's words; confirming publishes the corrected text (`04-live-system.md` §17.5).
-
-**The phone posture.** The phone review is **landscape-only**:
-portrait shows a "turn your phone" prompt. The landscape phone uses a
-**horizontal split** — the letter image spans the full landscape width on
-top (a phone turned sideways is close to the original document's width, so
-the handwriting renders near its real size), the editable transcription
-fills the bottom pane, and the action bar is sticky (never clipped). The
-tablet keeps the vertical split (image left, text right — it has the
-width for both at good size). Rationale: one split-pane design across
-tablet and phone-landscape instead of a second stacked mobile layout
-(VR8, user).
-
-**Open items:**
-- Det-only config: the recognition model loads alongside the detector (the
-  pipeline's default) — a det-only invocation halves the load; the rec model
-  is needed anyway for the cross-reader confidence, so it may stay.
-- Line-splitting: the median box height (93px at the resized scale) suggests
-  some boxes merge two tightly-spaced lines — a per-box re-split pass on
-  over-tall boxes (the ink projection can split within a box where the VLM
-  projection failed globally).
-- The Azure subscription, once it exists, is the cloud fallback for the
-  same mechanism (real boxes + confidence, handwriting-capable).
-- **Grouping correction (VR6).** The reviewer can see the document grouping
-  (the navigation strip) but has no way to correct a wrong page-to-document
-  assignment — split a document, merge two, or move a page. The design is
-  deferred until a real example of a wrong grouping surfaces in testing
-  (user).
-
-**The navigation and focus model (VR17, walkthrough finding).**
-
-The fake-user walkthrough (Sam) + the UX research (Preview
-Panel, Master-Detail, Overview+Detail, Inline Edit patterns) established
-the focus model:
-
-*The focused line* is the line at the top of the text pane's viewport.
-Scrolling the text changes the focus. The image follows — pans to the
-focused line's box, rotates to the line's reading orientation.
-Panning/zooming the image does NOT change the focus; the reviewer can
-explore the scan freely. A "return" button in the image toolbar
-re-centres on the focused line.
-
-*The image is the navigation surface.* The box overlays are touchable
-(`pointer-events: auto`). Tapping a box scrolls the text to the
-corresponding line and rotates the image to make it readable. The image
-pane's click handler that silently edits the text is removed.
-
-*The inline edit* has a visible Done (✓, commits) and Cancel (✕,
-discards) — the standard Inline Edit pattern. The Escape key cancels;
-the keyboard's Done key commits. The edit row shows the format buttons + Done + Cancel.
-
-*The verification tick* is a toggle: unchecked (○ outline) and checked
-(✓ filled). Clicking a checked line unchecks it (the edit is removed,
-the line returns to its unchecked state). The line's background turns
-cream when checked.
-
-*The image pane's initial view* fits the document's full content area
-(all boxes' min/max y, not just the first line) at a readable zoom
-level — the reviewer sees the full card and can scroll to the message.
-
-*Returning to a page restores the exact view.* The document and page
-are already in the URL (`syncSurfaceUrl`). The image view rectangle
-(the pan position and zoom level) and the text scroll position are
-persisted to `localStorage` keyed by `{batch}|{page}` — the same store
-as the rotation outbox — and restored on return. The focused line, the
-scroll position, and the image view are always in sync: the "no
-dislocating moves" rule (P18 from the walkthrough) applies
-to every re-render, not just within the session (VR9, AC19).
-
-*The per-line rotation* uses the pass orientation (the detector's
-reading direction), not the report's estimated degrees. The
-`_vlm_text_lines` anchoring: the line's orientation = the matched
-detection's pass orientation when a rec match exists, else the report's
-degrees (the best available estimate). This makes the viewRotation work
-correctly for the dual-pane link and the per-line reading rotation.
-
-**Resource management (VR16 — the app runs lightly on this laptop).**
-
-The layout stage's model call (the VLM) is the only heavy step in the review
-pipeline: the ink reader is local arithmetic over per-page arrays, and the
-classifier is one small call per page. Two measures bound the footprint:
-
-- *The model call is bounded by its budget.* Every transcription call carries
-  its own `max_tokens` and timeout, so a page's cost and duration are capped
-  per call rather than growing with the scan's native resolution (VR16 — the
-  pipeline's peak is bounded, not the scan's).
-- *No engine runs beside the app.* The reader measures ink with numpy in the
-  main venv — no recognition engine, no framework arena, no subprocess
-  (VR16 — a core stays free for other work while a page is measured).
-
+**Multi-orientation pages (PRD VR15).** A page whose writing runs in more
+than one direction is an open item: the reading path runs on the page's
+rotation, and the reviewer's rotate sets it and re-reads. A per-region
+orientation pass is not built.
 ---
 
+### 16.17 The reading path
+
+**The chain.** The reading path turns a page image into rows, boxes and text.
+
+1. **Ink.** `reading_for_page(page)` measures the page's ink at the reader's
+   scale and returns a `Reading`: the writing **lines** (each a box in page
+   pixels, in reading order, text-less) and the **words** (each a `Word` with
+   its box, baseline and waistline). No model is involved; the reader measures
+   ink.
+2. **Rows.** `Rows.from_words(reading.words, PageSize(width, height))` groups
+   the words by their reading lines: the draft rows. A row is one line of
+   writing; its band is the exact union of its words' boxes.
+3. **Text.** `Transcriber` cuts the rows into numbered bands from the review
+   surface's own rendering (each row tinted in its hue and numbered), sends
+   each band to the VLM, and receives the text for the rows the band carries.
+   The model answers for the row numbers; the text is per row, never a
+   page-level guess indexed onto the rows. The reader's line carries the text
+   of the row that owns its words.
+4. **The page's text.** The reading's lines are the page's text in reading
+   order. There is no separate page-level transcript; the rows are the grain.
+5. **The correction.** The reviewer draws a line along a row. `Rows.adjust`
+   applies the lines as an **edit** of the draft: a stroke that runs across a
+   reading line and covers at least half of its words replaces that row;
+   otherwise it claims only the words it runs along; every unclaimed word
+   keeps its reading line's row. A double pass joins the first row; a single
+   leftover is apportioned to its neighbours. The corrected rows are read
+   again as themselves; the reading carries the drawn lines' sha so a later
+   pass does not repeat the work.
+6. **The artifacts.** The reading is `rows.json` (`RowsReading`: page, size,
+   rotation, revision, lines with text) and `words.json` (the words); the page
+   `.txt` is the rows' text in order. The live DB projects the reading into
+   `pages` (revision), `page_rows` (source, trust, text, box, kind, insertion)
+   and `readings` (the reading sha); the reviewer's ticks are `row_checks` and
+   insertions are `page_row_links`. The work files are the pipeline's cache;
+   the DB is the live store.
+
+**Completion.** A page is read when its `rows.json` exists and carries at
+least one row. An empty reading is not a completion: the stage leaves the
+marker unwritten and names the page for a re-run. A correction is current when
+the reading's `corrected` sha equals the drawn-lines file's sha; an empty
+correction ("rows are right") is not a re-read.
+
+**What the model does and does not do.** The VLM supplies the text, the
+page's rotation (through the orient stage) and the row kinds; it does not
+supply the line or word boxes. The line and word geometry is the ink reader's.
+The self-report (`tools/selfreport.py`) marks the words the model is least
+sure of; no flag is not a claim of certainty.
+
+**The gold reference.** Page-01 (41 rows over 364 words) is the adjudicated
+reference. The correction path (`Rows.adjust`) is tested against it; the
+reader's draft is measured against it, never asserted equal. `Rows.validate`
+checks the row invariants on every correction: a row's band is its words'
+union; a line that caught no writing; a line that merges reading lines; a
+line off the writing's slope; a row off the page.
+
+**Where it lives.** `pipeline/detect/reader.py` (`reading_for_page`),
+`pipeline/rows/rows.py` (`Rows.from_words`, `Rows.adjust`, `Rows.validate`),
+`pipeline/transcribe/transcripts.py` (`Transcriber`), `pipeline/chain.py`
+(`read_pages`, `_read_corrected`). The review surface reads the reading; the
+API's row-adjustments route applies the same builder.

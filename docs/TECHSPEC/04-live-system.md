@@ -40,7 +40,7 @@ browsers.
   including accepting edits.
 - An edit made remotely must reach the plain-text archive without a
   bidirectional merge.
-- **Usable browse images** may leave the house; full-resolution originals may not. A thumbnail-only remote site is not acceptable.
+- **View images** may leave the house; full-resolution originals may not. A thumbnail-only remote site is not acceptable.
 - Backup and export run nightly, with retention — not continuously.
 
 ### 17.2 The shape
@@ -78,7 +78,7 @@ flowchart LR
     Backend["Cloudflare backend<br/>Worker + D1"]
     Snapshot["Published read model<br/>Pages / R2"]
     Outbox["Outbox table<br/>D1, keyed by UUID"]
-    Media["Cloudflare R2<br/>browse images · thumbnails<br/>review derivatives"]
+    Media["Cloudflare R2<br/>view images (readable)"]
     Auth["Cloudflare Access"]
     Model["Cloudflare AI Gateway"]
 
@@ -125,7 +125,7 @@ nightly human archive and operational backup.** The full deployment table is
 | **Cloudflare backend** | Worker + D1 | chat/identify calls, the outbox, auth validation, accounts | write the archive |
 | **Snapshot** | Pages / R2 | the last published read model and manifest | be the only copy |
 | **Outbox** | D1 | immutable commands keyed by UUID | be edited or deleted |
-| **Derivative store** | R2 | browse images, thumbnails, review derivatives | hold originals |
+| **Derivative store** | R2 | the view images (readable, row-checkable) | hold originals |
 | **Browser** | LAN or anywhere | reads; writes; optimistic pending state; a local outbox while the backend is down | be the source of truth |
 
 **Object model.** The domain nouns do not change: `Item`, `Person`,
@@ -135,7 +135,7 @@ nightly human archive and operational backup.** The full deployment table is
 `Outbox` (the durable queue of commands), `Snapshot` (the published read
 model), `SyncAgent` (pull–apply–publish), `Exporter` (the archive
 materialiser and backup), `ArchiveImport` (the rebuild), `Derivative` (one
-browse image), `Asset` (the catalogued original or derivative),
+view image), `Asset` (the catalogued original or derivative),
 `RemoteApp` (the static UI) and `Backend` (the managed dependency).
 `Archive` keeps its name but changes job: it is the plain-text
 materialisation, not the live store. The noun ownership is
@@ -155,7 +155,7 @@ materialisation, not the live store. The noun ownership is
 | Photo upload | pulls original | browser uploads to R2; the laptop pulls | keeps original |
 | Scan · classify · orient · read · rows · transcribe | ✓ | — | reads originals |
 | Full-resolution images | serves on LAN | — (never stored) | stores |
-| Browse images / derivatives | generates | served from R2 (usable resolution, not thumbnails) | — |
+| View images | generates | served from R2 (readable and row-checkable) | — |
 | Read model | produces | Pages/R2 serve the published model | — |
 | Remote command queue | drains | D1 outbox | — |
 | Operational backup | produces | — | stores |
@@ -168,9 +168,10 @@ scanner and the originals), and **no full-resolution originals off-site**.
 The second line needs stating precisely. The scan pixels stay home except
 while an upload is in flight. The *text* — transcripts, stories, memories,
 the review chat — is the intimate content, and it does live in the managed
-backend behind family auth. A derivative used for row review must be
-legible enough to draw lines on, which is not a thumbnail; the resolution is
-therefore a per-category decision (D5), not a blanket "web-sized".
+backend behind family auth. There is one view image per page. It must be legible enough to read and to
+check rows on; the row check sets the resolution. There is no separate
+higher-resolution review copy and no thumbnail-only tier; the app's
+card/list preview is a rendering detail.
 
 ### 17.5 Write paths
 
@@ -300,7 +301,7 @@ The invariants:
 - **Parked commands.** A command that cannot apply is listed in the remote
   UI under its author, with its payload and the newer version it collided
   with. It is not reduced to an anonymous count.
-- **Media.** R2 serves the browse images and derivatives. A request for
+- **Media.** R2 serves the view images. A request for
   an original on the remote site is refused with the honest answer: the
   original is in the house. The LAN serves originals normally.
 - **Search.** SQLite FTS5 in the live DB; the index is part of the published

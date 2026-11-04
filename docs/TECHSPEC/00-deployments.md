@@ -18,7 +18,7 @@ we operate runs off-site; the remote backend is a serverless function.
 |---|---|
 | **Cloudflare Access** | family-only auth (Google); no auth code |
 | **Cloudflare D1** | the tiny database: outbox, chat sessions, accounts |
-| **Cloudflare R2** | the browse images, thumbnails and review derivatives |
+| **Cloudflare R2** | the view images (readable and row-checkable) |
 | **Cloudflare AI Gateway** | the model gateway; the key lives in the Worker |
 
 ## The remote backend app
@@ -33,27 +33,25 @@ The Worker is the piece that makes chat and remote writes work while the
 laptop is off. The laptop applies the queued commands and republishes the
 read model when it returns.
 
-**The backend app is JS/TS.** The existing chat/identify logic is Python;
-it is ported to the Worker or shared as prompt/context data. The laptop's
-Python service stays the LAN writer. That is the code cost of the Cloudflare
-shape; a Python serverless host is the alternative if reusing the prompt
-code matters more than one vendor and one free tier.
+**The backend app is TS.** The existing chat/identify logic is ported to
+the Worker; the port is accepted, not a reason to add another host. The
+laptop's Python service stays the LAN writer.
 
 ## Images
 
-The remote site must be **readable**, not a thumbnail gallery:
+The remote site must be **readable and checkable**, not a thumbnail gallery:
 
-- **R2 stores the usable browse image for every item** — the page at a
-  reading resolution, not a thumbnail.
-- **Thumbnails** are the grid preview only; opening an item loads the
-  browse image.
-- **The review queue** gets a higher-resolution derivative for the pages in
-  progress (row review needs to see the writing).
+- **R2 stores one view image per page.** It is the image the reader opens
+  and the image the reviewer checks rows on; there is no separate
+  higher-resolution review copy. The resolution is set by the row check:
+  if it is high enough to read, it is high enough to check.
+- **No thumbnail-only tier.** The app's card/list preview is a rendering
+  detail, not a second archive policy.
 - **Full-resolution originals stay on the big disk at home.**
-- R2's free tier is **10 GB**. The laptop measures the browse derivatives
-  and sizes them to fit (WebP/AVIF, a reading resolution that still reads).
-  If the archive outgrows it, the answer is a more efficient derivative or
-  an explicit product decision — never a thumbnail-only site.
+- R2's free tier is **10 GB**. The laptop measures the view images and
+  sizes them to fit (WebP/AVIF at a resolution that still reads and checks).
+  If the archive outgrows it, the answer is a more efficient encode or an
+  explicit product decision — never a thumbnail-only site.
 
 Images are served from R2 (behind Access or short-lived signed URLs), not
 proxied through the Worker: the Worker's 100k requests/day is for commands
@@ -81,7 +79,7 @@ use the same persistence boundary (`08-code-organisation.md`).
 | `Snapshot` / read model | Cloudflare Pages/R2 |
 | `Outbox` (commands), chat sessions, accounts | Cloudflare D1 |
 | `Backend` (chat/identify, auth validation) | Cloudflare Worker |
-| `Derivative`, `Asset` bytes | Cloudflare R2 |
+| `Derivative` (the view image), `Asset` bytes | Cloudflare R2 |
 | `Auth` | Cloudflare Access |
 | `Model` calls | Cloudflare AI Gateway |
 | The human archive, the operational backup | Local OS daemon writes; the big disk stores |

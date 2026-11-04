@@ -425,7 +425,7 @@ import sessions — they bind every screen and every data decision:
 
 **Performance (at 10,000 items / 50,000 images):**
 - First meaningful paint ≤ 2 s on 4G; initial JS/CSS payload ≤ 100 KB (the stack decision is `TECHSPEC.md` §15's).
-- Scrolling at 60 fps; images lazy-loaded as thumbnails, with a **usable browse image** on open — the site must be readable, not a thumbnail gallery; full resolution stays on the LAN.
+- Scrolling at 60 fps; images lazy-loaded; opening an item shows the **view image** — readable and row-checkable, not a thumbnail; full resolution stays on the LAN.
 - Index loads incrementally (decade/year segments), never one giant fetch.
 - Runtime reads ride the family-only projection only — the app **never reads the archive directly** (the front end proposes through the sync contract; the backend records; full-res placement TBD, §15). The phone stores nothing.
 
@@ -439,9 +439,9 @@ import sessions — they bind every screen and every data decision:
 
 **Durability:** archive = plain files, open formats; per-item sidecars; a README written for a reader in 2060; backup = 3-2-1 with a copy in a second household; **the folder outlives the app — the app is disposable by design (see §18).**
 
-**Remote media (user):** every item's page images are browsable from the remote site at a **usable reading resolution** — not thumbnails. The laptop generates the browse derivative and publishes it; thumbnails are only the grid preview; full-resolution originals stay at home. The review queue's pages get a higher-resolution derivative for the work in progress. A thumbnail-only site is not an acceptable cost saving.
+**Remote media (user):** every item's page images are browsable from the remote site at a **usable resolution** — readable and row-checkable. The laptop generates one **view image per page** and publishes it; the same image is the reader's and the reviewer's. There is no separate higher-resolution review copy and no thumbnail-only tier; the app's card/list preview is a rendering detail. Full-resolution originals stay at home. A thumbnail-only site is not an acceptable cost saving.
 
-**Hosting and cost (user):** the remote side runs at **zero hosting cost** on free-tier managed services — a static app, a small serverless backend, a tiny database, and object storage for the browse images. The home box is the only server we operate; the remote backend is serverless. The image budget is the binding constraint; the laptop measures the browse derivatives and sizes them to fit the free tier. If the archive outgrows it, the remedy is a more efficient derivative or an explicit product decision — never a thumbnail-only site.
+**Hosting and cost (user):** the remote side runs at **zero hosting cost** on free-tier managed services — a static app, a small serverless backend, a tiny database, and object storage for the view images. The home box is the only server we operate; the remote backend is serverless. The image budget is the binding constraint; the laptop measures the view images and sizes them to fit the free tier. If the archive outgrows it, the remedy is a more efficient derivative or an explicit product decision — never a thumbnail-only site.
 
 **Complexity (user):** the remote backend is deliberately small — one serverless API, one tiny database, one auth gate, static reads. It must not duplicate the archive's domain logic: the laptop remains the only writer; the backend queues commands, runs the chat and identify calls, and nothing else. Minimal code and minimal operations are requirements, not preferences.
 
@@ -499,7 +499,7 @@ import sessions — they bind every screen and every data decision:
 ## 15. Open Questions (from the interview)
 
 1. **App name — RESOLVED (working):** *The Loft* (user approved); revisitable before launch.
-2. **Hosting — RESOLVED (user; revised R14):** the durable archive lives at home beside the scanner (direct USB, R14); the browsable site — viewing, transcription verification, the identity review, and the chat/story capture — is hosted so it stays available when the home machine is off; **zero hosting cost on free-tier managed services** (a static app, a small serverless backend, a tiny database, and object storage for the browse images); nothing confirmed is lost if a sync fails. Google Drive is the **backup mirror**, never the live home — the annual export to a second household and external media remains the durability ritual. **Cousins:** invite-able later via accounts; per-contributor folders / a merge is the seam (deployment mechanics: `TECHSPEC.md`).
+2. **Hosting — RESOLVED (user; revised R14):** the durable archive lives at home beside the scanner (direct USB, R14); the browsable site — viewing, transcription verification, the identity review, and the chat/story capture — is hosted so it stays available when the home machine is off; **zero hosting cost on free-tier managed services** (a static app, a small serverless backend, a tiny database, and object storage for the view images); nothing confirmed is lost if a sync fails. Google Drive is the **backup mirror**, never the live home — the annual export to a second household and external media remains the durability ritual. **Cousins:** invite-able later via accounts; per-contributor folders / a merge is the seam (deployment mechanics: `TECHSPEC.md`).
 3. **Photo volume — RESOLVED:** hundreds of physical photos to scan; thousands of digital photos exist (younger family members) but are **human-curated before import** (curation gate, §7).
 4. **Audio/video — RESOLVED:** some recordings likely exist but probably unrecoverable; **BBC archive is a research lead**; the schema stays future-proofed.
 5. **Back-of-photo writing — RESOLVED:** happens but rare → capture default is front-first; back captured when writing is noticed.

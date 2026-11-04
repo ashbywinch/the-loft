@@ -31,13 +31,13 @@ decisions survive all three. The blast radius is at the bottom.
   read model plus the caller's pending commands. It is the only copy of
   commands not yet pulled, so the outbox table is durable, replicated and
   never trimmed.
-- **D5 [shape] — Originals stay home; the words and usable images do not.**
+- **D5 [shape] — Originals stay home; the words and view images do not.**
   Scan pixels and full-resolution images stay on the big disk. Transcripts,
   stories, memories and review chat live in the Cloudflare backend behind
-  family auth. The remote site serves a **usable browse image** for every
-  item (not a thumbnail), a higher-resolution derivative for the review
-  queue, and thumbnails only for the grid. The resolution table is signed
-  off before the remote review surface ships.
+  family auth. The remote site serves **one view image per page**, readable
+  and row-checkable; the same image is the reader's and the reviewer's.
+  There is no separate review tier and no thumbnail-only policy. The
+  resolution is signed off before the remote review surface ships.
 - **D6 [shape] — Nightly, tiered, verified.** Nightly dumps and archive export;
   retention by tier; the export must be able to rebuild the DB.
 - **D7 [schema] — SQLite at home.** No server database on the laptop;

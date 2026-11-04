@@ -86,7 +86,7 @@ archive/
       item.json             # current metadata; no -2/-3 chain
       transcription.txt     # the confirmed words, plain UTF-8
       page-01.jpg           # the original scan (a copy, not a hardlink)
-      page-01.preview.jpg   # usable browse, derived
+      page-01.preview.jpg   # the view image (readable), derived
     story-2026-08-03-05/
       item.json
       story.txt

@@ -3237,8 +3237,14 @@ blob.
   import `sqlite3`.
 - **Domain tests.** No database at all; `Item`, `Person`, `Document` and
   `Page` are pure.
-- **The architecture test.** The import rule; `sqlite3` only under
-  `loft/archive/live/`; no surface imports the private modules.
+- **The architecture test.** The repo already enforces layers with
+  ArchUnitPython in `tests/test_architecture_layers.py` (foundation,
+  pipeline, server, evals). When the `loft/` layout lands, the same file
+  gains `domain`, `persistence` and `surfaces`: `persistence` may depend
+  only on `domain`, and `domain` may not depend on `persistence` or
+  `surfaces`. `sqlite3` appears only under `loft/archive/live/`; no surface
+  imports the private modules. The new rule lands with the package, never as
+  a skipped placeholder.
 
 ### 19.8 What moves in the current code
 
@@ -3270,8 +3276,10 @@ blob.
 
 ### 19.10 Spikes required
 
-1. **Import boundary.** A forbidden-import test; `sqlite3` only under
-   `loft/archive/live/`.
+1. **Import boundary.** Extend `tests/test_architecture_layers.py`
+   (ArchUnitPython) with `domain`, `persistence` and `surfaces`;
+   `sqlite3` only under `loft/archive/live/`; the new rule lands with the
+   package, not as a skipped placeholder.
 2. **Memory store.** The contract suite passes against `MemoryLiveStore`.
 3. **Batch change.** 2,000 saves in one transaction, read-your-writes,
    rollback on failure, no lock held across a model call.

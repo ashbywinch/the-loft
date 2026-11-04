@@ -12,6 +12,14 @@ The layers as designed today (git log records the older rules):
 - server — the app-side services (archive, review, sync, capture...).
 - evals — the standalone evaluation harnesses: nothing outside them may
   import one (an eval harness in a production path is a mistake).
+
+The §19 persistence boundary is the target, not yet a layer here: the
+`loft/` package layout is the destination (TECHSPEC §19.7/§19.10). When
+`loft/archive/live/` exists, add `domain`, `persistence` and `surfaces`
+layers to this file: `persistence` may only depend on `domain`, and
+`domain` may not depend on `persistence` or `surfaces`. The current layers
+stay until the move; the new rule lands with the package, not as a skipped
+placeholder.
 """
 
 from pathlib import Path

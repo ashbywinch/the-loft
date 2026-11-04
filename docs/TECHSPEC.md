@@ -1,6 +1,6 @@
 # Family History Album — Tech Spec & Architecture
 
-- **Status:** v0.3 — **for review** · §16 Import flow added (PLAN/PLAN.md Phase 1 draft)
+- **Status:** v0.3 — **for review** · §16 Import flow added (PLAN/PLAN.md Phase 1 draft) · §17 the live system added (database of record + remote sync, proposed) · §18 the schema and on-disk form added (proposed)
 - **Companion:** `PRD/PRD.md` v0.5
 - **After approval:** prototype with fake content (`tools/fake-data`), per §13.
 
@@ -15,7 +15,7 @@ It makes the architectural calls the PRD left open, with rationale. Section 12 l
 ## 1. Principles (inherited)
 
 - **P1 — Folder-first.** The archive is a folder; the app is a lens over it.
-- **P2 — Boring stack.** Vanilla HTML/CSS/JS, no framework, no build step, no database. Files + `fetch`.
+- **P2 — Boring stack.** Vanilla HTML/CSS/JS, no framework, no build step, no database in the browser. Files + `fetch`; the live store is SQLite on the laptop (§17).
 - **P3 — Generational durability (PRD §18).** Open formats, sidecar metadata, a README written for a reader in 2060, 3-2-1 backups across households, the app disposable by design.
 - **P4 — Propose/confirm.** ML/OCR never assert; everything enters as `proposed` until a human confirms.
 - **P5 — Privacy by default.** No accounts, no analytics, no third-party CDNs for family content. Single exception: street-view imagery (§6).
@@ -56,7 +56,7 @@ archive/
 - **Append-only (requirement):** no file in the archive is ever edited or deleted — a change is a new file that supersedes the old one, and the old file stays forever. **One documented exception:** the proposed-queue reject path (`reject_proposed_person`/`reject_proposed_place`) deletes the *proposed* record file via the store's single `delete` — a proposed record is a transient review work item that has never been published, not an artifact; everything that has ever shipped stays append-only. A sidecar's first version is `item.json`; a supersession is a new self-contained file `item-2.json`, `item-3.json`, … (the full metadata again, plus `supersedes: "<previous file>"`). Primary content files version with their sidecar (v1 → `story.txt`, v2 → `story-2.txt`). Publish/rebuild tooling resolves the highest version; deletion is a supersession with `status: "deleted"`. The identity tables (`people.json`, `places.json`, `themes.json`) follow the same rule when written. The derived files (`index.json`, `transcripts.json`, `app/data/*`, thumbs) are regenerable caches — they are rebuilt, never treated as canonical, and hand-editing them is a bug (a test fails the committed projection against publish). All writes go through one append-only store (`tools/store.py`); tests inject a fake filesystem that fails on any write to an existing file. The identity tables live in the archive — never only in the derived projection — and the projection is regenerated from them.
 - **Database vs project content.** The database is the archive: items, sidecars, people, places, themes, relationships, testimonies — everything the app renders. Project content — code, docs (PRD, TECHSPEC, PLAN, PRECEDENT), the private interview records, tests — records decisions and process; a fact becomes database content only as an attributed item (sidecar, testimony, person record), never by living in a doc. Interview transcripts enter the database as dated, attributed, verbatim story items (`told_by` the narrator, `source` the session, one item per session) — the project keeps its own working records under whatever names, but the archive never holds a doc called INTERVIEW.md. The same rule applies to code: real content never lives in a tool — `tools/demo_data.py` is the fictional demo generator (docs/coding-standards.md), and a test guards that the real family's names never appear in it.
 - **The object model lives in one module:** `tools/records.py` defines Person, Place, Org, Relationship, Item and every closed vocabulary (relationship kinds, date precisions, item types/statuses); `archive.save_item` validates sidecars against the Item record at the write seam — a developer reads the model in one place, and the archive and the model can never drift.
-- **The indexing posture:** no server database — the folder is the store, and every derived layer (index, transcripts, hashes, search, future embeddings) regenerates from the sidecars. The derived layers upgrade as needed (pre-built search index, queue as a derived view); SQLite-as-*cache* (never the store — regenerable, so it preserves the invariant, but costs tooling) is the revisitable knob past ~100k items or if SQL queries are genuinely needed. **`edits.jsonl`** — an append-only, plain-text audit log (timestamp, item, field, old → new, who) for every write; the one truth file that is a log, not a cache, and the answer to the no-history gap (corrections currently overwrite silently).
+- **The indexing posture (superseded by §17):** no server database — the folder is the store, and every derived layer (index, transcripts, hashes, search, future embeddings) regenerates from the sidecars. The derived layers upgrade as needed (pre-built search index, queue as a derived view); SQLite-as-*cache* (never the store — regenerable, so it preserves the invariant, but costs tooling) is the revisitable knob past ~100k items or if SQL queries are genuinely needed. **`edits.jsonl`** — an append-only, plain-text audit log (timestamp, item, field, old → new, who) for every write; the one truth file that is a log, not a cache, and the answer to the no-history gap (corrections currently overwrite silently).
 - **IDs are stable forever:** `letter-1963-05-14-01`, `photo-1972-06-01`. Never renamed, never reused.
 
 ---
@@ -1258,3 +1258,1805 @@ classifier is one small call per page. Two measures bound the footprint:
 - *No engine runs beside the app.* The reader measures ink with numpy in the
   main venv — no recognition engine, no framework arena, no subprocess
   (VR16 — a core stays free for other work while a page is measured).
+
+---
+
+## 17. The live system — database, remote site, and sync
+
+Status: **proposed architecture, for review**. Nothing in this section is
+implemented. It changes the storage authority: the database becomes the
+system of record and the plain-text archive becomes the nightly export.
+The archive's longevity guarantees are unchanged — it is still the thing a
+reader opens in 2046 — but it is no longer the only copy the software
+writes.
+
+### 17.1 The forces, and what exists today
+
+**As built today.** One FastAPI process serves the app, the API and the
+gated projection, and reads the archive disk directly for the review APIs.
+A separate worker process runs the pipeline. The browser reads
+`app/data` JSON for browsing and live APIs for review. Writes are
+archive-first, then `publish` rebuilds the whole projection. There is no
+database. Concurrency is a process-local `RLock` plus a check-then-write
+store, with the server, the worker and the CLI all writing the same trees.
+The `Outbox` exists but has no production caller, and per-line transcript
+edits live only in browser `localStorage`. The result: no remote write
+path, no cross-process safety, and review state split between files and
+browsers.
+
+**The forces the new architecture must satisfy:**
+
+- The archive must remain readable, greppable and diffable without this
+  software. That is the product's soul and the no-PII guard's layer.
+- The family needs structured behaviour that files do badly: concurrent
+  edits, review state, relations, queries, a queue.
+- The scanner, the full-resolution originals and the big disk live on one
+  laptop, which is sometimes off.
+- The remote website must keep working while that laptop is off,
+  including accepting edits.
+- An edit made remotely must reach the plain-text archive without a
+  bidirectional merge.
+- Web-sized images may leave the house; full-resolution originals may not.
+- Backup and export run nightly, with retention — not continuously.
+
+### 17.2 The shape
+
+One writer, two read surfaces, one export.
+
+```mermaid
+flowchart LR
+  subgraph Home["Home laptop — sometimes off"]
+    direction TB
+    Scanner["Scanner<br/>FF-680W"]
+    Worker["Pipeline worker<br/>classify · orient · read<br/>rows · transcribe"]
+    Service["Loft service<br/>API · auth · write seam"]
+    DB[("loft.db — SQLite<br/>system of record")]
+    Sync["Sync agent<br/>pull · apply · publish"]
+    Export["Exporter<br/>nightly archive + dump<br/>+ retention"]
+
+    Scanner --> Worker
+    Worker -->|"page readings, rows, drafts<br/>via the write seam"| Service
+    Service -->|"transactions"| DB
+    Sync -->|"applies commands via the seam"| Service
+    DB --> Export
+  end
+
+  subgraph Disk["Big disk — attached to the laptop"]
+    direction TB
+    Originals["Full-resolution originals<br/>scans/ · page images"]
+    Archive["Plain-text archive<br/>sidecars · content · tables<br/>audit log · manifest"]
+    Dumps["Nightly DB dumps<br/>+ snapshots"]
+  end
+
+  subgraph Cloud["Cloud — always on"]
+    direction TB
+    CloudApp["Cloud app<br/>read-only snapshot mode<br/>+ outbox intake"]
+    Snapshot["Read-only DB snapshot<br/>+ manifest"]
+    Outbox["Command outbox<br/>immutable objects, keyed by UUID"]
+    Media["Object storage<br/>web-sized derivatives<br/>staged uploads"]
+    Auth["Google OAuth"]
+
+    CloudApp -->|"reads"| Snapshot
+    CloudApp -->|"writes command"| Outbox
+    CloudApp <-->|"serves / stages"| Media
+    CloudApp --- Auth
+  end
+
+  LAN["Browser on the LAN"]
+  Remote["Browser / phone, anywhere"]
+
+  Worker -->|"originals"| Originals
+  Export -->|"writes"| Archive
+  Export -->|"writes"| Dumps
+  Originals -->|"originals (full-res on LAN)"| Service
+  Sync -->|"publish snapshot"| Snapshot
+  Sync -->|"upload derivatives"| Media
+  Outbox -->|"drain"| Sync
+  LAN <-->|"read / write"| Service
+  Remote -->|"read snapshot<br/>write command"| CloudApp
+```
+
+The rule in one sentence: **the laptop writes the database, the cloud
+serves a published copy and accepts commands, and the big disk receives
+the nightly export.** Everything else follows from that.
+
+### 17.3 The components
+
+| Component | Lives on | Owns | Never does |
+|---|---|---|---|
+| **Loft service** | laptop | the HTTP API, auth, the write seam, DB transactions | write the cloud |
+| **LiveStore** (`loft.db`) | laptop internal disk | the system of record: domain records, review state, pipeline state, asset catalog, audit log | hold image bytes |
+| **Worker** | laptop | scanner pickup, classify, orient, read, rows, transcribe; writes results through the seam and originals to the disk | serve HTTP |
+| **Sync agent** | laptop | pulls the outbox, applies commands through the write seam, publishes snapshots and derivatives | write the archive or open the DB directly |
+| **Exporter** | laptop | nightly DB dump, plain-text archive export, verification, retention | serve reads |
+| **Archive disk** | big disk | full-resolution originals; the plain-text archive; the nightly dumps | be written by the app |
+| **Cloud app** | cloud | read-only API and the same UI; outbox intake; staged uploads; auth | write domain state |
+| **Snapshot** | cloud | the last published read-only DB and manifest | be the only copy |
+| **Outbox** | cloud object storage | immutable commands keyed by UUID | be edited or deleted |
+| **Derivative store** | cloud object storage | derivatives at the per-category resolution, staged uploads | hold originals |
+| **Browser** | LAN or anywhere | reads; writes; optimistic pending state | be the source of truth |
+
+**Object model.** The domain nouns do not change: `Item`, `Person`,
+`Place`, `Org`, `Theme`, `Relationship`, `Document`, `Page`, `Row`,
+`Word`, `Transcript`, `Memory`, `ReviewChat`. The new infrastructure
+nouns are `LiveStore` (the SQLite store), `Command` (one immutable remote
+intent), `Outbox` (the durable queue of commands), `Snapshot` (the
+read-only published copy), `SyncAgent` (pull–apply–publish), `Exporter`
+(the archive materialiser), `ArchiveImport` (the rebuild), `Derivative`
+(one web-sized image), and `Asset` (the catalogued original or
+derivative). `Archive` keeps its name but changes job: it is the
+plain-text materialisation, not the live store.
+
+### 17.4 What lives where
+
+| Capability | Laptop | Cloud | Big disk |
+|---|---|---|---|
+| Authoritative writes | ✓ (only) | — | — |
+| Browse / search (LAN) | ✓ | — | — |
+| Browse / search (remote) | — | ✓ (snapshot) | — |
+| Transcript edit / confirm | applies | accepts command | confirmed text only |
+| Row drawing | applies and re-reads | accepts command | working state (not archived) |
+| Add story / memory | applies | accepts command | confirmed text only |
+| Identity decisions | applies | accepts command | confirmed/estimated only |
+| Photo upload | pulls original | stages the original temporarily, encrypted, then deletes it after the pull | keeps original |
+| Scan · classify · orient · read · rows · transcribe | ✓ | — | reads originals |
+| Full-resolution images | serves on LAN | — (never stored) | stores |
+| Web-sized derivatives | generates | serves | — |
+| DB snapshot | produces | serves | — |
+| Remote command queue | drains | stores | — |
+| Operational backup | produces | — | stores |
+| Human archive | produces | — | stores |
+| Retention / trim | ✓ | — | ✓ |
+| Auth | LAN session | Google OAuth | — |
+
+The two deliberate omissions: **no pipeline work in the cloud** (it needs
+the scanner and the originals), and **no full-resolution originals in the
+cloud**. The second line needs stating precisely. The scan pixels stay
+home except while an upload is in flight. The *text* — transcripts,
+stories, memories, the review chat — is the intimate content, and it does
+live in the cloud behind family auth. A derivative used for row review
+must be legible enough to draw lines on, which is not a thumbnail; the
+resolution is therefore a per-category decision (D5), not a blanket
+"web-sized".
+
+### 17.5 Write paths
+
+**W1 — at home, on the LAN.** Browser → Loft service → one SQLite
+transaction → one change (one or more events) → snapshot marked dirty. The
+response is sent
+after the commit, never after a projection rebuild. A background
+publisher coalesces the dirty marks and republishes the snapshot off the
+request path. This is the fast path and the only path that writes domain
+state directly.
+
+**W2 — the scanner and pipeline.** Scanner → big disk → worker → write
+seam → SQLite (batch, page reading, rows, draft transcript), with
+derivatives on the disk. Originals are never copied to the cloud. The worker is the only
+producer of machine state; it owns the draft fields and humans own the
+confirmation fields, which is what keeps them from fighting. The split is
+enforced in the schema, not by convention: a re-read refuses to replace
+a human row set newer than its input (`page_rows.source`, `pages.revision`),
+instead of deleting the reviewer's corrections as the as-built path does.
+
+**W3 — remote.** Browser → Cloud app → one immutable `Command` in the
+Outbox → `202` with the command id. The author sees the edit immediately
+as pending; everyone else sees the last published snapshot.
+
+Commands are classified, because they are not one kind of thing:
+
+| Class | Examples | Apply |
+|---|---|---|
+| **State** | transcript edit, story save, row lines | one `BEGIN IMMEDIATE` transaction; the guard is the typed table's UPSERT with `WHERE version IS :base`; zero rows means stale |
+| **Append-only decision** | identity attest/estimate/pending/delete, review decisions | append the decision and apply it (last wins); no version predicate, per the 2026-10-21 user ruling |
+| **State + machine work** | "re-read this page", "identify this document", an import-review message that calls a model | the transaction records the intent and inserts a `jobs` row; the worker runs outside the lock; its result is a second transaction |
+| **Bytes** | photo upload | the staged object is recorded as an `Asset`; the laptop pulls, re-hashes, writes and derives |
+
+**No transaction spans a model call, a file write, or a network hop.**
+That is what keeps the write lock from being held for a page read.
+
+The laptop's sync agent pulls the outbox and applies each command
+**through the service's write seam** — never by opening the DB itself —
+so validation cannot be bypassed. It advances one
+`sync_state.applied_through` cursor, and it uses the `command/applied`
+event as the idempotency marker. The marker is not redundant with the
+cursor: a decision has no version predicate, so a crash after the decision
+append and before the cursor advance would otherwise apply it twice. The
+outbox is a permanent append-only log, not a queue that is consumed.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor R as Remote reviewer
+  participant C as Cloud app
+  participant O as Outbox
+  participant L as Laptop sync agent
+  participant S as Loft service
+  participant D as SQLite
+  participant X as Exporter
+
+  R->>C: edit transcript (base entity_version 12)
+  C->>O: put Command {uuid, base 12}
+  O-->>C: stored
+  C-->>R: 202 accepted (pending)
+  Note over R,C: the author sees it as pending; others see entity_version 12
+
+  L->>O: pull since applied_through
+  O-->>L: commands
+  L->>S: apply command
+  S->>D: BEGIN IMMEDIATE · UPSERT items WHERE version IS 12
+  alt one row changed
+    D-->>S: commit + event(s)
+    S-->>L: applied
+    L->>L: advance applied_through
+    L->>C: publish snapshot + derivatives
+  else no row changed
+    S-->>L: stale
+    S->>D: command/rejected (retryable)
+    Note over C: the next snapshot carries needs_attention
+  end
+
+  X->>D: nightly read of changed records
+  X->>X: next sidecar and content versions + manifest
+```
+
+**W4 — uploads.** Browser → Cloud app → object storage (staging) plus a
+command referencing the object and its sha256. The laptop pulls the
+object, re-hashes it, writes the original to the big disk, generates
+derivatives, and records the asset. The staged object is deleted after
+the laptop confirms. This is the only path by which a new original can
+enter the house from outside; the staged copy is encrypted at rest and
+has a short lifetime.
+
+The invariants:
+
+- **One host writes.** Every write goes through the Loft service on the
+  laptop, inside a `BEGIN IMMEDIATE` transaction. The worker and the sync
+  agent are clients of that seam, not second writers.
+- **Idempotent.** A command whose UUID already has a `command/applied`
+  event is a no-op. The event log is exported and restored, so replay
+  after a restore is safe.
+- **Version-checked atomically.** The guard is the typed table's
+  conditional UPSERT with `WHERE version IS :base`; a zero-row result is a
+  stale command, never a Python read-check-write. A stale command is parked
+  as `needs_attention`.
+- **One entity version, one export cursor.** `entity_version` moves only
+  on a state change and is the command base; `exported_through` is the
+  global event seq the archive has materialised. Exporting never touches
+  `entity_version`, so it cannot staleify a command.
+- **No lock across slow work.** No transaction spans a model call, a file
+  write, or a network hop.
+- **Audited.** Every applied command writes one change — one or more
+  `events` rows — carrying its `command_id`.
+- **One direction.** Remote → laptop is the outbox; laptop → remote is
+  the snapshot.
+
+### 17.6 Read paths
+
+- **LAN.** Loft service → `LiveStore`. Always current.
+- **Remote.** Cloud app → `Snapshot`, plus an overlay of the caller's own
+  pending commands, so an author sees their edit before it is applied.
+  The snapshot is republished after each drain and on a schedule; it
+  carries `published_at`, and the UI shows its age and the count of
+  pending commands.
+- **Parked commands.** A command that cannot apply is listed in the cloud
+  UI under its author, with its payload and the newer version it
+  collided with. It is not reduced to an anonymous count.
+- **Media.** The cloud serves `Derivative` objects. A request for an
+  original on the remote site is refused with the honest answer: the
+  original is in the house. The LAN serves originals normally.
+- **Search.** SQLite FTS5 in the live DB; the index is part of the
+  snapshot, so remote search works on the published state.
+
+### 17.7 The sync pattern, and the alternatives
+
+The pattern is **single writer + immutable command outbox + materialised
+read replica** — a CQRS shape without making the domain event-sourced.
+It is the generalisation of the existing "frontend proposes, backend
+records" rule, applied to a backend that is sometimes unreachable.
+
+| Alternative | Why it lost |
+|---|---|
+| **Bidirectional replication** (Postgres logical, two-way Litestream, SQLite sync) | Two writers, conflict resolution, ordering and schema drift. The project's stated bar is that a future maintainer should not have to think hard about whether a race is possible; this fails it. |
+| **Folder sync** (Syncthing, Dropbox, Drive) | Moves the append-only discipline to sync-time reconciliation. The `imports-27` collision is the cautionary tale: two writers computed the same next version and one user's words were lost. |
+| **CRDT / local-first merge** (Automerge, Yjs) | Good for concurrent text, but the domain needs validation, identity and one audit order; a CRDT still needs a server-side validator, so the complexity is added without removing the writer. Possible later for the transcript text field alone. |
+| **Cloud-authoritative database** (Postgres/Supabase live) | The simplest live UX, but the truth moves off-site and the laptop becomes a materialiser; "sync back to the local disk" becomes a replication problem. It is the clean upgrade path if remote freshness ever outweighs local truth. |
+| **Static-only remote** (published JSON plus a serverless queue) | Cheaper and simpler to host, but forces every review API to become a static payload and loses server-side validation. The same app in read-only snapshot mode is less work and keeps one write seam. |
+
+The chosen pattern's cost is freshness, and the architecture makes it
+visible rather than hiding it: the snapshot's age and the pending count
+are part of the UI, and the author's own edits are never hidden from
+them.
+
+### 17.8 The data model
+
+The schema is §18. At the architecture level:
+
+**One truth.** `events` is the append-only log; every other table is a
+projection rebuilt from it (§18.1). A bad release can add events but cannot
+erase the good ones.
+
+**One entity version, one export cursor.** `entity_version` is the
+optimistic token a remote command carries. `exported_through` is the global
+event seq the archive has materialised. Exporting never touches
+`entity_version`, so a nightly export cannot staleify an in-flight command.
+
+**Ownership where the writers overlap.** `pages.revision` and
+`page_rows.source` (`machine` | `human`) make the draft/confirmed split a
+constraint rather than a convention: the seam refuses a re-read that would
+replace a human row set newer than its input, and the projection carries
+the check, instead of deleting the reviewer's corrections.
+
+**What moves into the DB** is the whole live state: items, identities,
+documents, pages, readings, review state, the asset catalog and the job
+queue. What stays on disk is the originals, the human archive, the
+operational backup and the nightly dumps (§18.8–§18.9).
+
+### 17.9 The nightly export, dumps, and retention
+
+The nightly job runs on the laptop at a fixed local time; if the laptop
+was off, it runs once on the next start (catch-up, never a backlog of
+runs).
+
+1. **Snapshot the DB** with `VACUUM INTO` (or `sqlite3 .backup`) to a
+   temp file; run `PRAGMA integrity_check`; keep it only if it passes.
+2. **Write the operational backup**: the full SQL dump, the full `content/`
+   store and the full event log, to the big disk and one off-site location,
+   encrypted. This is the restore source and the 3-2-1 copy; it is never
+   filtered. Keep the tiered set.
+3. **Write the human archive**: the confirmed current state only — one
+   `item.json` per catalogued item, the confirmed `.txt`, the images
+   (copied, never hardlinked), the confirmed/estimated identity tables,
+   `INDEX.md`, `PEOPLE.md`, `PLACES.md`, `README.md`, `manifest.json` and
+   `manifest.sha256`. No drafts, no proposed records, no model reasoning.
+   Write it to the big disk and to the off-site readable copy. The tree and
+   its format are §18.8.
+4. **Verify the human archive**: every file against the manifest; no
+   `trust='draft'` content anywhere; the confirmed subset equals the DB's
+   confirmed rows; fail loudly on any mismatch.
+5. **Verify the backup**: restore the dump and `content/` into a scratch DB,
+   compare the §18.8 backup contract, and check every hash; fail loudly.
+6. **Trim**: keep a tiered set of dumps and manifests (for example 14
+   nightly, 8 weekly, 12 monthly), and trim only after the newest backup
+   verifies. The event log is never trimmed; the human archive is rewritten
+   in place; the dumps are the tiered copies. Keep a monthly readable
+   snapshot for the annual external-media export.
+7. **Report**: write `sync_state.last_verified_export_at`. Both the LAN
+   and the cloud surfaces show the last verified export and raise a
+   banner after N missed nights. A failed nightly is not allowed to fail
+   silently.
+
+**Restore drill.** Monthly, the job restores the backup into a scratch DB,
+and compares every table and hash. It is a gate, not a spike: a longevity
+claim that is tested once is a hope.
+
+**Rebuild.** `ArchiveImport` reads the **operational backup** — the dump,
+`content/` and the event log — and reconstructs the truth and domain
+projections. The human archive is a confirmed publication, not the restore
+source; it can rebuild the confirmed subset only. The test is mechanical:
+backup, wipe the DB, restore, compare the §18.8 backup contract and every
+hash. If that test fails, the archive is not a sufficient longevity
+artifact.
+
+**The 2046 README** ships in the archive: what the tree is, how to read
+it without the software, and how to restore it.
+
+### 17.10 Failure modes
+
+| Failure | Still works | At risk | Recovery |
+|---|---|---|---|
+| Laptop off | Cloud reads the last snapshot; remote edits queue; the author sees their own pending edit | No scans, no new derivatives, no export; the snapshot ages | Nothing lost; the outbox drains on the next run |
+| Cloud down | LAN reads and writes; the browser's local outbox holds the edit | Remote reads and writes | The server-side outbox is durable; the browser retries on reconnect |
+| Cloud provider lost | LAN works; the laptop's DB remains | Commands not yet pulled | The outbox bucket is versioned and replicated to a second region; the snapshot is rebuilt from the laptop |
+| Laptop lost | The big disk and the off-site dump survive | Up to one night of DB writes; originals if the disk is lost | Restore the newest dump, then replay the outbox from the restored cursor; copy originals from backup |
+| Big disk lost | The DB and the off-site dump survive | Full-resolution originals unless backed up | 3-2-1 backup is still a separate requirement; the DB does not save the originals |
+| Nightly failed or missed | LAN and cloud keep working | The archive and its off-site copy age; the DB is still the live truth | Catch-up run on the next start; `last_verified_export_at` and a banner after N missed nights |
+| Restore to before the cursor | — | Replaying events | The event log is exported and restored, so replay is idempotent; the log records no duplicate |
+| Outbox grows for weeks | Everything | Storage only; the log is tiny | The cursor catches up; the outbox is never trimmed |
+| Stale command | — | The author's edit | Parked as `needs_attention`; the author sees it in the cloud's pending list and resolves against the newer version |
+| Partial snapshot upload | The previous snapshot stays current | — | The pointer flips only after the new snapshot and manifest are complete |
+| Ordering | — | Which command wins | Commands apply in pull order; per-record conflicts are decided by `entity_version`, not wall-clock time. There is no global order, and the UI does not claim one |
+
+### 17.11 Technology choices and security posture
+
+- **SQLite (WAL) for the live store.** A single file, in the Python
+  stdlib, no server to babysit, easy to snapshot and copy. Postgres at
+  home buys concurrency the family does not need and adds a daemon;
+  DuckDB is analytics, not OLTP. The DB lives on the laptop's internal
+  disk so unplugging the archive does not break the service. Pragmas are
+  part of the decision: `journal_mode=WAL`, `synchronous=FULL` (this is a
+  family archive, not a social feed), `busy_timeout=5000`,
+  `wal_autocheckpoint=1000`, `recursive_triggers=ON`. No foreign keys; the
+  write seam is the integrity check.
+- **The cloud runs the same app in read-only snapshot mode.** This keeps
+  the review APIs and the auth flow; the alternative — a static
+  projection — forces every review payload to be precomputed and loses
+  server-side validation.
+- **The outbox is a permanent append-only log of immutable objects in
+  object storage, keyed by UUID.** Durable, cheap, no database in the
+  cloud. A conditional put (`If-None-Match: *`) makes a duplicate command
+  impossible. It is never trimmed: it is the replay source after a
+  restore, and it is small.
+- **The snapshot is a SQLite file plus a manifest, uploaded atomically.**
+  `VACUUM INTO` gives a consistent copy without stopping the writer.
+- **Derivatives are generated on the laptop and uploaded.** On-the-fly
+  resizing at the edge would add a service and put the original one hop
+  from the internet.
+- **Auth stays Google OAuth at the cloud app** (the existing flow). The
+  LAN keeps the same session model.
+- **Search is SQLite FTS5 in the live DB**, carried in the snapshot; the
+  service probes FTS5 at startup and fails loudly rather than silently
+  degrading to no search.
+
+**Security posture.** The cloud holds the words, so it is treated as a
+trusted-but-limited surface, not a public one:
+
+- Object-storage buckets are private; reads use short-lived signed URLs;
+  writes use a server-side credential the browser never sees.
+- The cloud app validates a command's schema, actor and role before it
+  enters the outbox; the laptop validates again before applying. A
+  compromised cloud credential cannot inject an arbitrary domain write.
+- Staged uploads have a quota, an allowed MIME set, a sha256 check and a
+  short lifetime; the laptop deletes the staged object after the pull.
+- The LAN service binds to the tailnet/LAN, never a port-forward; the
+  cloud is the only public surface.
+- The laptop's disk is encrypted at rest (the whole corpus now lives on
+  it); the nightly off-site copy is encrypted with a family-held key
+  recorded with the media, never a vendor key.
+- Every write API has a body cap (the existing `MAX_BODY_BYTES` is
+  defined but unused); the outbox endpoint is rate-limited per actor.
+- `events.actor_id` is a person id (or a reserved system id), resolved
+  server-side, not a client-sent string; an account maps an optional login
+  to that person.
+
+### 17.12 Spikes required
+
+1. **Snapshot and read-only app.** Prove the cloud app serves the review
+   APIs from a snapshot, refuses every write except the outbox, and
+   swaps to a new snapshot atomically.
+2. **Outbox semantics.** Prove an applied-twice command is a no-op, a
+   stale command parks, and a crash mid-apply leaves no partial state.
+3. **Export/restore round trip.** Prove export → wipe → restore
+   reproduces the truth and domain projections exactly (the §18.8 contract
+   list), and that a second export of unchanged records writes nothing.
+4. **Derivative boundary.** Prove a remote review page never requests an
+   original, and that the full-resolution path is LAN-only.
+5. **Retention.** Prove the trimmed set still restores both the newest
+   and the oldest retained dump.
+6. **Command taxonomy and lock hold time.** Prove no transaction holds
+   the write lock across a model call, a file write or a network hop; a
+   re-read enqueues a job and the result lands in a second transaction.
+7. **One entity version, one export cursor.** Prove a nightly export
+   advances `exported_through` without changing `entity_version`, and a
+   command authored before the export still applies.
+8. **Export completeness.** Prove the export/restore comparison covers the
+   §18.8 contract list, that operational tables rebuild empty, and that a
+   rejected proposal does not resurrect.
+9. **Threat model.** Prove a forged command is rejected at the cloud and
+   again at the laptop; a staged upload cannot be fetched by an
+   unauthorised actor; a signed URL expires.
+10. **Snapshot cadence at scale.** Measure the publish cost at the PRD's
+    ceiling (10,000 items / 50,000 images) and prove the projection
+    rebuild is off the request path.
+
+The schema-specific spikes — append-only proof, withdrawal drill,
+hash/migration, draft exclusion, command rebuild — are §18.12.
+
+### 17.13 Decisions
+
+- **D1 — The database is the system of record.** The plain-text archive
+  is the nightly, lossless, human-readable export.
+- **D2 — One host writes.** The laptop's Loft service is the only writer
+  of domain state, and every write goes through its seam inside a
+  `BEGIN IMMEDIATE` transaction. The worker and the sync agent are
+  clients, not second writers; the cloud never writes domain state.
+- **D3 — Remote writes are commands.** Immutable, UUID-keyed,
+  `entity_version`-checked, applied idempotently by the laptop.
+- **D4 — The cloud is replaceable for reads.** A read-only snapshot plus
+  the caller's pending commands. It is the only copy of commands not yet
+  pulled, so the outbox is durable, replicated and never trimmed.
+- **D5 — Originals stay home; the words do not.** Scan pixels and
+  full-resolution images stay on the big disk. Transcripts, stories,
+  memories and review chat live in the cloud behind family auth, and so
+  do legible derivatives sized per page category (row review needs a
+  legible tier, not a thumbnail). The resolution table is signed off
+  before the remote review surface ships.
+- **D6 — Nightly, tiered, verified.** Nightly dumps and archive export;
+  retention by tier; the export must be able to rebuild the DB.
+- **D7 — SQLite at home.** No server database on the laptop;
+  `synchronous=FULL` because the corpus is irreplaceable.
+- **D8 — The archive stays append-only and scannable.** The DB and the
+  snapshot are derived, gitignored, and never in the no-PII guard's
+  layer.
+- **D9 — No transaction spans slow work.** A model call, a file write or
+  a network hop never holds the write lock; state-plus-work commands
+  enqueue a job and commit their result separately.
+- **D10 — One entity version, one export cursor.** `entity_version` for
+  commands; `exported_through` for the export.
+- **D11 — The outbox is permanent.** Progress is the laptop's
+  `applied_through` cursor; the `command/applied` event is the idempotency
+  marker. The cursor alone cannot protect an append-only decision.
+- **D12 — A failed nightly is visible.** `last_verified_export_at` is
+  shown on both surfaces, with a banner after N missed nights.
+- **D13 — The backup contract is explicit and drilled.** Truth and domain
+  projections rebuild from the operational backup; operational tables are
+  reseeded; a monthly restore-and-compare is a gate.
+
+### 17.14 What this changes in the existing design
+
+| Existing decision | Status | Why |
+|---|---|---|
+| **P2 — "no database"** | Superseded | The browser still has no DB; the laptop now has one, because the structured features are worth it. |
+| **§3 — "no server database"** | Superseded | The folder is no longer the live store; it is the export. |
+| **§12 — SQLite rejected as "database lock-in"** | Superseded | SQLite is in the stdlib, carries one of the strongest documented longevity commitments of any format, and the plain-text export remains the hedge. |
+| **§16.15 — backend owns the write seam; frontend proposes** | Retained in shape, inverted in direction | The laptop is still the write seam; the cloud is now a replica and an outbox, not a live proposer to a reachable backend. |
+| **§16.12 — Supabase as the live multi-user store** | Not adopted | It puts the truth off-site; the same structured features are served by SQLite at home. |
+| **PRD §3/§11 — version chains on disk; the prior version survives** | Satisfied by the DB, not the disk tree | `events` + `content` are the append-only chain: every prior version is an event row plus an immutable blob, and a withdrawal is a new event. The human archive is confirmed current state; the operational backup carries the full history and content. The PRD's disk-chain *format* is superseded; its durability *requirement* is met in the DB. |
+| **`docs/sqlite-projection-plan.md`** | Superseded | It made the archive the system of record and the DB a projection. This section makes the DB the record and the archive the export. The document is retained as history. |
+| **`Outbox` (unwired)** | Replaced, not extended | The existing class is a consumption queue (reads every file, unlinks on receipt); the new outbox is a permanent append-only log with a laptop cursor. |
+| **No-PII guard and weekly evals** | Read the DB when the export is absent | `tests/test_no_pii_in_repo.py` currently skips when `archive/people.json` is missing, so a stalled export would make the guard pass vacuously; the guard must fail hard if neither source exists, and the evals run against the DB and the export separately. |
+| **`Archive`** | Becomes the exporter/importer | `LiveStore` owns the live data; `Archive` owns the plain-text materialisation and rebuild. |
+| **Registry and work tree as files** | Become events and projections | The review surface must work remotely, so the drafts and rows must be in the snapshot, not only on the laptop. Files remain a cache. |
+| **Browser `localStorage` edits** | Become commands plus UI state | The edits that matter are durable commands; scroll position and similar UI state stay local. |
+| **`publish`** | Splits into snapshot publish, human archive and operational backup | They are different jobs with different cadences and different guarantees. |
+| **`publish` on the request path** | Moves off it | The server currently republishes synchronously after several writes; the snapshot is republished asynchronously, and the response waits only for the commit. |
+| **Process-local locks** | SQLite transactions | One writer plus real transactions replaces the RLock and the check-then-write CAS. |
+| **`tools/store.py` check-then-write** | Replaced by a `link()` create-if-absent primitive | The exporter cannot be append-only on a primitive that can silently overwrite a version. |
+| **CLI review gate and `record_confirmation` write the archive directly** | Cut over to the DB | The exporter is the only archive writer; the CLI becomes a client of the same seam. |
+| **Identity decisions are version-gated** | Exempt | The 2026-10-21 user decision: a determination is always applied and recorded, last wins, with no staleness to detect. |
+| **Date-partitioned document storage (`docs/object-model.md` Phase 5)** | Resolved: flat `items/<id>/` plus a generated index | §18.8: stable paths and `INDEX.md` give chronology without moving folders. |
+| **`edits.jsonl` and `audit.jsonl`** | One log: `events` | The event log is the audit; the operational backup carries it as `events/`. |
+
+---
+
+
+## 18. The live schema and the archive's on-disk form
+
+Status: **proposed schema, revised after an adversarial review; for review.**
+§17 decides where the system lives; this section decides what it stores and
+what a reader finds on the disk.
+
+### 18.1 Three append-only stores, and everything else
+
+The truth is three append-only stores:
+
+1. **`events`** — every state change, immutable. `UPDATE` and `DELETE` are
+   refused by triggers; a `BEFORE INSERT` trigger refuses a duplicate
+   `event_id` or `(entity_id, event_no)`; `PRAGMA recursive_triggers=ON`
+   closes the `INSERT OR REPLACE` hole that would otherwise delete a row
+   without firing the delete trigger. The pragma is declared in
+   `schema-truth.sql`, so a restore connection gets it too.
+2. **`content`** — every text or JSON blob, keyed by sha256,
+   create-if-absent. A bad release can add bytes; it cannot replace the
+   bytes under an existing sha.
+3. **`schema_migrations`** — the applied migration list, append-only.
+
+Everything else is a projection or operational state:
+
+- **Projections** (droppable, rebuildable from `events` + `content`):
+  `items`, `people`, `places`, `orgs`, `themes`, `relationships`,
+  `documents`, `document_pages`, `batches`, `scans`, `pages`, `page_rows`,
+  `page_row_links`, `row_checks`, `readings`, `review_sessions`, `claims`,
+  `review_messages`, `review_decisions`, `assets`, `item_refs`,
+  `item_assets`, `item_content`, `person_residences`, `theme_items`,
+  `aliases`, `withdrawals`, `commands`, `search_docs` and the FTS index.
+  **The current state is typed**; there is no generic entity table.
+- **Operational** (not truth; rebuilt or reseeded on restore): `jobs`,
+  `sync_state`.
+- **Auth state** (not truth; backed up, never in the human archive):
+  `accounts`.
+
+A projection may be updated or deleted freely. An operational table may be
+reset. The truth may only be appended to.
+
+This is the sidecar chain moved one layer down: the per-entity version
+becomes `event_no`, and current state is derived. The difference is that one
+place enforces it, and one query answers "what did the bad release write?"
+
+### 18.2 The event log
+
+```sql
+CREATE TABLE events (
+  seq            INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_id       TEXT    NOT NULL UNIQUE,      -- UUIDv7
+  change_id      TEXT    NOT NULL,             -- one user/system action
+  entity_kind    TEXT    NOT NULL,             -- person, item, page, command, ...
+  entity_id      TEXT    NOT NULL,
+  event_no       INTEGER NOT NULL,             -- 1..n per entity, every event
+  entity_version INTEGER,                      -- state token; NULL for log-like kinds
+  event_type     TEXT    NOT NULL,             -- created, superseded, deleted, ...
+  payload        TEXT    NOT NULL,             -- canonical JSON, references content by sha
+  payload_schema INTEGER NOT NULL,
+  recorded_at    TEXT    NOT NULL,             -- ISO 8601 UTC; not the ordering key
+  actor_kind     TEXT    NOT NULL CHECK (actor_kind IN ('person', 'system')),
+  actor_id       TEXT    NOT NULL,             -- a person id, or a reserved system id
+  command_id     TEXT,                         -- remote command that caused it
+  app_version    TEXT    NOT NULL,             -- immutable build id (git sha)
+  prev_hash      TEXT,                         -- previous event for this entity
+  hash           TEXT    NOT NULL,             -- sha256 of the canonical event
+  CHECK (event_no > 0),
+  UNIQUE (entity_kind, entity_id, event_no)
+) STRICT;
+
+CREATE UNIQUE INDEX events_one_apply
+  ON events (command_id) WHERE event_type = 'applied';
+
+CREATE INDEX events_entity   ON events (entity_kind, entity_id, seq);
+CREATE INDEX events_change   ON events (change_id);
+CREATE INDEX events_command  ON events (command_id);
+CREATE INDEX events_release  ON events (app_version);
+CREATE INDEX events_recorded ON events (recorded_at);
+CREATE INDEX events_actor    ON events (actor_kind, actor_id);
+
+CREATE TRIGGER events_no_duplicate BEFORE INSERT ON events
+WHEN EXISTS (
+  SELECT 1 FROM events
+  WHERE seq = NEW.seq
+     OR event_id = NEW.event_id
+     OR (entity_kind = NEW.entity_kind
+         AND entity_id = NEW.entity_id
+         AND event_no = NEW.event_no)
+)
+BEGIN SELECT RAISE(ABORT, 'event already exists'); END;
+
+CREATE TRIGGER events_no_update BEFORE UPDATE ON events
+BEGIN SELECT RAISE(ABORT, 'events is append-only'); END;
+CREATE TRIGGER events_no_delete BEFORE DELETE ON events
+BEGIN SELECT RAISE(ABORT, 'events is append-only'); END;
+```
+
+- **`event_no` is the ordinal; `entity_version` is the state token.** Every
+  event on an entity gets the next `event_no`; only the state-changing event
+  types advance `entity_version`. Log-like kinds (`command`, `job`,
+  `review_message`, `review_decision`, `asset`) leave `entity_version` NULL.
+  This is the correction the first draft missed: one column cannot be both
+  the unique ordinal and the optimistic token, or a machine derivative
+  stales a human edit.
+- **`change_id` groups the rows of one action.** Confirming a document
+  writes a `document` event, an `item` event and one event per page; they
+  share a `change_id`, so the debugger sees one action, not five.
+- **`payload` is metadata and content references for state records.** An
+  item event carries `text_sha`; a page-reading event carries `reading_sha`.
+  A log-like event (a review message, a decision) carries its short text
+  inline, in the immutable event; its optional `thinking_sha` points at
+  `content`. The bytes live in `content` (§18.3). This keeps the log small
+  and makes a text correction a new immutable blob, not an overwritten
+  file.
+- **`app_version` is the build id**, not a semver. A dev build that never
+  bumps it makes the release query lie.
+- **`actor` is the person, not the login.** `actor_kind = 'person'` carries a
+  person id — the genealogy record; `actor_kind = 'system'` carries a
+  reserved id (`pipeline`, `sync`, `import`). An account is an optional login
+  attached to a person (`accounts.person_id`); the event log never stores the
+  email. A contributor who is not yet in the cast gets a proposed person
+  record, per the memory flow.
+- **Ordering is `seq`.** `recorded_at` is for humans; a clock jump must never
+  reorder the log.
+
+**The hash recipe.** `hash = sha256(canonical(event))` over a **frozen
+column list** — `event_id`, `change_id`, `entity_kind`, `entity_id`,
+`event_no`, `entity_version`, `event_type`, `payload`, `payload_schema`,
+`recorded_at`, `actor_kind`, `actor_id`, `command_id`, `app_version`,
+`prev_hash` — never `SELECT *`. Adding a column in a migration therefore leaves historical
+hashes valid; a test applies every migration and re-verifies the chain.
+Sorted keys, UTF-8, no insignificant whitespace. The hash covers the **stored**
+`payload` string, not a re-serialisation: the seam canonicalises before
+insert, and a test pins it, so a restore that writes JSON differently does
+not turn the chain red. `prev_hash` is the previous event for the same
+`(entity_kind, entity_id)`. The recipe is pinned by a
+test. It detects accident, partial tampering and a truncated tail (the
+manifest pins each entity's head); it does **not** stop someone who can
+recompute the chain. Say so in the README rather than overclaiming.
+
+**The vocabulary is closed.** The write seam validates the pair:
+
+| `entity_kind` | `event_type` | advances `entity_version` |
+|---|---|---|
+| `person`, `place`, `org`, `theme`, `relationship` | `created`, `superseded`, `deleted`, `merged`, `unmerged`, `rejected` | yes |
+| `item`, `document`, `page`, `batch` | `created`, `superseded`, `deleted`, `status_changed` | yes |
+| `scan` | `created` | no |
+| `review_session` | `created`, `status_changed` | yes |
+| `page_reading` | `reading_recorded` | yes |
+| `review_message` | `message_appended` | no |
+| `review_decision` | `decision_recorded` | no |
+| `asset` | `asset_added`, `derivative_added` | no |
+| `command` | `received`, `applied`, `rejected` | no |
+| `job` | `enqueued`, `started`, `finished`, `failed` | no |
+| `withdrawal` | `withdrawn` | no |
+
+**Merges carry a redirect; rejection ends the proposal.** A `merged` payload
+names `merged_into`; the `aliases` projection resolves the loser to the
+survivor. An `unmerged` event removes the redirect; the alias projection is a
+fold of merge/unmerge, so withdrawing a merge restores the original id. A
+`rejected` event is terminal for a proposed person/place/org: the row stays
+in the log and the projection, excluded from browse and from reference
+resolution; a ref to it is a `loft verify` finding.
+
+**Commands are events.** A remote command becomes `command/received`; the
+apply writes the domain events plus `command/applied`; a stale or invalid
+command writes `command/rejected`. The `command/applied` event is the
+idempotency marker — the cursor alone cannot protect an append-only
+decision, because decisions deliberately have no version predicate. A
+replay finds the marker and stops.
+
+**Why one log, not typed version tables.** The literal translation of the
+sidecar chain is `item_versions`, `person_versions`, … — one append-only
+table and one current view per entity. It is more relational, but it
+multiplies the places a bad release can write and the places a debugger must
+look. The single log gives one guard and one history; the **current state is
+typed** (§18.4), so the read model is relational without making every type a
+second append-only table. The log is generic because it is a sequence of
+facts; the state is typed because it is the domain.
+
+### 18.3 The content store
+
+```sql
+CREATE TABLE content (
+  sha256     TEXT PRIMARY KEY,
+  mime       TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  bytes      BLOB,                 -- inline for small text/JSON
+  path       TEXT,                 -- relative path for a large blob
+  created_at TEXT NOT NULL,
+  CHECK ((bytes IS NOT NULL) <> (path IS NOT NULL)),
+  CHECK (bytes IS NULL OR length(bytes) = size)
+) STRICT;
+
+CREATE TRIGGER content_no_replace BEFORE INSERT ON content
+WHEN EXISTS (
+  SELECT 1 FROM content c
+  WHERE c.sha256 = NEW.sha256
+    AND (c.size <> NEW.size OR c.mime <> NEW.mime
+         OR c.bytes IS NOT NEW.bytes OR c.path IS NOT NEW.path)
+)
+BEGIN SELECT RAISE(ABORT, 'content sha already exists with different bytes'); END;
+
+CREATE TRIGGER content_no_update BEFORE UPDATE ON content
+BEGIN SELECT RAISE(ABORT, 'content is append-only'); END;
+CREATE TRIGGER content_no_delete BEFORE DELETE ON content
+BEGIN SELECT RAISE(ABORT, 'content is append-only'); END;
+```
+
+- **Text, readings and review reasoning are content-addressed.** The item's
+  `transcription`/`story`, the page's reading JSON and a message's
+  `thinking` are blobs keyed by sha. The event references the sha; the human
+  archive writes the confirmed `.txt` from it. A correction creates a new
+  sha; the old blob stays. A bad release cannot overwrite the words.
+- **Create-if-absent and verified.** The seam computes the sha from the
+  bytes before insert; an existing sha is re-hashed and compared, never
+  overwritten. A crash leaves an orphan blob; `loft verify` **reports** it
+  and never deletes one (the delete trigger forbids it). The only safe GC
+  is a rebuild into a fresh DB.
+- **Path-backed blobs are re-hashed.** A large blob at
+  `content/<sha2>/<sha>` is verified against its filename on every
+  `loft verify`; a rewrite is caught.
+- **A blob has no owner; its first event does.** The event that first
+  references a sha carries the actor and `app_version`; `loft verify` can
+  find the first reference by scanning the log, which is how a bad
+  release's blobs are traced.
+- **Images are not in SQLite.** The `assets` catalog holds the sha, mime,
+  size and a path relative to the content store; the bytes are files. The
+  human archive copies the confirmed item's images into its folder.
+- **The snapshot's content bundle is part of the atomic publish.** The
+  published manifest lists every content sha the snapshot references; the
+  pointer flips only when all are present. Uploads are content-addressed
+  with `If-None-Match: *`, so a retry is free and a partial upload never
+  goes live.
+- **The operational backup ships the blob metadata.** `content/` holds the
+  bytes and `content.json` holds `sha256`, `mime`, `size` and `created_at`,
+  so the table can be rebuilt byte-identically. A dump-only restore includes
+  `content/`, or the dump is taken with all content inline.
+
+### 18.4 The projections
+
+Projections are derived; operational tables are reset, not rebuilt. Their
+`CREATE` statements live in `schema-projections.sql`; projection contents
+are rebuilt by `loft rebuild`.
+
+**The current state is typed.** Each entity kind has its own table. Scalar
+fields are columns; small nested structures (aliases, `dob`/`dod`, a
+residence list, a theme body) are JSON columns on that table; the edges the
+browse queries join on are child tables. There is no generic entity table.
+
+| Table | Holds |
+|---|---|
+| `items` | id, type, title, date, date2, date_precision, status, source, description, provenance, sensitive, created, identified, `date_mentions_json`, `extra_json`, plus the shared columns |
+| `item_refs` | item → person/place/org/theme/item, with status, date, date2, precision and basis |
+| `item_assets` | item → asset, kind, caption, ordinal |
+| `item_content` | item → content sha, kind (`story`/`transcription`/`other`), trust (`draft`/`confirmed`) |
+| `people` | id, name, years, relation, bio, email, pronouns, hue, status, `dob_json`, `dod_json`, `aliases_json`, `occupations_json`, `basis_json`, plus the shared columns |
+| `person_residences` | person → place, from/to, precision, status, basis |
+| `places` | id, name, note, precision, lat, lng, x, y, address, status, `aliases_json`, `basis_json`, plus the shared columns |
+| `orgs` | id, name, address, branch, note, status, `aliases_json`, plus the shared columns |
+| `themes` | id, title, subtitle, seeded, `body_json`, plus the shared columns |
+| `theme_items` | theme → item, ordinal |
+| `relationships` | id, a_kind/a_id, b_kind/b_id, kind, label_a, label_b, `date_json`, `basis_json`, status, plus the shared columns |
+| `documents` | id, item_id, batch_id, doc_index, title, date, date_precision, status, greeting, signoff, text_sha, confirmed_at, plus the shared columns |
+| `document_pages` | document → page, ordinal |
+| `batches` | id, label, source, path, status, arrived_at, started_at, started_pid, started_host, `fingerprint_json`, content_changed, plus the shared columns |
+| `scans` | scan id, batch, page, sha256, path, ordinal, created |
+| `pages` | page id, image asset, sha, revision, status; the document edge is in `document_pages` |
+| `page_rows` | the current rows with `source`, `trust`, orientation and `revision` |
+| `page_row_links` | insertion links: target row, character offset, proposed/unset/confirmed |
+| `row_checks` | the reviewer's per-row verification ticks |
+| `readings` | page → reading sha, row count, word count |
+| `review_sessions` | session id, kind, subject (batch/document/item/person/place), actor, status, current attempt, closed_at |
+| `claims` | the review queue: origin, subject, phase, state, evidence |
+| `review_messages` | the review chat, one row per message, with its human actor |
+| `review_decisions` | the reviewer's determinations: subject, decision, basis, actor |
+| `assets` | the catalog: sha, kind, mime, size, relative path, derivative-of |
+| `aliases` | merged ids → survivor ids |
+| `withdrawals` | bad changes and their compensation change |
+| `commands` | remote commands: `received`→pending, `applied`→applied, `rejected`→needs_attention or rejected |
+| `search_docs` + `search` | FTS5 over titles, names, transcripts and stories |
+| `sync_state` | cursor progress and `last_verified_export_at`; operational |
+| `jobs` | the worker queue, leases and attempts; rebuilt from `job/*` |
+
+**Auth state is not a projection.** `accounts(account_id, person_id, email,
+role)` attaches an optional login to a person. `events.actor_id` is the
+**person id**, not the account id; the log never stores an email. A person
+may have no account — most of the cast never will — and a contributor who is
+not yet in the cast gets a proposed person record, so every human event still
+names a person. Accounts are backed up with the database and never written
+to the human archive.
+
+The shared columns on a state table are `version`, `event_no`, `event_seq`
+and `updated_at`; `version` is the optimistic token a command carries. The
+log-like tables (`review_messages`, `review_decisions`, `assets`,
+`commands`, `withdrawals`) have no `version`; they are append-only
+projections keyed by their own id or ordinal.
+
+**The review queue is a view over `claims`.** A claim is one thing a
+reviewer must resolve — an identity, a document, a memory, a failed
+integrity check. `review_sessions` is the conversation, `claims` is the
+queue, `review_decisions` is the outcome. The queue closes only when no
+claim is open for the origin. An unfinished memory is a claim with
+`origin_kind='memory'`; a failed integrity check is a claim with
+`origin_kind='integrity'`, so the weekly check produces work rather than a
+log line.
+
+**Constraints live on the typed tables.** `CHECK`s are reserved for
+vocabularies that will not grow without a migration — `page_rows.source`,
+`item_content.kind`, `item_refs.ref_kind`, `withdrawals.target_kind`,
+`commands.outcome`, `jobs.status`. The record statuses, item types and
+relationship kinds are validated by the seam against the domain class,
+because extending them must not require rebuilding an immutable table.
+Natural indexes go on `items(date)`, `items(type, date)`, `people(name)`,
+`item_refs(ref_kind, ref_id)` and `document_pages(page_id)`. The seam
+validates the payload before the projection writes, so the table and the
+class cannot drift. A new `entity_kind` needs a table, a migration and a
+projector; a test fails if the kind has no table.
+
+```sql
+CREATE INDEX items_date ON items (date);
+CREATE INDEX items_type_date ON items (type, date);
+CREATE INDEX item_refs_target ON item_refs (ref_kind, ref_id);
+```
+
+**Rows are typed where the constraint matters.** `page_rows` exists because
+§17 promises that a machine re-read cannot silently replace a human row set.
+It carries `source` (`machine` | `human`), `trust` (`raw` | `guess` |
+`confirmed`), the page `revision` and the segment `orientation`; the seam
+refuses a re-read whose input is older than the human rows. `row_checks`
+holds each reviewer's tick, and `page_row_links` the insertion target,
+character offset and state. The payload is still the reading; the projection
+is the constraint surface.
+
+**Rows are the grain; the document text is a cache.** The confirmed
+`page_rows` are the letter's words; `documents.text_sha` is a cache of them,
+and the item's `item_content(kind='transcription', trust='confirmed')` is the
+published text. A confirmed document must have an item (`CHECK (status <>
+'confirmed' OR item_id IS NOT NULL)`); the export writes `transcription.txt`
+from the item content and compares it to the document cache; a mismatch
+fails. There is no third authoritative copy.
+
+**FTS is deferred.** The FTS index is not updated inside the pipeline's
+write transaction; a projector applies `events` since `projected_through` to
+`search_docs`/`search`. The index is a cache; the search lag is seconds, and
+the write lock is not held for a full-text update.
+
+**Reads are current for the domain.** The typed tables are updated in the
+same transaction as the event, so a review read after a write sees it. The
+rebuild path exists for recovery, not for the happy path.
+
+**The rebuild is the test.** `loft rebuild` drops every projection, replays
+`events` in `seq` order (skipping nothing; there is no quarantine filter),
+rebuilds `search`, and compares every table in the §18.8 contract list. The
+gate is mechanical: drop, replay, compare, fail on any difference. A kind
+with no projection table is a failure, not a silently skipped event.
+
+### 18.5 The write path
+
+One transaction per **change**, not per event. A batch import of 2,000
+pages is one transaction with 2,000 events; an interactive edit is one
+transaction with one or two.
+
+```
+-- before BEGIN: write any new content blobs (create-if-absent)
+BEGIN IMMEDIATE;
+  compute event_no = max(event_no) + 1 for each entity;
+  insert the events, hash-chained per entity;
+  upsert the typed projection row for the entity kind, with the guard:
+    INSERT ... VALUES ...
+    ON CONFLICT (<table primary key>) DO UPDATE ...
+    WHERE <table>.version IS :base_version;
+  -- a create command carries base_version NULL; the seam validates it.
+  -- log-like kinds (command, job, review_message, review_decision, asset)
+  -- have no version predicate; they are upserted by their own key.
+  replace item_refs / item_assets / document_pages / person_residences
+    / theme_items for the entity;
+  upsert pages / page_rows / readings / review_* / assets / aliases;
+  insert command/applied when the change came from a remote command;
+COMMIT;
+-- after commit, the FTS projector catches up from projected_through
+```
+
+The projector is a dispatch table: `entity_kind` → the class that owns the
+mapping (`Item.write_projection`, `Person.write_projection`, …). The class
+already owns `to_dict`/`from_dict`; it also owns the row mapping, so the
+typed table and the wire shape stay in one place.
+
+- **Idempotent.** `event_id` is unique, and `events_one_apply` is a unique
+  index on `command_id` where `event_type = 'applied'`; a second apply
+  aborts inside the transaction. A decision is protected by the same index,
+  not by a pre-read.
+- **Version-checked atomically.** The guard is the typed table's
+  conditional UPSERT, `WHERE <table>.version IS :base_version`; a zero-row
+  result is a stale command, and the seam writes `command/rejected`. A
+  create command must carry `base_version = NULL`, and the seam validates
+  that before the UPSERT; a non-existent entity with a non-null base is a
+  protocol error, not a create. `IS`, not `=`, because a nullable version
+  must compare NULL-safely. No Python read-then-write.
+- **No slow work inside the lock.** A model call, a file write or a network
+  hop is a job; the transaction records the intent and the result. Content
+  blobs are written before the transaction, so a crash leaves an orphan,
+  never a half-referenced event.
+- **One host.** The worker and the sync agent call the same seam; they do
+  not open the database themselves.
+- **Pragmas:** `journal_mode=WAL`, `synchronous=FULL`, `busy_timeout=5000`,
+  `recursive_triggers=ON`, `wal_autocheckpoint=1000`. No foreign keys: the
+  write seam is the integrity check, and a generic ref cannot carry an FK
+  safely. Say that rather than leaving a `foreign_keys=ON` that does
+  nothing.
+
+### 18.6 Migrations
+
+- **Additive only.** `CREATE TABLE`, `CREATE INDEX`, `CREATE VIEW`,
+  `ALTER TABLE … ADD COLUMN`. A test reads the migration files and refuses
+  `DROP`, `RENAME`, and any column type change.
+- **A migration never writes projection rows.** It creates schema; the
+  rebuild is the backfill. A migration that inserts, updates or deletes a
+  projection makes the live table unreproducible from the log and fails the
+  rebuild gate.
+- **New columns are nullable.** Under `STRICT` a `NOT NULL` column needs a
+  default, and a default fabricates a value for every historical row of an
+  immutable log. Only the five strict types (`INTEGER`, `REAL`, `TEXT`,
+  `BLOB`, `ANY`) are allowed. A column is never removed.
+- **Two schema files.** `schema-truth.sql` starts with the pragmas
+  (`journal_mode=WAL`, `synchronous=FULL`, `busy_timeout=5000`,
+  `wal_autocheckpoint=1000`, `recursive_triggers=ON`), creates `events`,
+  `content` and `schema_migrations`, and has no virtual tables, so a 2046
+  reader on a SQLite without FTS5 can still rebuild the truth.
+  `schema-projections.sql` adds the projections and the FTS index; it is
+  regenerable.
+- **The migration SQL is exported.** `migrations/NNNN.sql` ships beside
+  `migrations.json`, so `schema_migrations.sql_sha256` is verifiable and a
+  future reader can see exactly what changed. A test applies every migration
+  and re-verifies the event hash chain: the frozen hash column list is what
+  makes that pass.
+- **Payload schemas are exported.** `payload-schemas/<kind>.v<n>.json` and
+  `vocabulary.json` ship in the archive, so `payload_schema` is a lookup, not
+  a bare number. `schema_migrations` is append-only
+  (`version`, `applied_at`, `app_version`, `sql_sha256`, `note`), and
+  `PRAGMA user_version` mirrors the head.
+- **A destructive change is a new table plus a rebuild**, never an in-place
+  alteration. The old table stays until the new one is proven.
+
+### 18.7 A bad release: withdrawal, not quarantine
+
+The first draft's `quarantines` table was wrong: filtering events makes the
+projection a function of mutable operator state, breaks drop-and-replay,
+and leaves the exported history permanently wrong with no marker. The
+repair is an **event**.
+
+`loft withdraw --change <change_id>` (or `--release <build>`) runs one
+transaction that:
+
+1. finds every entity the bad change touched and its **current** last event;
+2. classifies each entity:
+   - **created by the bad change** → append a `deleted` tombstone (there is
+     no prior payload to restore); if other changes reference it, list each
+     dependent ref in `needs_attention`;
+   - **a merge** → append `unmerged`; the alias projection drops the
+     redirect, so old refs resolve to the original id;
+   - **changed, with no later edits** → append `superseded` carrying the
+     payload from before the bad change;
+   - **changed, with later edits** → three-way merge (before, bad, current).
+     If a later edit touched a field the withdrawal would overwrite, list
+     the entity in `needs_attention` and refuse without `--force`; with
+     `--force`, restore the prior payload and record the overwritten fields;
+3. appends one `withdrawal` event with `target_kind`
+   (`change` | `release` | `event`), `target_ref`, the affected change set,
+   the compensation change, the reason, and the `needs_attention` list.
+
+The fold stays pure: the compensation is later than the bad event, so the
+entity's last event is the restored one. The withdrawal is an audit marker
+that the export carries, so the history is self-describing. The bad events
+remain visible; nothing is edited.
+
+| Symptom | Containment | Recovery |
+|---|---|---|
+| Bad projection | Stop the writer; rebuild | `loft rebuild`; compare; resume |
+| Bad events (valid but wrong) | Stop the writer; `loft withdraw --change <id>` | Compensation events + a withdrawal marker; rebuild |
+| A release wrote thousands of events | `loft withdraw --release <build>` | One compensation change with many events, not a seq range; later edits are merged or listed |
+| Unparseable event | The projector aborts; the rebuild cannot proceed | Withdraw the change; the compensation restores the entity; nothing was skipped |
+| Bad delete | Withdraw it | A `superseded` event with the prior payload |
+| Bad merge | Withdraw the merge | An `unmerged` event removes the alias; refs resolve to the original id |
+| Withdrawn create with dependents | Withdraw the create | Dependent refs are listed in `needs_attention`; nothing is silently retargeted |
+| Bad migration | Additive-only means the old columns/tables still exist; roll the code back | The new columns stay unused; no data restore |
+| Corrupt DB | Restore the nightly dump | Replay the event log exported since the dump; verify the chain |
+| Bad reading blob | Content is sha-keyed and immutable; the prior blob remains | A new `reading_recorded` pointing at the prior sha |
+
+- **`exported_through` is monotonic.** The exporter refuses to run when the
+  DB's `max(seq)` is below the manifest's `exported_through`; a restore must
+  re-import the backup's `events/` before the next backup. The human
+  archive never regresses.
+- **No global rollback.** There is no `trusted_through` cutoff; a withdrawal
+  is per-change, so the worker's good page reads and other people's edits
+  are untouched.
+- **The release is in every row.** `app_version` makes "what did the bad
+  release write?" one query.
+
+### 18.8 The two exports: the human archive and the operational backup
+
+Two artifacts, two jobs. The **human archive** is the complete
+viewer-facing dataset — everything a casual viewer can browse, in a form a
+person can read without this software. The **operational backup** is the
+full database, content store and event log — what restores the system.
+Neither substitutes for the other.
+
+#### The human archive
+
+The human archive contains **all viewer-facing data**, not a curated
+subset: every item the viewer can browse (including one whose transcription
+is still pending), every photo, story, confirmed transcription, person,
+place, org, theme and relationship, and the generated indexes. It contains
+no admin-facing state: draft text, proposed identities, review chat, claims,
+readings, jobs, the event log, the schema files or accounts.
+
+```
+archive/
+  README.md                 # what this is, how to read it
+  INDEX.md                  # dated index, links into items/
+  PEOPLE.md                 # the cast, readable
+  PLACES.md                 # the places, readable
+  manifest.json             # exported_through, exported_at, counts, hashes
+  manifest.sha256           # literal sha256sum -c output
+  people.json               # confirmed/estimated identity tables
+  places.json
+  orgs.json
+  themes.json
+  relationships.json        # the family edges the viewer's tree renders
+  tombstones.json           # deleted ids + reason + date; no content
+  items/
+    letter-1963-05-14-01/
+      item.json             # current metadata; no -2/-3 chain
+      transcription.txt     # the confirmed words, plain UTF-8
+      page-01.jpg           # the original scan (a copy, not a hardlink)
+      page-01.preview.jpg   # web-sized, derived
+    story-2026-08-03-05/
+      item.json
+      story.txt
+```
+
+- **One folder per thing, one `item.json`.** No version chains; the DB holds
+  the history. A date correction does not move the folder.
+- **Every browsable item is here.** An item whose transcription is still a
+  draft has no `transcription.txt`; its `item.json` says
+  `"transcription": "pending"`. The scan and the metadata are there; the
+  words arrive when confirmed. A photo with no text is a normal item.
+- **Confirmed and estimated identities, not proposed.** `people.json`,
+  `places.json` and `orgs.json` carry the cast the viewer sees (estimated is
+  the family's guess and is marked); proposed records wait in the DB, and a
+  rejected proposal is audit-only — it never reaches the viewer. Email is an
+  account field, not a viewer field: it is not in the human archive.
+- **The words are `.txt`; the scans are open images.** UTF-8 and
+  JPEG/PNG/TIFF; copied, never hardlinked.
+- **The index is generated.** `INDEX.md` has year sections from day one;
+  `PEOPLE.md`/`PLACES.md` are the cast. Sensitive items are included and
+  indexed like any other; the `sensitive` flag stays in `item.json`, and the
+  hosted browse applies the family's visibility rule, not the archive.
+- **The manifest verifies.** Every file has a sha256; `manifest.sha256` is
+  literal `sha256sum -c` output with relative paths.
+- **Tombstones are recorded, not published.** A deleted item is an entry in
+  `tombstones.json` (id, reason, date); its content is not in the tree.
+- **The path is stable in normal use.** If `items/` outgrows a comfortable
+  listing, shard by year; the id stays the citation key.
+
+**The walkthrough.** A great-grandchild opens `README.md`, then `INDEX.md`,
+finds "1963-05-14 — Letter from Nora to Owen", opens
+`items/letter-1963-05-14-01/page-01.jpg` and `transcription.txt`, and reads
+`item.json` for who/where/when. `PEOPLE.md` or `grep -R "Nora" .` finds a
+name; `sha256sum -c manifest.sha256` verifies. No app, no database, no
+network.
+
+**The human archive is a publication, not a backup.** It is the viewer-facing
+current state (confirmed text, no drafts or proposals); it cannot restore the
+drafts or the full history. The backup does that.
+
+#### The operational backup
+
+```
+backup/
+  README.md                 # how to restore
+  db.sql                    # the full SQL dump
+  db-manifest.json          # exported_through, counts, hashes
+  events/
+    events-2026.jsonl       # the full event log, append-only
+    events-2027.jsonl
+  content/
+    <sha2>/<sha>            # the full content store, including drafts
+  content.json              # sha256, mime, size, created_at for every blob
+  schema-truth.sql          # pragmas + events/content/migrations
+  schema-projections.sql    # projections + FTS; regenerable
+  migrations.json
+  migrations/               # NNNN.sql
+  vocabulary.json
+  payload-schemas/
+  assets.json
+```
+
+The backup is complete: every event, every blob (including drafts and model
+reasoning), every schema and payload definition. It is the restore source,
+the 3-2-1 copy and the audit trail. It is not a reading surface.
+
+**The backup contract.** A restore rebuilds the truth and the domain:
+`events`, `content`, `items`, `item_refs`, `item_assets`, `item_content`,
+`people`, `person_residences`, `places`, `orgs`, `themes`, `theme_items`,
+`relationships`, `documents`, `document_pages`, `batches`, `scans`,
+`pages`, `page_rows`, `page_row_links`, `row_checks`, `readings`,
+`review_sessions`, `claims`, `review_messages`, `review_decisions`,
+`assets`, `aliases`, `withdrawals`, `commands` and `accounts`.
+`jobs` is rebuilt from `job/*` (a `running` job without a live lease becomes
+`pending`); `sync_state` is reseeded from the manifest; the FTS index is
+rebuilt from the typed tables and `content`. `schema_migrations` is
+reconstructed from `migrations.json` and the `migrations/` SQL. The rebuild
+test compares exactly that list, table by table; a table outside the list is
+a bug in the contract, not a gap in the backup.
+
+The backup manifest records `exported_through`, each entity's head hash and
+every file hash. The restore seeds `sqlite_sequence` from
+`exported_through`, so `seq` never reuses a value.
+
+#### What is in neither
+
+The derived rows/words, the job queue, the search index, the cloud snapshot
+and the caches are regenerable or operational. The human archive omits them
+because a reader does not need them; the backup omits them because they are
+rebuilt from the log.
+
+#### Export mechanics
+
+**Human archive:** write changed files atomically; copy originals and
+previews; write `INDEX.md`, `PEOPLE.md`, `PLACES.md` and `manifest.*` last;
+never a version suffix, never a folder move. **Operational backup:** append
+new events to the current year's file; copy new content blobs; dump the DB;
+write the schema/payload files and the manifest last.
+
+#### Alternatives considered
+
+(a) Date-partitioned folders: better `ls` chronology, but a date correction
+moves the folder; the generated index gives chronology without moves.
+(b) Content-addressed originals in the reading tree: better dedup, worse
+browsing; the manifest gives integrity without opaque paths. (c) Version
+chains on the human archive: the DB holds the history; the chains would
+duplicate it and confuse the reader. (d) A SQLite file as the human archive:
+the archive must be readable without a DB.
+
+### 18.9 What the disk no longer stores
+
+| Today | Now |
+|---|---|
+| `item.json`, `item-2.json`, … | one `item.json`; history in the DB and the backup |
+| `people.json`, `people-27.json`, … | one `people.json`; history in the DB and the backup |
+| `proposed/people/*.json` | a `proposed` status in the table |
+| `imports.json` with attempts/messages | `sessions/<id>.md` + the event log |
+| `app/data/*` projection | the DB + the cloud snapshot |
+| `work/<batch>/*` history | the DB's readings + the content store |
+| `assets/<id>/` | `items/<id>/` (the one-time migration) |
+
+The live archive's `assets/<id>/` tree is migrated once to `items/<id>/`;
+the old tree stays read-only until the export verifies, then retires. This
+replaces the object model's date-partitioned Phase 5 layout; that document
+needs the one-line status change when this section is accepted.
+
+### 18.10 The schema, table by table
+
+**Truth.**
+
+```sql
+-- events: §18.2
+-- content: §18.3
+
+CREATE TABLE schema_migrations (
+  version     INTEGER PRIMARY KEY,
+  applied_at  TEXT NOT NULL,
+  app_version TEXT NOT NULL,
+  sql_sha256  TEXT NOT NULL,
+  note        TEXT NOT NULL
+) STRICT;
+
+CREATE TRIGGER migrations_no_update BEFORE UPDATE ON schema_migrations
+BEGIN SELECT RAISE(ABORT, 'schema_migrations is append-only'); END;
+CREATE TRIGGER migrations_no_delete BEFORE DELETE ON schema_migrations
+BEGIN SELECT RAISE(ABORT, 'schema_migrations is append-only'); END;
+```
+
+**Projections.**
+
+```sql
+-- Shared state columns on every state table:
+--   version INTEGER NOT NULL, event_no INTEGER NOT NULL,
+--   event_seq INTEGER NOT NULL, updated_at TEXT NOT NULL
+-- Status/type vocabularies are validated by the write seam against the
+-- domain class; CHECKs are reserved for vocabularies that will not grow
+-- without a migration.
+
+CREATE TABLE items (
+  item_id            TEXT PRIMARY KEY,
+  type               TEXT NOT NULL,
+  title              TEXT NOT NULL,
+  date               TEXT,
+  date2              TEXT,
+  date_precision     TEXT,
+  status             TEXT NOT NULL,
+  source             TEXT,
+  description        TEXT,
+  provenance         TEXT,
+  sensitive          INTEGER NOT NULL DEFAULT 0 CHECK (sensitive IN (0, 1)),
+  created            TEXT,
+  identified         INTEGER NOT NULL DEFAULT 0,
+  date_mentions_json TEXT,
+  extra_json         TEXT,
+  version            INTEGER NOT NULL,
+  event_no           INTEGER NOT NULL,
+  event_seq          INTEGER NOT NULL,
+  updated_at         TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE item_refs (
+  item_id   TEXT NOT NULL,
+  ref_kind  TEXT NOT NULL CHECK (ref_kind IN ('person', 'place', 'org', 'theme', 'item')),
+  ref_id    TEXT NOT NULL,
+  status    TEXT NOT NULL,
+  date      TEXT,
+  date2     TEXT,
+  date_precision TEXT,
+  basis_json TEXT,
+  event_seq INTEGER NOT NULL,
+  PRIMARY KEY (item_id, ref_kind, ref_id)
+) STRICT;
+
+CREATE TABLE item_assets (
+  item_id  TEXT NOT NULL,
+  asset_id TEXT NOT NULL,
+  kind     TEXT NOT NULL,
+  caption  TEXT,
+  ordinal  INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (item_id, asset_id)
+) STRICT;
+
+CREATE TABLE item_content (
+  item_id TEXT NOT NULL,
+  kind    TEXT NOT NULL CHECK (kind IN ('story', 'transcription', 'other')),
+  sha256  TEXT NOT NULL,
+  trust   TEXT NOT NULL CHECK (trust IN ('draft', 'confirmed')),
+  PRIMARY KEY (item_id, kind)
+) STRICT;
+
+CREATE TABLE people (
+  person_id        TEXT PRIMARY KEY,
+  name             TEXT NOT NULL,
+  years            TEXT,
+  relation         TEXT,
+  bio              TEXT,
+  email            TEXT,
+  pronouns         TEXT,
+  hue              TEXT,
+  status           TEXT NOT NULL,
+  dob_json         TEXT,
+  dod_json         TEXT,
+  aliases_json     TEXT,
+  occupations_json TEXT,
+  basis_json       TEXT,
+  version          INTEGER NOT NULL,
+  event_no         INTEGER NOT NULL,
+  event_seq        INTEGER NOT NULL,
+  updated_at       TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE person_residences (
+  person_id TEXT NOT NULL,
+  place_id  TEXT NOT NULL,
+  from_date TEXT,
+  to_date   TEXT,
+  from_precision TEXT,
+  to_precision   TEXT,
+  status    TEXT NOT NULL,
+  basis_json TEXT,
+  PRIMARY KEY (person_id, place_id, from_date)
+) STRICT;
+
+CREATE TABLE places (
+  place_id     TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  note         TEXT,
+  precision    TEXT,
+  lat          REAL,
+  lng          REAL,
+  x            INTEGER,
+  y            INTEGER,
+  address      TEXT,
+  status       TEXT NOT NULL,
+  aliases_json TEXT,
+  basis_json   TEXT,
+  version      INTEGER NOT NULL,
+  event_no     INTEGER NOT NULL,
+  event_seq    INTEGER NOT NULL,
+  updated_at   TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE orgs (
+  org_id       TEXT PRIMARY KEY,
+  name         TEXT NOT NULL,
+  address      TEXT,
+  branch       TEXT,
+  note         TEXT,
+  status       TEXT NOT NULL,
+  aliases_json TEXT,
+  version      INTEGER NOT NULL,
+  event_no     INTEGER NOT NULL,
+  event_seq    INTEGER NOT NULL,
+  updated_at   TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE themes (
+  theme_id  TEXT PRIMARY KEY,
+  title     TEXT NOT NULL,
+  subtitle  TEXT,
+  seeded    INTEGER NOT NULL DEFAULT 0,
+  body_json TEXT NOT NULL,
+  version   INTEGER NOT NULL,
+  event_no  INTEGER NOT NULL,
+  event_seq INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE theme_items (
+  theme_id TEXT NOT NULL,
+  item_id  TEXT NOT NULL,
+  ordinal  INTEGER NOT NULL,
+  PRIMARY KEY (theme_id, item_id)
+) STRICT;
+
+CREATE TABLE relationships (
+  relationship_id TEXT PRIMARY KEY,
+  a_kind   TEXT NOT NULL,
+  a_id     TEXT NOT NULL,
+  b_kind   TEXT NOT NULL,
+  b_id     TEXT NOT NULL,
+  kind     TEXT NOT NULL,
+  label_a  TEXT,
+  label_b  TEXT,
+  date_json TEXT,
+  basis_json TEXT,
+  status   TEXT,
+  version  INTEGER NOT NULL,
+  event_no INTEGER NOT NULL,
+  event_seq INTEGER NOT NULL,
+  updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE documents (
+  document_id    TEXT PRIMARY KEY,
+  item_id        TEXT,
+  batch_id       TEXT,
+  doc_index      INTEGER,
+  title          TEXT,
+  date           TEXT,
+  date2          TEXT,
+  date_precision TEXT,
+  status         TEXT NOT NULL,
+  greeting       TEXT,
+  signoff        TEXT,
+  text_sha       TEXT,
+  confirmed_at   TEXT,
+  version        INTEGER NOT NULL,
+  event_no       INTEGER NOT NULL,
+  event_seq      INTEGER NOT NULL,
+  updated_at     TEXT NOT NULL,
+  CHECK (status <> 'confirmed' OR item_id IS NOT NULL)
+) STRICT;
+
+CREATE TABLE document_pages (
+  document_id TEXT NOT NULL,
+  page_id     TEXT NOT NULL,
+  ordinal     INTEGER NOT NULL,
+  PRIMARY KEY (document_id, page_id)
+) STRICT;
+
+CREATE TABLE batches (
+  batch_id         TEXT PRIMARY KEY,
+  label            TEXT,
+  source           TEXT,
+  path             TEXT NOT NULL,
+  status           TEXT NOT NULL,
+  arrived_at       TEXT,
+  started_at       TEXT,
+  started_pid      INTEGER,
+  started_host     TEXT,
+  fingerprint_json TEXT,
+  content_changed  INTEGER NOT NULL DEFAULT 0,
+  version          INTEGER NOT NULL,
+  event_no         INTEGER NOT NULL,
+  event_seq        INTEGER NOT NULL,
+  updated_at       TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE scans (
+  scan_id   TEXT PRIMARY KEY,
+  batch_id  TEXT NOT NULL,
+  page_id   TEXT,
+  sha256    TEXT NOT NULL,
+  path      TEXT NOT NULL,
+  ordinal   INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT
+) STRICT;
+
+CREATE TABLE review_sessions (
+  session_id      TEXT PRIMARY KEY,
+  kind            TEXT NOT NULL,              -- import | document | memory | identity | integrity
+  subject_kind    TEXT NOT NULL,              -- batch | document | item | person | place | ...
+  subject_id      TEXT,
+  actor_person_id TEXT NOT NULL,
+  status          TEXT NOT NULL,
+  current_attempt INTEGER,
+  closed_at       TEXT,
+  version         INTEGER NOT NULL,
+  event_no        INTEGER NOT NULL,
+  event_seq       INTEGER NOT NULL,
+  updated_at      TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE claims (
+  claim_id     TEXT PRIMARY KEY,
+  origin_kind  TEXT NOT NULL,   -- batch | document | item | memory | identity | integrity
+  origin_id    TEXT NOT NULL,
+  subject_kind TEXT NOT NULL,
+  subject_id   TEXT,
+  phase        TEXT NOT NULL,
+  state        TEXT NOT NULL CHECK (state IN ('open', 'resolved', 'dismissed', 'blocked')),
+  evidence_sha TEXT,
+  event_seq    INTEGER NOT NULL
+) STRICT;
+CREATE INDEX claims_open ON claims (state, origin_kind, origin_id);
+CREATE INDEX claims_subject ON claims (subject_kind, subject_id);
+
+CREATE INDEX items_date ON items (date);
+CREATE INDEX items_type_date ON items (type, date);
+CREATE INDEX people_name ON people (name);
+CREATE INDEX item_refs_target ON item_refs (ref_kind, ref_id);
+CREATE INDEX person_residences_place ON person_residences (place_id);
+CREATE INDEX document_pages_page ON document_pages (page_id);
+CREATE INDEX documents_batch ON documents (batch_id, doc_index);
+CREATE INDEX relationships_a ON relationships (a_kind, a_id);
+CREATE INDEX relationships_b ON relationships (b_kind, b_id);
+CREATE INDEX theme_items_item ON theme_items (item_id);
+
+CREATE TABLE pages (
+  page_id        TEXT PRIMARY KEY,
+  image_asset_id TEXT NOT NULL,
+  sha256         TEXT NOT NULL,
+  revision       INTEGER NOT NULL,
+  status         TEXT NOT NULL,
+  event_seq      INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE page_rows (
+  page_id         TEXT NOT NULL,
+  ordinal         INTEGER NOT NULL,
+  source          TEXT NOT NULL CHECK (source IN ('machine', 'human')),
+  trust           TEXT NOT NULL CHECK (trust IN ('raw', 'guess', 'confirmed')),
+  text            TEXT NOT NULL,
+  box             TEXT NOT NULL,
+  kind            TEXT NOT NULL,
+  orientation     INTEGER,
+  revision        INTEGER NOT NULL,
+  event_seq       INTEGER NOT NULL,
+  PRIMARY KEY (page_id, ordinal)
+) STRICT;
+
+CREATE TABLE page_row_links (
+  link_id       TEXT PRIMARY KEY,
+  page_id       TEXT NOT NULL,
+  insertion_row INTEGER NOT NULL,
+  target_row    INTEGER,
+  char_offset   INTEGER,
+  state         TEXT NOT NULL CHECK (state IN ('proposed', 'unset', 'confirmed')),
+  event_seq     INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE row_checks (
+  page_id            TEXT NOT NULL,
+  ordinal            INTEGER NOT NULL,
+  reviewer_person_id TEXT NOT NULL,
+  state              TEXT NOT NULL CHECK (state IN ('checked', 'unchecked')),
+  at                 TEXT NOT NULL,
+  event_seq          INTEGER NOT NULL,
+  PRIMARY KEY (page_id, ordinal, reviewer_person_id)
+) STRICT;
+
+CREATE TABLE readings (
+  page_id     TEXT PRIMARY KEY,
+  reading_sha TEXT NOT NULL,
+  rows        INTEGER NOT NULL,
+  words       INTEGER NOT NULL,
+  event_seq   INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE review_messages (
+  session_id      TEXT NOT NULL,
+  ordinal         INTEGER NOT NULL,
+  role            TEXT NOT NULL,
+  actor_person_id TEXT,
+  text            TEXT NOT NULL,
+  thinking_sha    TEXT,
+  at              TEXT NOT NULL,
+  event_seq       INTEGER NOT NULL,
+  PRIMARY KEY (session_id, ordinal)
+) STRICT;
+
+CREATE TABLE review_decisions (
+  session_id      TEXT NOT NULL,
+  ordinal         INTEGER NOT NULL,
+  subject_kind    TEXT NOT NULL,
+  subject_id      TEXT,
+  decision        TEXT NOT NULL,
+  basis_json      TEXT,
+  actor_person_id TEXT NOT NULL,
+  at              TEXT NOT NULL,
+  event_seq       INTEGER NOT NULL,
+  PRIMARY KEY (session_id, ordinal)
+) STRICT;
+
+CREATE TABLE assets (
+  asset_id      TEXT PRIMARY KEY,
+  sha256        TEXT NOT NULL,
+  kind          TEXT NOT NULL,
+  mime          TEXT NOT NULL,
+  size          INTEGER NOT NULL,
+  path          TEXT NOT NULL,      -- relative to the content store
+  derivative_of TEXT,
+  event_seq     INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE aliases (
+  loser_kind    TEXT NOT NULL,
+  loser_id      TEXT NOT NULL,
+  survivor_kind TEXT NOT NULL,
+  survivor_id   TEXT NOT NULL,
+  event_seq     INTEGER NOT NULL,
+  PRIMARY KEY (loser_kind, loser_id)
+) STRICT;
+
+CREATE TABLE withdrawals (
+  withdrawal_id          TEXT PRIMARY KEY,
+  target_kind            TEXT NOT NULL CHECK (target_kind IN ('change', 'release', 'event')),
+  target_ref             TEXT NOT NULL,
+  affected_change_ids    TEXT NOT NULL,   -- JSON array
+  compensation_change_id TEXT NOT NULL,
+  needs_attention        TEXT,            -- JSON array of entity ids
+  reason                 TEXT NOT NULL,
+  at                     TEXT NOT NULL,
+  event_seq              INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE commands (
+  command_id   TEXT PRIMARY KEY,
+  actor_kind   TEXT NOT NULL CHECK (actor_kind IN ('person', 'system')),
+  actor_id     TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  received_at  TEXT NOT NULL,
+  base_version INTEGER,
+  payload_json TEXT,
+  outcome      TEXT NOT NULL DEFAULT 'pending'
+               CHECK (outcome IN ('pending', 'applied', 'needs_attention', 'rejected')),
+  event_seq    INTEGER,
+  reason       TEXT
+) STRICT;
+CREATE INDEX commands_outcome ON commands (outcome);
+
+CREATE TABLE jobs (
+  job_id      TEXT PRIMARY KEY,
+  kind        TEXT NOT NULL,
+  entity_kind TEXT NOT NULL,
+  entity_id   TEXT NOT NULL,
+  status      TEXT NOT NULL CHECK (status IN ('pending', 'running', 'done', 'failed')),
+  attempts    INTEGER NOT NULL DEFAULT 0,
+  lease_owner TEXT,
+  lease_until TEXT,
+  last_error  TEXT,
+  event_seq   INTEGER NOT NULL,
+  updated_at  TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE sync_state (
+  name  TEXT PRIMARY KEY,
+  seq   INTEGER,               -- applied_through, projected_through, exported_through
+  at    TEXT NOT NULL,
+  value TEXT                   -- last_verified_export_at, etc.
+) STRICT;
+
+CREATE TABLE accounts (
+  account_id  TEXT PRIMARY KEY,
+  person_id   TEXT NOT NULL,          -- the person the login belongs to
+  email       TEXT UNIQUE,            -- the sign-in identity
+  role        TEXT NOT NULL CHECK (role IN ('viewer', 'curator', 'admin')),
+  created_at  TEXT NOT NULL,
+  disabled_at TEXT
+) STRICT;
+CREATE INDEX accounts_person ON accounts (person_id);
+
+CREATE TABLE search_docs (
+  doc_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  entity_kind TEXT NOT NULL,
+  entity_id   TEXT NOT NULL,
+  UNIQUE (entity_kind, entity_id)
+) STRICT;
+
+CREATE VIRTUAL TABLE search USING fts5(
+  title,
+  body,
+  tokenize = 'unicode61'
+);
+```
+
+The FTS row's `rowid` is `search_docs.doc_id`; an update is
+`DELETE FROM search WHERE rowid = ?` followed by the insert, which is the
+indexed path, not a scan by `entity_id`.
+
+**Operational rules.** A rebuilt `running` job returns to `pending` unless a
+live lease proves otherwise; `lease_owner`/`lease_until` make that
+deterministic. `commands.outcome = 'needs_attention'` is the stale-command
+state the cloud shows as "awaiting the laptop"; the status reaches the cloud
+on the next snapshot, which the UI states.
+
+**Why typed columns, not a generic JSON table.** The first draft stored the
+current record in `entities.payload`; the review rejected it because one
+table could not constrain the domain, every query became `json_extract`, and
+the table invited new kinds with no schema. The typed tables keep scalar
+fields as columns, small nested records as JSON columns on the same table,
+and query-critical edges as child tables. The event `payload` remains JSON
+because it is the historical wire record; the typed table is the current
+row.
+
+### 18.11 Decisions
+
+- **D14 — The truth is three append-only stores.** `events`, `content`,
+  `schema_migrations`; everything else is a projection or operational.
+- **D15 — Events are immutable.** A correction is a new event; a delete is a
+  tombstone event; a repair is a compensation plus a withdrawal event.
+- **D16 — The rebuild is a tested gate.** Drop, replay, compare; a
+  projection that cannot be rebuilt is a bug.
+- **D17 — Commands are events.** `received`/`applied`/`rejected`; the
+  `applied` event is the idempotency marker.
+- **D18 — Migrations are additive, nullable, and non-destructive.**
+  Destructive changes are new tables plus rebuilds.
+- **D19 — Item/document/page text is content-addressed.** A correction is a
+  new sha; the old bytes stay. Short log lines may be inline in the
+  immutable event.
+- **D20 — The human archive is the viewer-facing current state.** Every
+  browsable item, identity, theme and relationship; no version chains, no
+  drafts, no proposed records. The operational backup carries the full event
+  log and content store.
+- **D21 — Stable flat item folders and generated indexes.** The path is the
+  id; `INDEX.md`/`PEOPLE.md`/`PLACES.md` provide the browse.
+- **D22 — The backup contract is explicit.** Truth + domain projections
+  rebuild from the operational backup; operational tables are reseeded; the
+  monotonic guard stops a backwards backup.
+- **D23 — The human archive is the complete viewer-facing dataset.** Every
+  browsable item, identity, theme and relationship; confirmed text but no
+  drafts, proposals or model reasoning; sensitive items included and indexed;
+  accounts and emails excluded. The hosted browse applies the family's
+  visibility rule, not the archive. The cloud review snapshot holds the
+  working state behind family auth.
+- **D24 — A bad release is contained by withdrawal and compensation, not by
+  a restore.** The nightly backup is the fallback.
+- **D25 — Originals and previews are copied, never hardlinked.**
+- **D26 — The human archive is readable without SQLite.** The backup carries
+  `schema-truth.sql`, the event log and `content/` for the restore; FTS is
+  optional.
+- **D27 — The current state is typed.** Every `entity_kind` has its own
+  projection table; scalar fields are columns, small nested records are
+  JSON columns on that table, and query-critical edges are child tables.
+  There is no generic entity table.
+- **D28 — The review queue is claims.** A session has a subject and an
+  actor; a decision names its subject; the queue closes only when no claim
+  is open for the origin. Unfinished memories and failed integrity checks
+  are claims.
+- **D29 — The actor is a person.** `events.actor_id` is a person id, or a
+  reserved system id for machine work. An account is an optional login
+  attached to a person; the event log never stores an email.
+- **D30 — Rows are the grain.** The confirmed `page_rows` are the letter's
+  words; document text is a cache; a confirmed document must have an item,
+  and the export compares the cache to the published text.
+
+### 18.12 Spikes required
+
+1. **Append-only proof.** `UPDATE`, `DELETE`, `INSERT OR REPLACE` and
+   `INSERT OR IGNORE` abort with the triggers and with the pragma **off**
+   (the `BEFORE INSERT` duplicate trigger is the schema-level guard); the
+   seam cannot emit `OR REPLACE`/`OR IGNORE`; `loft verify` checks the
+   triggers and the pragma.
+2. **Withdrawal drill.** A release writes 2,000 bad edits, including one
+   create and one entity edited afterwards; withdraw it with and without
+   `--force`; the later edit is merged or listed in `needs_attention`, the
+   create is tombstoned, the reader tree and history are correct, and a
+   non-specialist does it in under 30 minutes from the README.
+3. **Drop-and-replay equality.** Rebuild every projection from `events` +
+   `content` and compare the exact backup contract list.
+4. **Backup/restore contract.** Rebuild truth + domain from the backup;
+   `jobs` rebuilds from `job/*`, `sync_state` is reseeded; every hash
+   verifies.
+5. **Monotonic backup.** A restore to an older dump refuses to write until
+   the history is re-imported; the backup never regresses.
+6. **Content-addressed text.** A bad release cannot replace a blob under an
+   existing sha; a correction creates a new one.
+7. **Ten-year log.** Size, segment count, verify time and manifest time at
+   50,000 images.
+8. **Great-grandchild walkthrough.** A person with no app finds a confirmed
+   item by date, by person and by `grep`, reads it and verifies the manifest;
+   a catalogued item whose transcription is still a draft has no
+   `transcription.txt` and says so; a sensitive item is in `INDEX.md` like
+   any other.
+9. **FTS5 fallback.** `schema-truth.sql` restores on a SQLite without FTS5;
+   the projections rebuild when FTS5 is available.
+10. **Lock-hold budget.** A 2,000-event batch is one transaction; no other
+    writer sees "database is locked"; the FTS projector is off the lock.
+11. **Migration lint.** Destructive DDL and a `NOT NULL` column without a
+    default are refused.
+12. **Merge/alias.** A ref to a merged id resolves to the survivor and
+    publishes.
+13. **Migration and hash.** Apply every migration, then re-verify the whole
+    event chain: the frozen column list keeps historical hashes valid.
+14. **Draft exclusion.** The human archive contains no draft transcription,
+    proposed identity or `thinking` blob; the backup contains them; the
+    human archive's manifest lists only confirmed files.
+15. **Command outcome rebuild.** Drop `commands`, replay `command/*`, and
+    get the same pending/applied/needs_attention/rejected list.
+16. **Snapshot content atomicity.** A snapshot pointer never goes live
+    before every referenced content sha is present; a retry re-uses the
+    object.
+17. **Projection coverage.** Every `entity_kind` in the vocabulary has a
+    typed table and a projector; a new kind without one fails the gate. A
+    rebuild with a missing table fails, never silently skips.
+18. **Typed projection queries.** The timeline, person page, place page and
+    review queue are plain SQL joins on the typed tables at 10,000 items,
+    with no `json_extract` on the hot path.
+19. **Human archive vs backup.** The human archive verifies and reads
+    without SQLite; the backup restores the full DB; neither is mistaken
+    for the other, and a draft never appears in the human archive.
+20. **Attribution.** Every human event's `actor_id` is a person id (proposed
+    or confirmed); machine events use a reserved system id; the human
+    archive contains no accounts or emails; a contributor with no cast
+    record gets a proposed person.
+21. **Review state.** A row's `trust`, reviewer tick, orientation and
+    insertion links survive a device switch and a rebuild; `row_checks` is
+    per reviewer.
+22. **Claims closure.** An import, a document, an unfinished memory and a
+    failed integrity check each produce a claim; resolving every claim
+    closes the queue; a reopen creates a new claim.
+23. **Merge/unmerge.** Withdrawing a merge removes the alias and old refs
+    resolve to the original id; a withdrawn create lists its dependents.
+24. **Document authority.** A confirmed document without an item fails; a
+    document cache that disagrees with the published text fails the export
+    comparison.

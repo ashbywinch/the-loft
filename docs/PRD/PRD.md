@@ -15,6 +15,10 @@ Working title: **The Loft** (approved by the user; revisitable before launch).
 - **Sequencing:** `docs/PLAN/PLAN.md` — thin slices, feature inventory, urgency knobs.
 
 - **Status:** Draft v0.10
+- **Storage amendment (2026-11-04):** the database is the system of record; the
+  plain-text archive is the viewer-facing export; the operational backup
+  carries the full event log and content. Where this document says the file
+  store or version chain is the truth, read `TECHSPEC.md` §17–§18.
 - **Length note:** this canonical requirements document runs past the
   150–200 line ceiling in `docs/writing-documentation.md` — an explicit,
   documented exception for the requirements doc itself.
@@ -82,7 +86,7 @@ The deadline gives it shape: the narrators fade, and the physical collection may
 - **No public sharing of anything whatsoever** — all access is family-only; the mechanism is TBD (accounts, §15).
 - No social feeds; no public publishing.
 - No destructive operations in the UI (no delete/edit of artifacts; corrections via "edit metadata", never delete).
-- **The archive file store is append-only (requirement):** nothing in the underlying file store is ever edited or deleted — a change is a new file that *supersedes* the old one, and the old file stays forever. Mechanics in `TECHSPEC.md` §3. **One documented exception:** the proposed-queue reject path deletes the *proposed* record file — a transient review work item that has never been published, not an artifact; everything that has ever shipped stays append-only. Rejecting deletes the file so a refused proposal cannot linger as a proposed record.
+- **Append-only is the storage rule (requirement):** every change is a new immutable event plus a new content blob; the prior version survives for recovery, and nothing is edited or deleted. Mechanics in `TECHSPEC.md` §18. The **human archive on disk** is the confirmed current-state export (one `item.json` per item, no version suffixes); the full history is the event log in the operational backup. **One documented exception:** a rejected proposal is a terminal status, not a delete — the record stays in the log and is excluded from the viewer.
 
 ---
 
@@ -179,18 +183,22 @@ Because the collection is mostly physical, capture is a **core v1 flow**, not a 
 
 **Quality floor (reading, not archival):** shortest side ≥ ~1500px, flat, daylight, no flash, lens parallel to the page. Originals are kept; the app derives thumbnails.
 
-**Storage layout (the folder):**
+**Storage layout (two exports):**
 ```
-archive/
-  README.md              # written for a reader in 2060 — how to open this archive without any app
-  assets/<id>/item.json  # canonical metadata per item (sidecar — one bad file loses one item, not the archive)
-  assets/<id>/…          # originals + derived thumbs, open formats (JPEG/PNG)
-  index.json             # derived index, regenerable from sidecars (the app's fast path)
+archive/                    # the human archive — what a viewer browses
+  README.md                 # written for a reader in 2060
+  INDEX.md / PEOPLE.md      # generated, readable
+  items/<id>/item.json      # current metadata, one file per item
+  items/<id>/…              # confirmed words + originals + previews
+backup/                     # the operational backup — what restores the system
+  db.sql                    # the full database dump
+  events/                   # the full event log
+  content/                  # the full content store
 ```
-The app is a viewer over this folder. **Backup = copy the folder.** No database lock-in. Sidecar-first, because the index is a convenience and the sidecars are the truth (§18). **Two surfaces, one archive (R14):**
-- **The archive = the home workspace (its real home).** The durable folder — full-res scans, sidecars, transcriptions, derived files — lives on the big disk beside the scanner, written only by the backend. The browsable site views a published projection and proposes changes (transcriptions, identity); nothing confirmed is lost if a sync fails. Google Drive remains the **backup mirror** — not the live home.
+The database is the system of record; the human archive is the viewer-facing export; the operational backup restores the system. The sidecars are the export, not the truth (§18). **Two surfaces, one archive (R14):**
+- **The archive = the home workspace (its real home).** The big disk holds the originals, the human archive and the operational backup, written only by the backend. The browsable site views a published projection and proposes changes (transcriptions, identity); nothing confirmed is lost if a sync fails. Google Drive remains the **backup mirror** — not the live home.
 - **The site = the browsable front end, hosted cheaply and highly available.** Everything the family sees is **family-only — no public access** (mechanism TBD, accounts, §15), and the site keeps working when the home machine is off. **The app never reads the archive directly** — the projection for reading, the sync contract for writing (deployment mechanics: `TECHSPEC.md`).
-- **Durability is load-bearing on export:** the home workspace holds the live archive; the **annual full export** (folder download + CSV) to a second household and external media is the 3-2-1's second and third copies (§18.6). Files stay plain and open — if any service changes terms, the folder downloads whole.
+- **Durability is load-bearing on export:** the operational backup is the 3-2-1 copy; the **annual human export** to a second household and external media is the readable copy (§18.6). Files stay plain and open — if any service changes terms, the human archive downloads whole.
 
 ---
 
@@ -431,9 +439,9 @@ import sessions — they bind every screen and every data decision:
 
 **Durability:** archive = plain files, open formats; per-item sidecars; a README written for a reader in 2060; backup = 3-2-1 with a copy in a second household; **the folder outlives the app — the app is disposable by design (see §18).**
 
-**Resilience — append-only writes are the mechanism (user):** a change never overwrites an existing record; it writes the next version. That minimises the blast radius of corruption (a partial or bad write is contained to one version file, and the prior version always survives for recovery) and makes troubleshooting possible (diff any two versions to see exactly what changed, when). The version chain **is** the archive's troubleshooting record — never delete, squash, or "clean up" intermediate versions.
+**Resilience — append-only writes are the mechanism (user):** a change never overwrites an existing record; it appends the next version. The append-only chain now lives in the database (`events` + `content`, TECHSPEC §18): every prior version is an immutable event plus an immutable content blob, a correction is a new event, and a bad release is contained by the event log and repaired by compensation, not by a restore. The **human archive on disk** is the confirmed current-state snapshot (one `item.json` per item, no version suffixes); the **operational backup** carries the full event log and content store. Never delete, squash, or "clean up" the event log.
 
-**Long-term readability — plain text, complete snapshots (user):** every version is a complete, human-readable table — no deltas, no replay engine, nothing that needs the app or a toolchain to understand. The projection the app serves (`app/data`) is the derived snapshot of the newest version; the chain is the history. When the chain and the projection disagree on size or cleanliness, readability and completeness win: the chain grows by one small text file per change, and git already compresses them. This is the explicit rejection of event-sourcing-style delta storage or snapshot compaction — those trade the 2060 reader's ability to open any version with a text editor for space, against §18's rules.
+**Long-term readability — plain text, complete snapshots (user):** every record in the human archive is a complete, human-readable file — no deltas, no replay engine, nothing that needs the app or a toolchain to understand. The current state is the readable snapshot; the history is the append-only event log in the operational backup, not a chain of sidecar versions on disk. The 2060 reader opens the current archive with a text editor; a maintainer who wants the history restores the backup. This keeps the reader's artifact simple and the history complete.
 
 **Weekly integrity check (user):** the live product runs the archive-quality integrity tests — the archive evals (`tests/test_*`: attested edges, descriptions, place notes, story dates, completeness, content language, family membership, projection drift) — **weekly against the real archive**, on the family's running instance. A failed check is family data needing a fix (a supersede, a retranscription, a reconciled edge), never a test update; the same evals skip in the public repo's CI because the dataset never ships there (docs/testing-standards.md).
 
@@ -571,11 +579,11 @@ Discovery is the first roadmap phase, before v1 scope is final. Instruments live
 2. **The archive is self-describing.** A `README.md` at the archive root, written for a reader in 2060: what this is, who these people are (one line each), how to open every file without any app.
 3. **Privacy and control.** Family content stays private to the family and under their control — achievable without on-prem hosting knowledge (buying a backup disk is enough). Mechanism TBD (accounts, §15); nothing is public.
 3b. **Recoverable without credentials.** All data — including metadata — must be recoverable without any credential, maximising the chance that someone can recover the whole system, or something approximating it.
-4. **Sidecar-first metadata.** Canonical metadata lives in `assets/<id>/item.json`; one corrupt file loses one item, never the archive; the index is derived and regenerable.
+4. **Typed records, exported as sidecars.** Canonical metadata lives in the database; the human archive writes one `items/<id>/item.json` per record. One corrupt export file loses one item, never the database; the index is derived and regenerable.
 5. **Stable IDs.** An ID never changes; people, places, and story references point at IDs, never at app state.
-6. **Backup = 3-2-1, export-driven.** The home workspace holds the live archive (copy 1); Google Drive is the **backup mirror**; the **annual full export** — folder download + CSV — goes to a second household and external media (copies 2–3, off-site by definition). The export ritual is load-bearing: it is the guarantee that the archive never lives only in one service. The letters and memoirs are the irreplaceable layer.
-7. **Human-readable export.** A CSV/plain-text export of all metadata and transcriptions is part of the backup ritual — readable by any spreadsheet or text editor, forever.
-8. **"Within reason" boundary.** No format-migration treadmill, no exotic archival storage, no encryption that can lock out descendants. **No proprietary dependency:** the archive lives in plain, portable files (on the home disk, mirrored to Drive) — the annual export ritual guarantees it is never trapped in any service. Boring formats that have already outlived decades.
+6. **Backup = 3-2-1, export-driven.** The laptop holds the live database (copy 1); the **operational backup** — full database dump + content + event log — is the 3-2-1 copy; the **annual human export** goes to a second household and external media. The export ritual is load-bearing: it is the guarantee that the archive never lives only in one service. The letters and memoirs are the irreplaceable layer.
+7. **Human-readable export.** The human archive is a plain-text/JSON export of every confirmed record and transcription; the operational backup adds the SQL dump and the event log. Both are readable or restorable without the app.
+8. **"Within reason" boundary.** No format-migration treadmill, no exotic archival storage, no encryption that can lock out descendants. **No proprietary dependency:** the human archive is plain, portable files; the database is SQLite, a documented long-lived format, and the plain-text export is the hedge. Boring formats that have already outlived decades. If an off-site copy is encrypted, the key is family-held and recorded with the media, never a vendor key.
 9. **The 2060 test.** Someone who has never seen the app can open the archive and understand it. If they can't, it's not done.
 
 ---

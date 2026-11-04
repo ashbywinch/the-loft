@@ -11,14 +11,14 @@ we operate runs off-site; the remote backend is a serverless function.
 |---|---|---|
 | **Local web service** (laptop) | `loft serve` — FastAPI, `LiveStore`, the write seam, Google auth | the SQLite database, the LAN API, capture/review/browse |
 | **Local OS daemon** (laptop) | `loft work --watch`, `loft sync`, `loft export` | scan pickup, the pipeline, the outbox drain, the nightly human archive and operational backup |
-| **Remote static web app** (Cloudflare Pages) | HTML/JS/CSS + the published read model | browse, the review surface; reads the model; writes commands to the backend; **no server code** |
+| **Remote static web app** (Cloudflare Pages) | HTML/JS/CSS; reads the read model from R2 | browse, the review surface; writes commands to the backend; **no server code** |
 | **Remote backend app** (Cloudflare Worker + D1) | one small API: chat/identify, command outbox, auth validation | the working state and the model calls; **no server to operate** |
 
 | Managed service | Role |
 |---|---|
 | **Cloudflare Access** | family-only auth (Google); no auth code |
 | **Cloudflare D1** | the tiny database: outbox, chat sessions, accounts |
-| **Cloudflare R2** | the view images (readable and row-checkable) |
+| **Cloudflare R2** | the view images and the published read model (versioned releases + `current.json`) |
 | **Cloudflare AI Gateway** | the model gateway; the key lives in the Worker |
 
 ## The remote backend app
@@ -32,6 +32,23 @@ has no server code.
 The Worker is the piece that makes chat and remote writes work while the
 laptop is off. The laptop applies the queued commands and republishes the
 read model when it returns.
+
+## The read model
+
+The remote app's data is published to **R2**, not served by a server:
+
+- Each publish is a **release**: the laptop uploads the release's JSON and
+  images under a versioned prefix (`releases/<seq>/…`), then flips a small
+  `current.json` pointer. The app reads the pointer, then the release's JSON;
+  the images are content-addressed under the release.
+- A partial upload never goes live: the pointer still names the previous
+  release. A rollback re-points to the previous release.
+- The pointer and the release JSON are served from R2 behind Access (or
+  short-lived signed URLs); the app's fetch includes credentials; R2's CORS
+  policy allows the Pages origin. Images are fetched by `<img>`.
+- The laptop uses an **R2 API token** for the upload; the outbox pull uses a
+  **Cloudflare Access service token**. The app shell is on Pages and changes
+  rarely.
 
 **The backend app is TS.** The existing chat/identify logic is ported to
 the Worker; the port is accepted, not a reason to add another host. The
@@ -92,7 +109,7 @@ use the same persistence boundary (`08-code-organisation.md`).
 | `LiveStore`, `Change`, the event log, the projections, the content store | Local web service |
 | Worker, reconciler, scanner | Local OS daemon |
 | Sync agent, exporter, retention, derivative generation | Local OS daemon |
-| `Snapshot` / read model | Cloudflare Pages/R2 |
+| `Snapshot` / read model | Cloudflare R2 (versioned releases + `current.json`) |
 | `Outbox` (commands), chat sessions, accounts | Cloudflare D1 |
 | `Backend` (chat/identify, auth validation) | Cloudflare Worker |
 | `Derivative` (the view image), `Asset` bytes | Cloudflare R2 |

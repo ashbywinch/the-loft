@@ -76,7 +76,7 @@ flowchart LR
     direction TB
     Static["Remote static web app<br/>HTML/JS/CSS · no server code"]
     Backend["Cloudflare backend<br/>Worker + D1"]
-    Snapshot["Published read model<br/>Pages / R2"]
+    Snapshot["Read model<br/>R2 releases + current.json"]
     Outbox["Outbox table<br/>D1, keyed by UUID"]
     Media["Cloudflare R2<br/>view images (readable)"]
     Auth["Cloudflare Access"]
@@ -106,7 +106,7 @@ flowchart LR
 ```
 
 The rule in one sentence: **the laptop writes the database and publishes a
-read model to Pages/R2; the remote is a static app that reads it
+read model to R2; the remote is a static app that reads it
 and writes commands to the backend's outbox; the big disk receives the
 nightly human archive and operational backup.** The full deployment table is
 `00-deployments.md`.
@@ -121,9 +121,9 @@ nightly human archive and operational backup.** The full deployment table is
 | **Sync agent** | laptop | pulls the outbox, applies commands through the write seam, publishes the read model and derivatives | write the archive or open the DB directly |
 | **Exporter** | laptop | nightly operational backup, human archive, verification, retention | serve reads |
 | **Archive disk** | big disk | full-resolution originals; the human archive; the operational backup | be written by the app |
-| **Remote static app** | Cloudflare Pages | the static UI; reads the published read model; writes commands to the backend; fetches images from R2 | run server code |
+| **Remote static app** | Cloudflare Pages | the static UI; reads the R2 read model; writes commands to the backend; fetches images from R2 | run server code |
 | **Cloudflare backend** | Worker + D1 | chat/identify calls, the outbox, auth validation, accounts | write the archive |
-| **Snapshot** | Pages / R2 | the last published read model and manifest | be the only copy |
+| **Snapshot** | R2 | the current release and the `current.json` pointer | be the only copy |
 | **Outbox** | D1 | immutable commands keyed by UUID | be edited or deleted |
 | **Derivative store** | R2 | the view images (readable, row-checkable) | hold originals |
 | **Browser** | LAN or anywhere | reads; writes; optimistic pending state; a local outbox while the backend is down | be the source of truth |
@@ -147,7 +147,7 @@ materialisation, not the live store. The noun ownership is
 |---|---|---|---|
 | Authoritative writes | ✓ (only) | — | — |
 | Browse / search (LAN) | ✓ | — | — |
-| Browse / search (remote) | — | ✓ static app reads Pages/R2 | — |
+| Browse / search (remote) | — | ✓ static app reads the R2 release | — |
 | Transcript edit / confirm | applies | static app writes a command to the Worker | confirmed text only |
 | Row drawing | applies and re-reads | static app writes a command | working state (not archived) |
 | Add story / memory | applies | static app writes a command | confirmed text only |
@@ -156,7 +156,7 @@ materialisation, not the live store. The noun ownership is
 | Scan · classify · orient · read · rows · transcribe | ✓ | — | reads originals |
 | Full-resolution images | serves on LAN | — (never stored) | stores |
 | View images | generates | served from R2 (readable and row-checkable) | — |
-| Read model | produces | Pages/R2 serve the published model | — |
+| Read model | produces | R2 publishes a release + pointer | — |
 | Remote command queue | drains | D1 outbox | — |
 | Operational backup | produces | — | stores |
 | Human archive | produces | — | stores |
@@ -181,8 +181,8 @@ command is `05-schema.md` §18.5; this section does not restate it.
 **W1 — at home, on the LAN.** Browser → Loft service → one SQLite
 transaction → one change (one or more events) → read model marked dirty. The
 response is sent after the commit, never after a projection rebuild. A
-background publisher coalesces the dirty marks and republishes the read model
-off the request path. This is the fast path and the only path that writes
+background publisher coalesces the dirty marks, uploads a new release to R2 and
+flips `current.json` off the request path. This is the fast path and the only path that writes
 domain state directly.
 
 **W2 — the scanner and pipeline.** Scanner → big disk → worker → write
@@ -226,7 +226,7 @@ sequenceDiagram
   actor R as Remote reviewer
   participant C as Remote static app
   participant B as Cloudflare backend
-  participant P as Pages / R2
+  participant P as R2
   participant O as Outbox table
   participant L as Laptop sync agent
   participant S as Loft service
@@ -248,7 +248,7 @@ sequenceDiagram
     D-->>S: commit + event(s)
     S-->>L: applied
     L->>L: advance applied_through
-    L->>P: publish read model + images
+    L->>P: upload release + flip current.json
   else no row changed
     S-->>L: stale
     S->>D: command/rejected (retryable)
@@ -293,7 +293,7 @@ The invariants:
 ### 17.6 Read paths
 
 - **LAN.** Loft service → `LiveStore`. Always current.
-- **Remote.** The static app reads the Pages/R2 published read model,
+- **Remote.** The static app reads `current.json` and the release from R2,
   plus an overlay of the caller's own pending commands, so an author
   sees their edit before it is applied. The read model is republished after
   each drain and on a schedule; it carries `published_at`, and the UI shows
@@ -321,7 +321,7 @@ records" rule, applied to a backend that is sometimes unreachable.
 | **CRDT / local-first merge** (Automerge, Yjs) | Good for concurrent text, but the domain needs validation, identity and one audit order; a CRDT still needs a server-side validator, so the complexity is added without removing the writer. Possible later for the transcript text field alone. |
 | **Cloud-authoritative database** (Postgres/Supabase live) | The simplest live UX, but the truth moves off-site and the laptop becomes a materialiser; "sync back to the local disk" becomes a replication problem. It is the clean upgrade path if remote freshness ever outweighs local truth. |
 | **Remote app server** (the old two-app shape) | A server off-site would only serve the static app's reads and accept its writes — a second deployment, a live attack surface and a second writer, for no domain capability the Cloudflare backend does not already provide. |
-| **Remote static app + Cloudflare backend (chosen)** | The static app reads Pages/R2 and writes commands to a Worker; D1 holds the outbox and chat state; Access gates the family; AI Gateway holds the model. No server we operate runs off-site. It cannot validate domain writes itself, so the laptop re-validates every command on apply. That is the cost of no server, and it is the shape in `00-deployments.md`. |
+| **Remote static app + Cloudflare backend (chosen)** | The static app reads R2 and writes commands to a Worker; D1 holds the outbox and chat state; Access gates the family; AI Gateway holds the model. No server we operate runs off-site. It cannot validate domain writes itself, so the laptop re-validates every command on apply. That is the cost of no server, and it is the shape in `00-deployments.md`. |
 
 The chosen pattern's cost is freshness, and the architecture makes it
 visible rather than hiding it: the read model's age and the pending count
@@ -380,7 +380,7 @@ operational backup and the nightly dumps (`07-exports.md`).
   `wal_autocheckpoint=1000`, `recursive_triggers=ON`. No foreign keys; the
   write seam is the integrity check.
 - **The remote is a static web app plus a small Cloudflare backend.** The
-  static app reads Pages/R2; the Worker runs the chat/identify calls, the
+  static app reads R2; the Worker runs the chat/identify calls, the
   outbox and auth validation; D1 holds the working state; Access gates the
   family; AI Gateway holds the model. There is no server we operate: the
   laptop's apply is the domain validation the static app cannot perform.
@@ -389,8 +389,11 @@ operational backup and the nightly dumps (`07-exports.md`).
   is immutable, and the laptop's `applied_through` cursor is the progress
   state. It is never trimmed: it is the replay source after a restore, and
   it is small.
-- **The published read model is static JSON plus R2 images, uploaded
-  atomically.** The laptop builds it from the SQLite DB; Pages/R2 serve it. The pointer flips only when every referenced part is present.
+- **The published read model is an R2 release plus a pointer.** The laptop
+  uploads the release's JSON and images under `releases/<seq>/`, then flips
+  `current.json`; the app reads the pointer. The pointer flips only when every
+  referenced part is present. The laptop uses an **R2 API token** for the
+  upload; the outbox pull uses a **Cloudflare Access service token**.
 - **Derivatives are generated on the laptop and uploaded.** On-the-fly
   resizing at the edge would add a service and put the original one hop
   from the internet.

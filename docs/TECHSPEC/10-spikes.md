@@ -146,3 +146,7 @@ hash/migration, draft exclusion, command rebuild — follow.
     person; the cookies are `HttpOnly`/`Secure`/`SameSite=Strict`; CSRF and
     the session revocation hold; a first remote sign-in creates a provisional
     person the laptop confirms.
+
+27. **Read-model publish.** Upload a release, flip `current.json`; a partial
+    upload leaves the old pointer; the app reads the new release; a rollback
+    re-points; the R2 CORS/Access credentials hold.

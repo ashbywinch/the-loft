@@ -129,6 +129,10 @@ decisions survive all three. The blast radius is at the bottom.
 - **D38 [domain] — The canonical chat transcript is SQLite.** D1 holds the
   live session; each message has a UUID; the laptop writes exactly one
   `review_messages` row.
+- **D39 [shape] — The read model is an R2 release plus a pointer.** The laptop
+  uploads `releases/<seq>/` then flips `current.json`; the app reads the
+  pointer. The laptop uses an R2 API token; the outbox pull uses an Access
+  service token.
 
 
 ## Blast radius

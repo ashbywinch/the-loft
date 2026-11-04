@@ -18,7 +18,7 @@ Working title: **The Loft** (approved by the user; revisitable before launch).
 - **Storage amendment (2026-11-04):** the database is the system of record; the
   plain-text archive is the viewer-facing export; the operational backup
   carries the full event log and content. Where this document says the file
-  store or version chain is the truth, read `TECHSPEC.md` §17–§18.
+  store or version chain is the truth, read `docs/TECHSPEC/04-live-system.md` and `docs/TECHSPEC/05-schema.md`.
 - **Length note:** this canonical requirements document runs past the
   150–200 line ceiling in `docs/writing-documentation.md` — an explicit,
   documented exception for the requirements doc itself.

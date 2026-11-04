@@ -30,8 +30,8 @@ Instructions for AI agents working in this repo. Humans can read this too.
 |---|---|
 | Adopt / ingest planning (the batch adoption flow's docs) | `docs/PLAN/INGEST-PLAN.md` |
 | Product requirements, scope, personas | `docs/PRD/PRD.md` |
-| Architecture, stack, data model, decisions | `docs/TECHSPEC.md` |
-| Pipeline stages, completion markers, and per-page recovery (`make pipeline ARGS="guess\|layout <batch> [page...]"`) | `docs/TECHSPEC.md` §16.14.2 |
+| Architecture, stack, data model, decisions | `docs/TECHSPEC.md` (the index; components in `docs/TECHSPEC/`) |
+| Pipeline stages, completion markers, and per-page recovery (`make pipeline ARGS="guess\|layout <batch> [page...]"`) | `docs/TECHSPEC/03-import-and-pipeline.md` §16.14.2 |
 | Layout / geometry experiments ledger (the ink work's measured findings) | `docs/PLAN/geometry-experiments-log.md` |
 | Serving the app — foreground `make serve`; the supervised hub spec that survives daemon restarts | `README.md` (Quick Start → "Supervised dev server") |
 | The PLAN/ work logs (trial reports, walkthrough records, snags) | `docs/PLAN/` — `docs/PLAN/ocr-verification-research.md`, `docs/PLAN/model-trial-report.md`, `docs/PLAN/lucidlint-snag.md`, `docs/PLAN/ux-review-chat-solution.md`, `docs/PLAN/INGEST-PLAN.md` |
@@ -44,7 +44,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The segment/box review & edit UX (user stories, the box-issue taxonomy, the corner rulings) | `docs/PLAN/segment-review-stories.md` |
 | The row review's phone surface (the purpose, the two colour layers, the draw→redraw loop; PROPOSED) | `docs/PLAN/row-review-ux.md` |
 | The page categories (photograph, writing printed/handwritten, postcard face, form, drawing) and what each implies for the read | `docs/PLAN/page-categories.md` |
-| What a batch still needs, and the stage that completes it (the reconciler, the watch, the resync, `loft work --plan/--batch`) | `pipeline/stage_table.py` (the stage order and each stage's gap check), `pipeline/reconcile.py` (`Reconciler: plan + run`), `pipeline/worker.py` (`Worker.watch`); TECHSPEC §16.14.2 |
+| What a batch still needs, and the stage that completes it (the reconciler, the watch, the resync, `loft work --plan/--batch`) | `pipeline/stage_table.py` (the stage order and each stage's gap check), `pipeline/reconcile.py` (`Reconciler: plan + run`), `pipeline/worker.py` (`Worker.watch`); `docs/TECHSPEC/03-import-and-pipeline.md` §16.14.2 |
 | The stage layout on disk — the one place every artefact path is written | `pipeline/artefacts.py` (`BatchArtefacts`); the guard test is `tests/test_architecture.py` |
 | Which model is used where, and the Cloudflare AI Gateway endpoint | `pipeline/model/config.py` (`VISION_MODEL`, `CHAT_MODEL`, `BOUNDARY_MODEL`) |
 | How a drawn row line corrects a page (replace a covered row; claim only the words the line runs along; leave the rest) | `docs/PLAN/row-correction-rule.md`; `pipeline/rows/rows.py` (`_Claims`) |
@@ -65,7 +65,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The work remaining on the current subset (pipeline, ingest review, layout seams) | `docs/PLAN/WORK-PLAN.md` — the detailed designs are linked per item |
 | The plans folder's map (plan vs record) | `docs/PLAN/README.md` |
 | Code conventions | `docs/coding-standards.md` |
-| Code organisation, layers and the persistence boundary (`LiveStore`, `Change`, repositories, import rules) | `docs/TECHSPEC.md` §19 |
+| Code organisation, layers and the persistence boundary (`LiveStore`, `Change`, repositories, import rules) | `docs/TECHSPEC/08-code-organisation.md` §19 |
 | Test conventions | `docs/testing-standards.md` |
 | Documentation conventions | `docs/writing-documentation.md` |
 | Writing or editing a prompt (the review, memory, transcription instructions) | `skill://prompt-craft`; the form rules are `docs/writing-documentation.md` |
@@ -84,7 +84,7 @@ default. Real content never lives in code (`docs/coding-standards.md`).
 
 - Python tools: `tools/` — ruff (lint/format), pyrefly (types), pytest.
 - Web app: `app/` — vanilla ES modules. NO framework, NO build step, NO runtime
-  npm deps (decision recorded in `docs/TECHSPEC.md` §15). eslint + prettier + vitest
+  npm deps (decision recorded in `docs/TECHSPEC/09-decisions.md` §15). eslint + prettier + vitest
   are dev-only tooling.
 - Everything goes through `make`; npm/pytest/ruff are invoked only inside
   make targets.

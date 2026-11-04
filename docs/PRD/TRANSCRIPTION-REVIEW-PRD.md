@@ -2,7 +2,7 @@
 
 - **Status:** draft for agreement
 - **Epic:** 6.11.3 Transcription Validation (Notion)
-- **Inputs:** `research/OCR Correction UX & Tools Guide.pdf`; the capture pipeline's requirements `MULTI-DOC-IMPORT-PRD.md` R7/R10/R12/R13/R14; the sync contract (TECHSPEC §16.15)
+- **Inputs:** `research/OCR Correction UX & Tools Guide.pdf`; the capture pipeline's requirements `MULTI-DOC-IMPORT-PRD.md` R7/R10/R12/R13/R14; the sync contract (`docs/TECHSPEC/04-live-system.md` §17.5)
 - **Requirements only.** How the screen is built — the viewer, the alignment, the confidence signals, the layout — is the TECHSPEC's job, and the new tech (bounding-box alignment, per-word confidence) is **spiked before the spec** to see what the pipeline can produce. This PRD says what the reviewer experiences, not what the UI is made of.
 
 ## 1. Purpose
@@ -51,7 +51,7 @@ goes where it's needed.)
 corrected-then-confirmed, or rejected — nothing else. The confirmed text
 is the document's words; a rejection is recorded and nothing is silently
 dropped. Only confirmed text reaches the archive (R7; the confirmations
-contract, TECHSPEC §16.15).
+contract, `docs/TECHSPEC/04-live-system.md` §17.5).
 
 **VR6 — The grouping is part of the review.** The reviewer sees which
 pages make up each document and confirms the grouping with the text

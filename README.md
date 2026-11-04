@@ -76,7 +76,7 @@ the server above): **name:** `loft-worker` · **application:** `./loft` ·
 |---|---|
 | `docs/PRD/PRD.md` | Product requirements — the "why" and the "what" (v0.9) |
 | `docs/PLAN/PLAN.md` | Project plan — thin slices, time to value |
-| `docs/TECHSPEC.md` | Architecture — the "how", decisions, and review record |
+| `docs/TECHSPEC.md` | Architecture — the index; the components are in `docs/TECHSPEC/` |
 | `docs/PRD/MEMORIES.md` | Story-capture flow spec — "Add your memory" |
 | `docs/PRD/IMPORT-PRD.md` | Artifact-import flow spec — the letter-import rules (A–S) |
 | (private) worked-example review | Real-import lessons from the first letter |
@@ -108,4 +108,4 @@ the server above): **name:** `loft-worker` · **application:** `./loft` ·
 
 The archive (scans, sidecars, JSON) is committed to the repo during dev; on
 prod it is not committed but regularly backed up (user, 2026-08-03) — see
-`docs/TECHSPEC.md` §3–5 for where it lives.
+`docs/TECHSPEC/02-archive-and-capture.md` §3–5 for where it lives.

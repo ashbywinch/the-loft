@@ -1,7 +1,7 @@
 # Decisions
 
 > Component of `docs/TECHSPEC.md`. Status: **register**. The live-system
-> decisions (D1–D36) are proposed; the pre-§17 decisions (§12/§15) are
+> decisions (D1–D40) are proposed; the pre-§17 decisions (§12/§15) are
 > history.
 
 ## The register
@@ -156,7 +156,7 @@ decisions survive all three. The blast radius is at the bottom.
 
 These are kept for the record: the 2060 reader, the sidecar rationale, the
 old hosting choice. They are not the live design. Where they disagree with
-D1–D36, the live decision wins.
+D1–D40, the live decision wins.
 ## 12. Decisions to confirm (your review)
 
 | # | Decision | Recommendation |

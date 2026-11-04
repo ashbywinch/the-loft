@@ -1,7 +1,7 @@
 # Decisions
 
 > Component of `docs/TECHSPEC.md`. Status: **register**. The live-system
-> decisions (D1–D42) are proposed; the pre-§17 decisions (§12/§15) are
+> decisions (D1–D43) are proposed; the pre-§17 decisions (§12/§15) are
 > history.
 
 ## The register
@@ -149,6 +149,11 @@ decisions survive all three. The blast radius is at the bottom.
   rows, boxes and flags. A confirmed document is in browse; a reopen command
   creates a claim and the next release carries its payload. The archive's
   whole row set is never published.
+- **D43 [shape] — The service is the only process with the database.** The
+  daemon, sync agent, exporter and CLI call the service's local API for
+  domain reads and writes; the pipeline's work files stay files. The service
+  never runs the pipeline; the daemon never listens. The two are supervised
+  together, and a service outage delays the projection, never bypasses it.
 
 
 ## Blast radius
@@ -167,7 +172,7 @@ decisions survive all three. The blast radius is at the bottom.
 
 These are kept for the record: the 2060 reader, the sidecar rationale, the
 old hosting choice. They are not the live design. Where they disagree with
-D1–D42, the live decision wins.
+D1–D43, the live decision wins.
 ## 12. Decisions to confirm (your review)
 
 | # | Decision | Recommendation |

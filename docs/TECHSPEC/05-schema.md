@@ -306,6 +306,11 @@ with no projection table is a failure, not a silently skipped event.
 
 ### 18.5 The write path
 
+**Only the service opens the database.** The daemon, the sync agent, the
+exporter and the CLI call the service's local API; no other process holds a
+SQLite handle. The one transaction below runs inside the service, so the
+"single writer" is a process boundary as well as a seam.
+
 **Normative: the one write-path transaction.** The remote command flow that
 reaches it is `04-live-system.md` §17.5.
 

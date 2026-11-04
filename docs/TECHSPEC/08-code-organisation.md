@@ -32,8 +32,9 @@ flowchart TB
   end
 
   App --> Store
-  CLI --> Store
-  Worker --> Store
+  CLI --> API["loft/app/api — local write seam"]
+  Worker --> API
+  API --> Store
   Store --> Change
   Store --> Views
   Change --> SQL
@@ -47,20 +48,23 @@ flowchart TB
 Arrows point down. **The domain packages never import persistence**: an
 `Item` does not know SQLite exists, and `Document.confirm()` returns a
 document, not a row. The persistence package imports the domain types; the
-surfaces import the persistence facade and the domain types.
+service imports the persistence facade, and the daemon imports its local API
+client and the domain types.
 
 ### 19.2 One package speaks SQL
 
-- **`loft/archive/live/` is the only package that imports `sqlite3`.**
-  Everything else — the server, the worker, the sync agent, the exporter,
-  the CLI, the tests above the boundary — goes through `LiveStore`.
-- The public surface is deliberately small: `LiveStore`, `Change`, the view
-  records (`TimelineEntry`, `PersonPage`, `ItemDetail`, `ReviewQueueEntry`,
-  `SearchHit`, `ExportView`, `Snapshot`), and the error types. The event log,
-  the projection modules, the content store and the SQL helpers are private.
+- **`loft/archive/live/` is the only package that imports `sqlite3`, and the
+  service is the only process that hosts it.** The server calls `LiveStore`
+  in process; the worker, sync agent, exporter and CLI call the service's
+  local API and never open the database.
+- The service's public surface is deliberately small: `LiveStore`, `Change`,
+  the view records (`TimelineEntry`, `PersonPage`, `ItemDetail`,
+  `ReviewQueueEntry`, `SearchHit`, `ExportView`, `Snapshot`), and the error
+  types. The event log, the projection modules, the content store and the SQL
+  helpers are private.
 - `loft/archive/export.py` (the exporter) and `loft/archive/sync.py` (the
-  sync agent) import the read-only views and `LiveStore`; they never import
-  `loft.archive.live.sqlite` or write SQL.
+  sync agent) call the service's local API for reads and writes; they never
+  import `LiveStore`, `loft.archive.live.sqlite`, or write SQL.
 - A test enforces the rule: `sqlite3` appears only under
   `loft/archive/live/`; no module outside it imports the private modules.
 
@@ -194,8 +198,8 @@ blob.
 | `tools/archive.py` (the file store's facade) | `loft/archive/` — entities, exporter, importer; `Archive` is the export, not the live store |
 | `tools/store.py`, `tools/atomic.py` | `loft/archive/live/content.py` (content-addressed blobs) and the exporter's atomic writes |
 | `pipeline/api/server.py` | `loft/app/` surfaces; they call `LiveStore`, never SQL |
-| `pipeline/api/sync.py` | `loft/archive/sync.py` — the sync agent; it applies commands through `LiveStore` |
-| `pipeline/worker.py` | `loft/pipeline/worker.py`; it writes through `LiveStore` |
+| `pipeline/api/sync.py` | `loft/archive/sync.py` — the sync agent; it applies commands through the service's local API |
+| `pipeline/worker.py` | `loft/pipeline/worker.py`; it writes through the service's local API |
 | `pipeline/registry.py`, `pipeline/store.py` | the `batches`/`scans` projections; the files become a cache |
 | `tools/records.py` | `loft/archive/` entities (one class per file) |
 | `document/` | `loft/document/` |

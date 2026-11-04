@@ -117,15 +117,19 @@ creates a provisional account/person in D1; the laptop confirms it.
 
 ## The local web service and the local daemon are separate processes
 
-They share one laptop and one `LiveStore`:
+They share one laptop and one database, and **only the service holds it**:
 
-- the **service** is the only writer of domain state; it serves the LAN API
-  and the at-home surfaces;
-- the **daemon** never serves HTTP; it scans, runs the pipeline, drains the
-  outbox and writes the nightly exports.
+- the **service** is the only process that opens the database; it serves the
+  LAN API, the at-home surfaces and the local write seam;
+- the **daemon** never touches the database; it scans, runs the pipeline,
+  drains the outbox and writes the nightly exports, calling the service's
+  local API for every domain read and write.
 
-The service never runs the pipeline. The daemon never opens a socket. Both
-use the same persistence boundary (`08-code-organisation.md`).
+The service never runs the pipeline. The daemon never listens; it is an HTTP
+client of the service on localhost. The two are supervised together: if the
+service is down the daemon's projection step waits and retries — the work
+files are still written, but no domain write bypasses the seam.
+`08-code-organisation.md` is the only code that speaks SQL.
 
 ## Nouns, grouped by the deployment that owns them
 

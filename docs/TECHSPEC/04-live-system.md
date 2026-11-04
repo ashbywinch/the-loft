@@ -186,11 +186,12 @@ background publisher coalesces the dirty marks, uploads a new release to R2 and
 flips `current.json` off the request path. This is the fast path and the only path that writes
 domain state directly.
 
-**W2 — the scanner and pipeline.** Scanner → big disk → worker → write
-seam → SQLite (batch, page reading, rows, draft transcript), with
-derivatives on the disk. Originals are never copied off-site. The worker is the only
-producer of machine state; it owns the draft fields and humans own the
-confirmation fields, which is what keeps them from fighting. The split is
+**W2 — the scanner and pipeline.** Scanner → big disk → worker → the
+service's local API → write seam → SQLite (batch, page reading, rows, draft
+transcript), with derivatives on the disk. The worker never opens the
+database; it is the only producer of machine state. Originals are never
+copied off-site. It owns the draft fields and humans own the confirmation
+fields, which is what keeps them from fighting. The split is
 enforced in the schema, not by convention: a re-read refuses to replace
 a human row set newer than its input (`page_rows.source`, `pages.revision`),
 instead of deleting the reviewer's corrections as the as-built path does.
@@ -213,8 +214,8 @@ Commands are classified, because they are not one kind of thing:
 That is what keeps the write lock from being held for a page read.
 
 The laptop's sync agent pulls the outbox and applies each command
-**through the service's write seam** — never by opening the DB itself —
-so validation cannot be bypassed. It advances one
+**through the service's local API and write seam** — never by opening the DB
+itself — so validation cannot be bypassed. It advances one
 `sync_state.applied_through` cursor, and it uses the `command/applied`
 event as the idempotency marker. The marker is not redundant with the
 cursor: a decision has no version predicate, so a crash after the decision

@@ -167,3 +167,9 @@ hash/migration, draft exclusion, command rebuild — follow.
     `<img>`, the immutable header caches at the edge and in the browser, and a
     second view costs no Worker request. Confirm the free request budget holds
     for a day's family use.
+
+30. **Single-writer service.** The daemon's pipeline writes and the sync
+    agent's command applies go through the service's local API; a service
+    restart mid-pass leaves the work files and retries the projection; the
+    API's body caps and timeouts hold a large batch; no daemon process holds
+    a SQLite handle.

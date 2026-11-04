@@ -31,7 +31,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | Adopt / ingest planning (the batch adoption flow's docs) | `docs/PLAN/INGEST-PLAN.md` |
 | Product requirements, scope, personas | `docs/PRD/PRD.md` |
 | Architecture, stack, data model, decisions | `docs/TECHSPEC.md` (the index; components in `docs/TECHSPEC/`) |
-| Pipeline stages, completion markers, and per-page recovery (`make pipeline ARGS="guess\|layout <batch> [page...]"`) | `docs/TECHSPEC/03-import-and-pipeline.md` §16.14.2 |
+| Pipeline stages, completion markers, and per-page recovery (`make pipeline ARGS="process\|review\|printed <batch>"`) | `docs/TECHSPEC/03-import-and-pipeline.md` §16.14.2 |
 | Layout / geometry experiments ledger (the ink work's measured findings) | `docs/PLAN/geometry-experiments-log.md` |
 | Serving the app — foreground `make serve`; the supervised hub spec that survives daemon restarts | `README.md` (Quick Start → "Supervised dev server") |
 | The PLAN/ work logs (trial reports, walkthrough records, snags) | `docs/PLAN/` — `docs/PLAN/ocr-verification-research.md`, `docs/PLAN/model-trial-report.md`, `docs/PLAN/lucidlint-snag.md`, `docs/PLAN/ux-review-chat-solution.md`, `docs/PLAN/INGEST-PLAN.md` |
@@ -66,6 +66,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The plans folder's map (plan vs record) | `docs/PLAN/README.md` |
 | Code conventions | `docs/coding-standards.md` |
 | Code organisation, layers and the persistence boundary (`LiveStore`, `Change`, repositories, import rules) | `docs/TECHSPEC/08-code-organisation.md` §19 |
+| The one-time migration from the file archive to the database | `docs/TECHSPEC/11-migration.md` |
 | Test conventions | `docs/testing-standards.md` |
 | Documentation conventions | `docs/writing-documentation.md` |
 | Writing or editing a prompt (the review, memory, transcription instructions) | `skill://prompt-craft`; the form rules are `docs/writing-documentation.md` |

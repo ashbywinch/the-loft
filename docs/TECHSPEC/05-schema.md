@@ -118,6 +118,24 @@ fold of merge/unmerge, so withdrawing a merge restores the original id. A
 in the log and the projection, excluded from browse and from reference
 resolution; a ref to it is a `loft verify` finding.
 
+**The review speaks four outcomes; the store has three statuses and a
+terminal exclusion.** The vocabulary maps one way, and nowhere else:
+
+| Review outcome | Record / link status | Event |
+|---|---|---|
+| `attested` | `confirmed` | `created` (a new record) or `superseded` (an existing one) |
+| `estimated` | `estimated` | `created` / `superseded` |
+| `pending` (undecided, left for later) | `proposed` | `created` / `superseded` |
+| `delete` | the item's link is removed; a `proposed` record no other item references is excluded | the item is `superseded`; the record is `rejected` |
+
+`proposed` is the machine's guess awaiting review (`pending` is the review's
+word for it); `confirmed` is an attested fact; `estimated` is the reviewer's
+own recollection, recorded with its basis; `rejected` is terminal and the row
+stays. A `delete` on a `confirmed` record never downgrades it: the item's
+mention goes, the record stays a fact. There is no parallel status vocabulary
+in the UI, the commands or the export — a reader that needs the review's word
+maps it through this table.
+
 **Commands are events.** A remote command becomes `command/received`; the
 apply writes the domain events plus `command/applied`; a stale or invalid
 command writes `command/rejected`. The `command/applied` event is the
@@ -199,7 +217,7 @@ browse queries join on are child tables. There is no generic entity table.
 | `document_pages` | document → page, ordinal |
 | `batches` | id, label, source, path, status, arrived_at, started_at, started_pid, started_host, `fingerprint_json`, content_changed, plus the shared columns |
 | `scans` | scan id, batch, page, sha256, path, ordinal, created |
-| `pages` | page id, image asset, sha, revision, status; the document edge is in `document_pages` |
+| `pages` | page id, image asset, sha, revision, rotation, status; the document edge is in `document_pages` |
 | `page_rows` | the current rows with `source`, `trust`, orientation and `revision` |
 | `page_row_links` | insertion links: target row, character offset, proposed/unset/confirmed |
 | `row_checks` | the reviewer's per-row verification ticks |

@@ -298,8 +298,10 @@ is the ink reader's (§16.17).
 **Orientation (Rule J, mechanism).** The `orient` stage asks the vision model
 which clockwise rotation makes each page's writing upright
 (`pipeline/orient.py`) and turns the page into `oriented/`. One small call per
-page, thinking off. The page's rotation is the orient stage's output; the
-reading runs on the oriented image.
+page, thinking off. That is the page's **initial** rotation; the reading runs
+on the oriented image. The reviewer's ↻ is authoritative (§16.16): it sets the
+page's recorded rotation and the page is re-read on the corrected image. A
+re-read always uses the recorded rotation; nothing else re-orients the page.
 
 **The transcription backend (decided).** Every page's text comes from the
 **vision-language model** (`pipeline/model/vlm.py`): one call per page for
@@ -347,7 +349,7 @@ flowchart TB
 |---|---|---|
 | adopt / scan | register the pages | registry record + `pages` |
 | classify | the page's category and, for a postcard face or a form, its medium (vision model) | `classify.json` |
-| orient | the rotation that puts the page's writing upright (vision model) | `oriented/` |
+| orient | the initial rotation that puts the page's writing upright (vision model); the reviewer's ↻ overrides it | `oriented/` |
 | read (direct) | printed text, line for line, in one VLM call | `ocr-guess/*.txt` |
 | read (structured) | a form's labels and values, as a markdown table, in one VLM call | `ocr-guess/*.txt` |
 | read (rows) | handwriting: the reader's rows and words, the human row check, then the transcription review | `ocr-guess/*.rows.json`, `*.words.json`, `*.txt` |
@@ -359,7 +361,7 @@ the line and word geometry; the VLM supplies the text and the self-report
 flags. A page that reaches review without a reading is a stage failure.
 
 **The grouping scorer (VR6 — the grouping is part of the review; AC21 —
-two-sided item).** The guess stage's model groups TEXT pages only by
+two-sided item).** The group stage's model groups TEXT pages only by
 greeting/sign-off boundaries, so a photo page (the picture side of a
 postcard) can never join its document. The grouping scorer
 (`pipeline/grouping.py`) replaces the model's text-only
@@ -386,8 +388,302 @@ identification flow, but the review never pages through a photo).
 
 **Multi-orientation pages (PRD VR15).** A page whose writing runs in more
 than one direction is an open item: the reading path runs on the page's
-rotation, and the reviewer's rotate sets it and re-reads. A per-region
+recorded rotation, and the reviewer's ↻ sets it and re-reads. A per-region
 orientation pass is not built.
+
+### 16.14.2 Pipeline reliability — completion markers, fail-loud, and surgical recovery
+
+**Completion markers.** Each stage treats an output artifact's existence as
+its completion marker: `classify.json` the category, `oriented/<page>` the
+rotation, `ocr-guess/<stem>.rows.json` + `.words.json` the row read,
+`ocr-guess/<stem>.printed.json` / `.structured.json` a direct read,
+`ocr-guess/<stem>.txt` the page's text, and `boundaries.json` the document
+grouping. Re-running a stage skips pages whose marker exists — that is what
+makes re-runs cheap. The same reading is projected into `pages`, `readings`
+and `page_rows` (`04-live-system.md` §17.8.1); the work files are the cache,
+the projection is the live store.
+
+**The marker rule: existence of the marker alone is not completion.** A
+marker promises its artifact; a marker whose artifact is missing or empty
+is a stale or partial write and must be re-done, not "reused". A direct read
+skips a page only when both its marker and a non-empty `.txt` exist; the row
+read skips a page whose `.rows.json` exists and is current; and `process`
+re-reads a page whose artefacts are incomplete rather than trusting a marker
+alone. The row read is current when its `corrected` sha matches the drawn
+lines on disk (§16.17); an empty reading is never a completion.
+
+**Fail-loud over silent no-op.** A stage that cannot do its job for a
+requested input fails loudly with the remedy in the message. Never a
+geometry-only build, never a "reused" corrupt guess, never an output that
+looks done but isn't.
+
+**Surgical recovery.** Fixing one batch must not re-pay model calls for the
+whole archive. The pipeline exposes the stage entries:
+
+```bash
+make pipeline ARGS="process <batch>"        # the whole chain
+make pipeline ARGS="printed <batch>"        # a printed pile: one direct read per page
+make pipeline ARGS="review <batch>"         # the confirmation gate
+```
+
+`process <batch>` is the whole-chain entry point and the one the worker
+sweeps; `printed <batch>` re-reads a printed or structured pile directly
+(idempotent per page); `review <batch>` is the human gate.
+
+**The worker owns the machine stages** (`pipeline/worker.py`, `loft work`).
+A batch is work while a stage artefact is MISSING — not while its status
+says so. `pipeline/stage_table.py` owns the stage order and each stage's gap
+check: `classify` (no entry, or one in the pre-category spelling), `orient`
+(the row pages' uprights), `read` (the category's own marker), `group` (no
+grouped `boundaries.json`). `pipeline/reconcile.py` (`Reconciler`) runs
+exactly those, in order, after re-planning on the new categories once
+`classify` has run; it journals each stage's outcome to
+`work/<batch>/events.jsonl` and logs the reason and the duration. Nothing is
+retried: a failure is journalled and raised, and the batch waits for the next
+trigger or resync.
+
+The triggers are `Worker.watch`: a change under the scan area, the registry
+or the work tree maps to its batch and that batch is reconciled then (a batch
+already in flight is skipped, so the reconciler's own writes cannot feed back
+into it); a quiet interval is a full resync, and one runs at startup.
+`loft work` is one resync, `loft work --plan` prints each batch's gap and runs
+nothing, `loft work --batch <id>` reconciles one. `pipeline/artefacts.py` is
+the one place the layout is written (guarded by `tests/test_architecture.py`),
+and `pipeline/model/config.py` names every model and the Cloudflare AI Gateway
+endpoint.
+
+A page's pipeline status is never stored in the work tree — it is derived
+from the stage artefacts (`BatchReadings.page_status`); the live projection
+may carry the derived status for query speed (`04-live-system.md` §17.8.1).
+Only the batch's queue state is written, through the chain's one status
+writer, which stamps the pass (pid, host, time). Two rules keep the queue
+honest: a pass that dies half-way writes its record back to `pending` (a
+crash in `importing` would strand the batch), and a scan stages beside the
+inbox rather than in it (a directory in the scan area is a finished pile, and
+the worker adopts every one).
+
+**A corrected page is re-read on the worker's next pass.** The reviewer's
+drawn lines persist as `ocr-guess/<stem>.row-adjustments.json`; the write
+marks the batch `pending` (the server never contacts the worker), and the
+read stage rebuilds the page's rows from the persisted words + those lines,
+reads each row as itself, and writes them as the reading's lines with the
+drawn lines' sha in `corrected`. The transcript gate then shows the corrected
+text. Three rules keep it cheap and honest: a check with no lines ("rows are
+right") requeues nothing; a reading whose `corrected` equals the file's sha is
+skipped (the same lines are never re-read); and a corrupt correction file
+fails loudly rather than reading the page against lines nobody can parse.
+Only corrected pages re-read — an unchanged page keeps its draft reading.
+
+**The model-API contract (the client side of the Cloudflare gateway).** The
+VLM client must send a User-Agent the gateway's WAF accepts
+(`opencode/1.14.20`), and must give reasoning models `max_tokens` headroom
+(≥32000 for vision/geometry tasks — a reasoning model with a small budget
+returns `finish_reason: "length"` and zero content). HTTP errors surface
+with the response body; empty-content and budget-exhaustion failures are
+raised as actionable `VlmError`s. See the `cloudflare-ai-gateway` skill for
+the route-side configuration.
+
+**Versioned persistence.** All pipeline artifact writes go through
+`PipelineStore` (`pipeline/store.py`), which preserves the previous version
+at `-2.ext` before overwriting the base path — an overwrite is always
+recoverable, and the append-only invariant is enforced at the write seam
+rather than hoped for.
+
+### 16.16 The transcription-validation review surface
+
+**The reviewer's alignment and flags come from the reading.** The boxes are
+the ink reader's; the text is the VLM's; the flags are the model's
+self-report on its own numbered text (§16.17). No recognition engine runs
+beside the app. The review surface reads each page's rows from the read
+model (`04-live-system.md` §17.6); the drafts payload carries each page's
+rows: box, text, kind and the self-reported flags. The reviewer edits text
+and draws row lines; the boxes stay anchored to the page geometry, not to the
+corrected words.
+
+**A bad correction never reaches the review.** The drawn lines are validated
+(`Rows.validate`) before they are persisted: a line that caught no writing, a
+line off the writing's slope, or a row off the page is refused with its
+reason. The reviewer never sees a box the page cannot support.
+
+**The viewer.** The page-image pane is a plain `<img>` inside a
+transform-scaled layer (one `translate(...) scale(...) rotate(...)`; the
+line boxes are absolutely-positioned children of the same layer, so they
+stay pinned through pan/zoom/rotation by construction). The view is a
+rectangle in display pixels (the rotated image's axes); drag-pan, pinch and
+the Fit/−/+ buttons update it; the initial view is a width-fit band anchored
+at the reading's first line box (the scanned top margin is blank), or at the
+writing's extent on a page with no reading. The plain `<img>` decodes and paints in any browser, so a
+screenshot or a canvas pixel-read can verify the actual pixels — the
+perceptual-success standard (ux-standards P15) forbids an unverifiable
+render. The deep-zoom pyramid stays a future step (OpenSeadragon 6.1.0:
+BSD-3, zero-dependency vanilla, native overlays).
+The transcription pane, confidence flags, and confirm/reject controls are
+our vanilla code. The full transcription apps from the research
+(eScriptorium, FromThePage) are rejected: different stacks (Django+Vue,
+Rails+IIIF) contradicting the vanilla decision; Transkribus is proprietary.
+
+**The orientation rule.** The orient stage sets the page's initial rotation
+(one small model call, §16.14); its call can be wrong on a cursive page. The
+reviewer's ↻ is the authority: the press is a PIPELINE correction, not a view
+toggle, and the reading is redone on the corrected image. It is built for the
+sync's reality (the front end and back end are different boxes; the backend
+may be off; no image travels — it is never uploaded, the backend has it):
+
+- **The press is local first**: the view rotates instantly; the intent is
+  the DESIRED cumulative rotation in quarter-turns, queued in a
+  localStorage outbox (the same offline seam as the confirmations) and
+  committed on navigation — multiple presses coalesce (a half-corrected
+  first press never triggers a reprocess), and a wrong correction is just
+  another intent.
+- **The backend applies an idempotent delta**: the page's reading records the
+  cumulative applied rotation (`rotation`, projected as `pages.rotation`), the intent is the desired
+  absolute, so a retried intent is a no-op and offline queues cannot
+  over-rotate on redelivery.
+- **The fast half is synchronous**: the image rotates (a rigid box remap;
+  the text is re-read asynchronously) — the corrected page shows immediately.
+- **The slow half is the async job**: the page's text is re-read by the
+  vision model on the corrected image (the old reading is stale), the
+  self-report re-runs, the rows and the reading rebuild. The drafts payload carries a
+  per-page job state; the surface greys the document with a note, blocks
+  the confirm, and polls — the reviewer navigates on meanwhile. A server
+  restart mid-job demotes the page to "failed" (the stale text stays
+  visible WITH the warning — never a silent half-done page). The stale
+  local edits for the re-read page are cleared on completion.
+
+**The navigation model.** The review surface shows two nested
+sequences — pages inside a document, documents inside the batch — as ONE
+compact strip under the top bar: the batch's documents as chips showing
+the document's greeting (or a numbered fallback), with ✓ confirmed and ✗
+rejected status marks; the current document's pages as numbered chips (the
+current page filled; a red dot marks pages with lines still to check). Tap
+a chip to navigate. The strip replaces the top-bar subtitle and the
+Prev/Next page buttons: the document boundary is visible before the last
+page, and a cross-page "Next flagged" jump is visible before it happens
+(the flag dot shows where it lands). Numbers and status marks only — no
+added words (prior art: spatial page maps — CHI space-filling thumbnails;
+per-page review status — FromThePage). Flagged words render with a wavy red
+underline (the spell-check convention) at rest, not only in edit.
+
+**The reading order (VR15, AC20 — coherent, not dislocating).** The
+transcription presents the text in a coherent order. The reader returns the
+page's lines top to bottom in the page's frame; the rows keep that order, and
+a row is one line of writing with its words. The reviewer's drawn lines
+renumber the rows in reading order (topmost band first). The initial display
+shows the page the way the pipeline determined is right-way-up — the printed
+writing upright (the oriented image).
+
+**The three outcomes (VR5 — confirm or reject; VR17 — defer; AC30 — no
+action is irrevocable).** Every document reaches one of three states, and
+none is irrevocable:
+
+- **Confirmed** — the reviewer is confident in the transcription. The
+  document is published to the archive and removed from the pending queue
+  ("✓ Confirm & Next →" button). The confirm button is always available
+  (it is not blocked by unchecked lines, unverified lines, or any other
+  pre-condition — the reviewer's own confidence is the only gate; VR5,
+  AC27, AC28).
+- **Rejected** — the document does not belong in the archive (an
+  accidental import such as petrol receipts, an unreadable scan, one too
+  embarrassing to keep — user). The rejection is a
+  soft-delete: the document moves to a recoverable bin and leaves the
+  pending queue; the reviewer can bring it back. Not yet implemented.
+- **Deferred** — the document belongs in the archive but the reviewer
+  cannot finish it now (needs to ask a family member, come back later).
+  It stays in the pending queue, unconfirmed ("Skip →" button,
+  implemented).
+
+**The correction interaction (grounded in the prior art).** The
+reviewer's correction model follows Trove/Transkribus: **per-line inline
+editing anchored to the image**. Selecting a transcription line enters edit
+on that line (the text becomes directly editable in place) while the line's
+box stays highlighted on the image — the image pane keeps the current line's
+region in view (auto-pan/zoom to the box), so the reviewer compares the
+line's letters against the original while typing. The flagged low-confidence
+words are the entry points (WordCheck-style): the reviewer can jump to the
+next flagged word. Trove's per-line +/− (split/merge lines) applies where
+the reading merged two lines (the open item below). Corrections change only
+the edited line's words; confirming publishes the corrected text (`04-live-system.md` §17.5).
+
+**The phone posture.** The phone review is **landscape-only**:
+portrait shows a "turn your phone" prompt. The landscape phone uses a
+**horizontal split** — the letter image spans the full landscape width on
+top (a phone turned sideways is close to the original document's width, so
+the handwriting renders near its real size), the editable transcription
+fills the bottom pane, and the action bar is sticky (never clipped). The
+tablet keeps the vertical split (image left, text right — it has the
+width for both at good size). Rationale: one split-pane design across
+tablet and phone-landscape instead of a second stacked mobile layout
+(VR8, user).
+
+**The focus model (VR17, walkthrough finding).**
+
+The fake-user walkthrough (Sam) + the UX research (Preview
+Panel, Master-Detail, Overview+Detail, Inline Edit patterns) established
+the focus model:
+
+*The focused line* is the line at the top of the text pane's viewport.
+Scrolling the text changes the focus. The image follows — pans to the
+focused line's box, rotates to the line's reading orientation.
+Panning/zooming the image does NOT change the focus; the reviewer can
+explore the scan freely. A "return" button in the image toolbar
+re-centres on the focused line.
+
+*The image is the navigation surface.* The box overlays are touchable
+(`pointer-events: auto`). Tapping a box scrolls the text to the
+corresponding line and rotates the image to make it readable. The image
+pane's click handler that silently edits the text is removed.
+
+*The inline edit* has a visible Done (✓, commits) and Cancel (✕,
+discards) — the standard Inline Edit pattern. The Escape key cancels;
+the keyboard's Done key commits. The edit row shows the format buttons + Done + Cancel.
+
+*The verification tick* is a toggle: unchecked (○ outline) and checked
+(✓ filled). Clicking a checked line unchecks it (the edit is removed,
+the line returns to its unchecked state). The line's background turns
+cream when checked.
+
+*The image pane's initial view* fits the document's full content area
+(all boxes' min/max y, not just the first line) at a readable zoom
+level — the reviewer sees the full card and can scroll to the message.
+
+*Returning to a page restores the exact view.* The document and page
+are already in the URL (`syncSurfaceUrl`). The image view rectangle
+(the pan position and zoom level) and the text scroll position are
+persisted to `localStorage` keyed by `{batch}|{page}` — the same store
+as the rotation outbox — and restored on return. The focused line, the
+scroll position, and the image view are always in sync: the "no
+dislocating moves" rule (P18 from the walkthrough) applies
+to every re-render, not just within the session (VR9, AC19).
+
+*The page's rotation* is the reading's recorded rotation. The review's ↻ is
+the orientation correction above; the reading runs on the corrected image.
+
+**Resource management (VR16 — the app runs lightly on this laptop).**
+
+The transcription call (the VLM) is the only heavy step in the review
+pipeline: the ink reader is local arithmetic over per-page arrays, and the
+classifier is one small call per page. Two measures bound the footprint:
+
+- *The model call is bounded by its budget.* Every transcription call carries
+  its own `max_tokens` and timeout, so a page's cost and duration are capped
+  per call rather than growing with the scan's native resolution (VR16 — the
+  pipeline's peak is bounded, not the scan's).
+- *No engine runs beside the app.* The reader measures ink with numpy in the
+  main venv — no recognition engine, no framework arena, no subprocess
+  (VR16 — a core stays free for other work while a page is measured).
+
+**Open items:**
+- Line-splitting: a reading line can merge two tightly-spaced lines; the
+  reviewer's drawn lines split them. A per-box re-split on over-tall boxes is
+  an open item.
+- Multi-orientation pages: the per-region orientation reading is not built
+  (VR15); the reading runs on the page's rotation.
+- **Grouping correction (VR6).** The reviewer can see the document grouping
+  (the navigation strip) but has no way to correct a wrong page-to-document
+  assignment — split a document, merge two, or move a page. The design is
+  deferred until a real example of a wrong grouping surfaces in testing
+  (user).
+
 ---
 
 ### 16.17 The reading path

@@ -77,14 +77,14 @@ remains in a batch, leave partway, and come back without re-reading what
 they already handled. Progress is visible.
 
 **VR10 — Reorientation is the reviewer's act, immediate and reliable.**
-A page's orientation changes only because the reviewer changed it — never
-on its own, even after a reload or a return visit. When the reviewer does
-change it: (i) the page shows the corrected way round instantly and stays
-that way on every look thereafter, whatever else is happening — what the
-reviewer set is what they see, and it never reverts; and (ii) the
-corrected transcription reliably arrives, and when it arrives late it
-updates the text, never the orientation the reviewer set (user
-requirement).
+The pipeline sets a page's initial rotation; from then on a page's
+orientation changes only because the reviewer changed it — never on its own,
+even after a reload or a return visit. When the reviewer does change it: (i)
+the page shows the corrected way round instantly and stays that way on every
+look thereafter, whatever else is happening — what the reviewer set is what
+they see, and it never reverts; and (ii) the corrected transcription reliably
+arrives, and when it arrives late it updates the text, never the orientation
+the reviewer set (user requirement).
 
 **VR11 — The review proceeds page by page, in any order, at the reviewer's
 pace.** Each page is finished on its own; a document is finished only when

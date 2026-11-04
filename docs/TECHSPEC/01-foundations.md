@@ -24,15 +24,15 @@ It makes the architectural calls the PRD left open, with rationale. The decision
 - **Vanilla ES modules** — no framework, no build step, no `package.json` runtime dependency. The app is a set of `.js`/`.css`/`.html` files that work forever. (Vanilla means no framework or build step — not no classes: `class` is ES2015 and allowed; see docs/coding-standards.md.)
 - **Hash-based routing** (`#/timeline`, `#/item/letter-1963-05-14-01`, `#/themes/t-the-boats`) — works on any static host, no server rewrite rules.
 - **PWA:** `manifest.webmanifest` + `sw.js` — installable ("Add to Home Screen"), offline shell + cached archive content (§9).
-- **Tools** (`tools/`, optional at runtime): Node **or** Python — one choice, made in §12. Used for thumbnails, index rebuild, archive checks, CSV export, fake-data generation.
-- **Serving:** a free static host (Cloudflare/Netlify/GitHub Pages) serves the app **plus a published projection** — metadata, thumbnails, stories; no full-res by default (§5). **Google Drive is the archive's home**, accessed through its official API — the phone stores nothing and nothing is hosted in the house. Performance: Google/static CDN for browsing; Drive API for review reads.
+- **Tools** (`tools/`, optional at runtime): Python. Used for thumbnails, index rebuild, archive checks, CSV export, fake-data generation.
+- **Serving:** the app shell is static on **Cloudflare Pages**; the published read model (JSON + view images) is in **R2**; no full-res leaves the house. The archive lives at home on the big disk; the local service is the writer; the remote is a static app plus a small serverless backend (§17).
 - **Why this stack:** durability (files outlive any framework — P3), the payload budget (P6), hostability anywhere, and the entire surface is ~10 screens.
 
 ---
 ## 14. Deliberately deferred (seams only)
 
-OCR transcription drafts, photo labeling, theme/entity discovery, TTS — the `proposed`/`confirmed` status already exists in the schema (P4); models plug in later, locally. **No ML in the shipped v1** (PRD §12).
+OCR transcription drafts, photo labeling, theme/entity discovery, TTS — the `proposed`/`confirmed` status exists in the schema (P4). **Models are called through the family's gateway; there is no requirement to run them locally.**
 
-**Cousin contributions (not built, not ruled out):** Drive sharing covers invite-level access today; a future merge/import tool (per-contributor folders, ID namespacing) adds uploads without schema change — people are already first-class in the model.
+**Cousin contributions (not built, not ruled out):** Cloudflare Access covers invite-level access; a future merge/import tool (per-contributor folders, ID namespacing) adds uploads without schema change — people are already first-class in the model.
 
 ---

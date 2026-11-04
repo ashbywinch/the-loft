@@ -205,7 +205,7 @@ Commands are classified, because they are not one kind of thing:
 | Class | Examples | Apply |
 |---|---|---|
 | **State** | transcript edit, story save, row lines | one `BEGIN IMMEDIATE` transaction; the guard is the typed table's UPSERT with `WHERE version IS :base`; zero rows means stale |
-| **Append-only decision** | identity attest/estimate/pending/delete, review decisions | append the decision and apply it (last wins); no version predicate, per the 2026-10-21 user ruling |
+| **Append-only decision** | identity attest/estimate/pending/delete, review decisions | append the decision and apply it (last wins); no version predicate, per the 2026-10-21 user ruling. The four words are the review's; the record status they write is the one mapping in `05-schema.md` §18.2 |
 | **State + machine work** | "re-read this page", "identify this document", an import-review message that calls a model | the transaction records the intent and inserts a `jobs` row; the worker runs outside the lock; its result is a second transaction |
 | **Bytes** | photo upload | the staged object is recorded as an `Asset`; the laptop pulls, re-hashes, writes and derives |
 
@@ -387,6 +387,28 @@ the check, instead of deleting the reviewer's corrections.
 documents, pages, readings, review state, the asset catalog and the job
 queue. What stays on disk is the originals, the human archive, the
 operational backup and the nightly dumps (`07-exports.md`).
+### 17.8.1 The pipeline stages in the live store
+
+The work files are the pipeline's cache; the live store is the projection. The
+reconciler reads the projection, not the markers.
+
+| Stage | Work artifact (cache) | Live projection | Completion predicate |
+|---|---|---|---|
+| adopt / scan | `registry/<batch>.json`, the scan folder | `batches`, `scans`, `pages` | the batch exists and every scan has a page |
+| classify | `classify.json` | `pages`/the reading's category | the page's category is recorded |
+| orient | `oriented/<page>` | `pages.rotation` | the oriented image exists |
+| read | `rows.json`, `words.json`, `.txt` | `pages`, `readings`, `page_rows` | the page has a non-empty reading |
+| transcribe | the reading's per-row text | `page_rows.text` | every row has text |
+| row check | `row-adjustments.json`, `rows-adjusted.json` | `page_rows`, `row_checks`, `page_row_links` | the correction's sha matches the reading |
+| group | `boundaries.json` | `documents`, `document_pages` | a document with pages |
+| confirm | the item sidecar | `items`, `item_content`, `item_refs` | the item exists and is catalogued |
+| identify | the item's refs | `item_refs`, `people`, `places` | the proposals/decisions are recorded |
+| review | the import session | `review_sessions`, `claims` | no open claim for the origin |
+
+A page's status is derived from these rows; the projection may carry the
+derived status for query speed, but the rows are the evidence and the
+projection is rebuildable.
+
 ### 17.10 Failure modes
 
 | Failure | Still works | At risk | Recovery |

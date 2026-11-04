@@ -206,7 +206,7 @@ the archive must be readable without a DB.
 | `imports.json` with attempts/messages | `sessions/<id>.md` + the event log |
 | `app/data/*` projection | the DB + the published read model |
 | `work/<batch>/*` history | the DB's readings + the content store |
-| `assets/<id>/` | `items/<id>/` (the one-time migration) |
+| `assets/<id>/` | `items/<id>/`; the one-time import is [11-migration.md](11-migration.md) |
 
 The live archive's `assets/<id>/` tree is migrated once to `items/<id>/`;
 the old tree stays read-only until the export verifies, then retires. This

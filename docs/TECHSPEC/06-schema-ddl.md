@@ -376,6 +376,7 @@ CREATE TABLE pages (
   image_asset_id TEXT NOT NULL,
   sha256         TEXT NOT NULL,
   revision       INTEGER NOT NULL,
+  rotation       INTEGER NOT NULL DEFAULT 0,
   status         TEXT NOT NULL,
   event_seq      INTEGER NOT NULL
 ) STRICT;

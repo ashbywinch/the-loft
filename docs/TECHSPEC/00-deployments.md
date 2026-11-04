@@ -67,7 +67,9 @@ The remote site must be **readable and checkable**, not a thumbnail gallery:
 - **Full-resolution originals stay on the big disk at home.**
 - R2's free tier is **10 GB**. The laptop measures the view images and
   sizes them to fit (WebP/AVIF at a resolution that still reads and checks).
-  If the archive outgrows it, the answer is a more efficient encode or an
+  Start at **2000px on the long edge**; the view-image spike measures
+  legibility and the archive's page count, then sets the final size. If the
+  archive outgrows the budget, the answer is a more efficient encode or an
   explicit product decision — never a thumbnail-only site.
 
 Images are served from R2 (behind Access or short-lived signed URLs), not

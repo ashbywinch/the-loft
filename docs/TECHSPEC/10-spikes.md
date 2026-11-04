@@ -151,6 +151,10 @@ hash/migration, draft exclusion, command rebuild — follow.
     upload leaves the old pointer; the app reads the new release; a rollback
     re-points; the R2 CORS/Access credentials hold.
 
-28. **View-image transcription.** One page: the VLM's per-row text on the view
-    image vs the original. If the view holds, the remote re-read uses it; if
-    not, the page waits for the laptop or uses a higher-resolution derivative.
+28. **View-image transcription.** One 300 DPI handwriting page: the VLM's
+    per-row text on the view image vs the original. Acceptance: the view image
+    (start at 2000px long edge, WebP/AVIF) reads and checks rows at 100 % on
+    the landscape phone; the VLM's per-row text matches the original; the
+    archive's page count fits the 10 GB budget, or the derivative is tuned. If
+    the view does not hold, the page waits for the laptop or uses a
+    higher-resolution derivative.

@@ -65,6 +65,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The work remaining on the current subset (pipeline, ingest review, layout seams) | `docs/PLAN/WORK-PLAN.md` — the detailed designs are linked per item |
 | The plans folder's map (plan vs record) | `docs/PLAN/README.md` |
 | Code conventions | `docs/coding-standards.md` |
+| Code organisation, layers and the persistence boundary (`LiveStore`, `Change`, repositories, import rules) | `docs/TECHSPEC.md` §19 |
 | Test conventions | `docs/testing-standards.md` |
 | Documentation conventions | `docs/writing-documentation.md` |
 | Writing or editing a prompt (the review, memory, transcription instructions) | `skill://prompt-craft`; the form rules are `docs/writing-documentation.md` |

@@ -516,7 +516,7 @@ CREATE TABLE sync_state (
 ) STRICT;
 
 CREATE TABLE accounts (
-  account_id  TEXT PRIMARY KEY,
+  account_id  TEXT PRIMARY KEY,       -- mirror of the D1 login authority
   person_id   TEXT NOT NULL,          -- the person the login belongs to
   email       TEXT UNIQUE,            -- the sign-in identity
   role        TEXT NOT NULL CHECK (role IN ('viewer', 'curator', 'admin')),

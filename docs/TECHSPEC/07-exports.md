@@ -159,7 +159,8 @@ the 3-2-1 copy and the audit trail. It is not a reading surface.
 `relationships`, `documents`, `document_pages`, `batches`, `scans`,
 `pages`, `page_rows`, `page_row_links`, `row_checks`, `readings`,
 `review_sessions`, `claims`, `review_messages`, `review_decisions`,
-`assets`, `aliases`, `withdrawals`, `commands` and `accounts`.
+`assets`, `aliases`, `withdrawals`, `commands` and `accounts` (the SQLite
+mirror of the D1 logins).
 `jobs` is rebuilt from `job/*` (a `running` job without a live lease becomes
 `pending`); `sync_state` is reseeded from the manifest; the FTS index is
 rebuilt from the typed tables and `content`. `schema_migrations` is

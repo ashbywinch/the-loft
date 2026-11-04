@@ -394,8 +394,15 @@ operational backup and the nightly dumps (`07-exports.md`).
 - **Derivatives are generated on the laptop and uploaded.** On-the-fly
   resizing at the edge would add a service and put the original one hop
   from the internet.
-- **Auth is Cloudflare Access (Google).** The LAN keeps the same session
-  model; the static app never sees the client secret.
+- **Auth is Google on both surfaces, with the same family allowlist.**
+  Remote: Cloudflare Access in front of Pages and the Worker; the Worker reads
+  the Access JWT. Home: the local service's Google OAuth (web/device flow),
+  HTTPS, `HttpOnly`/`Secure`/`SameSite=Strict` cookies, CSRF, short sessions
+  with server-side revocation, body caps and rate limits. The home service is
+  reachable on the LAN and the tailnet; **Tailscale is the remote network
+  boundary, not the app auth** — every request still signs in with Google. The
+  LAN is not trusted. D1 is the login authority; SQLite mirrors the accounts
+  for LAN auth and backup. The static app never sees the client secret.
 - **Search is SQLite FTS5 in the live DB**; the published read model
   carries a client-searchable index. The service probes FTS5 at startup and
   fails loudly rather than silently degrading to no search.

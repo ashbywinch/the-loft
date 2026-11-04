@@ -217,12 +217,14 @@ browse queries join on are child tables. There is no generic entity table.
 | `jobs` | the worker queue, leases and attempts; rebuilt from `job/*` |
 
 **Auth state is not a projection.** `accounts(account_id, person_id, email,
-role)` attaches an optional login to a person. `events.actor_id` is the
-**person id**, not the account id; the log never stores an email. A person
-may have no account — most of the cast never will — and a contributor who is
-not yet in the cast gets a proposed person record, so every human event still
-names a person. Accounts are backed up with the database and never written
-to the human archive.
+role)` is the login authority in D1; SQLite mirrors it for LAN auth,
+attribution and backup. `events.actor_id` is the **person id**, not the
+account id; the log never stores an email. A person may have no account —
+most of the cast never will — and a contributor who is not yet in the cast
+gets a proposed person record. A first remote sign-in while the laptop is off
+creates a provisional account/person in D1; the laptop confirms it. The chat
+session is live in D1; the canonical transcript is SQLite `review_messages`,
+one row per message UUID. Accounts are never written to the human archive.
 
 The shared columns on a state table are `version`, `event_no`, `event_seq`
 and `updated_at`; `version` is the optimistic token a command carries. The

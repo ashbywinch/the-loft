@@ -140,3 +140,9 @@ hash/migration, draft exclusion, command rebuild — follow.
     match the laptop's Python review on the tested cases; the prompt/context
     is shared or ported; the model key stays in the Worker; the laptop
     re-validates every applied result.
+
+26. **Home auth.** A LAN request and a tailnet request both require Google
+    sign-in; the family allowlist gates both; the account mirror resolves the
+    person; the cookies are `HttpOnly`/`Secure`/`SameSite=Strict`; CSRF and
+    the session revocation hold; a first remote sign-in creates a provisional
+    person the laptop confirms.

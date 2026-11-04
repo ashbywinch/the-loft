@@ -9,7 +9,7 @@ we operate runs off-site; the remote backend is a serverless function.
 
 | Deployment | Runs | Owns |
 |---|---|---|
-| **Local web service** (laptop) | `loft serve` — FastAPI, `LiveStore`, the write seam | the SQLite database, the LAN API, capture/review/browse |
+| **Local web service** (laptop) | `loft serve` — FastAPI, `LiveStore`, the write seam, Google auth | the SQLite database, the LAN API, capture/review/browse |
 | **Local OS daemon** (laptop) | `loft work --watch`, `loft sync`, `loft export` | scan pickup, the pipeline, the outbox drain, the nightly human archive and operational backup |
 | **Remote static web app** (Cloudflare Pages) | HTML/JS/CSS + the published read model | browse, the review surface; reads the model; writes commands to the backend; **no server code** |
 | **Remote backend app** (Cloudflare Worker + D1) | one small API: chat/identify, command outbox, auth validation | the working state and the model calls; **no server to operate** |
@@ -57,6 +57,22 @@ Images are served from R2 (behind Access or short-lived signed URLs), not
 proxied through the Worker: the Worker's 100k requests/day is for commands
 and chat, not image bytes.
 
+## Authentication
+
+**Remote:** Cloudflare Access (Google) in front of Pages and the Worker; the
+family allowlist is the Access policy.
+
+**Home:** the local service uses Google OAuth with the same family allowlist —
+HTTPS, `HttpOnly`/`Secure`/`SameSite=Strict` cookies, CSRF, short sessions
+with server-side revocation, body caps and rate limits. **Tailscale is the
+remote network boundary, not the app auth**: the service is reachable on the
+LAN and the tailnet, and every request still signs in with Google. The LAN is
+not trusted.
+
+**Logins:** D1 is the login authority. SQLite mirrors the accounts for LAN
+auth, attribution and backup. A first remote sign-in while the laptop is off
+creates a provisional account/person in D1; the laptop confirms it.
+
 ## The local web service and the local daemon are separate processes
 
 They share one laptop and one `LiveStore`:
@@ -80,7 +96,7 @@ use the same persistence boundary (`08-code-organisation.md`).
 | `Outbox` (commands), chat sessions, accounts | Cloudflare D1 |
 | `Backend` (chat/identify, auth validation) | Cloudflare Worker |
 | `Derivative` (the view image), `Asset` bytes | Cloudflare R2 |
-| `Auth` | Cloudflare Access |
+| `Auth` | Cloudflare Access (remote); Google OAuth + Tailscale (home) |
 | `Model` calls | Cloudflare AI Gateway |
 | The human archive, the operational backup | Local OS daemon writes; the big disk stores |
 
@@ -94,6 +110,7 @@ survive a change of deployment.
 |---|---|
 | The remote backend leaves Cloudflare | `[shape]`: D3, D4, D11, D17, D20, D22; the Worker/D1 adapters; the Access/signed-URL image path |
 | The managed services are replaced | `[shape]`: D4, D5, D11, D13; the static app's SDK/API calls; the image URLs |
+| The auth provider changes | `[shape]`: D37, D38; the Access policy, the home Google client, the account mirror |
 | The laptop becomes a home server | the deployment table; the daemon/service split; `[shape]` D2, D6, D12 |
 | The database is replaced (SQLite → Postgres) | `[schema]`: D1, D7, D14, D16, D18, D27; `05-schema.md`/`06-schema-ddl.md` |
 | The code layout moves to `loft/` | `[interface]`: D31–D36; `08-code-organisation.md` |

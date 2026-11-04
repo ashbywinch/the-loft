@@ -121,6 +121,14 @@ decisions survive all three. The blast radius is at the bottom.
   against SQLite and memory.
 - **D36 [interface] — Export and sync use read views.** They never open the database or
   write SQL.
+- **D37 [shape] — Logins are Google on both surfaces.** D1 is the login
+  authority; SQLite mirrors accounts. The remote edge is Cloudflare Access;
+  the home service uses Google OAuth with the family allowlist, HTTPS, secure
+  cookies, CSRF and short sessions. Tailscale is the home network boundary,
+  not the app auth.
+- **D38 [domain] — The canonical chat transcript is SQLite.** D1 holds the
+  live session; each message has a UUID; the laptop writes exactly one
+  `review_messages` row.
 
 
 ## Blast radius

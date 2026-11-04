@@ -336,7 +336,7 @@ laptop re-validates every applied result and is the only writer.
 **The image.** The remote re-read uses the view image — the same image the
 reviewer checks rows on. The one-page comparison (view vs original, per-row
 text) is the gate; if the view is not good enough, the page waits for the
-laptop or uses a higher-resolution derivative.
+laptop. There is no second, higher-resolution review tier.
 
 **The prompts.** The Python review/memory/identify prompts and the verdict
 loop are ported to TS; the published facts and the prompt templates are the

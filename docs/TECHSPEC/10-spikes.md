@@ -156,5 +156,5 @@ hash/migration, draft exclusion, command rebuild — follow.
     (start at 2000px long edge, WebP/AVIF) reads and checks rows at 100 % on
     the landscape phone; the VLM's per-row text matches the original; the
     archive's page count fits the 10 GB budget, or the derivative is tuned. If
-    the view does not hold, the page waits for the laptop or uses a
-    higher-resolution derivative.
+    the view does not hold, the page waits for the laptop — there is no second
+    review tier.

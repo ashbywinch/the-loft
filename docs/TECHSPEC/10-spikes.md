@@ -136,10 +136,10 @@ hash/migration, draft exclusion, command rebuild — follow.
 
 ## The Cloudflare backend (`00-deployments.md`, `04-live-system.md`)
 
-25. **Worker chat parity.** The remote chat and identify flows on the Worker
-    match the laptop's Python review on the tested cases; the prompt/context
-    is shared or ported; the model key stays in the Worker; the laptop
-    re-validates every applied result.
+25. **Worker model parity.** The remote chat, identify and remote re-read on
+    the Worker match the laptop's Python review on the tested cases; the
+    prompt/context is shared or ported; the model key stays in the Worker; the
+    laptop re-validates every applied result.
 
 26. **Home auth.** A LAN request and a tailnet request both require Google
     sign-in; the family allowlist gates both; the account mirror resolves the
@@ -150,3 +150,7 @@ hash/migration, draft exclusion, command rebuild — follow.
 27. **Read-model publish.** Upload a release, flip `current.json`; a partial
     upload leaves the old pointer; the app reads the new release; a rollback
     re-points; the R2 CORS/Access credentials hold.
+
+28. **View-image transcription.** One page: the VLM's per-row text on the view
+    image vs the original. If the view holds, the remote re-read uses it; if
+    not, the page waits for the laptop or uses a higher-resolution derivative.

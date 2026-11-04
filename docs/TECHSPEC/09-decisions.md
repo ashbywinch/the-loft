@@ -133,6 +133,11 @@ decisions survive all three. The blast radius is at the bottom.
   uploads `releases/<seq>/` then flips `current.json`; the app reads the
   pointer. The laptop uses an R2 API token; the outbox pull uses an Access
   service token.
+- **D40 [shape] — The Worker runs chat, identify and remote re-read.** The
+  initial row generation and transcription stay on the laptop; the Worker
+  re-reads corrected rows from the published view image and queues the text.
+  Identify reads the transcript, not the scan. The laptop applies every
+  result.
 
 
 ## Blast radius

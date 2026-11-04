@@ -12,7 +12,7 @@ we operate runs off-site; the remote backend is a serverless function.
 | **Local web service** (laptop) | `loft serve` — FastAPI, `LiveStore`, the write seam, Google auth | the SQLite database, the LAN API, capture/review/browse |
 | **Local OS daemon** (laptop) | `loft work --watch`, `loft sync`, `loft export` | scan pickup, the pipeline, the outbox drain, the nightly human archive and operational backup |
 | **Remote static web app** (Cloudflare Pages) | HTML/JS/CSS; reads the read model from R2 | browse, the review surface; writes commands to the backend; **no server code** |
-| **Remote backend app** (Cloudflare Worker + D1) | one small API: chat/identify, command outbox, auth validation | the working state and the model calls; **no server to operate** |
+| **Remote backend app** (Cloudflare Worker + D1) | one small API: chat/identify/re-read, command outbox, auth validation | the working state and the model calls; **no server to operate** |
 
 | Managed service | Role |
 |---|---|
@@ -24,8 +24,8 @@ we operate runs off-site; the remote backend is a serverless function.
 ## The remote backend app
 
 It is a **Worker**, not a server: it holds the model key, accepts commands
-into D1, runs the chat and identify calls over the published facts, and
-serves the laptop's outbox pull. It does not write the archive; the laptop
+into D1, runs the chat, identify and remote re-read calls over the published
+facts, and serves the laptop's outbox pull. It does not write the archive; the laptop
 is still the only writer of domain state. The static app is separate and
 has no server code.
 
@@ -50,7 +50,7 @@ The remote app's data is published to **R2**, not served by a server:
   **Cloudflare Access service token**. The app shell is on Pages and changes
   rarely.
 
-**The backend app is TS.** The existing chat/identify logic is ported to
+**The backend app is TS.** The existing chat/identify/re-read logic is ported to
 the Worker; the port is accepted, not a reason to add another host. The
 laptop's Python service stays the LAN writer.
 
@@ -111,7 +111,7 @@ use the same persistence boundary (`08-code-organisation.md`).
 | Sync agent, exporter, retention, derivative generation | Local OS daemon |
 | `Snapshot` / read model | Cloudflare R2 (versioned releases + `current.json`) |
 | `Outbox` (commands), chat sessions, accounts | Cloudflare D1 |
-| `Backend` (chat/identify, auth validation) | Cloudflare Worker |
+| `Backend` (chat/identify/re-read, auth validation) | Cloudflare Worker |
 | `Derivative` (the view image), `Asset` bytes | Cloudflare R2 |
 | `Auth` | Cloudflare Access (remote); Google OAuth + Tailscale (home) |
 | `Model` calls | Cloudflare AI Gateway |

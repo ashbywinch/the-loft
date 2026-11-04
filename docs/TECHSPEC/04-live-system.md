@@ -122,7 +122,7 @@ nightly human archive and operational backup.** The full deployment table is
 | **Exporter** | laptop | nightly operational backup, human archive, verification, retention | serve reads |
 | **Archive disk** | big disk | full-resolution originals; the human archive; the operational backup | be written by the app |
 | **Remote static app** | Cloudflare Pages | the static UI; reads the R2 read model; writes commands to the backend; fetches images from R2 | run server code |
-| **Cloudflare backend** | Worker + D1 | chat/identify calls, the outbox, auth validation, accounts | write the archive |
+| **Cloudflare backend** | Worker + D1 | chat/identify/re-read calls, the outbox, auth validation, accounts | write the archive |
 | **Snapshot** | R2 | the current release and the `current.json` pointer | be the only copy |
 | **Outbox** | D1 | immutable commands keyed by UUID | be edited or deleted |
 | **Derivative store** | R2 | the view images (readable, row-checkable) | hold originals |
@@ -157,6 +157,7 @@ materialisation, not the live store. The noun ownership is
 | Full-resolution images | serves on LAN | — (never stored) | stores |
 | View images | generates | served from R2 (readable and row-checkable) | — |
 | Read model | produces | R2 publishes a release + pointer | — |
+| Remote re-read | — | Worker transcribes corrected rows from the view image | — |
 | Remote command queue | drains | D1 outbox | — |
 | Operational backup | produces | — | stores |
 | Human archive | produces | — | stores |
@@ -307,6 +308,40 @@ The invariants:
 - **Search.** SQLite FTS5 in the live DB; the index is part of the published
   read model, so remote search works on the published state.
 
+### 17.6.1 The remote model work
+
+The Worker runs the model-driven flows while the laptop is off:
+
+| Flow | Context | Result |
+|---|---|---|
+| **Import-review chat** | the conversation + the published facts (objects, transcripts, identity tables); a read-only tool set (get person/place/item, search, get document/transcript) | messages and decisions, queued as commands |
+| **Memory-capture chat** | the narrator's page, the current draft, the published facts | messages and the memory draft/save, queued |
+| **Identify** | the document's transcript + the published identity tables; no scan | proposed people/places, queued |
+| **Remote re-read** | the reviewer's drawn lines + the published words; the view image; the row boxes | the corrected rows' text, queued |
+
+**Identify reads the transcript.** The scan is not sent; the transcript is
+the evidence.
+
+**The remote re-read.** The app sends the drawn lines and the published
+words; the shared TS row-adjust module (the same rules as `Rows.adjust`)
+builds the corrected rows; the app crops the row bands from the view image;
+the Worker calls the VLM for the rows; the result queues for the laptop. The
+initial row generation and transcription stay on the laptop; only the re-read
+of an already-published page runs on the Worker.
+
+**The facts are the last published release.** The Worker sees the
+`current.json` release, not the live DB; the UI shows `published_at`. The
+laptop re-validates every applied result and is the only writer.
+
+**The image.** The remote re-read uses the view image — the same image the
+reviewer checks rows on. The one-page comparison (view vs original, per-row
+text) is the gate; if the view is not good enough, the page waits for the
+laptop or uses a higher-resolution derivative.
+
+**The prompts.** The Python review/memory/identify prompts and the verdict
+loop are ported to TS; the published facts and the prompt templates are the
+contract; a parity test runs the PRD's review cases against both.
+
 ### 17.7 The sync pattern, and the alternatives
 
 The pattern is **single writer + immutable command outbox + materialised
@@ -380,8 +415,8 @@ operational backup and the nightly dumps (`07-exports.md`).
   `wal_autocheckpoint=1000`, `recursive_triggers=ON`. No foreign keys; the
   write seam is the integrity check.
 - **The remote is a static web app plus a small Cloudflare backend.** The
-  static app reads R2; the Worker runs the chat/identify calls, the
-  outbox and auth validation; D1 holds the working state; Access gates the
+  static app reads R2; the Worker runs the chat/identify/re-read calls,
+  the outbox and auth validation; D1 holds the working state; Access gates the
   family; AI Gateway holds the model. There is no server we operate: the
   laptop's apply is the domain validation the static app cannot perform.
 - **The outbox is a D1 table, keyed by UUID.** D1 is durable and managed;

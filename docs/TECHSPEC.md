@@ -16,7 +16,7 @@ There are **four code deployments and four managed services**:
   published read model; **no server code**.
 - **Remote backend app** (Cloudflare Worker + D1) — the chat/identify calls,
   the command outbox and auth validation; serverless, no server to operate.
-- **Managed services** (Cloudflare) — Access (auth), D1 (the tiny database),
+- **Managed services** (Cloudflare) — D1 (the tiny database), the Worker's Google OAuth (auth),
   R2 (browse images), AI Gateway (the model).
 
 No server we operate runs off-site. The remote static app is exactly that;
@@ -45,7 +45,7 @@ restate it.
 | The record wire shape, maps, PWA, search, tools (the legacy file layout/capture/privacy/performance are in `99`) | [02-archive-and-capture.md](TECHSPEC/02-archive-and-capture.md) |
 | The capture pipeline, reading path and review surface (the import flow is a record) | [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) |
 | The live system's shape, the remote API, command/read flow, failure modes | [04-live-system.md](TECHSPEC/04-live-system.md) §17 |
-| The schema's concepts, event log, content, projections, migrations, withdrawal | [05-schema.md](TECHSPEC/05-schema.md) §18.1–18.7 |
+| The schema's concepts, event log, content, projections, migrations, withdrawal; the D1 store | [05-schema.md](TECHSPEC/05-schema.md) §18.1–18.7, §18.13 |
 | The schema DDL — events, content and projections, the one table definition | [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) |
 | The nightly job, the human archive, the operational backup | [07-exports.md](TECHSPEC/07-exports.md) |
 | Code organisation and the persistence boundary | [08-code-organisation.md](TECHSPEC/08-code-organisation.md) §19 |
@@ -69,7 +69,7 @@ The export/backup procedure is only in [07-exports.md](TECHSPEC/07-exports.md).
 | [02-archive-and-capture.md](TECHSPEC/02-archive-and-capture.md) | §4, §6, §9–§11 the record wire shape, maps, PWA, search, tools | current; §3/§5/§7/§8 are in [99-history.md](TECHSPEC/99-history.md) |
 | [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) | §16.13–§16.17 the capture pipeline, reading path and review surface; §16.1–§16.11 the import-flow record | current for the pipeline; the import-flow record is not the live architecture |
 | [04-live-system.md](TECHSPEC/04-live-system.md) | §17 the live system — shape, command/read flow, failure modes, technology choices | **proposed**; the deployment shape is normative in `00` |
-| [05-schema.md](TECHSPEC/05-schema.md) | §18.1–18.7 the schema concepts: append-only stores, event log, content, projections, write transaction, migrations, withdrawal | **proposed** |
+| [05-schema.md](TECHSPEC/05-schema.md) | §18.1–18.7 the schema concepts: append-only stores, event log, content, projections, write transaction, migrations, withdrawal; §18.13 the D1 store | **proposed** |
 | [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) | §18.2, §18.3, §18.10 the DDL — the one table definition | **proposed** |
 | [07-exports.md](TECHSPEC/07-exports.md) | §17.9 + §18.8–18.9 the nightly job, the human archive, the operational backup | **proposed** |
 | [08-code-organisation.md](TECHSPEC/08-code-organisation.md) | §19 the layers and the persistence boundary | **proposed** |
@@ -93,7 +93,7 @@ The export/backup procedure is only in [07-exports.md](TECHSPEC/07-exports.md).
 | §17.9 | [07-exports.md](TECHSPEC/07-exports.md) |
 | §17.12 | [10-spikes.md](TECHSPEC/10-spikes.md) |
 | §17.13 | [09-decisions.md](TECHSPEC/09-decisions.md) |
-| §18.1–§18.7 | [05-schema.md](TECHSPEC/05-schema.md) (concepts; the DDL is in `06`) |
+| §18.1–§18.7, §18.13 | [05-schema.md](TECHSPEC/05-schema.md) (concepts and the D1 store; the DDL is in `06`) |
 | §18.8–§18.9 | [07-exports.md](TECHSPEC/07-exports.md) |
 | §18.10 | [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) |
 | §18.11 | [09-decisions.md](TECHSPEC/09-decisions.md) |

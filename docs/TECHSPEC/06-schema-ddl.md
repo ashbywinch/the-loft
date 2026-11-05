@@ -498,7 +498,7 @@ CREATE TABLE commands (
   base_version INTEGER,
   payload_json TEXT,
   outcome      TEXT NOT NULL DEFAULT 'pending'
-               CHECK (outcome IN ('pending', 'applied', 'needs_attention', 'rejected')),
+               CHECK (outcome IN ('pending', 'applied', 'parked', 'rejected')),
   event_seq    INTEGER,
   reason       TEXT
 ) STRICT;
@@ -529,7 +529,7 @@ CREATE TABLE accounts (
   account_id  TEXT PRIMARY KEY,       -- mirror of the D1 login authority
   person_id   TEXT NOT NULL,          -- the person the login belongs to
   email       TEXT UNIQUE,            -- the sign-in identity
-  role        TEXT NOT NULL CHECK (role IN ('viewer', 'curator', 'admin')),
+  role        TEXT NOT NULL CHECK (role IN ('owner', 'editor', 'viewer')),
   created_at  TEXT NOT NULL,
   disabled_at TEXT
 ) STRICT;
@@ -555,7 +555,7 @@ indexed path, not a scan by `entity_id`.
 
 **Operational rules.** A rebuilt `running` job returns to `pending` unless a
 live lease proves otherwise; `lease_owner`/`lease_until` make that
-deterministic. `commands.outcome = 'needs_attention'` is the stale-command
+deterministic. `commands.outcome = 'parked'` is the stale-command
 state the remote UI shows as "awaiting the laptop"; the status reaches the
 remote on the next published read model, which the UI states.
 

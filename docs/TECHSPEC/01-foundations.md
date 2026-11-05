@@ -33,6 +33,6 @@ It makes the architectural calls the PRD left open, with rationale. The decision
 
 OCR transcription drafts, photo labeling, theme/entity discovery, TTS — the `proposed`/`confirmed` status exists in the schema (P4). **Models are called through the family's gateway; there is no requirement to run them locally.**
 
-**Cousin contributions (not built, not ruled out):** Cloudflare Access covers invite-level access; a future merge/import tool (per-contributor folders, ID namespacing) adds uploads without schema change — people are already first-class in the model.
+**Cousin contributions (not built, not ruled out):** The D1 accounts list covers invite-level access; a future merge/import tool (per-contributor folders, ID namespacing) adds uploads without schema change — people are already first-class in the model.
 
 ---

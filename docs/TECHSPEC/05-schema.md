@@ -236,20 +236,21 @@ browse queries join on are child tables. There is no generic entity table.
 | `assets` | the catalog: sha, kind, mime, size, relative path, derivative-of |
 | `aliases` | merged ids → survivor ids |
 | `withdrawals` | bad changes and their compensation change |
-| `commands` | remote commands: `received`→pending, `applied`→applied, `rejected`→needs_attention or rejected |
+| `commands` | remote commands: `received`→pending, `applied`→applied, `rejected`→parked or rejected |
 | `search_docs` + `search` | FTS5 over titles, names, transcripts and stories |
 | `sync_state` | cursor progress and `last_verified_export_at`; operational |
 | `jobs` | the worker queue, leases and attempts; rebuilt from `job/*` |
 
-**Auth state is not a projection.** `accounts(account_id, person_id, email,
-role)` is the login authority in D1; SQLite mirrors it for LAN auth,
-attribution and backup. `events.actor_id` is the **person id**, not the
-account id; the log never stores an email. A person may have no account —
-most of the cast never will — and a contributor who is not yet in the cast
-gets a proposed person record. A first remote sign-in while the laptop is off
-creates a provisional account/person in D1; the laptop confirms it. The chat
-session is live in D1; the canonical transcript is SQLite `review_messages`,
-one row per message UUID. Accounts are never written to the human archive.
+**Auth state is not a projection.** `accounts(account_id, email, subject,
+person_id, role, status)` is the login authority in D1; SQLite mirrors the
+linked accounts for LAN auth, attribution and backup. `events.actor_id` is the
+**person id**, not the account id; the log never stores an email. A person may
+have no account — most of the cast never will — and a contributor who is not
+yet in the cast gets a proposed person record. The owner invites an email; the
+first sign-in binds the Google subject; the laptop links the person (creating
+a proposed one if new). The chat session is live in D1; the canonical
+transcript is SQLite `review_messages`, one row per message UUID. Accounts are
+never written to the human archive.
 
 The shared columns on a state table are `version`, `event_no`, `event_seq`
 and `updated_at`; `version` is the optimistic token a command carries. The
@@ -460,3 +461,111 @@ remain visible; nothing is edited.
   are untouched.
 - **The release is in every row.** `app_version` makes "what did the bad
   release write?" one query.
+
+### 18.13 The remote store (D1)
+
+The Worker's store is D1 (SQLite); it holds only what the remote needs while
+the laptop is off. The live archive is the SQLite DB at home: D1 is a working
+store, not a second archive.
+
+```sql
+CREATE TABLE accounts (
+  account_id   TEXT PRIMARY KEY,     -- the invite id
+  email        TEXT NOT NULL UNIQUE, -- the invite address
+  subject      TEXT UNIQUE,          -- the Google sub, null until first sign-in
+  person_id    TEXT,                 -- the archive person, null until linked
+  role         TEXT NOT NULL DEFAULT 'editor'
+               CHECK (role IN ('owner', 'editor', 'viewer')),
+  status       TEXT NOT NULL DEFAULT 'invited'
+               CHECK (status IN ('invited', 'active', 'disabled')),
+  invited_at   TEXT NOT NULL,
+  activated_at TEXT,
+  last_seen_at TEXT
+);
+
+CREATE TABLE auth_sessions (
+  session_id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT
+);
+CREATE INDEX auth_sessions_account ON auth_sessions (account_id);
+
+CREATE TABLE commands (
+  seq              INTEGER PRIMARY KEY AUTOINCREMENT,
+  command_id       TEXT NOT NULL UNIQUE,
+  actor_account_id TEXT NOT NULL,
+  actor_person_id  TEXT,
+  kind             TEXT NOT NULL,
+  target_kind      TEXT NOT NULL,
+  target_id        TEXT NOT NULL,
+  payload_json     TEXT NOT NULL,
+  base_version     INTEGER,
+  idempotency_key  TEXT NOT NULL,
+  outcome          TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (outcome IN ('pending', 'applied', 'parked', 'rejected')),
+  reason           TEXT,
+  received_at      TEXT NOT NULL,
+  applied_at       TEXT,
+  UNIQUE (actor_account_id, idempotency_key)
+);
+CREATE INDEX commands_outcome ON commands (outcome);
+
+CREATE TABLE review_sessions (
+  session_id       TEXT PRIMARY KEY,
+  kind             TEXT NOT NULL,
+  subject_kind     TEXT NOT NULL,
+  subject_id       TEXT,
+  actor_account_id TEXT NOT NULL,
+  status           TEXT NOT NULL,
+  created_at       TEXT NOT NULL,
+  updated_at       TEXT NOT NULL
+);
+
+CREATE TABLE messages (
+  message_id       TEXT PRIMARY KEY,   -- the UUID the laptop writes
+  session_id       TEXT NOT NULL,
+  ordinal          INTEGER NOT NULL,
+  role             TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+  actor_account_id TEXT,
+  text             TEXT NOT NULL,
+  created_at       TEXT NOT NULL,
+  UNIQUE (session_id, ordinal)
+);
+
+CREATE TABLE uploads (
+  upload_id  TEXT PRIMARY KEY,
+  sha256     TEXT NOT NULL,
+  mime       TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  object_key TEXT NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'staged'
+             CHECK (status IN ('staged', 'pulled', 'rejected')),
+  created_at TEXT NOT NULL
+);
+```
+
+**The account is the allowlist.** An invite is a row with `status='invited'`
+and no `subject`; the owner creates it from the laptop through
+`POST /internal/accounts`. The first Google sign-in binds `subject`, sets
+`active`, and the laptop links `person_id` (or creates a proposed person and
+writes it back). An email with no row, or a `disabled` one, gets `403` and a
+log line.
+
+**The session is revocable.** The cookie carries only the `session_id`;
+`auth_sessions` is the authority, so a sign-out or a disable revokes at once.
+The cookie is `HttpOnly`, `Secure`, `SameSite=Lax`, short-lived.
+
+**The outbox is the command log.** `seq` is the laptop's cursor
+(`applied_through`); `command_id` is the operation id; the unique
+`(actor_account_id, idempotency_key)` index makes a retry return the first
+row. `outcome` is `pending` until the laptop applies it, then `applied` or
+`parked`; `rejected` is terminal.
+
+**The transcript is the live session.** `review_sessions` and `messages` are
+the D1 copy the app reads while the laptop is off; the laptop writes one
+`review_messages` row per `message_id`, and the SQLite copy is canonical.
+
+**No foreign keys, like the live schema.** D1 is not the archive; the laptop
+validates every reference on apply.

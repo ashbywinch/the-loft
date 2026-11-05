@@ -121,17 +121,18 @@ decisions survive all three. The blast radius is at the bottom.
   against SQLite and memory.
 - **D36 [interface] — Export and sync use read views.** They never open the database or
   write SQL.
-- **D37 [shape] — Logins are Google on both surfaces.** D1 is the login
-  authority; SQLite mirrors accounts. The remote edge is Cloudflare Access;
-  the home service uses Google OAuth with the family allowlist, HTTPS, secure
-  cookies, CSRF and short sessions. Tailscale is the home network boundary,
-  not the app auth.
+- **D37 [shape] — Logins are Google on both surfaces, and D1 is the
+  authority.** The Worker runs the remote OAuth flow and owns the session;
+  the home service runs its own flow against the SQLite mirror. D1 `accounts`
+  is the family allowlist: an invite by email, the first sign-in binding the
+  Google subject, an uninvited sign-in `403` and logged. SQLite mirrors the
+  accounts. Tailscale is the home network boundary, not the app auth.
 - **D38 [domain] — The canonical chat transcript is SQLite.** D1 holds the
   live session; each message has a UUID; the laptop writes exactly one
   `review_messages` row.
 - **D39 [shape] — The read model is an R2 release plus a pointer.** The laptop
   uploads `releases/<seq>/` then flips `current.json`; the app reads the
-  pointer. The laptop uses an R2 API token; the outbox pull uses an Access
+  pointer. The laptop uses an R2 API token; the outbox pull uses a Worker
   service token.
 - **D40 [shape] — The Worker runs chat, identify and remote re-read.** The
   initial row generation and transcription stay on the laptop; the Worker
@@ -140,8 +141,8 @@ decisions survive all three. The blast radius is at the bottom.
   result.
 - **D41 [shape] — The remote is one origin; the Worker serves the images.**
   Pages serves the app at `archive.<domain>`; the Worker answers `/api/*` and
-  `/img/<sha>` on the same hostname; Access protects it once, so cookies are
-  first-party and there is no CORS or signed URL. Images are content-addressed,
+  `/img/<sha>` on the same hostname; the Worker's Google session gates it, so
+  cookies are first-party and there is no CORS or signed URL. Images are content-addressed,
   served `immutable`, and cached at the edge and in the browser. The free
   Worker request budget is ample at family scale, and repeat views are free.
 - **D42 [domain] — The release's review half is the open claims only.** The

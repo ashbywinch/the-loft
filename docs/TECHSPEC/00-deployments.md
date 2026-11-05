@@ -12,12 +12,12 @@ we operate runs off-site; the remote backend is a serverless function.
 | **Local web service** (laptop) | `loft serve` — FastAPI, `LiveStore`, the write seam, Google auth | the SQLite database, the LAN API, capture/review/browse |
 | **Local OS daemon** (laptop) | `loft work --watch`, `loft sync`, `loft export` | scan pickup, the pipeline, the outbox drain, the nightly human archive and operational backup |
 | **Remote static web app** (Cloudflare Pages) | HTML/JS/CSS; reads the read model from R2 | browse, the review surface; writes commands to the backend; **no server code** |
-| **Remote backend app** (Cloudflare Worker + D1) | one small API: chat/identify/re-read, command outbox, auth validation | the working state and the model calls; **no server to operate** |
+| **Remote backend app** (Cloudflare Worker + D1) | one small API: Google OAuth, chat/identify/re-read, command outbox | the working state and the model calls; **no server to operate** |
 
 | Managed service | Role |
 |---|---|
-| **Cloudflare Access** | family-only auth (Google); no auth code |
-| **Cloudflare D1** | the tiny database: outbox, chat sessions, accounts |
+| **Google Identity** | the OAuth sign-in; the Worker verifies the ID token and owns the session |
+| **Cloudflare D1** | the tiny database: outbox, chat sessions, accounts, auth sessions |
 | **Cloudflare R2** | the view images and the published read model (versioned releases + `current.json`) |
 | **Cloudflare AI Gateway** | the model gateway; the key lives in the Worker |
 
@@ -39,7 +39,7 @@ The remote app's data is published to **R2**, served through **one origin**:
 
 - The app is at `archive.<domain>` (Cloudflare Pages). The Worker answers
   `/api/*` (commands, chat, identify, re-read) and `/img/<sha>` on the same
-  hostname. **Cloudflare Access protects the hostname once**; the session
+  hostname. **The Worker's Google session gates the hostname**; the session
   cookie is first-party, so the app's fetches and its `<img>` requests are
   authorized with no CORS and no signed URL.
 - Each publish is a **release**: the laptop uploads the release's JSON and
@@ -54,8 +54,8 @@ The remote app's data is published to **R2**, served through **one origin**:
   image after the first view. Repeat views cost neither a Worker request nor
   an R2 read.
 - The laptop uses an **R2 API token** for the upload; the outbox pull uses a
-  **Cloudflare Access service token**. The app shell is on Pages and changes
-  rarely.
+  **Worker service token** (a bearer secret). The app shell is on Pages and
+  changes rarely.
 
 **What a release carries.** Two halves:
 
@@ -95,26 +95,31 @@ The remote site must be **readable and checkable**, not a thumbnail gallery:
   explicit product decision — never a thumbnail-only site.
 
 **Images are served by the Worker on the same origin**, at `/img/<sha>`,
-from R2. That is one authorized hostname (Access once), no CORS, and no
+from R2. That is one authorized hostname (sign in once), no CORS, and no
 signed URL to mint or expire. The immutable cache header plus the browser
 cache means the first view of an image is the only one that touches the
 Worker.
 
 ## Authentication
 
-**Remote:** Cloudflare Access (Google) in front of the one hostname (Pages
-and the Worker's routes); the family allowlist is the Access policy.
+**Remote:** the Worker runs the Google OAuth flow itself (authorization code,
+PKCE, state and nonce); it verifies the ID token and owns a revocable session
+cookie. **D1 `accounts` is the family allowlist** — the owner invites an
+email, and the first sign-in binds the Google subject to that row. An
+uninvited sign-in is `403` and logged. The session gates `/api/*` and
+`/img/*`; `/internal/*` takes a Worker service token held by the laptop.
 
-**Home:** the local service uses Google OAuth with the same family allowlist —
-HTTPS, `HttpOnly`/`Secure`/`SameSite=Strict` cookies, CSRF, short sessions
-with server-side revocation, body caps and rate limits. **Tailscale is the
-remote network boundary, not the app auth**: the service is reachable on the
-LAN and the tailnet, and every request still signs in with Google. The LAN is
-not trusted.
+**Home:** the local service uses Google OAuth with the same account list (the
+SQLite mirror of D1 accounts) — HTTPS, `HttpOnly`/`Secure`/`SameSite=Strict`
+cookies, CSRF, short sessions with server-side revocation, body caps and rate
+limits. **Tailscale is the remote network boundary, not the app auth**: the
+service is reachable on the LAN and the tailnet, and every request still signs
+in with Google. The LAN is not trusted.
 
 **Logins:** D1 is the login authority. SQLite mirrors the accounts for LAN
-auth, attribution and backup. A first remote sign-in while the laptop is off
-creates a provisional account/person in D1; the laptop confirms it.
+auth, attribution and backup. The owner invites an account by email; the first
+remote sign-in binds its Google subject; the laptop links the account to a
+person (or creates a proposed one) and writes the link back.
 
 ## The local web service and the local daemon are separate processes
 
@@ -141,9 +146,9 @@ files are still written, but no domain write bypasses the seam.
 | Sync agent, exporter, retention, derivative generation | Local OS daemon |
 | `Snapshot` / read model | Cloudflare R2 (versioned releases + `current.json`) |
 | `Outbox` (commands), chat sessions, accounts | Cloudflare D1 |
-| `Backend` (chat/identify/re-read, auth validation) | Cloudflare Worker |
+| `Backend` (Google OAuth, chat/identify/re-read) | Cloudflare Worker |
 | `Derivative` (the view image), `Asset` bytes | Cloudflare R2 |
-| `Auth` | Cloudflare Access (remote); Google OAuth + Tailscale (home) |
+| `Auth` | Google OAuth (both surfaces); D1 accounts is the remote allowlist, SQLite mirrors; Tailscale (home network) |
 | `Model` calls | Cloudflare AI Gateway |
 | The human archive, the operational backup | Local OS daemon writes; the big disk stores |
 
@@ -155,9 +160,9 @@ survive a change of deployment.
 
 | Change | Revisit |
 |---|---|
-| The remote backend leaves Cloudflare | `[shape]`: D3, D4, D11, D17, D20, D22; the Worker/D1 adapters; the Access + `/img` path |
+| The remote backend leaves Cloudflare | `[shape]`: D3, D4, D11, D17, D20, D22; the Worker/D1 adapters; the Google OAuth + `/img` path |
 | The managed services are replaced | `[shape]`: D4, D5, D11, D13; the static app's SDK/API calls; the image URLs |
-| The auth provider changes | `[shape]`: D37, D38; the Access policy, the home Google client, the account mirror |
+| The auth provider changes | `[shape]`: D37, D38; the OAuth flow, the home Google client, the account mirror |
 | The laptop becomes a home server | the deployment table; the daemon/service split; `[shape]` D2, D6, D12 |
 | The database is replaced (SQLite → Postgres) | `[schema]`: D1, D7, D14, D16, D18, D27; `05-schema.md`/`06-schema-ddl.md` |
 | The code layout moves to `loft/` | `[interface]`: D31–D36; `08-code-organisation.md` |

@@ -79,13 +79,14 @@ flowchart LR
     Snapshot["Read model<br/>R2 releases + current.json"]
     Outbox["Outbox table<br/>D1, keyed by UUID"]
     Media["Cloudflare R2<br/>view images (readable)"]
-    Auth["Cloudflare Access"]
+    Auth["Google OAuth<br/>Worker sessions"]
     Model["Cloudflare AI Gateway"]
 
     Static -->|"reads read model"| Snapshot
     Static -->|"writes command"| Backend
     Static -->|"fetches images"| Media
-    Static --- Auth
+    Static -->|"sign in"| Auth
+    Backend --- Auth
     Backend -->|"model calls"| Model
     Backend --- Outbox
     Backend --- Auth
@@ -122,7 +123,7 @@ nightly human archive and operational backup.** The full deployment table is
 | **Exporter** | laptop | nightly operational backup, human archive, verification, retention | serve reads |
 | **Archive disk** | big disk | full-resolution originals; the human archive; the operational backup | be written by the app |
 | **Remote static app** | Cloudflare Pages | the static UI; reads the R2 read model; writes commands to the backend; fetches images from R2 | run server code |
-| **Cloudflare backend** | Worker + D1 | chat/identify/re-read calls, the outbox, auth validation, accounts | write the archive |
+| **Cloudflare backend** | Worker + D1 | Google OAuth, chat/identify/re-read calls, the outbox, accounts | write the archive |
 | **Snapshot** | R2 | the current release and the `current.json` pointer | be the only copy |
 | **Outbox** | D1 | immutable commands keyed by UUID | be edited or deleted |
 | **Derivative store** | R2 | the view images (readable, row-checkable) | hold originals |
@@ -162,7 +163,7 @@ materialisation, not the live store. The noun ownership is
 | Operational backup | produces | — | stores |
 | Human archive | produces | — | stores |
 | Retention / trim | ✓ | — | ✓ |
-| Auth | LAN session | Cloudflare Access (Google) | — |
+| Auth | LAN session | Google OAuth (the Worker's session) | — |
 
 The two deliberate omissions: **no pipeline work off-site** (it needs the
 scanner and the originals), and **no full-resolution originals off-site**.
@@ -254,7 +255,7 @@ sequenceDiagram
   else no row changed
     S-->>L: stale
     S->>D: command/rejected (retryable)
-    Note over P: the next read model carries needs_attention
+    Note over P: the next read model carries the parked list
   end
 
   X->>D: nightly read of changed records
@@ -280,7 +281,7 @@ The invariants:
 - **Version-checked atomically.** The guard is the typed table's
   conditional UPSERT with `WHERE version IS :base`; a zero-row result is a
   stale command, never a Python read-check-write. A stale command is parked
-  as `needs_attention`.
+  as `parked`.
 - **One entity version, one export cursor.** `entity_version` moves only
   on a state change and is the command base; `exported_through` is the
   global event seq the archive has materialised. Exporting never touches
@@ -294,9 +295,9 @@ The invariants:
 
 ### 17.5.1 The remote API
 
-**The public surface is resource-oriented.** One hostname (D41); Cloudflare
-Access authenticates; the Worker takes the actor from the Access identity,
-never from the body. A write is a request about a resource, not a command
+**The public surface is resource-oriented.** One hostname (D41); the Worker's
+Google session authenticates, and it takes the actor from the account, never
+from the body. A write is a request about a resource, not a command
 envelope; the command is the internal outbox row the Worker writes.
 
 | Endpoint | Body | Outbox kind |
@@ -333,7 +334,17 @@ is parked with its reason, listed under its author.
 
 **The outbox is internal.** `kind` and `payload` are the laptop's work item;
 the client never sends or sees them. The mapping above is the contract
-between the API and the drain.
+between the API and the drain. The D1 DDL is `05-schema.md` §18.13.
+
+**Auth routes.** `GET /auth/google` starts the flow, `GET /auth/callback`
+verifies the ID token and sets the session, `POST /auth/logout` revokes it.
+An uninvited email gets `403` and a log line.
+
+**The laptop's internal routes.** A Worker service token (bearer) gates
+`GET /internal/outbox?since=`, `POST /internal/outbox/{id}/result`,
+`GET /internal/messages?since=`, `GET /internal/accounts?since=`,
+`POST /internal/accounts`, `POST /internal/accounts/{id}/person`, and
+`POST /internal/uploads/{id}/pulled`. They are not part of the public API.
 
 ### 17.6 Read paths
 
@@ -449,7 +460,7 @@ records" rule, applied to a backend that is sometimes unreachable.
 | **CRDT / local-first merge** (Automerge, Yjs) | Good for concurrent text, but the domain needs validation, identity and one audit order; a CRDT still needs a server-side validator, so the complexity is added without removing the writer. Possible later for the transcript text field alone. |
 | **Cloud-authoritative database** (Postgres/Supabase live) | The simplest live UX, but the truth moves off-site and the laptop becomes a materialiser; "sync back to the local disk" becomes a replication problem. It is the clean upgrade path if remote freshness ever outweighs local truth. |
 | **Remote app server** (the old two-app shape) | A server off-site would only serve the static app's reads and accept its writes — a second deployment, a live attack surface and a second writer, for no domain capability the Cloudflare backend does not already provide. |
-| **Remote static app + Cloudflare backend (chosen)** | The static app reads R2 and writes commands to a Worker; D1 holds the outbox and chat state; Access gates the family; AI Gateway holds the model. No server we operate runs off-site. It cannot validate domain writes itself, so the laptop re-validates every command on apply. That is the cost of no server, and it is the shape in `00-deployments.md`. |
+| **Remote static app + Cloudflare backend (chosen)** | The static app reads R2 and writes commands to a Worker; D1 holds the outbox and chat state; the Worker's Google session gates the family; AI Gateway holds the model. No server we operate runs off-site. It cannot validate domain writes itself, so the laptop re-validates every command on apply. That is the cost of no server, and it is the shape in `00-deployments.md`. |
 
 The chosen pattern's cost is freshness, and the architecture makes it
 visible rather than hiding it: the read model's age and the pending count
@@ -515,7 +526,7 @@ value); the rows are the evidence and the projection is rebuildable.
 | Nightly failed or missed | LAN and remote keep working | The archive and its off-site copy age; the DB is still the live truth | Catch-up run on the next start; `last_verified_export_at` and a banner after N missed nights |
 | Restore to before the cursor | — | Replaying events | The event log is exported and restored, so replay is idempotent; the log records no duplicate |
 | Outbox grows for weeks | Everything | Storage only; the log is tiny | The cursor catches up; the outbox is never trimmed |
-| Stale command | — | The author's edit | Parked as `needs_attention`; the author sees it in the remote pending list and resolves against the newer version |
+| Stale command | — | The author's edit | Parked; the author sees it in the remote pending list and resolves against the newer version |
 | Partial read-model publish | The previous read model stays current | — | The pointer flips only after the new read model and manifest are complete |
 | Ordering | — | Which command wins | Commands apply in pull order; per-record conflicts are decided by `entity_version`, not wall-clock time. There is no global order, and the UI does not claim one |
 
@@ -532,8 +543,8 @@ value); the rows are the evidence and the projection is rebuildable.
   write seam is the integrity check.
 - **The remote is a static web app plus a small Cloudflare backend.** The
   static app reads R2; the Worker runs the chat/identify/re-read calls,
-  the outbox and auth validation; D1 holds the working state; Access gates the
-  family; AI Gateway holds the model. There is no server we operate: the
+  the outbox and OAuth; D1 holds the working state; the Worker's
+  Google session gates the family; AI Gateway holds the model. There is no server we operate: the
   laptop's apply is the domain validation the static app cannot perform.
 - **The outbox is a D1 table, keyed by UUID.** D1 is durable and managed;
   we run no queue service. The command row
@@ -544,19 +555,23 @@ value); the rows are the evidence and the projection is rebuildable.
   uploads the release's JSON and images under `releases/<seq>/`, then flips
   `current.json`; the app reads the pointer. The pointer flips only when every
   referenced part is present. The laptop uses an **R2 API token** for the
-  upload; the outbox pull uses a **Cloudflare Access service token**.
+  upload; the outbox pull uses a **Worker service token**.
 - **Derivatives are generated on the laptop and uploaded.** On-the-fly
   resizing at the edge would add a service and put the original one hop
   from the internet.
-- **Auth is Google on both surfaces, with the same family allowlist.**
-  Remote: Cloudflare Access in front of Pages and the Worker; the Worker reads
-  the Access JWT. Home: the local service's Google OAuth (web/device flow),
-  HTTPS, `HttpOnly`/`Secure`/`SameSite=Strict` cookies, CSRF, short sessions
-  with server-side revocation, body caps and rate limits. The home service is
-  reachable on the LAN and the tailnet; **Tailscale is the remote network
-  boundary, not the app auth** — every request still signs in with Google. The
-  LAN is not trusted. D1 is the login authority; SQLite mirrors the accounts
-  for LAN auth and backup. The static app never sees the client secret.
+- **Auth is Google on both surfaces, with one account list.** Remote: the
+  Worker runs the authorization-code flow (PKCE, state, nonce), verifies the
+  ID token and owns a revocable session cookie. D1 `accounts` is the family
+  allowlist: the owner invites an email; the first sign-in binds the Google
+  subject; an uninvited sign-in is `403` and logged. Home: the local service's
+  Google OAuth (web/device flow) against the SQLite mirror of the same
+  accounts, HTTPS, `HttpOnly`/`Secure`/`SameSite=Strict` cookies, CSRF, short
+  sessions with server-side revocation, body caps and rate limits. The home
+  service is reachable on the LAN and the tailnet; **Tailscale is the remote
+  network boundary, not the app auth** — every request still signs in with
+  Google. The LAN is not trusted. D1 is the login authority; SQLite mirrors
+  the accounts for LAN auth and backup. The static app never sees the client
+  secret.
 - **Search is SQLite FTS5 in the live DB**; the published read model
   carries a client-searchable index. The service probes FTS5 at startup and
   fails loudly rather than silently degrading to no search.
@@ -565,10 +580,10 @@ value); the rows are the evidence and the projection is rebuildable.
 images, so they are treated as trusted-but-limited surfaces, not public:
 
 - Object-storage buckets are private; reads go through the Worker's `/img`
-  and `/model` routes behind Access; writes use a server-side credential the
+  and `/model` routes behind the session; writes use a server-side credential the
   browser never sees.
-- Cloudflare Access and the Worker gate access; the laptop validates a
-  command's schema, actor and role again before applying. A compromised backend credential cannot inject an arbitrary
+- The Worker's session gate checks the account and role; the laptop validates
+  a command's schema, actor and role again before applying. A compromised backend credential cannot inject an arbitrary
   domain write.
 - Staged uploads have a quota, an allowed MIME set, a sha256 check and a
   short lifetime; the laptop deletes the staged object after the pull.

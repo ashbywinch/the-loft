@@ -142,14 +142,13 @@ hash/migration, draft exclusion, command rebuild — follow.
     laptop re-validates every applied result.
 
 26. **Home auth.** A LAN request and a tailnet request both require Google
-    sign-in; the family allowlist gates both; the account mirror resolves the
+    sign-in; the account list gates both; the account mirror resolves the
     person; the cookies are `HttpOnly`/`Secure`/`SameSite=Strict`; CSRF and
-    the session revocation hold; a first remote sign-in creates a provisional
-    person the laptop confirms.
+    the session revocation hold.
 
 27. **Read-model publish.** Upload a release, flip `current.json`; a partial
     upload leaves the old pointer; the app reads the new release through the
-    Worker; a rollback re-points; Access and the R2 token hold. Measure the
+    Worker; a rollback re-points; the session and the R2 token hold. Measure the
     release size and publish time for a 50k-page archive: browse + the open
     claims, never the whole row set.
 
@@ -161,12 +160,12 @@ hash/migration, draft exclusion, command rebuild — follow.
     the view does not hold, the page waits for the laptop — there is no second
     review tier.
 
-29. **One-origin Access and image caching.** Put the Pages app and the
-    Worker routes on one hostname behind Access; sign in once; load an image
-    through `/img/<sha>`; confirm the cookie authorizes both the API and the
-    `<img>`, the immutable header caches at the edge and in the browser, and a
-    second view costs no Worker request. Confirm the free request budget holds
-    for a day's family use.
+29. **One-origin auth and image caching.** Put the Pages app and the Worker
+    routes on one hostname; sign in through the Worker's Google flow once;
+    load an image through `/img/<sha>`; confirm the session cookie authorizes
+    both the API and the `<img>`, the immutable header caches at the edge and
+    in the browser, and a second view costs no Worker request. Confirm the
+    free request budget holds for a day's family use.
 
 30. **Single-writer service.** The daemon's pipeline writes and the sync
     agent's command applies go through the service's local API; a service
@@ -180,3 +179,8 @@ hash/migration, draft exclusion, command rebuild — follow.
     adjustments blob and the next pass re-reads from the reading's words; the
     reading blob round-trips through the content store; the 50k-page DB size,
     write time and backup size hold.
+
+32. **Remote auth.** The Worker's Google OAuth flow: state/PKCE/nonce, ID
+    token verification, the invited/active/disabled account, an uninvited
+    email getting `403` and a log line, the revocable session cookie gating
+    `/api/*` and `/img/*`, and the laptop's service token gating `/internal/*`.

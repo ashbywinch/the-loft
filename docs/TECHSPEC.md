@@ -44,13 +44,13 @@ restate it.
 | Principles, stack, deferred seams | [01-foundations.md](TECHSPEC/01-foundations.md) |
 | The record wire shape, maps, PWA, search, tools (the legacy file layout/capture/privacy/performance are in `99`) | [02-archive-and-capture.md](TECHSPEC/02-archive-and-capture.md) |
 | The capture pipeline, reading path and review surface (the import flow is a record) | [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) |
-| The live system's shape, command flow, read flow, failure modes | [04-live-system.md](TECHSPEC/04-live-system.md) §17 |
+| The live system's shape, the remote API, command/read flow, failure modes | [04-live-system.md](TECHSPEC/04-live-system.md) §17 |
 | The schema's concepts, event log, content, projections, migrations, withdrawal | [05-schema.md](TECHSPEC/05-schema.md) §18.1–18.7 |
 | The schema DDL — events, content and projections, the one table definition | [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) |
 | The nightly job, the human archive, the operational backup | [07-exports.md](TECHSPEC/07-exports.md) |
 | Code organisation and the persistence boundary | [08-code-organisation.md](TECHSPEC/08-code-organisation.md) §19 |
 | The one-time migration from the file archive to the database | [11-migration.md](TECHSPEC/11-migration.md) |
-| Decisions (D1–D44 and the legacy decisions), with blast radius | [09-decisions.md](TECHSPEC/09-decisions.md) |
+| Decisions (D1–D45 and the legacy decisions), with blast radius | [09-decisions.md](TECHSPEC/09-decisions.md) |
 | Spikes | [10-spikes.md](TECHSPEC/10-spikes.md) |
 | History — superseded designs | [99-history.md](TECHSPEC/99-history.md) |
 

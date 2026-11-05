@@ -1,7 +1,7 @@
 # Decisions
 
 > Component of `docs/TECHSPEC.md`. Status: **register**. The live-system
-> decisions (D1–D44) are proposed; the pre-§17 decisions (§12/§15) are
+> decisions (D1–D45) are proposed; the pre-§17 decisions (§12/§15) are
 > history.
 
 ## The register
@@ -161,6 +161,12 @@ decisions survive all three. The blast radius is at the bottom.
   There are no work files: the only files are the scan originals, the
   derivatives, the nightly export and the backup. A stage is done when its row
   is, and only the service writes the DB.
+- **D45 [interface] — The remote API is resource-oriented.** Writes are
+  `PUT`/`PATCH`/`DELETE` on resources; reads are `GET` with cursor
+  pagination. Idempotency is the `Idempotency-Key` header, concurrency is
+  `If-Match`, and the async apply is a `202` plus an operation resource. The
+  command envelope is internal to the outbox. There is no generic command
+  endpoint and no bulk browse endpoint.
 
 
 ## Blast radius
@@ -179,7 +185,7 @@ decisions survive all three. The blast radius is at the bottom.
 
 These are kept for the record: the 2060 reader, the sidecar rationale, the
 old hosting choice. They are not the live design. Where they disagree with
-D1–D44, the live decision wins.
+D1–D45, the live decision wins.
 ## 12. Decisions to confirm (your review)
 
 | # | Decision | Recommendation |

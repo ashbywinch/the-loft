@@ -292,6 +292,49 @@ The invariants:
 - **One direction.** Remote → laptop is the outbox; laptop → remote is the
   published read model.
 
+### 17.5.1 The remote API
+
+**The public surface is resource-oriented.** One hostname (D41); Cloudflare
+Access authenticates; the Worker takes the actor from the Access identity,
+never from the body. A write is a request about a resource, not a command
+envelope; the command is the internal outbox row the Worker writes.
+
+| Endpoint | Body | Outbox kind |
+|---|---|---|
+| `PUT /api/pages/{page_id}/row-texts` | `{texts: {ordinal: text}}` | `page.row_texts` |
+| `PUT /api/pages/{page_id}/correction` | `{lines: [...]}` | `page.correction` |
+| `PUT /api/pages/{page_id}/ticks` | `{ticks: [{ordinal, checked}]}` | `page.ticks` |
+| `PUT /api/documents/{document_id}/review` | `{outcome: confirmed\|rejected\|deferred, note?}` | `document.review` |
+| `DELETE /api/documents/{document_id}/review` | — | `document.reopen` |
+| `PATCH /api/items/{item_id}/refs/{ref_id}` | `{decision: attested\|estimated\|pending\|delete, basis?}` | `identity.decide` |
+| `PUT /api/items/{item_id}/story` | `{text}` | `item.story` |
+| `POST /api/review-sessions/{session_id}/messages` | `{text}` | the D1 session log |
+| `POST /api/items/{item_id}/identify-requests` | `{}` | `item.identify` |
+| `POST /api/uploads` | `{sha256, mime, size}` | `asset.upload` |
+
+**Headers and responses.**
+
+- `Idempotency-Key: <uuid>` on every write. A retry with the same key
+  returns the first result; it never writes a second command.
+- `If-Match: "<version>"` on a state write. The Worker compares it with the
+  published entity version; a mismatch is `412 Precondition Failed`.
+- `202 Accepted` plus `Location: /api/operations/{id}`. The laptop applies
+  asynchronously; `GET /api/operations/{id}` reports `pending`, `applied` or
+  `parked`, with the reason. The request never waits for the laptop.
+- Errors are `application/problem+json` (RFC 9457): `400` shape, `401`
+  unauthenticated, `403` outside the family, `404` unknown, `409` conflict,
+  `412` stale, `422` semantically invalid.
+
+**What the Worker validates.** The actor, the endpoint's schema, that the
+referenced ids exist in the published release, and that `If-Match` equals
+the published version. It does not apply domain rules; the laptop
+re-validates on apply and is the authority. A command the laptop cannot apply
+is parked with its reason, listed under its author.
+
+**The outbox is internal.** `kind` and `payload` are the laptop's work item;
+the client never sends or sees them. The mapping above is the contract
+between the API and the drain.
+
 ### 17.6 Read paths
 
 - **LAN.** Loft service → `LiveStore`. Always current.
@@ -348,6 +391,49 @@ laptop. There is no second, higher-resolution review tier.
 **The prompts.** The Python review/memory/identify prompts and the verdict
 loop are ported to TS; the published facts and the prompt templates are the
 contract; a parity test runs the PRD's review cases against both.
+
+### 17.6.2 The read API
+
+**The reads are resources.** They read the published release, not the live
+DB; a read carries the release's `published_at` and the caller's pending
+overlay.
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/release` | the current seq, `published_at`, the manifest URL |
+| `GET /api/batches?limit=&cursor=` | the batch list |
+| `GET /api/batches/{id}` | the batch with its documents and pages |
+| `GET /api/documents/{id}` | the document, pages, review outcome, open claim; rows when open |
+| `GET /api/pages/{id}` | the page, reading (rows, boxes, flags), correction, ticks, image URL |
+| `GET /api/items/{id}` | the item, content, refs, assets |
+| `GET /api/people/{id}` · `/api/places/{id}` · `/api/themes/{id}` | the identity or theme |
+| `GET /api/items` · `/api/people` · `/api/places` · `/api/themes` (with `limit=&cursor=`) | the collection |
+| `GET /api/search?q=&limit=&cursor=` | hits from the published index |
+| `GET /api/review-sessions/{id}` · `…/messages?after=` | the session and its messages |
+| `GET /api/operations/{id}` | `pending`, `applied` or `parked` |
+| `GET /api/me` | the caller's person, role and allowlist state |
+
+**Pagination.** Cursor-based; `limit` defaults to 50 and is capped at 500; the
+response carries `next` (opaque) and `total` where it is cheap. The caller
+walks `next` to warm the offline cache or stops when the screen is full.
+There is no separate bulk `browse` endpoint: "fetch everything" is walking
+the cursors.
+
+**Caching.** Release-backed resources carry an `ETag` (the release seq plus
+the entity version) and `X-Published-At`; `If-None-Match` returns `304`.
+`Cache-Control: private, no-cache` for a live resource; `/img/<sha>` is
+`immutable`. The app keeps what it has seen; a new release invalidates by
+seq.
+
+**The overlay.** The caller's own pending commands are merged into the
+resource they affect, so an author sees their edit before the laptop applies
+it. `GET /api/operations/{id}` is the uncached, live status.
+
+**The release is the Worker's source, not the app's.** The app boots with
+`GET /api/release` (the pointer and `published_at`) and then the collections
+it needs; the Worker reads the release's JSON from R2 through the binding and
+paginates it. The app never fetches the release's JSON directly and never
+talks to R2; only `/img/<sha>` is content-addressed and immutable.
 
 ### 17.7 The sync pattern, and the alternatives
 

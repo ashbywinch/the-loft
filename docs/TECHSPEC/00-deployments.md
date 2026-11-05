@@ -61,7 +61,8 @@ The remote app's data is published to **R2**, served through **one origin**:
 
 - **Browse:** `index.json` (the cards), `people.json`, `places.json`,
   `orgs.json`, `themes.json`, `transcripts.json`, the published search index,
-  and the view images. Small enough to hold offline after one load.
+  and the view images. The app walks the API's collections once to warm its
+  cache; there is no bulk endpoint.
 - **Review:** `review/index.json` (the open claims and the batch/document
   strip) and one `review/<document_id>.json` per open document — its pages,
   rows, boxes and flags. A confirmed document is readable from browse; it is

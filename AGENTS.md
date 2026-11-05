@@ -31,6 +31,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | Adopt / ingest planning (the batch adoption flow's docs) | `docs/PLAN/INGEST-PLAN.md` |
 | Product requirements, scope, personas | `docs/PRD/PRD.md` |
 | Architecture, stack, data model, decisions | `docs/TECHSPEC.md` (the index; components in `docs/TECHSPEC/`) |
+| The remote API — resource endpoints, pagination, idempotency, the outbox mapping | `docs/TECHSPEC/04-live-system.md` §17.5.1–17.6.2 |
 | Pipeline stages, stage completion (the live row), and per-page recovery (`make pipeline ARGS="process\|review\|printed <batch>"`) | `docs/TECHSPEC/03-import-and-pipeline.md` §16.14.2 |
 | Layout / geometry experiments ledger (the ink work's measured findings) | `docs/PLAN/geometry-experiments-log.md` |
 | Serving the app — foreground `make serve`; the supervised hub spec that survives daemon restarts | `README.md` (Quick Start → "Supervised dev server") |

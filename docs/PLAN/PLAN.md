@@ -64,7 +64,7 @@ from fake-data demo to real-archive feature.
 
 | Feature | Status | Owned by | Notes |
 |---|---|---|---|
-| Curator mode | **stub** | Slice 2 | the real Drive API write path is the slice's core |
+| Curator mode | **stub** | Slice 2 | the remote upload path is the slice's core |
 | proposed/confirmed UI | partial — the import review chat confirms proposed people; proposed/estimated still render flatly (per-card R12 open) | Slice 2 | proposed links render like confirmed today |
 | Sensitive flags | data-only | Slice 5 | field exists; no UI uses it yet |
 | Memory controls (dismiss date/person/memory) | not built | Slice 5 | |
@@ -90,8 +90,8 @@ A design document (extends `TECHSPEC.md`), not code. It resolves:
 - **The propose/confirm queue** — machine suggestions (entity links, OCR
   drafts) waiting for one tap.
 - **Publish** — archive → `app/data` projection → live on the phone.
-- **Phone capture path** (Drive API OAuth) — how the thin-client phone writes
-  to the archive account.
+- **Phone capture path** — the remote app's Google sign-in and upload; the
+  laptop applies the command.
 - **Transcription draft loop** — OCR drafts → reviewer corrects → searchable.
 
 **Output:** an "Import flow" section in `TECHSPEC.md` + a worked example on
@@ -103,7 +103,7 @@ one real scan. The brother's scanner is the first real input.
 | Slice | Status |
 |---|---|
 | 1 — The capture pipeline, end to end | **Delivered** — real archive (the adopt batches), import, transcription drafts + the review surface, publish; the 2026-08-03 implementation plan's steps 1–12 are on `main` |
-| 2 — Phone capture & curation (Drive API) | **Partial** — Google sign-in (`tools/auth.py`, PKCE) and the import review chat (proposed → confirmed) are live; curator mode is still the stub (`app/views/curator.js`); the Drive write path and phone capture sessions are unbuilt |
+| 2 — Phone capture & curation | **Partial** — Google sign-in (`tools/auth.py`, PKCE) and the import review chat (proposed → confirmed) are live; curator mode is still the stub (`app/views/curator.js`); the remote upload path and phone capture sessions are unbuilt |
 | 3 — Show mode for Dad (and gatherings) | **Not started** — no `#/show` route |
 | 4 — Testimony at scale | **Partial** — OCR transcription drafts (+ self-report flags) and the story-capture flow (`app/memories.js`, `tools/memory.py`) are live; voice recording and semantic search (embeddings) are unbuilt |
 | 5 — Trust & continuity | **Not started** — no export tooling, memory controls, or sensitive-flag UI |
@@ -121,7 +121,7 @@ one real scan. The brother's scanner is the first real input.
   date extraction, curation gate), `tools/rebuild-index`, `loft publish`
   (archive → projection), `tools/check-archive`, app reads the real archive
   (fake data behind a demo flag).
-- **Out:** Drive API phone capture, OCR, PWA, memory controls.
+- **Out:** phone capture, PWA, memory controls.
 - **Acceptance:** 10 real letter scans → imported with zero manual renaming →
   dated correctly on the timeline → a machine-generated transcription draft
   readable in the lens → mention links work → published → visible on the
@@ -131,7 +131,7 @@ one real scan. The brother's scanner is the first real input.
 
 Build order, each step behind the gate (`make test`):
 
-1. **Archive scaffold** — `~/loft/archive` (README-for-2060, `assets/`, `index.json`) outside the repo; `~/loft/inbox` staging; AGENTS-compliant.
+1. **Archive scaffold** — `loft/archive` (README-for-2060, `assets/`, `index.json`) outside the repo; `loft/inbox` staging; AGENTS-compliant.
 2. **Ingest adapter** — inbox jobs (per-page JPEG sets or PDFs) concatenated into one ordered page sequence; PIL validation; duplex page-count sanity; **append-only** — new scans are noticed, never re-processed.
 3. **Hashes + dedupe** — TECHSPEC §16.10: per-asset sha256 + phash, derived `hashes.json`, letter-level fingerprints, batch + archive dedupe; `content_hash` on drafts.
 4. **Session journal** — per-batch `state.json` (§16.11): pages seen, decisions made, letter statuses; atomic writes; crash-safe resume mid-stack.
@@ -144,18 +144,18 @@ Build order, each step behind the gate (`make test`):
 11. **Tests** — deterministic job fixtures; golden sidecars; dedupe cases; OCR-backend fixtures; **resume-after-crash, scan-ahead append, OCR queue**.
 12. **The first real box** — start at the archive's beginning and go forward; cross-stack order is not guaranteed, within-stack is — the prompt tolerates both.
 
-**Deferred out of Slice 1:** Drive upload + OAuth (`tools/upload-drive`) → Slice 2 with the phone client; embeddings + semantic search → Slice 4 (machine *reading* is Slice 1, *understanding* stays 4).
+**Deferred out of Slice 1:** phone upload → Slice 2; embeddings + semantic search → Slice 4 (machine *reading* is Slice 1, *understanding* stays 4).
 
-**The live system (Supabase) — sequencing:** Slice 1 stays local-first — import writes the folder (sidecars + journal), the durable contract. The Supabase store (Postgres + pgvector, small family-user set, RESOLVED) enters as Slice 2's foundation with the multi-user curation surface: schema + migrations, write-through folder materialization (every committed change updates both the store and the folder), the audit log mirrored, review/admin surfaces reading from the store. The folder and the store rebuild each other — neither is a lock.
+**The live system — sequencing:** Slice 1 stays local-first: the SQLite DB is the live store, and the scan area and the dated export are the files. The remote app (Cloudflare Pages + Worker + D1 + R2) enters as Slice 2's foundation for the phone: Google sign-in, the upload command, the outbox; the laptop applies the commands and publishes the dated read model. The DB and the export rebuild each other — neither is a lock.
 
-### Slice 2 — Phone capture & curation (Drive API)
+### Slice 2 — Phone capture & curation
 - **Value:** Alex's stated work surface — curation from the phone: capture
   sessions, date+7 suggestion, speech-to-text story lines, metadata editing.
 - **Carries:** the review stub becomes real; proposed/confirmed moves from
   data-only to visible UI (proposed links and OCR drafts marked as
   suggestions).
-- **Scope:** Google sign-in (PKCE) with the archive account; Drive API
-  read/write; the capture flow; proposed/confirmed in the UI.
+- **Scope:** Google sign-in; the remote app's upload path; the capture flow;
+  proposed/confirmed in the UI.
 - **Acceptance:** capture a letter on the phone → tagged on the phone → it
   appears in the archive (laptop sync) and on the site.
 

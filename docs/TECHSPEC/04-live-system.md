@@ -195,7 +195,7 @@ copied off-site. It owns the draft fields and humans own the confirmation
 fields, which is what keeps them from fighting. The split is
 enforced in the schema, not by convention: a re-read refuses to replace
 a human row set newer than its input (`page_rows.source`, `pages.revision`),
-instead of deleting the reviewer's corrections as the as-built path does.
+instead of deleting the reviewer's corrections.
 
 **W3 — remote.** Browser → the static app → the Cloudflare backend's D1
 outbox (one immutable `Command`) → `202` with the command id. The author

@@ -356,8 +356,10 @@ typed table and the wire shape stay in one place.
   aborts inside the transaction. A decision is protected by the same index,
   not by a pre-read.
 - **Version-checked atomically.** The guard is the typed table's
-  conditional UPSERT, `WHERE <table>.version IS :base_version`; a zero-row
-  result is a stale command, and the seam writes `command/rejected`. A
+  conditional UPSERT, `WHERE <table>.version IS :base_version`
+  (`pages.revision` for a page and everything under it: its rows, its drawn
+  lines, its ticks); a zero-row result is a stale command, and the seam writes
+  `command/rejected`. A
   create command must carry `base_version = NULL`, and the seam validates
   that before the UPSERT; a non-existent entity with a non-null base is a
   protocol error, not a create. `IS`, not `=`, because a nullable version

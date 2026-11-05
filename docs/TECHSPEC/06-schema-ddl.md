@@ -433,6 +433,7 @@ CREATE TABLE row_adjustments (
 ) STRICT;
 
 CREATE TABLE review_messages (
+  message_id      TEXT PRIMARY KEY,       -- the UUID the laptop writes
   session_id      TEXT NOT NULL,
   ordinal         INTEGER NOT NULL,
   role            TEXT NOT NULL,
@@ -441,7 +442,7 @@ CREATE TABLE review_messages (
   thinking_sha    TEXT,
   at              TEXT NOT NULL,
   event_seq       INTEGER NOT NULL,
-  PRIMARY KEY (session_id, ordinal)
+  UNIQUE (session_id, ordinal)
 ) STRICT;
 
 CREATE TABLE review_decisions (

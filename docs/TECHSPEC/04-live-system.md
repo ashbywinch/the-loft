@@ -206,7 +206,7 @@ Commands are classified, because they are not one kind of thing:
 
 | Class | Examples | Apply |
 |---|---|---|
-| **State** | transcript edit, story save, row lines | one `BEGIN IMMEDIATE` transaction; the guard is the typed table's UPSERT with `WHERE version IS :base`; zero rows means stale |
+| **State** | transcript edit, story save, row lines | one `BEGIN IMMEDIATE` transaction; the guard is the typed table's UPSERT with `WHERE version IS :base` (`pages.revision` for a page and its rows); zero rows means stale |
 | **Append-only decision** | identity attest/estimate/pending/delete, review decisions | append the decision and apply it (last wins); no version predicate, per the 2026-10-21 user ruling. The four words are the review's; the record status they write is the one mapping in `05-schema.md` §18.2 |
 | **State + machine work** | "re-read this page", "identify this document", an import-review message that calls a model | the transaction records the intent and inserts a `jobs` row; the worker runs outside the lock; its result is a second transaction |
 | **Bytes** | photo upload | the staged object is recorded as an `Asset`; the laptop pulls, re-hashes, writes and derives |
@@ -318,7 +318,8 @@ envelope; the command is the internal outbox row the Worker writes.
 - `Idempotency-Key: <uuid>` on every write. A retry with the same key
   returns the first result; it never writes a second command.
 - `If-Match: "<version>"` on a state write. The Worker compares it with the
-  published entity version; a mismatch is `412 Precondition Failed`.
+  published entity version (the page's `revision` for a page's row texts,
+  correction or ticks); a mismatch is `412 Precondition Failed`.
 - `202 Accepted` plus `Location: /api/operations/{id}`. The laptop applies
   asynchronously; `GET /api/operations/{id}` reports `pending`, `applied` or
   `parked`, with the reason. The request never waits for the laptop.

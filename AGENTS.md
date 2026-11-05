@@ -101,8 +101,8 @@ default. Real content never lives in code (`docs/coding-standards.md`).
 - Atomic commits; reference issues with `Fixes #N`.
 - Archive data is NEVER committed: the `archive/` directory is gitignored
   and data-free in the repo; the real family content lives on the
-  workspace volume and is regularly backed up. The concurrency model for
-  the archive's writers: `docs/archive-concurrency-plan.md`.
+  workspace volume and is regularly backed up. The archive's durability
+  rules: `docs/archive-durability.md`.
 
 ## Public repo (user)
 

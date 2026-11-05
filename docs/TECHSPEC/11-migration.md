@@ -26,7 +26,7 @@ never modified.
 | `people.json`, `places.json`, `orgs.json`, `themes.json`, `-N` | identity events; `people`/`places`/`orgs`/`themes`/`relationships` |
 | `imports.json`, `-N` | `review_sessions`/`review_messages`/`review_decisions` events |
 | `registry/<batch>.json` | `batches`/`scans`; `pages`; the item id; the boundaries |
-| `work/<batch>/classify.json`, `oriented/`, `ocr-guess/*` | `page_readings`, `readings`, `page_rows`, `pages`; the work files become cache |
+| `work/<batch>/classify.json`, `oriented/`, `ocr-guess/*` | `pages.category`, `pages.rotation`, `readings`, `page_rows`, `row_adjustments`; the work files are read once and not carried |
 | `app/data/*` | discarded; the projection is derived |
 
 ## The order
@@ -38,7 +38,7 @@ never modified.
 5. **Imports/review sessions**: attempts, messages, decisions.
 6. **Batches, scans, pages**: the registry records and the item links.
 7. **Current readings, rows and words**: the latest reading only; the work
-   files stay as cache.
+   files are read once and discarded.
 8. **Documents and grouping**: the confirmed boundaries.
 9. **Verify** (below).
 10. **Cut over** (below).

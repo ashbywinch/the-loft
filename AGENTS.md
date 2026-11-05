@@ -31,7 +31,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | Adopt / ingest planning (the batch adoption flow's docs) | `docs/PLAN/INGEST-PLAN.md` |
 | Product requirements, scope, personas | `docs/PRD/PRD.md` |
 | Architecture, stack, data model, decisions | `docs/TECHSPEC.md` (the index; components in `docs/TECHSPEC/`) |
-| Pipeline stages, completion markers, and per-page recovery (`make pipeline ARGS="process\|review\|printed <batch>"`) | `docs/TECHSPEC/03-import-and-pipeline.md` §16.14.2 |
+| Pipeline stages, stage completion (the live row), and per-page recovery (`make pipeline ARGS="process\|review\|printed <batch>"`) | `docs/TECHSPEC/03-import-and-pipeline.md` §16.14.2 |
 | Layout / geometry experiments ledger (the ink work's measured findings) | `docs/PLAN/geometry-experiments-log.md` |
 | Serving the app — foreground `make serve`; the supervised hub spec that survives daemon restarts | `README.md` (Quick Start → "Supervised dev server") |
 | The PLAN/ work logs (trial reports, walkthrough records, snags) | `docs/PLAN/` — `docs/PLAN/ocr-verification-research.md`, `docs/PLAN/model-trial-report.md`, `docs/PLAN/lucidlint-snag.md`, `docs/PLAN/ux-review-chat-solution.md`, `docs/PLAN/INGEST-PLAN.md` |
@@ -45,7 +45,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The row review's phone surface (the purpose, the two colour layers, the draw→redraw loop; PROPOSED) | `docs/PLAN/row-review-ux.md` |
 | The page categories (photograph, writing printed/handwritten, postcard face, form, drawing) and what each implies for the read | `docs/PLAN/page-categories.md` |
 | What a batch still needs, and the stage that completes it (the reconciler, the watch, the resync, `loft work --plan/--batch`) | `pipeline/stage_table.py` (the stage order and each stage's gap check), `pipeline/reconcile.py` (`Reconciler: plan + run`), `pipeline/worker.py` (`Worker.watch`); `docs/TECHSPEC/03-import-and-pipeline.md` §16.14.2 |
-| The stage layout on disk — the one place every artefact path is written | `pipeline/artefacts.py` (`BatchArtefacts`); the guard test is `tests/test_architecture.py` |
+| The derivative path layout — the oriented and view images | `pipeline/artefacts.py` (`BatchArtefacts`); the guard test is `tests/test_architecture.py` |
 | Which model is used where, and the Cloudflare AI Gateway endpoint | `pipeline/model/config.py` (`VISION_MODEL`, `CHAT_MODEL`, `BOUNDARY_MODEL`) |
 | How a drawn row line corrects a page (replace a covered row; claim only the words the line runs along; leave the rest) | `docs/PLAN/row-correction-rule.md`; `pipeline/rows/rows.py` (`_Claims`) |
 |Interview/observation instruments|`docs/DISCOVERY.md`, private session records|

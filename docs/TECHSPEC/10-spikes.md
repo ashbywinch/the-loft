@@ -170,6 +170,13 @@ hash/migration, draft exclusion, command rebuild — follow.
 
 30. **Single-writer service.** The daemon's pipeline writes and the sync
     agent's command applies go through the service's local API; a service
-    restart mid-pass leaves the work files and retries the projection; the
+    restart mid-pass leaves the rows at the last transaction and retries the
+    projection; the
     API's body caps and timeouts hold a large batch; no daemon process holds
     a SQLite handle.
+
+31. **Pipeline in the DB.** A batch runs classify → orient → read → group with
+    no work files; a restart resumes from the rows; a correction writes the
+    adjustments blob and the next pass re-reads from the reading's words; the
+    reading blob round-trips through the content store; the 50k-page DB size,
+    write time and backup size hold.

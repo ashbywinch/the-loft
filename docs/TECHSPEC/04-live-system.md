@@ -392,29 +392,30 @@ the check, instead of deleting the reviewer's corrections.
 
 **What moves into the DB** is the whole live state: items, identities,
 documents, pages, readings, review state, the asset catalog and the job
-queue. What stays on disk is the originals, the human archive, the
-operational backup and the nightly dumps (`07-exports.md`).
+queue. What stays on disk is the originals, the derivatives (the oriented
+image and the one view image), the human archive, the operational backup and
+the nightly dumps (`07-exports.md`).
 ### 17.8.1 The pipeline stages in the live store
 
-The work files are the pipeline's cache; the live store is the projection. The
-reconciler reads the projection, not the markers.
+The live store is the pipeline's state; there are no work files. The
+reconciler reads these rows through the service, so "done" and "in the
+archive" cannot disagree.
 
-| Stage | Work artifact (cache) | Live projection | Completion predicate |
-|---|---|---|---|
-| adopt / scan | `registry/<batch>.json`, the scan folder | `batches`, `scans`, `pages` | the batch exists and every scan has a page |
-| classify | `classify.json` | `pages`/the reading's category | the page's category is recorded |
-| orient | `oriented/<page>` | `pages.rotation` | the oriented image exists |
-| read | `rows.json`, `words.json`, `.txt` | `pages`, `readings`, `page_rows` | the page has a non-empty reading |
-| transcribe | the reading's per-row text | `page_rows.text` | every row has text |
-| row check | `row-adjustments.json`, `rows-adjusted.json` | `page_rows`, `row_checks`, `page_row_links` | the correction's sha matches the reading |
-| group | `boundaries.json` | `documents`, `document_pages` | a document with pages |
-| confirm | the item sidecar | `items`, `item_content`, `item_refs` | the item exists and is catalogued |
-| identify | the item's refs | `item_refs`, `people`, `places` | the proposals/decisions are recorded |
-| review | the import session | `review_sessions`, `claims` | no open claim for the origin |
+| Stage | Live rows | Completion predicate |
+|---|---|---|
+| adopt / scan | `batches`, `scans`, `pages` | the batch exists and every scan has a page |
+| classify | `pages.category` | the page's category is recorded |
+| orient | `pages.rotation` + the oriented derivative | the rotation is recorded and the derivative exists |
+| read | `readings` (the reading blob), `page_rows`, the page text | the page has a non-empty reading |
+| transcribe | `page_rows.text` | every row has text |
+| row check | `row_adjustments` (the drawn-lines blob), `page_rows`, `row_checks`, `page_row_links` | the reading's `corrected_sha` matches the adjustments' sha |
+| group | `documents`, `document_pages` | a document with pages |
+| confirm | `items`, `item_content`, `item_refs` | the item exists and is catalogued |
+| identify | `item_refs`, `people`, `places` | the proposals/decisions are recorded |
+| review | `review_sessions`, `claims` | no open claim for the origin |
 
-A page's status is derived from these rows; the projection may carry the
-derived status for query speed, but the rows are the evidence and the
-projection is rebuildable.
+A page's status is derived from these rows (`pages.status` is the projected
+value); the rows are the evidence and the projection is rebuildable.
 
 ### 17.10 Failure modes
 
@@ -513,7 +514,7 @@ proposed.
 | **`Outbox` (unwired)** | Replaced, not extended | The existing class is a consumption queue (reads every file, unlinks on receipt); the new outbox is a permanent append-only log with a laptop cursor. |
 | **No-PII guard and weekly evals** | Read the DB when the export is absent | `tests/test_no_pii_in_repo.py` currently skips when `archive/people.json` is missing, so a stalled export would make the guard pass vacuously; the guard must fail hard if neither source exists, and the evals run against the DB and the export separately. |
 | **`Archive`** | Becomes the exporter/importer | `LiveStore` owns the live data; `Archive` owns the plain-text materialisation and rebuild. |
-| **Registry and work tree as files** | Become events and projections | The review surface must work remotely, so the drafts and rows must be in the published read model, not only on the laptop. Files remain a cache. |
+| **Registry and work tree as files** | Become events and projections | The review surface must work remotely, so the drafts and rows are published, not only on the laptop. Files are the image bytes and the export; state is rows. |
 | **Browser `localStorage` edits** | Become commands plus UI state | The edits that matter are durable commands; scroll position and similar UI state stay local. |
 | **`publish`** | Splits into read-model publish, human archive and operational backup | They are different jobs with different cadences and different guarantees. |
 | **`publish` on the request path** | Moves off it | The server currently republishes synchronously after several writes; the read model is published asynchronously, and the response waits only for the commit. |

@@ -157,7 +157,7 @@ the 3-2-1 copy and the audit trail. It is not a reading surface.
 `events`, `content`, `items`, `item_refs`, `item_assets`, `item_content`,
 `people`, `person_residences`, `places`, `orgs`, `themes`, `theme_items`,
 `relationships`, `documents`, `document_pages`, `batches`, `scans`,
-`pages`, `page_rows`, `page_row_links`, `row_checks`, `readings`,
+`pages`, `page_rows`, `page_row_links`, `row_checks`, `row_adjustments`, `readings`,
 `review_sessions`, `claims`, `review_messages`, `review_decisions`,
 `assets`, `aliases`, `withdrawals`, `commands` and `accounts` (the SQLite
 mirror of the D1 logins).
@@ -174,10 +174,10 @@ every file hash. The restore seeds `sqlite_sequence` from
 
 #### What is in neither
 
-The derived rows/words, the job queue, the search index, the published read model
-and the caches are regenerable or operational. The human archive omits them
-because a reader does not need them; the backup omits them because they are
-rebuilt from the log.
+The job queue, the search index, the published read model, the derivatives and
+the caches are regenerable or operational. The human archive omits the raw
+reading blob and the rows because a reader gets the confirmed text; the backup
+keeps them (`content`, `page_rows`). There are no work files to omit.
 
 #### Export mechanics
 

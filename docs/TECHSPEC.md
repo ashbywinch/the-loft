@@ -50,7 +50,7 @@ restate it.
 | The nightly job, the human archive, the operational backup | [07-exports.md](TECHSPEC/07-exports.md) |
 | Code organisation and the persistence boundary | [08-code-organisation.md](TECHSPEC/08-code-organisation.md) §19 |
 | The one-time migration from the file archive to the database | [11-migration.md](TECHSPEC/11-migration.md) |
-| Decisions (D1–D43 and the legacy decisions), with blast radius | [09-decisions.md](TECHSPEC/09-decisions.md) |
+| Decisions (D1–D44 and the legacy decisions), with blast radius | [09-decisions.md](TECHSPEC/09-decisions.md) |
 | Spikes | [10-spikes.md](TECHSPEC/10-spikes.md) |
 | History — superseded designs | [99-history.md](TECHSPEC/99-history.md) |
 

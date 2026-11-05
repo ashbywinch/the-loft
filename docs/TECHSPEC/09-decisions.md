@@ -1,7 +1,7 @@
 # Decisions
 
 > Component of `docs/TECHSPEC.md`. Status: **register**. The live-system
-> decisions (D1–D43) are proposed; the pre-§17 decisions (§12/§15) are
+> decisions (D1–D44) are proposed; the pre-§17 decisions (§12/§15) are
 > history.
 
 ## The register
@@ -151,9 +151,16 @@ decisions survive all three. The blast radius is at the bottom.
   whole row set is never published.
 - **D43 [shape] — The service is the only process with the database.** The
   daemon, sync agent, exporter and CLI call the service's local API for
-  domain reads and writes; the pipeline's work files stay files. The service
-  never runs the pipeline; the daemon never listens. The two are supervised
-  together, and a service outage delays the projection, never bypasses it.
+  domain reads and writes; the pipeline's state is the live store, and only
+  the image bytes are files. The service never runs the pipeline; the daemon
+  never listens. The two are supervised together, and a service outage delays
+  the projection, never bypasses it.
+- **D44 [domain] — The live store is the pipeline's state.** A page's reading
+  is a content blob referenced by `readings`; `page_rows` is its queryable
+  projection; the drawn lines are a blob referenced by `row_adjustments`.
+  There are no work files: the only files are the scan originals, the
+  derivatives, the nightly export and the backup. A stage is done when its row
+  is, and only the service writes the DB.
 
 
 ## Blast radius
@@ -172,7 +179,7 @@ decisions survive all three. The blast radius is at the bottom.
 
 These are kept for the record: the 2060 reader, the sidecar rationale, the
 old hosting choice. They are not the live design. Where they disagree with
-D1–D43, the live decision wins.
+D1–D44, the live decision wins.
 ## 12. Decisions to confirm (your review)
 
 | # | Decision | Recommendation |

@@ -200,7 +200,8 @@ blob.
 | `pipeline/api/server.py` | `loft/app/` surfaces; they call `LiveStore`, never SQL |
 | `pipeline/api/sync.py` | `loft/archive/sync.py` — the sync agent; it applies commands through the service's local API |
 | `pipeline/worker.py` | `loft/pipeline/worker.py`; it writes through the service's local API |
-| `pipeline/registry.py`, `pipeline/store.py` | the `batches`/`scans` projections; the files become a cache |
+| `pipeline/registry.py`, `pipeline/store.py` | the `batches`/`scans` projections and the content store; the old work files are read once by the migration, then gone |
+| `pipeline/artefacts.py` | the derivative path layout (oriented image, view image); not state |
 | `tools/records.py` | `loft/archive/` entities (one class per file) |
 | `document/` | `loft/document/` |
 | `tests/test_architecture.py` | the new import rules above |

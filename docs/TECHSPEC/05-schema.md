@@ -161,6 +161,12 @@ The DDL is in `06-schema-ddl.md`.
   `thinking` are blobs keyed by sha. The event references the sha; the human
   archive writes the confirmed `.txt` from it. A correction creates a new
   sha; the old blob stays. A bad release cannot overwrite the words.
+- **The pipeline's reading is a blob, not a file.** A page's full reading
+  (its lines with text, every word with its box, baseline and waistline) is
+  one JSON blob referenced by `readings.reading_sha`; `page_rows` is the
+  queryable projection. The reviewer's drawn lines are a second blob,
+  referenced by `row_adjustments.sha256`. The pipeline's state is these rows
+  and blobs; there is no `work/` tree.
 - **Create-if-absent and verified.** The seam computes the sha from the
   bytes before insert; an existing sha is re-hashed and compared, never
   overwritten. A crash leaves an orphan blob; `loft verify` **reports** it
@@ -217,11 +223,12 @@ browse queries join on are child tables. There is no generic entity table.
 | `document_pages` | document → page, ordinal |
 | `batches` | id, label, source, path, status, arrived_at, started_at, started_pid, started_host, `fingerprint_json`, content_changed, plus the shared columns |
 | `scans` | scan id, batch, page, sha256, path, ordinal, created |
-| `pages` | page id, image asset, sha, revision, rotation, status; the document edge is in `document_pages` |
+| `pages` | page id, image asset, sha, revision, rotation, category, status; the document edge is in `document_pages` |
 | `page_rows` | the current rows with `source`, `trust`, orientation and `revision` |
 | `page_row_links` | insertion links: target row, character offset, proposed/unset/confirmed |
 | `row_checks` | the reviewer's per-row verification ticks |
-| `readings` | page → reading sha, row count, word count |
+| `row_adjustments` | page → the drawn-lines blob sha; the current correction |
+| `readings` | page → reading sha, the correction sha it was built from, row count, word count |
 | `review_sessions` | session id, kind, subject (batch/document/item/person/place), actor, status, current attempt, closed_at |
 | `claims` | the review queue: origin, subject, phase, state, evidence |
 | `review_messages` | the review chat, one row per message, with its human actor |

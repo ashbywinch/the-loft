@@ -11,10 +11,9 @@ Status: **current for §16.13–§16.17** (the capture pipeline, the reading pat
 
 ```
 boxes → the user's scan area (their folders — adopted by hash, §16.13)
-      → workspace/work/<batch>/ (oriented → read → confirmed)
-      → tools/import  [prompt: date] → archive/assets/<id>/ (sidecars + JPEGs + thumbs)
-      → tools/upload-drive            → Google Drive (the archive's home)
-      → loft publish                 → app/data projection → static host → phone
+      → the live store (classify → orient → read → review)
+      → the human archive (nightly export: items + originals + transcription)
+      → the published read model (the R2 release) → the phone
 ```
 
 - **Curator mode (phone, Slice 2):** 3 fields + story line; `draft` → `catalogued`; dates refined with date+7 suggestions. Import never catalogues — **the curation gate** is: a human selected the originals (scanning *is* the selection), import catalogs them as `draft`, and they appear only when the phone session confirms. Digital photos from younger members are human-curated before import, never bulk-imported (PRD §7).
@@ -175,7 +174,12 @@ injected as "derived" — the model is never asked to do arithmetic.
 - **read** — an async OCR queue: items pending reading sit in the queue and fill in as the backend processes them (batch/rate-aware); status per item `pending → reading → draft`.
 - **publish** — lags; runs on demand.
 
-**The session journal** makes the worksheet crash-safe and resumable: per-batch `state.json` in a work dir records which pages are seen, which boundaries/dates/defaults are decided, and each letter's status; written atomically after every confirmed letter. Re-running resumes exactly where the session stopped — new scans append, never re-prompt. Processing order is arrival order.
+**The review session is crash-safe and resumable.** The `review_sessions`,
+`review_messages` and `claims` rows record which pages are seen, which
+boundaries, dates and defaults are decided, and each letter's status — one
+transaction per decision. Re-running resumes exactly where the session
+stopped — new scans append, never re-prompt. Processing order is arrival
+order.
 
 **The story-capture server rides the same localhost shape** (MEMORIES):
 the contributions endpoint receives the narrator's account, runs assess +
@@ -191,36 +195,37 @@ older §16.1/§16.3 conventions of an "inbox" of our job folders: the user's
 scan area is **theirs** (R1) — we adopt its folders by content, never by
 path convention.
 
-**The two zones.** The user's scan area (on the big disk: `scans/` — PhotoScan, and whatever the user creates) is read-only to us. Our workspace is the sibling folder **`Loft`** at the disk root (decided — alongside the user's `scans/`, not inside it) holding everything we produce:
+**The two zones.** The user's scan area (on the big disk: `scans/` — PhotoScan, and whatever the user creates) is read-only to us. Our workspace is the sibling folder **`Loft`** at the disk root (decided — alongside the user's `scans/`, not inside it) holding the live store and the files that are bytes:
 
 ```
+scans/                            the user's scan area (read-only to us)
 Loft/
-  registry/<batch-id>.json         one record per adopted user folder
-  work/<batch-id>/                 derived stages, in trust order
-    oriented/page-NN.jpg           correct way up (Rule J, before any reading)
-    ocr-guess/page-NN.txt          the page's text, read by the vision model (transcription_status: draft)
-  archive/                         the durable knowledge (confirmed only)
-    assets/<item-id>/              item.json + page-NN.jpg + transcription.txt + thumbs
-    people.json places.json orgs.json themes.json items.json ...
-  projection/                      deployable: reduced-res images + derived JSON
+  loft.db                         the live store — the pipeline's state and the archive
+  content/<sha2>/<sha>            path-backed blobs (large readings, large text)
+  derivatives/
+    oriented/page-NN.jpg          correct way up (Rule J, before any reading)
+    view/page-NN.webp             the one view image per page (published to R2)
+  exports/
+    items/<item-id>/              the human archive (nightly; item.json + originals + transcription.txt)
+  backup/                         the operational dump + manifest (nightly)
+  release/                        the staged R2 release (transient; uploaded then discarded)
 ```
 
 Paths: `tools/loft_paths.py` — `USER_SCAN_AREA` (`scans/`), `WORKSPACE`
-(`Loft/`), `REGISTRY_DIR`, `WORK_DIR`, `ARCHIVE_DIR`, `PROJECTION_DIR`. The
-archive at `Loft/archive/` holds 558 files (size-verified). Register-in-place
-(decided): adopted
-external folders are hashed where they sit — never copied into the
-workspace; the raw scans stay single-source.
+(`Loft/`), `CONTENT_DIR`, `DERIVATIVES_DIR`, `ARCHIVE_DIR` (the export
+root), `BACKUP_DIR`, `RELEASE_DIR`. There is no `registry/` and no `work/`:
+the batch, its scans, its pages, the readings and the grouping are rows. The
+scan originals stay where they are (register-in-place, decided): never
+copied into the workspace, so the raw scans remain single-source.
 
-**Registry records.** `registry/<batch-id>.json` (batch id is ours and
-stable): `path_last_known`, `fingerprint`
-(sorted page hashes), `label` (the user's name for the scan folder,
-recorded only when they enter one), `status`
-(`pending → importing → done | superseded`), `boundaries` (item/page
-mapping once decided). The label is the user's folder name.
+**The batch and its pages are rows.** `batches` carries the id, label,
+source, path, status and fingerprint; `scans` carries each page's sha and
+path; `pages` carries the category, rotation, revision and status. The
+batch's label is the user's folder name. Re-association after a user
+reorganisation is the same fingerprint search, against the `scans` rows.
 
 **Re-association after user reorganisation.** Each run re-verifies every
-registered folder: fingerprint found at a new path → re-link (automatic);
+batch's folder: fingerprint found at a new path → re-link (automatic);
 fingerprint split/merged across folders → semi-automatic with a manual
 fallback; pages added → fingerprint grows, new pages adopted; pages
 removed → flag for review; folder not found → flag; reviewer points or
@@ -234,54 +239,55 @@ phash, the phash taken on the **oriented** form so rotation/re-encode does
 not defeat it. Per batch and per item: fingerprint = sorted page hashes
 (batch identity for re-association; item identity for whole-letter
 duplicates). Dedupe runs at adoption and at catalog against the whole
-known universe (user area + work stages + archive). Policy (§16.10):
-exact match → skip silently, first wins; phash match → both candidates to
-the reviewer with observable properties; never auto-delete or auto-merge.
+known universe (user area + the live store's pages + the export). Policy
+(§16.10): exact match → skip silently, first wins; phash match → both
+candidates to the reviewer with observable properties; never auto-delete or
+auto-merge.
 
-- **Raw-file naming — recovery from reorganisation.** Every raw
-page we produce is named `<batch-id>-NN.jpg` (e.g. `scan-20260813-1850-01.jpg`)
-— the batch id is embedded in every file name. If the user renames the
-folder, any file still says which batch and position it belongs to, so
-re-association can start from names before hashing (the hash fingerprint
-confirms). The work stages (`oriented/page-NN.jpg`, …) keep plain page
-names — they are ours, never reorganised. External files keep their own
-names; adoption hashes them.
+- **Raw-file naming — recovery from reorganisation.** Every raw page we
+  produce is named `<batch-id>-NN.jpg` (e.g. `scan-20260813-1850-01.jpg`) —
+  the batch id is embedded in every file name. If the user renames the
+  folder, any file still says which batch and position it belongs to, so
+  re-association can start from names before hashing (the hash fingerprint
+  confirms). The derivative folders (`oriented/`, `view/`) keep plain page
+  names — they are ours, never reorganised. External files keep their own
+  names; adoption hashes them.
 
-**Write-then-rename everywhere.** No component publishes a file a reader
-could see half-written: every produced file (registry records, stage
-outputs, archive sidecars) is written to a temp sibling, flushed, then
-renamed — `tools/atomic.py` `atomic_write`, the one helper, used by the
-store's `write_new` and by every component. The batch folder
-itself appears atomically (staging dir rename).
+**Write-then-rename everywhere a file is written.** No component publishes
+a file a reader could see half-written: every produced file (a derivative,
+an export sidecar, a backup file) is written to a temp sibling, flushed,
+then renamed — `tools/atomic.py` `atomic_write`, the one helper. The live
+store's writes are transactions, not renames; the content store verifies
+each blob's sha before it is referenced.
 
 ### 16.14 The pipeline components
 
 The capture pipeline is a chain of components, each owning one stage; the
-**workspace filesystem is the interface between them** — a component reads
-its input stage (the user's folder or a `work/<batch>/` stage dir + the
-registry record) and writes its output stage + the registry status. No
+**live store is the interface between them** — a component reads its input
+rows (the batch, its pages, the readings) through the service and writes its
+output rows, with the scan originals and the derivatives on disk. No
 component calls another; no shared in-memory state; each is independently
 runnable, resumable, and replaceable.
 
 | Component | Input → Output | Status effect |
 |---|---|---|
-| `capture` (tools/scan.py) | scanner → pages in the user area + registry record (label, hashes) | `pending` |
-| `adopt` | an external/preexisting folder → registry record (register-in-place) | `pending` |
-| `classify` | raw pages → `work/<batch>/classify.json` — each page's CATEGORY: photograph, printed, handwriting, postcard face, form, drawing (one vision call per page) | `importing` |
-| `orient` | the pages with writing → `work/<batch>/oriented/` (the vision model names each page's rotation) | `importing` |
-| `read` | the pages' text, routed by their category: printed → one direct VLM transcription; a form → a structured read (labels and values, as a markdown table); handwriting and a handwritten postcard face → the row pipeline (auto rows, the human row check, the transcription review) | `importing` |
-| `group` | the documents: the model judges boundaries over the pages' readings, then the scorer weighs duplex sides, paper size, page numbers and those flags | `boundaries.json` |
-| `review` | oriented + read → the agreed document as an archive item (its `transcription.txt`) + `boundaries` (the IMPORT-PRD flow, user-paced) | `review` |
-| `catalog` | confirmed pages + transcript → `archive/assets/<id>/` (draft items) | `done` |
-| `publish` | archive → `projection/` (reduced-res) | — |
+| `capture` (tools/scan.py) | scanner → pages in the user area + `batches`/`scans` rows (label, hashes) | `pending` |
+| `adopt` | an external/preexisting folder → `batches`/`scans` rows (register-in-place) | `pending` |
+| `classify` | raw pages → `pages.category` — each page's CATEGORY: photograph, printed, handwriting, postcard face, form, drawing (one vision call per page) | `importing` |
+| `orient` | the pages with writing → `pages.rotation` + `derivatives/oriented/` (the vision model names each page's rotation) | `importing` |
+| `read` | the pages' text, routed by their category: printed → one direct VLM transcription; a form → a structured read (labels and values, as a markdown table); handwriting and a handwritten postcard face → the row pipeline (auto rows, the human row check, the transcription review) | `readings`, `page_rows`, the page text | `importing` |
+| `group` | the documents: the model judges boundaries over the pages' readings, then the scorer weighs duplex sides, paper size, page numbers and those flags | `documents`, `document_pages` |
+| `review` | oriented + read → the agreed document as an archive item (its `transcription.txt`) + the grouping (the IMPORT-PRD flow, user-paced) | `review` |
+| `catalog` | confirmed pages + transcript → the item and its content (`items`, `item_content`) | `done` |
+| `publish` | the live store → the R2 release (`releases/<seq>/`) | — |
 
 **Parallelism.** Batches are independent; stages within a batch are
 sequential (classify before orient; orient before the read). The
-driver walks the registry and fans out per-batch stage jobs, so capture
+driver walks the batches and fans out per-batch stage jobs, so capture
 runs while orient/read process earlier batches (scan-ahead, §16.11) and the
 user reviews batch *N* while the machine works *N+1*. Each component
-re-runs idempotently (its output stage is a cache; re-running regenerates
-it) and never touches the user's area.
+re-runs idempotently (its rows are guarded by the page revision; re-running
+regenerates them) and never touches the user's area.
 
 **Content routing (requirements R10–R12).** Batches are mixed: handwritten
 letters, print, photographs, drawings, postcards, forms. A `classify` stage
@@ -297,7 +303,8 @@ is the ink reader's (§16.17).
 
 **Orientation (Rule J, mechanism).** The `orient` stage asks the vision model
 which clockwise rotation makes each page's writing upright
-(`pipeline/orient.py`) and turns the page into `oriented/`. One small call per
+(`pipeline/orient.py`), records it in `pages.rotation`, and writes the
+oriented derivative. One small call per
 page, thinking off. That is the page's **initial** rotation; the reading runs
 on the oriented image. The reviewer's ↻ is authoritative (§16.16): it sets the
 page's recorded rotation and the page is re-read on the corrected image. A
@@ -316,8 +323,8 @@ element (handwritten digits in a dense form); ~11K tokens/page. The VLM is the o
 at scan time: `make scan-docs ARGS="--label 'Box 1 — Letters 1977'"`, or a
 prompt when no `--label` is given ("Envelope/pile label — what's written
 on it?"). The name is the folder the scans land in, and — when the user
-enters one — it is also written into the registry record at scan time and
-rides through to the review prompts.
+enters one — it is also written into the batch row at scan time and rides
+through to the review prompts.
 
 ### 16.14.1 The pipeline picture
 
@@ -347,13 +354,13 @@ flowchart TB
 
 | Phase | What it does | Output |
 |---|---|---|
-| adopt / scan | register the pages | registry record + `pages` |
-| classify | the page's category and, for a postcard face or a form, its medium (vision model) | `classify.json` |
-| orient | the initial rotation that puts the page's writing upright (vision model); the reviewer's ↻ overrides it | `oriented/` |
-| read (direct) | printed text, line for line, in one VLM call | `ocr-guess/*.txt` |
-| read (structured) | a form's labels and values, as a markdown table, in one VLM call | `ocr-guess/*.txt` |
-| read (rows) | handwriting: the reader's rows and words, the human row check, then the transcription review | `ocr-guess/*.rows.json`, `*.words.json`, `*.txt` |
-| review | the reviewer verifies/corrects the draft | confirmed text |
+| adopt / scan | register the pages | `batches`, `scans`, `pages` |
+| classify | the page's category and, for a postcard face or a form, its medium (vision model) | `pages.category` |
+| orient | the initial rotation that puts the page's writing upright (vision model); the reviewer's ↻ overrides it | `pages.rotation` + the oriented derivative |
+| read (direct) | printed text, line for line, in one VLM call | `readings`, `page_rows` |
+| read (structured) | a form's labels and values, as a markdown table, in one VLM call | `readings`, `page_rows` |
+| read (rows) | handwriting: the reader's rows and words, the human row check, then the transcription review | `readings`, `page_rows` |
+| review | the reviewer verifies/corrects the draft | `items`, `item_content` |
 
 **The review surface's boxes.** The boxes and per-word flags the review
 surface needs are the reading path's output (§16.17): the ink reader supplies
@@ -391,26 +398,22 @@ than one direction is an open item: the reading path runs on the page's
 recorded rotation, and the reviewer's ↻ sets it and re-reads. A per-region
 orientation pass is not built.
 
-### 16.14.2 Pipeline reliability — completion markers, fail-loud, and surgical recovery
+### 16.14.2 Pipeline reliability — the live row, fail-loud, and surgical recovery
 
-**Completion markers.** Each stage treats an output artifact's existence as
-its completion marker: `classify.json` the category, `oriented/<page>` the
-rotation, `ocr-guess/<stem>.rows.json` + `.words.json` the row read,
-`ocr-guess/<stem>.printed.json` / `.structured.json` a direct read,
-`ocr-guess/<stem>.txt` the page's text, and `boundaries.json` the document
-grouping. Re-running a stage skips pages whose marker exists — that is what
-makes re-runs cheap. The same reading is projected into `pages`, `readings`
-and `page_rows` (`04-live-system.md` §17.8.1); the work files are the cache,
-the projection is the live store.
+**The live row is the completion marker.** Each stage's completion is its
+row, not a file: `pages.category` the classification, `pages.rotation` and
+the oriented derivative the orientation, a non-empty `readings` row (with
+its `page_rows`) the read, a grouped `documents`/`document_pages` the
+grouping. Re-running a stage skips pages whose row is current — that is what
+makes re-runs cheap. `04-live-system.md` §17.8.1 maps every stage to its
+rows.
 
-**The marker rule: existence of the marker alone is not completion.** A
-marker promises its artifact; a marker whose artifact is missing or empty
-is a stale or partial write and must be re-done, not "reused". A direct read
-skips a page only when both its marker and a non-empty `.txt` exist; the row
-read skips a page whose `.rows.json` exists and is current; and `process`
-re-reads a page whose artefacts are incomplete rather than trusting a marker
-alone. The row read is current when its `corrected` sha matches the drawn
-lines on disk (§16.17); an empty reading is never a completion.
+**A row without its evidence is not completion.** A reading whose blob is
+missing, or whose `page_rows` are empty, is a stale or partial write and is
+re-done, not "reused". A direct read is current when its `readings` row and
+a non-empty page text exist; the row read is current when its `readings` row
+and `page_rows` exist and its `corrected_sha` matches the current
+`row_adjustments` row; an empty reading is never a completion.
 
 **Fail-loud over silent no-op.** A stage that cannot do its job for a
 requested input fails loudly with the remedy in the message. Never a
@@ -431,48 +434,48 @@ sweeps; `printed <batch>` re-reads a printed or structured pile directly
 (idempotent per page); `review <batch>` is the human gate.
 
 **The worker owns the machine stages** (`pipeline/worker.py`, `loft work`).
-A batch is work while a stage artefact is MISSING — not while its status
-says so. `pipeline/stage_table.py` owns the stage order and each stage's gap
-check: `classify` (no entry, or one in the pre-category spelling), `orient`
-(the row pages' uprights), `read` (the category's own marker), `group` (no
-grouped `boundaries.json`). `pipeline/reconcile.py` (`Reconciler`) runs
-exactly those, in order, after re-planning on the new categories once
-`classify` has run; it journals each stage's outcome to
-`work/<batch>/events.jsonl` and logs the reason and the duration. Nothing is
-retried: a failure is journalled and raised, and the batch waits for the next
-trigger or resync.
+A batch is work while a stage's row is missing — not while its status says
+so. `pipeline/stage_table.py` owns the stage order and each stage's gap
+check, read through the service: `classify` (`pages.category` absent),
+`orient` (the row pages' rotation or derivative absent), `read` (no
+non-empty `readings`), `group` (no grouped `documents`).
+`pipeline/reconcile.py` (`Reconciler`) runs exactly those, in order, after
+re-planning on the new categories once `classify` has run; it journals each
+stage's outcome as a `jobs` row and logs the reason and the duration.
+Nothing is retried: a failure is journalled and raised, and the batch waits
+for the next trigger or resync.
 
-The triggers are `Worker.watch`: a change under the scan area, the registry
-or the work tree maps to its batch and that batch is reconciled then (a batch
-already in flight is skipped, so the reconciler's own writes cannot feed back
-into it); a quiet interval is a full resync, and one runs at startup.
-`loft work` is one resync, `loft work --plan` prints each batch's gap and runs
-nothing, `loft work --batch <id>` reconciles one. `pipeline/artefacts.py` is
-the one place the layout is written (guarded by `tests/test_architecture.py`),
-and `pipeline/model/config.py` names every model and the Cloudflare AI Gateway
+The triggers are a change under the scan area (adopt that folder, then
+reconcile its batch) and a short periodic resync (one at startup). A remote
+command or a drawn-line correction marks the batch `pending`; the next
+resync picks it up — the correction's latency is the resync interval, not a
+person. `loft work` is one resync, `loft work --plan` prints each batch's gap
+and runs nothing, `loft work --batch <id>` reconciles one.
+`pipeline/artefacts.py` is the one place the derivative path layout is
+written (guarded by `tests/test_architecture.py`), and
+`pipeline/model/config.py` names every model and the Cloudflare AI Gateway
 endpoint.
 
-A page's pipeline status is never stored in the work tree — it is derived
-from the stage artefacts (`BatchReadings.page_status`); the live projection
-may carry the derived status for query speed (`04-live-system.md` §17.8.1).
-Only the batch's queue state is written, through the chain's one status
-writer, which stamps the pass (pid, host, time). Two rules keep the queue
-honest: a pass that dies half-way writes its record back to `pending` (a
-crash in `importing` would strand the batch), and a scan stages beside the
-inbox rather than in it (a directory in the scan area is a finished pile, and
-the worker adopts every one).
+A page's status is the projection of its rows (`pages.status`); it is
+derived, never hand-set. Only the batch's queue state is written, through
+the chain's one status writer, which stamps the pass (pid, host, time). Two
+rules keep the queue honest: a pass that dies half-way writes its record
+back to `pending` (a crash in `importing` would strand the batch), and a
+scan stages beside the inbox rather than in it (a directory in the scan area
+is a finished pile, and the worker adopts every one).
 
 **A corrected page is re-read on the worker's next pass.** The reviewer's
-drawn lines persist as `ocr-guess/<stem>.row-adjustments.json`; the write
-marks the batch `pending` (the server never contacts the worker), and the
-read stage rebuilds the page's rows from the persisted words + those lines,
-reads each row as itself, and writes them as the reading's lines with the
-drawn lines' sha in `corrected`. The transcript gate then shows the corrected
-text. Three rules keep it cheap and honest: a check with no lines ("rows are
-right") requeues nothing; a reading whose `corrected` equals the file's sha is
-skipped (the same lines are never re-read); and a corrupt correction file
-fails loudly rather than reading the page against lines nobody can parse.
-Only corrected pages re-read — an unchanged page keeps its draft reading.
+drawn lines persist as the page's `row_adjustments` row, whose JSON blob is
+in the content store. The write marks the batch `pending` (the server never
+contacts the worker); the read stage rebuilds the page's rows from the
+reading's words + those lines, reads each row as itself, and writes them as
+the reading's lines with the drawn lines' sha in `corrected_sha`. The
+transcript gate then shows the corrected text. Three rules keep it cheap and
+honest: a check with no lines ("rows are right") requeues nothing; a reading
+whose `corrected_sha` equals the adjustments' sha is skipped (the same lines
+are never re-read); and a corrupt adjustments blob fails loudly rather than
+reading the page against lines nobody can parse. Only corrected pages
+re-read — an unchanged page keeps its draft reading.
 
 **The model-API contract (the client side of the Cloudflare gateway).** The
 VLM client must send a User-Agent the gateway's WAF accepts
@@ -483,11 +486,11 @@ with the response body; empty-content and budget-exhaustion failures are
 raised as actionable `VlmError`s. See the `cloudflare-ai-gateway` skill for
 the route-side configuration.
 
-**Versioned persistence.** All pipeline artifact writes go through
-`PipelineStore` (`pipeline/store.py`), which preserves the previous version
-at `-2.ext` before overwriting the base path — an overwrite is always
-recoverable, and the append-only invariant is enforced at the write seam
-rather than hoped for.
+**One write seam, no file store.** Every pipeline write is a `Change`
+through the service; the content store verifies each blob's sha; the event
+log is append-only. There is no `PipelineStore` and no per-stage file to
+version: the DB's transaction is the unit, and an old blob stays in
+`content`.
 
 ### 16.16 The transcription-validation review surface
 
@@ -714,18 +717,20 @@ classifier is one small call per page. Two measures bound the footprint:
    leftover is apportioned to its neighbours. The corrected rows are read
    again as themselves; the reading carries the drawn lines' sha so a later
    pass does not repeat the work.
-6. **The artifacts.** The reading is `rows.json` (`RowsReading`: page, size,
-   rotation, revision, lines with text) and `words.json` (the words); the page
-   `.txt` is the rows' text in order. The live DB projects the reading into
-   `pages` (revision), `page_rows` (source, trust, text, box, kind, insertion)
-   and `readings` (the reading sha); the reviewer's ticks are `row_checks` and
-   insertions are `page_row_links`. The work files are the pipeline's cache;
-   the DB is the live store.
+6. **The artifacts.** The reading is one content blob (`RowsReading`: page,
+   size, rotation, revision, lines with text, and the words); `readings`
+   references it by sha and carries the row and word counts. `page_rows` is
+   the queryable projection (source, trust, text, box, kind, insertion); the
+   page text is the rows' text in order. The reviewer's drawn lines are a
+   second blob, referenced by the page's `row_adjustments` row; the reading's
+   `corrected_sha` records the lines it was built from. The reviewer's ticks
+   are `row_checks` and insertions are `page_row_links`. There are no work
+   files: the live store is the state.
 
-**Completion.** A page is read when its `rows.json` exists and carries at
-least one row. An empty reading is not a completion: the stage leaves the
-marker unwritten and names the page for a re-run. A correction is current when
-the reading's `corrected` sha equals the drawn-lines file's sha; an empty
+**Completion.** A page is read when its `readings` row exists and carries at
+least one row. An empty reading is not a completion: the stage writes no
+reading row and names the page for a re-run. A correction is current when the
+reading's `corrected_sha` equals the `row_adjustments` row's sha; an empty
 correction ("rows are right") is not a re-read.
 
 **What the model does and does not do.** The VLM supplies the text, the

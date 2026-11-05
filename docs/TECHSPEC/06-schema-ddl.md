@@ -377,6 +377,7 @@ CREATE TABLE pages (
   sha256         TEXT NOT NULL,
   revision       INTEGER NOT NULL,
   rotation       INTEGER NOT NULL DEFAULT 0,
+  category       TEXT NOT NULL DEFAULT '',
   status         TEXT NOT NULL,
   event_seq      INTEGER NOT NULL
 ) STRICT;
@@ -416,11 +417,19 @@ CREATE TABLE row_checks (
 ) STRICT;
 
 CREATE TABLE readings (
-  page_id     TEXT PRIMARY KEY,
-  reading_sha TEXT NOT NULL,
-  rows        INTEGER NOT NULL,
-  words       INTEGER NOT NULL,
-  event_seq   INTEGER NOT NULL
+  page_id       TEXT PRIMARY KEY,
+  reading_sha   TEXT NOT NULL,
+  corrected_sha TEXT NOT NULL DEFAULT '',
+  rows          INTEGER NOT NULL,
+  words         INTEGER NOT NULL,
+  event_seq     INTEGER NOT NULL
+) STRICT;
+
+CREATE TABLE row_adjustments (
+  page_id    TEXT PRIMARY KEY,
+  sha256     TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  event_seq  INTEGER NOT NULL
 ) STRICT;
 
 CREATE TABLE review_messages (

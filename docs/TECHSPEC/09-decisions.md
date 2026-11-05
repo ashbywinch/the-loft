@@ -130,10 +130,12 @@ decisions survive all three. The blast radius is at the bottom.
 - **D38 [domain] — The canonical chat transcript is SQLite.** D1 holds the
   live session; each message has a UUID; the laptop writes exactly one
   `review_messages` row.
-- **D39 [shape] — The read model is an R2 release plus a pointer.** The laptop
-  uploads `releases/<seq>/` then flips `current.json`; the app reads the
-  pointer. The laptop uses an R2 API token; the outbox pull uses a Worker
-  service token.
+- **D39 [shape] — The read model is a dated R2 release with a final manifest.**
+  The laptop uploads `releases/<timestamp>/` and writes `manifest.json` last;
+  the newest folder with a manifest is current; the old folder is deleted. The
+  media is global and content-addressed (`media/<sha>`); a publish uploads only
+  new shas. A rollback is a republish from the DB. The laptop uses an R2 API
+  token; the outbox pull uses a Worker service token.
 - **D40 [shape] — The Worker runs chat, identify and remote re-read.** The
   initial row generation and transcription stay on the laptop; the Worker
   re-reads corrected rows from the published view image and queues the text.

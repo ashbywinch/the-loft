@@ -18,7 +18,7 @@ we operate runs off-site; the remote backend is a serverless function.
 |---|---|
 | **Google Identity** | the OAuth sign-in; the Worker verifies the ID token and owns the session |
 | **Cloudflare D1** | the tiny database: outbox, chat sessions, accounts, auth sessions |
-| **Cloudflare R2** | the view images and the published read model (versioned releases + `current.json`) |
+| **Cloudflare R2** | the view images (`media/<sha>`) and the published read model (dated releases, manifest last) |
 | **Cloudflare AI Gateway** | the model gateway; the key lives in the Worker |
 
 ## The remote backend app
@@ -42,13 +42,16 @@ The remote app's data is published to **R2**, served through **one origin**:
   hostname. **The Worker's Google session gates the hostname**; the session
   cookie is first-party, so the app's fetches and its `<img>` requests are
   authorized with no CORS and no signed URL.
-- Each publish is a **release**: the laptop uploads the release's JSON and
-  images under a versioned prefix (`releases/<seq>/…`), then flips a small
-  `current.json` pointer. The Worker reads the pointer and the release from
-  R2 through a binding; the app never talks to R2 directly.
-- A partial upload never goes live: the pointer still names the previous
-  release. A rollback re-points to the previous release.
-- **Images are content-addressed and immutable.** The Worker serves
+- Each publish is a **dated folder**: the laptop uploads the release's JSON
+  under `releases/<timestamp>/` and writes `manifest.json` **last**. The
+  newest folder with a manifest is the current release; a folder without one
+  is not a release. The Worker lists the folders and reads the newest through
+  a binding; the app never talks to R2 directly.
+- A partial upload never goes live: it has no manifest, so the previous
+  release stays current. Once the manifest lands, the old folder is deleted.
+  A rollback is a republish from the DB.
+- **Images are global and content-addressed**, `media/<sha>`, not per
+  release; a publish uploads only the shas that are new. The Worker serves
   `/img/<sha>` with `Cache-Control: public, max-age=31536000, immutable` and
   caches the object at the edge (`caches.default`); the browser keeps each
   image after the first view. Repeat views cost neither a Worker request nor
@@ -60,9 +63,9 @@ The remote app's data is published to **R2**, served through **one origin**:
 **What a release carries.** Two halves:
 
 - **Browse:** `index.json` (the cards), `people.json`, `places.json`,
-  `orgs.json`, `themes.json`, `transcripts.json`, the published search index,
-  and the view images. The app walks the API's collections once to warm its
-  cache; there is no bulk endpoint.
+  `orgs.json`, `themes.json`, `transcripts.json`, the published search index;
+  it references the global view images (`media/<sha>`). The app walks the API's
+  collections once to warm its cache; there is no bulk endpoint.
 - **Review:** `review/index.json` (the open claims and the batch/document
   strip) and one `review/<document_id>.json` per open document — its pages,
   rows, boxes and flags. A confirmed document is readable from browse; it is
@@ -144,7 +147,7 @@ files are still written, but no domain write bypasses the seam.
 | `LiveStore`, `Change`, the event log, the projections, the content store | Local web service |
 | Worker, reconciler, scanner | Local OS daemon |
 | Sync agent, exporter, retention, derivative generation | Local OS daemon |
-| `Snapshot` / read model | Cloudflare R2 (versioned releases + `current.json`) |
+| `Snapshot` / read model | Cloudflare R2 (dated releases, manifest last) |
 | `Outbox` (commands), chat sessions, accounts | Cloudflare D1 |
 | `Backend` (Google OAuth, chat/identify/re-read) | Cloudflare Worker |
 | `Derivative` (the view image), `Asset` bytes | Cloudflare R2 |

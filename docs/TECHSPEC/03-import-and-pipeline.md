@@ -279,7 +279,7 @@ runnable, resumable, and replaceable.
 | `group` | the documents: the model judges boundaries over the pages' readings, then the scorer weighs duplex sides, paper size, page numbers and those flags | `documents`, `document_pages` |
 | `review` | oriented + read → the agreed document as an archive item (its `transcription.txt`) + the grouping (the IMPORT-PRD flow, user-paced) | `review` |
 | `catalog` | confirmed pages + transcript → the item and its content (`items`, `item_content`) | `done` |
-| `publish` | the live store → the R2 release (`releases/<seq>/`) | — |
+| `publish` | the live store → the R2 release (`releases/<timestamp>/`, manifest last) | — |
 
 **Parallelism.** Batches are independent; stages within a batch are
 sequential (classify before orient; orient before the read). The

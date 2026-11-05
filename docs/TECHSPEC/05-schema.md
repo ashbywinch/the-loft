@@ -183,10 +183,10 @@ The DDL is in `06-schema-ddl.md`.
   size and a path relative to the content store; the bytes are files. The
   human archive copies the confirmed item's images into its folder.
 - **The snapshot's content bundle is part of the atomic publish.** The
-  published manifest lists every content sha the snapshot references; the
-  pointer flips only when all are present. Uploads are content-addressed
-  with `If-None-Match: *`, so a retry is free and a partial upload never
-  goes live.
+  published manifest lists every content sha the snapshot references and is
+  written last; a release without a manifest is not a release. Uploads are
+  content-addressed with `If-None-Match: *`, so a retry is free and a partial
+  upload never goes live.
 - **The operational backup ships the blob metadata.** `content/` holds the
   bytes and `content.json` holds `sha256`, `mime`, `size` and `created_at`,
   so the table can be rebuilt byte-identically. A dump-only restore includes

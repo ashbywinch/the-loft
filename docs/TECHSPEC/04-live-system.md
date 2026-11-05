@@ -76,7 +76,7 @@ flowchart LR
     direction TB
     Static["Remote static web app<br/>HTML/JS/CSS · no server code"]
     Backend["Cloudflare backend<br/>Worker + D1"]
-    Snapshot["Read model<br/>R2 releases + current.json"]
+    Snapshot["Read model<br/>R2 dated releases + manifest"]
     Outbox["Outbox table<br/>D1, keyed by UUID"]
     Media["Cloudflare R2<br/>view images (readable)"]
     Auth["Google OAuth<br/>Worker sessions"]
@@ -124,7 +124,7 @@ nightly human archive and operational backup.** The full deployment table is
 | **Archive disk** | big disk | full-resolution originals; the human archive; the operational backup | be written by the app |
 | **Remote static app** | Cloudflare Pages | the static UI; reads the R2 read model; writes commands to the backend; fetches images from R2 | run server code |
 | **Cloudflare backend** | Worker + D1 | Google OAuth, chat/identify/re-read calls, the outbox, accounts | write the archive |
-| **Snapshot** | R2 | the current release and the `current.json` pointer | be the only copy |
+| **Snapshot** | R2 | the current dated release and its manifest | be the only copy |
 | **Outbox** | D1 | immutable commands keyed by UUID | be edited or deleted |
 | **Derivative store** | R2 | the view images (readable, row-checkable) | hold originals |
 | **Browser** | LAN or anywhere | reads; writes; optimistic pending state; a local outbox while the backend is down | be the source of truth |
@@ -157,7 +157,7 @@ materialisation, not the live store. The noun ownership is
 | Scan · classify · orient · read · rows · transcribe | ✓ | — | reads originals |
 | Full-resolution images | serves on LAN | — (never stored) | stores |
 | View images | generates | served from R2 (readable and row-checkable) | — |
-| Read model | produces | R2 publishes a release + pointer | — |
+| Read model | produces | R2 publishes a dated release | — |
 | Remote re-read | — | Worker transcribes corrected rows from the view image | — |
 | Remote command queue | drains | D1 outbox | — |
 | Operational backup | produces | — | stores |
@@ -183,8 +183,8 @@ command is `05-schema.md` §18.5; this section does not restate it.
 **W1 — at home, on the LAN.** Browser → Loft service → one SQLite
 transaction → one change (one or more events) → read model marked dirty. The
 response is sent after the commit, never after a projection rebuild. A
-background publisher coalesces the dirty marks, uploads a new release to R2 and
-flips `current.json` off the request path. This is the fast path and the only path that writes
+background publisher coalesces the dirty marks and writes a new dated release
+to R2, manifest last, off the request path. This is the fast path and the only path that writes
 domain state directly.
 
 **W2 — the scanner and pipeline.** Scanner → big disk → worker → the
@@ -251,7 +251,7 @@ sequenceDiagram
     D-->>S: commit + event(s)
     S-->>L: applied
     L->>L: advance applied_through
-    L->>P: upload release + flip current.json
+    L->>P: upload release + write manifest last
   else no row changed
     S-->>L: stale
     S->>D: command/rejected (retryable)
@@ -349,8 +349,9 @@ An uninvited email gets `403` and a log line.
 ### 17.6 Read paths
 
 - **LAN.** Loft service → `LiveStore`. Always current.
-- **Remote.** The static app reads the release through the Worker, which reads
-  `current.json` and the release from R2, plus an overlay of the caller's own
+- **Remote.** The static app reads the release through the Worker, which lists
+  the releases and reads the newest folder with a manifest from R2, plus an
+  overlay of the caller's own
   pending commands, so an author
   sees their edit before it is applied. The read model is republished after
   each drain and on a schedule; it carries `published_at`, and the UI shows
@@ -390,8 +391,8 @@ the Worker calls the VLM for the rows; the result queues for the laptop. The
 initial row generation and transcription stay on the laptop; only the re-read
 of an already-published page runs on the Worker.
 
-**The facts are the last published release.** The Worker sees the
-`current.json` release, not the live DB; the UI shows `published_at`. The
+**The facts are the last published release.** The Worker sees the current
+dated release, not the live DB; the UI shows `published_at`. The
 laptop re-validates every applied result and is the only writer.
 
 **The image.** The remote re-read uses the view image — the same image the
@@ -441,7 +442,7 @@ resource they affect, so an author sees their edit before the laptop applies
 it. `GET /api/operations/{id}` is the uncached, live status.
 
 **The release is the Worker's source, not the app's.** The app boots with
-`GET /api/release` (the pointer and `published_at`) and then the collections
+`GET /api/release` (the current release's timestamp and `published_at`) and then the collections
 it needs; the Worker reads the release's JSON from R2 through the binding and
 paginates it. The app never fetches the release's JSON directly and never
 talks to R2; only `/img/<sha>` is content-addressed and immutable.
@@ -527,7 +528,7 @@ value); the rows are the evidence and the projection is rebuildable.
 | Restore to before the cursor | — | Replaying events | The event log is exported and restored, so replay is idempotent; the log records no duplicate |
 | Outbox grows for weeks | Everything | Storage only; the log is tiny | The cursor catches up; the outbox is never trimmed |
 | Stale command | — | The author's edit | Parked; the author sees it in the remote pending list and resolves against the newer version |
-| Partial read-model publish | The previous read model stays current | — | The pointer flips only after the new read model and manifest are complete |
+| Partial read-model publish | The previous read model stays current | — | The manifest is written last; a folder without one is not a release |
 | Ordering | — | Which command wins | Commands apply in pull order; per-record conflicts are decided by `entity_version`, not wall-clock time. There is no global order, and the UI does not claim one |
 
 ### 17.11 Technology choices and security posture
@@ -551,11 +552,12 @@ value); the rows are the evidence and the projection is rebuildable.
   is immutable, and the laptop's `applied_through` cursor is the progress
   state. It is never trimmed: it is the replay source after a restore, and
   it is small.
-- **The published read model is an R2 release plus a pointer.** The laptop
-  uploads the release's JSON and images under `releases/<seq>/`, then flips
-  `current.json`; the app reads the pointer. The pointer flips only when every
-  referenced part is present. The laptop uses an **R2 API token** for the
-  upload; the outbox pull uses a **Worker service token**.
+- **The published read model is a dated R2 release with a final manifest.**
+  The laptop uploads the release's JSON under `releases/<timestamp>/` and
+  writes `manifest.json` last; the newest folder with a manifest is current.
+  The old folder is deleted after the manifest lands. The laptop uses an
+  **R2 API token** for the upload; the outbox pull uses a **Worker service
+  token**.
 - **Derivatives are generated on the laptop and uploaded.** On-the-fly
   resizing at the edge would add a service and put the original one hop
   from the internet.

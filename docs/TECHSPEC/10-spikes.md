@@ -85,10 +85,10 @@ hash/migration, draft exclusion, command rebuild — follow.
     proposed identity or `thinking` blob; the backup contains them; the
     human archive's manifest lists only confirmed files.
 15. **Command outcome rebuild.** Drop `commands`, replay `command/*`, and
-    get the same pending/applied/needs_attention/rejected list.
-16. **Snapshot content atomicity.** A read-model pointer never goes live
-    before every referenced content sha is present; a retry re-uses the
-    object.
+    get the same pending/applied/parked/rejected list.
+16. **Snapshot content atomicity.** A read-model release never goes live
+    before its manifest, and the manifest lists every referenced content sha;
+    a retry re-uses the object.
 17. **Projection coverage.** Every `entity_kind` in the vocabulary has a
     typed table and a projector; a new kind without one fails the gate. A
     rebuild with a missing table fails, never silently skips.
@@ -146,11 +146,12 @@ hash/migration, draft exclusion, command rebuild — follow.
     person; the cookies are `HttpOnly`/`Secure`/`SameSite=Strict`; CSRF and
     the session revocation hold.
 
-27. **Read-model publish.** Upload a release, flip `current.json`; a partial
-    upload leaves the old pointer; the app reads the new release through the
-    Worker; a rollback re-points; the session and the R2 token hold. Measure the
-    release size and publish time for a 50k-page archive: browse + the open
-    claims, never the whole row set.
+27. **Read-model publish.** Upload a dated release, write the manifest last;
+    a partial upload has no manifest, so the old release stays current; the
+    Worker lists and serves the newest complete folder; the old folder is
+    deleted; the session and the R2 token hold. Measure the release size and
+    publish time for a 50k-page archive: browse + the open claims, never the
+    whole row set.
 
 28. **View-image transcription.** One 300 DPI handwriting page: the VLM's
     per-row text on the view image vs the original. Acceptance: the view image

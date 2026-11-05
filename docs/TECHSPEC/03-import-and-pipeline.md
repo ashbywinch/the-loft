@@ -205,8 +205,11 @@ Loft/
   derivatives/
     oriented/page-NN.jpg          correct way up (Rule J, before any reading)
     view/page-NN.webp             the one view image per page (published to R2)
-  exports/
-    items/<item-id>/              the human archive (nightly; item.json + originals + transcription.txt)
+  archive/                        the human archive's document leg (nightly)
+    README.md INDEX.md PEOPLE.md PLACES.md
+    documents/<date label>/<item-id>/
+      item.json
+      transcription.txt
   backup/                         the operational dump + manifest (nightly)
   release/                        the staged R2 release (transient; uploaded then discarded)
 ```

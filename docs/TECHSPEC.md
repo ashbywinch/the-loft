@@ -47,7 +47,7 @@ restate it.
 | The live system's shape, the remote API, command/read flow, failure modes | [04-live-system.md](TECHSPEC/04-live-system.md) §17 |
 | The schema's concepts, event log, content, projections, migrations, withdrawal; the D1 store | [05-schema.md](TECHSPEC/05-schema.md) §18.1–18.7, §18.13 |
 | The schema DDL — events, content and projections, the one table definition | [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) |
-| The nightly job, the human archive, the operational backup | [07-exports.md](TECHSPEC/07-exports.md) |
+| The nightly job, the human archive (the dated document tree + the scan image leg), the operational backup | [07-exports.md](TECHSPEC/07-exports.md) |
 | Code organisation and the persistence boundary | [08-code-organisation.md](TECHSPEC/08-code-organisation.md) §19 |
 | The one-time migration from the file archive to the database | [11-migration.md](TECHSPEC/11-migration.md) |
 | Decisions (D1–D45 and the legacy decisions), with blast radius | [09-decisions.md](TECHSPEC/09-decisions.md) |

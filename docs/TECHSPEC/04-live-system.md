@@ -626,7 +626,7 @@ proposed.
 | **`tools/store.py` check-then-write** | Replaced by a `link()` create-if-absent primitive | The exporter cannot be append-only on a primitive that can silently overwrite a version. |
 | **CLI review gate and `record_confirmation` write the archive directly** | Cut over to the DB | The exporter is the only archive writer; the CLI becomes a client of the same seam. |
 | **Identity decisions are version-gated** | Exempt | The 2026-10-21 user decision: a determination is always applied and recorded, last wins, with no staleness to detect. |
-| **Date-partitioned document storage (`docs/object-model.md` Phase 5)** | Resolved: flat `items/<id>/` plus a generated index | `07-exports.md` §18.8: stable paths and `INDEX.md` give chronology without moving folders. |
+| **Date-partitioned document storage (`docs/object-model.md`)** | **Chosen** | `07-exports.md` §18.8: the export's document leg is the dated tree; the DB is the index; the images stay in the scan area, linked by sha/phash. The flat `items/` + copy decision is withdrawn. |
 | **`edits.jsonl` and `audit.jsonl`** | One log: `events` | The event log is the audit; the operational backup carries it as `events/`. |
 
 ---

@@ -68,6 +68,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | Code conventions | `docs/coding-standards.md` |
 | Code organisation, layers and the persistence boundary (`LiveStore`, `Change`, repositories, import rules) | `docs/TECHSPEC/08-code-organisation.md` §19 |
 | The one-time migration from the file archive to the database | `docs/TECHSPEC/11-migration.md` |
+| The human archive — the dated document tree, the scan image leg, the sha/phash re-find | `docs/TECHSPEC/07-exports.md` §18.8; `docs/object-model.md` (the model summary) |
 | Test conventions | `docs/testing-standards.md` |
 | Documentation conventions | `docs/writing-documentation.md` |
 | Writing or editing a prompt (the review, memory, transcription instructions) | `skill://prompt-craft`; the form rules are `docs/writing-documentation.md` |

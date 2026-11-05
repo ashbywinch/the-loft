@@ -384,11 +384,15 @@ its contract — what it takes in and what it hands back.
 | `ReviewChat` | `loft/archive/` (the review machinery) | The review conversation over a source — a `Memory` or a `Document`: takes the source and the facts context (the standing collections, through `ReviewContext`), runs the read-only tool harness and the verdict loop (the digs + correction turns; the model-call-is-a-conversation rule; depth is the only per-source difference), hands back the `ReviewDecision` outcomes (attested / estimated / pending / delete per entity) and the `Message` log |
 ## Settled — the archive's document storage: date-partitioned folders
 
+**Normative:** `TECHSPEC/07-exports.md` §18.8 defines the export's tree; this
+section is the object model's summary. The DB is the live store; the export
+writes the dated document leg and references the scan area's images by
+sha/phash.
+
 **The live archive is migrated — this is not optional and not
 deferred.** The existing archive's data is in the old
-`assets/<id>/` layout and must be converted to the date-partitioned
-tree below; the new code does not read or write the live archive's
-data until the migration has run. The migration is **Phase 5**, the
+`assets/<id>/` layout and must be converted; the new code does not read or
+write the live archive's data until the migration has run. The migration is **Phase 5**, the
 only phase allowed to touch the live archive, under the Archive-safety
 contract (opt-in command, dry-run first, backup precondition,
 verify-loudly — see above). Until it runs, everything stays on the

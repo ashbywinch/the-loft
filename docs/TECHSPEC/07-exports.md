@@ -98,6 +98,40 @@ archive/
   draft has no `transcription.txt`; its `item.json` says
   `"transcription": "pending"`. The scan and the metadata are there; the
   words arrive when confirmed. A photo with no text is a normal item.
+
+**The `item.json` shape.** One object per item, current metadata only; no
+versions, event ids or hashes. The fields a reader or a tool needs:
+
+```json
+{
+  "schema": 1,
+  "id": "letter-1963-05-14-01",
+  "type": "letter",
+  "title": "A week in the flat",
+  "date": "1963-05-14",
+  "date_precision": "exact",
+  "description": "",
+  "source": "Box 3 — Letters 1963",
+  "provenance": "",
+  "sensitive": false,
+  "status": "catalogued",
+  "people": [{"id": "p-mum", "name": "Nora", "status": "confirmed"}],
+  "places": [{"id": "pl-aldgate", "name": "Aldgate", "status": "confirmed"}],
+  "orgs": [],
+  "themes": [{"id": "t-the-flat-search", "title": "The flat search", "status": "confirmed"}],
+  "items": [],
+  "assets": [{"kind": "page", "file": "page-01.jpg", "caption": ""}],
+  "transcription": "transcription.txt"
+}
+```
+
+- `transcription` is the filename or `"pending"`; a story item uses `story`.
+- Refs carry `confirmed` or `estimated`; `proposed` is never exported.
+- The `id` is the stable folder name; a date correction does not move it.
+- `schema` is the export shape's version (`1`).
+- The text is never embedded; it is the `.txt` file.
+- JSON is UTF-8 with sorted keys and a trailing newline, so `manifest.json`
+  can hash it deterministically.
 - **Confirmed and estimated identities, not proposed.** `people.json`,
   `places.json` and `orgs.json` carry the cast the viewer sees (estimated is
   the family's guess and is marked); proposed records wait in the DB, and a

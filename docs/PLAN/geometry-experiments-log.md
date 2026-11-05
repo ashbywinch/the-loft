@@ -236,7 +236,7 @@ rec's ink for precision. Next candidates:
 
 ## 2026-08-22 — the model trial (5 models x 2 tasks, OpenRouter)
 
-The full report: `docs/PLAN/model-trial-report.md` — the table + the
+The full report: `docs/TECHSPEC/03-import-and-pipeline.md` — the table + the
 visual breakdown. The summary:
 
 - All 5 models (glm-4.6v, glm-4.5v, qwen2.5-vl-72b, gpt-4.1-mini,

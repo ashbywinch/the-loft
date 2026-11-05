@@ -156,7 +156,7 @@ a second pass on the chat's usability itself, ignoring the supersession.
 | R14 | minor | DESIGN | **Completion claim oversells** — "the tree now shows the confirmed family" when it already did | OPEN |
 
 **Status of R1–R14:** still open — the resolutions are
-designed in `docs/PLAN/ux-review-chat-solution.md`, and the mechanism was
+designed in `docs/PLAN/INGEST-PLAN.md`, and the mechanism was
 superseded by the claim-model agreement (`docs/PLAN/INGEST-PLAN.md`,
 agreed direction, not yet implemented); the findings' fates
 are tracked there.
@@ -1093,7 +1093,7 @@ line).
 
 **Implemented:** the focus model landed with the review surface v2 — the
 dual-pane, per-line-box walk, served by the
-grouped-strips layout (`strip-grouping-plan.md`).
+grouped-strips layout (`docs/TECHSPEC/03-import-and-pipeline.md` §16.14.1).
 
 **Decision:** VR17 and acceptance criteria 24-28 recorded in the PRD.
 The focus model is the reference for the usability test.

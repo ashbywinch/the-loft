@@ -28,7 +28,6 @@ ownership and the blast radius: **`docs/TECHSPEC/00-deployments.md`**.
 - **Normative** — implement this; the code and tests are held to it.
 - **Proposed** — under review; may change before implementation.
 - **Deferred** — a seam, not built.
-- **History** — superseded; kept for the record; never implement.
 
 The status is per component; a component can be normative in its deployment
 statement and proposed in its details.
@@ -52,7 +51,6 @@ restate it.
 | The one-time migration from the file archive to the database | [11-migration.md](TECHSPEC/11-migration.md) |
 | Decisions (D1–D45 and the legacy decisions), with blast radius | [09-decisions.md](TECHSPEC/09-decisions.md) |
 | Spikes | [10-spikes.md](TECHSPEC/10-spikes.md) |
-| History — superseded designs | [99-history.md](TECHSPEC/99-history.md) |
 
 The write path has two topics, not two copies: **[04-live-system.md](TECHSPEC/04-live-system.md) §17.5**
 is the remote command flow (browser → managed outbox → local sync agent);
@@ -66,7 +64,7 @@ The export/backup procedure is only in [07-exports.md](TECHSPEC/07-exports.md).
 |---|---|---|
 | [00-deployments.md](TECHSPEC/00-deployments.md) | the deployment shape, the nouns each owns, the blast radius | **normative** |
 | [01-foundations.md](TECHSPEC/01-foundations.md) | §0–§2 principles/stack, §14 deferred seams | **normative**, with superseded notes |
-| [02-archive-and-capture.md](TECHSPEC/02-archive-and-capture.md) | §4, §6, §9–§11 the record wire shape, maps, PWA, search, tools | current; §3/§5/§7/§8 are in [99-history.md](TECHSPEC/99-history.md) |
+| [02-archive-and-capture.md](TECHSPEC/02-archive-and-capture.md) | §4, §6, §9–§11 the record wire shape, maps, PWA, search, tools | current |
 | [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) | §16.13–§16.17 the capture pipeline, reading path and review surface; §16.1–§16.11 the import-flow record | current for the pipeline; the import-flow record is not the live architecture |
 | [04-live-system.md](TECHSPEC/04-live-system.md) | §17 the live system — shape, command/read flow, failure modes, technology choices | **proposed**; the deployment shape is normative in `00` |
 | [05-schema.md](TECHSPEC/05-schema.md) | §18.1–18.7 the schema concepts: append-only stores, event log, content, projections, write transaction, migrations, withdrawal; §18.13 the D1 store | **proposed** |
@@ -74,9 +72,8 @@ The export/backup procedure is only in [07-exports.md](TECHSPEC/07-exports.md).
 | [07-exports.md](TECHSPEC/07-exports.md) | §17.9 + §18.8–18.9 the nightly job, the human archive, the operational backup | **proposed** |
 | [08-code-organisation.md](TECHSPEC/08-code-organisation.md) | §19 the layers and the persistence boundary | **proposed** |
 | [11-migration.md](TECHSPEC/11-migration.md) | the one-time file-store → DB import: what maps, order, idempotency, verification, cutover | **proposed** |
-| [09-decisions.md](TECHSPEC/09-decisions.md) | §12, §15, §17.13, §18.11, §19.9 the decision register | register |
+| [09-decisions.md](TECHSPEC/09-decisions.md) | §17.13, §18.11, §19.9 the decision register | register |
 | [10-spikes.md](TECHSPEC/10-spikes.md) | §17.12, §18.12, §19.10 the spike register | register |
-| [99-history.md](TECHSPEC/99-history.md) | §3, §5, §7, §8, §13, §16.12, §16.15 superseded designs | **history** |
 
 ## Section map
 
@@ -84,12 +81,9 @@ The export/backup procedure is only in [07-exports.md](TECHSPEC/07-exports.md).
 |---|---|
 | §0–§2, §14 | [01-foundations.md](TECHSPEC/01-foundations.md) |
 | §4, §6, §9–§11 | [02-archive-and-capture.md](TECHSPEC/02-archive-and-capture.md) |
-| §3, §5, §7, §8 | [99-history.md](TECHSPEC/99-history.md) |
-| §12, §15 | [09-decisions.md](TECHSPEC/09-decisions.md) |
-| §13 | [99-history.md](TECHSPEC/99-history.md) |
+
 | §16.1–§16.11 (import-flow record), §16.13–§16.14.2, §16.16–§16.17 | [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) |
-| §16.12, §16.15 | [99-history.md](TECHSPEC/99-history.md) |
-| §17.1–§17.8, §17.10–§17.11, §17.14 | [04-live-system.md](TECHSPEC/04-live-system.md) |
+| §17.1–§17.8, §17.10–§17.11 | [04-live-system.md](TECHSPEC/04-live-system.md) |
 | §17.9 | [07-exports.md](TECHSPEC/07-exports.md) |
 | §17.12 | [10-spikes.md](TECHSPEC/10-spikes.md) |
 | §17.13 | [09-decisions.md](TECHSPEC/09-decisions.md) |

@@ -2,7 +2,7 @@
 
 <!-- Component of docs/TECHSPEC.md. See the index for the status. -->
 
-Status: **current for §4, §6, §9–§11** (the record wire shape, maps, PWA, search, tools). The legacy file layout, Drive-era capture, privacy and performance are in `99-history.md`.
+Status: **current for §4, §6, §9–§11** (the record wire shape, maps, PWA, search, tools).
 
 ## 4. Data model (JSON)
 

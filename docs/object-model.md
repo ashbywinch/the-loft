@@ -287,7 +287,7 @@ Marginalia are notes with no insertion point, not part of the body text.
 page-01 reference (41 rows over 364 words) — is extended with each
 row's kind and insertion points, and **the extended results are
 validated by the user by hand before they count**. Anchors:
-`layout-requirements-draft` L3–L6, `Row.kind`. The §16.17/VR14 doc
+the layout requirements L3–L6, `Row.kind`. The §16.17/VR14 doc
 framing that blessed the strip path is corrected in the same change.
 The strip stage's `layout.json` dies with it — and so does "layout" as a
 concept name: the rows are the reading (boxes, text, trust stage, kind
@@ -314,7 +314,7 @@ scan folder): sha, source, arrived_at, the processing results, and its
 id (allocated at registration, never reassigned). Superseding writes
 **version the sidecar** (`…-1`, `…-2` per write) — the archive's
 data-safety and concurrency discipline, kept from today
-(`docs/archive-concurrency-plan.md`). There is no central
+(`docs/archive-durability.md`). There is no central
 registry or ledger file; an image whose sha matches an existing
 image's sidecar **is** that image — a reorganised folder, a copy, or a
 re-scan all resolve to the same image (matched by sha; R4's
@@ -412,7 +412,7 @@ the *placement* — the flat `assets/<id>/` layout and the document
 tree — never the safety mechanisms. The **superseding version chain is
 kept** (`item.json` → `item-N.json` per write): it is the archive's
 data-safety and concurrency discipline (one writer at a time, every
-write safe by append, `docs/archive-concurrency-plan.md`), and the new
+write safe by append, `docs/archive-durability.md`), and the new
 layout versions its sidecars the same way. The atomic write seam, the
 store layer, the sha identity, and the per-image sidecar records all
 carry over; nothing that makes a write safe is discarded.

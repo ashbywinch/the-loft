@@ -181,38 +181,3 @@ decisions survive all three. The blast radius is at the bottom.
 | The laptop becomes a home server | `[shape]`: D2, D6, D12; `00-deployments.md` |
 | SQLite becomes Postgres | `[schema]`: D1, D7, D14, D16, D18, D27; `05-schema.md`, `06-schema-ddl.md` |
 | The code layout moves to `loft/` | `[interface]`: D31–D36; `08-code-organisation.md` |
-
----
-
-## History — the pre-§17 decisions (superseded by §17.14)
-
-These are kept for the record: the 2060 reader, the sidecar rationale, the
-old hosting choice. They are not the live design. Where they disagree with
-D1–D45, the live decision wins.
-## 12. Decisions to confirm (your review)
-
-| # | Decision | Recommendation |
-|---|---|---|
-| 1 | **Vanilla-first — RESOLVED (user)** | A framework adds no value at this scale and hand-rolling stays manageable. Not "React or nothing": small JS or a CSS framework (degrading well) remains acceptable; revisit during development if things get messy (§15) |
-| 2 | **Drive is the archive's home (dedicated family account, official API, thin-client phone); site = published projection (metadata/thumbnails/stories); annual export is the durability ritual** | Yes — nothing stored on the phone, nothing hosted in the house |
-| 3 | **Sidecar-first layout** (`item.json` canonical, index derived) | Yes — one bad file loses one item (P3.4) |
-| 4 | **Street view + Leaflet/OSM map — RESOLVED (user)** | Public imagery only; OSM attribution; degrades offline |
-| 5 | **Tools language — RESOLVED:** Python (user) | — |
-| 6 | **Hosting target** — free static host for the app; archive home = Google Drive free tier | Cloudflare Pages (or Netlify / GitHub Pages) + Drive; nothing paid, nothing self-hosted |
-| 7 | **Working title — RESOLVED:** "The Loft" (user approved) | — |
-| 8 | **No PIN on the projection — open by design** (the archive account is the gate) | **SUPERSEDED (§7/F6):** no public surface at all until accounts land — the projection is family-only; nothing deploys before the F6 gate (PLAN/PLAN.md) |
-| 9 | **Family relationships** — typed edges in `people.json`; person pages show relationship labels; `#/tree` renders generations | **RESOLVED (user)** — built in the prototype. **Alignment:** no genealogy *tooling* (the PRD anti-pattern) is not the same as no object-model standard — **GEDCOM X** is adopted as the object-model reference (person/relationship/agent/event/place/source vocabulary; **residence events replace the place-household field** — the standard's model is better); **date precision extended** with `before`/`after`/`between` so the mapping is lossless; `tools/export-gedcom` targets **GEDCOM 7.0** with a documented one-to-one mapping (excludes proposed links and proposed residence; stories shoehorn as NOTES on the people they reference); **`tools/import-gedcom`** is the inverse (ids recovered via REFN, places by name) and the round-trip is exact — verified by tests and on the real archive; both sides parse-verified with `gedcom7` (strict ABNF grammar) |
-| 10 | **Live system store** — multi-user curation and corpus-scale generation need a real store; the folder stays the durable materialized contract | **RESOLVED (user)** — Supabase (Postgres + pgvector); small family-user set; generation on the reviewer's laptop; tenant isolation is a far-future seam (§14), not built |
-
----
-## 15. Decision rationale (for future reviewers)
-
-**Why no framework (user asked):** 1) *Durability* — the app is disposable but its code shouldn't be: vanilla files are readable in any editor in fifty years; a framework means `node_modules`, a build system, and a toolchain that rots. 2) *The budget* — 100 KB initial payload (P6); React + router + state is 300–500 KB before a line of our code. 3) *The app is small* — ~10 screens, no multiuser state, no real-time; frameworks pay off when state grows big enough to fight you. 4) *Zero maintenance tax* — no `npm install`, no lockfile churn, no build step to re-run; `python3 -m http.server` serves it. The honest counterpoint: at 40 screens with interdependent state, or with hired developers, a framework would win; the discipline that substitutes for it is small focused ES modules plus a ~50-line router. **Recorded decision (user):** a framework is judged to add no value at this scale, and hand-rolling complexity is not expected to overwhelm maintainability. Explicitly *not* "React or nothing": a small JS library or a CSS framework — especially one that degrades gracefully — may be adopted if it earns its place. Revisit during development if the code starts to get messy. The decision targets frameworks and build steps; it never ruled out classes (native ES2015) — the app has few value types so far, and the date model's JS twin (`PreciseDate`) will be the first (docs/coding-standards.md).
-
-**Sidecar tradeoffs (user asked):** each item is a folder; `item.json` sits beside the scans; `index.json` is derived, not canonical. *Gains:* one corrupt file loses one item, never the archive; the index is a cache — always rebuildable; cousin merges are folder merges, no database conflict; the archive is human-readable without the app (the 2060 test); no migrations ever. *Costs:* metadata exists twice (trivial — JSON is cheap); bulk edits need an index rebuild (automated); cross-archive queries read the index so it must be fresh (two simultaneous editors is the only race, rare, last-write-wins acceptable). *Alternatives rejected:* one big `index.json` (every write rewrites the whole file; one corruption is catastrophic; merges fight) and SQLite (fastest queries, but binary — a tool must read it, bad for 2060 — and it is the database lock-in the PRD refuses). Sidecars are the durability-first middle.
-
-**Why no PIN (user):** the PIN was a courtesy lock inherited from a pre-auth architecture; once real authentication (the archive account) gates everything intimate, the projection contains nothing sensitive — a PIN is ceremony with nothing behind it. Removed everywhere.
-
-**Why scanners:** the sheet-fed scanner and slide/photo scanner are the bulk quality path (300 DPI legibility — upgrades R3); the phone camera is ad-hoc only; tagging stays on the phone.
-
----

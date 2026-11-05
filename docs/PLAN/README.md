@@ -13,27 +13,18 @@ acceptance), then the pointed design doc for the item.
 | `PLAN.md` | the large-scale plan — the full PRD: slices 1–6, feature inventory, sequencing, per-slice status |
 | `WORK-PLAN.md` | the small-scale plan — the work remaining on the active subset (the ingest → transcription → identity pipeline), ordered with acceptance |
 | `SCRAPS.md` | loose ends that fit neither plan |
-| `archive-arrangement-proposal.md` | the archive's legs — where agreed and intermediate artefacts live (WORK-PLAN §1.7); settled: the dated document tree, no image copies (`TECHSPEC/07` §18.8) |
 
-## Records — history
+## Design and work records
 
 | File | Records |
 |---|---|
 | `pipeline-stages-plan.md` | the pipeline refactor's design (object model, seams) — status per WORK-PLAN §1 |
 | `INGEST-PLAN.md` | the claim-model review's design — WORK-PLAN §2 |
-| `strip-grouping-plan.md` | the layout stage's strip path — SERVED 2026-09-09 + postmortem; seams in WORK-PLAN §3 |
 | `segment-review-stories.md` | the review structure-tools stories — adjudicated; the build is WORK-PLAN 1.4/1.6 |
 | `row-review-ux.md` | the row review's phone surface — PROPOSED: the purpose, the pipeline's colours over the page, the reviewer's yellow lines, draw→redraw |
 | `page-categories.md` | the page categories (photo, writing printed/handwritten, postcard face, form, drawing) and what each implies for reading; PROPOSED |
 | `row-correction-rule.md` | how a drawn line edits a mostly-right page — LANDED: replace a covered row, claim only the words the line runs along, leave everything else |
-| `layout-requirements-draft.md` | the layout requirements — adjudicated + landed (VR19–24; TECHSPEC §16.17) |
-| `single-pass-landing-plan.md` | the §16.17 landing — complete 2026-09-22 |
-| `row-data-migration-plan.md` | user-lines → rows library — landed 2026-09-19 |
-| `model-trial-report.md` | the model trial — superseded as mechanism |
-| `vlm-word-segmentation-spike.md` | the VLM word-segmentation spike — milestones 1–3 landed in `tools/` |
-| `ocr-verification-research.md` | research synthesis — its rec/Transkribus directions ruled out 2026-09-22 |
 | `ux-fixes-plan.md` | the UX loop's working log (findings + statuses) — R1–R14 open until WORK-PLAN §2 |
-| `ux-review-chat-solution.md` | the review-chat redesign — superseded by INGEST-PLAN |
 | `geometry-experiments-log.md` | the experiment ledger — check before trying a mechanism |
 | `design-decisions.md` | the decision register |
 | `lucidlint-review-log.md`, `lucidlint-snag.md` | lucidlint integration records |

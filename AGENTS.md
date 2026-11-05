@@ -35,10 +35,10 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | Pipeline stages, stage completion (the live row), and per-page recovery (`make pipeline ARGS="process\|review\|printed <batch>"`) | `docs/TECHSPEC/03-import-and-pipeline.md` §16.14.2 |
 | Layout / geometry experiments ledger (the ink work's measured findings) | `docs/PLAN/geometry-experiments-log.md` |
 | Serving the app — foreground `make serve`; the supervised hub spec that survives daemon restarts | `README.md` (Quick Start → "Supervised dev server") |
-| The PLAN/ work logs (trial reports, walkthrough records, snags) | `docs/PLAN/` — `docs/PLAN/ocr-verification-research.md`, `docs/PLAN/model-trial-report.md`, `docs/PLAN/lucidlint-snag.md`, `docs/PLAN/ux-review-chat-solution.md`, `docs/PLAN/INGEST-PLAN.md` |
-| The layout stage's strip path — its plan, postmortem and reopened seams (ink-projection line bands; the grouping read) | `docs/PLAN/strip-grouping-plan.md` |
+| The PLAN/ work logs (the UX loop, the linter, the geometry ledger) | `docs/PLAN/ux-fixes-plan.md`, `docs/PLAN/lucidlint-review-log.md`, `docs/PLAN/lucidlint-snag.md`, `docs/PLAN/geometry-experiments-log.md`, `docs/PLAN/INGEST-PLAN.md` |
+| The layout stage's grouping and strip path (the grouping read, the strip route) | `docs/TECHSPEC/03-import-and-pipeline.md` §16.14.1, §16.17 |
 | Acting on lucidlint findings (fix-engine workflow, baseline, per-file checks) | `skill://lucidlint-workflow`; the repo's findings log at `docs/PLAN/lucidlint-review-log.md` |
-| Layout redesign requirements (the adjudication draft — layout-requirements-draft) | `docs/PLAN/layout-requirements-draft.md` |
+| The layout requirements (VR19–24) | `docs/TECHSPEC/03-import-and-pipeline.md` §16.17; `docs/PRD/TRANSCRIPTION-REVIEW-PRD.md` VR19 |
 | The reader — how a page's writing is found and boxed, and its acceptance check | `docs/box-detection.md`; `pipeline/detect/reader.py`, and the check `Rows.validate` in `pipeline/rows/rows.py` |
 | The per-word detection internals (ink → connected marks, baseline/waistline measurement, the streak-rule drop) | `pipeline/detect/mark.py` (`find_marks`, `baseline_row`, `waistline_row`); the page ruler `pipeline/detect/ruler.py`; pinned by `tests/pipeline/test_reader.py` |
 | Showing the user a visual artifact (renders, maps, zooms, case sheets) | `.omp/skills/show-the-user/SKILL.md` — existing tooling only, LAN URL, self-check before presenting |
@@ -75,8 +75,8 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | Documentation structure — the required doc set, folder rules, discoverability | `docs/documentation-structure.md` |
 | UX standards (the reviewer rules and UX-process norms) | `docs/ux-standards.md` |
 | UX spec — the PRD's UX answers + the journeys to usability-test | `docs/UX.md` |
-| Real content (people, relationships, items, story text) | `archive/` — append-only, supersede never edit; regenerate `app/data` with `./loft publish` |
-| Where an artefact lives (the archive's legs: identities, items, sessions) | `docs/PLAN/archive-arrangement-proposal.md` |
+| Real content (people, relationships, items, story text) | the live DB; the export is `archive/` (the dated document tree + the scan image leg); the repo is data-free. `./loft publish` regenerates `app/data` for local serve |
+| Where an artefact lives (the archive's legs: identities, items, sessions) | `docs/TECHSPEC/07-exports.md` |
 | Demo content for fake instances | `tools/demo_data.py` — fictional only, never real names |
 
 Read the relevant doc before changing behavior. **Before any code change, read `docs/coding-standards.md` — it is the standing contract for how code is written here, not a reference to consult when in doubt.** **Before any documentation change, read `docs/writing-documentation.md`.** **Before writing or editing any prompt, read `skill://prompt-craft`** — a prompt is an instruction an agent acts on, and the prompt modules carry no history lessons (`docs/writing-documentation.md` § "No history lessons"). The PRD's §10 principles are

@@ -6,9 +6,9 @@ model / TECHSPEC). The structure tools this works out are unbuilt:
 they are the build order of `pipeline-stages-plan.md` (step 4's drawing
 surface; stage 6's interjection decision). Inputs: the
 rulings (the box's purpose; logical consecutiveness; the gate; the
-structure-first flow — recorded in `layout-requirements-draft.md`),
+structure-first flow — recorded in `docs/TECHSPEC/03-import-and-pipeline.md` §16.17),
 VR19–VR24 (TRANSCRIPTION-REVIEW-PRD), and the box-issue evidence in
-`geometry-experiments-log.md` + `model-trial-report.md`. The
+`geometry-experiments-log.md` + `docs/TECHSPEC/03-import-and-pipeline.md` §16.17. The
 requirements live in the PRD; this doc
 works the experience: what the reviewer actually does, and the corner
 cases that need rulings before the surface is built.
@@ -293,7 +293,7 @@ log); the rec model's own ink bounds (the gated recovery recovered 3 of
 the margin pieces but the reassembly refused); and the vision model
 proposing geometry as SVG — 15/16 boxes on real writing on the postcard
 test, block-level, frame rescaling required, never trusted raw
-(layout-requirements-draft experiment) — combined with
+(the layout experiment) — combined with
 pre-rotated passes for rotated content and per-box clip reads for text
 (L11's candidate mechanism).
 

@@ -27,7 +27,7 @@ ships something usable that week, on the real collection, not the fake one.
    flag the moment real items exist.
 5. **Green every slice.** Lint + typecheck + tests pass and the browser walk
    confirms the slice before the next begins.
-6. **Framework decision is revisitable** if a slice gets messy (`TECHSPEC.md` §15).
+6. **Framework decision is revisitable** if a slice gets messy (`docs/TECHSPEC/01-foundations.md` §2).
 
 ## The shape
 
@@ -76,37 +76,16 @@ from fake-data demo to real-archive feature.
 | PWA / offline | not built | Slice 6 | |
 | TV / second-screen mode | not built | Slice 6 | |
 
-## Phase 1 — Import flow sketch (draft delivered)
-
-A design document (extends `TECHSPEC.md`), not code. It resolves:
-
-- **Scanner conventions** — sheet-fed output (per-page JPEGs or one PDF per
-  letter) and slide/photo scanner output; naming from the sheet order;
-  how dates are extracted (filename, EXIF, or a minimal prompt).
-- **`tools/import`** — scans → archive folder: assets + sidecars + derived
-  index; auto-sequencing; the curation gate (nothing uncurated).
-- **The resolution seam** — `app/people.js` aliases doing real work: "Mum
-  said…" in an OCR'd letter → person link, `proposed` until confirmed.
-- **The propose/confirm queue** — machine suggestions (entity links, OCR
-  drafts) waiting for one tap.
-- **Publish** — archive → `app/data` projection → live on the phone.
-- **Phone capture path** — the remote app's Google sign-in and upload; the
-  laptop applies the command.
-- **Transcription draft loop** — OCR drafts → reviewer corrects → searchable.
-
-**Output:** an "Import flow" section in `TECHSPEC.md` + a worked example on
-one real scan. The brother's scanner is the first real input.
-
 ## Phase 2 — Slices
-### Slice status (2026-09-22)
+### Slice status
 
 | Slice | Status |
 |---|---|
-| 1 — The capture pipeline, end to end | **Delivered** — real archive (the adopt batches), import, transcription drafts + the review surface, publish; the 2026-08-03 implementation plan's steps 1–12 are on `main` |
+| 1 — The capture pipeline, end to end | **Delivered** — real archive (the adopt batches), import, transcription drafts + the review surface, publish |
 | 2 — Phone capture & curation | **Partial** — Google sign-in (`tools/auth.py`, PKCE) and the import review chat (proposed → confirmed) are live; curator mode is still the stub (`app/views/curator.js`); the remote upload path and phone capture sessions are unbuilt |
 | 3 — Show mode for Dad (and gatherings) | **Not started** — no `#/show` route |
 | 4 — Testimony at scale | **Partial** — OCR transcription drafts (+ self-report flags) and the story-capture flow (`app/memories.js`, `tools/memory.py`) are live; voice recording and semantic search (embeddings) are unbuilt |
-| 5 — Trust & continuity | **Not started** — no export tooling, memory controls, or sensitive-flag UI |
+| 5 — Trust & continuity | **Partial** — the nightly export and backup exist; memory controls and the sensitive-flag UI are unbuilt |
 | 6 — Scale & polish | **Not started** — no service worker, TV mode, or 10k virtualization |
 
 
@@ -117,36 +96,15 @@ one real scan. The brother's scanner is the first real input.
   being a demo and starts being the archive.
 - **Carries:** every "built" row above — real data replaces the demo flag;
   the alias resolver becomes the import seam.
-- **Scope:** `tools/import` (scans → assets + sidecars + index, auto-naming,
-  date extraction, curation gate), `tools/rebuild-index`, `loft publish`
-  (archive → projection), `tools/check-archive`, app reads the real archive
-  (fake data behind a demo flag).
+- **Scope:** `make scan-docs` / `make adopt` / `make pipeline` (classify →
+  orient → read → review), `loft publish` (the projection), the live read and
+  write surfaces, `make verify`; the app reads the real archive (fake data
+  behind a demo flag).
 - **Out:** phone capture, PWA, memory controls.
 - **Acceptance:** 10 real letter scans → imported with zero manual renaming →
   dated correctly on the timeline → a machine-generated transcription draft
   readable in the lens → mention links work → published → visible on the
   phone.
-
-### Slice 1 — implementation plan (2026-08-03)
-
-Build order, each step behind the gate (`make test`):
-
-1. **Archive scaffold** — `loft/archive` (README-for-2060, `assets/`, `index.json`) outside the repo; `loft/inbox` staging; AGENTS-compliant.
-2. **Ingest adapter** — inbox jobs (per-page JPEG sets or PDFs) concatenated into one ordered page sequence; PIL validation; duplex page-count sanity; **append-only** — new scans are noticed, never re-processed.
-3. **Hashes + dedupe** — TECHSPEC §16.10: per-asset sha256 + phash, derived `hashes.json`, letter-level fingerprints, batch + archive dedupe; `content_hash` on drafts.
-4. **Session journal** — per-batch `state.json` (§16.11): pages seen, decisions made, letter statuses; atomic writes; crash-safe resume mid-stack.
-5. **Worksheet logic (one core)** — boundaries (structure-based review), date + precision (date+7 from the **same stack**), **per-stack run defaults** (asked at stack start; Dad's boat letters differ), dedupe questions, the four buckets; the queue file Slice 2 consumes. CLI client first.
-6. **Catalog** — date-based IDs (collision suffix, never renamed), atomic sidecar write (status `draft`) + an `edits.jsonl` audit entry, asset copy; catalogued jobs move to `done`.
-7. **Machine reading (OCR)** — an **async queue** so scanning outpaces reading: scanner-bundled OCR (free, print-oriented) and a vision backend (env-configured `LOFT_OCR_*`, handwriting-capable) behind a **calibration gate** (§16.7); drafts carry `transcription_status: draft`; the reading pre-fills the prompt and feeds `resolve-mentions`.
-8. **Import API + admin view** — `tools/import serve` (localhost API); the app gains `#/import` driving worksheet, dedupe and OCR review (guarded: "import server not reachable" without the API).
-9. **Thumbs + index + publish** — make-thumbs, rebuild-index (now emitting the derived `search.json` inverted index with offline tf-idf weights, §10), `loft publish` → `app/data` projection.
-10. **check-archive** — extended with duplicate reports + hash verification (the 2060 integrity check).
-11. **Tests** — deterministic job fixtures; golden sidecars; dedupe cases; OCR-backend fixtures; **resume-after-crash, scan-ahead append, OCR queue**.
-12. **The first real box** — start at the archive's beginning and go forward; cross-stack order is not guaranteed, within-stack is — the prompt tolerates both.
-
-**Deferred out of Slice 1:** phone upload → Slice 2; embeddings + semantic search → Slice 4 (machine *reading* is Slice 1, *understanding* stays 4).
-
-**The live system — sequencing:** Slice 1 stays local-first: the SQLite DB is the live store, and the scan area and the dated export are the files. The remote app (Cloudflare Pages + Worker + D1 + R2) enters as Slice 2's foundation for the phone: Google sign-in, the upload command, the outbox; the laptop applies the commands and publishes the dated read model. The DB and the export rebuild each other — neither is a lock.
 
 ### Slice 2 — Phone capture & curation
 - **Value:** Alex's stated work surface — curation from the phone: capture
@@ -229,6 +187,7 @@ from his phone, end to end. The backup ritual is documented and run once.
 
 ## Explicitly deferred (no slice)
 
-Social feeds, public sharing of any kind, family tree view, the ML models
-themselves (labels, OCR, alt text, and story suggestions plug into the seam
-later). Accounts are Should — mechanism TBD (`docs/PRD/PRD.md` §15).
+Social feeds, public sharing of any kind, family tree view, and the
+model-driven suggestions beyond the reading (labels, alt text, story
+suggestions). Accounts are the D1 family list; the remote app signs in with
+Google (`docs/TECHSPEC/04-live-system.md` §17.5.1).

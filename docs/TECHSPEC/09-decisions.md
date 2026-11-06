@@ -110,17 +110,19 @@ decisions survive all three. The blast radius is at the bottom.
   and the export compares the cache to the published text.
 ### 19.9 Decisions
 
-- **D31 [interface] — One SQL package.** `loft/archive/live/` is the only code that
-  imports `sqlite3`; every other layer uses `LiveStore`.
-- **D32 [interface] — One write path.** `Change` is the unit of work; saves derive
-  events; no caller builds an event payload.
-- **D33 [interface] — Product-shaped reads.** Queries return paginated view records, not
-  rows or `dict`s.
-- **D34 [interface] — Domain errors at the boundary.** No `sqlite3` exception escapes.
-- **D35 [interface] — A memory store proves the interface.** The same contract suite runs
-  against SQLite and memory.
-- **D36 [interface] — Export and sync use read views.** They never open the database or
-  write SQL.
+- **D31 [interface] — One SQL package.** `loft/archive/live/` is the only code
+  that imports `sqlite3`; the service uses `LiveStore`; every other process
+  uses the service's local API. `08` §19.2.
+- **D32 [interface] — One write path.** `Change` is the unit of work; saves
+  derive events; no caller builds an event payload. `08` §19.4.
+- **D33 [interface] — Product-shaped reads.** Queries return paginated view
+  records, not rows or `dict`s. `08` §19.5.
+- **D34 [interface] — Domain errors at the boundary.** No `sqlite3` exception
+  escapes. `08` §19.3.
+- **D35 [interface] — A memory store proves the interface.** The same contract
+  suite runs against SQLite and memory. `08` §19.7.
+- **D36 [interface] — Export and sync use the service's local API.** They
+  never open the database or write SQL. `08` §19.2.
 - **D37 [shape] — Logins are Google on both surfaces; D1 is the authority.**
   The model, allowlist and sessions are `00` §Authentication; the routes are
   `04` §17.5.1. SQLite mirrors the accounts; the home service is LAN-only.
@@ -131,27 +133,18 @@ decisions survive all three. The blast radius is at the bottom.
   The contract (manifest last, newest folder current, old deleted, global
   `media/<sha>`, republish as rollback) is `00` §The read model.
 - **D40 [shape] — The Worker runs chat, identify and remote re-read.** The
-  initial row generation and transcription stay on the laptop; the Worker
-  re-reads corrected rows from the published view image and queues the text.
-  Identify reads the transcript, not the scan. The laptop applies every
-  result.
+  initial row generation and transcription stay on the laptop; identify reads
+  the transcript. `04` §17.6.1.
 - **D41 [shape] — The remote is one origin; the Worker serves the images.**
   The shape and the cache rule are `00` §The read model.
 - **D42 [domain] — The release's review half is the open claims only.** A
   confirmed document is in browse; a reopen command creates a claim. `00`
   §The read model, "What a release carries".
 - **D43 [shape] — The service is the only process with the database.** The
-  daemon, sync agent, exporter and CLI call the service's local API for
-  domain reads and writes; the pipeline's state is the live store, and only
-  the image bytes are files. The service never runs the pipeline; the daemon
-  never listens. The two are supervised together, and a service outage delays
-  the projection, never bypasses it.
-- **D44 [domain] — The live store is the pipeline's state.** A page's reading
-  is a content blob referenced by `readings`; `page_rows` is its queryable
-  projection; the drawn lines are a blob referenced by `row_adjustments`.
-  There are no work files: the only files are the scan originals, the
-  derivatives, the nightly export and the backup. A stage is done when its row
-  is, and only the service writes the DB.
+  daemon, sync agent, exporter and CLI call its local API. `00` §The local web
+  service and the local daemon are separate processes.
+- **D44 [domain] — The live store is the pipeline's state.** There are no work
+  files; a stage is done when its row is. `03` §16.14.2; `05` §18.3.
 - **D45 [interface] — The remote API is resource-oriented.** Writes are
   `PUT`/`PATCH`/`DELETE` on resources; reads are `GET` with cursor
   pagination. Idempotency is the `Idempotency-Key` header, concurrency is

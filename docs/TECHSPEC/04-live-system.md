@@ -357,10 +357,9 @@ An uninvited email gets `403` and a log line.
   sees their edit before it is applied. The read model is republished after
   each drain and on a schedule; it carries `published_at`, and the UI shows
   its age and the count of pending commands.
-- **Review payload.** The release's review half is the open claims:
-  `review/index.json` plus one payload per open document. A confirmed
-  document is read from browse; a reopen command creates a claim and the next
-  release carries its payload.
+- **Review payload.** The release's review half is the open claims (`00`
+  §The read model, "What a release carries"). A confirmed document is read
+  from browse; a reopen command creates a claim.
 - **Parked commands.** A command that cannot apply is listed in the remote
   UI under its author, with its payload and the newer version it collided
   with. It is not reduced to an anonymous count.
@@ -553,28 +552,14 @@ value); the rows are the evidence and the projection is rebuildable.
   is immutable, and the laptop's `applied_through` cursor is the progress
   state. It is never trimmed: it is the replay source after a restore, and
   it is small.
-- **The published read model is a dated R2 release with a final manifest.**
-  The laptop uploads the release's JSON under `releases/<timestamp>/` and
-  writes `manifest.json` last; the newest folder with a manifest is current.
-  The old folder is deleted after the manifest lands. The laptop uses an
-  **R2 API token** for the upload; the outbox pull uses a **Worker service
-  token**.
+- **The read model is a dated R2 release with a final manifest** (`00`
+  §The read model).
 - **Derivatives are generated on the laptop and uploaded.** On-the-fly
   resizing at the edge would add a service and put the original one hop
   from the internet.
-- **Auth is Google on both surfaces, with one account list.** Remote: the
-  Worker runs the authorization-code flow (PKCE, state, nonce), verifies the
-  ID token and owns a revocable session cookie. D1 `accounts` is the family
-  allowlist: the owner invites an email; the first sign-in binds the Google
-  subject; an uninvited sign-in is `403` and logged. Home: the local service's
-  Google OAuth (web/device flow) against the SQLite mirror of the same
-  accounts, HTTPS, `HttpOnly`/`Secure`/`SameSite=Strict` cookies, CSRF, short
-  sessions with server-side revocation, body caps and rate limits. The home
-  service is reachable on the LAN and the tailnet; **Tailscale is the remote
-  network boundary, not the app auth** — every request still signs in with
-  Google. The LAN is not trusted. D1 is the login authority; SQLite mirrors
-  the accounts for LAN auth and backup. The static app never sees the client
-  secret.
+- **Auth is Google on both surfaces; D1 is the authority; SQLite mirrors.**
+  The model is `00` §Authentication; the routes are §17.5.1. Tailscale is the
+  home network boundary, not the app auth.
 - **Search is SQLite FTS5 in the live DB**; the published read model
   carries a client-searchable index. The service probes FTS5 at startup and
   fails loudly rather than silently degrading to no search.

@@ -121,37 +121,26 @@ decisions survive all three. The blast radius is at the bottom.
   against SQLite and memory.
 - **D36 [interface] — Export and sync use read views.** They never open the database or
   write SQL.
-- **D37 [shape] — Logins are Google on both surfaces, and D1 is the
-  authority.** The Worker runs the remote OAuth flow and owns the session;
-  the home service runs its own flow against the SQLite mirror. D1 `accounts`
-  is the family allowlist: an invite by email, the first sign-in binding the
-  Google subject, an uninvited sign-in `403` and logged. SQLite mirrors the
-  accounts. Tailscale is the home network boundary, not the app auth.
+- **D37 [shape] — Logins are Google on both surfaces; D1 is the authority.**
+  The model, allowlist and sessions are `00` §Authentication; the routes are
+  `04` §17.5.1. SQLite mirrors the accounts; Tailscale is the home network
+  boundary, not the app auth.
 - **D38 [domain] — The canonical chat transcript is SQLite.** D1 holds the
   live session; each message has a UUID; the laptop writes exactly one
   `review_messages` row.
 - **D39 [shape] — The read model is a dated R2 release with a final manifest.**
-  The laptop uploads `releases/<timestamp>/` and writes `manifest.json` last;
-  the newest folder with a manifest is current; the old folder is deleted. The
-  media is global and content-addressed (`media/<sha>`); a publish uploads only
-  new shas. A rollback is a republish from the DB. The laptop uses an R2 API
-  token; the outbox pull uses a Worker service token.
+  The contract (manifest last, newest folder current, old deleted, global
+  `media/<sha>`, republish as rollback) is `00` §The read model.
 - **D40 [shape] — The Worker runs chat, identify and remote re-read.** The
   initial row generation and transcription stay on the laptop; the Worker
   re-reads corrected rows from the published view image and queues the text.
   Identify reads the transcript, not the scan. The laptop applies every
   result.
 - **D41 [shape] — The remote is one origin; the Worker serves the images.**
-  Pages serves the app at `archive.<domain>`; the Worker answers `/api/*` and
-  `/img/<sha>` on the same hostname; the Worker's Google session gates it, so
-  cookies are first-party and there is no CORS or signed URL. Images are content-addressed,
-  served `immutable`, and cached at the edge and in the browser. The free
-  Worker request budget is ample at family scale, and repeat views are free.
-- **D42 [domain] — The release's review half is the open claims only.** The
-  release carries the browse projection and, per open document, its pages,
-  rows, boxes and flags. A confirmed document is in browse; a reopen command
-  creates a claim and the next release carries its payload. The archive's
-  whole row set is never published.
+  The shape and the cache rule are `00` §The read model.
+- **D42 [domain] — The release's review half is the open claims only.** A
+  confirmed document is in browse; a reopen command creates a claim. `00`
+  §The read model, "What a release carries".
 - **D43 [shape] — The service is the only process with the database.** The
   daemon, sync agent, exporter and CLI call the service's local API for
   domain reads and writes; the pipeline's state is the live store, and only

@@ -110,12 +110,13 @@ PKCE, state and nonce); it verifies the ID token and owns a revocable session
 cookie. **D1 `accounts` is the family allowlist** — the owner invites an
 email, and the first sign-in binds the Google subject to that row. An
 uninvited sign-in is `403` and logged. The session gates `/api/*` and
-`/img/*`; `/internal/*` takes a Worker service token held by the laptop.
+`/img/*`; `/internal/*` takes a Worker service token held by the laptop. The
+static app never sees the client secret.
 
 **Home:** the local service uses Google OAuth with the same account list (the
 SQLite mirror of D1 accounts) — HTTPS, `HttpOnly`/`Secure`/`SameSite=Strict`
 cookies, CSRF, short sessions with server-side revocation, body caps and rate
-limits. **Tailscale is the remote network boundary, not the app auth**: the
+limits. **Tailscale is the home network boundary, not the app auth**: the
 service is reachable on the LAN and the tailnet, and every request still signs
 in with Google. The LAN is not trusted.
 

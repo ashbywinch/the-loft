@@ -223,12 +223,12 @@ browse queries join on are child tables. There is no generic entity table.
 | `document_pages` | document → page, ordinal |
 | `batches` | id, label, source, path, status, arrived_at, started_at, started_pid, started_host, `fingerprint_json`, content_changed, plus the shared columns |
 | `scans` | scan id, batch, page, sha256, path, ordinal, created |
-| `pages` | page id, image asset, sha, revision, rotation, category, status; the document edge is in `document_pages` |
+| `pages` | page id, image asset, sha, revision, rotation (applied, relative to the original), category, status; the document edge is in `document_pages` |
 | `page_rows` | the current rows with `source`, `trust`, orientation and `revision` |
 | `page_row_links` | insertion links: target row, character offset, proposed/unset/confirmed |
 | `row_checks` | the reviewer's per-row verification ticks |
 | `row_adjustments` | page → the drawn-lines blob sha; the current correction |
-| `readings` | page → reading sha, the correction sha it was built from, row count, word count |
+| `readings` | the row set (the code's old name): page → row-set sha, the correction sha it was built from, row count, word count |
 | `review_sessions` | session id, kind, subject (batch/document/item/person/place), actor, status, current attempt, closed_at |
 | `claims` | the review queue: origin, subject, phase, state, evidence |
 | `review_messages` | the review chat, one row per message, with its human actor |

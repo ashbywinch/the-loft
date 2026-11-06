@@ -1,8 +1,7 @@
 # Decisions
 
-> Component of `docs/TECHSPEC.md`. Status: **register**. The live-system
-> decisions (D1–D45) are proposed; the pre-§17 decisions (§12/§15) are
-> history.
+> Component of `docs/TECHSPEC.md`. Status: **register**. The decisions
+> (D1–D46) are proposed.
 
 ## The register
 
@@ -148,6 +147,9 @@ decisions survive all three. The blast radius is at the bottom.
   cursor-paginated reads, `Idempotency-Key`, `If-Match`, and a `202` plus an
   operation resource; the command envelope is internal to the outbox. `04`
   §17.5.1–17.6.2.
+- **D46 [domain] — The page's artifact is the row set.** The code's
+  `RowsReading`, `readings` and `reading_for_page` are old names; the target
+  names are the row set (rows + words), with `page_rows` as its query view.
 
 
 ## Blast radius

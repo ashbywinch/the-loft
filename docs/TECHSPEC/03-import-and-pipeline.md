@@ -557,20 +557,25 @@ sync's reality (the front end and back end are different boxes; the backend
 may be off; no image travels — it is never uploaded, the backend has it):
 
 - **The press is local first**: the view rotates instantly; the intent is
-  the DESIRED cumulative rotation in quarter-turns, queued in a
+  the DESIRED rotation from the original in quarter-turns, queued in a
   localStorage outbox (the same offline seam as the confirmations) and
   committed on navigation — multiple presses coalesce (a half-corrected
   first press never triggers a reprocess), and a wrong correction is just
   another intent.
-- **The backend applies an idempotent delta**: the page's reading records the
-  cumulative applied rotation (`rotation`, projected as `pages.rotation`), the intent is the desired
-  absolute, so a retried intent is a no-op and offline queues cannot
-  over-rotate on redelivery.
-- **The fast half is synchronous**: the image rotates (a rigid box remap;
-  the text is re-read asynchronously) — the corrected page shows immediately.
+- **The backend compares the desired absolute**: `pages.rotation` is the
+  applied orientation relative to the original; the command carries the
+  desired one. If they match, the command is a no-op and marked applied; a
+  duplicate delivery cannot over-rotate.
+- **The apply is one step, as close to atomic as possible**: write the
+  rotated derivative (content-addressed; the old one stays), then one
+  transaction updates `pages.rotation`, the page image, the row set's
+  rotation and the rows' boxes; the text is marked stale. A crash leaves the
+  old page and row set; the retry is safe.
+- **The fast half is synchronous**: the derivative and the boxes are that
+  transaction; the corrected page shows immediately.
 - **The slow half is the async job**: the page's text is re-read by the
-  vision model on the corrected image (the old reading is stale), the
-  self-report re-runs, the rows and the reading rebuild. The drafts payload carries a
+  vision model on the corrected image (the old row set is stale), the
+  self-report re-runs, the row set rebuilds. The drafts payload carries a
   per-page job state; the surface greys the document with a note, blocks
   the confirm, and polls — the reviewer navigates on meanwhile. A server
   restart mid-job demotes the page to "failed" (the stale text stays
@@ -769,6 +774,11 @@ reader's draft is measured against it, never asserted equal. `Rows.validate`
 checks the row invariants on every correction: a row's band is its words'
 union; a line that caught no writing; a line that merges reading lines; a
 line off the writing's slope; a row off the page.
+
+**Vocabulary.** The page's artifact is its **row set** (rows + words), not a
+"reading". The code's `RowsReading`, `readings` and `reading_for_page` are
+the old names; the target names are the row set, and `page_rows` is its query
+view.
 
 **Where it lives.** `pipeline/detect/reader.py` (`reading_for_page`),
 `pipeline/rows/rows.py` (`Rows.from_words`, `Rows.adjust`, `Rows.validate`),

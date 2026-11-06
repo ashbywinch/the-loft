@@ -127,8 +127,7 @@ decisions survive all three. The blast radius is at the bottom.
   The model, allowlist and sessions are `00` §Authentication; the routes are
   `04` §17.5.1. SQLite mirrors the accounts; the home service is LAN-only.
 - **D38 [domain] — The canonical chat transcript is SQLite.** D1 holds the
-  live session; each message has a UUID; the laptop writes exactly one
-  `review_messages` row.
+  live session. `05` §18.13.
 - **D39 [shape] — The read model is a dated R2 release with a final manifest.**
   The contract (manifest last, newest folder current, old deleted, global
   `media/<sha>`, republish as rollback) is `00` §The read model.
@@ -145,12 +144,10 @@ decisions survive all three. The blast radius is at the bottom.
   service and the local daemon are separate processes.
 - **D44 [domain] — The live store is the pipeline's state.** There are no work
   files; a stage is done when its row is. `03` §16.14.2; `05` §18.3.
-- **D45 [interface] — The remote API is resource-oriented.** Writes are
-  `PUT`/`PATCH`/`DELETE` on resources; reads are `GET` with cursor
-  pagination. Idempotency is the `Idempotency-Key` header, concurrency is
-  `If-Match`, and the async apply is a `202` plus an operation resource. The
-  command envelope is internal to the outbox. There is no generic command
-  endpoint and no bulk browse endpoint.
+- **D45 [interface] — The remote API is resource-oriented.** Resource writes,
+  cursor-paginated reads, `Idempotency-Key`, `If-Match`, and a `202` plus an
+  operation resource; the command envelope is internal to the outbox. `04`
+  §17.5.1–17.6.2.
 
 
 ## Blast radius

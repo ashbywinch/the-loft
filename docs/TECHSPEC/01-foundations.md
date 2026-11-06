@@ -1,6 +1,6 @@
 <!-- Component of docs/TECHSPEC.md. See the index for the status. -->
 
-Status: **normative** for §0–§2; §14 is deferred. §3–§4 live in `02-archive-and-capture.md` and describe the legacy file format.
+Status: **normative** for §0–§2; §14 is deferred. §4, §6 and §9–§11 live in `02-archive-and-capture.md`.
 
 ## 0. What this document decides
 

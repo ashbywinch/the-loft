@@ -63,7 +63,7 @@ The export/backup procedure is only in [07-exports.md](TECHSPEC/07-exports.md).
 | File | Scope | Status |
 |---|---|---|
 | [00-deployments.md](TECHSPEC/00-deployments.md) | the deployment shape, the nouns each owns, the blast radius | **normative** |
-| [01-foundations.md](TECHSPEC/01-foundations.md) | §0–§2 principles/stack, §14 deferred seams | **normative**, with superseded notes |
+| [01-foundations.md](TECHSPEC/01-foundations.md) | §0–§2 principles/stack, §14 deferred seams | **normative** |
 | [02-archive-and-capture.md](TECHSPEC/02-archive-and-capture.md) | §4, §6, §9–§11 the record wire shape, maps, PWA, search, tools | current |
 | [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) | §16.1–§16.17 the capture pipeline, reading path and review surface | current |
 | [04-live-system.md](TECHSPEC/04-live-system.md) | §17 the live system — shape, command/read flow, failure modes, technology choices | **proposed**; the deployment shape is normative in `00` |

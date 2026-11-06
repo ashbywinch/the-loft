@@ -162,7 +162,7 @@ Status: **current for §4, §6, §9–§11** (the record wire shape, maps, PWA, 
 - `make scan-docs` / `make scan-photos` — the scanner into the inbox (label at scan time).
 - `make adopt` — register a folder in place as a batch.
 - `make ingest` / `make pipeline ARGS="process|review|printed <batch>"` — the capture pipeline per batch; `review` is the confirmation gate.
-- `./loft publish` — regenerates the published projection from the archive: identity tables + sidecars + content files → index, people, places, themes, transcripts, assets, avatars; deterministic, tested, the only writer of the projection.
+- `./loft publish` — regenerates the published projection from the live store: the identity tables, items and content → index, people, places, themes, transcripts, assets, avatars; deterministic, tested, the only writer of the projection.
 - `./loft serve` — the app and the API at home.
 - `./loft work` — the worker: one sweep, `--watch`, `--plan`, `--batch <id>`.
 - `./loft capture-memory` — capture a narrator's memory.

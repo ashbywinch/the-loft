@@ -141,10 +141,10 @@ hash/migration, draft exclusion, command rebuild — follow.
     prompt/context is shared or ported; the model key stays in the Worker; the
     laptop re-validates every applied result.
 
-26. **Home auth.** A LAN request and a tailnet request both require Google
-    sign-in; the account list gates both; the account mirror resolves the
-    person; the cookies are `HttpOnly`/`Secure`/`SameSite=Strict`; CSRF and
-    the session revocation hold.
+26. **Home auth.** A LAN request requires Google sign-in; the account list
+    gates it; the account mirror resolves the person; the cookies are
+    `HttpOnly`/`Secure`/`SameSite=Strict`; CSRF and the session revocation
+    hold.
 
 27. **Read-model publish.** Upload a dated release, write the manifest last;
     a partial upload has no manifest, so the old release stays current; the

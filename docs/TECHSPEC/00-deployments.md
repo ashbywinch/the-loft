@@ -116,9 +116,8 @@ static app never sees the client secret.
 **Home:** the local service uses Google OAuth with the same account list (the
 SQLite mirror of D1 accounts) — HTTPS, `HttpOnly`/`Secure`/`SameSite=Strict`
 cookies, CSRF, short sessions with server-side revocation, body caps and rate
-limits. **Tailscale is the home network boundary, not the app auth**: the
-service is reachable on the LAN and the tailnet, and every request still signs
-in with Google. The LAN is not trusted.
+limits. The home service is reachable on the LAN; a private VPN is the
+owner's choice, not part of this architecture. The LAN is not trusted.
 
 **Logins:** D1 is the login authority. SQLite mirrors the accounts for LAN
 auth, attribution and backup. The owner invites an account by email; the first
@@ -152,7 +151,7 @@ files are still written, but no domain write bypasses the seam.
 | `Outbox` (commands), chat sessions, accounts | Cloudflare D1 |
 | `Backend` (Google OAuth, chat/identify/re-read) | Cloudflare Worker |
 | `Derivative` (the view image), `Asset` bytes | Cloudflare R2 |
-| `Auth` | Google OAuth (both surfaces); D1 accounts is the remote allowlist, SQLite mirrors; Tailscale (home network) |
+| `Auth` | Google OAuth (both surfaces); D1 accounts is the remote allowlist, SQLite mirrors |
 | `Model` calls | Cloudflare AI Gateway |
 | The human archive, the operational backup | Local OS daemon writes; the big disk stores |
 

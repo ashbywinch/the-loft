@@ -123,8 +123,7 @@ decisions survive all three. The blast radius is at the bottom.
   write SQL.
 - **D37 [shape] — Logins are Google on both surfaces; D1 is the authority.**
   The model, allowlist and sessions are `00` §Authentication; the routes are
-  `04` §17.5.1. SQLite mirrors the accounts; Tailscale is the home network
-  boundary, not the app auth.
+  `04` §17.5.1. SQLite mirrors the accounts; the home service is LAN-only.
 - **D38 [domain] — The canonical chat transcript is SQLite.** D1 holds the
   live session; each message has a UUID; the laptop writes exactly one
   `review_messages` row.

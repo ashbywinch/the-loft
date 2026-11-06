@@ -558,8 +558,8 @@ value); the rows are the evidence and the projection is rebuildable.
   resizing at the edge would add a service and put the original one hop
   from the internet.
 - **Auth is Google on both surfaces; D1 is the authority; SQLite mirrors.**
-  The model is `00` §Authentication; the routes are §17.5.1. Tailscale is the
-  home network boundary, not the app auth.
+  The model is `00` §Authentication; the routes are §17.5.1. The home
+  service is LAN-only.
 - **Search is SQLite FTS5 in the live DB**; the published read model
   carries a client-searchable index. The service probes FTS5 at startup and
   fails loudly rather than silently degrading to no search.
@@ -575,7 +575,7 @@ images, so they are treated as trusted-but-limited surfaces, not public:
   domain write.
 - Staged uploads have a quota, an allowed MIME set, a sha256 check and a
   short lifetime; the laptop deletes the staged object after the pull.
-- The LAN service binds to the tailnet/LAN, never a port-forward; the static
+- The LAN service binds to the LAN, never a port-forward; the static
   site and the Worker are the only public surfaces.
 - The laptop's disk is encrypted at rest (the whole corpus now lives on
   it); the nightly off-site copy is encrypted with a family-held key

@@ -1,6 +1,6 @@
 <!-- Component of docs/TECHSPEC.md. See the index for the status. -->
 
-Status: **current for §16.13–§16.17** (the capture pipeline, the reading path and the review surface). §16.1–§16.11 is the import-flow record, not the live architecture.
+Status: **current for §16.1–§16.17** (the capture pipeline, the reading path and the review surface).
 
 ## 16. Import flow (capture → archive → app)
 
@@ -12,16 +12,16 @@ Status: **current for §16.13–§16.17** (the capture pipeline, the reading pat
 ```
 boxes → the user's scan area (their folders — adopted by hash, §16.13)
       → the live store (classify → orient → read → review)
-      → the human archive (nightly export: items + originals + transcription)
+      → the human archive (nightly export: the dated document tree + the scan image leg)
       → the published read model (the R2 release) → the phone
 ```
 
 - **Curator mode (phone, Slice 2):** 3 fields + story line; `draft` → `catalogued`; dates refined with date+7 suggestions. Import never catalogues — **the curation gate** is: a human selected the originals (scanning *is* the selection), import catalogs them as `draft`, and they appear only when the phone session confirms. Digital photos from younger members are human-curated before import, never bulk-imported (PRD §7).
-- **The app never reads Drive at runtime** — all reading rides the projection (§5). Import and upload are the only writers to the archive.
+- **The app never reads the scan area at runtime** — all reading rides the live store. Adoption and upload are the only writers of new bytes.
 
 ### 16.2 Scanner conventions (resolved, user)
 
-- **Operator:** the reviewer alone, at home, own pace. Supersedes PLAN/PLAN.md's brother-scanner-day assumption.
+- **Operator:** the reviewer alone, at home, own pace.
 - **Gear:** an **Epson FastFoto FF-680W** — sheet-fed ADF for letters *and* photos, duplex, 600 dpi optical, WiFi (eSCL) + USB; no flatbed, so 35 mm slides remain uncovered; Android phone scan app for odd sizes.
 
 | Requirement | Why |
@@ -34,56 +34,77 @@ boxes → the user's scan area (their folders — adopted by hash, §16.13)
 | Phone app: per-page JPEG export | odd sizes (airmail, cards) — PRD §7 no-camera amendment (user) |
 
 - **Sheet flow:** the letters are in **stacks** and feed continuously — one letter is not one scan job, and there are **no separator sheets**. The letters carry their own structure: a letter's first page holds the address block, the date and the salutation ("as from: 31 Pinewood Court… Wed 12th Jan. '77… Chère mamie"), and continuation pages are often numbered. Boundaries are therefore a **review pass, not a detection problem**: import concatenates every job in the inbox into one ordered page sequence, walks it letter by letter, and the worksheet prompt confirms where each letter ends — the reviewer has the physical letter in hand, and the structure makes the pass easy. Duplex; sheet order = reading order (page-01 = sheet 1 front, page-02 = sheet 1 back, …). The 50-sheet ADF caps a single feed at ~10–12 letters, so a stack feeds as several sub-jobs — job boundaries are irrelevant. A vision-read boundary *proposal* can join later via the ML seam (Slice 4); the review pass is the Slice 1 mechanism. **No envelopes** in this collection — the letter carries its own address and date (`INTERVIEW.md` addendum) — so envelope-first does not apply here; the ritual still supports it for other families.
-- **Image spec:** 300 DPI colour, JPEG quality ~88. Calibrated on real scans (§16.8): handwritten ink on white compresses to ~1 MB/page — colour is ~3× grayscale and still fits the free tier.
-- **Scan command:** `make scan-docs ARGS="--label …"` / `make scan-photos ARGS="--label …"` → the user's scan area (`tools/loft_paths.py` `USER_SCAN_AREA` — `<…>/scans/<batch-id>/<batch-id>-NN.jpg`, 300 DPI colour, JPEG q88, label in the registry record) via `tools/scan.py`; the FF-680W is added to the user SANE config (`~/.config/sane/airscan.conf`) by IP because mDNS discovery on the BT Smart Hub is unreliable, and the airscan backend is enabled in the user `dll.conf` (the Ubuntu package ships it disabled). The scanner answers direct eSCL jobs even when discovery/status checks fail — the phone app's "Not Ready but scans work" is that behaviour.
-- **Odd sizes:** phone scan app → export per-letter page JPEGs into a job folder → the same `tools/import` pipeline.
+- **Image spec:** 300 DPI colour, JPEG quality ~88. Calibrated on real scans (§16.8): handwritten ink on white compresses to ~1 MB/page — colour is ~3× grayscale and still fits the disk; the view image is budgeted against R2's 10 GB.
+- **Scan command:** `make scan-docs ARGS="--label …"` / `make scan-photos ARGS="--label …"` → the user's scan area (`tools/loft_paths.py` `USER_SCAN_AREA` — `<…>/scans/<batch-id>/<batch-id>-NN.jpg`, 300 DPI colour, JPEG q88, label in the `batches` row) via `tools/scan.py`; the FF-680W is added to the user SANE config (`~/.config/sane/airscan.conf`) by IP because mDNS discovery on the BT Smart Hub is unreliable, and the airscan backend is enabled in the user `dll.conf` (the Ubuntu package ships it disabled). The scanner answers direct eSCL jobs even when discovery/status checks fail — the phone app's "Not Ready but scans work" is that behaviour.
+- **Odd sizes:** phone scan app → export per-letter page JPEGs into a job folder → the same pipeline.
 
-### 16.3 tools/import (Python CLI, reviewer-operated)
+### 16.3 The scan, adopt and pipeline commands
 
-- `tools/import <inbox> --box "Box — Letters 1977" --type letter` — one box at a time; `--box` becomes `source` and pre-fills the year.
-- **Stages:** ingest → prompt → catalog → **read (machine transcription draft + prompt pre-fills, §16.7)** → thumbs → index. Resumable: processed folders are marked in their sidecars — the inbox folders are never moved (MULTI-DOC-IMPORT-PRD §3.5); a crash re-runs cleanly. Fail-fast on unreadable images, duplicate IDs, page-count anomalies.
-- **The minimal prompt** (per item). The plan's "filename / EXIF / minimal prompt" question resolves to the prompt: filenames carry no dates, and scanner EXIF stamps scan-time, not letter dates — the date is handwritten.
+- `make scan-docs ARGS="--label 'Box 1 — Letters 1977'"` / `make scan-photos`
+  — the scanner writes a labelled folder into the user's scan area;
+  `make adopt ARGS="<folder>"` registers an existing folder in place. The
+  batch and its scans become `batches`/`scans` rows.
+- `make pipeline ARGS="process <batch>"` runs classify → orient → read →
+  group; `review <batch>` is the confirmation gate.
+- The date, precision, page count and run defaults are asked in the review
+  surface, once per document, while the letter is in hand:
 
 | Prompt field | Behaviour |
 |---|---|
-| date | pre-filled from box year, or date+7 from the previous letter **in the same stack** (stacks are chronological within themselves); one Enter accepts, or correct — unordered stacks (e.g. Dad's boat letters) get manual dates |
-| precision | `exact / month / year / approx` — never force a fake exact date (PRD §6) |
-| page count | sanity check vs duplex expectation; odd counts flagged |
-| run defaults | sender + recipient, asked **once per stack** (Nora → Fern for the main run; Dad's boat letters differ); one Enter accepts |
+| date | pre-filled from the box year, or date+7 from the previous letter **in the same stack**; one Enter accepts, or correct — unordered stacks (Dad's boat letters) get manual dates |
+| precision | `exact / month / year / approx` — never force a fake exact date |
+| page count | a sanity check against the duplex expectation; odd counts flagged |
+| run defaults | sender + recipient, asked **once per stack**; one Enter accepts |
 
-- **IDs:** assigned at import from the prompt date (`letter-1977-01-12-01`, `-02` on same-date collision) or box year alone (`letter-1977-01`); **never renamed afterwards** — later precision refinement updates metadata only (§3, "IDs are stable forever").
-- **Output:** `archive/assets/<id>/item.json` (sidecar, status `draft`) + `page-NN.jpg` + `thumbs/`; `index.json`/`transcripts.json` rebuilt; `check-archive` passes. The local archive lives **outside the repo** (AGENTS.md — scans are never committed), in our workspace on the 3.7 TB Seagate — the workspace sibling holds registry, work stages, archive and projection (§16.13); the user's scan area (`scans/`) stays theirs.
+- **IDs** are assigned from the date (`letter-1977-01-12-01`, `-02` on a
+  same-date collision) and never renamed; a precision refinement updates the
+  date metadata only.
+- **The output is rows:** `batches`, `scans`, `pages`, `readings`,
+  `page_rows`, `documents`. The scan original stays in the user's scan area.
 
 ### 16.4 The resolution seam (import doing real work)
 
-- **The identity tables are archive content.** `archive/people.json` (people + relationships), `archive/places.json` and `archive/themes.json` are the single source; `app/people.js` renders their aliases and the shared engine (`tools/projection.py`) carries the matcher. `tools/resolve-mentions` runs the same matcher over transcriptions and address lines, writing `people[]`/`places[]` entries as `proposed` into sidecars — one alias source, three consumers (reader links, import proposals, publish regeneration). No second convention.
+- **The identity tables are the live store's.** `people`, `places`, `orgs`, `themes` and `relationships` are the source; the projection and the export write `people.json`, `places.json` and `relationships.json`; `app/people.js` renders their aliases, and the shared engine (`tools/projection.py`) carries the matcher. `tools/resolve-mentions` runs the same matcher over transcriptions and address lines and writes proposed refs through the service — one alias source, three consumers (reader links, import proposals, publish regeneration).
 - **Place records carry `aliases` too**; the reader hyperlinks place mentions exactly like people mentions — a mention without a record stays plain text (F7).
 - Mentions without a record stay verbatim text (PRD F7): nothing is linked, the suggestion sits in the queue.
 - **Worked-example finding:** the real letter salutes "Chère mamie" — Fern's aliases lack `mamie`; alias content is the reviewer's call (the dataset), flagged in the private worked-example review. Initialisms ("BF") are deliberately not auto-resolved — too noisy; they go to the queue as manual proposals.
 
 ### 16.5 The propose/confirm queue
 
-- **No new derived file.** The queue is a review-mode view (Slice 2) over sidecar state: items carrying `proposed` refs, a draft transcription, or proposed alt text. Confirm = supersede the sidecar with the flipped status + re-publish. One tap.
-- **Place-mention candidates sit in the queue.** The criterion for a place record is not recurrence — it is *is it an actual place the family engaged with?* (Easthaven because Dad went to the Mayor's knees-up, not because it recurs; "a turkey" the dinner is not a place, "Tornia" where Dale and Harper lived is). "Hyperlink later" costs nothing: the render follows the record, so adding the record later lights every link.
-- **The queue's import-time shape is the curation worksheet (§16.9):** proposals and open questions in one list, answered once while the letter is in hand.
-- **Schema extension** (for OCR drafts): `transcription_status: none | draft | confirmed` alongside `transcription`. Drafts render with a visible "draft" marker and search with a draft flag; promotion is correction + status flip.
+- **The queue is a view over `claims`.** A claim is an item carrying proposed
+  refs, a draft reading or proposed alt text. Confirming writes a decision
+  through the seam; the projection catches up.
+- **Place-mention candidates** sit in the queue. The criterion is not
+  recurrence — it is *is it an actual place the family engaged with?*
+  ("Easthaven" because Dad went to the Mayor's knees-up; "a turkey" is
+  dinner). Adding the record later lights every link.
+- **The import-time shape is the curation worksheet (§16.9).**
+- **Status:** refs are `confirmed | estimated | proposed`; a draft reading is
+  `page_rows.trust='guess'`, a confirmed one `confirmed`. There is no
+  separate `transcription_status` field.
 
 ### 16.6 Publish and the phone path
 
-- **Sync:** `tools/upload-drive` mirrors the local archive to the dedicated family account (exists — user). Split from import (which §5 bundled) so a dropped connection never loses catalog work.
-- **Publish:** `loft publish` regenerates `app/data` from the local archive (identity tables + sidecars + primary content files — metadata, thumbnails, stories, transcriptions); the static host serves it. Drafts appear in the projection (the owner's drafts surface reads them) and are filtered from the archival views by `catalogued()`; tombstoned items never publish. **Hard gate (review):** the publish path refuses (non-zero exit) to target a public host until F6 accounts exist — the release gate in PLAN/PLAN.md — so the projection's transcriptions can never leak to a public deployment by accident; the only override is an explicit flag for a family-only host. The gate guards the deploy path; the current `loft publish` targets the local projection only.
-- **Phone (Slice 2):** Google Identity Services PKCE against the archive account; `files.create/update` for sidecars, `media` upload for captures; the phone writes byte-compatible sidecars (same schema, same fields). Full-res read only when authenticated (§5).
-- **PWA** caches the projection (Slice 6); the whole browsable archive is cacheable.
+- **Publish:** `loft publish` regenerates the local `app/data` projection for
+  `loft serve`. The remote read model is the dated R2 release (`00` §The read
+  model; `04` §17.6); only confirmed text is published.
+- **Phone:** the remote app signs in with Google (D1 accounts), writes
+  commands and uploads; the laptop applies and republishes. No Drive; the
+  browser writes commands, never files.
+- **PWA** caches what the API's collections serve; the browse cache warms by
+  walking the cursors.
 
-### 16.7 Transcription draft loop
+### 16.7 The reading draft
 
-- **Machine-read only — the reviewer does not type letters.** Transcriptions enter as machine drafts from two backends behind a quality gate:
-  - **Scanner-bundled OCR** (the Epson's software, ABBYY-class) — free and local, print-oriented: ledgers, typeset documents, typed memoirs.
-  - **Vision model** (env-configured `LOFT_OCR_*` endpoint) — token-costing, handwriting-capable: the letters themselves (proven in the worked example — it read the 1977 page's date, address, salutation and content).
-  - **Calibration gate (Slice 1):** one real letter read both ways; the better backend wins per document type. Expect the vision path to carry handwritten letters.
-- Drafts enter with `transcription_status: draft` (the lens already renders the marker); correct → confirmed → searchable (correction lands on Slice 2's review surface, §16.6). Drafts are searchable from day one (pattern discovery, PRD §6) with a draft flag.
-- The same machine reading pre-fills the prompt (date/address/salutation — proposed) and, once the draft exists, `resolve-mentions` (§16.4) populates proposed people/places — the resolution seam does its first real work in Slice 1.
-- The propose/confirm seam (P4) is unchanged: machine output never asserts.
+- The VLM is the only reader: a printed page in one call, a form as
+  structure, handwriting in per-row bands (§16.17). No scanner OCR, no second
+  backend, no calibration gate.
+- Drafts are `page_rows.trust='guess'`; the reviewer corrects; confirmation
+  writes `trust='confirmed'` and the item content.
+- Drafts are searchable with a draft flag.
+- The read pre-fills the date, address and salutation proposals;
+  `resolve-mentions` adds proposed refs.
+- Machine output never asserts.
 
 ### 16.8 Storage math (colour letters — user)
 
@@ -103,7 +124,8 @@ Calibration from real captures: a 3.1 MP colour handwriting page = 402 KB; a 1.5
 
 - **The estimate is a floor.** The user reports at least this much again in miscellaneous letters, accounts and photos — realistic total **8–18 GB (mid ~13 GB)**.
 - **Decision (user): an external hard drive is bought** — the annual 3-2-1 export target (PRD §18.6) and the overflow store.
-- **Open decision:** the archive's home is Drive (PRD §7) and the free tier caps at 15 GB — at ~13 GB mid-estimate it may not hold. Options: Google One 100 GB (~£1.6/mo, keeps the architecture) or the hard drive becoming the primary home with Drive as a partial mirror (breaks the "Drive is the home" principle). Recommendation: Google One; not pre-empted until the real volume is known.
+- **The originals live on the big disk; the view images are budgeted against
+  R2's 10 GB (`00` §Images).** The export's document leg is small.
 
 ### 16.9 The curation worksheet — connecting a letter
 
@@ -156,37 +178,36 @@ injected as "derived" — the model is never asked to do arithmetic.
 
 ### 16.10 Dedupe & integrity hashes
 
-- **Per asset**, the sidecar stores `hash` (SHA-256 of the file bytes) and `phash` (perceptual hash — a rescan at different settings or a slight crop still matches). Transcription text, when it exists, adds `content_hash` (SHA-256 of the text) — a re-typed duplicate letter matches on content.
-- **Derived `hashes.json`** — regenerable from sidecars, maps asset path → `{sha256, phash}`; the fast path for archive-wide scans and the 2060 integrity check (a reader in 2060 can verify every file).
-- **Letter-level fingerprints** — the sorted list of a letter's page hashes identifies the whole letter, so dedupe works at both the page and letter level (an accidental rescan of one page vs a re-imported whole letter).
-- **Policy:** exact sha256 match → the file is byte-identical → skip silently and report (first import wins; nothing deleted). Perceptual match above threshold → show both scans to the reviewer with their observable properties (resolution, blur, crop, lighting) and let them pick: if one is clearly better it is the one imported (the rejected scan never enters the archive, so nothing is deleted); if they are equivalent, keep the first without asking; if the comparison is genuinely ambiguous, ask. Dedupe runs (a) within the batch, (b) against the archive at ingest, (c) as a standing report in `tools/check-archive`.
-- **Deps:** pillow + imagehash (dev-only, uv-managed).
+- **Per page**, `scans` stores sha256 and phash (on the oriented form); a
+  re-encoded or rescanned page matches. A transcription adds a content hash,
+  so a re-typed duplicate matches too.
+- **Letter fingerprints** — the sorted page hashes identify the whole letter;
+  dedupe works at both page and letter level.
+- **Policy:** exact sha → skip silently (first wins); phash above threshold →
+  both scans to the reviewer with their observable properties; never
+  auto-delete or merge. Dedupe runs at adoption, at catalog and in
+  `make verify`; the export manifest carries the hashes.
+- **Deps:** pillow + imagehash (dev-only).
 
-### 16.11 Import admin & resumability
+### 16.11 The review surface and resumability
 
-**The reviewer's import surface is the web app, not a terminal.** `tools/import serve` runs a localhost API; the existing app gains an admin view (`#/import`) that drives the worksheet, dedupe and OCR review with the same logic the CLI uses — one core, two clients. The API listens on localhost only; the deployed app has no API, so the admin view renders a "import server not reachable" card — the admin surface is laptop-local by construction, never part of the static host.
-
-**Scan-ahead: the inbox is an append-only drop zone.** Scanning (possibly by someone else) outpaces processing by design. The pipeline is stage-decoupled so nothing blocks the scanner:
-
-- **ingest** — fast, idempotent: normalize pages, hash them, detect new jobs; never modifies the inbox — catalogued batches are marked in their sidecars (MULTI-DOC-IMPORT-PRD §3.5).
-- **worksheet** — human-paced: boundaries, dates, defaults, dedupe; resumable mid-stack.
-- **catalog** — atomic sidecar writes (temp + rename).
-- **read** — an async OCR queue: items pending reading sit in the queue and fill in as the backend processes them (batch/rate-aware); status per item `pending → reading → draft`.
-- **publish** — lags; runs on demand.
-
-**The review session is crash-safe and resumable.** The `review_sessions`,
-`review_messages` and `claims` rows record which pages are seen, which
-boundaries, dates and defaults are decided, and each letter's status — one
-transaction per decision. Re-running resumes exactly where the session
-stopped — new scans append, never re-prompt. Processing order is arrival
-order.
-
-**The story-capture server rides the same localhost shape** (MEMORIES):
-the contributions endpoint receives the narrator's account, runs assess +
-elicit through the AI client (env key, never in the browser), and returns
-the review screen's data. The deployed static site renders the affordance
-and shows the same "server not reachable" card when the laptop's server is
-off.
+- The reviewer's surface is the app served by `loft serve`; the remote app is
+  the same surface for the family. There is no admin-only localhost API and no
+  separate import server.
+- **Scan-ahead:** the scan area is an append-only drop zone; the worker adopts
+  new folders and the pipeline is stage-decoupled.
+  - **ingest** — adopt the folder, hash the pages, write `batches`/`scans`;
+    never modify the scan area.
+  - **worksheet** — the review: boundaries, dates, defaults, dedupe;
+    resumable mid-stack.
+  - **catalog** — the item and its content through the seam.
+  - **read** — the pipeline; no async OCR queue.
+  - **publish** — the read model is published after the drain and on a
+    schedule.
+- **The review session is crash-safe and resumable.** `review_sessions`,
+  `review_messages` and `claims` record each decision; re-running resumes at
+  the first open claim.
+- **The story capture** rides the same service (`docs/PRD/MEMORIES.md`).
 
 ### 16.13 The capture pipeline — the two-zone workspace
 
@@ -258,7 +279,7 @@ auto-merge.
 
 **Write-then-rename everywhere a file is written.** No component publishes
 a file a reader could see half-written: every produced file (a derivative,
-an export sidecar, a backup file) is written to a temp sibling, flushed,
+an export file, a backup file) is written to a temp sibling, flushed,
 then renamed — `tools/atomic.py` `atomic_write`, the one helper. The live
 store's writes are transactions, not renames; the content store verifies
 each blob's sha before it is referenced.

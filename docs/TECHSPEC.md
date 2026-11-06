@@ -65,7 +65,7 @@ The export/backup procedure is only in [07-exports.md](TECHSPEC/07-exports.md).
 | [00-deployments.md](TECHSPEC/00-deployments.md) | the deployment shape, the nouns each owns, the blast radius | **normative** |
 | [01-foundations.md](TECHSPEC/01-foundations.md) | §0–§2 principles/stack, §14 deferred seams | **normative**, with superseded notes |
 | [02-archive-and-capture.md](TECHSPEC/02-archive-and-capture.md) | §4, §6, §9–§11 the record wire shape, maps, PWA, search, tools | current |
-| [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) | §16.13–§16.17 the capture pipeline, reading path and review surface; §16.1–§16.11 the import-flow record | current for the pipeline; the import-flow record is not the live architecture |
+| [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) | §16.1–§16.17 the capture pipeline, reading path and review surface | current |
 | [04-live-system.md](TECHSPEC/04-live-system.md) | §17 the live system — shape, command/read flow, failure modes, technology choices | **proposed**; the deployment shape is normative in `00` |
 | [05-schema.md](TECHSPEC/05-schema.md) | §18.1–18.7 the schema concepts: append-only stores, event log, content, projections, write transaction, migrations, withdrawal; §18.13 the D1 store | **proposed** |
 | [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) | §18.2, §18.3, §18.10 the DDL — the one table definition | **proposed** |
@@ -82,7 +82,7 @@ The export/backup procedure is only in [07-exports.md](TECHSPEC/07-exports.md).
 | §0–§2, §14 | [01-foundations.md](TECHSPEC/01-foundations.md) |
 | §4, §6, §9–§11 | [02-archive-and-capture.md](TECHSPEC/02-archive-and-capture.md) |
 
-| §16.1–§16.11 (import-flow record), §16.13–§16.14.2, §16.16–§16.17 | [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) |
+| §16.1–§16.17 | [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) |
 | §17.1–§17.8, §17.10–§17.11 | [04-live-system.md](TECHSPEC/04-live-system.md) |
 | §17.9 | [07-exports.md](TECHSPEC/07-exports.md) |
 | §17.12 | [10-spikes.md](TECHSPEC/10-spikes.md) |

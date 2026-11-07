@@ -5,8 +5,8 @@ CREATE TABLE accounts (
   email        TEXT NOT NULL UNIQUE, -- the invite address
   subject      TEXT UNIQUE,          -- the Google sub, null until first sign-in
   person_id    TEXT,                 -- the archive person, null until linked
-  role         TEXT NOT NULL DEFAULT 'editor'
-               CHECK (role IN ('owner', 'editor', 'viewer')),
+  role         TEXT NOT NULL DEFAULT 'curator'
+               CHECK (role IN ('owner', 'curator', 'viewer')),
   status       TEXT NOT NULL DEFAULT 'invited'
                CHECK (status IN ('invited', 'active', 'disabled')),
   invited_at   TEXT NOT NULL,

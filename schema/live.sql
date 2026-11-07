@@ -510,7 +510,7 @@ CREATE TABLE accounts (
   account_id  TEXT PRIMARY KEY,       -- mirror of the D1 login authority
   person_id   TEXT NOT NULL,          -- the person the login belongs to
   email       TEXT UNIQUE,            -- the sign-in identity
-  role        TEXT NOT NULL CHECK (role IN ('owner', 'editor', 'viewer')),
+  role        TEXT NOT NULL CHECK (role IN ('owner', 'curator', 'viewer')),
   created_at  TEXT NOT NULL,
   disabled_at TEXT
 ) STRICT;

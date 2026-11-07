@@ -249,7 +249,8 @@ have no account — most of the cast never will — and a contributor who is not
 yet in the cast gets a proposed person record. The owner invites an email; the
 first sign-in binds the Google subject; the laptop links the person (creating
 a proposed one if new). The chat session is live in D1; the canonical
-transcript is SQLite `review_messages`, one row per message UUID. Accounts are
+transcript is SQLite `review_messages`, one row per session and ordinal; the
+D1 message carries a unique request key for the retry. Accounts are
 never written to the human archive.
 
 The shared columns on a state table are `version`, `event_no`, `event_seq`
@@ -491,7 +492,9 @@ row. `outcome` is `pending` until the laptop applies it, then `applied` or
 
 **The transcript is the live session.** `review_sessions` and `messages` are
 the D1 copy the app reads while the laptop is off; the laptop writes one
-`review_messages` row per `message_id`, and the SQLite copy is canonical.
+`review_messages` row per session and ordinal, and the SQLite copy is
+canonical. The D1 message's unique `(actor_account_id, request_key)` makes a
+retried message return the existing row.
 
 **No foreign keys, like the live schema.** D1 is not the archive; the laptop
 validates every reference on apply.

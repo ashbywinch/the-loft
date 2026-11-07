@@ -55,14 +55,15 @@ CREATE TABLE review_sessions (
 );
 
 CREATE TABLE messages (
-  message_id       TEXT PRIMARY KEY,   -- the UUID the laptop writes
   session_id       TEXT NOT NULL,
   ordinal          INTEGER NOT NULL,
+  request_key      TEXT NOT NULL,      -- the Idempotency-Key; a retry returns this row
   role             TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
   actor_account_id TEXT,
   text             TEXT NOT NULL,
   created_at       TEXT NOT NULL,
-  UNIQUE (session_id, ordinal)
+  PRIMARY KEY (session_id, ordinal),
+  UNIQUE (actor_account_id, request_key)
 );
 
 CREATE TABLE uploads (

@@ -27,7 +27,6 @@ CREATE TABLE commands (
   seq              INTEGER PRIMARY KEY AUTOINCREMENT,
   command_id       TEXT NOT NULL UNIQUE,
   actor_account_id TEXT NOT NULL,
-  actor_person_id  TEXT,
   kind             TEXT NOT NULL,
   target_kind      TEXT NOT NULL,
   target_id        TEXT NOT NULL,

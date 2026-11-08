@@ -64,14 +64,3 @@ CREATE TABLE messages (
   PRIMARY KEY (session_id, ordinal),
   UNIQUE (actor_account_id, request_key)
 );
-
-CREATE TABLE uploads (
-  upload_id  TEXT PRIMARY KEY,
-  sha256     TEXT NOT NULL,
-  mime       TEXT NOT NULL,
-  size       INTEGER NOT NULL,
-  object_key TEXT NOT NULL,
-  status     TEXT NOT NULL DEFAULT 'staged'
-             CHECK (status IN ('staged', 'pulled', 'rejected')),
-  created_at TEXT NOT NULL
-);

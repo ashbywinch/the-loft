@@ -262,8 +262,8 @@ sequenceDiagram
   X->>X: next sidecar and content versions + manifest
 ```
 
-**W4 — uploads.** Browser → the static app → R2 (staging) plus an outbox
-command referencing the object and its sha256. The laptop pulls
+**W4 — uploads.** Browser → the static app → **R2 (staging) first**; then an
+outbox command referencing the object and its sha256. The laptop pulls
 the object, re-hashes it, writes the original to the big disk, generates
 derivatives, and records the asset. The staged object is deleted after the
 laptop confirms. This is the only path by which a new original can enter the
@@ -312,7 +312,12 @@ envelope; the command is the internal outbox row the Worker writes.
 | `PUT /api/items/{item_id}/story` | `{text}` | `item.story` |
 | `POST /api/review-sessions/{session_id}/messages` | `{text}` | the D1 session log |
 | `POST /api/items/{item_id}/identify-requests` | `{}` | `item.identify` |
+| `POST /api/uploads/sign` | `{sha256, mime, size}` | — (a signed PUT URL) |
 | `POST /api/uploads` | `{sha256, mime, size}` | `asset.upload` |
+
+The app calls `/uploads/sign`, uploads the bytes to `staging/<sha256>`, then
+calls `/uploads`; the command is created only when the object exists. There
+is no `uploads` table and no staged outcome.
 
 `page.rotation` is the applied orientation relative to the original. The
 command carries the desired absolute; if the page's rotation already equals
@@ -351,8 +356,8 @@ An uninvited email gets `403` and a log line.
 **The laptop's internal routes.** A Worker service token (bearer) gates
 `GET /internal/outbox?since=`, `POST /internal/outbox/{id}/result`,
 `GET /internal/messages?since=`, `GET /internal/accounts?since=`,
-`POST /internal/accounts`, `POST /internal/accounts/{id}/person`, and
-`POST /internal/uploads/{id}/pulled`. They are not part of the public API.
+`POST /internal/accounts`, and `POST /internal/accounts/{id}/person`. They
+are not part of the public API.
 
 ### 17.6 Read paths
 

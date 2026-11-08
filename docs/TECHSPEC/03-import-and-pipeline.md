@@ -79,9 +79,11 @@ boxes → the user's scan area (their folders — adopted by hash, §16.13)
   ("Easthaven" because Dad went to the Mayor's knees-up; "a turkey" is
   dinner). Adding the record later lights every link.
 - **The import-time shape is the curation worksheet (§16.9).**
-- **Status:** refs are `confirmed | estimated | proposed`; a draft reading is
-  `page_rows.trust='guess'`, a confirmed one `confirmed`. There is no
-  separate `transcription_status` field.
+- **Status:** refs carry the disposition `confirmed | proposed` (a rejected
+  link is removed) plus the link’s `basis` and `confidence`; `estimated` is a
+  rendering (confirmed + recollection/inference below certain). A draft
+  reading is `page_rows.trust='guess'`, a confirmed one `confirmed`. There is
+  no separate `transcription_status` field.
 
 ### 16.6 Publish and the phone path
 
@@ -157,7 +159,7 @@ Linking is a *process*, not a batch step. Import classifies every mention into o
   - **Unattested links are removed, not annotated.** A place the text doesn't support is dropped from the item (Marlock from the Aldgate-addresses story), never kept "with a note" — the note becomes a claim the text never made.
   - **Ask, don't guess.** When presence is genuinely ambiguous — a group photo, an event spanning years, several plausible people — the worksheet's **Question** bucket is the answer, not a `proposed` link: "who was actually there?" is a bounded per-item question (PRD §19, req 8). `proposed` is for a confident inference worth one tap; ambiguous presence is a question.
 
-**The learn step.** Every review answer updates the standing knowledge the next letter resolves against: aliases (Lex, mamie, BF), relationships (Miles–Wilma), place precision (Marlock = the Hales' house), chronology (long married by 1977). The worksheet is how the archive gets smarter as it is curated — the identity tables are content, and curation is their author. No new schema: the buckets map onto the existing `confirmed`/`proposed` statuses plus a queue question type (Slice 2). **Regeneration (requirement):** the derived tables — including the relationships — must be regenerable programmatically from the artifacts: the family structure is stated verbatim in the dated, attributed interview answers ("Mum was Nora…", "Wilma is Miles's sister", "Owen's parents Miles and Vera") and the letters, so the shared engine runs extraction + the propose/confirm seam over the primary data in the batch path, at import, and at capture — never hand-maintained, never hardcoded (the tests fail on drift).
+**The learn step.** Every review answer updates the standing knowledge the next letter resolves against: aliases (Lex, mamie, BF), relationships (Miles–Wilma), place precision (Marlock = the Hales' house), chronology (long married by 1977). The worksheet is how the archive gets smarter as it is curated — the identity tables are content, and curation is their author. No new schema: the buckets map onto the disposition (`confirmed`/`proposed`) with the basis and confidence (D48), plus a queue question type (Slice 2). **Regeneration (requirement):** the derived tables — including the relationships — must be regenerable programmatically from the artifacts: the family structure is stated verbatim in the dated, attributed interview answers ("Mum was Nora…", "Wilma is Miles's sister", "Owen's parents Miles and Vera") and the letters, so the shared engine runs extraction + the propose/confirm seam over the primary data in the batch path, at import, and at capture — never hand-maintained, never hardcoded (the tests fail on drift).
 
 **Disputed evidence.** When a new dated, attributed comment conflicts with a generated assertion (Harper's own account, 2026, vs the 1977 letter's "nervous breakdown or similar"), the assertion leaves the generated text (bios, captions); both accounts remain in the archive, each attributed to its source. The app arranges evidence; it never adjudicates (PRD §10).
 

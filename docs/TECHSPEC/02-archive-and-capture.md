@@ -26,8 +26,8 @@ Status: **current for §4, §6, §9–§11** (the record wire shape, maps, PWA, 
     "phrase": null
   },
   "date_text": "14 May 1963",
-  "people":  [{"id": "p-mum", "status": "confirmed"}],
-  "places":  [{"id": "pl-aldgate-kensington", "status": "confirmed"}],
+  "people":  [{"id": "p-mum", "status": "confirmed", "basis": "knowledge", "confidence": "certain"}],
+  "places":  [{"id": "pl-aldgate-kensington", "status": "confirmed", "basis": "document", "confidence": "certain"}],
   "themes":  [{"id": "t-the-flat-search", "status": "proposed"}],
   "source": "Box 3 — Letters 1963",
   "description": "",
@@ -40,7 +40,7 @@ Status: **current for §4, §6, §9–§11** (the record wire shape, maps, PWA, 
 ```
 
 - **Primary content is files, not fields.** A story item's text is `story.txt` in its folder, a letter/document's transcription is `transcription.txt` — referenced by the item's `assets` (`{"kind": "story"|"transcription", "file": …}`). The page images stay in the scan area; the item's page refs carry the batch, sha256 and phash that find them if they move. The item JSON never carries the text; the projection's items embed it again at publish (the projection is derived, so embedding is fine there).
-- **References carry a status** — `confirmed` | `estimated` | `proposed`. That is the ML seam (P4): models write `proposed`; the reviewer records `estimated` with its basis or `confirmed` with one tap. No schema change when OCR/labeling arrive. The human archive exports confirmed and estimated only.
+- **A reference carries a disposition, a basis and a confidence.** The disposition is `confirmed`, `proposed` or `rejected` (a rejected link is removed); the basis is `document`/`knowledge`/`recollection`/`inference`; the confidence is `certain`/`probable`/`possible`. `estimated` is a display (a confirmed link with a recollection or inference basis below certain). The human archive exports confirmed only; proposed is never exported.
 - **Dates:** the structured `DateValue` (`05` §18.4) — calendar, type (date/period/range), qualifier, from/to, phrase; `date_text` is the display. The DB's `date`, `date2` and `date_precision` are derived for the timeline and filters. Approx and ranges render honestly; never a fake exact date.
 - **Person:** `{"id","name","years","relation","bio","photo"}` — thin bios are honest (PRD §4); never padded.
 - **Person IDs are name-based** (p-alex, p-nora, p-owen) — first-name-only for the main characters where unambiguous; on a name clash the ID qualifies with the surname (p-harper-hale). IDs never change once catalogued.

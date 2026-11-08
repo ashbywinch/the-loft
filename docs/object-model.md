@@ -45,14 +45,16 @@ the honest noun for the object.
   import folder or any path inside it (the source island stays
   untouched); the destination is an existing directory; or the
   destination is an existing file (no silent overwrite).
-- **One status schema.** The review speaks **attested / estimated /
-  pending / delete**; the record stores **confirmed / estimated /
-  proposed**, with `rejected` terminal. The mapping is `05` §18.2.
+- **One status schema.** The review speaks **attested / pending / delete**
+  with a basis and confidence; the record stores **proposed / confirmed /
+  rejected** plus `basis_json`. `estimated` is a display (confirmed +
+  recollection/inference below certain). The mapping is `05` §18.2.
   GEDCOM carries it in the custom tag `1 _LOFT_STATUS pending` (user tags
   start `_`); the import reads it.
-- **Export emits confirmed and estimated, never proposed.** Round trip is
-  exact on that subset; proposed records are not expected to match across
-  an export.
+- **Export emits confirmed, never proposed.** The confirmed record carries
+  its basis and confidence; the GEDCOM adapter maps the recollection basis
+  to `EST`/`QUAY`. Round trip is exact on that subset; proposed records are
+  not expected to match across an export.
 - **The record set is closed by round-trip fidelity.** The import writes a
   record for every construct the file carries that export must re-emit:
   people, families, relationships, places, residences; events, dates,
@@ -179,9 +181,9 @@ projection. The date-partitioned tree is the **export**, not the live store.
 person↔person (family links), person↔place ("lived at", "worked at"),
 person↔item ("owned"), theme↔item (curated), and any other pair — the
 `kind` names the relation, recorded as-is when the link is made.
-**`status` is the record vocabulary for every entity kind** —
-`confirmed | estimated | proposed`, with `rejected` terminal; the review
-outcomes map through `05` §18.2. No `Entities` collection class: the
+**`status` is the record disposition for every entity kind** — `proposed |
+confirmed | rejected` — with `basis_json` holding the basis and confidence;
+the review responses map through `05` §18.2 and `estimated` is a display. No `Entities` collection class: the
 collections are per type and the **`Archive`** class exposes them
 (people, places, orgs, items, themes); `tools/memory.py`'s `Knowledge`
 is not a second view. The record classes move into a `loft/archive/` package, one
@@ -219,7 +221,7 @@ its contract — what it takes in and what it hands back.
 | Chat | Home | The interface |
 |---|---|---|
 | `ChatClient` | `loft/` root (`ai_client`) | The LLM client: `chat(system, user, *, thinking) -> str` — one call, the caller owns the conversation (messages in, the reply out) |
-| `ReviewChat` | `loft/archive/` (the review machinery) | The review conversation over a source — a `Memory` or a `Document`: takes the source and the facts context (the standing collections, through `ReviewContext`), runs the read-only tool harness and the verdict loop (the digs + correction turns; the model-call-is-a-conversation rule; depth is the only per-source difference), hands back the `ReviewDecision` outcomes (attested / estimated / pending / delete per entity) and the `Message` log |
+| `ReviewChat` | `loft/archive/` (the review machinery) | The review conversation over a source — a `Memory` or a `Document`: takes the source and the facts context (the standing collections, through `ReviewContext`), runs the read-only tool harness and the verdict loop (the digs + correction turns; the model-call-is-a-conversation rule; depth is the only per-source difference), hands back the `ReviewDecision` responses (attested / pending / delete per entity, with basis and confidence; `estimated` is a display) and the `Message` log |
 ## The export's document tree
 
 The human archive's document leg is the date-partitioned tree: `All Time`,

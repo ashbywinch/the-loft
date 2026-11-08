@@ -215,6 +215,7 @@ CREATE TABLE orgs (
   branch       TEXT,
   note         TEXT,
   status       TEXT NOT NULL,
+  basis_json   TEXT,                 -- basis + confidence
   aliases_json TEXT,
   version      INTEGER NOT NULL,
   event_no     INTEGER NOT NULL,
@@ -227,6 +228,8 @@ CREATE TABLE themes (
   title     TEXT NOT NULL,
   subtitle  TEXT,
   seeded    INTEGER NOT NULL DEFAULT 0,
+  status    TEXT NOT NULL DEFAULT 'confirmed',
+  basis_json TEXT,                 -- basis + confidence
   body_json TEXT NOT NULL,
   version   INTEGER NOT NULL,
   event_no  INTEGER NOT NULL,

@@ -1,7 +1,7 @@
 # Decisions
 
 > Component of `docs/TECHSPEC.md`. Status: **register**. The decisions
-> (D1–D47) are proposed.
+> (D1–D48) are proposed.
 
 ## The register
 
@@ -156,6 +156,12 @@ decisions survive all three. The blast radius is at the bottom.
   (before/after/between), from/to and phrase. The query columns `date`,
   `date2` and `date_precision` are derived; `date_text` is the display.
   `tools/gedcom_date.py` is the output/import adapter, never the source.
+- **D48 [domain] — A record stores a disposition, a basis and a confidence.**
+  Status `proposed | confirmed | rejected`; basis `document | knowledge |
+  recollection | inference`; confidence `certain | probable | possible`
+  (basis and confidence in `basis_json`). The review’s `estimated` is a
+  display — a `confirmed` record with a recollection/inference basis below
+  certain — not a status.
 
 
 ## Blast radius

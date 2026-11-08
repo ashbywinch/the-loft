@@ -118,23 +118,24 @@ fold of merge/unmerge, so withdrawing a merge restores the original id. A
 in the log and the projection, excluded from browse and from reference
 resolution; a ref to it is a `loft verify` finding.
 
-**The review speaks four outcomes; the store has three statuses and a
-terminal exclusion.** The vocabulary maps one way, and nowhere else:
+**The review decides a disposition; the record stores it with its basis and
+confidence.** The disposition is `proposed | confirmed | rejected`. The basis
+is `document | knowledge | recollection | inference`; the confidence is
+`certain | probable | possible`. Both live in `basis_json`.
 
-| Review outcome | Record / link status | Event |
-|---|---|---|
-| `attested` | `confirmed` | `created` (a new record) or `superseded` (an existing one) |
-| `estimated` | `estimated` | `created` / `superseded` |
-| `pending` (undecided, left for later) | `proposed` | `created` / `superseded` |
-| `delete` | the item's link is removed; a `proposed` record no other item references is excluded | the item is `superseded`; the record is `rejected` |
+| The reviewer’s response | Record / link status | Basis | Confidence |
+|---|---|---|---|
+| `attested` (“it might be true”) | `confirmed` | document / knowledge / recollection / inference | certain / probable / possible |
+| `pending` (“I don’t know”) | `proposed` (unchanged) | — | — |
+| `delete` (“no”) | the item’s link is removed; a `proposed` record no other item references is `rejected` | — | — |
 
-`proposed` is the machine's guess awaiting review (`pending` is the review's
-word for it); `confirmed` is an attested fact; `estimated` is the reviewer's
-own recollection, recorded with its basis; `rejected` is terminal and the row
-stays. A `delete` on a `confirmed` record never downgrades it: the item's
-mention goes, the record stays a fact. There is no parallel status vocabulary
-in the UI, the commands or the export — a reader that needs the review's word
-maps it through this table.
+`estimated` is a **rendering**, not a status: a `confirmed` record whose basis
+is `recollection` or `inference` and whose confidence is below `certain`. The
+app shows “estimated” exactly where it does today. `proposed` is the machine’s
+claim awaiting review; `confirmed` is the reviewer’s endorsement; `rejected`
+is terminal and the row stays. A `delete` on a `confirmed` record never
+downgrades it: the item’s mention goes, the record stays a fact. There is no
+parallel status vocabulary.
 
 **Commands are events.** A remote command becomes `command/received`; the
 apply writes the domain events plus `command/applied`; a stale or invalid
@@ -221,11 +222,11 @@ source. The mentions in `date_mentions_json` use the same value.
 | `item_refs` | item → person/place/org/theme/item, with status, `date_json` (derived date/date2/precision) and basis |
 | `item_assets` | item → asset, kind, caption, ordinal |
 | `item_content` | item → content sha, kind (`story`/`transcription`/`other`), trust (`draft`/`confirmed`) |
-| `people` | id, name, years, relation, bio, email, pronouns, hue, status, `dob_json`, `dod_json`, `aliases_json`, `occupations_json`, `basis_json`, plus the shared columns |
+| `people` | id, name, years, relation, bio, email, pronouns, hue, status (`proposed`/`confirmed`/`rejected`), `basis_json` (basis + confidence), `dob_json`, `dod_json`, `aliases_json`, `occupations_json`, plus the shared columns |
 | `person_residences` | person → place, `date_json` (a period; from/to derived), precision, status, basis |
-| `places` | id, name, note, precision, lat, lng, x, y, address, status, `aliases_json`, `basis_json`, plus the shared columns |
-| `orgs` | id, name, address, branch, note, status, `aliases_json`, plus the shared columns |
-| `themes` | id, title, subtitle, seeded, `body_json`, plus the shared columns |
+| `places` | id, name, note, precision, lat, lng, x, y, address, status (`proposed`/`confirmed`/`rejected`), `basis_json` (basis + confidence), `aliases_json`, plus the shared columns |
+| `orgs` | id, name, address, branch, note, status, `basis_json` (basis + confidence), `aliases_json`, plus the shared columns |
+| `themes` | id, title, subtitle, seeded, status, `basis_json` (basis + confidence), `body_json`, plus the shared columns |
 | `theme_items` | theme → item, ordinal |
 | `relationships` | id, a_kind/a_id, b_kind/b_id, kind, label_a, label_b, `date_json`, `basis_json`, status, plus the shared columns |
 | `documents` | id, item_id, batch_id, doc_index, title, `date_json` (derived date/date2/precision), status, greeting, signoff, text_sha, confirmed_at, plus the shared columns |
@@ -241,7 +242,7 @@ source. The mentions in `date_mentions_json` use the same value.
 | `review_sessions` | session id, kind, subject (batch/document/item/person/place), actor, status, current attempt, closed_at |
 | `claims` | the review queue: origin, subject, phase, state, evidence |
 | `review_messages` | the review chat, one row per message, with its human actor |
-| `review_decisions` | the reviewer's determinations: subject, decision, basis, actor |
+| `review_decisions` | the reviewer's determinations: subject, disposition (`attested`/`pending`/`delete`), basis + confidence, actor |
 | `assets` | the catalog: sha, kind, mime, size, relative path, derivative-of |
 | `aliases` | merged ids → survivor ids |
 | `withdrawals` | bad changes and their compensation change |

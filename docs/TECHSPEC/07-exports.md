@@ -15,13 +15,13 @@ runs).
    encrypted. This is the restore source and the 3-2-1 copy; it is never
    filtered. Keep the tiered set.
 3. **Write the human archive**: the confirmed current state only — one
-   `item.json` per catalogued item, the confirmed `.txt`, the confirmed and
-   estimated identity tables, `INDEX.md`, `PEOPLE.md`, `PLACES.md`,
-   `README.md`, `manifest.json` and `manifest.sha256`. The page refs point at
-   the scan area; nothing is copied. Write the document leg to the big disk
-   and the off-site readable copy, and carry the image leg (the scan area) to
-   the same off-site copy. No drafts, no proposed records, no model
-   reasoning. The tree and its format are §18.8.
+   `item.json` per catalogued item, the confirmed `.txt`, the confirmed
+   identity tables (with basis and confidence), `INDEX.md`, `PEOPLE.md`,
+   `PLACES.md`, `README.md`, `manifest.json` and `manifest.sha256`. The page
+   refs point at the scan area; nothing is copied. Write the document leg to
+   the big disk and the off-site readable copy, and carry the image leg (the
+   scan area) to the same off-site copy. No drafts, no proposed records, no
+   model reasoning. The tree and its format are §18.8.
 4. **Verify the human archive**: every file against the manifest; no
    `trust='draft'` content anywhere; the confirmed subset equals the DB's
    confirmed rows; fail loudly on any mismatch.
@@ -82,7 +82,7 @@ archive/
   PLACES.md                 # the places, readable
   manifest.json             # exported_through, exported_at, counts, page paths + hashes
   manifest.sha256           # literal sha256sum -c output
-  people.json               # confirmed/estimated identity tables
+  people.json               # confirmed identity tables (basis + confidence)
   places.json
   orgs.json
   themes.json
@@ -150,8 +150,8 @@ versions or event ids. The fields a reader or a tool needs:
   "provenance": "",
   "sensitive": false,
   "status": "catalogued",
-  "people": [{"id": "p-mum", "name": "Nora", "status": "confirmed"}],
-  "places": [{"id": "pl-aldgate", "name": "Aldgate", "status": "confirmed"}],
+  "people": [{"id": "p-mum", "name": "Nora", "status": "confirmed", "basis": "knowledge", "confidence": "certain"}],
+  "places": [{"id": "pl-aldgate", "name": "Aldgate", "status": "confirmed", "basis": "document", "confidence": "certain"}],
   "orgs": [],
   "themes": [{"id": "t-the-flat-search", "title": "The flat search", "status": "confirmed"}],
   "items": [],
@@ -167,17 +167,19 @@ versions or event ids. The fields a reader or a tool needs:
 - `date` is the structured `DateValue` (`05` §18.4); `date_text` is its
   display for a person. There is no `date2` or precision copy in the export;
   the query columns are the DB’s projection.
-- Refs carry `confirmed` or `estimated`; `proposed` is never exported.
+- Refs carry `confirmed` with their basis and confidence; `proposed` is never
+  exported. `estimated` is a display.
 - The `id` never changes; the folder path can move with a date correction.
-- `schema` is the export shape's version (`1`).
+- `schema` is the export shape's version (`2`).
 - The text is never embedded; it is the `.txt` file.
 - The page refs carry the sha256 and phash; the JSON is UTF-8 with sorted keys
   and a trailing newline, so `manifest.json` can hash it deterministically.
-- **Confirmed and estimated identities, not proposed.** `people.json`,
-  `places.json` and `orgs.json` carry the cast the viewer sees (estimated is
-  the family's guess and is marked); proposed records wait in the DB, and a
-  rejected proposal is audit-only — it never reaches the viewer. Email is an
-  account field, not a viewer field: it is not in the human archive.
+- **Confirmed identities, with basis and confidence.** `people.json`,
+  `places.json` and `orgs.json` carry the cast the viewer sees; `estimated`
+  is the display for a confirmed record whose basis is recollection or
+  inference below certain. Proposed records wait in the DB, and a rejected
+  proposal is audit-only — it never reaches the viewer. Email is an account
+  field, not a viewer field: it is not in the human archive.
 - **The words are `.txt`; the scans are open images in the scan area.**
   UTF-8 and JPEG/PNG/TIFF. The document leg references a page by batch,
   filename, sha256 and phash; it never copies the image.

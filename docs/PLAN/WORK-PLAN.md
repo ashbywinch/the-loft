@@ -142,6 +142,10 @@ implementation; the date model is the first slice.
   `date`/`date2`/`date_precision`; `date_text`; the GEDCOM round trip; the
   `item.json`; the app timeline, filter and display; the migration from
   `date`/`date2`/`date_precision`.
+- **The status model** — disposition (`proposed`/`confirmed`/`rejected`) +
+  basis + confidence; the review responses (`attested`/`pending`/`delete`);
+  the `estimated` display; the migration from `estimated`; the GEDCOM
+  `EST`/`QUAY` mapping.
 - **The live store** — the service-only DB, the local API, the seam,
   events/content, the projections; the daemon reading rows.
 - **The remote** — the resource API, the outbox, the D1 tables, the dated

@@ -152,7 +152,7 @@ materialisation, not the live store. The noun ownership is
 | Transcript edit / confirm | applies | static app writes a command to the Worker | confirmed text only |
 | Row drawing | applies and re-reads | static app writes a command | working state (not archived) |
 | Add story / memory | applies | static app writes a command | confirmed text only |
-| Identity decisions | applies | static app writes a command | confirmed/estimated only |
+| Identity decisions | applies | static app writes a command | confirmed only |
 | Photo upload | pulls original | browser uploads to R2; the laptop pulls | keeps original |
 | Scan · classify · orient · read · rows · transcribe | ✓ | — | reads originals |
 | Full-resolution images | serves on LAN | — (never stored) | stores |
@@ -207,7 +207,7 @@ Commands are classified, because they are not one kind of thing:
 | Class | Examples | Apply |
 |---|---|---|
 | **State** | transcript edit, story save, row lines | one `BEGIN IMMEDIATE` transaction; the guard is the typed table's UPSERT with `WHERE version IS :base` (`pages.revision` for a page and its rows); zero rows means stale |
-| **Append-only decision** | identity attest/estimate/pending/delete, review decisions | append the decision and apply it (last wins); no version predicate, per the 2026-10-21 user ruling. The four words are the review's; the record status they write is the one mapping in `05-schema.md` §18.2 |
+| **Append-only decision** | identity attest/pending/delete, review decisions | append the decision and apply it (last wins); no version predicate, per the 2026-10-21 user ruling. The review's responses; the record status they write is the one mapping in `05-schema.md` §18.2 |
 | **State + machine work** | "rotate this page", "re-read this page", "identify this document", an import-review message that calls a model | the transaction records the intent and inserts a `jobs` row; the worker runs outside the lock; its result is a second transaction |
 | **Bytes** | photo upload | the staged object is recorded as an `Asset`; the laptop pulls, re-hashes, writes and derives |
 
@@ -308,7 +308,7 @@ envelope; the command is the internal outbox row the Worker writes.
 | `PUT /api/pages/{page_id}/ticks` | `{ticks: [{ordinal, checked}]}` | `page.ticks` |
 | `PUT /api/documents/{document_id}/review` | `{outcome: confirmed\|rejected\|deferred, note?}` | `document.review` |
 | `DELETE /api/documents/{document_id}/review` | — | `document.reopen` |
-| `PATCH /api/items/{item_id}/refs/{ref_id}` | `{decision: attested\|estimated\|pending\|delete, basis?}` | `identity.decide` |
+| `PATCH /api/items/{item_id}/refs/{ref_id}` | `{decision: attested\|pending\|delete, basis, confidence}` | `identity.decide` |
 | `PUT /api/items/{item_id}/story` | `{text}` | `item.story` |
 | `POST /api/review-sessions/{session_id}/messages` | `{text}` | the D1 session log |
 | `POST /api/items/{item_id}/identify-requests` | `{}` | `item.identify` |

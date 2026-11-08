@@ -87,7 +87,6 @@ archive/
   orgs.json
   themes.json
   relationships.json        # the family edges the viewer's tree renders
-  tombstones.json           # deleted ids + reason + date; no content
   documents/
     All Time/
       Before 1963-01-01/
@@ -190,8 +189,6 @@ versions or event ids. The fields a reader or a tool needs:
   hosted browse applies the family's visibility rule, not the archive.
 - **The manifest verifies.** Every file has a sha256; `manifest.sha256` is
   literal `sha256sum -c` output with relative paths.
-- **Tombstones are recorded, not published.** A deleted item is an entry in
-  `tombstones.json` (id, reason, date); its content is not in the tree.
 - **The tree shards itself.** The date partitions split at N = 200; the id
   stays the citation key, and a date correction re-files the leaf.
 

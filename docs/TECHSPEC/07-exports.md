@@ -149,7 +149,6 @@ versions or event ids. The fields a reader or a tool needs:
   "source": "Box 3 — Letters 1963",
   "provenance": "",
   "sensitive": false,
-  "status": "catalogued",
   "people": [{"id": "p-mum", "name": "Nora", "status": "confirmed", "basis": "knowledge", "confidence": "certain"}],
   "places": [{"id": "pl-aldgate", "name": "Aldgate", "status": "confirmed", "basis": "document", "confidence": "certain"}],
   "orgs": [],
@@ -170,6 +169,8 @@ versions or event ids. The fields a reader or a tool needs:
 - Refs carry `confirmed` with their basis and confidence; `proposed` is never
   exported. `estimated` is a display.
 - The `id` never changes; the folder path can move with a date correction.
+- There is no item `status`: the archive is the confirmed current state; the
+  draft/catalogued lifecycle is the app’s, not an archive fact.
 - `schema` is the export shape's version (`2`).
 - The text is never embedded; it is the `.txt` file.
 - The page refs carry the sha256 and phash; the JSON is UTF-8 with sorted keys

@@ -504,7 +504,8 @@ row. `outcome` is `pending` until the laptop applies it, then `applied` or
 the D1 copy the app reads while the laptop is off; the laptop writes one
 `review_messages` row per session and ordinal, and the SQLite copy is
 canonical. The D1 message's unique `(actor_account_id, request_key)` makes a
-retried message return the existing row.
+retried user message return the existing row; the assistant and system rows
+carry no request key.
 
 **No foreign keys, like the live schema.** D1 is not the archive; the laptop
 validates every reference on apply.

@@ -56,7 +56,7 @@ CREATE TABLE review_sessions (
 CREATE TABLE messages (
   session_id       TEXT NOT NULL,
   ordinal          INTEGER NOT NULL,
-  request_key      TEXT NOT NULL,      -- the Idempotency-Key; a retry returns this row
+  request_key      TEXT,               -- the Idempotency-Key on the user's message; null on assistant/system rows
   role             TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
   actor_account_id TEXT,
   text             TEXT NOT NULL,

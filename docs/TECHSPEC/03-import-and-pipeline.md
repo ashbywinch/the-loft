@@ -52,7 +52,7 @@ boxes → the user's scan area (their folders — adopted by hash, §16.13)
 | Prompt field | Behaviour |
 |---|---|
 | date | pre-filled from the box year, or date+7 from the previous letter **in the same stack**; one Enter accepts, or correct — unordered stacks (Dad's boat letters) get manual dates |
-| precision | `exact / month / year / approx` — never force a fake exact date |
+| date type | a date, a period (from/to) or a range (before/after/between); the qualifier (about/estimated/calculated); the display (`date_text`) — never force a fake exact date |
 | page count | a sanity check against the duplex expectation; odd counts flagged |
 | run defaults | sender + recipient, asked **once per stack**; one Enter accepts |
 

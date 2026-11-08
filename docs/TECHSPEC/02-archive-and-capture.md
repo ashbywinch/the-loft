@@ -16,8 +16,16 @@ Status: **current for §4, §6, §9–§11** (the record wire shape, maps, PWA, 
   "id": "letter-1963-05-14-01",
   "type": "letter",
   "title": "A week in the flat",
-  "date": "1963-05-14",
-  "date_precision": "exact",
+  "date": {
+    "calendar": "gregorian",
+    "type": "date",
+    "qualifier": null,
+    "range": null,
+    "from": {"year": 1963, "month": 5, "day": 14},
+    "to": null,
+    "phrase": null
+  },
+  "date_text": "14 May 1963",
   "people":  [{"id": "p-mum", "status": "confirmed"}],
   "places":  [{"id": "pl-aldgate-kensington", "status": "confirmed"}],
   "themes":  [{"id": "t-the-flat-search", "status": "proposed"}],
@@ -26,14 +34,14 @@ Status: **current for §4, §6, §9–§11** (the record wire shape, maps, PWA, 
   "provenance": "",
   "sensitive": false,
   "status": "catalogued",
-  "assets": [{"kind": "page", "file": "page-01.jpg", "caption": ""}],
+  "assets": [{"kind": "page", "file": "page-01.jpg", "batch": "scan-20260813-1850", "sha256": "…", "phash": "…", "caption": ""}],
   "created": "2026-08-02"
 }
 ```
 
 - **Primary content is files, not fields.** A story item's text is `story.txt` in its folder, a letter/document's transcription is `transcription.txt` — referenced by the item's `assets` (`{"kind": "story"|"transcription", "file": …}`). The page images stay in the scan area; the item's page refs carry the batch, sha256 and phash that find them if they move. The item JSON never carries the text; the projection's items embed it again at publish (the projection is derived, so embedding is fine there).
 - **References carry a status** — `confirmed` | `estimated` | `proposed`. That is the ML seam (P4): models write `proposed`; the reviewer records `estimated` with its basis or `confirmed` with one tap. No schema change when OCR/labeling arrive. The human archive exports confirmed and estimated only.
-- **Dates:** ISO + `date_precision` (`exact | month | year | approx`). Approx renders at range start with a subtle marker; filters treat it honestly.
+- **Dates:** the structured `DateValue` (`05` §18.4) — calendar, type (date/period/range), qualifier, from/to, phrase; `date_text` is the display. The DB's `date`, `date2` and `date_precision` are derived for the timeline and filters. Approx and ranges render honestly; never a fake exact date.
 - **Person:** `{"id","name","years","relation","bio","photo"}` — thin bios are honest (PRD §4); never padded.
 - **Person IDs are name-based** (p-alex, p-nora, p-owen) — first-name-only for the main characters where unambiguous; on a name clash the ID qualifies with the surname (p-harper-hale). IDs never change once catalogued.
 - **Place:** `{"id","name","aliases","note","lat","lng"}` — `aliases` are the short forms the reader hyperlinks ("Dunmoor" → Dunmoor Primary School); the same alias seam as people (§16.4).

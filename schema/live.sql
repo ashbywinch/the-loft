@@ -105,9 +105,10 @@ CREATE TABLE items (
   item_id            TEXT PRIMARY KEY,
   type               TEXT NOT NULL,
   title              TEXT NOT NULL,
-  date               TEXT,
-  date2              TEXT,
-  date_precision     TEXT,
+  date_json          TEXT,                 -- the DateValue source
+  date                TEXT,                 -- derived: ISO from
+  date2              TEXT,                 -- derived: ISO to
+  date_precision     TEXT,                 -- derived: exact/month/year/approx/before/after/between/period/phrase
   status             TEXT NOT NULL,
   source             TEXT,
   description        TEXT,
@@ -128,9 +129,10 @@ CREATE TABLE item_refs (
   ref_kind  TEXT NOT NULL CHECK (ref_kind IN ('person', 'place', 'org', 'theme', 'item')),
   ref_id    TEXT NOT NULL,
   status    TEXT NOT NULL,
-  date      TEXT,
-  date2     TEXT,
-  date_precision TEXT,
+  date_json TEXT,                 -- the DateValue source
+  date      TEXT,                 -- derived
+  date2     TEXT,                 -- derived
+  date_precision TEXT,            -- derived
   basis_json TEXT,
   event_seq INTEGER NOT NULL,
   PRIMARY KEY (item_id, ref_kind, ref_id)
@@ -177,10 +179,11 @@ CREATE TABLE people (
 CREATE TABLE person_residences (
   person_id TEXT NOT NULL,
   place_id  TEXT NOT NULL,
-  from_date TEXT,
-  to_date   TEXT,
-  from_precision TEXT,
-  to_precision   TEXT,
+  date_json TEXT,                 -- the DateValue source (a period)
+  from_date TEXT,                 -- derived
+  to_date   TEXT,                 -- derived
+  from_precision TEXT,            -- derived
+  to_precision   TEXT,            -- derived
   status    TEXT NOT NULL,
   basis_json TEXT,
   PRIMARY KEY (person_id, place_id, from_date)
@@ -262,9 +265,10 @@ CREATE TABLE documents (
   batch_id       TEXT,
   doc_index      INTEGER,
   title          TEXT,
-  date           TEXT,
-  date2          TEXT,
-  date_precision TEXT,
+  date_json      TEXT,                 -- the DateValue source
+  date           TEXT,                 -- derived
+  date2          TEXT,                 -- derived
+  date_precision TEXT,                 -- derived
   status         TEXT NOT NULL,
   greeting       TEXT,
   signoff        TEXT,

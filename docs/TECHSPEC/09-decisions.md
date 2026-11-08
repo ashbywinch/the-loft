@@ -1,7 +1,7 @@
 # Decisions
 
 > Component of `docs/TECHSPEC.md`. Status: **register**. The decisions
-> (D1–D46) are proposed.
+> (D1–D47) are proposed.
 
 ## The register
 
@@ -150,6 +150,12 @@ decisions survive all three. The blast radius is at the bottom.
 - **D46 [domain] — The page's artifact is the row set.** The code's
   `RowsReading`, `readings` and `reading_for_page` are old names; the target
   names are the row set (rows + words), with `page_rows` as its query view.
+- **D47 [domain] — Dates are structured; GEDCOM is an adapter.** Every dated
+  row stores the `DateValue` (`date_json`): calendar, type
+  (date/period/range), qualifier (about/estimated/calculated), range
+  (before/after/between), from/to and phrase. The query columns `date`,
+  `date2` and `date_precision` are derived; `date_text` is the display.
+  `tools/gedcom_date.py` is the output/import adapter, never the source.
 
 
 ## Blast radius

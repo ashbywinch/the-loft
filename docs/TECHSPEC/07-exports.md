@@ -131,12 +131,20 @@ versions or event ids. The fields a reader or a tool needs:
 
 ```json
 {
-  "schema": 1,
+  "schema": 2,
   "id": "letter-1963-05-14-01",
   "type": "letter",
   "title": "A week in the flat",
-  "date": "1963-05-14",
-  "date_precision": "exact",
+  "date": {
+    "calendar": "gregorian",
+    "type": "date",
+    "qualifier": null,
+    "range": null,
+    "from": {"year": 1963, "month": 5, "day": 14},
+    "to": null,
+    "phrase": null
+  },
+  "date_text": "14 May 1963",
   "description": "",
   "source": "Box 3 — Letters 1963",
   "provenance": "",
@@ -156,6 +164,9 @@ versions or event ids. The fields a reader or a tool needs:
 ```
 
 - `transcription` is the filename or `"pending"`; a story item uses `story`.
+- `date` is the structured `DateValue` (`05` §18.4); `date_text` is its
+  display for a person. There is no `date2` or precision copy in the export;
+  the query columns are the DB’s projection.
 - Refs carry `confirmed` or `estimated`; `proposed` is never exported.
 - The `id` never changes; the folder path can move with a date correction.
 - `schema` is the export shape's version (`1`).

@@ -131,4 +131,22 @@ slice's own session.
   calibration loop).
 - **Transkribus is not a reference.**
 
+## 5. The target store — failing tests first
+
+These tests name the target (`TECHSPEC/05`–`08`, `11`; `schema/live.sql`,
+`schema/d1.sql`), not the active subset. Each lands failing and drives the
+implementation; the date model is the first slice.
+
+- **Dates** — the `DateValue` for exact, year, month, about/estimated/
+  calculated, before/after/between, period, phrase and calendar; the derived
+  `date`/`date2`/`date_precision`; `date_text`; the GEDCOM round trip; the
+  `item.json`; the app timeline, filter and display; the migration from
+  `date`/`date2`/`date_precision`.
+- **The live store** — the service-only DB, the local API, the seam,
+  events/content, the projections; the daemon reading rows.
+- **The remote** — the resource API, the outbox, the D1 tables, the dated
+  release, auth, images.
+- **The app** — the row set, the rotation (desired absolute; the atomic
+  apply), the correction, the messages, the review.
+
 Loose ends that fit neither plan: `SCRAPS.md`.

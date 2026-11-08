@@ -27,6 +27,7 @@ never modified.
 | `imports.json`, `-N` | `review_sessions`/`review_messages`/`review_decisions` events |
 | `registry/<batch>.json` | `batches`/`scans`; `pages`; the item id; the boundaries |
 | `work/<batch>/classify.json`, `oriented/`, `ocr-guess/*` | `pages.category`, `pages.rotation`, `readings`, `page_rows`, `row_adjustments`; the work files are read once and not carried |
+| item/ref/document/residence dates (`date`, `date2`, `date_precision`) | `date_json` (the `DateValue`) plus the derived columns: exact/month/year → date; approx → about; before/after → range; between → between; a residence’s from/to → period |
 | `app/data/*` | discarded; the projection is derived |
 
 ## The order

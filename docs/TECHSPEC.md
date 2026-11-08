@@ -49,7 +49,7 @@ restate it.
 | The nightly job, the human archive (the dated document tree + the scan image leg), the operational backup | [07-exports.md](TECHSPEC/07-exports.md) |
 | Code organisation and the persistence boundary | [08-code-organisation.md](TECHSPEC/08-code-organisation.md) §19 |
 | The one-time migration from the file archive to the database | [11-migration.md](TECHSPEC/11-migration.md) |
-| Decisions (D1–D46), with blast radius | [09-decisions.md](TECHSPEC/09-decisions.md) |
+| Decisions (D1–D47), with blast radius | [09-decisions.md](TECHSPEC/09-decisions.md) |
 | Spikes | [10-spikes.md](TECHSPEC/10-spikes.md) |
 
 The write path has two topics, not two copies: **[04-live-system.md](TECHSPEC/04-live-system.md) §17.5**

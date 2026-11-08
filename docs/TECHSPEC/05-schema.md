@@ -206,20 +206,29 @@ fields are columns; small nested structures (aliases, `dob`/`dod`, a
 residence list, a theme body) are JSON columns on that table; the edges the
 browse queries join on are child tables. There is no generic entity table.
 
+**Dates are structured.** Every dated row stores `date_json` — the
+`DateValue`: calendar, type (`date` / `period` / `range`), qualifier
+(`about` / `estimated` / `calculated`), range (`before` / `after` /
+`between`), `from` / `to` (year, month, day, time) and phrase. The columns
+`date`, `date2` and `date_precision` are derived by the seam for the timeline
+and filters; they are a projection, not the source. `date_text` is the
+display. GEDCOM is an output/import adapter (`tools/gedcom_date.py`), not the
+source. The mentions in `date_mentions_json` use the same value.
+
 | Table | Holds |
 |---|---|
-| `items` | id, type, title, date, date2, date_precision, status, source, description, provenance, sensitive, created, identified, `date_mentions_json`, `extra_json`, plus the shared columns |
-| `item_refs` | item → person/place/org/theme/item, with status, date, date2, precision and basis |
+| `items` | id, type, title, `date_json` (the DateValue; `date`/`date2`/`date_precision` derived), status, source, description, provenance, sensitive, created, identified, `date_mentions_json`, `extra_json`, plus the shared columns |
+| `item_refs` | item → person/place/org/theme/item, with status, `date_json` (derived date/date2/precision) and basis |
 | `item_assets` | item → asset, kind, caption, ordinal |
 | `item_content` | item → content sha, kind (`story`/`transcription`/`other`), trust (`draft`/`confirmed`) |
 | `people` | id, name, years, relation, bio, email, pronouns, hue, status, `dob_json`, `dod_json`, `aliases_json`, `occupations_json`, `basis_json`, plus the shared columns |
-| `person_residences` | person → place, from/to, precision, status, basis |
+| `person_residences` | person → place, `date_json` (a period; from/to derived), precision, status, basis |
 | `places` | id, name, note, precision, lat, lng, x, y, address, status, `aliases_json`, `basis_json`, plus the shared columns |
 | `orgs` | id, name, address, branch, note, status, `aliases_json`, plus the shared columns |
 | `themes` | id, title, subtitle, seeded, `body_json`, plus the shared columns |
 | `theme_items` | theme → item, ordinal |
 | `relationships` | id, a_kind/a_id, b_kind/b_id, kind, label_a, label_b, `date_json`, `basis_json`, status, plus the shared columns |
-| `documents` | id, item_id, batch_id, doc_index, title, date, date_precision, status, greeting, signoff, text_sha, confirmed_at, plus the shared columns |
+| `documents` | id, item_id, batch_id, doc_index, title, `date_json` (derived date/date2/precision), status, greeting, signoff, text_sha, confirmed_at, plus the shared columns |
 | `document_pages` | document → page, ordinal |
 | `batches` | id, label, source, path, status, arrived_at, started_at, started_pid, started_host, `fingerprint_json`, content_changed, plus the shared columns |
 | `scans` | scan id, batch, page, sha256, path, ordinal, created |

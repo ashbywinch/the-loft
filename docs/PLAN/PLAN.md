@@ -5,7 +5,8 @@
   "built" rows now run on the real archive; Slices 2 and 4 partially
   landed, 3/5/6 unstarted (per-slice status under Phase 2).
 - **Current work:** the remaining work on the active subset lives in
-  `WORK-PLAN.md`; the folder's map is `README.md`.
+  `WORK-PLAN.md`; the target store's failing-test list is `WORK-PLAN.md` §5;
+  the folder's map is `README.md`.
 - **Date:** 2026-08-02 · Companion to `docs/PRD/PRD.md` v0.6 and `TECHSPEC.md` v0.2
 
 ## The urgency

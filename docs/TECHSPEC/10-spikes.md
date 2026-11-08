@@ -185,3 +185,9 @@ hash/migration, draft exclusion, command rebuild — follow.
     token verification, the invited/active/disabled account, an uninvited
     email getting `403` and a log line, the revocable session cookie gating
     `/api/*` and `/img/*`, and the laptop's service token gating `/internal/*`.
+
+33. **Date round-trip.** Every `DateValue` form — exact, year, month,
+    about/estimated/calculated, before/after/between, period, phrase,
+    calendar — through the derived `date`/`date2`/`date_precision`, the
+    `date_text`, the `item.json`, and GEDCOM and back; the migration from
+    `date`/`date2`/`date_precision`.

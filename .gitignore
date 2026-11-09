@@ -26,6 +26,11 @@ __pycache__/
 .mypy_cache/
 app/.eslintcache
 
+# the live database (never in the repo; `loft db init` writes outside it by default)
+loft.db
+loft.db-wal
+loft.db-shm
+
 # coverage
 .coverage
 htmlcov/

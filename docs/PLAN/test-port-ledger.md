@@ -20,6 +20,7 @@ scenario has no new home. A suite is never deleted for being inconvenient.
 | Area | Existing suites | Disposition | Ports in | New home |
 |---|---|---|---|---|
 | The archive facade and the file store | `tests/test_archive.py`, `tests/test_store.py`, `tests/pipeline/test_store.py` | port | A1–A2, B1–B3 | `tests/live/`, `tests/archive/` |
+| The live database | `tests/live/test_*.py` | keep (the new home; it grows into the contract suite) | A1–A2 | `tests/live/` |
 | The domain records | `tests/test_records.py` | keep | E1 move | same |
 | The CLI surface | `tests/test_cli.py` | port (the path moves in A0; the commands port with their surfaces) | A0, then B1–B6 | `tests/cli/` |
 | The live service API | `tests/pipeline/test_server.py`, `tests/pipeline/test_sync.py`, `tests/test_sync.py`, `tests/test_review.py`, `tests/test_approval.py`, `tests/test_review_scoring.py` | port | B3, B4, B7 | `tests/app/api/` |

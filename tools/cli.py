@@ -22,6 +22,10 @@ from typing import Any
 
 import uvicorn
 
+from loft.live.build import app_version
+from loft.live.database import LiveDatabase
+from loft.live.paths import default_database_path
+from loft.live.schema import SchemaError
 from pipeline.api.server import Server, ServerConfig, build_app, lan_addresses
 from pipeline.model.ai_client import AIClient, AIClientError
 from pipeline.registry import RegistryError, list_batches
@@ -244,6 +248,41 @@ def cmd_work(args: argparse.Namespace) -> int:
     return command.sweep()
 
 
+def cmd_db_init(args: argparse.Namespace) -> int:
+    """Create the live database from the canonical schema."""
+    path = Path(args.path)
+    try:
+        database = LiveDatabase.create(path, app_version=app_version())
+    except SchemaError as error:
+        print(f"db init: {error}")
+        return 1
+    database.close()
+    print(f"created {path}")
+    return 0
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """Verify the live database against the canonical schema."""
+    if not args.schema:
+        print("verify: choose --schema")
+        return 2
+    try:
+        database = LiveDatabase.open(Path(args.path))
+    except SchemaError as error:
+        print(f"verify: {error}")
+        return 1
+    try:
+        findings = database.verify_schema()
+    finally:
+        database.close()
+    if findings:
+        for finding in findings:
+            print(f"verify: {finding}")
+        return 1
+    print(f"schema ok: {args.path}")
+    return 0
+
+
 def cmd_gedcom(args: argparse.Namespace) -> int:
     if args.action == "export":
         return _gedcom_export(args.folder, args.path)
@@ -365,6 +404,15 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="BATCH_ID",
         help="put one batch back in the queue before the sweep (a batch a person has finished with, or a dead pass)",
     )
+
+    p = sub.add_parser("db", help="the live database")
+    db = p.add_subparsers(dest="db_action", required=True)
+    pi = _command(db, name="init", help_text="create the live database from schema/", fn=cmd_db_init)
+    pi.add_argument("--path", default=str(default_database_path()))
+
+    p = _command(sub, name="verify", help_text="verify the live database", fn=cmd_verify)
+    p.add_argument("--schema", action="store_true", help="verify the schema, pragmas and migration head")
+    p.add_argument("--path", default=str(default_database_path()))
 
     p = sub.add_parser(
         "gedcom",

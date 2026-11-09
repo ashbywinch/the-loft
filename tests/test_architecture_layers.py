@@ -22,6 +22,7 @@ stay until the move; the new rule lands with the package, not as a skipped
 placeholder.
 """
 
+import re
 from pathlib import Path
 
 from archunitpython import assert_passes, project_layers
@@ -96,3 +97,23 @@ def test_architecture_layers():
     la = la.where_layer("pipeline").may_not_depend_on_layers("evals")
     la = la.where_layer("server").may_not_depend_on_layers("evals")
     assert_passes(la)
+
+
+def test_sqlite3_is_confined_to_loft_live() -> None:
+    """`loft/live/` is the one package that speaks SQL (TECHSPEC §19.2).
+
+    The SQL-only tests are the deliberate exception; no production module
+    outside the live package imports sqlite3.
+    """
+    root = Path(ROOT)
+    allowed = root / "loft" / "live"
+    offenders: list[str] = []
+    for package in ("loft", "tools", "pipeline", "document", "scripts", "research"):
+        for path in (root / package).rglob("*.py"):
+            if allowed in path.parents:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if re.search(r"^\s*(?:import sqlite3\b|from sqlite3\b)", text, re.MULTILINE):
+                offenders.append(str(path.relative_to(root)))
+    assert offenders == [], f"sqlite3 is legal only under loft/live/: {offenders}"
+    assert (allowed / "database.py").is_file(), "the live database package must exist"

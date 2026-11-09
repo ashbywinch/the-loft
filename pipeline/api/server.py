@@ -635,6 +635,19 @@ def build_app(
     # -- the static app + the data gate ------------------------------------
 
     @app.middleware("http")
+    async def log_shell_request(request: Request, call_next: Any) -> Any:
+        # The shell's client identity is the first thing to know when a phone
+        # shows a blank page; the access log alone carries no User-Agent.
+        if request.url.path == "/":
+            logger.info(
+                "shell: host=%r ua=%r platform=%r",
+                request.headers.get("host"),
+                request.headers.get("user-agent"),
+                request.headers.get("sec-ch-ua-platform"),
+            )
+        return await call_next(request)
+
+    @app.middleware("http")
     async def app_shell_no_cache(request: Request, call_next: Any) -> Any:
         # The app code must never be heuristically cached: StaticFiles sends
         # only ETag/Last-Modified, so a browser's heuristic can keep serving

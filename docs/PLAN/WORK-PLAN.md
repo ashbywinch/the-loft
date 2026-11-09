@@ -131,11 +131,12 @@ slice's own session.
   calibration loop).
 - **Transkribus is not a reference.**
 
-## 5. The target store — failing tests first
+## 5. The target store — the acceptance corpus
 
-These tests name the target (`TECHSPEC/05`–`08`, `11`; `schema/truth.sql, schema/projections.sql`,
-`schema/d1.sql`), not the active subset. Each lands failing and drives the
-implementation; the date model is the first slice.
+The order is `REWRITE-PLAN.md`; this list is its Phase A/B acceptance. The
+tests name the target (`TECHSPEC/05`–`08`, `11`; `schema/truth.sql`,
+`schema/projections.sql`, `schema/d1.sql`), not the active subset. Each lands
+failing and drives the increment the plan names.
 
 - **Dates** — the `DateValue` for exact, year, month, about/estimated/
   calculated, before/after/between, period, phrase and calendar; the derived

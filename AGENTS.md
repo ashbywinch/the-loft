@@ -64,6 +64,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The object model — the classes and the document chain | `docs/object-model.md` |
 | Project plan, slices, urgency | `docs/PLAN/PLAN.md` |
 | The work remaining on the current subset (pipeline, ingest review, layout seams) | `docs/PLAN/WORK-PLAN.md` — the detailed designs are linked per item |
+| The DB rewrite's order, phases and per-increment gates | `docs/PLAN/REWRITE-PLAN.md` |
 | The plans folder's map (plan vs record) | `docs/PLAN/README.md` |
 | Code conventions | `docs/coding-standards.md` |
 | Code organisation, layers and the persistence boundary (`LiveStore`, `Change`, repositories, import rules) | `docs/TECHSPEC/08-code-organisation.md` §19 |

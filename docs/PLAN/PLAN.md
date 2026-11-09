@@ -4,9 +4,12 @@
 - **Status update:** Slice 1 delivered — the inventory's
   "built" rows now run on the real archive; Slices 2 and 4 partially
   landed, 3/5/6 unstarted (per-slice status under Phase 2).
-- **Current work:** the remaining work on the active subset lives in
-  `WORK-PLAN.md`; the target store's failing-test list is `WORK-PLAN.md` §5;
-  the folder's map is `README.md`.
+- **Current work:** the DB rewrite's order is `REWRITE-PLAN.md`; the active
+  subset's detail is `WORK-PLAN.md`, whose §5 is the rewrite's acceptance
+  corpus; the folder's map is `README.md`.
+- **Rewrite:** the database as the system of record (`TECHSPEC.md` v1.0) is
+  sequenced in `REWRITE-PLAN.md`; the slices below remain the product backlog
+  and keep their acceptance criteria.
 - **Date:** 2026-08-02 · Companion to `docs/PRD/PRD.md` v0.6 and `TECHSPEC.md` v0.2
 
 ## The urgency

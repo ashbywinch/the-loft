@@ -3,15 +3,17 @@
 Two kinds of files. **Plans** say what work remains. **Records** say what
 happened and why — read them for context, never for remaining work.
 
-Fresh agent: read `WORK-PLAN.md` first (what's left, ordered, with
-acceptance), then the pointed design doc for the item.
+Fresh agent: read `REWRITE-PLAN.md` first for the DB rewrite's order, then
+`WORK-PLAN.md` for the active subset's detail, then the pointed design doc for
+the item.
 
 ## Plans — work to do
 
 | File | Scope |
 |---|---|
-| `PLAN.md` | the large-scale plan — the full PRD: slices 1–6, feature inventory, sequencing, per-slice status |
-| `WORK-PLAN.md` | the small-scale plan — the work remaining on the active subset (the ingest → transcription → identity pipeline), ordered with acceptance |
+| `REWRITE-PLAN.md` | the rewrite's order — the database as the system of record: phases A–F, one increment per PR, each with its gate |
+| `PLAN.md` | the large-scale product plan — the full PRD: slices 1–6, feature inventory, per-slice status; the rewrite order is `REWRITE-PLAN.md` |
+| `WORK-PLAN.md` | the small-scale plan — the work remaining on the active subset (the ingest → transcription → identity pipeline), ordered with acceptance; §5 is the rewrite's acceptance corpus |
 | `SCRAPS.md` | loose ends that fit neither plan |
 
 ## Design and work records
@@ -28,3 +30,4 @@ acceptance), then the pointed design doc for the item.
 | `geometry-experiments-log.md` | the experiment ledger — check before trying a mechanism |
 | `design-decisions.md` | the decision register |
 | `lucidlint-review-log.md`, `lucidlint-snag.md` | lucidlint integration records |
+| `test-port-ledger.md` | the rewrite's coverage ledger — every existing suite's disposition, port increment and new home; the rule is `REWRITE-PLAN.md` |

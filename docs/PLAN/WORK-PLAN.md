@@ -146,6 +146,10 @@ implementation; the date model is the first slice.
   basis + confidence; the review responses (`attested`/`pending`/`delete`);
   the `estimated` display; the migration from `estimated`; the GEDCOM
   `EST`/`QUAY` mapping.
+- **The human archive** — the dated document tree; `item.json` plus the
+  readable views (`INDEX`, `PEOPLE`, `PLACES`, `THEMES`, `ORGS`,
+  `RELATIONSHIPS`) generated from the DB; the manifest and `sha256sum`; the
+  image leg; the sha/phash re-find.
 - **The live store** — the service-only DB, the local API, the seam,
   events/content, the projections; the daemon reading rows.
 - **The remote** — the resource API, the outbox, the D1 tables, the dated

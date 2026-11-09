@@ -20,8 +20,7 @@ are not a second architecture: the components are the TECHSPEC's.
   sees it.
 - A DB write is a committed transaction; the response is sent after the
   commit, never after a projection rebuild.
-- The export writes `INDEX.md`, `PEOPLE.md`, `PLACES.md` and the manifest
-  last.
+- The export writes the readable views and the manifest last.
 
 ## Idempotent by UUID
 

@@ -229,7 +229,7 @@ Loft/
     oriented/page-NN.jpg          correct way up (Rule J, before any reading)
     view/page-NN.webp             the one view image per page (published to R2)
   archive/                        the human archive's document leg (nightly)
-    README.md INDEX.md PEOPLE.md PLACES.md
+    README.md INDEX.md PEOPLE.md PLACES.md THEMES.md ORGS.md RELATIONSHIPS.md
     documents/<date label>/<item-id>/
       item.json
       transcription.txt

@@ -15,13 +15,14 @@ runs).
    encrypted. This is the restore source and the 3-2-1 copy; it is never
    filtered. Keep the tiered set.
 3. **Write the human archive**: the confirmed current state only — one
-   `item.json` per catalogued item, the confirmed `.txt`, the confirmed
-   identity tables (with basis and confidence), `INDEX.md`, `PEOPLE.md`,
-   `PLACES.md`, `README.md`, `manifest.json` and `manifest.sha256`. The page
-   refs point at the scan area; nothing is copied. Write the document leg to
-   the big disk and the off-site readable copy, and carry the image leg (the
-   scan area) to the same off-site copy. No drafts, no proposed records, no
-   model reasoning. The tree and its format are §18.8.
+   `item.json` per catalogued item, the confirmed `.txt`, the JSON identity
+   tables (with basis and confidence), the readable views (`INDEX.md`,
+   `PEOPLE.md`, `PLACES.md`, `THEMES.md`, `ORGS.md`, `RELATIONSHIPS.md`),
+   `README.md`, `manifest.json` and `manifest.sha256`. The page refs point at
+   the scan area; nothing is copied. Write the document leg to the big disk
+   and the off-site readable copy, and carry the image leg (the scan area) to
+   the same off-site copy. No drafts, no proposed records, no model
+   reasoning. The tree and its format are §18.8.
 4. **Verify the human archive**: every file against the manifest; no
    `trust='draft'` content anywhere; the confirmed subset equals the DB's
    confirmed rows; fail loudly on any mismatch.
@@ -76,10 +77,13 @@ log, the schema files or accounts.
 
 ```
 archive/
-  README.md                 # what this is, how to read it; the two legs
+  README.md                 # what this is, how to read it; the DB is the source; JSON for machines, Markdown for people; the two legs
   INDEX.md                  # dated index, links into documents/
   PEOPLE.md                 # the cast, readable
   PLACES.md                 # the places, readable
+  THEMES.md                 # the story doors and their items, readable
+  ORGS.md                   # the organisations, readable
+  RELATIONSHIPS.md          # the family edges, readable
   manifest.json             # exported_through, exported_at, counts, page paths + hashes
   manifest.sha256           # literal sha256sum -c output
   people.json               # confirmed identity tables (basis + confidence)
@@ -183,8 +187,12 @@ versions or event ids. The fields a reader or a tool needs:
 - **The words are `.txt`; the scans are open images in the scan area.**
   UTF-8 and JPEG/PNG/TIFF. The document leg references a page by batch,
   filename, sha256 and phash; it never copies the image.
-- **The index is generated.** `INDEX.md` has year sections from day one;
-  `PEOPLE.md`/`PLACES.md` are the cast. Sensitive items are included and
+- **The readable views are generated from the DB.** `INDEX.md` has year
+  sections from day one; `PEOPLE.md`, `PLACES.md`, `THEMES.md`, `ORGS.md` and
+  `RELATIONSHIPS.md` are the human renders of `people.json`, `places.json`,
+  `themes.json`, `orgs.json` and `relationships.json`. The DB is the source;
+  the JSON is the machine form; the Markdown is the human form; both are
+  regenerated, never hand-edited. Sensitive items are included and
   indexed like any other; the `sensitive` flag stays in `item.json`, and the
   hosted browse applies the family's visibility rule, not the archive.
 - **The manifest verifies.** Every file has a sha256; `manifest.sha256` is
@@ -259,8 +267,10 @@ keeps them (`content`, `page_rows`). There are no work files to omit.
 #### Export mechanics
 
 **Human archive:** write changed files atomically; re-file a document leaf
-when a date correction crosses a partition; write `INDEX.md`, `PEOPLE.md`,
-`PLACES.md` and `manifest.*` last; never a version suffix; never copy the
+when a date correction crosses a partition; write the readable views
+(`INDEX.md`, `PEOPLE.md`, `PLACES.md`, `THEMES.md`, `ORGS.md`,
+`RELATIONSHIPS.md`) and `manifest.*` last; never a version suffix; never copy
+the
 images — the manifest records their paths and hashes. **Operational backup:**
 append new events to the current year's file; copy new content blobs; dump the
 DB; write the schema/payload files and the manifest last. The 3-2-1 copy

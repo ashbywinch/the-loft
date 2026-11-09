@@ -18,30 +18,35 @@ flowchart TB
   subgraph Surfaces["Surfaces"]
     App["loft/app — capture, review, browse"]
     CLI["loft/cli — scanner box"]
-    Worker["loft/pipeline — worker, sync, export wiring"]
+    Worker["loft/pipeline — worker, sync"]
+    Archive["loft/archive — exporter, importer"]
   end
-  subgraph Persistence["Persistence — loft/archive/live/"]
+  subgraph Persistence["Persistence — loft/live/"]
     Store["LiveStore — facade"]
     Change["Change — unit of work"]
     Views["views — timeline, person, review, search"]
     SQL[("SQLite")]
   end
   subgraph Domain["Domain"]
-    Archive["loft/archive — Item, Person, Claim, ReviewSession"]
+    Records["loft/records — Item, Person, Relationship"]
+    Review["loft/review — ReviewChat, Claim, ReviewSession"]
     Document["loft/document — Document, Page, Row, Word"]
   end
 
   App --> Store
   CLI --> API["loft/app/api — local write seam"]
   Worker --> API
+  Archive --> API
   API --> Store
   Store --> Change
   Store --> Views
   Change --> SQL
   Views --> SQL
-  Change --> Archive
+  Change --> Records
+  Change --> Review
   Change --> Document
-  Views --> Archive
+  Views --> Records
+  Views --> Review
   Views --> Document
 ```
 
@@ -53,7 +58,7 @@ client and the domain types.
 
 ### 19.2 One package speaks SQL
 
-- **`loft/archive/live/` is the only package that imports `sqlite3`, and the
+- **`loft/live/` is the only package that imports `sqlite3`, and the
   service is the only process that hosts it.** The server calls `LiveStore`
   in process; the worker, sync agent, exporter and CLI call the service's
   local API and never open the database.
@@ -62,11 +67,11 @@ client and the domain types.
   `ReviewQueueEntry`, `SearchHit`, `ExportView`, `Snapshot`), and the error
   types. The event log, the projection modules, the content store and the SQL
   helpers are private.
-- `loft/archive/export.py` (the exporter) and `loft/archive/sync.py` (the
+- `loft/archive/export.py` (the exporter) and `loft/pipeline/sync.py` (the
   sync agent) call the service's local API for reads and writes; they never
-  import `LiveStore`, `loft.archive.live.sqlite`, or write SQL.
-- A test enforces the rule: `sqlite3` appears only under
-  `loft/archive/live/`; no module outside it imports the private modules.
+  import `LiveStore`, `loft.live.sqlite`, or write SQL.
+- A test enforces the rule: `sqlite3` appears only under `loft/live/`; no
+  module outside it imports the private modules.
 
 ### 19.3 The interface's UX
 
@@ -187,7 +192,7 @@ blob.
   pipeline, server, evals). When the `loft/` layout lands, the same file
   gains `domain`, `persistence` and `surfaces`: `persistence` may depend
   only on `domain`, and `domain` may not depend on `persistence` or
-  `surfaces`. `sqlite3` appears only under `loft/archive/live/`; no surface
+  `surfaces`. `sqlite3` appears only under `loft/live/`; no surface
   imports the private modules. The new rule lands with the package, never as
   a skipped placeholder.
 
@@ -195,13 +200,14 @@ blob.
 
 | Today | Target |
 |---|---|
-| `tools/archive.py` (the file store's facade) | `loft/archive/` — entities, exporter, importer; `Archive` is the export, not the live store |
-| `tools/store.py`, `tools/atomic.py` | `loft/archive/live/content.py` (content-addressed blobs) and the exporter's atomic writes |
+| `tools/archive.py` (the file store's facade) | `loft/records/` — the entities and the `Records` aggregate; `loft/archive/` — the exporter and importer |
+| `tools/store.py`, `tools/atomic.py` | `loft/live/content.py` (content-addressed blobs) and the exporter's atomic writes |
 | `pipeline/api/server.py` | `loft/app/` surfaces; they call `LiveStore`, never SQL |
-| `pipeline/api/sync.py` | `loft/archive/sync.py` — the sync agent; it applies commands through the service's local API |
+| `pipeline/api/sync.py` | `loft/pipeline/sync.py` — the sync agent; it applies commands through the service's local API |
 | `pipeline/worker.py` | `loft/pipeline/worker.py`; it writes through the service's local API |
-| `pipeline/registry.py`, `pipeline/store.py` | the `batches`/`scans` projections and the content store; the old work files are read once by the migration, then gone |
-| `pipeline/artefacts.py` | the derivative path layout (oriented image, view image); not state |
-| `tools/records.py` | `loft/archive/` entities (one class per file) |
+| `pipeline/registry.py`, `pipeline/store.py` | the `batches`/`scans` projections and the content store (`loft/live/`); the old work files are read once by the migration, then gone |
+| `pipeline/artefacts.py` | `loft/pipeline/artefacts.py` — the derivative path layout (oriented image, view image); not state |
+| `tools/records.py` | `loft/records/` entities (one class per file) |
+| `tools/review.py` | `loft/review/` — `ReviewChat`, `ReviewDecision`, `ReviewSession`, `Claim` |
 | `document/` | `loft/document/` |
 | `tests/test_architecture.py` | the new import rules above |

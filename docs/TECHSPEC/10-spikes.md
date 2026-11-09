@@ -122,7 +122,7 @@ hash/migration, draft exclusion, command rebuild — follow.
 
 1. **Import boundary.** Extend `tests/test_architecture_layers.py`
    (ArchUnitPython) with `domain`, `persistence` and `surfaces`;
-   `sqlite3` only under `loft/archive/live/`; the new rule lands with the
+   `sqlite3` only under `loft/live/`; the new rule lands with the
    package, not as a skipped placeholder.
 2. **Memory store.** The contract suite passes against `MemoryLiveStore`.
 3. **Batch change.** 2,000 saves in one transaction, read-your-writes,

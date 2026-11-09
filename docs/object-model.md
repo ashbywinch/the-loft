@@ -184,16 +184,17 @@ person↔item ("owned"), theme↔item (curated), and any other pair — the
 **`status` is the record disposition for every entity kind** — `proposed |
 confirmed | rejected` — with `basis_json` holding the basis and confidence;
 the review responses map through `05` §18.2 and `estimated` is a display. No `Entities` collection class: the
-collections are per type and the **`Archive`** class exposes them
+collections are per type and the **`Records`** class exposes them
 (people, places, orgs, items, themes); `tools/memory.py`'s `Knowledge`
-is not a second view. The record classes move into a `loft/archive/` package, one
+is not a second view. The record classes move into a `loft/records/` package, one
 class per file named after the class. `ReviewChat` reads a `Memory` or
 a `Document` with the raw projection as its facts context (through
 `ReviewContext`) and produces the review outcomes;
 the memory and the document reviews are the same conversation.
 
-**Archive**: the exporter/importer. `LiveStore` owns the live data and
-the paths; `Archive` materialises the export and imports the old tree.
+**Exporter/Importer**: the human archive (`loft/archive/`). `LiveStore` owns
+the live data and the paths; the exporter materialises the dated tree and
+imports the old tree.
 The per-image operations (**rows**, **transcribe**, **orientation**,
 **rotate**) are the pipeline's. The document boundaries are not part of
 the model call — the grouping scorer proposes them, the review confirms.
@@ -221,7 +222,7 @@ its contract — what it takes in and what it hands back.
 | Chat | Home | The interface |
 |---|---|---|
 | `ChatClient` | `loft/` root (`ai_client`) | The LLM client: `chat(system, user, *, thinking) -> str` — one call, the caller owns the conversation (messages in, the reply out) |
-| `ReviewChat` | `loft/archive/` (the review machinery) | The review conversation over a source — a `Memory` or a `Document`: takes the source and the facts context (the standing collections, through `ReviewContext`), runs the read-only tool harness and the verdict loop (the digs + correction turns; the model-call-is-a-conversation rule; depth is the only per-source difference), hands back the `ReviewDecision` responses (attested / pending / delete per entity, with basis and confidence; `estimated` is a display) and the `Message` log |
+| `ReviewChat` | `loft/review/` (the review machinery) | The review conversation over a source — a `Memory` or a `Document`: takes the source and the facts context (the standing collections, through `ReviewContext`), runs the read-only tool harness and the verdict loop (the digs + correction turns; the model-call-is-a-conversation rule; depth is the only per-source difference), hands back the `ReviewDecision` responses (attested / pending / delete per entity, with basis and confidence; `estimated` is a display) and the `Message` log |
 ## The export's document tree
 
 The human archive's document leg is the date-partitioned tree: `All Time`,
@@ -263,10 +264,8 @@ classDiagram
     namespace "loft" {
         class ChatClient
     }
-    namespace "loft/archive" {
-        class Archive {
-            exporter/importer
-        }
+    namespace "loft/records" {
+        class Records { the typed collections }
         class Entity { id, status, validation }
         class Person
         class Place
@@ -274,13 +273,19 @@ classDiagram
         class Item
         class Theme
         class Relationship { a, b, kind }
+        class Memory { the narrator's account }
+    }
+    namespace "loft/review" {
         class ReviewChat {
             the one review: a Memory or a Document, depth the only difference
         }
-        class Memory { the narrator's account }
+        class ReviewContext
+    }
+    namespace "loft/archive" {
+        class Exporter
+        class Importer
         class GedcomDocument
         class Projection
-        class ReviewContext
     }
     namespace "loft/document" {
         class Document {

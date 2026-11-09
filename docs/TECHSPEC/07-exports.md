@@ -42,7 +42,7 @@ runs).
 and compares every table and hash. It is a gate, not a spike: a longevity
 claim that is tested once is a hope.
 
-**Rebuild.** `ArchiveImport` reads the **operational backup** — the dump,
+**Rebuild.** The rebuild reads the **operational backup** — the dump,
 `content/` and the event log — and reconstructs the truth and domain
 projections. The human archive is a confirmed publication, not the restore
 source; it can rebuild the confirmed subset only. The test is mechanical:

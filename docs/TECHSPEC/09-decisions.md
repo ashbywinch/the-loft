@@ -109,7 +109,7 @@ decisions survive all three. The blast radius is at the bottom.
   and the export compares the cache to the published text.
 ### 19.9 Decisions
 
-- **D31 [interface] — One SQL package.** `loft/archive/live/` is the only code
+- **D31 [interface] — One SQL package.** `loft/live/` is the only code
   that imports `sqlite3`; the service uses `LiveStore`; every other process
   uses the service's local API. `08` §19.2.
 - **D32 [interface] — One write path.** `Change` is the unit of work; saves

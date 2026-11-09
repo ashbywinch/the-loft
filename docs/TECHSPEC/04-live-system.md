@@ -134,11 +134,11 @@ nightly human archive and operational backup.** The full deployment table is
 `Word`, `Transcript`, `Memory`, `ReviewChat`. The infrastructure nouns are
 `LiveStore` (the SQLite store), `Command` (one immutable remote intent),
 `Outbox` (the durable queue of commands), `Snapshot` (the published read
-model), `SyncAgent` (pull–apply–publish), `Exporter` (the archive
-materialiser and backup), `ArchiveImport` (the rebuild), `Derivative` (one
+model), `SyncAgent` (pull–apply–publish), `Exporter` (the human archive
+materialiser and backup), `Rebuild` (the rebuild), `Derivative` (one
 view image), `Asset` (the catalogued original or derivative),
 `RemoteApp` (the static UI) and `Backend` (the managed dependency).
-`Archive` keeps its name but changes job: it is the plain-text
+The aggregate is `Records`; the `Exporter` is the plain-text
 materialisation, not the live store. The noun ownership is
 `00-deployments.md`.
 

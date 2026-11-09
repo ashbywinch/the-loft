@@ -2,12 +2,12 @@
 
 §17.9 is in `07-exports.md`; §17.12 is in `10-spikes.md`; §17.13 is in `09-decisions.md`.
 
-The deployment shape is **normative** in `00-deployments.md`; the rest of this component is proposed.
+The whole component is **normative**; the deployment shape is in `00-deployments.md`.
 
 ## 17. The live system — database, remote site, and sync
 
-Status: **the deployment shape is normative** (`00-deployments.md`); the
-mechanism in this component is proposed. Nothing is implemented. It changes
+Status: **normative**; the deployment shape is in `00-deployments.md`. Nothing
+is implemented yet. It changes
 the storage authority: the database becomes the system of record and the
 plain-text archive becomes the nightly export.
 The archive's longevity guarantees are unchanged — it is still the thing a

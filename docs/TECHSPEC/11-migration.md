@@ -1,6 +1,6 @@
 # The migration from the file archive to the database
 
-> Component of `docs/TECHSPEC.md`. Status: **proposed; the one-time move.**
+> Component of `docs/TECHSPEC.md`. Status: **normative; the one-time move.**
 > This is a current workstream, not a history record.
 
 The old tree is the source; the DB is the live store. The migration is a

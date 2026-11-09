@@ -1,7 +1,8 @@
 # Family History Album — Tech Spec & Architecture
 
-**Status:** v0.4 — the deployments and the live-system shape are settled; the
-schema and the code boundary are under review. **This file is the index.**
+**Status:** v1.0 — the target is approved: the deployments, the live system,
+the schema, the code boundary, the export and the migration are normative.
+**This file is the index.**
 The components live in `docs/TECHSPEC/`.
 
 ## Read this first: the deployments
@@ -65,12 +66,12 @@ The export/backup procedure is only in [07-exports.md](TECHSPEC/07-exports.md).
 | [01-foundations.md](TECHSPEC/01-foundations.md) | §0–§2 principles/stack, §14 deferred seams | **normative** |
 | [02-archive-and-capture.md](TECHSPEC/02-archive-and-capture.md) | §4, §6, §9–§11 the record wire shape, maps, PWA, search, tools | current |
 | [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) | §16.1–§16.17 the capture pipeline, reading path and review surface | current |
-| [04-live-system.md](TECHSPEC/04-live-system.md) | §17 the live system — shape, command/read flow, failure modes, technology choices | **proposed**; the deployment shape is normative in `00` |
-| [05-schema.md](TECHSPEC/05-schema.md) | §18.1–18.7 the schema concepts: append-only stores, event log, content, projections, write transaction, migrations, withdrawal; §18.13 the D1 store | **proposed** |
-| [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) | §18.2, §18.3, §18.10 the DDL rules; the SQL is [`schema/truth.sql`](../schema/truth.sql) + [`schema/projections.sql`](../schema/projections.sql) | **proposed** |
-| [07-exports.md](TECHSPEC/07-exports.md) | §17.9 + §18.8–18.9 the nightly job, the human archive, the operational backup | **proposed** |
-| [08-code-organisation.md](TECHSPEC/08-code-organisation.md) | §19 the layers and the persistence boundary | **proposed** |
-| [11-migration.md](TECHSPEC/11-migration.md) | the one-time file-store → DB import: what maps, order, idempotency, verification, cutover | **proposed** |
+| [04-live-system.md](TECHSPEC/04-live-system.md) | §17 the live system — shape, command/read flow, failure modes, technology choices | **normative** |
+| [05-schema.md](TECHSPEC/05-schema.md) | §18.1–18.7 the schema concepts: append-only stores, event log, content, projections, write transaction, migrations, withdrawal; §18.13 the D1 store | **normative** |
+| [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) | §18.2, §18.3, §18.10 the DDL rules; the SQL is [`schema/truth.sql`](../schema/truth.sql) + [`schema/projections.sql`](../schema/projections.sql) | **normative** |
+| [07-exports.md](TECHSPEC/07-exports.md) | §17.9 + §18.8–18.9 the nightly job, the human archive, the operational backup | **normative** |
+| [08-code-organisation.md](TECHSPEC/08-code-organisation.md) | §19 the layers and the persistence boundary | **normative** |
+| [11-migration.md](TECHSPEC/11-migration.md) | the one-time file-store → DB import: what maps, order, idempotency, verification, cutover | **normative** |
 | [09-decisions.md](TECHSPEC/09-decisions.md) | §17.13, §18.11, §19.9 the decision register | register |
 | [10-spikes.md](TECHSPEC/10-spikes.md) | §17.12, §18.12, §19.10 the spike register | register |
 

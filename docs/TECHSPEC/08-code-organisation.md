@@ -6,7 +6,7 @@ The deployment shape is `00-deployments.md`; this component is the code boundary
 
 ## 19. Code organisation and the persistence boundary
 
-Status: **proposed; for review.** §17 says where the system runs, §18 what it
+Status: **normative.** §17 says where the system runs, §18 what it
 stores. This section says how the code is arranged, and — the part that
 matters most for the people who will extend it — what the database layer
 looks like from above.

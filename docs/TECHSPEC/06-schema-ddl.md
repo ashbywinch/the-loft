@@ -1,6 +1,6 @@
 <!-- Component of docs/TECHSPEC.md. See the index for the status. -->
 
-Status: **proposed**; the SQL is in `schema/truth.sql` and `schema/projections.sql`.
+Status: **normative**; the SQL is in `schema/truth.sql` and `schema/projections.sql`.
 
 ## The DDL
 

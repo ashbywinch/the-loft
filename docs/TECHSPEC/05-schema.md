@@ -6,7 +6,7 @@ The DDL is `06-schema-ddl.md`; the exports are `07-exports.md`. This component d
 
 ## 18. The live schema and the archive's on-disk form
 
-Status: **proposed schema, revised after an adversarial review; for review.**
+Status: **normative schema, revised after an adversarial review; approved.**
 §17 decides where the system lives; this section decides what it stores and
 what a reader finds on the disk.
 

@@ -1,6 +1,6 @@
 <!-- Component of docs/TECHSPEC.md. See the index for the status. -->
 
-Status: **proposed**; this is the one nightly/export/backup procedure.
+Status: **normative**; this is the one nightly/export/backup procedure.
 
 ### 17.9 The nightly export, dumps, and retention
 

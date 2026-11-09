@@ -1,7 +1,7 @@
 # Decisions
 
 > Component of `docs/TECHSPEC.md`. Status: **register**. The decisions
-> (D1–D48) are proposed.
+> (D1–D48) are adopted.
 
 ## The register
 

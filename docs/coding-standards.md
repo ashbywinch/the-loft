@@ -433,7 +433,7 @@ a check is a wish:
   names every surface where the fact can be expressed, or it silently
   misses whole classes.
 - **One operator surface: the `loft` CLI (`tools/cli.py`, wrapper script at
-  the repo root). No per-module `__main__` shims.** `loft publish`, `loft
+  `scripts/loft`). No per-module `__main__` shims.** `loft publish`, `loft
   serve`, `loft create-demo`, `loft capture-document`, `loft gedcom in|out`,
   `loft eval-memory`. The CLI constructs the nouns and calls the methods; a
   module's argv handling lives in the subcommand, never in the module

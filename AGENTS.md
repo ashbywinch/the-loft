@@ -76,7 +76,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | Documentation structure — the required doc set, folder rules, discoverability | `docs/documentation-structure.md` |
 | UX standards (the reviewer rules and UX-process norms) | `docs/ux-standards.md` |
 | UX spec — the PRD's UX answers + the journeys to usability-test | `docs/UX.md` |
-| Real content (people, relationships, items, story text) | the live DB; the export is `archive/` (the dated document tree + the scan image leg); the repo is data-free. `./loft publish` regenerates `app/data` for local serve |
+| Real content (people, relationships, items, story text) | the live DB; the export is `archive/` (the dated document tree + the scan image leg); the repo is data-free. `./scripts/loft publish` regenerates `app/data` for local serve |
 | Where an artefact lives (the archive's legs: identities, items, sessions) | `docs/TECHSPEC/07-exports.md` |
 | Demo content for fake instances | `tools/demo_data.py` — fictional only, never real names |
 

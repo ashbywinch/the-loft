@@ -6,7 +6,7 @@ Archive.publish(), Server.serve(), Archive.capture_memory(),
 GedcomDocument.to_text()/from_text() — so the domain vocabulary lives in
 the nouns, and the CLI is a thin argument surface. No per-module __main__
 shims (coding-standards.md): a command's argv handling lives here, and
-the repo-root ``loft`` wrapper forwards it.
+the ``scripts/loft`` wrapper forwards it.
 """
 
 from __future__ import annotations

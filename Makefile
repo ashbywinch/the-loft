@@ -54,7 +54,7 @@ setup:
 
 
 serve: setup
-	@./loft serve --host 0.0.0.0 --port 8000 --reload
+	@./scripts/loft serve --host 0.0.0.0 --port 8000 --reload
 
 
 lint: setup

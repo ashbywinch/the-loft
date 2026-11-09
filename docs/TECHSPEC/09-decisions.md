@@ -91,7 +91,7 @@ decisions survive all three. The blast radius is at the bottom.
   a restore.** The nightly backup is the fallback.
 - **D25 [domain] — Originals and previews are copied, never hardlinked.**
 - **D26 [domain] — The human archive is readable without SQLite.** The backup carries
-  `schema-truth.sql`, the event log and `content/` for the restore; FTS is
+  `schema/truth.sql`, the event log and `content/` for the restore; FTS is
   optional.
 - **D27 [schema] — The current state is typed.** Every `entity_kind` has its own
   projection table; scalar fields are columns, small nested records are

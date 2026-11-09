@@ -71,7 +71,7 @@ hash/migration, draft exclusion, command rebuild — follow.
    a catalogued item whose transcription is still a draft has no
    `transcription.txt` and says so; a sensitive item is in `INDEX.md` like
    any other.
-9. **FTS5 fallback.** `schema-truth.sql` restores on a SQLite without FTS5;
+9. **FTS5 fallback.** `schema/truth.sql` restores on a SQLite without FTS5;
    the projections rebuild when FTS5 is available.
 10. **Lock-hold budget.** A 2,000-event batch is one transaction; no other
     writer sees "database is locked"; the FTS projector is off the lock.

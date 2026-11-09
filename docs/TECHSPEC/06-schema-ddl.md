@@ -1,12 +1,14 @@
 <!-- Component of docs/TECHSPEC.md. See the index for the status. -->
 
-Status: **proposed**; the SQL is in `schema/live.sql`.
+Status: **proposed**; the SQL is in `schema/truth.sql` and `schema/projections.sql`.
 
 ## The DDL
 
-The authoritative SQL is [`schema/live.sql`](../../schema/live.sql): the event
-log (§18.2), the content store (§18.3), the typed projections, the FTS index
-and the triggers (§18.10). The concepts are in `05-schema.md`.
+The authoritative SQL is [`schema/truth.sql`](../../schema/truth.sql) for the
+pragmas, the event log (§18.2), the content store (§18.3) and
+`schema_migrations`, and [`schema/projections.sql`](../../schema/projections.sql)
+for the typed tables, indexes and the FTS index (§18.10). The concepts are in
+`05-schema.md`.
 
 The FTS row's `rowid` is `search_docs.doc_id`; an update is
 `DELETE FROM search WHERE rowid = ?` followed by the insert, which is the

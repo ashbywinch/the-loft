@@ -225,8 +225,8 @@ backup/
   content/
     <sha2>/<sha>            # the full content store, including drafts
   content.json              # sha256, mime, size, created_at for every blob
-  schema-truth.sql          # pragmas + events/content/migrations
-  schema-projections.sql    # projections + FTS; regenerable
+  schema/truth.sql          # pragmas + events/content/migrations
+  schema/projections.sql    # projections + FTS; regenerable
   migrations.json
   migrations/               # NNNN.sql
   vocabulary.json

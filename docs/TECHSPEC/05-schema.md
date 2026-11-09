@@ -19,7 +19,7 @@ The truth is three append-only stores:
    `event_id` or `(entity_id, event_no)`; `PRAGMA recursive_triggers=ON`
    closes the `INSERT OR REPLACE` hole that would otherwise delete a row
    without firing the delete trigger. The pragma is declared in
-   `schema-truth.sql`, so a restore connection gets it too.
+   `schema/truth.sql`, so a restore connection gets it too.
 2. **`content`** — every text or JSON blob, keyed by sha256,
    create-if-absent. A bad release can add bytes; it cannot replace the
    bytes under an existing sha.
@@ -199,7 +199,7 @@ The DDL is in `06-schema-ddl.md`.
 says what each table is for.
 
 Projections are derived; operational tables are reset, not rebuilt. Their
-`CREATE` statements live in `schema-projections.sql`; projection contents
+`CREATE` statements live in `schema/projections.sql`; projection contents
 are rebuilt by `loft rebuild`.
 
 **The current state is typed.** Each entity kind has its own table. Scalar
@@ -400,12 +400,12 @@ typed table and the wire shape stay in one place.
   default, and a default fabricates a value for every historical row of an
   immutable log. Only the five strict types (`INTEGER`, `REAL`, `TEXT`,
   `BLOB`, `ANY`) are allowed. A column is never removed.
-- **Two schema files.** `schema-truth.sql` starts with the pragmas
+- **Two schema files.** `schema/truth.sql` starts with the pragmas
   (`journal_mode=WAL`, `synchronous=FULL`, `busy_timeout=5000`,
   `wal_autocheckpoint=1000`, `recursive_triggers=ON`), creates `events`,
   `content` and `schema_migrations`, and has no virtual tables, so a 2046
   reader on a SQLite without FTS5 can still rebuild the truth.
-  `schema-projections.sql` adds the projections and the FTS index; it is
+  `schema/projections.sql` adds the projections and the FTS index; it is
   regenerable.
 - **The migration SQL is exported.** `migrations/NNNN.sql` ships beside
   `migrations.json`, so `schema_migrations.sql_sha256` is verifiable and a

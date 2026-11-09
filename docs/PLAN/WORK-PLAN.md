@@ -133,7 +133,7 @@ slice's own session.
 
 ## 5. The target store — failing tests first
 
-These tests name the target (`TECHSPEC/05`–`08`, `11`; `schema/live.sql`,
+These tests name the target (`TECHSPEC/05`–`08`, `11`; `schema/truth.sql, schema/projections.sql`,
 `schema/d1.sql`), not the active subset. Each lands failing and drives the
 implementation; the date model is the first slice.
 

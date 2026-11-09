@@ -45,7 +45,7 @@ restate it.
 | The capture pipeline, reading path and review surface (the import flow is a record) | [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) |
 | The live system's shape, the remote API, command/read flow, failure modes | [04-live-system.md](TECHSPEC/04-live-system.md) §17 |
 | The schema's concepts, event log, content, projections, migrations, withdrawal; the D1 store | [05-schema.md](TECHSPEC/05-schema.md) §18.1–18.7, §18.13 |
-| The schema DDL — events, content and projections, the one table definition | [`schema/live.sql`](../schema/live.sql); [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) |
+| The schema DDL — events, content and projections, the one table definition | [`schema/truth.sql`](../schema/truth.sql) + [`schema/projections.sql`](../schema/projections.sql); [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) |
 | The nightly job, the human archive (the dated document tree + the scan image leg), the operational backup | [07-exports.md](TECHSPEC/07-exports.md) |
 | Code organisation and the persistence boundary | [08-code-organisation.md](TECHSPEC/08-code-organisation.md) §19 |
 | The one-time migration from the file archive to the database | [11-migration.md](TECHSPEC/11-migration.md) |
@@ -54,7 +54,7 @@ restate it.
 
 The write path has two topics, not two copies: **[04-live-system.md](TECHSPEC/04-live-system.md) §17.5**
 is the remote command flow (browser → managed outbox → local sync agent);
-**[05-schema.md](TECHSPEC/05-schema.md) §18.5** is the transaction that applies a change. The DDL is only in [`schema/live.sql`](../schema/live.sql); [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) explains the rules. The hash recipe is only in [05-schema.md](TECHSPEC/05-schema.md) §18.2.
+**[05-schema.md](TECHSPEC/05-schema.md) §18.5** is the transaction that applies a change. The DDL is only in [`schema/truth.sql`](../schema/truth.sql) + [`schema/projections.sql`](../schema/projections.sql); [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) explains the rules. The hash recipe is only in [05-schema.md](TECHSPEC/05-schema.md) §18.2.
 The export/backup procedure is only in [07-exports.md](TECHSPEC/07-exports.md).
 
 ## Components
@@ -67,7 +67,7 @@ The export/backup procedure is only in [07-exports.md](TECHSPEC/07-exports.md).
 | [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) | §16.1–§16.17 the capture pipeline, reading path and review surface | current |
 | [04-live-system.md](TECHSPEC/04-live-system.md) | §17 the live system — shape, command/read flow, failure modes, technology choices | **proposed**; the deployment shape is normative in `00` |
 | [05-schema.md](TECHSPEC/05-schema.md) | §18.1–18.7 the schema concepts: append-only stores, event log, content, projections, write transaction, migrations, withdrawal; §18.13 the D1 store | **proposed** |
-| [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) | §18.2, §18.3, §18.10 the DDL rules; the SQL is [`schema/live.sql`](../schema/live.sql) | **proposed** |
+| [06-schema-ddl.md](TECHSPEC/06-schema-ddl.md) | §18.2, §18.3, §18.10 the DDL rules; the SQL is [`schema/truth.sql`](../schema/truth.sql) + [`schema/projections.sql`](../schema/projections.sql) | **proposed** |
 | [07-exports.md](TECHSPEC/07-exports.md) | §17.9 + §18.8–18.9 the nightly job, the human archive, the operational backup | **proposed** |
 | [08-code-organisation.md](TECHSPEC/08-code-organisation.md) | §19 the layers and the persistence boundary | **proposed** |
 | [11-migration.md](TECHSPEC/11-migration.md) | the one-time file-store → DB import: what maps, order, idempotency, verification, cutover | **proposed** |

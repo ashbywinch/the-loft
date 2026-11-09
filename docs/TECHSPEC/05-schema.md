@@ -422,10 +422,11 @@ typed table and the wire shape stay in one place.
 
 ### 18.7 A bad release: withdrawal, not quarantine
 
-The first draft's `quarantines` table was wrong: filtering events makes the
+The repair is an **event**, not a quarantine. Filtering events makes the
 projection a function of mutable operator state, breaks drop-and-replay,
-and leaves the exported history permanently wrong with no marker. The
-repair is an **event**.
+and leaves the backup's history permanently wrong with no marker. The
+withdrawal is an audit marker that the operational backup carries; the human
+archive holds the current state only.
 
 `loft withdraw --change <change_id>` (or `--release <build>`) runs one
 transaction that:
@@ -449,7 +450,8 @@ transaction that:
 
 The fold stays pure: the compensation is later than the bad event, so the
 entity's last event is the restored one. The withdrawal is an audit marker
-that the export carries, so the history is self-describing. The bad events
+that the operational backup carries; the human archive holds the current
+state. The bad events
 remain visible; nothing is edited.
 
 | Symptom | Containment | Recovery |

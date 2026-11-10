@@ -81,6 +81,7 @@ from pipeline.api.sync import (
     safe_page_name,
     set_page_job,
 )
+from pipeline.api.text_gzip import TextGZipMiddleware
 from pipeline.artefacts import BatchArtefacts
 from pipeline.identify import IdentificationError
 from pipeline.model.ai_client import AIClient
@@ -148,6 +149,10 @@ def build_app(
     outbox = config.outbox if config.outbox is not None else Outbox(WORK_DIR.parent / "sync-outbox")
 
     app = FastAPI(title="The Loft", docs_url=None, redoc_url=None)
+    # The phone pays for every byte of the projection, the module graph and
+    # the map; compress the text responses (the archive's images are already
+    # compressed). The app shell and data are still revalidated by ETag.
+    app.add_middleware(TextGZipMiddleware, minimum_size=1024)
 
     def session_user(request: Request) -> SessionUser | None:
         return auth.session_user_from_cookie(request.cookies.get(auth.COOKIE_NAME))

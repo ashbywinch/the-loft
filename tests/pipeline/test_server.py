@@ -197,6 +197,31 @@ def test_the_projection_is_served_from_the_servers_own_data_dir(server: ServerFi
     assert status == 401
 
 
+def test_text_responses_are_gzipped(server: ServerFixture) -> None:
+    """The projection and the module graph are text; the phone pays for them."""
+    (server.data_dir / "big.json").write_text(json.dumps({"items": ["x" * 4000]}), encoding="utf-8")
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{server.port}/data/big.json",
+        headers={"Cookie": server.cookie, "Accept-Encoding": "gzip"},
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert response.headers.get("Content-Encoding") == "gzip"
+        assert len(response.read()) < 4_000
+
+
+def test_binary_assets_are_not_gzipped(server: ServerFixture) -> None:
+    """JPEG scans are already compressed; a second pass costs CPU and gains nothing."""
+    assets = server.data_dir / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    (assets / "scan.jpg").write_bytes(b"x" * 4096)
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{server.port}/data/assets/scan.jpg",
+        headers={"Cookie": server.cookie, "Accept-Encoding": "gzip"},
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert response.headers.get("Content-Encoding") is None
+
+
 def test_health(server: ServerFixture) -> None:
     status, body = server.get("/api/health")
     assert status == 200

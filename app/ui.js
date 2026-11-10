@@ -62,6 +62,12 @@ export function header(title, state = null, back = false) {
     );
   }
   bar.append(el("h1", { class: "topbar-title" }, title));
+  if (state?.me) {
+    // A persistent way into the review hub: the home page's Review door is
+    // the portal, but a reader who is deep in the archive must not have to
+    // navigate home to find the work waiting.
+    bar.append(el("a", { class: "chip topbar-review", href: "#/review", "aria-label": "Review the archive" }, "Review"));
+  }
   if (state) bar.append(identityElement(state));
   return bar;
 }

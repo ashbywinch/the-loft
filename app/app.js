@@ -7,43 +7,40 @@ import { loadData } from "./data.js";
 import { onRoute } from "./router.js";
 import { el } from "./ui.js";
 import { gateScreen } from "./gate.js";
+import { loadLeaflet } from "./leaflet.js";
 import { render as home } from "./views/home.js";
-import { render as timeline } from "./views/timeline.js";
-import { render as item } from "./views/item.js";
-import { render as cast, personPage } from "./views/cast.js";
-import { render as tree } from "./views/tree.js";
-import { render as places, placePage, cleanup as cleanupPlaces } from "./views/places.js";
-import { render as stories, themePage, reader } from "./views/stories.js";
-import { render as museum } from "./views/museum.js";
-import { render as letters } from "./views/letters.js";
-import { render as search } from "./views/search.js";
-import { render as curator } from "./views/curator.js";
-import { render as importReview } from "./views/import.js";
-import { render as identify } from "./views/identify.js";
-import { render as review, cleanup as cleanupReview } from "./views/review.js";
-import { render as rowsReview } from "./views/rows.js";
 
-const ROUTES = {
-  home,
-  timeline,
-  item,
-  cast,
-  tree,
-  person: personPage,
-  places,
-  place: placePage,
-  themes: stories,
-  theme: themePage,
-  story: reader,
-  museum,
-  letters,
-  search,
-  curator,
-  import: importReview,
-  identify,
-  review,
-  rows: rowsReview,
+// The home is the only view in the boot bundle; every other view is imported
+// on its first navigation. The review surface alone is ~120 KB — a phone
+// should not download it to see the front door.
+const LOADERS = {
+  timeline: () => import("./views/timeline.js"),
+  item: () => import("./views/item.js"),
+  cast: () => import("./views/cast.js"),
+  person: () => import("./views/cast.js"),
+  tree: () => import("./views/tree.js"),
+  places: async () => {
+    try {
+      await loadLeaflet();
+    } catch {
+      // the view renders its SVG dot fallback when Leaflet cannot load
+    }
+    return import("./views/places.js");
+  },
+  place: () => import("./views/places.js"),
+  themes: () => import("./views/stories.js"),
+  theme: () => import("./views/stories.js"),
+  story: () => import("./views/stories.js"),
+  museum: () => import("./views/museum.js"),
+  letters: () => import("./views/letters.js"),
+  search: () => import("./views/search.js"),
+  curator: () => import("./views/curator.js"),
+  import: () => import("./views/import.js"),
+  identify: () => import("./views/identify.js"),
+  review: () => import("./views/review.js"),
+  rows: () => import("./views/rows.js"),
 };
+const VIEW_EXPORT = { person: "personPage", place: "placePage", theme: "themePage", story: "reader" };
 
 /** The identity at boot: null = unknown, {authenticated:
  *  true} = signed in, or the sentinel NO_API when the deployment has no
@@ -113,20 +110,40 @@ export async function boot() {
     return;
   }
   const root = document.getElementById("app");
-  onRoute((ctx, revisit) => {
-    mark(`route "${ctx.name}" → ${ctx.arg ?? ""}`.trim());
-    cleanupPlaces(); // views with long-lived resources (the Leaflet map) unhook here
-    cleanupReview(); // the review surface's pane observer (same rationale)
+  const cleanups = new Map(); // route -> the view's cleanup (map, pane observer)
+  let currentRoute = null;
+  let routeToken = 0;
+  onRoute(async (ctx, revisit) => {
+    const name = LOADERS[ctx.name] ? ctx.name : "home";
+    const token = ++routeToken;
+    mark(`route "${name}" → ${ctx.arg ?? ""}`.trim());
+    const previous = currentRoute;
+    currentRoute = name;
+    if (previous) {
+      const cleanup = cleanups.get(previous);
+      if (cleanup) {
+        cleanups.delete(previous);
+        cleanup(); // views with long-lived resources unhook here
+      }
+    }
     root.replaceChildren();
     const main = el("main", { class: "view" });
     root.append(main);
-    const view = ROUTES[ctx.name] ?? home;
     try {
+      let view = home;
+      if (name !== "home") {
+        main.append(el("div", { class: "empty" }, "Loading…"));
+        const module = await LOADERS[name]();
+        if (token !== routeToken) return; // a newer navigation won
+        if (module.cleanup) cleanups.set(name, module.cleanup);
+        main.replaceChildren();
+        view = module[VIEW_EXPORT[name] ?? "render"];
+      }
       view(main, ctx, state);
     } catch (error) {
       // Two-tier failure (docs/coding-standards.md): a plain line for the
       // visitor, the root cause in the log — a view crash is never a blank page.
-      console.error(`app: view "${ctx.name}" failed`, error);
+      console.error(`app: view "${name}" failed`, error);
       main.replaceChildren(
         el(
           "div",

@@ -76,10 +76,7 @@
         }, 8000);
       })();
     </script>
-    <script type="module">
-      import { boot } from "./app.js";
-      boot();
-    </script>
+    <script type="module" src="./dist/boot.js"></script>
     <script>
       // A classic marker after the module: modules are deferred, so this
       // runs while the module graph is still loading. If the watchdog sees

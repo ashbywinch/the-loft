@@ -39,6 +39,7 @@ app/coverage/
 
 # build artifacts
 dist/
+app/dist/
 *.egg-info/
 
 # IDE/OS

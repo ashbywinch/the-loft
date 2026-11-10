@@ -77,9 +77,12 @@ function paintStrokes(svg, strokes, live) {
   }
 }
 
-async function loadDrafts(batchId) {
+async function loadDrafts(batchId, docIndex, pageIndex) {
   try {
-    const res = await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/drafts`);
+    // one page's maps, not the whole batch: the row screen renders exactly
+    // this page, and the whole-batch payload is the 12-second client cost
+    const query = `?doc=${docIndex}&page=${pageIndex}`;
+    const res = await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/drafts${query}`);
     if (!res.ok) return null;
     return await res.json();
   } catch (error) {
@@ -114,8 +117,8 @@ export async function render(main, ctx, state) {
   // The drafts read the batch's work files; a slow disk or link must show
   // progress, never an empty page.
   main.replaceChildren(header("Rows", state, "Review"), el("p", { class: "empty" }, "Loading the page…"));
-  const drafts = await loadDrafts(batchId);
-  const doc = drafts?.documents?.[docIndex];
+  const drafts = await loadDrafts(batchId, docIndex, pageIndex);
+  const doc = drafts?.documents?.[0];
   const page = doc?.pages?.[pageIndex];
   if (!doc || !page) {
     main.replaceChildren(

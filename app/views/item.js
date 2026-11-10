@@ -112,7 +112,10 @@ export function render(main, ctx, state) {
   );
 
   // --- transcription: pattern discovery lives here ---
-  if (item.transcription) {
+  // The index no longer carries the text; it is fetched once for Item,
+  // Search and Identify. The old inline copy is the fallback for old data.
+  const transcription = state.transcripts?.[item.id] ?? item.transcription ?? "";
+  if (transcription) {
     let open = false;
     const isDraft = item.transcription_status === "draft";
     const note = isDraft
@@ -121,7 +124,7 @@ export function render(main, ctx, state) {
     // the transcription is verbatim markdown (a medal card is a table) —
     // render the structure, then link the mentions inside each piece
     const text = el("div", { class: "transcription-text" });
-    for (const node of renderMarkdown(item.transcription)) {
+    for (const node of renderMarkdown(transcription)) {
       if (node.tagName === "TABLE") {
         for (const cell of node.querySelectorAll("th, td")) {
           cell.replaceChildren(...linkMentions(cell.textContent, state.people, state.places));

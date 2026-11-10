@@ -193,7 +193,7 @@ export function render(main, ctx, state) {
     list,
     el("details", { class: "identify-text" }, [
       el("summary", {}, "The document's text"),
-      el("pre", {}, loaded.transcription ?? ""),
+      el("pre", {}, state.transcripts?.[loaded.id] ?? loaded.transcription ?? ""),
     ]),
   ]);
   main.append(section);

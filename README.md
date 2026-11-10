@@ -2,7 +2,7 @@
 
 A family history museum on a tablet — a lens over a folder of family artifacts:
 letters, photographs, documents, heirlooms. Vanilla HTML/CSS/JS web app with
-Python tools; no framework, no build step, no runtime backend by design
+Python tools; no framework, no runtime backend; a dev-only esbuild boot bundle
 (`docs/TECHSPEC.md`).
 
 **Status:** product docs complete (PRD v0.9), architecture reviewed, repo
@@ -30,8 +30,8 @@ run once, inside `make coverage`; never ad-hoc tool commands (see `AGENTS.md`).
 stops it; nothing to configure). For a phone-facing server that must
 survive daemon restarts and omp exits, start it through the hub with:
 
-- **name:** `loft-dev` · **application:** `./scripts/loft` · **args:** `serve
-  --host 0.0.0.0 --port 8000 --reload` · **cwd:** repo root
+- **name:** `loft-dev` · **application:** `make` · **args:** `serve` · **cwd:**
+  repo root
 - **detached:** `true` (survives broker/daemon restarts — `persist`
   alone does not)
 - **ready:** log banner `Uvicorn running` **and** TCP port 8000

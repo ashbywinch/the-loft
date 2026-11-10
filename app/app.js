@@ -3,7 +3,7 @@
  * Loads the projection once, then renders views into #app on hash change.
  */
 
-import { loadData } from "./data.js";
+import { loadBootstrap, loadData, loadTranscripts } from "./data.js";
 import { onRoute, parseHash } from "./router.js";
 import { el } from "./ui.js";
 import { gateScreen } from "./gate.js";
@@ -77,22 +77,8 @@ export async function boot() {
     window.__loftStage = message; // the visible loading marker repaints with this
   };
   mark("start");
-  const identity = await fetchIdentity();
-  mark(
-    identity === null
-      ? "no session — the gate"
-      : identity === NO_API
-        ? "open (no auth server)"
-        : `session for ${identity.email}`,
-  );
-  if (identity === null) {
-    // the server says "not signed in" — the archive is private; the app
-    // shell stays public so this gate can load (user)
-    document.getElementById("app").replaceChildren(gateScreen());
-    return;
-  }
-  const signedIn = identity === NO_API ? null : identity;
-  const emptyState = () => ({
+  const initial = parseHash();
+  const emptyState = (me) => ({
     items: [],
     people: [],
     places: [],
@@ -101,20 +87,31 @@ export async function boot() {
     imports: [],
     transcripts: {},
     byId: new Map(),
-    me: signedIn,
+    me,
   });
-  const state = emptyState();
+  let state = emptyState(null);
+  let signedIn;
   let dataLoaded = false;
   let dataError = null;
   let dataReady = null;
+  const markData = () => {
+    dataLoaded = true;
+    mark(`data loaded (${state.items.length} items, ${state.people.length} people)`);
+  };
   const ensureData = () => {
     if (!dataReady) {
-      dataReady = loadData()
-        .then((loaded) => {
-          Object.assign(state, loaded);
-          state.me = signedIn;
-          dataLoaded = true;
-          mark(`data loaded (${state.items.length} items, ${state.people.length} people)`);
+      dataReady = loadBootstrap()
+        .then(async (answer) => {
+          if (answer.noApi) {
+            Object.assign(state, await loadData());
+            state.me = null;
+          } else if (!answer.signedIn) {
+            dataError = new Error("sign in to read the archive");
+            return;
+          } else {
+            Object.assign(state, answer.state);
+          }
+          markData();
         })
         .catch((error) => {
           dataError = error;
@@ -123,22 +120,64 @@ export async function boot() {
     }
     return dataReady;
   };
-  const initial = parseHash();
-  if (initial.name !== "rows") {
-    // The row screen needs its batch's drafts and image, not the whole
-    // archive projection; every other route waits for the data (and shows
-    // why if it fails).
-    await ensureData();
-    if (dataError) {
+  let transcriptsLoaded = false;
+  let transcriptsError = null;
+  let transcriptsReady = null;
+  const ensureTranscripts = () => {
+    if (!transcriptsReady) {
+      transcriptsReady = loadTranscripts()
+        .then((texts) => {
+          state.transcripts = texts;
+          transcriptsLoaded = true;
+        })
+        .catch((error) => {
+          transcriptsError = error;
+          console.error("boot: failed to load the transcriptions", error);
+        });
+    }
+    return transcriptsReady;
+  };
+  if (initial.name === "rows") {
+    // The row screen needs its batch's drafts and image, not the archive
+    // projection. It asks only who is signed in (the header avatar).
+    const identity = await fetchIdentity();
+    if (identity === null) {
+      document.getElementById("app").replaceChildren(gateScreen());
+      return;
+    }
+    signedIn = identity === NO_API ? null : identity;
+    state = emptyState(signedIn);
+  } else {
+    // One bootstrap request: identity + the projection. The old boot paid
+    // one auth request and five data requests before the home could render.
+    mark("bootstrap");
+    let answer;
+    try {
+      answer = await loadBootstrap();
+    } catch (error) {
       const bootRoot = document.getElementById("app");
       bootRoot.replaceChildren(
         el(
           "div",
           { class: "empty" },
-          `Could not load the archive (data load failed: ${dataError.message}). Reload to retry.`,
+          `Could not load the archive (${error.message}). Reload to retry.`,
         ),
       );
       return;
+    }
+    if (answer.noApi) {
+      Object.assign(state, await loadData());
+      state.me = null;
+      dataLoaded = true;
+      markData();
+    } else if (!answer.signedIn) {
+      document.getElementById("app").replaceChildren(gateScreen());
+      return;
+    } else {
+      Object.assign(state, answer.state);
+      dataLoaded = true;
+      dataReady = Promise.resolve();
+      markData();
     }
   }
   const root = document.getElementById("app");
@@ -171,6 +210,16 @@ export async function boot() {
         main.replaceChildren();
         if (dataError) {
           main.append(el("div", { class: "empty" }, `Could not load the archive (${dataError.message}).`));
+          return;
+        }
+      }
+      if (["item", "search", "identify"].includes(name) && !transcriptsLoaded) {
+        main.append(el("div", { class: "empty" }, "Loading the text…"));
+        await ensureTranscripts();
+        if (token !== routeToken) return; // a newer navigation won
+        main.replaceChildren();
+        if (transcriptsError) {
+          main.append(el("div", { class: "empty" }, `Could not load the text (${transcriptsError.message}).`));
           return;
         }
       }

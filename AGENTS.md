@@ -87,9 +87,10 @@ default. Real content never lives in code (`docs/coding-standards.md`).
 ## Tool selection
 
 - Python tools: `tools/` — ruff (lint/format), pyrefly (types), pytest.
-- Web app: `app/` — vanilla ES modules. NO framework, NO build step, NO runtime
-  npm deps (decision recorded in `docs/TECHSPEC/09-decisions.md` §15). eslint + prettier + vitest
-  are dev-only tooling.
+- Web app: `app/` — vanilla ES modules. NO framework, NO runtime npm deps; a
+  dev-only esbuild step (`make app-build`) packs the boot graph into
+  `app/dist/` and leaves each view a lazy chunk (D49). eslint + prettier +
+  vitest are dev-only tooling.
 - Everything goes through `make`; npm/pytest/ruff are invoked only inside
   make targets.
 

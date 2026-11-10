@@ -1,7 +1,7 @@
 # Decisions
 
 > Component of `docs/TECHSPEC.md`. Status: **register**. The decisions
-> (D1–D48) are adopted.
+> (D1–D49) are adopted.
 
 ## The register
 
@@ -162,6 +162,7 @@ decisions survive all three. The blast radius is at the bottom.
   (basis and confidence in `basis_json`). The review’s `estimated` is a
   display — a `confirmed` record with a recollection/inference basis below
   certain — not a status.
+- **D49 [interface] — The boot graph is bundled; the source stays vanilla.** `make app-build` (esbuild, dev-only) emits `app/dist/boot.js` and lazy view chunks; `app/` remains the source of truth. The former no-build rule was about no framework/runtime build; a boot bundle removes the 12 module round trips, not the source.
 
 
 ## Blast radius

@@ -11,7 +11,7 @@ It makes the architectural calls the PRD left open, with rationale. The decision
 ## 1. Principles (inherited)
 
 - **P1 — Folder-first.** The archive is a folder; the app is a lens over it.
-- **P2 — Boring stack.** Vanilla HTML/CSS/JS, no framework, no build step, no database in the browser. Files + `fetch`; the live store is SQLite on the laptop (§17).
+- **P2 — Boring stack.** Vanilla HTML/CSS/JS, no framework, no runtime npm dependency, no database in the browser. A dev-only esbuild step packs the boot graph (decision D49); files + `fetch`; the live store is SQLite on the laptop (§17).
 - **P3 — Generational durability (PRD §18).** Open formats, sidecar metadata, a README written for a reader in 2060, 3-2-1 backups across households, the app disposable by design.
 - **P4 — Propose/confirm.** ML/OCR never assert; everything enters as `proposed` until a human confirms.
 - **P5 — Privacy by default.** No accounts, no analytics, no third-party CDNs for family content. Single exception: street-view imagery (§6).
@@ -21,7 +21,7 @@ It makes the architectural calls the PRD left open, with rationale. The decision
 
 ## 2. Stack
 
-- **Vanilla ES modules** — no framework, no build step, no `package.json` runtime dependency. The app is a set of `.js`/`.css`/`.html` files that work forever. (Vanilla means no framework or build step — not no classes: `class` is ES2015 and allowed; see docs/coding-standards.md.)
+- **Vanilla ES modules** — no framework, no `package.json` runtime dependency. The source is a set of `.js`/`.css`/`.html` files that work forever; `make app-build` (esbuild, dev-only) emits `app/dist/boot.js` and lazy view chunks (D49). (Vanilla means no framework — not no classes: `class` is ES2015 and allowed; see docs/coding-standards.md.)
 - **Hash-based routing** (`#/timeline`, `#/item/letter-1963-05-14-01`, `#/themes/t-the-boats`) — works on any static host, no server rewrite rules.
 - **PWA:** `manifest.webmanifest` + `sw.js` — installable ("Add to Home Screen"), offline shell + cached archive content (§9).
 - **Tools** (`tools/`, optional at runtime): Python. Used for thumbnails, index rebuild, archive checks, CSV export, fake-data generation.

@@ -13,7 +13,7 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
-.PHONY: help setup serve lint lint-github typecheck typecheck-update-baseline test coverage format clean eval evals eval-changed verify scan-docs scan-photos adopt ingest confirm
+.PHONY: help setup app-build serve lint lint-github typecheck typecheck-update-baseline test coverage format clean eval evals eval-changed verify scan-docs scan-photos adopt ingest confirm
 
 PYTHON := .venv/bin/python
 RUFF := .venv/bin/ruff
@@ -51,7 +51,10 @@ setup:
 	@if [ ! -d node_modules ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then $(NPM) ci --no-audit --no-fund; fi  # ci stays reproducible; skipped when the lock is unchanged (2026-08-13: a full reinstall on every make call was the suite's fixed 3 s tax)
 	@uv run pre-commit install
 	@[ -n "$${CI:-}" ] || { [ -f .env ] || cp .env.example .env; }  # CI carries its own gateway env (ci.yml); the copy is for local shells only — .env.example's blank values would wipe it
+	@$(MAKE) --no-print-directory app-build  # CI builds it too, so a broken bundle fails the gate
 
+app-build:
+	@$(NPM) run build
 
 serve: setup
 	@./scripts/loft serve --host 0.0.0.0 --port 8000 --reload

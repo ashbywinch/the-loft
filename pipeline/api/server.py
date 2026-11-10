@@ -183,6 +183,12 @@ def build_app(
             return []
         return json.loads(path.read_text(encoding="utf-8")).get(key, [])
 
+    def _projection_document(filename: str) -> dict[str, Any]:
+        path = data_dir / filename
+        if not path.exists():
+            return {}
+        return json.loads(path.read_text(encoding="utf-8"))
+
     def existing_ids() -> set[str]:
         ids = {it["id"] for it in _read_projection(filename="index.json", key="items")}
         ids |= set(archive.item_ids()) | archive.proposed_ids()
@@ -203,6 +209,27 @@ def build_app(
         session = session_user(request)
         logger.info("auth: /me saw %s", "a session" if session else "no session")
         return auth.me_payload(archive, session).to_dict()
+
+    @app.get("/api/bootstrap")
+    def bootstrap(request: Request) -> Any:
+        """The app's one boot read: identity + the projection files.
+
+        The home used to pay one auth request and five data requests; the
+        round trips, not the server work, were most of its load. One
+        auth-gated response removes five of them. The transcriptions are
+        not here: only Item/Search/Identify fetch that file.
+        """
+        session = session_user(request)
+        if session is None:
+            return JSONResponse(ErrorAnswer("sign in to read the archive").to_dict(), status_code=401)
+        return {
+            "me": auth.me_payload(archive, session).to_dict(),
+            "index": _projection_document("index.json"),
+            "people": _projection_document("people.json"),
+            "places": _projection_document("places.json"),
+            "themes": _projection_document("themes.json"),
+            "imports": _projection_document("imports.json"),
+        }
 
     @app.post("/api/auth/logout")
     def logout() -> JSONResponse:
@@ -719,7 +746,11 @@ def build_app(
         """The machine drafts the review surface reads (guesses + boundaries
         + layout, TECHSPEC §16.16), with the registry's per-document
         review status merged in (the registry is the status' home — the
-        guess stage's boundaries.json never changes after review)."""
+        guess stage's boundaries.json never changes after review).
+
+        With ``doc`` + ``page`` the answer is the one page the row screen
+        opened: the document's maps are cut to that page. The row screen
+        needs one page, not every document and page in the batch."""
         if session_user(request) is None:
             return JSONResponse(ErrorAnswer("sign in to read the drafts").to_dict(), status_code=401)
         try:
@@ -734,7 +765,7 @@ def build_app(
             # photo docs stay "review" until that flow claims them). The
             # picture side of a two-sided item stays in the structure; the
             # review just does not page through it.
-            documents = []
+            documents: list[dict[str, Any]] = []
             for document in draft_payloads(batch_id, work_dir):
                 texts = document.get("texts") or {}
                 if not texts:
@@ -760,6 +791,28 @@ def build_app(
                         "ready": bool(text_pages) and len(pages_ready) == len(text_pages),
                     }
                 )
+            raw_doc = request.query_params.get("doc")
+            raw_page = request.query_params.get("page")
+            if raw_doc is not None or raw_page is not None:
+                if raw_doc is None or raw_page is None:
+                    return JSONResponse({"error": "doc and page must be provided together"}, status_code=400)
+                try:
+                    doc_number = int(raw_doc)
+                    page_number = int(raw_page)
+                except ValueError:
+                    return JSONResponse({"error": "doc and page must be integers"}, status_code=400)
+                if doc_number < 0 or doc_number >= len(documents):
+                    return JSONResponse({"error": "no such document"}, status_code=400)
+                chosen = documents[doc_number]
+                document_pages: list[Any] = list(chosen.get("pages") or [])
+                if page_number < 0 or page_number >= len(document_pages):
+                    return JSONResponse({"error": "no such page"}, status_code=400)
+                page_name = document_pages[page_number]
+                for key in ("texts", "layouts", "orientations", "row_adjustments", "adjusted_rows", "tints"):
+                    value = chosen.get(key)
+                    if isinstance(value, dict):
+                        chosen[key] = {page_name: value[page_name]} if page_name in value else {}
+                documents = [chosen]
             return BatchDraftsAnswer(
                 batch_id=batch_id,
                 label=record.label,

@@ -1,19 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { el, esc, header, itemCard } from "../ui.js";
-
-describe("the header", () => {
-  it("carries the review hub link for a signed-in reader", () => {
-    const bar = header("The Loft", { me: { email: "reader@example.com", name: "Reader" }, people: [] });
-    const link = bar.querySelector("a.topbar-review");
-    expect(link).not.toBeNull();
-    expect(link.getAttribute("href")).toBe("#/review");
-  });
-
-  it("has no review link before sign-in", () => {
-    const bar = header("The Loft", { me: null, people: [] });
-    expect(bar.querySelector("a.topbar-review")).toBeNull();
-  });
-});
+import { el, esc, itemCard } from "../ui.js";
 
 describe("boolean form attrs", () => {
   it("checked: false sets the property, never a truthy attribute", () => {

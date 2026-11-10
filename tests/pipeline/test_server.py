@@ -4,6 +4,7 @@ real HTTP stack on an ephemeral port — no network, no AI."""
 
 from __future__ import annotations
 
+import io
 import json
 import threading
 import urllib.error
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any, override
 
 import pytest
+from PIL import Image
 
 from pipeline.api.server import ServerConfig, create_server
 from pipeline.api.sync import Outbox
@@ -1257,14 +1259,17 @@ def test_sync_page_requires_a_session(server: ServerFixture) -> None:
     assert status == 401
 
 
-def test_sync_page_serves_the_oriented_image(server: ServerFixture) -> None:
+def test_sync_page_serves_the_view_image(server: ServerFixture) -> None:
     _seed_sync_batch(server)
     oriented = server.work_dir / "adopt-0001" / "oriented"
     oriented.mkdir(parents=True)
-    (oriented / "p1.jpg").write_bytes(b"\xff\xd8fake-jpeg-bytes")
+    Image.new("RGB", (2600, 4000), (200, 180, 150)).save(oriented / "p1.jpg", "JPEG")
     status, raw = server.get("/api/sync/batch/adopt-0001/page/p1.jpg", cookie=server.cookie)
     assert status == 200
-    assert raw == b"\xff\xd8fake-jpeg-bytes"
+    assert raw[:4] == b"RIFF" and raw[8:12] == b"WEBP"
+    with Image.open(io.BytesIO(raw)) as view:
+        # the boxes still live in the page's own pixel space
+        assert view.size == (2600, 4000)
 
 
 def test_sync_page_rejects_unknown_and_unsafe_names(server: ServerFixture) -> None:

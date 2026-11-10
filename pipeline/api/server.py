@@ -780,16 +780,24 @@ def build_app(
             return JSONResponse(ErrorAnswer("sign in to read the pages").to_dict(), status_code=401)
         if not BATCH_ID.match(batch_id) or not safe_page_name(page):
             return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
-        image = BatchArtefacts(work_dir, batch_id).oriented(page)
-        if not image.is_file():
+        artefacts = BatchArtefacts(work_dir, batch_id)
+        source = artefacts.oriented(page)
+        if not source.is_file():
             # a photo/drawing page skips orientation entirely (the grouping
             # scorer puts the postcard's picture side into its document —
             # the review surface must still see the image)
             record = load_batch(batch_id, registry_dir)
-            raw = record.path / page
-            if raw.is_file():
-                return FileResponse(raw)
-            return JSONResponse({"error": "no such page"}, status_code=404)
+            source = record.path / page
+            if not source.is_file():
+                return JSONResponse({"error": "no such page"}, status_code=404)
+        try:
+            image = artefacts.view_image(page, source)
+        # a corrupt or unreadable source still has to show; the log names
+        # the page and the source itself is the visible fallback
+        # lucidlint: ignore swallow the source image is the visible fallback
+        except (OSError, ValueError):
+            logger.exception("view image failed for %s/%s", batch_id, page)
+            image = source
         return FileResponse(image)
 
     def _reprocess_page(batch_id: str, page: str) -> None:

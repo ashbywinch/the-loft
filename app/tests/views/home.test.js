@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "../../views/home.js";
 
 // The moment is relative to "today" — pin the clock so the test is
@@ -22,8 +22,18 @@ const STATE = {
   themes: [],
 };
 
+beforeEach(() => {
+  // the home view always asks for the work count; never let a test reach
+  // the network (the per-test stubs above override this one)
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => ({ ok: true, json: async () => ({ batches: [] }) })),
+  );
+});
+
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("home", () => {
@@ -504,13 +514,25 @@ describe("the unfinished import session (user: the front page shows the session,
     );
     const main = document.createElement("main");
     render(main, {}, STATE);
-    await vi.waitFor(() => expect(main.querySelector(".review-card")).not.toBeNull());
     const cards = main.querySelectorAll(".review-card");
     expect(cards).toHaveLength(1); // one door, not one per kind of work
     const card = cards[0];
     expect(card.querySelector(".review-card-title").textContent).toBe("Review");
-    expect(card.querySelector(".review-card-note").textContent).toBe("1 page to check · 1 document to review");
     expect(card.getAttribute("href")).toBe("#/review");
+    await vi.waitFor(() =>
+      expect(card.querySelector(".review-card-note").textContent).toBe("1 page to check · 1 document to review"),
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it("the review door exists before the work count resolves", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    const main = document.createElement("main");
+    render(main, {}, STATE);
+    const card = main.querySelector(".review-card");
+    expect(card).not.toBeNull();
+    expect(card.getAttribute("href")).toBe("#/review");
+    expect(card.querySelector(".review-card-note").textContent).toBe("Open the review hub");
     vi.unstubAllGlobals();
   });
 
@@ -539,23 +561,26 @@ describe("the unfinished import session (user: the front page shows the session,
         ],
       },
     );
-    await vi.waitFor(() => expect(main.querySelector(".review-card")).not.toBeNull());
     const card = main.querySelector(".review-card");
-    expect(card.querySelector(".review-card-note").textContent).toBe("1 document to identify");
+    expect(card).not.toBeNull();
     expect(card.getAttribute("href")).toBe("#/review");
+    await vi.waitFor(() => expect(card.querySelector(".review-card-note").textContent).toBe("1 document to identify"));
     vi.unstubAllGlobals();
   });
 
-  it("no portal when nothing is pending", async () => {
+  it("the portal stays when nothing is pending, and says so", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({ ok: true, json: async () => ({ batches: [] }) })),
     );
     const main = document.createElement("main");
     render(main, {}, STATE);
-    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(main.querySelector(".review-card")).toBeNull();
+    const card = main.querySelector(".review-card");
+    expect(card).not.toBeNull();
+    expect(card.getAttribute("href")).toBe("#/review");
+    await vi.waitFor(() =>
+      expect(card.querySelector(".review-card-note").textContent).toBe("Nothing waiting — everything is confirmed."),
+    );
     vi.unstubAllGlobals();
   });
 });

@@ -430,31 +430,55 @@ function signedOut(main) {
   main.replaceChildren(gateScreen());
 }
 
+const BATCH_TIMEOUT_MS = 8000;
+
+/** The review hub's frame — painted before the batches answer, so a slow
+ *  connection is never an empty page. */
+function reviewTopbar(backTarget = "home") {
+  return el("div", { class: "rv-topbar" }, [
+    el("button", { class: "rv-back", onclick: () => navigate(backTarget) }, "← Home"),
+    el("div", { class: "rv-topbar-titles" }, [el("div", { class: "rv-tt" }, "Review")]),
+  ]);
+}
+
 /** An error screen is never a dead end (a non-technical user cannot be
  *  expected to find the browser's back arrow). Every
- *  failure renders the top bar with a back arrow plus the message. */
-function renderError(main, message, backTarget = "home") {
+ *  failure renders the top bar with a back arrow, the message, and a retry
+ *  when the caller can offer one. */
+function renderError(main, message, backTarget = "home", retry = null) {
   const root = el("div", { class: "rv" }, [
-    el("div", { class: "rv-topbar" }, [
-      el("button", { class: "rv-back", onclick: () => navigate(backTarget) }, "← Home"),
-      el("div", { class: "rv-topbar-titles" }, [el("div", { class: "rv-tt" }, "Review")]),
-    ]),
+    reviewTopbar(backTarget),
     el("div", { class: "rv-note" }, message),
+    retry ? el("button", { class: "btn", onclick: retry }, "Try again") : null,
   ]);
   main.replaceChildren(root);
 }
 
 async function renderBatchList(main, state) {
+  // Paint the frame synchronously: the batch list reads the registry and
+  // work files, and a slow/offline connection must not leave a blank page.
+  main.replaceChildren(reviewTopbar(), el("div", { class: "rv-note" }, "Loading the work…"));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), BATCH_TIMEOUT_MS);
   let batches;
   try {
-    const res = await fetch("/api/sync/batches", { headers: { Accept: "application/json" } });
+    const res = await fetch("/api/sync/batches", {
+      headers: { Accept: "application/json" },
+      signal: controller.signal,
+    });
     if (res.status === 401) return signedOut(main);
     if (!res.ok) throw new Error(`batches (${res.status})`);
     batches = (await res.json()).batches;
   } catch (error) {
-    renderError(main, `Could not load the batches (${error.message}).`);
+    const message = controller.signal.aborted
+      ? "The work list took too long to load. Check the connection and try again."
+      : `Could not load the batches (${error.message}).`;
+    renderError(main, message, "home", () => renderBatchList(main, state));
     return;
+  } finally {
+    clearTimeout(timer);
   }
+  main.replaceChildren();
   // a batch with nothing left to review (all boundaries confirmed, or the
   // registry says so) does not belong on the review hub (user);
   // the empty message appears only when there is genuinely no review work
@@ -486,12 +510,7 @@ async function renderBatchList(main, state) {
     renderError(main, "No review work waiting — everything is confirmed.");
     return;
   }
-  main.append(
-    el("div", { class: "rv-topbar" }, [
-      el("button", { class: "rv-back", onclick: () => navigate("home") }, "← Home"),
-      el("div", { class: "rv-topbar-titles" }, [el("div", { class: "rv-tt" }, "Review")]),
-    ]),
-  );
+  main.append(reviewTopbar());
 
   if (toCheck.length) {
     main.append(el("h2", { class: "rv-section-title" }, "Check the rows — pages the machine has read"));

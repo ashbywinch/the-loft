@@ -111,6 +111,9 @@ export async function render(main, ctx, state) {
   const batchId = ctx.arg;
   const docIndex = Number(ctx.rest?.[2]);
   const pageIndex = Number(ctx.rest?.[3]);
+  // The drafts read the batch's work files; a slow disk or link must show
+  // progress, never an empty page.
+  main.replaceChildren(header("Rows", state, "Review"), el("p", { class: "empty" }, "Loading the page…"));
   const drafts = await loadDrafts(batchId);
   const doc = drafts?.documents?.[docIndex];
   const page = doc?.pages?.[pageIndex];
@@ -147,7 +150,8 @@ export async function render(main, ctx, state) {
   drawSvg.setAttribute("class", "rv-draw");
   tintsSvg.append(tintGroup);
   layer.append(img, tintsSvg, drawSvg);
-  imgBox.append(layer);
+  const imageNote = el("div", { class: "rv-note" }, "Loading the page image…");
+  imgBox.append(layer, imageNote);
   if (!tints.length) {
     imgBox.append(el("div", { class: "rv-note" }, "No word boxes to correct on this page — re-read it first."));
     bar.disabled = true;
@@ -181,6 +185,7 @@ export async function render(main, ctx, state) {
   const redrawStrokes = () => paintStrokes(drawSvg, session.strokes, session.live);
 
   img.onload = () => {
+    imageNote.remove();
     session.imgSize = { w: img.naturalWidth, h: img.naturalHeight };
     layer.style.width = `${session.imgSize.w}px`;
     layer.style.height = `${session.imgSize.h}px`;
@@ -202,6 +207,7 @@ export async function render(main, ctx, state) {
     renderView();
   };
   img.onerror = () => {
+    imageNote.remove();
     layer.remove();
     imgBox.append(el("div", { class: "rv-note" }, "Could not load the page image."));
   };

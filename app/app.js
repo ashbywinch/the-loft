@@ -4,7 +4,7 @@
  */
 
 import { loadData } from "./data.js";
-import { onRoute } from "./router.js";
+import { onRoute, parseHash } from "./router.js";
 import { el } from "./ui.js";
 import { gateScreen } from "./gate.js";
 import { loadLeaflet } from "./leaflet.js";
@@ -91,23 +91,55 @@ export async function boot() {
     document.getElementById("app").replaceChildren(gateScreen());
     return;
   }
-  let state;
-  try {
-    state = await loadData();
-    state.me = identity === NO_API ? null : identity;
-    mark(`data loaded (${state.items.length} items, ${state.people.length} people)`);
-  } catch (error) {
-    // Fail visibly, never a blank page (docs/coding-standards.md: fail fast)
-    const root = document.getElementById("app");
-    root.replaceChildren(
-      el(
-        "div",
-        { class: "empty" },
-        `Could not load the archive (data load failed: ${error && error.message}). Reload to retry.`,
-      ),
-    );
-    console.error("boot: failed to load the archive", error);
-    return;
+  const signedIn = identity === NO_API ? null : identity;
+  const emptyState = () => ({
+    items: [],
+    people: [],
+    places: [],
+    themes: [],
+    relationships: [],
+    imports: [],
+    transcripts: {},
+    byId: new Map(),
+    me: signedIn,
+  });
+  const state = emptyState();
+  let dataLoaded = false;
+  let dataError = null;
+  let dataReady = null;
+  const ensureData = () => {
+    if (!dataReady) {
+      dataReady = loadData()
+        .then((loaded) => {
+          Object.assign(state, loaded);
+          state.me = signedIn;
+          dataLoaded = true;
+          mark(`data loaded (${state.items.length} items, ${state.people.length} people)`);
+        })
+        .catch((error) => {
+          dataError = error;
+          console.error("boot: failed to load the archive", error);
+        });
+    }
+    return dataReady;
+  };
+  const initial = parseHash();
+  if (initial.name !== "rows") {
+    // The row screen needs its batch's drafts and image, not the whole
+    // archive projection; every other route waits for the data (and shows
+    // why if it fails).
+    await ensureData();
+    if (dataError) {
+      const bootRoot = document.getElementById("app");
+      bootRoot.replaceChildren(
+        el(
+          "div",
+          { class: "empty" },
+          `Could not load the archive (data load failed: ${dataError.message}). Reload to retry.`,
+        ),
+      );
+      return;
+    }
   }
   const root = document.getElementById("app");
   const cleanups = new Map(); // route -> the view's cleanup (map, pane observer)
@@ -130,6 +162,18 @@ export async function boot() {
     const main = el("main", { class: "view" });
     root.append(main);
     try {
+      if (name !== "rows" && !dataLoaded) {
+        // a deep link to the row screen skipped the projection; the first
+        // browse route fetches it, visibly
+        main.append(el("div", { class: "empty" }, "Loading the archive…"));
+        await ensureData();
+        if (token !== routeToken) return; // a newer navigation won
+        main.replaceChildren();
+        if (dataError) {
+          main.append(el("div", { class: "empty" }, `Could not load the archive (${dataError.message}).`));
+          return;
+        }
+      }
       let view = home;
       if (name !== "home") {
         main.append(el("div", { class: "empty" }, "Loading…"));

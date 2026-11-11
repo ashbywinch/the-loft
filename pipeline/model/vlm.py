@@ -127,37 +127,37 @@ class VlmPrompts:
         "image width and height."
     )
 
+    @staticmethod
+    def transcription_system_with_context(
+        *,
+        people: list[str] | None = None,
+        places: list[str] | None = None,
+        label: str | None = None,
+        previous_page: str | None = None,
+        request_boxes: bool = True,
+    ) -> str:
+        """The verbatim-transcription system prompt plus the context that helps
+        the model READ: the family's known names (a familiar name is read
+        correctly, not guessed letter-by-letter), the places, the pile's label,
+        and the previous page's text for continuity (user: "whatever
+        useful context we have to help it guess better").
 
-def transcription_system_with_context(
-    *,
-    people: list[str] | None = None,
-    places: list[str] | None = None,
-    label: str | None = None,
-    previous_page: str | None = None,
-    request_boxes: bool = True,
-) -> str:
-    """The verbatim-transcription system prompt plus the context that helps
-    the model READ: the family's known names (a familiar name is read
-    correctly, not guessed letter-by-letter), the places, the pile's label,
-    and the previous page's text for continuity (user: "whatever
-    useful context we have to help it guess better").
-
-    ``request_boxes=False`` swaps the JSON-and-coordinates format for
-    plain text — for callers whose geometry comes from elsewhere (the
-    ink-column batch measures from the rec's ink)."""
-    lines = [VlmPrompts._READING_RULES + (VlmPrompts.FORMAT_JSON if request_boxes else VlmPrompts.FORMAT_PLAIN)]
-    if people or places:
-        lines.append(
-            "Context to help you read — known family people: "
-            f"{', '.join(people) if people else 'none'}. "
-            f"Known places: {', '.join(places) if places else 'none'}. "
-            "Use these spellings when the writing matches them."
-        )
-    if label:
-        lines.append(f"This page belongs to the pile: {label!r}.")
-    if previous_page:
-        lines.append(f"The previous page of this document read:\n---\n{previous_page}\n---")
-    return "\n".join(lines)
+        ``request_boxes=False`` swaps the JSON-and-coordinates format for
+        plain text — for callers whose geometry comes from elsewhere (the
+        ink-column batch measures from the rec's ink)."""
+        lines = [VlmPrompts._READING_RULES + (VlmPrompts.FORMAT_JSON if request_boxes else VlmPrompts.FORMAT_PLAIN)]
+        if people or places:
+            lines.append(
+                "Context to help you read — known family people: "
+                f"{', '.join(people) if people else 'none'}. "
+                f"Known places: {', '.join(places) if places else 'none'}. "
+                "Use these spellings when the writing matches them."
+            )
+        if label:
+            lines.append(f"This page belongs to the pile: {label!r}.")
+        if previous_page:
+            lines.append(f"The previous page of this document read:\n---\n{previous_page}\n---")
+        return "\n".join(lines)
 
 
 class VlmError(RuntimeError):

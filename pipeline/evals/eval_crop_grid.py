@@ -33,9 +33,9 @@ from pipeline.model.config import ModelConfig
 from pipeline.model.transcription import Transcription
 from pipeline.model.vlm import (
     VlmError,
+    VlmPrompts,
     parse_transcription_response,
     transcribe_image_vlm,
-    transcription_system_with_context,
 )
 from pipeline.model.vlm_answer import VlmAnswer
 from pipeline.store import PipelineStore
@@ -79,7 +79,7 @@ def _read_transcription(path: Path, model: str, base_url: str, api_key: str | No
     return transcribe_image_vlm(
         path,
         model=model,
-        system=transcription_system_with_context(),
+        system=VlmPrompts.transcription_system_with_context(),
         base_url=base_url,
         api_key=api_key,
         # the crop read's completion is ~1-4k tokens; 64000 (the

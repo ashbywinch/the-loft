@@ -79,7 +79,6 @@ def contract_errors(result: Assessment) -> list[str]:
         errors.append("missing title")
     # three distinct conditional validation messages per iteration — a comprehension
     # would need a None-sentinel tuple, which is harder to read than the loop
-    # lucidlint: ignore loop-pipeline three conditional messages per iteration, sentinel-tuple comprehension
     for ex in result.extractions:
         if ex.kind not in KINDS:
             errors.append(f"extraction kind not in {KINDS}: {ex!r}")
@@ -91,7 +90,6 @@ def contract_errors(result: Assessment) -> list[str]:
         errors.append(f"more than {MAX_QUESTIONS} questions")
     # two distinct conditional validation messages per iteration plus a derived local
     # (suggestions) — a comprehension would need a None-sentinel tuple
-    # lucidlint: ignore loop-pipeline two conditional messages per iteration plus a derived local
     for q in result.questions:
         if q.skippable is not True:
             errors.append(f"question not skippable: {q!r}")

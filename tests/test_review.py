@@ -10,10 +10,10 @@ from typing import Any
 
 import pytest
 
-from tools.attested_args import AttestedArgs
 from tools.finding import Finding
 from tools.item_hit import ItemHit
 from tools.memory import ElicitationError
+from tools.person_id_args import PersonIdArgs
 from tools.records import Person, ReviewContext
 from tools.review import ToolResult, investigate, run_tool, steer_message
 from tools.review_verdict import ReviewVerdict
@@ -482,7 +482,7 @@ def test_the_attested_tool_returns_the_sentence_that_mentions_the_person() -> No
         ),
     }
     facts = ReviewContext(people=facts.people, items=facts.items + (long_item,), relationships=facts.relationships)
-    hits = _item_hits(run_tool("attested", AttestedArgs(id="p-walter"), facts))
+    hits = _item_hits(run_tool("attested", PersonIdArgs(id="p-walter"), facts))
     letter = next(hit for hit in hits if hit.id == "doc-1916-letter")
     assert letter.quotes == ("I must tell you that Walter Whitlock was killed in the bombardment on the fifteenth.",)
     assert not any("rested at the camp" in q for q in letter.quotes)  # never the opening
@@ -533,7 +533,7 @@ def test_the_attested_tool_matches_mentions_case_insensitively() -> None:
         "story": "the notes my aunt left say pearl was the one who kept the photographs.",
     }
     facts = ReviewContext(people=facts.people, items=facts.items + (lower_item,), relationships=facts.relationships)
-    hits = _item_hits(run_tool("attested", AttestedArgs(id="p-pearl"), facts))
+    hits = _item_hits(run_tool("attested", PersonIdArgs(id="p-pearl"), facts))
     assert any(hit.id == "doc-ocr-letter" for hit in hits)
     quotes = next(hit for hit in hits if hit.id == "doc-ocr-letter").quotes
     assert quotes == ("the notes my aunt left say pearl was the one who kept the photographs.",)

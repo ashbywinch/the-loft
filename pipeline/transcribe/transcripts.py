@@ -36,7 +36,6 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -44,6 +43,7 @@ from PIL import Image
 from document.numbered_rows import NumberedRows
 from document.page_size import PageSize
 from document.rectangle import Rectangle
+from document.row import Row
 from document.row_adjustments import RowAdjustments
 from document.row_transcript import RowTranscript
 from document.transcript import Transcript, TranscriptError
@@ -136,7 +136,7 @@ class Transcriber:
     """
 
     image_path: Path
-    rows: list[Any]
+    rows: list[Row]
     fixture: Path | None = None
     call: Callable[..., VlmAnswer] | None = None
     model: str | None = None
@@ -289,7 +289,7 @@ def transcribe(
     ).transcribe()
 
 
-def _cut_and_save_strips(image: Image.Image, rows: list[Any], out_dir: Path, stem: str) -> PageBands:
+def _cut_and_save_strips(image: Image.Image, rows: list[Row], out_dir: Path, stem: str) -> PageBands:
     """The page's bands, numbered, written beside the run — and their paths, for
     the answer beside them."""
     # the band count comes from the writing's height and the measured
@@ -327,7 +327,7 @@ def transcribe_rows_alone(
     image_path: Path,
     *,
     numbers: list[int],
-    rows: list[Any] | None = None,
+    rows: list[Row] | None = None,
     fixture: Path | None = None,
     call: Callable[..., VlmAnswer] | None = None,
     out_dir: Path = OUT_DIR,
@@ -353,7 +353,7 @@ def transcribe_rows_alone(
     ordered = sorted(rows, key=lambda row: row.number)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = image_path.stem
-    alone = _AloneReader(image=image, out_dir=out_dir, stem=stem, call=call, ordered=ordered)
+    alone = _AlonePage(image=image, out_dir=out_dir, stem=stem, call=call, ordered=ordered)
     read: list[RowReading] = []
     for row in ordered:
         if row.number in numbers and row.word_boxes:
@@ -366,13 +366,13 @@ def transcribe_rows_alone(
     return read
 
 
-def _record_read(alone: _AloneReader, row: Any, read: list[RowReading]) -> None:
+def _record_read(alone: _AlonePage, row: Row, read: list[RowReading]) -> None:
     """One row's read alone — the running transcript threads it with the
     rows read so far — recorded in the read list."""
     read.append(RowReading(number=row.number, text=alone.text_of(row, read)))
 
 
-def masked_row(row: Any, page: Image.Image, ordered: list[Any]) -> Image.Image:
+def masked_row(row: Row, page: Image.Image, ordered: list[Row]) -> Image.Image:
     """The page's region for this row with EVERYTHING but the row's own words
     painted over in the paper's colour.
 
@@ -398,7 +398,7 @@ def masked_row(row: Any, page: Image.Image, ordered: list[Any]) -> Image.Image:
     return Image.fromarray(region.astype("uint8"), "RGB")
 
 
-def row_crop(row: Any, size: PageSize) -> Rectangle:
+def row_crop(row: Row, size: PageSize) -> Rectangle:
     """The rectangle holding one row's words plus a little air — neighbours may
     be inside it, which the mask removes."""
     width, height = size.width, size.height
@@ -410,17 +410,17 @@ def row_crop(row: Any, size: PageSize) -> Rectangle:
 
 
 @dataclass(frozen=True)
-class _AloneReader:
-    """Reading rows one at a time: the page they are cropped from, where the
-    crops and transcripts are kept, and what writes the transcripts."""
+class _AlonePage:
+    """The page whose rows are read one at a time: its image, where the crops
+    and transcripts are kept, and what writes the transcripts."""
 
     image: Image.Image
     out_dir: Path
     stem: str
     call: Callable[..., VlmAnswer] | None
-    ordered: list[Any]
+    ordered: list[Row]
 
-    def text_of(self, row: Any, above: list[RowReading]) -> str:
+    def text_of(self, row: Row, above: list[RowReading]) -> str:
         """One row transcribed from a masked crop of its own words only — no
         neighbour's ink, nothing else in the image to confuse it with."""
         path = self.out_dir / f"{self.stem}.row-{row.number}.jpg"
@@ -492,7 +492,7 @@ class _Bands:
         context."""
         transcripts: list[str] = []
         usage = TokenUsage()
-        one: list[Any] = []
+        one: list[RowTranscript] = []
         refusals: list[str] = []
         for index in range(len(self.bands.numbered)):
             read = self._one(index, transcripts)

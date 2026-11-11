@@ -322,7 +322,6 @@ def _story_notes(archive: Archive, exported_ids: set[str]) -> StoryNotes:
         text = str(story.raw.get("story") or "").strip()
         if not text:
             continue
-        # lucidlint: ignore loop-pipeline the notes index is built by a side-effecting add(), not a pure collection
         for ref in story.people_refs:
             if ref.id in exported_ids:
                 notes.add(ref.id, text)
@@ -585,7 +584,6 @@ class GedcomDocument:
         for record in self._records:
             if record.tag == "INDI":
                 person = self._parse_person(record)
-                # lucidlint: ignore loop-pipeline the add is a side effect of the pass that builds the people map
                 for association in _associations_of(record):
                     associations.add(association)
                 xref_to_refn[record.xref] = person.id
@@ -681,7 +679,6 @@ class GedcomDocument:
             status = "pending" if fam.id in pending_fams else None
             if fam.a is not None and fam.b is not None:
                 edges.append(GedcomEdge(a=fam.a, b=fam.b, kind="spouse", date=fam.marriage, status=status))
-            # lucidlint: ignore loop-pipeline each parent edge carries the FAM's pending status — not a pure build
             for child in fam.children:
                 for parent in (member for member in (fam.a, fam.b) if member is not None):
                     edges.append(GedcomEdge(a=parent, b=child, kind="parent", status=status))

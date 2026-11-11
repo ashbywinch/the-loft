@@ -88,6 +88,72 @@ bug.
 
 ---
 
+### 1.6 `global-state` flags every module-level constant — 348 findings on 0.7.1
+
+The rule's catalog entry says *any* module-level assignment is a finding,
+but its runtime message says the opposite for the case that dominates this
+tree: *"if it is a constant the module's own functions read, keep it here
+and say what it measures — a class invented to hold one number is
+ceremony."*
+
+Probed on 0.7.1 with a two-file repo:
+
+```python
+# one.py
+X = 1
+Y: int = 2
+NAME = "x"
+
+def f() -> int:
+    return X + Y
+```
+
+All three constants are reported (`X`, `Y`, `NAME`), including the two read
+only by the module's own function. The rule skips call-valued assignments
+(`app = Flask(...)`) and type aliases, but it cannot tell a named measure
+from mutable state — the distinction its message tells the reader to make.
+`document/document.py`'s `DOCUMENT_DRAFT` (a `Literal` state name, commented
+with what it measures) is reported exactly like a mutable module dict would
+be.
+
+The repo's coding standard REQUIRES named constants — "string literals for
+domain concepts are named constants", "magic numbers … are named constants"
+— and forbids the thing the rule should catch (no module-level mutable
+state, no `global`). There is no mutable module-level assignment on this
+tree; all 348 findings are UPPER_CASE constants. The per-site form ("say
+what it measures") would be 348 suppression comments, most of them
+duplicating an inline measure comment that already exists. The family is
+config-ignored (`.lucidlint.toml`, pointing here); a **new module-level
+mutable value remains a review finding**, and the standard is the
+enforcement.
+
+### 1.7 `duplicate-module` compares skeletons with identifiers erased — 31 findings on 0.7.1
+
+The rule claims two modules/classes are "a fork" from Dice similarity of
+their structural skeleton. The comparison drops identifiers, so distinct
+record types read as copies:
+
+- `tools/tool_error.py` (`{"error": …}`) and `tools/tool_note.py`
+  (`{"note": …}`) — 100% similar, different wire keys and different domain
+  meaning (a refusal vs a dead end);
+- `document/point.py` (`x, y`) and `document/span.py` (`start, end`) — 100%
+  similar, different quantities (a position vs an axis extent);
+- `document/span.py` and `pipeline/detect/u_span.py` — 100% similar, page
+  pixels vs a line's own `u` units.
+
+This is the shape the repo's record doctrine deliberately produces after the
+`record-shape` work (§2.2): one small class per domain type, in a file named
+after it. The one genuinely byte-identical family was fixed in code with
+0.7.1's arrival: the five tool-argument records (`person`, `relationships`
+and `attested` were identical; `search_items` and `search_people` were
+identical) collapsed to `PersonIdArgs` and `SearchQueryArgs`. The rule still
+reports those two against each other (different field name, different
+normalization) — the proof that the detector cannot see the distinction it
+is asked to judge. The family is config-ignored; a real fork is still a
+review finding.
+
+---
+
 ## 2. Disagreements — findings suppressed with reasons (see `.lucidlint.toml` + code comments)
 
 ### 2.1 `fakefs` in tests (139 findings) — config-ignored for `tests/**`

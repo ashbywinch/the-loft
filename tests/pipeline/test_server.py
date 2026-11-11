@@ -144,7 +144,7 @@ class ServerFixture:
         from pipeline.api.session_user import SessionUser
 
         user = SessionUser("alex@example.com", "Alex Hale", "")
-        self.cookie = f"{auth.COOKIE_NAME}={auth._make_session_cookie(user)}"
+        self.cookie = f"{auth.GoogleOAuth.COOKIE_NAME}={auth._make_session_cookie(user)}"
 
     def post(self, path: str, body: dict[str, Any], cookie: str | None = None) -> tuple[int, dict[str, Any]]:
         headers = {"Content-Type": "application/json"}

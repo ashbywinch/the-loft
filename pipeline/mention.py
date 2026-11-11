@@ -15,15 +15,15 @@ from typing import Any
 
 from tools.extraction import KINSHIP_TERMS
 
-KINDS = ("person", "place")
-
-NAME_LIMIT = 80
-
 
 @dataclass(frozen=True)
 class Mention:
     """One entity the document names — its kind, the name, the matched
     record, and the document's own words."""
+
+    _KINDS = ("person", "place")
+
+    _NAME_LIMIT = 80
 
     kind: str
     name: str
@@ -31,12 +31,12 @@ class Mention:
     quote: str = ""
 
     def __post_init__(self) -> None:
-        if self.kind not in KINDS:
-            raise ValueError(f"mention kind {self.kind!r} is not one of {list(KINDS)}")
+        if self.kind not in Mention._KINDS:
+            raise ValueError(f"mention kind {self.kind!r} is not one of {list(Mention._KINDS)}")
         if not self.name.strip():
             raise ValueError("a mention needs a name")
-        if len(self.name.strip()) > NAME_LIMIT:
-            raise ValueError(f"mention name is longer than {NAME_LIMIT} characters: {self.name!r}")
+        if len(self.name.strip()) > Mention._NAME_LIMIT:
+            raise ValueError(f"mention name is longer than {Mention._NAME_LIMIT} characters: {self.name!r}")
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Mention:
@@ -44,7 +44,7 @@ class Mention:
         a missing name makes the entry unusable."""
         kind = raw.get("kind")
         name = raw.get("name")
-        if kind not in KINDS or not isinstance(name, str) or not name.strip():
+        if kind not in Mention._KINDS or not isinstance(name, str) or not name.strip():
             raise ValueError(f"mention needs a known kind and a name: {raw!r}")
         match = raw.get("match")
         return cls(

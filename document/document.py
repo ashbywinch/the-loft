@@ -19,19 +19,11 @@ because the two change for one reason.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from document.word import Word
 
-# The Document's states — the status is the state. A draft's stored value is
-# "review" (the pipeline's word for it); the reviewer's two decisions are the
-# other states.
 DocumentStatus = Literal["review", "confirmed", "rejected"]
-DOCUMENT_DRAFT: DocumentStatus = "review"
-DOCUMENT_AGREED: DocumentStatus = "confirmed"
-DOCUMENT_REJECTED: DocumentStatus = "rejected"
-
-DOCUMENT_STATUSES: tuple[DocumentStatus, ...] = (DOCUMENT_DRAFT, DOCUMENT_AGREED, DOCUMENT_REJECTED)
 
 
 @dataclass(frozen=True)
@@ -106,10 +98,18 @@ class Document:
     draft entry, and the reviewer's decision once the gate has run.
     """
 
+    # The Document's states — the status is the state. A draft's stored value is
+    # "review" (the pipeline's word for it); the reviewer's two decisions are
+    # the other states.
+    DRAFT: ClassVar[DocumentStatus] = "review"
+    AGREED: ClassVar[DocumentStatus] = "confirmed"
+    REJECTED: ClassVar[DocumentStatus] = "rejected"
+    STATUSES: ClassVar[tuple[DocumentStatus, ...]] = (DRAFT, AGREED, REJECTED)
+
     pages: list[str]
     greeting: str | None = None
     signoff: str | None = None
-    status: DocumentStatus = DOCUMENT_DRAFT
+    status: DocumentStatus = DRAFT
     lines: list[DocumentLine] = field(default_factory=list)
     # the confirmation's own keys, when this document came in as one: the
     # registry's boundary entry records the payload it was confirmed by
@@ -125,9 +125,9 @@ class Document:
         """The document an artefact record describes — a registry boundary
         entry reads as its draft state until the gate has decided otherwise,
         and a confirmation payload carries its own keys through."""
-        status = str(raw.get("status", DOCUMENT_DRAFT))
-        if status not in DOCUMENT_STATUSES:
-            raise ValueError(f"document status {status!r} is not one of {list(DOCUMENT_STATUSES)}")
+        status = str(raw.get("status", cls.DRAFT))
+        if status not in cls.STATUSES:
+            raise ValueError(f"document status {status!r} is not one of {list(cls.STATUSES)}")
         doc_index = raw.get("doc_index")
         return cls(
             pages=[str(page) for page in raw.get("pages") or []],

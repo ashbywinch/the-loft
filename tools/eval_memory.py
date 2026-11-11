@@ -26,9 +26,9 @@ from pipeline.model.ai_client import AIClient
 from tools.anchor import Anchor
 from tools.assessment import Assessment
 from tools.assessment_fact import AssessmentFact
-from tools.extraction import BUCKETS, KINDS
+from tools.extraction import Extraction
 from tools.memory import Knowledge, assess
-from tools.question import MAX_QUESTIONS, MAX_SUGGESTIONS
+from tools.question import Question
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -80,21 +80,21 @@ def contract_errors(result: Assessment) -> list[str]:
     # three distinct conditional validation messages per iteration — a comprehension
     # would need a None-sentinel tuple, which is harder to read than the loop
     for ex in result.extractions:
-        if ex.kind not in KINDS:
-            errors.append(f"extraction kind not in {KINDS}: {ex!r}")
-        if ex.bucket not in BUCKETS:
-            errors.append(f"extraction bucket not in {BUCKETS}: {ex!r}")
+        if ex.kind not in Extraction.KINDS:
+            errors.append(f"extraction kind not in {Extraction.KINDS}: {ex!r}")
+        if ex.bucket not in Extraction.BUCKETS:
+            errors.append(f"extraction bucket not in {Extraction.BUCKETS}: {ex!r}")
         if not (ex.match is None or isinstance(ex.match, str)):
             errors.append(f"extraction match must be str|null: {ex!r}")
-    if len(result.questions) > MAX_QUESTIONS:
-        errors.append(f"more than {MAX_QUESTIONS} questions")
+    if len(result.questions) > Question.MAX_QUESTIONS:
+        errors.append(f"more than {Question.MAX_QUESTIONS} questions")
     # two distinct conditional validation messages per iteration plus a derived local
     # (suggestions) — a comprehension would need a None-sentinel tuple
     for q in result.questions:
         if q.skippable is not True:
             errors.append(f"question not skippable: {q!r}")
         suggestions = q.suggestions
-        if len(suggestions) > MAX_SUGGESTIONS or not all(isinstance(s, str) for s in suggestions):
+        if len(suggestions) > Question.MAX_SUGGESTIONS or not all(isinstance(s, str) for s in suggestions):
             errors.append(f"bad suggestions: {suggestions!r}")
     return errors
 

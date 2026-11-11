@@ -57,14 +57,22 @@ logger = logging.getLogger(__name__)
 
 SESSION_MAX_AGE = timedelta(days=30)
 
-# The OAuth state token's entropy (32 bytes -> 43 url-safe chars) and the web
-# flow's scopes (the verified email and profile a session is minted from).
-_STATE_TOKEN_BYTES = 32
-_WEB_SCOPES = [
-    "openid",
-    "https://www.googleapis.com/auth/userinfo.email",
-    "https://www.googleapis.com/auth/userinfo.profile",
-]
+
+class GoogleOAuth:
+    """The Google provider's fixed facts: the OAuth state token's entropy (32
+    bytes -> 43 url-safe chars), the web flow's scopes (the verified email and
+    profile a session is minted from), the device endpoints, and the session
+    cookie's name."""
+
+    _STATE_TOKEN_BYTES = 32
+    _WEB_SCOPES = [
+        "openid",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile",
+    ]
+    _DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
+    _DEVICE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+    COOKIE_NAME = "session"
 
 
 class AuthState:
@@ -91,8 +99,6 @@ class AuthState:
 # The process's one in-flight login store — the auth functions read and
 # mutate it, never a module global dict (ephemeral: a restart clears it).
 _auth_state = AuthState()
-
-COOKIE_NAME = "session"
 
 
 def web_client_id() -> str:
@@ -142,10 +148,10 @@ def session_user_from_cookie(cookie: str | None) -> SessionUser | None:
     payload — the serializer must never see the name= prefix."""
     if not cookie:
         return None
-    if f"{COOKIE_NAME}=" in cookie:
+    if f"{GoogleOAuth.COOKIE_NAME}=" in cookie:
         for part in cookie.split(";"):
             name, _, value = part.strip().partition("=")
-            if name == COOKIE_NAME:
+            if name == GoogleOAuth.COOKIE_NAME:
                 cookie = value
                 break
     try:
@@ -162,8 +168,8 @@ def login_url() -> LoginAnswer:
     if config is None:
         return LoginAnswer.failed("Google OAuth is not configured (THE_LOFT_GOOGLE_WEB_CLIENT_ID)")
     _auth_state.sweep_stale_states()
-    state = secrets.token_urlsafe(_STATE_TOKEN_BYTES)
-    flow = Flow.from_client_config(config.to_dict(), scopes=_WEB_SCOPES)
+    state = secrets.token_urlsafe(GoogleOAuth._STATE_TOKEN_BYTES)
+    flow = Flow.from_client_config(config.to_dict(), scopes=GoogleOAuth._WEB_SCOPES)
     flow.redirect_uri = f"{public_url()}/api/auth/callback"
     authorization_url, _ = flow.authorization_url(access_type="online", include_granted_scopes="false", state=state)
     code_verifier = str(getattr(flow, "code_verifier", "") or "")
@@ -187,7 +193,7 @@ def exchange_code(code: str, state: str) -> SessionUser | None:
     if pending is None:
         logger.warning("auth: unknown or replayed OAuth state")
         return None
-    flow = Flow.from_client_config(config.to_dict(), scopes=_WEB_SCOPES)
+    flow = Flow.from_client_config(config.to_dict(), scopes=GoogleOAuth._WEB_SCOPES)
     flow.redirect_uri = f"{public_url()}/api/auth/callback"
     flow.code_verifier = pending.code_verifier
     try:
@@ -238,8 +244,8 @@ def callback_error_url(error: str) -> str:
 # google.com/device, the id_token minting the session. No redirect URIs at
 # all. The device client is houses' — one family client for the family apps.
 
-_DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
-_DEVICE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GoogleOAuth._DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
+GoogleOAuth._DEVICE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 
 def device_client_id() -> str:
@@ -275,10 +281,12 @@ def start_device_grant(
     client_id = device_client_id()
     if not client_id:
         return DeviceStartAnswer.failed("the device OAuth client is not configured (THE_LOFT_GOOGLE_DEVICE_CLIENT_ID)")
-    answer = (_post or _device_grant_post)(_DEVICE_CODE_URL, DeviceCodeRequest(client_id=client_id).to_form())
+    answer = (_post or _device_grant_post)(
+        GoogleOAuth._DEVICE_CODE_URL, DeviceCodeRequest(client_id=client_id).to_form()
+    )
     if not answer.device_code or not answer.user_code:
         return DeviceStartAnswer.failed("Google did not start the device grant")
-    state = secrets.token_urlsafe(_STATE_TOKEN_BYTES)
+    state = secrets.token_urlsafe(GoogleOAuth._STATE_TOKEN_BYTES)
     _auth_state.device_grants[state] = DeviceGrant.started(answer.device_code)
     logger.info(
         "auth: device grant started (user_code %s, expires in %ss)",
@@ -320,7 +328,7 @@ def poll_device_grant(
         _auth_state.device_grants.pop(state, None)
         return DevicePollAnswer.failed("the device grant expired — start again")
     answer = (_post or _device_grant_post)(
-        _DEVICE_TOKEN_URL,
+        GoogleOAuth._DEVICE_TOKEN_URL,
         DeviceTokenRequest(
             client_id=device_client_id(),
             device_code=grant.device_code,

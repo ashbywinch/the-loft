@@ -20,12 +20,13 @@ from tools.dated_fact import DatedFact
 # asserted link with no review seam. The link carries the same vocabulary as
 # the record it points at, so a decided mention stops waiting on the review.
 RefStatus = Literal["confirmed", "proposed", "estimated"]
-REF_STATUSES = ("confirmed", "proposed", "estimated")
 
 
 @dataclass(frozen=True)
 class Ref:
     """A link to another record — the id, the status, the involvement date."""
+
+    _STATUSES = ("confirmed", "proposed", "estimated")
 
     id: str
     status: RefStatus | None = None
@@ -39,7 +40,7 @@ class Ref:
         if not record_id:
             raise ValueError(f"{label} ref missing id: {raw!r}")
         status = raw.get("status")
-        if status is not None and status not in REF_STATUSES:
+        if status is not None and status not in Ref._STATUSES:
             raise ValueError(f"{label} ref has bad status: {raw!r}")
         date = raw.get("date")
         return cls(

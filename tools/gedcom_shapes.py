@@ -17,27 +17,27 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from tools.gedcom_edge import GedcomEdge
 from tools.gedcom_person import GedcomPerson
 from tools.gedcom_place import GedcomPlace
 from tools.records import PeopleTable, PlacesTable
 
-PEOPLE_FILE = "people.json"
-PLACES_FILE = "places.json"
-
-# which keys of the merged wire each file carries: the people file carries
-# the people and their relationships, the places file the places
-ISLAND_FILES: tuple[tuple[str, tuple[str, ...]], ...] = (
-    (PEOPLE_FILE, ("people", "relationships")),
-    (PLACES_FILE, ("places",)),
-)
-
 
 @dataclass(frozen=True)
 class GedcomShapes:
     """The island's record set: the people, the relationship edges, the places."""
+
+    PEOPLE_FILE = "people.json"
+    PLACES_FILE = "places.json"
+
+    # which keys of the merged wire each file carries: the people file carries
+    # the people and their relationships, the places file the places
+    _ISLAND_FILES: ClassVar[tuple[tuple[str, tuple[str, ...]], ...]] = (
+        (PEOPLE_FILE, ("people", "relationships")),
+        (PLACES_FILE, ("places",)),
+    )
 
     people: tuple[GedcomPerson, ...] = ()
     relationships: tuple[GedcomEdge, ...] = ()
@@ -74,8 +74,8 @@ class GedcomShapes:
     @classmethod
     def read(cls, folder: Path) -> GedcomShapes:
         """The island's folder -> its record set."""
-        people = json.loads((folder / PEOPLE_FILE).read_text(encoding="utf-8"))
-        places = json.loads((folder / PLACES_FILE).read_text(encoding="utf-8"))
+        people = json.loads((folder / GedcomShapes.PEOPLE_FILE).read_text(encoding="utf-8"))
+        places = json.loads((folder / GedcomShapes.PLACES_FILE).read_text(encoding="utf-8"))
         return cls(
             people=tuple(GedcomPerson.from_dict(person) for person in (people.get("people") or [])),
             relationships=tuple(GedcomEdge.from_dict(edge) for edge in (people.get("relationships") or [])),
@@ -95,6 +95,6 @@ class GedcomShapes:
         as the archive's identity tables, sorted keys, indent 2, one
         trailing newline."""
         wire = self.to_dict()
-        for name, keys in ISLAND_FILES:
+        for name, keys in GedcomShapes._ISLAND_FILES:
             payload = {key: wire[key] for key in keys}
             (folder / name).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

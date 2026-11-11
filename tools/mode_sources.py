@@ -9,15 +9,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-ADF_SOURCE = "ADF Duplex"  # the FF-680W's source — one ADF for letters and photos
-
 
 @dataclass(frozen=True)
 class ModeSources:
     """The SANE source each scan mode reads from."""
 
-    docs: str = ADF_SOURCE
-    photos: str = ADF_SOURCE
+    _ADF_SOURCE = "ADF Duplex"  # the FF-680W's source — one ADF for letters and photos
+
+    docs: str = _ADF_SOURCE
+    photos: str = _ADF_SOURCE
 
     def for_mode(self, mode: str) -> str:
         """The source the named mode scans from."""

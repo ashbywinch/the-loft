@@ -32,7 +32,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from document.document import DOCUMENT_DRAFT
+from document.document import Document
 from document.row_adjustments import RowAdjustments
 from document.stages import PageStatus
 from pipeline.api import auth
@@ -155,7 +155,7 @@ def build_app(
     app.add_middleware(TextGZipMiddleware, minimum_size=1024)
 
     def session_user(request: Request) -> SessionUser | None:
-        return auth.session_user_from_cookie(request.cookies.get(auth.COOKIE_NAME))
+        return auth.session_user_from_cookie(request.cookies.get(auth.GoogleOAuth.COOKIE_NAME))
 
     def narrator(request: Request) -> Narrator | None:
         """The signed-in narrator — the verified session's person. The
@@ -241,7 +241,7 @@ def build_app(
     @app.post("/api/auth/logout")
     def logout() -> JSONResponse:
         response = JSONResponse({"ok": True})
-        response.delete_cookie(auth.COOKIE_NAME, path="/")
+        response.delete_cookie(auth.GoogleOAuth.COOKIE_NAME, path="/")
         return response
 
     @app.get("/api/auth/callback")
@@ -285,7 +285,7 @@ def build_app(
     def _set_session_cookie(response: JSONResponse | RedirectResponse, user: SessionUser) -> None:
         cookie = auth._make_session_cookie(user)
         response.set_cookie(
-            auth.COOKIE_NAME,
+            auth.GoogleOAuth.COOKIE_NAME,
             cookie,
             max_age=int(auth.SESSION_MAX_AGE.total_seconds()),
             httponly=True,
@@ -717,7 +717,7 @@ def build_app(
         # to read it (user: content gated behind sign-in). The
         # app shell stays public so the gate can load.
         if request.url.path.startswith("/data/"):
-            session = auth.session_user_from_cookie(request.cookies.get(auth.COOKIE_NAME))
+            session = auth.session_user_from_cookie(request.cookies.get(auth.GoogleOAuth.COOKIE_NAME))
             if session is None:
                 return JSONResponse({"ok": False, "error": "sign in to read the archive"}, status_code=401)
         return await call_next(request)
@@ -762,7 +762,7 @@ def build_app(
             return JSONResponse(ErrorAnswer("sign in to read the drafts").to_dict(), status_code=401)
         try:
             record = load_batch(batch_id, registry_dir)
-            by_pages = {tuple(b.pages): b.status or DOCUMENT_DRAFT for b in (record.boundaries or [])}
+            by_pages = {tuple(b.pages): b.status or Document.DRAFT for b in (record.boundaries or [])}
             # The transcription review shows only documents with a text
             # page, and only their TEXT pages (2026-08-17, user: "we just
             # don't need to show users any of the photos when they're
@@ -793,7 +793,7 @@ def build_app(
                     {
                         **document,
                         "pages": text_pages,
-                        "status": by_pages.get(tuple(document.get("pages", [])), DOCUMENT_DRAFT),
+                        "status": by_pages.get(tuple(document.get("pages", [])), Document.DRAFT),
                         "pages_ready": pages_ready,
                         "ready": bool(text_pages) and len(pages_ready) == len(text_pages),
                     }

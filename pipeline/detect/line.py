@@ -14,10 +14,6 @@ from pipeline.detect.projected_ink import ProjectedInk
 from pipeline.detect.ruler import Ruler
 from pipeline.detect.u_span import USpan
 
-SLOPE_LIMIT = 0.13  # ≈7.5°: writing on a page never slopes more than this
-MERGE_DIVISOR = 4  # pitch ÷ this: how close two fits are the same line
-CAP = 0.8  # × pitch: a box never exceeds this above/below its baseline
-
 
 class Frame(NamedTuple):
     """The line's local frame for measuring boxes: the origin (x_ref, y_ref)
@@ -34,6 +30,12 @@ class Frame(NamedTuple):
 @dataclass
 class Line:
     """One line of writing: the shapes on it, and the baseline fitted through them."""
+
+    _SLOPE_LIMIT = 0.13  # ≈7.5°: writing on a page never slopes more than this
+
+    _MERGE_DIVISOR = 4  # pitch ÷ this: how close two fits are the same line
+
+    _CAP = 0.8  # × pitch: a box never exceeds this above/below its baseline
 
     shapes: list[Mark] = field(default_factory=list)
     a: float = 0.0
@@ -57,7 +59,7 @@ class Line:
     def refit(self) -> None:
         """Fit the baseline through the shapes' densest rows, sloped like writing.
 
-        A fit beyond SLOPE_LIMIT is not a writing slope — it is a few shapes
+        A fit beyond Line._SLOPE_LIMIT is not a writing slope — it is a few shapes
         strung across the page by chance — so the line falls back to its median
         level.
         """
@@ -65,12 +67,12 @@ class Line:
         ys = np.array([s.baseline for s in self.shapes], dtype=float)
         if len(xs) >= 2 and (xs.max() - xs.min()) > 1:
             slope, intercept = np.polyfit(xs, ys, 1)
-            if abs(slope) <= SLOPE_LIMIT:
+            if abs(slope) <= Line._SLOPE_LIMIT:
                 self.a, self.b = float(slope), float(intercept)
                 return
         self.a, self.b = 0.0, float(np.median(ys))
 
-    def matches(self, other: Line, pitch: float, divisor: float = MERGE_DIVISOR) -> bool:
+    def matches(self, other: Line, pitch: float, divisor: float = _MERGE_DIVISOR) -> bool:
         """Is this the same line of writing as `other`?
 
         Compared WHERE THEY OVERLAP: a slope and an intercept are not comparable
@@ -158,8 +160,8 @@ class Line:
                     run,
                     float(along.min()),
                     float(along.max()),
-                    max(float(np.percentile(across, 2)), -CAP * pitch / SCALE),
-                    min(float(np.percentile(across, 98)), CAP * pitch / SCALE),
+                    max(float(np.percentile(across, 2)), -Line._CAP * pitch / SCALE),
+                    min(float(np.percentile(across, 98)), Line._CAP * pitch / SCALE),
                 )
             )
         return out

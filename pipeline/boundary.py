@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from document.document import DOCUMENT_STATUSES, DocumentStatus
+from document.document import Document, DocumentStatus
 from pipeline.confirmation import Confirmation
 from pipeline.page_flag import PageFlag
 
@@ -37,8 +37,8 @@ class Boundary:
     item_id: str = ""
 
     def __post_init__(self) -> None:
-        if self.status is not None and self.status not in DOCUMENT_STATUSES:
-            raise ValueError(f"boundary status {self.status!r} is not one of {list(DOCUMENT_STATUSES)}")
+        if self.status is not None and self.status not in Document.STATUSES:
+            raise ValueError(f"boundary status {self.status!r} is not one of {list(Document.STATUSES)}")
 
     @classmethod
     def opening_at(cls, page: str, flag: PageFlag | None) -> Boundary:

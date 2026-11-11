@@ -13,19 +13,20 @@ import urllib.parse
 from dataclasses import dataclass
 from typing import Any
 
-DEFAULT_POLL_INTERVAL = 5
-DEFAULT_VERIFICATION_URL = "https://www.google.com/device"
-
 
 @dataclass(frozen=True)
 class GrantAnswer:
     """Google's answer to a device-grant request — the start's fields, the
     poll's id_token, or an error."""
 
+    _DEFAULT_POLL_INTERVAL = 5
+
+    _DEFAULT_VERIFICATION_URL = "https://www.google.com/device"
+
     device_code: str = ""
     user_code: str = ""
-    verification_url: str = DEFAULT_VERIFICATION_URL
-    interval: int = DEFAULT_POLL_INTERVAL
+    verification_url: str = _DEFAULT_VERIFICATION_URL
+    interval: int = _DEFAULT_POLL_INTERVAL
     expires_in: str = ""
     id_token: str = ""
     error: str = ""
@@ -48,8 +49,8 @@ class GrantAnswer:
         return cls(
             device_code=str(raw.get("device_code", "")),
             user_code=str(raw.get("user_code", "")),
-            verification_url=str(raw.get("verification_url", DEFAULT_VERIFICATION_URL)),
-            interval=max(1, int(raw.get("interval", DEFAULT_POLL_INTERVAL))),
+            verification_url=str(raw.get("verification_url", GrantAnswer._DEFAULT_VERIFICATION_URL)),
+            interval=max(1, int(raw.get("interval", GrantAnswer._DEFAULT_POLL_INTERVAL))),
             expires_in=str(raw.get("expires_in", "")),
             id_token=str(raw.get("id_token", "")),
             error=str(raw.get("error", "")),

@@ -56,7 +56,6 @@ from pipeline.rows.render import Colour, tint_row
 
 TOUCH_FRACTION = 0.38  # x the writing height: how far a line's stroke claims a word
 SPACING_RATIO = 1.6  # x the writing height: where one row ends and the next begins
-RULE_ASPECT = 8.0  # x a box's height: this wide for its height is a rule, not writing
 BUTT_GAP_MIN = 4.0  # px floor for a butting adjacency — physical, never unit-dependent razor
 MAX_LINE_SLOPE_DEG = 6.0  # a drawn line runs along the writing (the jig's A5: ~0–2.4° observed)
 
@@ -463,13 +462,13 @@ class _Claims:
 
         A rule is not part of any row; an underline — which HAS writing
         directly above (the letters it underscores) — is. The box must be at
-        least `RULE_ASPECT` wider than tall, and no other word box (that is
+        least `Word.RULE_ASPECT` wider than tall, and no other word box (that is
         itself not rule-flat) may sit within one line-spacing above it,
         overlapping its width."""
-        if word.height <= 0 or word.width < RULE_ASPECT * word.height:
+        if word.height <= 0 or word.width < Word.RULE_ASPECT * word.height:
             return False
         for other in self.words:
-            if other is word or other.width >= RULE_ASPECT * other.height:
+            if other is word or other.width >= Word.RULE_ASPECT * other.height:
                 continue
             if other.x1 > word.x0 and other.x0 < word.x1 and -self.spacing <= word.y0 - other.y1 <= self.spacing:
                 return False  # writing sits directly above — an underline, part of the row

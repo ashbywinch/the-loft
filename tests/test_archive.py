@@ -11,7 +11,7 @@ from typing import override
 import pytest
 
 from pipeline.identification import Identification
-from tools.archive import SIDECAR, Archive, ArchiveError
+from tools.archive import Archive, ArchiveError
 from tools.gone_place import GonePlace
 from tools.records import ImportsTable, Item, Person, Place, Session, validate_identity
 from tools.store import ImmutableStoreError, MemoryStore, StoreError
@@ -219,8 +219,8 @@ def test_supersession_writes_a_new_version_and_never_edits() -> None:
     version = archive.save_item(_record(title="Two"))
     assert version == 2
     # the original is untouched (append-only), the superseding file carries the chain
-    assert json.loads(store.read(f"assets/story-x/{SIDECAR}"))["title"] == "One"
-    assert json.loads(store.read("assets/story-x/item-2.json"))["supersedes"] == f"assets/story-x/{SIDECAR}"
+    assert json.loads(store.read(f"assets/story-x/{Archive.SIDECAR}"))["title"] == "One"
+    assert json.loads(store.read("assets/story-x/item-2.json"))["supersedes"] == f"assets/story-x/{Archive.SIDECAR}"
     item = archive.get_item("story-x")
     assert item is not None and item.title == "Two"  # the highest version wins
 
@@ -230,7 +230,7 @@ def test_delete_marks_a_tombstone_instead_of_removing() -> None:
     _ = archive.save_item(_record(title="One"))
     archive.delete_item("story-x", "test fabrication")
     # the files are all still there — nothing was deleted
-    assert store.exists(f"assets/story-x/{SIDECAR}")
+    assert store.exists(f"assets/story-x/{Archive.SIDECAR}")
     assert store.exists("assets/story-x/item-2.json")
     tombstone = json.loads(store.read("assets/story-x/item-2.json"))
     assert tombstone["status"] == "deleted"
@@ -276,7 +276,7 @@ def test_duplicate_save_via_archive_still_refuses_in_place_edits() -> None:
     archive, store = make_archive()
     _ = archive.save_item(_record(id="x", title="One"))
     with pytest.raises(ImmutableStoreError):
-        store.write_new(f"assets/x/{SIDECAR}", "{}")  # the low-level store still guards
+        store.write_new(f"assets/x/{Archive.SIDECAR}", "{}")  # the low-level store still guards
     _ = archive.save_item(_record(id="x", title="One again"))
     item = archive.get_item("x")
     assert item is not None and item.title == "One again"
@@ -388,7 +388,7 @@ def test_save_item_with_content_writes_content_file_and_references_it() -> None:
     )
     # the story is a content file the sidecar references — not a JSON field
     assert store.read("assets/story-x/story.txt") == "We took the dinghy out."
-    sidecar = json.loads(store.read(f"assets/story-x/{SIDECAR}"))
+    sidecar = json.loads(store.read(f"assets/story-x/{Archive.SIDECAR}"))
     assert "story" not in sidecar
     assert {"kind": "story", "file": "story.txt", "caption": "The story, verbatim"} in sidecar["assets"]
     assert archive.read_content("story-x", "story.txt") == "We took the dinghy out."
@@ -408,7 +408,7 @@ def test_superseded_content_is_a_new_file_never_an_edit() -> None:
     assert store.read("assets/story-x/story.txt") == "Version one."
     assert store.read("assets/story-x/story-2.txt") == "Version two."
     v2 = json.loads(store.read("assets/story-x/item-2.json"))
-    assert v2["supersedes"] == f"assets/story-x/{SIDECAR}"
+    assert v2["supersedes"] == f"assets/story-x/{Archive.SIDECAR}"
     assert {"kind": "story", "file": "story-2.txt", "caption": "The story, verbatim"} in v2["assets"]
     assert archive.read_content("story-x", "story.txt") == "Version one."
     assert archive.read_content("story-x", "story-2.txt") == "Version two."
@@ -440,7 +440,7 @@ def test_story_with_transcription_keeps_both_content_files() -> None:
     )
     assert store.read("assets/story-x/story.txt") == "The account."
     assert store.read("assets/story-x/transcription.txt") == "The typed record."
-    sidecar = json.loads(store.read(f"assets/story-x/{SIDECAR}"))
+    sidecar = json.loads(store.read(f"assets/story-x/{Archive.SIDECAR}"))
     assert {"kind": "story", "file": "story.txt", "caption": "The story, verbatim"} in sidecar["assets"]
     assert {"kind": "transcription", "file": "transcription.txt", "caption": "The transcription"} in sidecar["assets"]
     assert "story" not in sidecar and "transcription" not in sidecar

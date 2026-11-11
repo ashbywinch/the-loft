@@ -12,11 +12,9 @@ owns that judgement.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from document.rectangle import Rectangle
-
-RULE_ASPECT = 8.0  # x height: this wide for its height is a rule, not a word
 
 
 @dataclass(frozen=True)
@@ -33,6 +31,9 @@ class WordMeasurements:
 
 class Word:
     """One word on the page: its rectangle and ITS font size."""
+
+    # x height: this wide for its height is a rule, not a word
+    RULE_ASPECT: ClassVar[float] = 8.0
 
     def __init__(
         self,
@@ -106,7 +107,7 @@ class Word:
 
     def is_rule(self) -> bool:
         """An underline or rule: far wider than it is tall, so not a word."""
-        return self.width >= RULE_ASPECT * self.height
+        return self.width >= self.RULE_ASPECT * self.height
 
     def is_letter(self) -> bool:
         """A single glyph box (an 'I', a digit): narrower than it is tall.

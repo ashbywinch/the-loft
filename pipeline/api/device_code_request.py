@@ -8,15 +8,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-DEVICE_SCOPES = "openid email profile"
-
 
 @dataclass(frozen=True)
 class DeviceCodeRequest:
     """The /device/code request: which client asks, and for what."""
 
+    _SCOPES = "openid email profile"
+
     client_id: str
-    scope: str = DEVICE_SCOPES
+    scope: str = _SCOPES
 
     def to_form(self) -> dict[str, str]:
         """The form Google's /device/code endpoint reads."""

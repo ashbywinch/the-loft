@@ -20,11 +20,6 @@ import dateparser
 from tools.date_settings import DateSettings
 from tools.dated_fact import DatedFact
 
-# The precision a model-asserted date may CLAIM — the words' own granularity.
-# The archive's dated-fact vocabulary (tools/dated_fact.py) adds the bounds the
-# artifacts state (before/after/between); a claim never carries one.
-CLAIMED_PRECISIONS = ("exact", "month", "year", "approx")
-
 _HEDGE_RE = re.compile(r"^(?:around|circa|about)\s+", flags=re.IGNORECASE)
 _SEASON_RE = re.compile(r"^(?:the\s+)?(?:summer|spring|autumn|fall|winter)\s+of\s+", flags=re.IGNORECASE)
 _DECADE_RE = re.compile(r"(?:19|20)\d{2}s", flags=re.IGNORECASE)
@@ -32,16 +27,21 @@ _ISO_DAY_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 _ISO_MONTH_RE = re.compile(r"\d{4}-\d{2}")
 _ISO_YEAR_RE = re.compile(r"\d{4}")
 
-# Far enough back that a bare year cannot borrow its month/day from the base.
-_FAR_BASE_YEAR = 1600
-_FAR_BASE = datetime(_FAR_BASE_YEAR, month=1, day=1)
-
 
 @dataclass(frozen=True)
 class ParsedPhrase:
     """A phrase the library resolved — the phrase itself and the moment it
     named. The phrase decides what the parse proves: an ISO shape names its own
     parts; anything else is probed against a far-off base."""
+
+    # The precision a model-asserted date may CLAIM — the words' own granularity.
+    # The archive's dated-fact vocabulary (tools/dated_fact.py) adds the bounds the
+    # artifacts state (before/after/between); a claim never carries one.
+    CLAIMED_PRECISIONS = ("exact", "month", "year", "approx")
+
+    # Far enough back that a bare year cannot borrow its month/day from the base.
+    _FAR_BASE_YEAR = 1600
+    _FAR_BASE = datetime(_FAR_BASE_YEAR, month=1, day=1)
 
     phrase: str
     parsed: datetime
@@ -99,7 +99,7 @@ class ParsedPhrase:
         a non-ISO phrase is probed against a far-off base — a stable parse means
         the value names its own parts, an unstable one means the parser filled
         them in (demote to the year the parse proved)."""
-        precision = claimed if claimed in CLAIMED_PRECISIONS else None
+        precision = claimed if claimed in ParsedPhrase.CLAIMED_PRECISIONS else None
         year = self.parsed.year
         if precision == "exact":
             # an exact day is only provable from a full ISO value; a non-ISO
@@ -133,7 +133,7 @@ class ParsedPhrase:
         a bare "1963" picks up the base's month/day and shifts; a full
         "15/09/1981" is unchanged. This is the library's own behaviour, never a
         hand-rolled parser (docs/coding-standards.md)."""
-        probe = dateparser.parse(self.phrase, settings=DateSettings.archive().at(_FAR_BASE).to_dict())
+        probe = dateparser.parse(self.phrase, settings=DateSettings.archive().at(ParsedPhrase._FAR_BASE).to_dict())
         return probe is not None and (probe.year, probe.month, probe.day) == (
             self.parsed.year,
             self.parsed.month,

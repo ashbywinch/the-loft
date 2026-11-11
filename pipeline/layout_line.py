@@ -17,17 +17,21 @@ from pipeline.detection_word import DetectionWord
 from pipeline.layout_word import LayoutWord
 from pipeline.richness import Richness
 
-# the box_source values the builders use — the review colours a line by them
-BOX_SOURCE_REPORT = "report"
-BOX_SOURCE_REPORT_UNCONFIRMED = "report-unconfirmed"
-BOX_SOURCE_CONTENT = "content"
-BOX_SOURCE_POSITIONAL = "positional"
-BOX_SOURCE_MULTI = "multi"
-
 
 @dataclass
 class LayoutLine:
     """One line of a page's review layout."""
+
+    # the box_source values the builders use — the review colours a line by them
+    BOX_SOURCE_REPORT = "report"
+
+    BOX_SOURCE_REPORT_UNCONFIRMED = "report-unconfirmed"
+
+    BOX_SOURCE_CONTENT = "content"
+
+    BOX_SOURCE_POSITIONAL = "positional"
+
+    BOX_SOURCE_MULTI = "multi"
 
     index: int
     text: str
@@ -47,11 +51,11 @@ class LayoutLine:
     def is_anchored(self) -> bool:
         """A line the model's report located (confirmed or not): the
         authoritative transcription, never dropped by the dedupe."""
-        return self.box_source in (BOX_SOURCE_REPORT, BOX_SOURCE_REPORT_UNCONFIRMED)
+        return self.box_source in (LayoutLine.BOX_SOURCE_REPORT, LayoutLine.BOX_SOURCE_REPORT_UNCONFIRMED)
 
     def is_confirmed(self) -> bool:
         """A line a rec detection content-matched — the rec read its text."""
-        return self.box_source == BOX_SOURCE_CONTENT
+        return self.box_source == LayoutLine.BOX_SOURCE_CONTENT
 
     def richness(self) -> Richness:
         """The reading's strength — more letters beat fewer; ties by score."""

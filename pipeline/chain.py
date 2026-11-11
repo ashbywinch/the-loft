@@ -32,7 +32,7 @@ from typing import Any
 
 from PIL import Image
 
-from document.document import DOCUMENT_AGREED
+from document.document import Document
 from document.page_size import PageSize
 from document.row import Row
 from document.row_adjustments import RowAdjustments
@@ -759,7 +759,7 @@ class ReviewGate(Batch):
 
         record = load_batch(self.batch_id, self.registry_dir)
         self.update_status(record, STATUS_CONFIRMED)
-        confirmed = [b for b in record.boundaries or [] if b.status == DOCUMENT_AGREED]
+        confirmed = [b for b in record.boundaries or [] if b.status == Document.AGREED]
         write_line(f"\nbatch {self.batch_id} confirmed ({len(confirmed)} document(s))")
 
     def load_boundaries(self, write_line: Callable[[str], None]) -> list[Boundary] | None:

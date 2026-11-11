@@ -11,12 +11,12 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
-ROLES = ("user", "assistant")
-
 
 @dataclass(frozen=True)
 class ReviewMessageRequest:
     """The transcript record: one rendered line of the walk."""
+
+    _ROLES = ("user", "assistant")
 
     session_id: str
     role: Literal["user", "assistant"]
@@ -28,6 +28,6 @@ class ReviewMessageRequest:
         session_id = str(raw.get("session_id", ""))
         role = str(raw.get("role", ""))
         text = str(raw.get("text", ""))
-        if not session_id or role not in ROLES or not text.strip():
+        if not session_id or role not in ReviewMessageRequest._ROLES or not text.strip():
             raise ValueError("session_id, role and text are required")
         return cls(session_id=session_id, role=cast(Literal["user", "assistant"], role), text=text)

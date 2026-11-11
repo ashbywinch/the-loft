@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from pipeline.model.orientation_line import READING_DEGREES
+from pipeline.model.orientation_line import OrientationLine
 
 
 @dataclass(frozen=True)
@@ -26,14 +26,14 @@ class OrientationHint:
     approx_box: list[float] | None = None
 
     def __post_init__(self) -> None:
-        if self.degrees not in READING_DEGREES:
-            raise ValueError(f"a region reads at one of {READING_DEGREES} degrees, got {self.degrees}")
+        if self.degrees not in OrientationLine.READING_DEGREES:
+            raise ValueError(f"a region reads at one of {OrientationLine.READING_DEGREES} degrees, got {self.degrees}")
 
     @classmethod
     def of(cls, raw: Any) -> OrientationHint | None:
         """The hint a raw report entry holds — None when it is not a record
         with a readable direction."""
-        if not isinstance(raw, dict) or raw.get("degrees") not in READING_DEGREES:
+        if not isinstance(raw, dict) or raw.get("degrees") not in OrientationLine.READING_DEGREES:
             return None
         box = raw.get("approx_box")
         region = raw.get("region")

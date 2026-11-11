@@ -14,7 +14,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from tools.assessment_fact import MAX_FACT_TEXT, AssessmentFact
+from tools.assessment_fact import AssessmentFact
 
 
 @dataclass(frozen=True)
@@ -31,7 +31,7 @@ class PendingFact:
         carries no verbatim text, or already has its value."""
         if not fact.is_pending():
             return None
-        return cls(kind=fact.kind, text=fact.text.strip()[:MAX_FACT_TEXT])
+        return cls(kind=fact.kind, text=fact.text.strip()[: AssessmentFact.MAX_FACT_TEXT])
 
     @classmethod
     def all_from(cls, facts: Iterable[AssessmentFact]) -> tuple[PendingFact, ...]:

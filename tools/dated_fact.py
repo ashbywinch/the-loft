@@ -26,8 +26,6 @@ from typing import Any
 # ``between`` carries the upper bound in date2.
 PRECISIONS = frozenset({"exact", "month", "year", "approx", "before", "after", "between"})
 
-MONTHS_IN_YEAR = 12  # the date-form validation's month bound
-
 _DATE_RE = re.compile(r"(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?")
 
 
@@ -41,7 +39,7 @@ def viable_date(value: str) -> bool:
         return False
     month, day = m.group(2), m.group(3)  # lucidlint: ignore magic-number fixed regex capture-group
     # indices — (\d{4})(?:-(\d{2})(?:-(\d{2}))?)?
-    if month and not 1 <= int(month) <= MONTHS_IN_YEAR:
+    if month and not 1 <= int(month) <= DatedFact._MONTHS_IN_YEAR:
         return False
     if day:
         try:
@@ -55,6 +53,8 @@ def viable_date(value: str) -> bool:
 class DatedFact:
     """A date and the precision it can prove. ``date2`` is the upper bound
     of a ``between`` fact and is carried only then."""
+
+    _MONTHS_IN_YEAR = 12  # the date-form validation's month bound
 
     date: str
     precision: str

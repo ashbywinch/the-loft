@@ -31,12 +31,12 @@ from typing import Any, Literal, Protocol, cast
 from pipeline.model.ai_client import AIClientError, json_object
 from tools.anchor import Anchor
 from tools.assessment import Assessment
-from tools.assessment_fact import FACT_KINDS, AssessmentFact
+from tools.assessment_fact import AssessmentFact
 from tools.dated_fact import DatedFact
-from tools.extraction import BUCKETS, KINDS, Extraction
+from tools.extraction import Extraction
 from tools.fact_answer import FactAnswer
 from tools.pending_fact import PendingFact
-from tools.question import MAX_QUESTIONS, MAX_SUGGESTIONS, Question
+from tools.question import Question
 from tools.records import Item, Person, Place
 from tools.ref import Ref, RefStatus
 from tools.theme import Theme
@@ -120,7 +120,7 @@ _QUESTIONS_PURPOSE = (
 )
 
 _QUESTION_RULES = (
-    f"Question rules. Ask only what is missing and matters, at most {MAX_QUESTIONS}; "
+    f"Question rules. Ask only what is missing and matters, at most {Question.MAX_QUESTIONS}; "
     "every question is skippable and nothing is required. A date the account states "
     "is asserted as a fact instead, and a year computable from an asserted date of "
     "birth and age is not asked for. Ask for: the event date; the date of birth when the "
@@ -137,7 +137,7 @@ _QUESTION_RULES = (
     'needing a date carries "type": "date" and "date_kind": "dob" when asking for a date of '
     'birth, else "event", and the narrator answers it in their own words; every other '
     'question carries "type": null. Every question carries up to '
-    f'{MAX_SUGGESTIONS} short "suggestions" the narrator can tap instead of typing: give '
+    f'{Question.MAX_SUGGESTIONS} short "suggestions" the narrator can tap instead of typing: give '
     "them only where they are plausible for this narrator — never a date before their "
     "birth, and consistent with their stated age and with the story's stated time; with "
     "neither known, leave them out. A suggestion is an answer to tap, never a match: the "
@@ -146,9 +146,9 @@ _QUESTION_RULES = (
 )
 
 _CONTENT_JSON = (
-    f'{{"title": string, "extractions": [{{"kind": "{"|".join(KINDS)}", "name": string, '
-    f'"match": "<id>"|null, "bucket": "{"|".join(BUCKETS)}", "reason": string}}], '
-    f'"facts": [{{"kind": "{"|".join(FACT_KINDS)}", "entity": "<person id>"|null, '
+    f'{{"title": string, "extractions": [{{"kind": "{"|".join(Extraction.KINDS)}", "name": string, '
+    f'"match": "<id>"|null, "bucket": "{"|".join(Extraction.BUCKETS)}", "reason": string}}], '
+    f'"facts": [{{"kind": "{"|".join(AssessmentFact.FACT_KINDS)}", "entity": "<person id>"|null, '
     f'"text": "<verbatim quote>", "value": "<date or integer>"|null, '
     f'"precision": "exact|month|year|approx"|null}}]}}'
 )
@@ -682,7 +682,7 @@ class Assessor:
             raise ElicitationError(f"the questions answer carries no list: {parsed!r}")
         return tuple(
             Question.from_dict(entry)
-            for entry in entries[:MAX_QUESTIONS]
+            for entry in entries[: Question.MAX_QUESTIONS]
             if isinstance(entry, dict) and str(entry.get("text", "")).strip()
         )
 
@@ -905,7 +905,7 @@ class Fact:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Fact:
         kind = str(raw.get("kind", ""))
-        if kind not in FACT_KINDS:
+        if kind not in AssessmentFact.FACT_KINDS:
             raise ValueError(f"unknown fact kind: {kind!r}")
         status = str(raw.get("status", "proposed"))
         if status not in ("confirmed", "proposed"):

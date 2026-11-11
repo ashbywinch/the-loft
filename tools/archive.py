@@ -51,8 +51,6 @@ from tools.records import (
 from tools.ref import Ref
 from tools.store import FileStore
 
-SIDECAR = "item.json"
-
 
 def _valid_record_id(record_id: str) -> str:
     """The record-id rule lives in tools.records (the classes own the wire
@@ -109,12 +107,6 @@ def _import_session_apply(table: ImportsTable | None) -> ImportsTable:
     return table.with_session(session)
 
 
-# Primary content lives in files the sidecar describes (never as sidecar
-# The archive's identity tables (people + relationships, places, themes) live
-# at the archive root and follow the same append-only versioning as sidecars:
-# people.json, people-2.json, … — the highest wins.
-IDENTITY_TABLES = ("people", "places", "themes", "orgs", "imports")
-
 # The proposed-queue record kinds — the person/place methods differ only in
 # the record class and the queue/table name; the shared helpers are typed
 # over this.
@@ -132,6 +124,14 @@ class ArchiveError(RuntimeError):
 
 class Archive:
     """Domain access to the archive: resolution, supersession, tombstones."""
+
+    SIDECAR = "item.json"
+
+    # Primary content lives in files the sidecar describes (never as sidecar
+    # The archive's identity tables (people + relationships, places, themes) live
+    # at the archive root and follow the same append-only versioning as sidecars:
+    # people.json, people-2.json, … — the highest wins.
+    _IDENTITY_TABLES = ("people", "places", "themes", "orgs", "imports")
 
     # the identity-table write lock: the server's threads share
     # one Archive, and save_identity's read-compute-write must be atomic
@@ -206,7 +206,7 @@ class Archive:
         return sorted({p.split("/")[1] for p in self.store.list("assets") if p.startswith("assets/")})
 
     def _identity_versions(self, name: str) -> list[int]:
-        if name not in IDENTITY_TABLES:
+        if name not in Archive._IDENTITY_TABLES:
             raise ArchiveError(f"unknown identity table: {name}")
         return self._contiguous_versions(
             f"identity {name}",

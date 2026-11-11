@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from document.document import DOCUMENT_AGREED
+from document.document import Document
 from pipeline.boundary import Boundary
 
 # The queue vocabulary — the record's status IS the queue (the worker runs the
@@ -109,4 +109,4 @@ class BatchRecord:
 
     def confirmed_boundaries(self) -> list[Boundary]:
         """The documents the reviewer confirmed — the records never cleared."""
-        return [boundary for boundary in self.boundaries or [] if boundary.status == DOCUMENT_AGREED]
+        return [boundary for boundary in self.boundaries or [] if boundary.status == Document.AGREED]

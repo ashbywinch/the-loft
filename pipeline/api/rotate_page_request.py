@@ -16,7 +16,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from pipeline.api.sync import QUARTERS_PER_TURN
+from pipeline.api.sync import Rotation
 
 
 @dataclass(frozen=True)
@@ -29,6 +29,6 @@ class RotatePageRequest:
     def from_dict(cls, raw: Mapping[str, Any]) -> RotatePageRequest:
         """The rotation a client states, or the default when it states none."""
         quarters = raw.get("quarters")
-        if isinstance(quarters, int) and quarters in range(QUARTERS_PER_TURN):
+        if isinstance(quarters, int) and quarters in range(Rotation.QUARTERS_PER_TURN):
             return cls(quarters=quarters)
         return cls()

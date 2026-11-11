@@ -15,19 +15,19 @@ from pathlib import Path
 from types import TracebackType
 from typing import Self
 
-from loft.live.schema import SchemaError, apply_initial_schema, verify_schema
-
-_PRAGMAS = (
-    "PRAGMA journal_mode = WAL",
-    "PRAGMA synchronous = FULL",
-    "PRAGMA busy_timeout = 5000",
-    "PRAGMA wal_autocheckpoint = 1000",
-    "PRAGMA recursive_triggers = ON",
-)
+from loft.live.schema import Schema, SchemaError
 
 
 class LiveDatabase:
     """One open SQLite database with the canonical schema and pragmas."""
+
+    _PRAGMAS = (
+        "PRAGMA journal_mode = WAL",
+        "PRAGMA synchronous = FULL",
+        "PRAGMA busy_timeout = 5000",
+        "PRAGMA wal_autocheckpoint = 1000",
+        "PRAGMA recursive_triggers = ON",
+    )
 
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
@@ -38,7 +38,7 @@ class LiveDatabase:
         path: Path,
         *,
         app_version: str,
-        verify: Callable[[sqlite3.Connection], tuple[str, ...]] = verify_schema,
+        verify: Callable[[sqlite3.Connection], tuple[str, ...]] = Schema.verify,
     ) -> Self:
         if path.exists():
             raise SchemaError(f"{path} exists — refusing to overwrite")
@@ -51,7 +51,7 @@ class LiveDatabase:
         connection.row_factory = sqlite3.Row
         try:
             cls._apply_pragmas(connection)
-            apply_initial_schema(connection, app_version)
+            Schema.apply(connection, app_version)
             findings = verify(connection)
             if findings:
                 raise SchemaError("; ".join(findings))
@@ -82,11 +82,11 @@ class LiveDatabase:
 
     @staticmethod
     def _apply_pragmas(connection: sqlite3.Connection) -> None:
-        for pragma in _PRAGMAS:
+        for pragma in LiveDatabase._PRAGMAS:
             connection.execute(pragma).fetchall()
 
     def verify_schema(self) -> tuple[str, ...]:
-        return verify_schema(self.connection)
+        return Schema.verify(self.connection)
 
     def close(self) -> None:
         self.connection.close()

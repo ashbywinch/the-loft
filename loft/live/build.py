@@ -7,7 +7,11 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+
+class Repo:
+    """The checkout this package lives in — the root every path is built from."""
+
+    ROOT = Path(__file__).resolve().parents[2]
 
 
 def app_version(env: Mapping[str, str] | None = None) -> str:
@@ -19,7 +23,7 @@ def app_version(env: Mapping[str, str] | None = None) -> str:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=REPO,
+            cwd=Repo.ROOT,
             capture_output=True,
             text=True,
             check=False,

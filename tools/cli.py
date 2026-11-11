@@ -33,7 +33,7 @@ from pipeline.worker import Worker
 from tools.anchor import Anchor
 from tools.archive import Archive
 from tools.gedcom_document import GedcomDocument
-from tools.gedcom_shapes import PEOPLE_FILE, PLACES_FILE, GedcomShapes
+from tools.gedcom_shapes import GedcomShapes
 from tools.loft_paths import ARCHIVE_DIR, USER_SCAN_AREA, LoftPaths
 from tools.memory import ASSESS_MAX_TOKENS
 from tools.store import DiskStore
@@ -328,8 +328,14 @@ def _gedcom_export(folder_arg: str, path_arg: str) -> int:
     dest = Path(path_arg)
     # 1. the first argument must BE an import folder: not a bare file, not
     #    a folder without the imported structure
-    if not folder.is_dir() or not (folder / PEOPLE_FILE).is_file() or not (folder / PLACES_FILE).is_file():
-        return _refuse(f"{folder_arg} is not an import folder (needs {PEOPLE_FILE} + {PLACES_FILE})")
+    if (
+        not folder.is_dir()
+        or not (folder / GedcomShapes.PEOPLE_FILE).is_file()
+        or not (folder / GedcomShapes.PLACES_FILE).is_file()
+    ):
+        return _refuse(
+            f"{folder_arg} is not an import folder (needs {GedcomShapes.PEOPLE_FILE} + {GedcomShapes.PLACES_FILE})"
+        )
     # 2. the destination must not be the import folder or any path inside
     #    it — the source island stays untouched
     dest_resolved = dest.resolve()

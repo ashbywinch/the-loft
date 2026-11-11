@@ -16,6 +16,7 @@ import numpy as np
 
 from document.page_size import PageSize
 from document.unionfind import UnionFind
+from document.word import Word
 from pipeline.detect.column_run import ColumnRun
 from pipeline.detect.row_band import RowBand
 
@@ -38,7 +39,6 @@ SCALE = 2  # work at half resolution (2px geometry precision)
 STREAK_TALL = 40  # 1/2 px: a run this tall and ≤3 wide is a scan line
 STREAK_WIDE = 60  # 1/2 px: a run this wide and ≤4 tall is a rule
 SHAPE_MIN_AREA = 60  # 1/2 px²: smaller components are specks
-RULE_ASPECT = 8.0  # width ÷ height: a horizontal line, not writing (tools/word.py)
 RULE_TOUCH = 0.15  # of its width: a line is nearly disconnected from the writing
 LINE_GAP = 0.75  # × the writing's height: a line further below it is not underscoring it
 LINE_ALIGN = 0.2  # of the writing's width: an underline matches it, a rule does not
@@ -171,7 +171,7 @@ class Mark:
         shape = word_measures(self)
         if shape.height < WORD_MIN_HEIGHT * unit or (shape.width < WORD_MIN_WIDTH * unit and not waive_width):
             return False
-        if not waive_band and shape.width >= RULE_ASPECT * shape.height:
+        if not waive_band and shape.width >= Word.RULE_ASPECT * shape.height:
             return False  # a band this wide for its height is a line, not a word
         if shape.height < WORD_FULL_LINE * unit:
             # too short to be a whole line of writing: it must be joined up, not
@@ -183,7 +183,7 @@ class Mark:
         """The line this piece is, if it is one: "underline" or "rule", else None.
 
         A line is a pen stroke: thin (LINE_HEIGHT × the writing's x-height at
-        most) and long (RULE_ASPECT wider than tall), and detached from the
+        most) and long (Word.RULE_ASPECT wider than tall), and detached from the
         writing it accompanies — a word's chopped half shares its boundary with
         the rest of the word (user: 'an underline is entirely or nearly
         entirely disconnected from the word'). `others` is the ink it is
@@ -193,7 +193,7 @@ class Mark:
         a rule is a line that is not aligned with the words above it,
         whether wider or narrower or offset)."""
         width, height = self.x1 - self.x0, self.y1 - self.y0
-        if height <= 0 or height > LINE_HEIGHT * unit or width < RULE_ASPECT * height:
+        if height <= 0 or height > LINE_HEIGHT * unit or width < Word.RULE_ASPECT * height:
             return None
         ys, xs = np.asarray(self.pix[0]).astype(int), np.asarray(self.pix[1]).astype(int)
         runs = list(Ink(ys, xs).longest_runs().values())

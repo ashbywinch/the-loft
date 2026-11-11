@@ -35,7 +35,7 @@ from typing import Any
 
 from watchfiles import Change, watch
 
-from pipeline.adopt import IMAGE_EXTENSIONS, register_adopted
+from pipeline.adopt import is_page_image, register_adopted
 from pipeline.adoption_result import AdoptionResult
 from pipeline.batch_failure import BatchFailure
 from pipeline.batch_record import STATUS_PENDING, STATUS_PROCESSING, BatchRecord
@@ -57,7 +57,7 @@ def _is_pile(folder: Path) -> bool:
     instead; a pile that keeps its scans in a subfolder (`pile/2026-08-17/`)
     is reached the same way, because the folder that holds the images is the
     pile."""
-    return any(path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS for path in folder.iterdir())
+    return any(is_page_image(path) for path in folder.iterdir())
 
 
 def _piles_under(folder: Path) -> list[Path]:

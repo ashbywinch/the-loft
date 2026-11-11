@@ -36,9 +36,6 @@ _BATCH_ID = re.compile(r"^[A-Za-z0-9-]+$")
 # A PipelineStore versioned copy: base-2.json, base-3.json, etc.
 _VERSIONED_FILE = re.compile(r"-(\d+)\.json$")
 
-IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
-DEFAULT_SOURCE = "external"
-
 
 class AdoptionError(RuntimeError):
     """An adoption failed; the message is the plain-language line."""
@@ -56,6 +53,11 @@ def _is_versioned_copy(path: Path) -> bool:
     return base.exists()
 
 
+def is_page_image(path: Path) -> bool:
+    """Whether the path is a page image the adopter takes (JPEG, PNG or TIFF)."""
+    return path.is_file() and path.suffix.lower() in _Adoption.IMAGE_EXTENSIONS
+
+
 class _Adoption:
     """One scan folder's adoption: the content fingerprint it hashes to
     and the registry it registers into — the shared vocabulary of the
@@ -63,12 +65,15 @@ class _Adoption:
     arrived fresh all resolve against the same pair; R4: reorganising
     costs us work, never data)."""
 
+    IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+    _DEFAULT_SOURCE = "external"
+
     def __init__(
         self,
         folder: Path,
         *,
         label: str = "",
-        source: str = DEFAULT_SOURCE,
+        source: str = _DEFAULT_SOURCE,
         registry_dir: Path = REGISTRY_DIR,
         work_dir: Path = WORK_DIR,
     ) -> None:
@@ -88,7 +93,7 @@ class _Adoption:
         folder = self.folder
         if not folder.is_dir():
             raise AdoptionError(f"no such folder: {folder}")
-        return sorted(p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS)
+        return sorted(p for p in folder.rglob("*") if p.is_file() and p.suffix.lower() in self.IMAGE_EXTENSIONS)
 
     def _existing_records(self) -> list[RegistryEntry]:
         """The registry's records — the match and same-pile candidates."""
@@ -199,7 +204,7 @@ def register_adopted(
     folder: Path,
     *,
     label: str = "",
-    source: str = DEFAULT_SOURCE,
+    source: str = _Adoption._DEFAULT_SOURCE,
     registry_dir: Path = REGISTRY_DIR,
     work_dir: Path = WORK_DIR,
 ) -> AdoptionResult:
@@ -233,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("folder", type=Path, help="the user's scan folder (never modified)")
     parser.add_argument("--label", default="", help="the envelope/pile label, if known")
-    parser.add_argument("--source", default=DEFAULT_SOURCE, help="where the scans came from")
+    parser.add_argument("--source", default=_Adoption._DEFAULT_SOURCE, help="where the scans came from")
     args = parser.parse_args(argv)
 
     try:

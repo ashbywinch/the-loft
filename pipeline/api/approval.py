@@ -20,7 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from document.document import DOCUMENT_AGREED
+from document.document import Document
 from pipeline.artefacts import BatchArtefacts
 from pipeline.batch_record import BatchRecord
 from pipeline.boundary import Boundary
@@ -124,7 +124,7 @@ def approve_page(
     )
     document.item_id = item.id
     if complete:
-        document.reviewed(DOCUMENT_AGREED)
+        document.reviewed(Document.AGREED)
     boundaries = [b for b in record.boundaries or [] if b.pages != document.pages]
     boundaries.append(document)
     record.boundaries = boundaries

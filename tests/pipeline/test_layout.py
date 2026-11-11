@@ -27,7 +27,7 @@ from pipeline.layout import (
     rotate_detections,
     words,
 )
-from pipeline.layout_line import BOX_SOURCE_MULTI, BOX_SOURCE_REPORT_UNCONFIRMED, LayoutLine
+from pipeline.layout_line import LayoutLine
 from pipeline.layout_word import LayoutWord
 from pipeline.line_match import LineMatch
 from pipeline.model.orientation_line import OrientationLine
@@ -1910,8 +1910,10 @@ def test_dedupe_regions_survives_boxless_lines() -> None:
     from pipeline.layout import dedupe_regions
 
     lines = [
-        LayoutLine(index=0, text="E    R", box=None, conf=0.0, box_source=BOX_SOURCE_REPORT_UNCONFIRMED),
-        LayoutLine(index=1, text="extra fragment", box=[0, 0, 100, 20], conf=0.0, box_source=BOX_SOURCE_MULTI),
+        LayoutLine(index=0, text="E    R", box=None, conf=0.0, box_source=LayoutLine.BOX_SOURCE_REPORT_UNCONFIRMED),
+        LayoutLine(
+            index=1, text="extra fragment", box=[0, 0, 100, 20], conf=0.0, box_source=LayoutLine.BOX_SOURCE_MULTI
+        ),
     ]
     out = dedupe_regions(lines)
     assert [ln.text for ln in out] == ["E    R", "extra fragment"]

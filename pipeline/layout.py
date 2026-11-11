@@ -50,17 +50,10 @@ from pipeline.box_choice import BoxChoice
 from pipeline.detection import Detection
 from pipeline.detection_pass import DetectionPass
 from pipeline.detection_word import DetectionWord
-from pipeline.layout_line import (
-    BOX_SOURCE_CONTENT,
-    BOX_SOURCE_MULTI,
-    BOX_SOURCE_POSITIONAL,
-    BOX_SOURCE_REPORT,
-    BOX_SOURCE_REPORT_UNCONFIRMED,
-    LayoutLine,
-)
+from pipeline.layout_line import LayoutLine
 from pipeline.layout_word import LayoutWord
 from pipeline.line_match import LineMatch
-from pipeline.model.orientation_line import READING_DEGREES, OrientationLine
+from pipeline.model.orientation_line import OrientationLine
 from pipeline.model.orientation_report import OrientationReport
 from pipeline.model.unsure_word import UnsureWord
 from pipeline.unmatched_line import UnmatchedLine
@@ -189,7 +182,7 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> Associ
                     rec_score=det["score"],
                     rec_words=words(det["text"]),
                     det_words=list(det.get("words", [])),
-                    box_source=BOX_SOURCE_CONTENT,
+                    box_source=LayoutLine.BOX_SOURCE_CONTENT,
                     orientation=det.get("orientation", 0),
                 )
             )
@@ -217,7 +210,7 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> Associ
             rec_score=det["score"],
             rec_words=words(det["text"]),
             det_words=list(det.get("words", [])),
-            box_source=BOX_SOURCE_POSITIONAL,
+            box_source=LayoutLine.BOX_SOURCE_POSITIONAL,
             orientation=det.get("orientation", 0),
         )
         for vi, det in zip(boxless, unmatched, strict=False)
@@ -778,7 +771,7 @@ def _anchored_lines(
                 ],
                 conf=1.0 if is_confirmed else 0.0,
                 orientation=int(report.degrees),
-                box_source=BOX_SOURCE_REPORT if is_confirmed else BOX_SOURCE_REPORT_UNCONFIRMED,
+                box_source=LayoutLine.BOX_SOURCE_REPORT if is_confirmed else LayoutLine.BOX_SOURCE_REPORT_UNCONFIRMED,
                 words=[LayoutWord(word=w, box=None, conf=1.0 if is_confirmed else 0.0) for w in vlm_line_words(text)],
             )
         )
@@ -844,18 +837,18 @@ class Anchor:
         otherwise. The one decision both match branches make."""
         assert match.box is not None  # the callers refine only a located match
         if overlap(scaled, match.box) >= _LOCATED_OVERLAP:
-            return BoxChoice(box=scaled, source=BOX_SOURCE_REPORT)
+            return BoxChoice(box=scaled, source=LayoutLine.BOX_SOURCE_REPORT)
         return BoxChoice(box=match.box, source=fallback_source)
 
     def _resolve(self) -> None:
         report_line, match, text = self._report_line, self._match, self._text
         width, height = self._width, self._height
-        self._box_source: str = BOX_SOURCE_POSITIONAL  # the provenance of the chosen box
+        self._box_source: str = LayoutLine.BOX_SOURCE_POSITIONAL  # the provenance of the chosen box
         report_box = report_line.box if report_line else None
         if not (report_box and (report_box[2] > report_box[0] or report_box[3] > report_box[1])):
             self._box = match.box if match else None
             if match and match.confirms():
-                self._box_source = BOX_SOURCE_CONTENT
+                self._box_source = LayoutLine.BOX_SOURCE_CONTENT
             self._orientation = self._resolve_orientation(self._box)
             return
         scaled = [
@@ -869,14 +862,14 @@ class Anchor:
         if (
             match
             and match.box
-            and match.box_source == BOX_SOURCE_CONTENT
+            and match.box_source == LayoutLine.BOX_SOURCE_CONTENT
             and (text_extent_violation(text, match.box, match.orientation) is None)
         ):
             # the match read REAL text at a plausible size — its box is
             # ink-grounded; the report box is the per-line refinement
             # when they agree (page-03: the marker boxes sat ~200px
             # above the real text — the disjoint match box wins)
-            choice = self._report_refines(match, scaled, BOX_SOURCE_CONTENT)
+            choice = self._report_refines(match, scaled, LayoutLine.BOX_SOURCE_CONTENT)
             self._box, self._box_source = choice.box, choice.source
             self._orientation = self._resolve_orientation(self._box)
             return
@@ -884,7 +877,7 @@ class Anchor:
         if (
             match
             and match.box
-            and match.box_source == BOX_SOURCE_POSITIONAL
+            and match.box_source == LayoutLine.BOX_SOURCE_POSITIONAL
             and (text_extent_violation(text, match.box, match.orientation) is None)
         ):
             # the order-based fallback's box is only the line's region
@@ -892,25 +885,25 @@ class Anchor:
             # unrelated detection must never displace a good report
             # box. The report refines when they agree; the rec's OWN
             # reading of the match's box decides the disjoint case.
-            choice = self._report_refines(match, scaled, BOX_SOURCE_POSITIONAL)
+            choice = self._report_refines(match, scaled, LayoutLine.BOX_SOURCE_POSITIONAL)
             self._box, self._box_source = choice.box, choice.source
             if (
-                self._box_source == BOX_SOURCE_POSITIONAL
+                self._box_source == LayoutLine.BOX_SOURCE_POSITIONAL
                 and jaccard(match.rec_word_set(), set(words(text))) < MATCH_THRESHOLD
             ):
                 # the rec did NOT read the line's own text there — the
                 # unrelated ink must not displace the report box
-                self._box, self._box_source = scaled, BOX_SOURCE_REPORT
+                self._box, self._box_source = scaled, LayoutLine.BOX_SOURCE_REPORT
             self._orientation = self._resolve_orientation(self._box)
             return
             # the match's box cannot hold the text — the report's location anchors
         if text_extent_violation(text, scaled, report_orientation) is None:
             self._box = scaled
-            self._box_source = BOX_SOURCE_REPORT
+            self._box_source = LayoutLine.BOX_SOURCE_REPORT
             self._orientation = self._resolve_orientation(scaled)
             return
         self._box = None  # no candidate holds the text — boxless, flagged
-        self._box_source = BOX_SOURCE_REPORT
+        self._box_source = LayoutLine.BOX_SOURCE_REPORT
         self._orientation = self._resolve_orientation(None)
 
     def _resolve_orientation(self, box: list[float] | None) -> int:
@@ -1005,7 +998,7 @@ def anchor_guess_lines(
                 box=anchor.box,
                 conf=1.0 if is_confirmed else 0.0,
                 orientation=anchor.orientation,
-                box_source=BOX_SOURCE_REPORT if is_confirmed else BOX_SOURCE_REPORT_UNCONFIRMED,
+                box_source=LayoutLine.BOX_SOURCE_REPORT if is_confirmed else LayoutLine.BOX_SOURCE_REPORT_UNCONFIRMED,
                 words=[
                     LayoutWord(word=w, box=None, conf=1.0 if is_confirmed else 0.0) for w in vlm_line_words(line_text)
                 ],
@@ -1096,7 +1089,7 @@ def _extra_lines(
                 box=det["box"],
                 conf=0.0,
                 orientation=orientation,
-                box_source=BOX_SOURCE_MULTI,
+                box_source=LayoutLine.BOX_SOURCE_MULTI,
                 words=_multi_line_words(text, det.get("words", []), 0.0),
             )
         )
@@ -1193,7 +1186,7 @@ class MultiAssembly:
                 box=entry["box"],
                 conf=entry["score"],
                 orientation=p.degrees if aspect_consistent(p.degrees, entry["box"]) else 0,
-                box_source=BOX_SOURCE_MULTI,
+                box_source=LayoutLine.BOX_SOURCE_MULTI,
                 words=_multi_line_words(entry["text"], entry.get("words", []), entry["score"]),
             )
             for p in sorted(self._inputs.passes, key=lambda p: p.degrees)
@@ -1266,7 +1259,7 @@ def load_orientation_hint(path: Path) -> list[int]:
     lines' degrees both feed the pass set."""
     report = load_orientation_report(path)
     degrees = {hint.degrees for hint in report.hints}
-    degrees |= {line.degrees for line in report.lines if line.degrees in READING_DEGREES}
+    degrees |= {line.degrees for line in report.lines if line.degrees in OrientationLine.READING_DEGREES}
     return sorted(degrees) if len(degrees) >= 2 else []
 
 

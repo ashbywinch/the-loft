@@ -147,7 +147,7 @@ class NumberedRows:
         most_bands = max(1, min(len(ordered), cls._STRIPS_MAX))
         bands = max(1, min(math.ceil((bottom - top) / max_band_height), most_bands))
         while True:
-            bounds = [top, *_cut_gaps(ordered, strips=bands, top=top, bottom=bottom), bottom]
+            bounds = [top, *NumberedRows._cut_gaps(ordered, strips=bands, top=top, bottom=bottom), bottom]
             tallest = max(high - low for low, high in zip(bounds[:-1], bounds[1:], strict=True))
             if bands >= most_bands or tallest <= max_band_height:
                 break
@@ -235,10 +235,10 @@ class NumberedRows:
         lane outward. A number never moves up or down to find room: level with
         the wrong row, it points at the wrong row."""
         draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-        font = _font()
+        font = NumberedRows._font()
         boxes: list[Rectangle] = []
         ink = [w.rect for r in rows for w in r.word_boxes]
-        margin = _margin_column(rows, width=cls._PILL_MIN_WIDTH + 2 * cls._PILL_PAD_X + 12)
+        margin = NumberedRows._margin_column(rows, width=cls._PILL_MIN_WIDTH + 2 * cls._PILL_PAD_X + 12)
         for row in rows:
             measured = draw.textbbox((0, 0), str(row.number), font=font)
             width = max(cls._PILL_MIN_WIDTH, (measured[2] - measured[0]) + 2 * cls._PILL_PAD_X)
@@ -254,7 +254,7 @@ class NumberedRows:
             for candidate, centre in beside:
                 top = centre - height / 2 - cls._PILL_LIFT
                 box = Rectangle(candidate, top, candidate + width, top + height)
-                if _fits(box, ink, boxes):
+                if NumberedRows._fits(box, ink, boxes):
                     boxes.append(box)
                     break
             else:
@@ -263,7 +263,7 @@ class NumberedRows:
                 # unmistakably its row's
                 centre = cls.end_centre(row, left_end=True)
                 top = centre - height / 2 - cls._PILL_LIFT
-                boxes.append(_in_lane(Rectangle(margin, top, margin + width, top + height), ink, boxes))
+                boxes.append(NumberedRows._in_lane(Rectangle(margin, top, margin + width, top + height), ink, boxes))
         return boxes
 
     @classmethod
@@ -308,7 +308,7 @@ class NumberedRows:
         )
         x = min(max(int(ink_left) - cls._COLUMN_GAP, 0), canvas.width - 1)
         y = min(max(int(gap_y - offset_y), 0), canvas.height - 1)
-        sample = _rgb(canvas.convert("RGB").getpixel((x, y)))
+        sample = NumberedRows._rgb(canvas.convert("RGB").getpixel((x, y)))
         # a cropped canvas can carry the page's dark edge where the margin
         # should be, which is no background to wash a hue into
         return sample if sum(sample) > 450 else Colour(red=255, green=255, blue=255)
@@ -336,7 +336,7 @@ class NumberedRows:
         numbers = {row.id: row.number for row in rows}
         background = cls.background_of(canvas, rows, offset_x=offset_x, offset_y=offset_y)
         draw = ImageDraw.Draw(canvas)
-        font = _font()
+        font = NumberedRows._font()
         for row, box in zip(rows, cls._pill_boxes(rows), strict=False):
             left, top = box.x0 - offset_x, box.y0 - offset_y
             right, bottom = box.x1 - offset_x, box.y1 - offset_y
@@ -390,81 +390,83 @@ class NumberedRows:
         cover (one reading per number, none missing)."""
         return len(self.numbers)
 
+    @staticmethod
+    def _fits(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> bool:
+        """Whether a number's box would cover ink or another number."""
+        return not any(box.overlaps(other) for other in [*ink, *placed])
+
+    @staticmethod
+    def _in_lane(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> Rectangle:
+        """The box in the first free lane of the margin, at its own height.
+
+        Lanes run outward from the writing's widest line; the page's left margin is
+        wide, and a number further out is still unmistakably its row's. Stepping up
+        or down instead is what put 38's number beside 39.
+        """
+        for lane in range(NumberedRows._MARGIN_LANES):
+            left = box.x0 - lane * (box.width + NumberedRows._COLUMN_GAP)
+            if left < 0:
+                break
+            candidate = Rectangle(left, box.y0, left + box.width, box.y1)
+            if NumberedRows._fits(candidate, ink, placed):
+                return candidate
+        return box
+
+    @staticmethod
+    def _margin_column(rows: list[Row], *, width: float = 0.0) -> float:
+        """The numbered column's left edge: in the page's LEFT margin, clear of
+        every word, so no number can cover writing whatever its height.
+
+        Each pill then sits at its own row's height with a leader line back to it.
+        Placing pills beside their own rows failed twice over: the ragged writing
+        pushed thirteen of page-01's numbers into the right margin where the model
+        never found them, and where rows sit 20px apart the pills covered each
+        other."""
+        edges = [w.rect.x0 for row in rows for w in row.word_boxes] or [row.band.x0 for row in rows]
+        return max(0.0, min(edges) - NumberedRows._COLUMN_GAP - width)
+
+    @staticmethod
+    def _rgb(pixel: object) -> Colour:
+        """A pixel as three channels — PIL hands back a tuple on an RGB image, and
+        on an RGB image only, which is what every canvas here is."""
+        # every canvas here is RGB, so getpixel returns channels, never a float
+        channels: tuple[int, ...] = tuple(pixel)  # type: ignore[arg-type]  # RGB canvas, so channels not a float
+        first, second, third = channels[:3]
+        return Colour(first, second, third)
+
+    @staticmethod
+    def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> list[float]:
+        """Where to cut `strips` bands of writing without cutting a row: the
+        largest gaps between consecutive bands, at the boundaries a naive equal
+        split would have chosen."""
+        gaps = sorted(
+            (
+                (rows[i + 1].band.y0 - rows[i].band.y1, (rows[i + 1].band.y0 + rows[i].band.y1) / 2)
+                for i in range(len(rows) - 1)
+            ),
+            reverse=True,
+        )
+
+        wanted = [top + (bottom - top) * index / strips for index in range(1, strips)]
+        chosen: list[float] = []
+        for target in wanted:
+            # one gap per cut: two cuts in the same gap make a band with no rows,
+            # which is an image of a margin and a wasted look (a 6-band page has
+            # fewer distinct gaps than that on its thin stretches)
+            free = [gap for gap in gaps if gap[1] not in chosen]
+            if not free:
+                break
+            chosen.append(min(free, key=lambda gap: abs(gap[1] - target) + (0 if gap[0] >= 0 else 10_000))[1])
+        return sorted(chosen)
+
+    @staticmethod
+    def _font() -> ImageDraw.ImageFont.ImageFont | ImageDraw.ImageFont.FreeTypeFont:
+        try:
+            return ImageDraw.ImageFont.load_default(size=NumberedRows._ROW_NUM_SIZE)
+        except TypeError:  # Pillow older than the size-capable default font
+            return ImageDraw.ImageFont.load_default()
+
 
 # a number's box, the ink on the page, and the numbers already placed are three
 # things, not one clump: the box is a `Rectangle` (the geometry the model
 # already has) and the other two are the lists it must stay clear of
-def _fits(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> bool:
-    """Whether a number's box would cover ink or another number."""
-    return not any(box.overlaps(other) for other in [*ink, *placed])
-
-
-def _in_lane(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> Rectangle:
-    """The box in the first free lane of the margin, at its own height.
-
-    Lanes run outward from the writing's widest line; the page's left margin is
-    wide, and a number further out is still unmistakably its row's. Stepping up
-    or down instead is what put 38's number beside 39.
-    """
-    for lane in range(NumberedRows._MARGIN_LANES):
-        left = box.x0 - lane * (box.width + NumberedRows._COLUMN_GAP)
-        if left < 0:
-            break
-        candidate = Rectangle(left, box.y0, left + box.width, box.y1)
-        if _fits(candidate, ink, placed):
-            return candidate
-    return box
-
-
-def _margin_column(rows: list[Row], *, width: float = 0.0) -> float:
-    """The numbered column's left edge: in the page's LEFT margin, clear of
-    every word, so no number can cover writing whatever its height.
-
-    Each pill then sits at its own row's height with a leader line back to it.
-    Placing pills beside their own rows failed twice over: the ragged writing
-    pushed thirteen of page-01's numbers into the right margin where the model
-    never found them, and where rows sit 20px apart the pills covered each
-    other."""
-    edges = [w.rect.x0 for row in rows for w in row.word_boxes] or [row.band.x0 for row in rows]
-    return max(0.0, min(edges) - NumberedRows._COLUMN_GAP - width)
-
-
-def _rgb(pixel: object) -> Colour:
-    """A pixel as three channels — PIL hands back a tuple on an RGB image, and
-    on an RGB image only, which is what every canvas here is."""
-    # every canvas here is RGB, so getpixel returns channels, never a float
-    channels: tuple[int, ...] = tuple(pixel)  # type: ignore[arg-type]  # RGB canvas, so channels not a float
-    first, second, third = channels[:3]
-    return Colour(first, second, third)
-
-
-def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> list[float]:
-    """Where to cut `strips` bands of writing without cutting a row: the
-    largest gaps between consecutive bands, at the boundaries a naive equal
-    split would have chosen."""
-    gaps = sorted(
-        (
-            (rows[i + 1].band.y0 - rows[i].band.y1, (rows[i + 1].band.y0 + rows[i].band.y1) / 2)
-            for i in range(len(rows) - 1)
-        ),
-        reverse=True,
-    )
-
-    wanted = [top + (bottom - top) * index / strips for index in range(1, strips)]
-    chosen: list[float] = []
-    for target in wanted:
-        # one gap per cut: two cuts in the same gap make a band with no rows,
-        # which is an image of a margin and a wasted look (a 6-band page has
-        # fewer distinct gaps than that on its thin stretches)
-        free = [gap for gap in gaps if gap[1] not in chosen]
-        if not free:
-            break
-        chosen.append(min(free, key=lambda gap: abs(gap[1] - target) + (0 if gap[0] >= 0 else 10_000))[1])
-    return sorted(chosen)
-
-
-def _font() -> ImageDraw.ImageFont.ImageFont | ImageDraw.ImageFont.FreeTypeFont:
-    try:
-        return ImageDraw.ImageFont.load_default(size=NumberedRows._ROW_NUM_SIZE)
-    except TypeError:  # Pillow older than the size-capable default font
-        return ImageDraw.ImageFont.load_default()

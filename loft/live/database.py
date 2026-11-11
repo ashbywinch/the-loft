@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from collections.abc import Callable
 from pathlib import Path
 from types import TracebackType
 from typing import Self
@@ -32,7 +33,13 @@ class LiveDatabase:
         self.connection = connection
 
     @classmethod
-    def create(cls, path: Path, *, app_version: str) -> Self:
+    def create(
+        cls,
+        path: Path,
+        *,
+        app_version: str,
+        verify: Callable[[sqlite3.Connection], tuple[str, ...]] = verify_schema,
+    ) -> Self:
         if path.exists():
             raise SchemaError(f"{path} exists — refusing to overwrite")
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -45,7 +52,7 @@ class LiveDatabase:
         try:
             cls._apply_pragmas(connection)
             apply_initial_schema(connection, app_version)
-            findings = verify_schema(connection)
+            findings = verify(connection)
             if findings:
                 raise SchemaError("; ".join(findings))
             connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")

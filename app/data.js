@@ -45,7 +45,17 @@ export async function loadBootstrap() {
   const res = await fetch("/api/bootstrap", { headers: { Accept: "application/json" } });
   if (res.status === 404 || res.status === 410) return { noApi: true };
   if (res.status === 401) return { signedIn: false };
-  if (!res.ok) throw new Error(`bootstrap -> ${res.status}`);
+  if (!res.ok) {
+    // Surface the operator's remedy, not an internal status code.
+    let detail = "";
+    try {
+      const body = await res.json();
+      detail = String(body.detail || body.error || "");
+    } catch {
+      // a non-JSON failure still falls back to the status line below
+    }
+    throw new Error(detail || `bootstrap -> ${res.status}`);
+  }
   const payload = await res.json();
   const items = payload.index?.items ?? [];
   state = {

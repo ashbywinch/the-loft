@@ -1,9 +1,9 @@
 # Story & Fact Capture — "Add your memory" (Feature PRD)
 
 - **Status:** requirements (the flow shipped; mechanics in
-  `docs/TECHSPEC/02-archive-and-capture.md` §4 and `03-import-and-pipeline.md` §16.9/§16.11/§16.12)
+  `docs/TECHSPEC/02-archive-and-capture.md` §4 and `03-import-and-pipeline.md` §16.9/§16.11/§16.13)
 - **Companions:** `PRD.md` §19 (story harvest), `docs/TECHSPEC/03-import-and-pipeline.md` §16.9/
-  §16.11/§16.12 (mechanics), `docs/PLAN/PLAN.md`
+  §16.11/§16.13 (mechanics), `docs/PLAN/PLAN.md`
 - **Requirements only.** This file states what the feature must do for the
   family — nothing about how it is built. Mechanics live in TECHSPEC.
 

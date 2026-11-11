@@ -110,6 +110,30 @@ def test_the_insert_or_replace_hole_is_closed_without_the_pragma(tmp_path: Path)
         db.close()
 
 
+def test_create_publishes_only_a_verified_database(tmp_path: Path) -> None:
+    """A failed verification must leave no `loft.db` to block the next run."""
+    path = tmp_path / "loft.db"
+    with pytest.raises(SchemaError, match="injected"):
+        LiveDatabase.create(path, app_version="test", verify=lambda _connection: ("injected",))
+    assert not path.exists()
+    assert not list(tmp_path.glob(f".{path.name}.*.init*"))
+
+
+def test_verify_reports_a_changed_schema_digest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from loft.live import schema as schema_module
+
+    db = LiveDatabase.create(tmp_path / "loft.db", app_version="test")
+    try:
+        changed = tmp_path / "truth.sql"
+        changed.write_text(schema_module.TRUTH.read_text(encoding="utf-8") + "\n-- changed\n", encoding="utf-8")
+        # lucidlint: ignore monkeypatch the schema path is the seam under test
+        monkeypatch.setattr(schema_module, "TRUTH", changed)
+        findings = db.verify_schema()
+        assert any("sql_sha256" in finding for finding in findings), findings
+    finally:
+        db.close()
+
+
 def test_verify_reports_a_missing_projection(tmp_path: Path) -> None:
     db = LiveDatabase.create(tmp_path / "loft.db", app_version="test")
     try:

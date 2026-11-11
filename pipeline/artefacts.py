@@ -31,6 +31,9 @@ from tools.atomic import atomic_write
 # coordinate change first. The derivative is cached beside the page.
 VIEW_MAX_EDGE: int | None = None
 VIEW_QUALITY = 70
+# Bump when the renderer's output changes: cached derivatives from an older
+# renderer (e.g. one that ignored EXIF orientation) must not survive.
+VIEW_VERSION = 2
 
 # the marker suffix each route's read writes (pipeline/classify.read_route)
 READ_MARKERS: dict[str, tuple[str, ...]] = {
@@ -89,7 +92,7 @@ class BatchArtefacts:
     def view(self, page: str) -> Path:
         """The cached review derivative of one page (WebP; the page's own
         pixel dimensions until the box-normalisation change permits 2000px)."""
-        return self.view_dir / f"{Path(page).stem}.webp"
+        return self.view_dir / f"{Path(page).stem}.v{VIEW_VERSION}.webp"
 
     def view_image(self, page: str, source: Path | None = None) -> Path:
         """Render (or reuse) the page's view image from *source*.

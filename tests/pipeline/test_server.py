@@ -1074,15 +1074,25 @@ def test_sync_drafts_page_scope_returns_one_page(server: ServerFixture) -> None:
     import json as _json
 
     _seed_sync_batch(server)
+    guess = server.work_dir / "adopt-0001" / "ocr-guess"
+    (guess / "p2.txt").write_text("Another page.", encoding="utf-8")
+    for page in ("p1", "p2"):
+        (guess / f"{page}.row-adjustments.json").write_text(_json.dumps({"lines": []}), encoding="utf-8")
+        (guess / f"{page}.rows-adjusted.json").write_text(_json.dumps({"rows": []}), encoding="utf-8")
+    (guess / "boundaries.json").write_text(
+        _json.dumps([{"pages": ["p1.jpg", "p2.jpg"], "greeting": "Chère Maman.", "signoff": None}]),
+        encoding="utf-8",
+    )
     status, raw = server.get("/api/sync/batch/adopt-0001/drafts?doc=0&page=0", cookie=server.cookie)
     assert status == 200
     body = _json.loads(raw.decode("utf-8"))
     assert len(body["documents"]) == 1
     document = body["documents"][0]
-    assert document["pages"] == ["p1.jpg"]
+    assert document["pages"] == ["p1.jpg", "p2.jpg"]
     assert document["texts"] == {"p1.jpg": "Chère Maman."}
     assert document["greeting"] == "Chère Maman."
-    assert document["checked_pages"] == []  # the whole batch's checked set, not this page's
+    # the whole batch's checked set survives the one-page cut
+    assert document["checked_pages"] == ["p1.jpg", "p2.jpg"]
     status, _ = server.get("/api/sync/batch/adopt-0001/drafts?doc=0&page=99", cookie=server.cookie)
     assert status == 400
 

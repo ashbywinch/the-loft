@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from tools.archive import Archive
-from tools.loft_paths import ARCHIVE_DIR
+from tools.loft_paths import LoftPaths
 from tools.store import DiskStore
 
 REPO = Path(__file__).resolve().parents[1]
@@ -26,9 +26,9 @@ JARGON = re.compile(
 
 
 @pytest.mark.archive
-@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.skipif(not (LoftPaths.ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_place_notes_never_carry_process_status() -> None:
-    archive = Archive(DiskStore(ARCHIVE_DIR))
+    archive = Archive(DiskStore(LoftPaths.ARCHIVE_DIR))
     table = archive.get_identity("places")
     if table is None:
         return  # a fresh archive predating the places seam has no notes to check

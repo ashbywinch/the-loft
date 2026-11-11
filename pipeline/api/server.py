@@ -90,7 +90,7 @@ from pipeline.rows.rows import Rows
 from tools import memory, review
 from tools.archive import Archive, ArchiveError
 from tools.decision_basis import DecisionBasis
-from tools.loft_paths import REGISTRY_DIR, WORK_DIR
+from tools.loft_paths import LoftPaths
 from tools.memory import ElicitationError, Knowledge
 from tools.records import Item, Person, Place, ReviewContext, ReviewDecision, split_content
 from tools.store import FileStore
@@ -144,9 +144,9 @@ def build_app(
     client = config.client
     data_dir = Path(config.data_dir)
     app_dir = Path(config.app_dir)
-    work_dir = Path(config.work_dir) if config.work_dir else WORK_DIR
-    registry_dir = Path(config.registry_dir) if config.registry_dir else REGISTRY_DIR
-    outbox = config.outbox if config.outbox is not None else Outbox(WORK_DIR.parent / "sync-outbox")
+    work_dir = Path(config.work_dir) if config.work_dir else LoftPaths.WORK_DIR
+    registry_dir = Path(config.registry_dir) if config.registry_dir else LoftPaths.REGISTRY_DIR
+    outbox = config.outbox if config.outbox is not None else Outbox(LoftPaths.WORK_DIR.parent / "sync-outbox")
 
     app = FastAPI(title="The Loft", docs_url=None, redoc_url=None)
     # The phone pays for every byte of the projection, the module graph and
@@ -1233,7 +1233,7 @@ class Server:
         # a previous run's reprocess threads died with the process — any page
         # left "transcribing" demotes to "failed" (its text is stale; the
         # warning shows, never a silent half-done page, 2026-08-16)
-        demote_stale_jobs(WORK_DIR)
+        demote_stale_jobs(LoftPaths.WORK_DIR)
         app = build_app(self.config)
         if self.host == "0.0.0.0":
             for url in self.lan_urls():

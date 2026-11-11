@@ -41,7 +41,7 @@ from pipeline.model.vlm_answer import VlmAnswer
 from pipeline.store import PipelineStore
 from pipeline.unmatched_line import UnmatchedLine
 from tools.box import overlap
-from tools.loft_paths import WORK_DIR
+from tools.loft_paths import LoftPaths
 from tools.text import normalize
 
 
@@ -324,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("page")
     parser.add_argument("--cols", type=int, default=2)
     parser.add_argument("--rows", type=int, default=3)
-    parser.add_argument("--work-dir", type=Path, default=WORK_DIR)
+    parser.add_argument("--work-dir", type=Path, default=LoftPaths.WORK_DIR)
     parser.add_argument("--model", default=VISION_MODEL, help="the model to trial")
     parser.add_argument("--base-url", default=None, help="the API base (default: the gateway)")
     parser.add_argument(

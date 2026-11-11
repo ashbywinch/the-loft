@@ -19,9 +19,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from pathlib import Path
-from typing import override
+from typing import ClassVar, override
 
+from loft.live.build import Repo
 from pipeline.model.ai_client import AIClient
 from tools.anchor import Anchor
 from tools.assessment import Assessment
@@ -30,15 +30,13 @@ from tools.extraction import Extraction
 from tools.memory import Knowledge, assess
 from tools.question import Question
 
-REPO = Path(__file__).resolve().parent.parent
-
 AssertFn = Callable[[Assessment], list[str]]
 
 
 def load_projection() -> Knowledge:
     """The published projection as the standing knowledge the real flows
     assess against — the same records the server loads."""
-    data = REPO / "app" / "data"
+    data = Repo.ROOT / "app" / "data"
     return Knowledge.from_projection(
         people=json.loads((data / "people.json").read_text(encoding="utf-8"))["people"],
         places=json.loads((data / "places.json").read_text(encoding="utf-8"))["places"],
@@ -51,23 +49,11 @@ def load_projection() -> Knowledge:
 # hired genealogist's voice (PRD: "the assistant reads as a hired
 # genealogist, not a computer"; user: "make sure the
 # requirement is in all relevant evals").
-_PROCESS_JARGON = (
-    "session",
-    "interview",
-    "elicitation",
-    "draft",
-    "the system",
-    "the app",
-    "question 1",
-    "input",
-)
-
-
 def _persona_errors(result: Assessment) -> list[str]:
     return [
         f"question echoes the process ('{word}'): {q.text[:80]}"
         for q in result.questions
-        for word in _PROCESS_JARGON
+        for word in MemoryFlow._PROCESS_JARGON
         if word in q.text.lower()
     ]
 
@@ -132,23 +118,6 @@ def _expect_not_linked(disallowed: str, result: Assessment, message: str) -> lis
 
 
 # date-seeking phrasing ("when you moved" inside another question is not one)
-_DATE_ASK = (
-    "what year",
-    "which year",
-    "in what year",
-    "in which year",
-    "date of birth",
-    "born",
-    "how old",
-    "your age",
-    "what date",
-    "when did",
-    "when was",
-    "when do",
-    "when were",
-)
-
-
 def _real_knowledge_with_dob() -> Knowledge:
     """Fictional narrator for the dob cases — the rule must not depend on
     which real people happen to be in the projection (no person is
@@ -176,6 +145,40 @@ def _real_knowledge_with_dob() -> Knowledge:
 
 
 class MemoryFlow:
+    ALL: ClassVar[tuple[MemoryFlow, ...]] = ()
+
+    # The elicitation speaks the family's language, never the process's — the
+    # hired genealogist's voice (PRD: "the assistant reads as a hired
+    # genealogist, not a computer"; user: "make sure the requirement is in all
+    # relevant evals").
+    _PROCESS_JARGON = (
+        "session",
+        "interview",
+        "elicitation",
+        "draft",
+        "the system",
+        "the app",
+        "question 1",
+        "input",
+    )
+
+    # date-seeking phrasing ("when you moved" inside another question is not one)
+    _DATE_ASK = (
+        "what year",
+        "which year",
+        "in what year",
+        "in which year",
+        "date of birth",
+        "born",
+        "how old",
+        "your age",
+        "what date",
+        "when did",
+        "when was",
+        "when do",
+        "when were",
+    )
+
     """One named memory-capture scenario — the anchor, the narrator, the
     account. The session fixture runs each flow ONCE (the assess stage —
     the production call self-corrects internally, so the eval runs it
@@ -316,7 +319,7 @@ class AgeWithKnownDobNotAskedFlow(MemoryFlow):
     @override
     @staticmethod
     def assert_(result: Assessment) -> list[str]:
-        if not any(w in _question_texts(result) for w in _DATE_ASK):
+        if not any(w in _question_texts(result) for w in MemoryFlow._DATE_ASK):
             return []
         return [f"asked for a date despite a known dob + given age: {_question_texts(result)}"]
 
@@ -336,7 +339,7 @@ class AgeWithoutDobAsksFlow(MemoryFlow):
     @override
     @staticmethod
     def assert_(result: Assessment) -> list[str]:
-        if any(w in _question_texts(result) for w in _DATE_ASK):
+        if any(w in _question_texts(result) for w in MemoryFlow._DATE_ASK):
             return []
         return ["no date question asked despite an unknown dob and only an age given"]
 
@@ -356,7 +359,7 @@ class DobStatedAssertedFlow(MemoryFlow):
     @override
     @staticmethod
     def assert_(result: Assessment) -> list[str]:
-        if _facts_of_kind(result, "dob") and not any(w in _question_texts(result) for w in _DATE_ASK):
+        if _facts_of_kind(result, "dob") and not any(w in _question_texts(result) for w in MemoryFlow._DATE_ASK):
             return []
         return ["expected an asserted dob fact and no date question when dob + age are computable"]
 
@@ -401,7 +404,7 @@ class NewArtifactAskedFlow(MemoryFlow):
         return ["no 'tell me more' question about the newly named artifact (Kasia)"]
 
 
-FLOWS: tuple[MemoryFlow, ...] = (
+MemoryFlow.ALL = (
     RealBoatsLinksFlow(),
     RealSheppeyFlow(),
     FictionalNoOvermatchFlow(),

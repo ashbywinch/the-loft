@@ -29,7 +29,7 @@ from pipeline.registry import load_batch, record_path
 from pipeline.stage_table import TEXT_KINDS, classification_of
 from pipeline.store import PipelineStore
 from tools.archive import Archive
-from tools.loft_paths import REGISTRY_DIR, WORK_DIR
+from tools.loft_paths import LoftPaths
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 
@@ -38,8 +38,8 @@ class ApprovalContext:
     """Where an approval is written: the archive and the batch's own trees."""
 
     archive: Archive
-    work_dir: Path = WORK_DIR
-    registry_dir: Path = REGISTRY_DIR
+    work_dir: Path = LoftPaths.WORK_DIR
+    registry_dir: Path = LoftPaths.REGISTRY_DIR
 
 
 @dataclass(frozen=True)

@@ -22,7 +22,7 @@ from typing import Any
 
 import uvicorn
 
-from loft.live.build import app_version
+from loft.live.build import Repo, app_version
 from loft.live.database import LiveDatabase
 from loft.live.paths import default_database_path
 from loft.live.schema import SchemaError
@@ -34,11 +34,9 @@ from tools.anchor import Anchor
 from tools.archive import Archive
 from tools.gedcom_document import GedcomDocument
 from tools.gedcom_shapes import GedcomShapes
-from tools.loft_paths import ARCHIVE_DIR, USER_SCAN_AREA, LoftPaths
-from tools.memory import ASSESS_MAX_TOKENS
+from tools.loft_paths import LoftPaths
+from tools.memory import Assessor
 from tools.store import DiskStore
-
-ROOT = Path(__file__).resolve().parent.parent
 
 
 def _archive(archive_dir: str) -> Archive:
@@ -61,7 +59,7 @@ def _capture_client() -> AIClient | None:
     """The capture client when an API key exists — the capture API needs the
     key; absent, the server serves without capture (visible, never silent)."""
     try:
-        return AIClient(max_tokens=ASSESS_MAX_TOKENS)
+        return AIClient(max_tokens=Assessor.ASSESS_MAX_TOKENS)
     except AIClientError as e:
         print(f"serve: no capture client ({e}) — serving the app only")
         return None
@@ -124,7 +122,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             # honest fix: tools/ + pipeline/ are the backend (editing a test
             # must not bounce the server, and a pipeline edit must reload it);
             # the frontend is served without a build step.
-            reload_dirs=[str(ROOT / "tools"), str(ROOT / "pipeline")],
+            reload_dirs=[str(Repo.ROOT / "tools"), str(Repo.ROOT / "pipeline")],
             host=args.host,
             port=args.port,
             log_level="info",
@@ -148,7 +146,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 def cmd_capture_memory(args: argparse.Namespace) -> int:
     account = sys.stdin.read() if args.account == "-" else Path(args.account).read_text(encoding="utf-8")
     try:
-        client = AIClient(max_tokens=ASSESS_MAX_TOKENS)
+        client = AIClient(max_tokens=Assessor.ASSESS_MAX_TOKENS)
     except AIClientError as e:
         print(f"capture-memory: no API key: {e}")
         return 1
@@ -362,15 +360,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = _command(sub, name="publish", help_text="regenerate the projection (app/data) from the archive", fn=cmd_publish)
-    p.add_argument("--archive", default=str(ARCHIVE_DIR))
+    p.add_argument("--archive", default=str(LoftPaths.ARCHIVE_DIR))
     p.add_argument("--data", default="app/data")
 
     p = _command(sub, name="serve", help_text="serve the app (no-cache) with the memory-capture API", fn=cmd_serve)
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8124)
-    p.add_argument("--archive", default=str(ARCHIVE_DIR))
+    p.add_argument("--archive", default=str(LoftPaths.ARCHIVE_DIR))
     p.add_argument("--data", default="app/data")
-    p.add_argument("--app", default=str(ROOT / "app"))
+    p.add_argument("--app", default=str(Repo.ROOT / "app"))
     p.add_argument("--reload", action="store_true", help="auto-reload the backend on source changes (make serve)")
 
     p = _command(
@@ -383,7 +381,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--who", default="")
     p.add_argument("--anchor", default="", help="JSON anchor context (item/person/theme)")
     p.add_argument("--status", default="draft", choices=["draft", "catalogued"])
-    p.add_argument("--archive", default=str(ARCHIVE_DIR))
+    p.add_argument("--archive", default=str(LoftPaths.ARCHIVE_DIR))
 
     p = _command(
         sub,
@@ -391,7 +389,7 @@ def build_parser() -> argparse.ArgumentParser:
         help_text="run the machine stages for dropped scans — one sweep, or --watch",
         fn=cmd_work,
     )
-    p.add_argument("--scan-area", default=str(USER_SCAN_AREA), help="the folder the scanner drops piles into")
+    p.add_argument("--scan-area", default=str(LoftPaths.USER_SCAN_AREA), help="the folder the scanner drops piles into")
     p.add_argument("--batch", default="", help="work one batch only (its id, as the registry names it)")
     p.add_argument(
         "--plan",

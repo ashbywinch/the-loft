@@ -55,7 +55,7 @@ from pipeline.transcribe.printed import printed_transcript, structured_transcrip
 from tools.archive import Archive, ArchiveError
 from tools.atomic import atomic_write
 from tools.dated_fact import PRECISIONS
-from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR
+from tools.loft_paths import LoftPaths
 from tools.memory import ChatClient, Knowledge
 from tools.records import Item
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
@@ -365,7 +365,7 @@ def record_confirmation(
     title: str = "",
     date: str = "",
     date_precision: str = "",
-    registry_dir: Path = REGISTRY_DIR,
+    registry_dir: Path = LoftPaths.REGISTRY_DIR,
 ) -> str:
     """The backend's single write path for a reviewed document — shared by
     the CLI review gate and the sync receiver (TECHSPEC/04 §17.5).
@@ -459,7 +459,7 @@ def apply_row_adjustments(
     adjustments: RowAdjustments,
     work_dir: Path,
     *,
-    registry_dir: Path = REGISTRY_DIR,
+    registry_dir: Path = LoftPaths.REGISTRY_DIR,
 ) -> RowCorrection:
     """The reviewer's drawn row lines -> the page's rows
     (`rows.adjust` over the words the read stage persisted, each with
@@ -958,8 +958,8 @@ def _batch_run(
     return BatchRun(
         batch_id,
         work_dir=work_dir,
-        registry_dir=registry_dir or REGISTRY_DIR,
-        archive_dir=archive_dir or ARCHIVE_DIR,
+        registry_dir=registry_dir or LoftPaths.REGISTRY_DIR,
+        archive_dir=archive_dir or LoftPaths.ARCHIVE_DIR,
     )
 
 

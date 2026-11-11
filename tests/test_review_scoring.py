@@ -14,9 +14,9 @@ import pytest
 
 from pipeline.evals.eval_scoring import score_page
 from pipeline.layout import Layout
-from tools.loft_paths import WORK_DIR
+from tools.loft_paths import LoftPaths
 
-REFS = WORK_DIR / "eval-htr" / "reference-lines.json"
+REFS = LoftPaths.WORK_DIR / "eval-htr" / "reference-lines.json"
 FLOOR = 0.55  # under the measured 0.68 — headroom for honest refusals
 
 
@@ -34,7 +34,7 @@ def test_serving_coverage_stays_above_the_floor() -> None:
     scores = []
     refused = 0
     for batch, page, refkey in pages:
-        lp = WORK_DIR / batch / "ocr-guess" / f"{page}.layout.json"
+        lp = LoftPaths.WORK_DIR / batch / "ocr-guess" / f"{page}.layout.json"
         layout = Layout.from_dict(json.loads(lp.read_text(encoding="utf-8"))) if lp.is_file() else None
         s = score_page(" ".join(refs[refkey]), layout)
         refused += s.refused

@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from tools.loft_paths import ARCHIVE_DIR
+from tools.loft_paths import LoftPaths
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -66,9 +66,9 @@ def _resolve_candidates(name: str, people: list[dict[str, Any]]) -> list[str]:
 
 
 @pytest.mark.archive
-@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.skipif(not (LoftPaths.ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_attested_family_links_have_edges() -> None:
-    paths = sorted((ARCHIVE_DIR).glob("people*.json"))
+    paths = sorted((LoftPaths.ARCHIVE_DIR).glob("people*.json"))
     table: dict[str, Any] = json.loads(_latest(paths).read_text(encoding="utf-8"))
     people = table.get("people", [])
     edges = [r for r in table.get("relationships", []) if r.get("kind") in ("spouse", "parent", "inlaw")]

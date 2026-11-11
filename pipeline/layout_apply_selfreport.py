@@ -17,11 +17,10 @@ from pipeline.artefacts import BatchArtefacts
 from pipeline.layout import Layout, is_struck, normalize
 from pipeline.model.unsure_word import UnsureWord
 from pipeline.store import PipelineStore
-from tools.loft_paths import WORK_DIR
+from tools.loft_paths import LoftPaths
+from tools.selfreport import SelfReport
 from tools.selfreport_driver import run_cli
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
-
-REPORT_NAME = "selfreport.json"
 
 
 def _word_flag(word: str, *, selfreport_line: set[str] | None) -> float:
@@ -62,7 +61,7 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path) -> in
     if not guess_dir.is_dir():
         print(f"layout-apply: no guess dir for batch {batch_id!r}", file=sys.stderr)
         return 1
-    reports = sorted(guess_dir.glob(f"*.{REPORT_NAME}"))
+    reports = sorted(guess_dir.glob(f"*.{SelfReport.NAME}"))
     if page_names:
         wanted = set(page_names)
         reports = [p for p in reports if p.stem.split(".")[0] in wanted]
@@ -90,7 +89,7 @@ def _apply_report(report: Path) -> None:
         if isinstance(entry, dict) and isinstance(entry.get("line"), int) and isinstance(entry.get("word"), str)
     ]
     apply_selfreport(layout, selfreport)
-    layout.write_store(PipelineStore(WORK_DIR), str(layout_path.relative_to(WORK_DIR)))
+    layout.write_store(PipelineStore(LoftPaths.WORK_DIR), str(layout_path.relative_to(LoftPaths.WORK_DIR)))
     flagged = sum(1 for line in layout.lines for word in line.words or [] if word.conf == 0.0)
     print(f"layout: applied self-report to {layout_path.name} -> {flagged} flagged words")
 

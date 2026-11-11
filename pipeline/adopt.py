@@ -28,7 +28,7 @@ from pipeline.batch_record import BatchRecord
 from pipeline.pile_candidate import PileCandidate
 from pipeline.registry_entry import RegistryEntry
 from pipeline.store import PipelineStore
-from tools.loft_paths import REGISTRY_DIR, WORK_DIR
+from tools.loft_paths import LoftPaths
 from tools.store import StoreError
 
 _BATCH_ID = re.compile(r"^[A-Za-z0-9-]+$")
@@ -74,8 +74,8 @@ class _Adoption:
         *,
         label: str = "",
         source: str = _DEFAULT_SOURCE,
-        registry_dir: Path = REGISTRY_DIR,
-        work_dir: Path = WORK_DIR,
+        registry_dir: Path = LoftPaths.REGISTRY_DIR,
+        work_dir: Path = LoftPaths.WORK_DIR,
     ) -> None:
         self.folder = folder
         files = self.page_files()
@@ -205,8 +205,8 @@ def register_adopted(
     *,
     label: str = "",
     source: str = _Adoption._DEFAULT_SOURCE,
-    registry_dir: Path = REGISTRY_DIR,
-    work_dir: Path = WORK_DIR,
+    registry_dir: Path = LoftPaths.REGISTRY_DIR,
+    work_dir: Path = LoftPaths.WORK_DIR,
 ) -> AdoptionResult:
     """Hash ``folder`` in place and register it; returns where the record
     landed and the outcome.

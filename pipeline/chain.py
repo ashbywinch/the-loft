@@ -66,7 +66,7 @@ from pipeline.transcribe.printed import printed_transcript, structured_transcrip
 from pipeline.transcribe.transcripts import Transcriber, row_transcripts
 from tools.archive import Archive
 from tools.atomic import atomic_write
-from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR, LoftPaths
+from tools.loft_paths import LoftPaths
 from tools.store import DiskStore, StoreError  # noqa: F401 — the architecture test's store-layer marker
 
 BOUNDARY_MODEL = BOUNDARY_MODEL_FROM_CONFIG  # judges document boundaries (<provider>/<model>)
@@ -166,9 +166,9 @@ class Batch:
         self,
         batch_id: str,
         *,
-        work_dir: Path = WORK_DIR,
-        registry_dir: Path = REGISTRY_DIR,
-        archive_dir: Path = ARCHIVE_DIR,
+        work_dir: Path = LoftPaths.WORK_DIR,
+        registry_dir: Path = LoftPaths.REGISTRY_DIR,
+        archive_dir: Path = LoftPaths.ARCHIVE_DIR,
     ) -> None:
         self.batch_id = batch_id
         self.work_dir = work_dir
@@ -654,9 +654,9 @@ class BatchRun(Batch):
 def process(
     batch_id: str,
     *,
-    registry_dir: Path = REGISTRY_DIR,
-    work_dir: Path = WORK_DIR,
-    archive_dir: Path = ARCHIVE_DIR,
+    registry_dir: Path = LoftPaths.REGISTRY_DIR,
+    work_dir: Path = LoftPaths.WORK_DIR,
+    archive_dir: Path = LoftPaths.ARCHIVE_DIR,
     client: Callable[[str, str], str] | None = None,
 ) -> None:
     """Classify → orient → read (the category decides: direct read, structured

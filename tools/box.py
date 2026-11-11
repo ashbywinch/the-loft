@@ -9,10 +9,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-# The float tolerance for division-underflow protection: a zero-area box
-# must not divide by zero.
-_AREA_EPSILON = 1e-9
-
 
 def area(box: list[float]) -> float:
     return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
@@ -23,7 +19,10 @@ def overlap(a: list[float], b: list[float]) -> float:
     box still claims the same region."""
     x = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
     y = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-    return (x * y) / max(min(area(a), area(b)), _AREA_EPSILON)
+    # the float tolerance for division-underflow protection: a zero-area box
+    # must not divide by zero
+    area_epsilon = 1e-9
+    return (x * y) / max(min(area(a), area(b)), area_epsilon)
 
 
 def reading_axis(box: list[float], orientation: float | None) -> float:
@@ -71,9 +70,6 @@ def orientation_from_aspect(box: list[float] | None) -> int:
 # A line clip must carry >= 0.1% dark pixels — a blank clip has nothing
 # to recognize (the clip guard) and a box whose region is blank is an
 # estimate, not an anchor (Gate D).
-INK_MIN = 0.001
-
-
 def has_ink(box: Sequence[float], image: Any) -> bool:
     """Does the box's region contain ink relative to its OWN paper
     level? (Gate D): a well-proportioned box in a blank region is an
@@ -98,7 +94,8 @@ def has_ink(box: Sequence[float], image: Any) -> bool:
             level = value
             break
     ink_level = max(1, level - 35)
-    return sum(hist[:ink_level]) >= INK_MIN * total
+    ink_min = 0.001
+    return sum(hist[:ink_level]) >= ink_min * total
 
 
 def text_line_count(box: Sequence[float], image: Any, *, min_band_rows: int = 3, min_gap_rows: int = 3) -> int:

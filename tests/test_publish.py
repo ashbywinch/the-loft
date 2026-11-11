@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from tools.archive import Archive
-from tools.loft_paths import ARCHIVE_DIR
+from tools.loft_paths import LoftPaths
 from tools.projection import DeriveError, Projection, projection_json, resolved_items
 from tools.records import Item, Person, Place, validate_identity
 from tools.store import DiskStore
@@ -898,13 +898,13 @@ def _latest_sidecar(folder: Path) -> Path | None:
 
 
 @pytest.mark.archive
-@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.skipif(not (LoftPaths.ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_committed_sidecars_all_validate() -> None:
     """Every committed sidecar satisfies the Item record — the write seam
     refuses anything that doesn't, so the archive and the model can never
     drift."""
     scanned = 0
-    for folder in sorted((ARCHIVE_DIR / "assets").iterdir()):
+    for folder in sorted((LoftPaths.ARCHIVE_DIR / "assets").iterdir()):
         item_path = _latest_sidecar(folder)
         if item_path is None:
             continue
@@ -915,7 +915,7 @@ def test_committed_sidecars_all_validate() -> None:
 
 
 @pytest.mark.archive
-@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.skipif(not (LoftPaths.ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_committed_projection_equals_publish_of_committed_archive(tmp_path: Path) -> None:
     """The committed app/data must be exactly what publish produces from the
     committed archive (modulo the regeneration stamp) — a hand-edit of the
@@ -923,7 +923,7 @@ def test_committed_projection_equals_publish_of_committed_archive(tmp_path: Path
     relationships bug) fails here. Compares the whole tree, including the
     derived assets (placeholder pages, avatars), which the five-JSON
     compare does not cover. Edit the archive, then re-publish."""
-    archive = Archive(DiskStore(ARCHIVE_DIR))
+    archive = Archive(DiskStore(LoftPaths.ARCHIVE_DIR))
     out = REPO / "app" / "data"
     fresh = tmp_path / "fresh"
     Projection(archive, fresh).build()
@@ -961,7 +961,7 @@ _ATTRIBUTION = re.compile(r"^[A-Za-z][A-Za-z ]+:")
 
 
 @pytest.mark.archive
-@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.skipif(not (LoftPaths.ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_projection_has_no_unattributed_commentary() -> None:
     """PRD §10 / docs/coding-standards.md: generated copy is factual — a
     personal observation is attributed testimony, never app prose. Story

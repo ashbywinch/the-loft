@@ -19,7 +19,7 @@ from PIL import Image, ImageDraw
 from pipeline.artefacts import BatchArtefacts
 from pipeline.layout import Layout, load_layout_store
 from pipeline.store import PipelineStore
-from tools.loft_paths import WORK_DIR
+from tools.loft_paths import LoftPaths
 
 MAX_SHEET_WIDTH = 1600  # vision-legible; scans here are 3000-4000px
 
@@ -46,10 +46,10 @@ def annotate_page(image_path: Path, layout: Layout, out_path: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    batches = argv if argv else [p.name for p in sorted(WORK_DIR.iterdir()) if p.is_dir()]
-    store = PipelineStore(WORK_DIR)
+    batches = argv if argv else [p.name for p in sorted(LoftPaths.WORK_DIR.iterdir()) if p.is_dir()]
+    store = PipelineStore(LoftPaths.WORK_DIR)
     for batch in batches:
-        artefacts = BatchArtefacts(WORK_DIR, batch)
+        artefacts = BatchArtefacts(LoftPaths.WORK_DIR, batch)
         guess_dir = artefacts.guess_dir
         if not guess_dir.is_dir():
             continue
@@ -60,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
             if not image_path.is_file():
                 continue
             try:
-                layout = load_layout_store(store, str(layout_path.relative_to(WORK_DIR)))
+                layout = load_layout_store(store, str(layout_path.relative_to(LoftPaths.WORK_DIR)))
             # lucidlint: ignore broad-except the per-page boundary: one unloadable layout is reported and skipped
             except Exception as exc:
                 print(f"{batch}/{page}: UNLOADABLE ({exc})")

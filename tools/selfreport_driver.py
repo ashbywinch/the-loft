@@ -10,7 +10,7 @@ import argparse
 from collections.abc import Callable
 from pathlib import Path
 
-from tools.loft_paths import WORK_DIR
+from tools.loft_paths import LoftPaths
 
 
 def run_cli(
@@ -27,6 +27,6 @@ def run_cli(
     parser = argparse.ArgumentParser(prog=prog, description=description)
     parser.add_argument("batch_id")
     parser.add_argument("pages", nargs="*", help=pages_help)
-    parser.add_argument("--work-dir", type=Path, default=WORK_DIR)
+    parser.add_argument("--work-dir", type=Path, default=LoftPaths.WORK_DIR)
     args = parser.parse_args(argv)
     return runner(args.batch_id, args.pages or None, args.work_dir)

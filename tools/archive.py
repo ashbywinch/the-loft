@@ -30,8 +30,6 @@ from tools.gone_place import GonePlace
 from tools.memory import Knowledge, Memory, StoryRequest
 from tools.projection import Projection, projection_json
 from tools.records import (
-    CONTENT_CAPTIONS,
-    CONTENT_FILES,
     IdentityTable,
     ImportsTable,
     Item,
@@ -565,12 +563,14 @@ class Archive:
             # its old entry would otherwise publish the previous text
             # forever
             payload["assets"] = [
-                a for a in payload["assets"] if a.get("kind") not in CONTENT_FILES or a.get("kind") in present_kinds
+                asset
+                for asset in payload["assets"]
+                if asset.get("kind") not in Item.CONTENT_FILES or asset.get("kind") in present_kinds
             ]
             for kind, text in content.items():
                 if not text:
                     continue
-                bare, caption = CONTENT_FILES.get(kind), CONTENT_CAPTIONS.get(kind, "")
+                bare, caption = Item.CONTENT_FILES.get(kind), Item.CONTENT_CAPTIONS.get(kind, "")
                 if bare is None:
                     raise ArchiveError(f"unknown content kind: {kind}")
                 filename = self._content_filename(bare, version)

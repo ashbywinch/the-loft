@@ -17,23 +17,26 @@ import re
 
 from tools.records import Person, Relationship
 
-# text patterns -> the edge kind the claim asserts. Parent links may name
-# one or both parents ("son of ? Corbett and Harper Pryce") — the first named
-# parent suffices for the check.
-PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"married ([A-Z][\w' -]+?)(?:,|\.|\(|\b\d|$)"), "spouse"),
-    (re.compile(r"([A-Z][\w' -]+?)'s husband"), "spouse"),
-    (re.compile(r"([A-Z][\w' -]+?)'s wife"), "spouse"),
-    (re.compile(r"husband of ([A-Z][\w' -]+)"), "spouse"),
-    (re.compile(r"wife of ([A-Z][\w' -]+)"), "spouse"),
-    (re.compile(r"son of ([A-Z?][\w' -]+?)(?: and |\.|$)"), "parent"),
-    (re.compile(r"daughter of ([A-Z?][\w' -]+?)(?: and |\.|$)"), "parent"),
-    (re.compile(r"child of ([A-Z?][\w' -]+?)(?: and |\.|$)"), "parent"),
-    (re.compile(r"father of ([A-Z][\w' -]+?)(?: and |\.|$)"), "parent"),
-    (re.compile(r"mother of ([A-Z][\w' -]+?)(?: and |\.|$)"), "parent"),
-    (re.compile(r"sister-in-law of ([A-Z][\w' -]+)"), "inlaw"),
-    (re.compile(r"brother-in-law of ([A-Z][\w' -]+)"), "inlaw"),
-)
+
+class Attestation:
+    """The text patterns the attested-edge scan reads, and the edge kind each
+    claim asserts. Parent links may name one or both parents ("son of ? Corbett
+    and Harper Pryce") — the first named parent suffices for the check."""
+
+    PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+        (re.compile(r"married ([A-Z][\w' -]+?)(?:,|\.|\(|\b\d|$)"), "spouse"),
+        (re.compile(r"([A-Z][\w' -]+?)'s husband"), "spouse"),
+        (re.compile(r"([A-Z][\w' -]+?)'s wife"), "spouse"),
+        (re.compile(r"husband of ([A-Z][\w' -]+)"), "spouse"),
+        (re.compile(r"wife of ([A-Z][\w' -]+)"), "spouse"),
+        (re.compile(r"son of ([A-Z?][\w' -]+?)(?: and |\.|$)"), "parent"),
+        (re.compile(r"daughter of ([A-Z?][\w' -]+?)(?: and |\.|$)"), "parent"),
+        (re.compile(r"child of ([A-Z?][\w' -]+?)(?: and |\.|$)"), "parent"),
+        (re.compile(r"father of ([A-Z][\w' -]+?)(?: and |\.|$)"), "parent"),
+        (re.compile(r"mother of ([A-Z][\w' -]+?)(?: and |\.|$)"), "parent"),
+        (re.compile(r"sister-in-law of ([A-Z][\w' -]+)"), "inlaw"),
+        (re.compile(r"brother-in-law of ([A-Z][\w' -]+)"), "inlaw"),
+    )
 
 
 def _resolve_candidates(name: str, people: list[Person]) -> list[str]:
@@ -71,7 +74,7 @@ def attested_edge_gaps(people: list[Person], relationships: list[Relationship]) 
     offenders: list[str] = []
     for person in people:
         text = f"{person.relation} {person.bio}"
-        for pattern, kind in PATTERNS:
+        for pattern, kind in Attestation.PATTERNS:
             for match in pattern.finditer(text):
                 targets = _resolve_candidates(match.group(1), people)
                 if not targets:

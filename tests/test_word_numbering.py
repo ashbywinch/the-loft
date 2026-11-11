@@ -15,11 +15,7 @@ from PIL import Image
 from document.colour import Colour
 from tools.chip import Chip
 from tools.word_numbering import (
-    CHIP_GAP,
-    EDGE_PAD,
-    MAX_CHIP,
-    PALETTE,
-    UNPLACED,
+    NumberedWords,
     _base_font,
     candidates,
     chip_extent,
@@ -28,6 +24,12 @@ from tools.word_numbering import (
     place_chips,
     unplaced,
 )
+
+CHIP_GAP = NumberedWords.CHIP_GAP
+EDGE_PAD = NumberedWords.EDGE_PAD
+MAX_CHIP = NumberedWords.MAX_CHIP
+PALETTE = NumberedWords.PALETTE
+UNPLACED = NumberedWords.UNPLACED
 
 A = (100.0, 100.0, 200.0, 200.0)  # a word the size of the tests' world
 

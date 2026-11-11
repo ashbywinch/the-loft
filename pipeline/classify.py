@@ -30,7 +30,7 @@ from pipeline.model.vlm import VlmError, extract_json, transcribe_image_vlm
 from pipeline.page_classification import PageClassification
 from pipeline.registry import RegistryError, load_batch
 from pipeline.store import PipelineStore
-from tools.loft_paths import REGISTRY_DIR, WORK_DIR
+from tools.loft_paths import LoftPaths
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 
@@ -149,8 +149,8 @@ def classify_page(
 def run_classify(
     batch_id: str,
     *,
-    registry_dir: Path = REGISTRY_DIR,
-    work_dir: Path = WORK_DIR,
+    registry_dir: Path = LoftPaths.REGISTRY_DIR,
+    work_dir: Path = LoftPaths.WORK_DIR,
     classifier: Callable[[Path], PageClassification] | None = None,
     reclassify: Collection[str] = (),
 ) -> Path:
@@ -191,7 +191,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         classify_path = run_classify(args.batch_id)
-        results = json.loads(PipelineStore(WORK_DIR).read_latest(str(classify_path.relative_to(WORK_DIR))))
+        store = PipelineStore(LoftPaths.WORK_DIR)
+        results = json.loads(store.read_latest(str(classify_path.relative_to(LoftPaths.WORK_DIR))))
     except RegistryError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

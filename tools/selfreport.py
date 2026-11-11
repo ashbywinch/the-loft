@@ -25,8 +25,13 @@ from pipeline.model.vlm import selfreport_words
 from tools.atomic import atomic_write
 from tools.selfreport_driver import run_cli
 
-REPORT_NAME = "selfreport.json"
-_MAX_WORKERS = 6  # the VLM calls are IO-bound — no shared state between pages
+
+class SelfReport:
+    """The self-report artefact — where it lands and how many pages one run
+    reads at a time (the VLM calls are IO-bound; no shared state)."""
+
+    NAME = "selfreport.json"
+    _MAX_WORKERS = 6
 
 
 def _process_page(image: Path, guess_dir: Path) -> None:
@@ -37,7 +42,7 @@ def _process_page(image: Path, guess_dir: Path) -> None:
     if not guess_path.exists():
         print(f"selfreport: {image.name} — no guess text, skipping", file=sys.stderr)
         return
-    out = guess_dir / f"{image.stem}.{REPORT_NAME}"
+    out = guess_dir / f"{image.stem}.{SelfReport.NAME}"
     if out.exists():
         print(f"selfreport: {image.name} — already done, reusing")
         return
@@ -69,7 +74,7 @@ def run_batch(batch_id: str, page_names: list[str] | None, work_dir: Path) -> in
         pages = [p for p in pages if p.name in wanted]
     if not pages:
         return 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=SelfReport._MAX_WORKERS) as pool:
         futures = {pool.submit(_process_page, image, guess_dir): image for image in pages}
         for future in concurrent.futures.as_completed(futures):
             exc = future.exception()

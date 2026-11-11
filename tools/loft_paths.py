@@ -18,19 +18,6 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-# The big disk — the one machine-dependent input. Defaults to the current
-# family's mount; override with LOFT_DISK_ROOT on a machine where the
-# workspace lives elsewhere, so the data checks run there too instead of
-# silently skipping as "archive not found".
-_DISK = Path(os.environ.get("LOFT_DISK_ROOT", "/run/media/ashby/One Touch"))
-
-USER_SCAN_AREA = _DISK / "scans"
-WORKSPACE = _DISK / "Loft"
-REGISTRY_DIR = WORKSPACE / "registry"
-WORK_DIR = WORKSPACE / "work"
-ARCHIVE_DIR = WORKSPACE / "archive"
-PROJECTION_DIR = WORKSPACE / "projection"
-
 
 @dataclass(frozen=True)
 class LoftPaths:
@@ -39,6 +26,18 @@ class LoftPaths:
     They travel together (the worker's constructor, a test's scratch tree),
     so they are one value: a caller that overrides one and forgets another
     would point the work at a folder the registry does not describe."""
+
+    # The big disk — the one machine-dependent input. Defaults to the current
+    # family's mount; override with LOFT_DISK_ROOT on a machine where the
+    # workspace lives elsewhere, so the data checks run there too instead of
+    # silently skipping as "archive not found".
+    _DISK = Path(os.environ.get("LOFT_DISK_ROOT", "/run/media/ashby/One Touch"))
+
+    USER_SCAN_AREA = _DISK / "scans"
+    WORKSPACE = _DISK / "Loft"
+    REGISTRY_DIR = WORKSPACE / "registry"
+    WORK_DIR = WORKSPACE / "work"
+    ARCHIVE_DIR = WORKSPACE / "archive"
 
     scan_area: Path = USER_SCAN_AREA
     registry_dir: Path = REGISTRY_DIR

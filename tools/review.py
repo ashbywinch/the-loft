@@ -32,8 +32,6 @@ from tools.tool_error import ToolError
 from tools.tool_note import ToolNote
 from tools.trace_step import TraceStep
 
-MAX_RESOLVE_ATTEMPTS = 2
-
 logger = logging.getLogger(__name__)
 
 
@@ -94,44 +92,6 @@ def _known_facts(facts: ReviewContext) -> str:
             )
             lines.append(f"  {it.get('id')} — {it.get('title', '')}{draft}: {story[:200]}")
     return "\n".join(lines)
-
-
-MAX_INVESTIGATE_STEPS = 6  # the digs plus room for a verdict correction
-VERDICT_AND_CORRECTION_TURNS = 3  # the loop's turns beyond the digs: the verdict, a correction, and slack
-MAX_TOOL_CALLS = 4  # the investigation's tool-call budget before the model must conclude
-
-_TOOLS_DESC = """You can investigate the archive with these READ-ONLY tools:
-
-- search_people({"query": "<name or relation text>"}): people whose name
-  matches, with their ids.
-- person({"id": "<person id>"}): one person's record — dates, relation,
-  status.
-- relationships({"id": "<person id>"}): the recorded family edges touching
-  that person.
-- attested({"id": "<person id>"}): the recorded items (letters, records,
-  stories) that mention the person — their attested facts.
-- search_items({"query": "<a place, a town, an event, a phrase>"}): the
-  recorded items whose text mentions it — follow a place or an event the
-  reviewer brings up (a visit, a town, a death).
-
-To call a tool, return ONLY JSON: {"tool": "<name>", "args": {...}}.
-The tool's result will be appended and you may call another. When you have
-enough to answer, return the verdict JSON.
-
-Deliberate in ONE short pass: at most four tool calls in one round, and
-each of the four decisions (leads, search, relevance, contradiction)
-made exactly once. After each tool call a "Facts already gathered"
-ledger is appended — it is deduplicated and last-value-wins: consult it
-and NEVER re-fetch a fact it already lists, and once it covers your
-planned leads, stop deliberating about further calls and emit the
-verdict. The ledger is only an INDEX of the tool results — it changes
-nothing about what counts as a finding: relationship/person lines in it
-are not evidence (the person-record rule), and a document the tools
-surfaced is STILL a finding to report even when the ledger lists it.
-Never re-analyse a decision
-you have already made, never re-plan a search you have already planned,
-and never restate the reviewer's statement back to yourself. If you
-catch yourself repeating a step, stop and emit the verdict."""
 
 
 def _facts_ledger(trace: Sequence[TraceStep], limit: int = 400) -> str:
@@ -359,6 +319,49 @@ def render_history(messages: tuple[Message, ...]) -> str:
 
 # the reviewer identity, the facts context, the history — a parameter object would add ceremony at the DI boundary
 # lucidlint: ignore long-param-list the investigation's inputs — the client seam, the answer, the person under review,
+class Investigation:
+    """The tool-using review's budget and its read-only tools' description."""
+
+    MAX_STEPS = 6  # the digs plus room for a verdict correction
+    VERDICT_AND_CORRECTION_TURNS = 3  # the loop's turns beyond the digs: the verdict, a correction, and slack
+    MAX_TOOL_CALLS = 4  # the investigation's tool-call budget before the model must conclude
+
+    TOOLS_DESC = """You can investigate the archive with these READ-ONLY tools:
+
+- search_people({"query": "<name or relation text>"}): people whose name
+  matches, with their ids.
+- person({"id": "<person id>"}): one person's record — dates, relation,
+  status.
+- relationships({"id": "<person id>"}): the recorded family edges touching
+  that person.
+- attested({"id": "<person id>"}): the recorded items (letters, records,
+  stories) that mention the person — their attested facts.
+- search_items({"query": "<a place, a town, an event, a phrase>"}): the
+  recorded items whose text mentions it — follow a place or an event the
+  reviewer brings up (a visit, a town, a death).
+
+To call a tool, return ONLY JSON: {"tool": "<name>", "args": {...}}.
+The tool's result will be appended and you may call another. When you have
+enough to answer, return the verdict JSON.
+
+Deliberate in ONE short pass: at most four tool calls in one round, and
+each of the four decisions (leads, search, relevance, contradiction)
+made exactly once. After each tool call a "Facts already gathered"
+ledger is appended — it is deduplicated and last-value-wins: consult it
+and NEVER re-fetch a fact it already lists, and once it covers your
+planned leads, stop deliberating about further calls and emit the
+verdict. The ledger is only an INDEX of the tool results — it changes
+nothing about what counts as a finding: relationship/person lines in it
+are not evidence (the person-record rule), and a document the tools
+surfaced is STILL a finding to report even when the ledger lists it.
+Never re-analyse a decision
+you have already made, never re-plan a search you have already planned,
+and never restate the reviewer's statement back to yourself. If you
+catch yourself repeating a step, stop and emit the verdict."""
+
+
+# the reviewer identity, the facts context, the history — a parameter object would add ceremony at the DI boundary
+# lucidlint: ignore long-param-list the investigation's inputs — the client seam, the answer, the person under review,
 def investigate(
     client: _Chat,
     *,
@@ -485,7 +488,7 @@ def investigate(
             "never an offer put as a question ('shall I leave it…?'), which is a "
             "re-ask in another costume. ",
             "Then answer.",
-            _TOOLS_DESC,
+            Investigation.TOOLS_DESC,
             # the conversation — the growing part — sits LAST so the
             # previous prompt's exact text is this prompt's prefix (the
             # prompt-cache reuses it). The family's latest line is part of
@@ -594,7 +597,9 @@ def investigate(
     # prompt starts with this one (the tool results are logged in the
     # trace, not in the prefix)
     base_prompt = user
-    for _ in range(MAX_INVESTIGATE_STEPS + VERDICT_AND_CORRECTION_TURNS):  # the digs, plus the verdict and a correction
+    for _ in range(
+        Investigation.MAX_STEPS + Investigation.VERDICT_AND_CORRECTION_TURNS
+    ):  # the digs, plus the verdict and a correction
         try:
             raw = client.chat(prompt, user, thinking=True)
             parsed = json_object(raw)
@@ -605,7 +610,7 @@ def investigate(
         reasoning = getattr(client, "last_reasoning", "")
         if tool:
             tool_calls += 1
-            if tool_calls > MAX_TOOL_CALLS:
+            if tool_calls > Investigation.MAX_TOOL_CALLS:
                 # an over-budget tool-shaped turn is still the model's own
                 # words — logged in the trace AND fed back verbatim, never
                 # discarded (the completeness property — everything the model

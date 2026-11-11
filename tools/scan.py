@@ -33,21 +33,26 @@ from PIL import Image
 
 from pipeline.batch_record import BatchRecord
 from tools.atomic import atomic_write
-from tools.loft_paths import REGISTRY_DIR, USER_SCAN_AREA
+from tools.loft_paths import LoftPaths
 from tools.mode_sources import ModeSources
 
-INBOX = USER_SCAN_AREA
-SANE_CONFIG_DIR = Path.home() / ".config" / "sane"
-SCANIMAGE = "scanimage"
-RESOLUTION_DPI = 300
-JPEG_QUALITY = 88
-MODES = ("docs", "photos")
-# the source each mode reads from: one object — a future device with a
-# photo-specific source changes one field
-SOURCES = ModeSources()
-SCAN_SOURCE = "epson-ff680w"
-
 _DEVICE_LINE = re.compile(r"^device `([^']+)' is a ")
+
+
+class ScanJob:
+    """The scanner's fixed job config: where the pages land, the SANE device
+    and its resolution, and the two modes the FF-680W offers."""
+
+    INBOX = LoftPaths.USER_SCAN_AREA
+    SANE_CONFIG_DIR = Path.home() / ".config" / "sane"
+    SCANIMAGE = "scanimage"
+    RESOLUTION_DPI = 300
+    JPEG_QUALITY = 88
+    MODES = ("docs", "photos")
+    # the source each mode reads from: one object — a future device with a
+    # photo-specific source changes one field
+    SOURCES = ModeSources()
+    SCAN_SOURCE = "epson-ff680w"
 
 
 class ScanError(RuntimeError):
@@ -55,14 +60,14 @@ class ScanError(RuntimeError):
 
 
 def _sane_env() -> dict[str, str]:
-    """SANE_CONFIG_DIR pointing at the user config when it exists.
+    """ScanJob.SANE_CONFIG_DIR pointing at the user config when it exists.
 
     The static airscan device entry lives in the user config dir, so
     scanimage must read its config from there, not /etc/sane.d alone.
     """
     env = dict(os.environ)
-    if SANE_CONFIG_DIR.is_dir():
-        env["SANE_CONFIG_DIR"] = str(SANE_CONFIG_DIR)
+    if ScanJob.SANE_CONFIG_DIR.is_dir():
+        env["ScanJob.SANE_CONFIG_DIR"] = str(ScanJob.SANE_CONFIG_DIR)
     return env
 
 
@@ -111,9 +116,9 @@ def scan_job(
     mode: str,
     job: str,
     *,
-    inbox: Path = INBOX,
-    resolution: int = RESOLUTION_DPI,
-    _scanimage: str = SCANIMAGE,
+    inbox: Path = ScanJob.INBOX,
+    resolution: int = ScanJob.RESOLUTION_DPI,
+    _scanimage: str = ScanJob.SCANIMAGE,
     _env: dict[str, str] | None = None,
 ) -> Path:
     """Scan one ADF job into inbox/<job>/<job>-NN.jpg; the job dir appears only on success."""
@@ -131,7 +136,7 @@ def scan_job(
                     "-d",
                     device,
                     "--source",
-                    SOURCES.for_mode(mode),
+                    ScanJob.SOURCES.for_mode(mode),
                     "--mode",
                     "Color",
                     "--resolution",
@@ -157,7 +162,7 @@ def scan_job(
             number = int(png.stem.rsplit("-", 1)[1])  # page-1 -> 1; scanimage's %d is not zero-padded
             # the raw file name carries the batch id: if the user renames the
             # folder, any file still says which batch and position it belongs to
-            Image.open(png).convert("RGB").save(png.with_name(f"{job}-{number:02d}.jpg"), quality=JPEG_QUALITY)
+            Image.open(png).convert("RGB").save(png.with_name(f"{job}-{number:02d}.jpg"), quality=ScanJob.JPEG_QUALITY)
             png.unlink()
     except (ScanError, OSError):
         shutil.rmtree(staging, ignore_errors=True)  # best-effort; the inbox sees only complete jobs
@@ -170,8 +175,8 @@ def register_batch(
     job_dir: Path,
     label: str,
     *,
-    source: str = SCAN_SOURCE,
-    registry_dir: Path = REGISTRY_DIR,
+    source: str = ScanJob.SCAN_SOURCE,
+    registry_dir: Path = LoftPaths.REGISTRY_DIR,
 ) -> Path:
     """The capture-side registry record: label, source, page hashes, status pending.
 
@@ -196,11 +201,13 @@ def register_batch(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="scan", description="Scan the Epson FF-680W into the user's scan area")
-    parser.add_argument("mode", choices=MODES, help="what is in the ADF")
+    parser.add_argument("mode", choices=ScanJob.MODES, help="what is in the ADF")
     parser.add_argument("--label", default="", help="the envelope/pile label (what's written on it)")
     parser.add_argument("--job", default="", help="scan folder name (default: scan-<timestamp>)")
-    parser.add_argument("--inbox", type=Path, default=INBOX, help="the user's scan area (default: USER_SCAN_AREA)")
-    parser.add_argument("--resolution", type=int, default=RESOLUTION_DPI, help="DPI (default: 300)")
+    parser.add_argument(
+        "--inbox", type=Path, default=ScanJob.INBOX, help="the user's scan area (default: LoftPaths.USER_SCAN_AREA)"
+    )
+    parser.add_argument("--resolution", type=int, default=ScanJob.RESOLUTION_DPI, help="DPI (default: 300)")
     parser.add_argument("--device", default="", help="SANE device name (default: auto-pick the Epson device)")
     args = parser.parse_args(argv)
 
@@ -211,12 +218,14 @@ def main(argv: list[str] | None = None) -> int:
             label = input("Envelope/pile label (what's written on it)? blank for none: ").strip()
         try:
             listed = subprocess.run(
-                [SCANIMAGE, "-L"], capture_output=True, text=True, check=True, env=_sane_env()
+                [ScanJob.SCANIMAGE, "-L"], capture_output=True, text=True, check=True, env=_sane_env()
             ).stdout
         except (OSError, subprocess.SubprocessError) as exc:
             # scanimage missing, or SANE misconfigured — the same clean error
             # the other failure paths give, not a raw traceback
-            raise ScanError(f"{SCANIMAGE} -L failed ({exc}) — is the scanner connected and SANE configured?") from exc
+            raise ScanError(
+                f"{ScanJob.SCANIMAGE} -L failed ({exc}) — is the scanner connected and SANE configured?"
+            ) from exc
         device = args.device or pick_device(parse_devices(listed))
         job_dir = scan_job(device, args.mode, job, inbox=args.inbox, resolution=args.resolution)
         record_path = register_batch(job, job_dir, label)

@@ -32,7 +32,7 @@ from pipeline.evals.band_summary import BandSummary
 from pipeline.model.vlm import VlmOptions, transcribe_images_vlm
 from pipeline.rows.render import render_rows
 from pipeline.rows.rows import Rows
-from pipeline.transcribe.transcripts import SYSTEM, band_prompt, drawn_lines, words_from
+from pipeline.transcribe.transcripts import Transcriber, band_prompt, drawn_lines, words_from
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 FIXTURE = Path("tests/fixtures/page01-rows-gold")
@@ -42,7 +42,12 @@ OUT = Path("work/eval-band-size")
 # (the case bands exist to avoid) and the rest step down to well inside the
 # model's comfort. The tallest height whose bands come back fully read is the
 # limit the renderer sizes bands by.
-HEIGHTS = (2450, 2000, 1700, 1500, 1300, 1100, 900)
+
+
+class Sweep:
+    """The band-height sweep the eval runs: the tallest first."""
+
+    HEIGHTS = (2450, 2000, 1700, 1500, 1300, 1100, 900)
 
 
 def read_band(band: NumberedRows, index: int, of: int, height: int, out_dir: Path) -> BandReading:
@@ -53,7 +58,7 @@ def read_band(band: NumberedRows, index: int, of: int, height: int, out_dir: Pat
     band.image.save(path, quality=88)
     started = time.monotonic()
     answer = transcribe_images_vlm(
-        [path], options=VlmOptions(system=SYSTEM, user_text=band_prompt(index, of, numbers, []))
+        [path], options=VlmOptions(system=Transcriber.SYSTEM, user_text=band_prompt(index, of, numbers, []))
     )
     (out_dir / f"page-01.max-{height}.band-{index + 1}.answer.json").write_text(
         json.dumps({"answer": answer.answer}, indent=1), encoding="utf-8"
@@ -67,7 +72,7 @@ def read_band(band: NumberedRows, index: int, of: int, height: int, out_dir: Pat
     )
 
 
-def run(image_path: Path, fixture: Path, heights: tuple[int, ...] = HEIGHTS) -> list[BandSummary]:
+def run(image_path: Path, fixture: Path, heights: tuple[int, ...] = Sweep.HEIGHTS) -> list[BandSummary]:
     """One pass per band height: the bands that height makes, and how much of
     each band's numbering the model could see."""
     page = Image.open(image_path)
@@ -130,7 +135,7 @@ def _words(fixture: Path) -> list[Word]:
 def main(argv: list[str] | None = None) -> int:
     args = list(argv or sys.argv[1:])
     fixture = Path(args[args.index("--fixture") + 1]) if "--fixture" in args else FIXTURE
-    heights = HEIGHTS
+    heights = Sweep.HEIGHTS
     if "--heights" in args:
         heights = tuple(int(value) for value in args[args.index("--heights") + 1].split(","))
     if not SCAN.is_file():

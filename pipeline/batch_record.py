@@ -17,18 +17,17 @@ from typing import Any
 from document.document import Document
 from pipeline.boundary import Boundary
 
-# The queue vocabulary — the record's status IS the queue (the worker runs the
-# pending ones). ``processing`` is the one transient: a live pass writes it
-# with ``started_at``, and a pass that raises puts its record back to pending.
-STATUS_PENDING = "pending"  # the state a fresh adoption's record starts in
-STATUS_PROCESSING = "importing"  # a machine pass is running (the wire's word)
-STATUS_REVIEW = "review"  # the machine stages are done — a person's turn
-STATUS_CONFIRMED = "confirmed"  # the reviewer agreed every document in it
-
 
 @dataclass
 class BatchRecord:
-    """One batch's registry record."""
+    """One batch's registry registry record. The queue vocabulary is the
+    record's: ``processing`` is the one transient — a live pass writes it with
+    ``started_at``, and a pass that raises puts its record back to pending."""
+
+    STATUS_PENDING = "pending"  # the state a fresh adoption's record starts in
+    STATUS_PROCESSING = "importing"  # a machine pass is running (the wire's word)
+    STATUS_REVIEW = "review"  # the machine stages are done — a person's turn
+    STATUS_CONFIRMED = "confirmed"  # the reviewer agreed every document in it
 
     batch_id: str
     path: Path
@@ -53,7 +52,7 @@ class BatchRecord:
             path=Path(str(raw.get("path", ""))),
             label=str(raw.get("label", "")),
             source=str(raw.get("source", "")),
-            status=str(raw.get("status", STATUS_PENDING)),
+            status=str(raw.get("status", BatchRecord.STATUS_PENDING)),
             arrived_at=str(raw.get("arrived_at", "")),
             started_at=str(raw.get("started_at", "")),
             started_pid=int(raw.get("started_pid", 0)),
@@ -99,7 +98,7 @@ class BatchRecord:
         self.path = folder
         self.pages = dict(pages)
         self.fingerprint = list(fingerprint)
-        self.status = STATUS_PENDING
+        self.status = BatchRecord.STATUS_PENDING
         self.started_at = ""  # a requeued batch holds no pass
         self.started_pid = 0
         self.started_host = ""

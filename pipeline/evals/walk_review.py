@@ -21,14 +21,13 @@ from pipeline.layout import Layout, load_layout_store
 from pipeline.store import PipelineStore
 from tools.loft_paths import LoftPaths
 
-MAX_SHEET_WIDTH = 1600  # vision-legible; scans here are 3000-4000px
-
 
 def annotate_page(image_path: Path, layout: Layout, out_path: Path) -> int:
     """Draw the layout's line boxes (red, indexed) on the page image."""
+    max_sheet_width = 1600  # vision-legible; scans here are 3000-4000px
     with Image.open(image_path) as im:
         im = im.convert("RGB")
-        scale = min(1.0, MAX_SHEET_WIDTH / im.width)
+        scale = min(1.0, max_sheet_width / im.width)
         if scale < 1.0:
             im = im.resize((round(im.width * scale), round(im.height * scale)))
         draw = ImageDraw.Draw(im)

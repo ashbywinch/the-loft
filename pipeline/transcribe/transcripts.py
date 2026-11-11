@@ -50,7 +50,7 @@ from document.transcript import Transcript, TranscriptError
 from document.word import Word
 from document.words import Words
 from pipeline.detect.reader import reading_for_page
-from pipeline.model.config import VISION_MODEL
+from pipeline.model.config import ModelConfig
 from pipeline.model.token_usage import TokenUsage
 from pipeline.model.vlm import VlmOptions, transcribe_images_vlm
 from pipeline.model.vlm_answer import VlmAnswer
@@ -59,51 +59,6 @@ from pipeline.rows.rows import Rows
 from pipeline.transcribe.page_bands import PageBands
 from pipeline.transcribe.row_reading import RowReading
 from pipeline.transcribe.transcription_report import TranscriptionReport
-
-OUT_DIR = Path("work/eval-rows-transcript")
-ALONE_MARGIN = 24  # px: air around a row read on its own
-
-# the page the other real-model evals already use (a cursive letter, our best
-# case); a page with no confirmed transcript is still readable
-DEFAULT_PAGE = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
-
-SYSTEM = (
-    "You read a scanned page of handwriting. The image shows the page with its rows "
-    "numbered: one numbered chip per row of writing, in reading order, sitting beside "
-    "the row it labels. The number IS the row's number.\n\n"
-    "Each chip is drawn in the colour of the line it belongs to, and every line of "
-    "writing is tinted that same colour: the chip and its row are one colour. When it "
-    "is unclear which line a number belongs to — the writing is crowded, the chip sits "
-    "between two lines, or two chips are close together — the tint decides it: match "
-    "the chip to the line whose tint is the SAME colour as the chip, and read that line "
-    "as that number's row.\n\n"
-    "For every numbered row, return its writing. A number may cover several rows when "
-    "the writing is one continuous piece (a sentence broken across rows); never give a "
-    'row two transcripts. A row you cannot read comes back with "transcript": "" — '
-    "never guess at it and never dwell on it; an empty transcript is the correct answer "
-    "for writing you cannot make out.\n\n"
-    "Types:\n"
-    "- body: the running text\n"
-    "- injection: writing squeezed above/between rows, meant to be inserted into other "
-    "text — it REQUIRES injection_after: the row number it follows\n"
-    "- marginalia: a note in the margin, with NO injection_after\n\n"
-    "Transcribe verbatim, reading the handwriting; a word the writer crossed out is "
-    "~~word~~, an underlined word is ~word~. Never tidy the spelling, never drop words.\n\n"
-    "The page may arrive as several images: bands of the same page, top to "
-    "bottom, in order, and neighbouring bands share a little of the page. They "
-    "are ONE page — read the rows of every band and answer once, covering "
-    "every number from the first band to the last. A row visible in two bands "
-    "is still ONE row: read it once, in the band that shows it whole.\n\n"
-    "Reply with JSON only:\n"
-    '{"segments": [\n'
-    '  {"rows": [1], "type": "body", "transcript": "London Opera Centre"},\n'
-    '  {"rows": [2, 3], "type": "body", "transcript": "a sentence that runs on"},\n'
-    '  {"rows": [4], "type": "injection", "transcript": "my dear", "injection_after": 3},\n'
-    '  {"rows": [5], "type": "marginalia", "transcript": "Send this first"},\n'
-    '  {"rows": [6], "type": "body", "transcript": ""}\n'
-    "]}\n"
-    "Every numbered row must appear exactly once. No prose before or after the JSON."
-)
 
 
 def words_from(path: Path) -> list[Word]:
@@ -134,6 +89,48 @@ class Transcriber:
     answer, the verdict — so the pass travels as this record rather than as five
     arguments threaded through four functions.
     """
+
+    OUT_DIR = Path("work/eval-rows-transcript")
+    # the page the other real-model evals already use (a cursive letter, our best
+    # case); a page with no confirmed transcript is still readable
+    DEFAULT_PAGE = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
+    SYSTEM = (
+        "You read a scanned page of handwriting. The image shows the page with its rows "
+        "numbered: one numbered chip per row of writing, in reading order, sitting beside "
+        "the row it labels. The number IS the row's number.\n\n"
+        "Each chip is drawn in the colour of the line it belongs to, and every line of "
+        "writing is tinted that same colour: the chip and its row are one colour. When it "
+        "is unclear which line a number belongs to — the writing is crowded, the chip sits "
+        "between two lines, or two chips are close together — the tint decides it: match "
+        "the chip to the line whose tint is the SAME colour as the chip, and read that line "
+        "as that number's row.\n\n"
+        "For every numbered row, return its writing. A number may cover several rows when "
+        "the writing is one continuous piece (a sentence broken across rows); never give a "
+        'row two transcripts. A row you cannot read comes back with "transcript": "" — '
+        "never guess at it and never dwell on it; an empty transcript is the correct answer "
+        "for writing you cannot make out.\n\n"
+        "Types:\n"
+        "- body: the running text\n"
+        "- injection: writing squeezed above/between rows, meant to be inserted into other "
+        "text — it REQUIRES injection_after: the row number it follows\n"
+        "- marginalia: a note in the margin, with NO injection_after\n\n"
+        "Transcribe verbatim, reading the handwriting; a word the writer crossed out is "
+        "~~word~~, an underlined word is ~word~. Never tidy the spelling, never drop words.\n\n"
+        "The page may arrive as several images: bands of the same page, top to "
+        "bottom, in order, and neighbouring bands share a little of the page. They "
+        "are ONE page — read the rows of every band and answer once, covering "
+        "every number from the first band to the last. A row visible in two bands "
+        "is still ONE row: read it once, in the band that shows it whole.\n\n"
+        "Reply with JSON only:\n"
+        '{"segments": [\n'
+        '  {"rows": [1], "type": "body", "transcript": "London Opera Centre"},\n'
+        '  {"rows": [2, 3], "type": "body", "transcript": "a sentence that runs on"},\n'
+        '  {"rows": [4], "type": "injection", "transcript": "my dear", "injection_after": 3},\n'
+        '  {"rows": [5], "type": "marginalia", "transcript": "Send this first"},\n'
+        '  {"rows": [6], "type": "body", "transcript": ""}\n'
+        "]}\n"
+        "Every numbered row must appear exactly once. No prose before or after the JSON."
+    )
 
     image_path: Path
     rows: list[Row]
@@ -199,7 +196,7 @@ class Transcriber:
             # the endpoint and the model the transcript ACTUALLY used, and how long it
             # took: a run that answers in under a second is not reading a page
             endpoint=_endpoint(),
-            model=self.model or VISION_MODEL,
+            model=self.model or ModelConfig.VISION_MODEL,
             seconds=round(seconds, 1),
             rows=len(rows),
             words=sum(len(row.word_boxes) for row in rows),
@@ -273,7 +270,7 @@ def transcribe(
     fixture: Path | None = None,
     call: Callable[..., VlmAnswer] | None = None,
     model: str | None = None,
-    out_dir: Path = OUT_DIR,
+    out_dir: Path | None = None,
 ) -> TranscriptionReport:
     """One page transcribed: its rows, its bands, its transcript, its verdict.
 
@@ -285,7 +282,12 @@ def transcribe(
     builder = Rows.from_words(words, PageSize(image.width, image.height))
     rows = builder.adjust(drawn_lines(fixture / "user-row-adjustments.json")) if fixture else builder.rows()
     return Transcriber(
-        image_path=image_path, rows=rows, fixture=fixture, call=call, model=model, out_dir=out_dir
+        image_path=image_path,
+        rows=rows,
+        fixture=fixture,
+        call=call,
+        model=model,
+        out_dir=out_dir or Transcriber.OUT_DIR,
     ).transcribe()
 
 
@@ -316,7 +318,7 @@ def row_transcripts(
     returns nothing answers with an empty mapping — the caller must leave its
     marker unwritten, not record an empty transcript as done.
     """
-    report = transcribe(image_path, model=model, call=call, out_dir=out_dir)
+    report = transcribe(image_path, model=model, call=call, out_dir=out_dir or Transcriber.OUT_DIR)
     return {int(number): text for number, text in report.transcripts.items()}
 
 
@@ -330,7 +332,7 @@ def transcribe_rows_alone(
     rows: list[Row] | None = None,
     fixture: Path | None = None,
     call: Callable[..., VlmAnswer] | None = None,
-    out_dir: Path = OUT_DIR,
+    out_dir: Path | None = None,
 ) -> list[RowReading]:
     """Read named rows ONE AT A TIME, each from a MASKED crop of its own words
     only.
@@ -351,6 +353,7 @@ def transcribe_rows_alone(
         builder = Rows.from_words(words, PageSize(image.width, image.height))
         rows = builder.adjust(drawn_lines(fixture / "user-row-adjustments.json")) if fixture else builder.rows()
     ordered = sorted(rows, key=lambda row: row.number)
+    out_dir = out_dir or Transcriber.OUT_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = image_path.stem
     alone = _AlonePage(image=image, out_dir=out_dir, stem=stem, call=call, ordered=ordered)
@@ -372,47 +375,49 @@ def _record_read(alone: _AlonePage, row: Row, read: list[RowReading]) -> None:
     read.append(RowReading(number=row.number, text=alone.text_of(row, read)))
 
 
-def masked_row(row: Row, page: Image.Image, ordered: list[Row]) -> Image.Image:
-    """The page's region for this row with EVERYTHING but the row's own words
-    painted over in the paper's colour.
-
-    The crop rectangle holds the row's words plus a little air; the mask then
-    erases whatever else that rectangle contains. A rectangle alone cannot
-    isolate a row whose region interleaves a neighbour's (page-01's 36/37, 76px
-    of vertical overlap): there is no rectangle holding one without the other.
-    Painting the neighbour over leaves only this row's writing to be read, and
-    it is exactly what "read this row alone" means."""
-    rect = row_crop(row, PageSize(page.width, page.height))
-    # PIL's crop wants its own 4-tuple; the record is the Rectangle above it
-    region = np.asarray(page.convert("RGB").crop((int(rect.x0), int(rect.y0), int(rect.x1), int(rect.y1)))).copy()
-    paper = np.array(NumberedRows.background_of(page, ordered))
-    mask = np.zeros((region.shape[0], region.shape[1]), dtype=bool)
-    pad = 2  # word boxes hug the ink; a couple of px so the strokes are never shaved
-    for word in row.word_boxes:
-        x0 = max(0, int(word.x0) - rect.x0 - pad)
-        y0 = max(0, int(word.y0) - rect.y0 - pad)
-        x1 = min(region.shape[1], int(word.x1) - rect.x0 + pad)
-        y1 = min(region.shape[0], int(word.y1) - rect.y0 + pad)
-        mask[y0:y1, x0:x1] = True
-    region[~mask] = paper[:3]
-    return Image.fromarray(region.astype("uint8"), "RGB")
-
-
-def row_crop(row: Row, size: PageSize) -> Rectangle:
-    """The rectangle holding one row's words plus a little air — neighbours may
-    be inside it, which the mask removes."""
-    width, height = size.width, size.height
-    left = max(0, int(min(word.x0 for word in row.word_boxes)) - ALONE_MARGIN)
-    right = min(width, int(max(word.x1 for word in row.word_boxes)) + ALONE_MARGIN)
-    top = max(0, int(min(word.y0 for word in row.word_boxes)) - ALONE_MARGIN)
-    bottom = min(height, int(max(word.y1 for word in row.word_boxes)) + ALONE_MARGIN)
-    return Rectangle(left, top, right, bottom)
-
-
 @dataclass(frozen=True)
 class _AlonePage:
     """The page whose rows are read one at a time: its image, where the crops
     and transcripts are kept, and what writes the transcripts."""
+
+    ALONE_MARGIN = 24  # px: air around a row read on its own
+
+    @staticmethod
+    def masked_row(row: Row, page: Image.Image, ordered: list[Row]) -> Image.Image:
+        """The page's region for this row with EVERYTHING but the row's own words
+        painted over in the paper's colour.
+
+        The crop rectangle holds the row's words plus a little air; the mask then
+        erases whatever else that rectangle contains. A rectangle alone cannot
+        isolate a row whose region interleaves a neighbour's (page-01's 36/37, 76px
+        of vertical overlap): there is no rectangle holding one without the other.
+        Painting the neighbour over leaves only this row's writing to be read, and
+        it is exactly what "read this row alone" means."""
+        rect = _AlonePage.row_crop(row, PageSize(page.width, page.height))
+        # PIL's crop wants its own 4-tuple; the record is the Rectangle above it
+        region = np.asarray(page.convert("RGB").crop((int(rect.x0), int(rect.y0), int(rect.x1), int(rect.y1)))).copy()
+        paper = np.array(NumberedRows.background_of(page, ordered))
+        mask = np.zeros((region.shape[0], region.shape[1]), dtype=bool)
+        pad = 2  # word boxes hug the ink; a couple of px so the strokes are never shaved
+        for word in row.word_boxes:
+            x0 = max(0, int(word.x0) - rect.x0 - pad)
+            y0 = max(0, int(word.y0) - rect.y0 - pad)
+            x1 = min(region.shape[1], int(word.x1) - rect.x0 + pad)
+            y1 = min(region.shape[0], int(word.y1) - rect.y0 + pad)
+            mask[y0:y1, x0:x1] = True
+        region[~mask] = paper[:3]
+        return Image.fromarray(region.astype("uint8"), "RGB")
+
+    @staticmethod
+    def row_crop(row: Row, size: PageSize) -> Rectangle:
+        """The rectangle holding one row's words plus a little air — neighbours may
+        be inside it, which the mask removes."""
+        width, height = size.width, size.height
+        left = max(0, int(min(word.x0 for word in row.word_boxes)) - _AlonePage.ALONE_MARGIN)
+        right = min(width, int(max(word.x1 for word in row.word_boxes)) + _AlonePage.ALONE_MARGIN)
+        top = max(0, int(min(word.y0 for word in row.word_boxes)) - _AlonePage.ALONE_MARGIN)
+        bottom = min(height, int(max(word.y1 for word in row.word_boxes)) + _AlonePage.ALONE_MARGIN)
+        return Rectangle(left, top, right, bottom)
 
     image: Image.Image
     out_dir: Path
@@ -424,7 +429,7 @@ class _AlonePage:
         """One row transcribed from a masked crop of its own words only — no
         neighbour's ink, nothing else in the image to confuse it with."""
         path = self.out_dir / f"{self.stem}.row-{row.number}.jpg"
-        masked_row(row, self.image, self.ordered).save(path, quality=90)
+        self.masked_row(row, self.image, self.ordered).save(path, quality=90)
         read_above = "\n".join(f"row {one.number}: {one.text}" for one in above[-6:])
         prompt = (
             f"This is ONE row of a handwritten letter: row {row.number}, alone. Transcribe exactly what it says, "
@@ -432,7 +437,7 @@ class _AlonePage:
             "ends mid-sentence, transcribe just what is here"
             + (f". The rows immediately above it read:\n{read_above}" if read_above else ".")
         )
-        options = VlmOptions(system=SYSTEM, user_text=prompt)
+        options = VlmOptions(system=Transcriber.SYSTEM, user_text=prompt)
         answer = (
             self.call([path], options=options)
             if self.call is not None
@@ -511,9 +516,9 @@ class _Bands:
         numbers = sorted(strip.numbers.values())
         band_text = band_prompt(index, len(self.bands.numbered), numbers, so_far)
         options = (
-            VlmOptions(system=SYSTEM, user_text=band_text, model=self.model)
+            VlmOptions(system=Transcriber.SYSTEM, user_text=band_text, model=self.model)
             if self.model
-            else VlmOptions(system=SYSTEM, user_text=band_text)
+            else VlmOptions(system=Transcriber.SYSTEM, user_text=band_text)
         )
         answer = self._call(index, options)
         try:
@@ -585,7 +590,7 @@ def main(argv: list[str] | None = None) -> int:
         index = args.index("--fixture")
         fixture = Path(args[index + 1])
         del args[index : index + 2]
-    pages = [Path(arg) for arg in args] or [DEFAULT_PAGE]
+    pages = [Path(arg) for arg in args] or [Transcriber.DEFAULT_PAGE]
     code = 0
     for page in pages:
         if not page.is_file():

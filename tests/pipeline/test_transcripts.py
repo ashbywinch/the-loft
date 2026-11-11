@@ -17,7 +17,7 @@ from document.word import Word
 from pipeline.model.token_usage import TokenUsage
 from pipeline.model.vlm import VlmOptions
 from pipeline.model.vlm_answer import VlmAnswer
-from pipeline.transcribe.transcripts import masked_row, row_crop, row_transcripts, transcribe
+from pipeline.transcribe.transcripts import _AlonePage, row_transcripts, transcribe
 
 PAGE = PageSize(2544, 4642)
 PAPER = (247, 243, 232)
@@ -51,7 +51,7 @@ def test_the_mask_erases_a_neighbour_that_interleaves_vertically() -> None:
     page_draw.rectangle((250, 110, 350, 150), fill=FOREIGN)  # the interleaved neighbour
     row = _row(36, [(100, 100, 200, 140), (400, 100, 500, 140)])
     neighbour = _row(37, [(250, 110, 350, 150)])
-    masked = np.asarray(masked_row(row, page, [row, neighbour])).astype(int)
+    masked = np.asarray(_AlonePage.masked_row(row, page, [row, neighbour])).astype(int)
     assert not (np.abs(masked - FOREIGN).max(axis=2) <= 20).any(), "the neighbour's ink survived the mask"
     assert (np.abs(masked - INK).max(axis=2) <= 20).any(), "the row's own ink was erased by the mask"
 
@@ -62,7 +62,7 @@ def test_the_mask_keeps_the_rows_own_ink_untouched() -> None:
     page = Image.new("RGB", (700, 300), PAPER)
     ImageDraw.Draw(page).rectangle((100, 100, 300, 140), fill=INK)
     row = _row(1, [(100, 100, 300, 140)])
-    masked = np.asarray(masked_row(row, page, [row])).astype(int)
+    masked = np.asarray(_AlonePage.masked_row(row, page, [row])).astype(int)
     origin = np.asarray(page.crop((76, 76, 324, 164))).astype(int)
     box = (slice(24, 64), slice(24, 224))  # word (100,100)-(300,140) in crop coords
     assert (np.abs(masked[box] - origin[box]).max()) <= 20, "the row's words were altered by the mask"
@@ -70,7 +70,7 @@ def test_the_mask_keeps_the_rows_own_ink_untouched() -> None:
 
 def test_the_rect_holds_only_the_rows_words_plus_air() -> None:
     row = _row(2, [(100, 400, 200, 440)])
-    rect = row_crop(row, PAGE)
+    rect = _AlonePage.row_crop(row, PAGE)
     assert (rect.x0, rect.y0, rect.x1, rect.y1) == (76, 376, 224, 464)
 
 

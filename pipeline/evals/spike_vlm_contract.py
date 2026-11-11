@@ -19,10 +19,6 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
-VALID_TYPES = ("body", "injection", "marginalia", "rule")
-
-_FENCE = "```"  # the markdown fence the model sometimes wraps its JSON in
-
 
 class ContractError(ValueError):
     """The VLM's answer violates the schema — fail loudly, never merge."""
@@ -30,6 +26,8 @@ class ContractError(ValueError):
 
 @dataclass(frozen=True)
 class Segment:
+    VALID_TYPES = ("body", "injection", "marginalia", "rule")
+
     """One segment of the VLM's answer, judged against the render's numbered
     boxes: the id, the type, the word ids it read, its transcript (None for a
     rule that states none) and the word an injection lands after.
@@ -55,8 +53,8 @@ class Segment:
         if not isinstance(segment_id, str) or not segment_id:
             raise ContractError(f"a segment has no id: {raw!r}")
         kind = raw.get("type")
-        if kind not in VALID_TYPES:
-            raise ContractError(f"{segment_id}: unknown type {kind!r} (not {VALID_TYPES})")
+        if kind not in Segment.VALID_TYPES:
+            raise ContractError(f"{segment_id}: unknown type {kind!r} (not {Segment.VALID_TYPES})")
         return cls(
             id=segment_id,
             type=kind,
@@ -118,15 +116,59 @@ def _transcript(segment_id: str, kind: str, raw_transcript: Any) -> str | None:
     return raw_transcript
 
 
+class Prompts:
+    """The spike's contract-checking instruction set."""
+
+    LINES = (
+        "You segment a scanned letter into its segments of writing. The image shows the "
+        "letter with every detected word boxed and numbered; the number on a box IS its "
+        "word id.",
+        "",
+        "A segment is the longest run of text that belongs together — a logically "
+        "consecutive run of writing. It ends where the writing logically separates: a "
+        "line break, a column, a margin annotation, an insertion, a distinct hand. A "
+        "paragraph and a 'yours sincerely' after it are never one segment; a body line "
+        "and a marginal note are never one segment.",
+        "",
+        "The segment types:",
+        "- body: the running text, one segment per line",
+        "- injection: text meant to be inserted into other text (a caret, text squeezed "
+        'above a line). The JSON REQUIRES injection_point: {"after": <word id>} — the '
+        "word the caret follows.",
+        "- marginalia: a note with NO injection point, and the JSON must NOT carry one",
+        "- rule: an underline or flourish the detector found — it needs no transcript",
+        "",
+        "Transcribe each segment verbatim, word by word, reading the boxes. A word the "
+        "writer crossed out is transcribed ~~word~~ (double tilde); a word the writer "
+        "underlined is ~word~ (single tilde). The markers are content: never drop them, "
+        "never type them literally as text.",
+        "",
+        "Reply with JSON only:",
+        '{"segments": [',
+        '  {"id": "seg-1", "type": "body", "transcript": "London Opera Centre", '
+        '"word_ids": [129, 130, 131, 135, 138]},',
+        '  {"id": "seg-2", "type": "injection", "transcript": "my dear", '
+        '"injection_point": {"after": 147}, "word_ids": [152, 153]},',
+        '  {"id": "seg-3", "type": "marginalia", "transcript": "Send this first", "word_ids": [160]},',
+        '  {"id": "seg-4", "type": "rule", "word_ids": [151]}',
+        "]}",
+        "No prose before or after the JSON.",
+    )
+
+
+SYSTEM_PROMPT = "\n".join(Prompts.LINES)
+
+
 def _segments_of(answer: str) -> list[Any]:
     """The answer's raw segments, or a refusal: the model sometimes wraps its
     JSON in a markdown fence, and the envelope must be
     ``{"segments": [...]}``."""
+    fence = "```"  # the markdown fence the model sometimes wraps its JSON in
     stripped = answer.strip()
-    if stripped.startswith(_FENCE):
+    if stripped.startswith(fence):
         lines = stripped.splitlines()
-        lines = lines[1:] if lines[0].strip().startswith(_FENCE) else lines
-        stripped = "\n".join(line for line in lines if not line.strip().startswith(_FENCE)).strip()
+        lines = lines[1:] if lines[0].strip().startswith(fence) else lines
+        stripped = "\n".join(line for line in lines if not line.strip().startswith(fence)).strip()
     try:
         parsed = json.loads(stripped)
     except json.JSONDecodeError as exc:
@@ -187,44 +229,6 @@ def reconcile(answers: list[Segment], universe: int) -> Reconciliation:
     if missing:
         problems.append(f"unassigned words: {missing[:20]}{'...' if len(missing) > 20 else ''}")
     return Reconciliation(assignment, problems)
-
-
-_SYSTEM_LINES = (
-    "You segment a scanned letter into its segments of writing. The image shows the "
-    "letter with every detected word boxed and numbered; the number on a box IS its "
-    "word id.",
-    "",
-    "A segment is the longest run of text that belongs together — a logically "
-    "consecutive run of writing. It ends where the writing logically separates: a "
-    "line break, a column, a margin annotation, an insertion, a distinct hand. A "
-    "paragraph and a 'yours sincerely' after it are never one segment; a body line "
-    "and a marginal note are never one segment.",
-    "",
-    "The segment types:",
-    "- body: the running text, one segment per line",
-    "- injection: text meant to be inserted into other text (a caret, text squeezed "
-    'above a line). The JSON REQUIRES injection_point: {"after": <word id>} — the '
-    "word the caret follows.",
-    "- marginalia: a note with NO injection point, and the JSON must NOT carry one",
-    "- rule: an underline or flourish the detector found — it needs no transcript",
-    "",
-    "Transcribe each segment verbatim, word by word, reading the boxes. A word the "
-    "writer crossed out is transcribed ~~word~~ (double tilde); a word the writer "
-    "underlined is ~word~ (single tilde). The markers are content: never drop them, "
-    "never type them literally as text.",
-    "",
-    "Reply with JSON only:",
-    '{"segments": [',
-    '  {"id": "seg-1", "type": "body", "transcript": "London Opera Centre", "word_ids": [129, 130, 131, 135, 138]},',
-    '  {"id": "seg-2", "type": "injection", "transcript": "my dear", '
-    '"injection_point": {"after": 147}, "word_ids": [152, 153]},',
-    '  {"id": "seg-3", "type": "marginalia", "transcript": "Send this first", "word_ids": [160]},',
-    '  {"id": "seg-4", "type": "rule", "word_ids": [151]}',
-    "]}",
-    "No prose before or after the JSON.",
-)
-
-SYSTEM_PROMPT = "\n".join(_SYSTEM_LINES)
 
 
 def user_prompt(universe: int) -> str:

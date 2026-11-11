@@ -22,16 +22,21 @@ from PIL import Image
 
 from document.colour import Colour
 from document.rectangle import Rectangle
-from pipeline.detect.mark import SCALE, find_marks
+from pipeline.detect.mark import Components, find_marks
 from pipeline.detect.reader import artifacts, ink_mask
-from pipeline.rows.page_visuals import review_image
+from pipeline.rows.page_visuals import PagePainter
 from tools.word_numbering import draw_numbering, number_words, place_numbering
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 if not SCAN.exists():
     raise SystemExit(f"render_* needs the adopt batch mounted - the scan is not at {SCAN}")
-OUT = Path(__file__).resolve().parent / "evidence" / "marks-wholepage-review.jpg"
-STAGED = Path(__file__).resolve().parent / "evidence" / "marks-wholepage-numbering.json"
+
+
+class Config:
+    """This script's fixed inputs and outputs."""
+
+    OUT = Path(__file__).resolve().parent / "evidence" / "marks-wholepage-review.jpg"
+    STAGED = Path(__file__).resolve().parent / "evidence" / "marks-wholepage-numbering.json"
 
 
 @dataclass(frozen=True)
@@ -64,7 +69,10 @@ def _main() -> int:
     mask = ink_mask(page)
     artifacts(mask)
     shapes = find_marks(mask)
-    boxes = [(s.x0 * SCALE, s.y0 * SCALE, s.x1 * SCALE, s.y1 * SCALE) for s in shapes]
+    boxes = [
+        (s.x0 * Components.SCALE, s.y0 * Components.SCALE, s.x1 * Components.SCALE, s.y1 * Components.SCALE)
+        for s in shapes
+    ]
     numbered = number_words(boxes)
     staged = [
         StagedMark(
@@ -75,13 +83,13 @@ def _main() -> int:
         )
         for entry in numbered
     ]
-    STAGED.write_text(json.dumps({"words": [mark.to_dict() for mark in staged]}, indent=1), encoding="utf-8")
+    Config.STAGED.write_text(json.dumps({"words": [mark.to_dict() for mark in staged]}, indent=1), encoding="utf-8")
     section = Rectangle(x0=0.0, y0=0.0, x1=float(page.width), y1=float(page.height))
     layout = place_numbering(numbered, section, 1.0)
     img = draw_numbering(page, layout)
-    OUT.write_bytes(review_image(img))
-    print(f"marks wholepage: {len(shapes)} marks -> {OUT} ({OUT.stat().st_size // 1024}KB)")
-    print(f"numbering staged -> {STAGED}")
+    Config.OUT.write_bytes(PagePainter.review_image(img))
+    print(f"marks wholepage: {len(shapes)} marks -> {Config.OUT} ({Config.OUT.stat().st_size // 1024}KB)")
+    print(f"numbering staged -> {Config.STAGED}")
     return 0
 
 

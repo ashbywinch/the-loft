@@ -32,9 +32,9 @@ from document.traces import Traces
 from document.words import Words
 from pipeline.api.row_correction import RowCorrection
 from pipeline.artefacts import BatchArtefacts
-from pipeline.batch_record import STATUS_PENDING
+from pipeline.batch_record import BatchRecord
 from pipeline.boundary import Boundary
-from pipeline.classify import read_route
+from pipeline.classify import PageKinds
 from pipeline.identification import Identification
 from pipeline.identify import identify
 from pipeline.layout import (
@@ -505,7 +505,7 @@ def apply_row_adjustments(
     atomic_write(readings.adjustments_path(page), adjustments_json + "\n")
     atomic_write(readings.adjusted_rows_path(page), json.dumps(Rows.to_dict(rows), ensure_ascii=False, indent=1) + "\n")
     if adjustments.lines:
-        _ = set_status(batch_id, STATUS_PENDING, registry_dir)
+        _ = set_status(batch_id, BatchRecord.STATUS_PENDING, registry_dir)
     return RowCorrection(rows=rows, violations=violations, tints=row_tints(rows))
 
 
@@ -986,7 +986,7 @@ def _reread_page(
         receipt.unlink(missing_ok=True)
     for suffix in (".selfreport.json", ".vlm.json", ".orientation.json"):
         (artefacts.guess_dir / Path(page).with_suffix(suffix)).unlink(missing_ok=True)
-    route = read_route(classification_of(artefacts).get(page, {}))
+    route = PageKinds.read_route(classification_of(artefacts).get(page, {}))
     if route == "direct":
         run.printed_pages([page], _transcribe=transcribe or printed_transcript, provisional_boundary=False)
     elif route == "structured":

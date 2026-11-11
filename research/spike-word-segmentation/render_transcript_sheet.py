@@ -30,15 +30,21 @@ from pipeline.transcribe.transcripts import drawn_lines, words_from
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 ANSWER = Path("work/eval-rows-transcript/page-01.answer.json")
 FIXTURE = Path("tests/fixtures/page01-rows-gold")
-LINES = FIXTURE / "user-row-adjustments.json"
-WORDS = FIXTURE / "words.json"
-OUT = Path("research/spike-word-segmentation/rows-transcript-sheet.jpg")
 
-MARGIN = 18  # px: air around the reading's column
-COLUMN = 1400  # px: the reading's column — wide enough for most lines, and lines
-# that do not fit wrap UNDER their own entry, never clipped and never overlapping
-TEXT_SIZE = 36  # px: the reading's own size, level with its row
-NUMBER_SIZE = 40  # px: the row number in the gutter
+
+class Config:
+    """This script's fixed inputs and outputs."""
+
+    LINES = FIXTURE / "user-row-adjustments.json"
+    WORDS = FIXTURE / "words.json"
+    MARGIN = 18  # px: air around the reading's column
+    COLUMN = 1400  # px: the reading's column — wide enough for most lines, and lines
+    # that do not fit wrap UNDER their own entry, never clipped and never overlapping
+    TEXT_SIZE = 36  # px: the reading's own size, level with its row
+    NUMBER_SIZE = 40  # px: the row number in the gutter
+
+
+OUT = Path("research/spike-word-segmentation/rows-transcript-sheet.jpg")
 
 
 def _width(font: ImageFont.FreeTypeFont | ImageFont.ImageFont, text: str) -> int:
@@ -78,33 +84,37 @@ def main() -> None:
     page = Image.open(SCAN).convert("RGB")
     # the CORRECT rows: the rows the reviewer's drawn lines make — the reading
     # and the highlight are both about those, never the geometry's draft
-    rows = Rows.from_words(words_from(WORDS), PageSize(page.width, page.height)).adjust(drawn_lines(LINES))
+    rows = Rows.from_words(words_from(Config.WORDS), PageSize(page.width, page.height)).adjust(
+        drawn_lines(Config.LINES)
+    )
     readings = _readings(answer)
-    print(f"the rows are the correction's: {len(rows)} from {LINES.name}")
+    print(f"the rows are the correction's: {len(rows)} from {Config.LINES.name}")
 
     # the highlight is the house renderer's (each row's words tinted in its own
     # hue, joined by the minimal bands) and the numbers are the document
     # package's own drawing — no second convention lives in this script
     highlighted = NumberedRows.draw_numbers(render_rows(page, rows), rows)
-    text_font = _font(TEXT_SIZE)
-    height = TEXT_SIZE + 8
+    text_font = _font(Config.TEXT_SIZE)
+    height = Config.TEXT_SIZE + 8
     entries: list[list[str]] = []
     for row in rows:
         text = readings.texts.get(row.number) or "(no reading)"
         prefix = f"{row.number}   "
-        wrapped = textwrap.wrap(text, max(1, (COLUMN - 2 * MARGIN - _width(text_font, prefix)) // (TEXT_SIZE // 2)))
+        wrapped = textwrap.wrap(
+            text, max(1, (Config.COLUMN - 2 * Config.MARGIN - _width(text_font, prefix)) // (Config.TEXT_SIZE // 2))
+        )
         entries.append([prefix + (wrapped[0] if wrapped else "")] + [" " * 6 + line for line in wrapped[1:]])
     sheet = Image.new(
         "RGB",
-        (page.width + COLUMN, max(page.height, sum(len(e) for e in entries) * height + 2 * MARGIN)),
+        (page.width + Config.COLUMN, max(page.height, sum(len(e) for e in entries) * height + 2 * Config.MARGIN)),
         (255, 255, 255),
     )
     sheet.paste(highlighted.image, (0, 0))
     draw = ImageDraw.Draw(sheet)
-    y = MARGIN
+    y = Config.MARGIN
     for entry in entries:
         for line in entry:
-            draw.text((page.width + MARGIN, y), line, fill=Colour(red=20, green=20, blue=20), font=text_font)
+            draw.text((page.width + Config.MARGIN, y), line, fill=Colour(red=20, green=20, blue=20), font=text_font)
             y += height
 
     sheet.save(OUT, quality=84)

@@ -124,7 +124,13 @@ good.
   taking the same leading parameter are a class waiting to happen); a pile
   of functions over one structure is a finding. **No module-level mutable
   state and no `global`** — put state in a class named for the domain
-  concept it represents, never the pattern name.
+  concept it represents, never the pattern name. The same goes for a named
+  measure: a module-level constant lives on the class that owns the work it
+  measures, privately (`ClassName._MEASURE`) unless another module reads it,
+  and a helper that operates on that class's data is its method. A pure
+  helper with one reader keeps its measure local to the function; a holder
+  class invented to wrap one number is the ceremony this rule exists to
+  avoid.
 - **Each class in its own module.** Named after the class; exception for a
   module grouping closely related handful-of-fields models that share one
   reason to change. Extract once a class grows non-trivial behaviour.

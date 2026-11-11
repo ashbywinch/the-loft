@@ -9,7 +9,7 @@ from typing import NamedTuple
 import numpy as np
 
 from document.trace import Box
-from pipeline.detect.mark import SCALE, Mark
+from pipeline.detect.mark import Components, Mark
 from pipeline.detect.projected_ink import ProjectedInk
 from pipeline.detect.ruler import Ruler
 from pipeline.detect.u_span import USpan
@@ -114,14 +114,17 @@ class Line:
         """A box [u0, u1] along the line by [v0, v1] across it, in page pixels."""
         x_ref, y_ref, ux, uy, nx, ny = self.frame(shapes)
         return [
-            [(x_ref + u * ux + v * nx) * SCALE, (y_ref + u * uy + v * ny) * SCALE]
+            [
+                (x_ref + u * ux + v * nx) * Components.SCALE,
+                (y_ref + u * uy + v * ny) * Components.SCALE,
+            ]
             for u, v in ((u0, v0), (u1, v0), (u1, v1), (u0, v1))
         ]
 
     def u_span(self, shapes: list[Mark], poly: Box) -> USpan:
         """Where a box lies along this line, in the line's own units."""
         x_ref, y_ref, ux, uy, _, _ = self.frame(shapes)
-        us = [((px / SCALE - x_ref) * ux + (py / SCALE - y_ref) * uy) for px, py in poly]
+        us = [((px / Components.SCALE - x_ref) * ux + (py / Components.SCALE - y_ref) * uy) for px, py in poly]
         return USpan(min(us), max(us))
 
     def boxes(self, scale: Ruler) -> list[Box]:
@@ -160,8 +163,8 @@ class Line:
                     run,
                     float(along.min()),
                     float(along.max()),
-                    max(float(np.percentile(across, 2)), -Line._CAP * pitch / SCALE),
-                    min(float(np.percentile(across, 98)), Line._CAP * pitch / SCALE),
+                    max(float(np.percentile(across, 2)), -Line._CAP * pitch / Components.SCALE),
+                    min(float(np.percentile(across, 98)), Line._CAP * pitch / Components.SCALE),
                 )
             )
         return out

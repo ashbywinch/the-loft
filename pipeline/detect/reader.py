@@ -36,9 +36,9 @@ from pipeline.detect.covered_words import CoveredWords
 from pipeline.detect.cut_verdict import CutVerdict
 from pipeline.detect.gap import Gap
 from pipeline.detect.line import Line
-from pipeline.detect.mark import BAND_RUN, SCALE, SHAPE_MIN_AREA, Ink, Mark, find_marks
+from pipeline.detect.mark import Components, Ink, Mark, find_marks
 from pipeline.detect.row_runs import RowRuns
-from pipeline.detect.ruler import LINE_RATIO_DEFAULT, Ruler
+from pipeline.detect.ruler import Ruler
 from pipeline.detect.segment import Segment
 from pipeline.detect.stroke import Stroke
 from pipeline.detect.stroke_group import StrokeGroup
@@ -46,26 +46,14 @@ from pipeline.detect.traced_box import TracedBox
 from pipeline.detect.u_span import USpan
 from pipeline.detect.word_groups import WordGroups
 
-BATCH = Path(os.environ.get("LOFT_BATCH", "/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004"))
-PAGE = BATCH / "oriented/page-01.jpg"
-TRACE = Path(os.environ.get("LOFT_TRACE_DIR", "/tmp/trace"))
-INK_DELTA = 25  # grey levels below the local paper level = ink
-SPREAD_FACTOR = 1.2  # × pitch: a line whose members spread further is two lines
-CLUSTER_DIVISOR = 2  # pitch ÷ this: how far a member may sit from its cluster
-MIN_BOX_PX = 20  # full-res px: a leftover sliver thinner than this is noise
-LINE_ROUNDS = 3  # strip-and-regroup rounds: a line can hide behind another
-ROW_MERGE = 2  # 1/2 px: rows this close belong to the same piece of a cut shape
-WAIST_RUN = 10  # columns: a cut row running this far is a band of ink, not a stroke tip
-WAIST_OVERLAP = 0.5  # of the shorter longest-run: this much overlap is one band
-
-VERTICAL_RULE_MIN_HEIGHT = 100  # 1/2 px: a vertical rule runs the height of several lines
-
 
 def ink_mask(page: Image.Image) -> np.ndarray:
     """1 where a pixel is darker than the paper around it."""
-    g = np.asarray(page.convert("L").resize((page.width // SCALE, page.height // SCALE))).astype(int)
+    g = np.asarray(page.convert("L").resize((page.width // Components.SCALE, page.height // Components.SCALE))).astype(
+        int
+    )
     bg = np.asarray(Image.fromarray(g.astype(np.uint8)).filter(ImageFilter.MedianFilter(17))).astype(int)
-    return (bg - g) > INK_DELTA
+    return (bg - g) > Reading.INK_DELTA
 
 
 def artifacts(mask: np.ndarray) -> int:
@@ -89,6 +77,9 @@ class LineFitter:
     fixed number of rounds: refit every line, merge the lines that are one line,
     reassign every shape to its nearest line, and split a line that covers two.
     """
+
+    SPREAD_FACTOR = 1.2  # × pitch: a line whose members spread further is two lines
+    CLUSTER_DIVISOR = 2  # pitch ÷ this: how far a member may sit from its cluster
 
     ROUNDS = 8  # refit-merge-reassign-split passes: the fit settles well inside this
 
@@ -166,7 +157,7 @@ class LineFitter:
             # the cluster comparison below uses the raw offset. The two differ,
             # and swapping them changes which lines split.
             spread = sorted(line.signed_distance(shape) for shape in line.shapes)
-            if len(spread) < 2 or spread[-1] - spread[0] <= SPREAD_FACTOR * self.scale.pitch:
+            if len(spread) < 2 or spread[-1] - spread[0] <= LineFitter.SPREAD_FACTOR * self.scale.pitch:
                 split.append(line)
                 continue
             split += self._clustered_lines(line)
@@ -178,7 +169,10 @@ class LineFitter:
         clusters: list[list[Mark]] = []
         for shape in sorted(line.shapes, key=lambda s: s.baseline - line.y_at(s.cx)):
             last = clusters[-1][-1] if clusters else None
-            if last is not None and abs(line.offset(shape) - line.offset(last)) <= self.scale.pitch / CLUSTER_DIVISOR:
+            if (
+                last is not None
+                and abs(line.offset(shape) - line.offset(last)) <= self.scale.pitch / LineFitter.CLUSTER_DIVISOR
+            ):
                 clusters[-1].append(shape)
             else:
                 clusters.append([shape])
@@ -213,12 +207,12 @@ def is_waist(per_row: dict[int, list[int]], runs: dict[int, int], top: int, bott
     mid-body. A word boundary breaks at least one side: a short run, or two
     long runs that do not overlap. (User rulings 2026-09-13: the bug through
     widening ink; the eight one-word pins; the Pupil block.)"""
-    if min(runs[top], runs[bottom]) < WAIST_RUN:
+    if min(runs[top], runs[bottom]) < Reading.WAIST_RUN:
         return True
     top_iv = _longest_interval(per_row[top])
     bot_iv = _longest_interval(per_row[bottom])
     overlap = max(0, min(top_iv.end, bot_iv.end) - max(top_iv.start, bot_iv.start) + 1)
-    return overlap < WAIST_OVERLAP * min(top_iv.end - top_iv.start + 1, bot_iv.end - bot_iv.start + 1)
+    return overlap < Reading.WAIST_OVERLAP * min(top_iv.end - top_iv.start + 1, bot_iv.end - bot_iv.start + 1)
 
 
 def _rows_ink(shape: Mark, y0: int, y1: int) -> Ink:
@@ -233,11 +227,6 @@ def piece_between(shape: Mark, segment: Segment) -> Mark:
     return shape.piece(_rows_ink(shape, segment.y0, segment.y1), segment.line, segment.y0)
 
 
-GAP_FRACTION = 0.25  # of the flanking ink: a row this much thinner is a gap
-GAP_WINDOW = 4  # rows either side whose median run is the flank
-GAP_MIN_FLANK = 3  # 1/2 px: a gap between scraps of ink cuts nothing
-
-
 def split_shapes(shapes: list[Mark], lines: list[Line], unit: float) -> list[Mark]:
     """The words these marks make at this scale, exposed for the tests.
 
@@ -248,7 +237,7 @@ def split_shapes(shapes: list[Mark], lines: list[Line], unit: float) -> list[Mar
     return Writing(
         marks=shapes,
         lines=lines,
-        scale=Ruler(unit=unit, pitch=LINE_RATIO_DEFAULT * unit),
+        scale=Ruler(unit=unit, pitch=Ruler.LINE_RATIO_DEFAULT * unit),
         stripped=0,
     )._words_of()
 
@@ -287,8 +276,8 @@ def covered_by(stroke: list[Point], shapes: list[Mark], touch: float) -> list[Ma
         shape
         for shape in shapes
         if any(
-            shape.x0 - touch <= point.x / SCALE <= shape.x1 + touch
-            and shape.y0 - touch <= point.y / SCALE <= shape.y1 + touch
+            shape.x0 - touch <= point.x / Components.SCALE <= shape.x1 + touch
+            and shape.y0 - touch <= point.y / Components.SCALE <= shape.y1 + touch
             for point in stroke
         )
     ]
@@ -319,6 +308,13 @@ class Writing:
     underline as joining anything'). `cut` is the cutting of the
     marks into words, `_settled` the lines re-fitted to them."""
 
+    LINE_ROUNDS = 3  # strip-and-regroup rounds: a line can hide behind another
+    ROW_MERGE = 2  # 1/2 px: rows this close belong to the same piece of a cut shape
+    VERTICAL_RULE_MIN_HEIGHT = 100  # 1/2 px: a vertical rule runs the height of several lines
+    GAP_FRACTION = 0.25  # of the flanking ink: a row this much thinner is a gap
+    GAP_WINDOW = 4  # rows either side whose median run is the flank
+    GAP_MIN_FLANK = 3  # 1/2 px: a gap between scraps of ink cuts nothing
+
     marks: list[Mark]
     lines: list[Line]
     scale: Ruler
@@ -329,12 +325,12 @@ class Writing:
         """The page's writing, measured from its ink.
 
         The scale comes from the marks, which is why the measuring is inside the
-        loop; LINE_ROUNDS bounds it."""
+        loop; Writing.LINE_ROUNDS bounds it."""
         cls._strip_vertical_rules(mask)
         marks = find_marks(mask)
         scale = _page_scale(marks, traced)
         stripped = 0
-        for _ in range(LINE_ROUNDS):
+        for _ in range(Writing.LINE_ROUNDS):
             lines = LineFitter(scale).fit(marks)
             found = line_pieces(split_shapes(marks, lines, scale.unit), scale.unit)
             if not found:
@@ -390,7 +386,7 @@ class Writing:
             continuation = continuations.get(index)
             if continuation is not None:
                 ink = ink.joined_with(Ink.of_shape(continuation))
-            if ink.size < SHAPE_MIN_AREA // 2:
+            if ink.size < Components.SHAPE_MIN_AREA // 2:
                 continue
             piece = shape.piece(ink, segment.line, segment.y0)
             if piece.is_streak:
@@ -449,7 +445,7 @@ class Writing:
         space."""
         row_runs = self._row_runs(shape)
         gap = self._deepest_gap(row_runs.rows, row_runs.runs)
-        if gap.depth >= GAP_FRACTION:
+        if gap.depth >= Writing.GAP_FRACTION:
             return None  # strict: a tie at the boundary is a letter's internal gap
         per_row = shape.rows()
         upper = [y for y in row_runs.rows if y <= gap.row]
@@ -472,12 +468,12 @@ class Writing:
         edges, with both flanks substantial."""
         best = Gap(depth=1.0, row=rows[0])
         for i, y in enumerate(rows):
-            if i < GAP_WINDOW or i >= len(rows) - GAP_WINDOW:
+            if i < Writing.GAP_WINDOW or i >= len(rows) - Writing.GAP_WINDOW:
                 continue
-            above = float(np.median([runs[rows[j]] for j in range(i - GAP_WINDOW, i)]))
-            below = float(np.median([runs[rows[j]] for j in range(i + 1, i + 1 + GAP_WINDOW)]))
+            above = float(np.median([runs[rows[j]] for j in range(i - Writing.GAP_WINDOW, i)]))
+            below = float(np.median([runs[rows[j]] for j in range(i + 1, i + 1 + Writing.GAP_WINDOW)]))
             flank = max(above, below)
-            if flank < GAP_MIN_FLANK:
+            if flank < Writing.GAP_MIN_FLANK:
                 continue
             score = runs[y] / flank
             if score < best.depth:
@@ -562,7 +558,7 @@ class Writing:
             if last is None:
                 segments.append(Segment(nearest, y, y))
                 continue
-            if (last.line == nearest and y - last.y1 <= ROW_MERGE) or (
+            if (last.line == nearest and y - last.y1 <= Writing.ROW_MERGE) or (
                 last.line != nearest and not is_waist(per_row, runs, last.y1, y)
             ):
                 segments[-1] = Segment(last.line, last.y0, y)
@@ -576,7 +572,7 @@ class Writing:
         strip can classify and remove it."""
         ys, xs = shape.pix
         width = float(xs.max() - xs.min() + 1)
-        band = [y for y in shape.rows() if runs[y] >= BAND_RUN * width]
+        band = [y for y in shape.rows() if runs[y] >= Mark.BAND_RUN * width]
         if len(band) < 2:
             return segments
         lo, hi = band[0], band[-1]
@@ -641,7 +637,7 @@ class Writing:
                         longest = below - run + 1
                 else:
                     run = 1
-            if longest_run >= VERTICAL_RULE_MIN_HEIGHT:
+            if longest_run >= Writing.VERTICAL_RULE_MIN_HEIGHT:
                 mask[longest : longest + longest_run, x] = False
 
     @staticmethod
@@ -782,12 +778,12 @@ def compose_boxes(lines: list[Line], traced: list[TracedBox], scale: Ruler) -> l
 def _boxes_between(line: Line, poly: Box, traced: list[USpan], scale: Ruler) -> list[Box]:
     """The boxes one line's polygon gives, with the traced spans taken out."""
     x_ref, y_ref, ux, uy, nx, ny = line.frame(line.shapes)
-    along = [(px / SCALE - x_ref) * ux + (py / SCALE - y_ref) * uy for px, py in poly]
-    across = [(px / SCALE - x_ref) * nx + (py / SCALE - y_ref) * ny for px, py in poly]
+    along = [(px / Components.SCALE - x_ref) * ux + (py / Components.SCALE - y_ref) * uy for px, py in poly]
+    across = [(px / Components.SCALE - x_ref) * nx + (py / Components.SCALE - y_ref) * ny for px, py in poly]
     boxes = [
         line.box(line.shapes, span.start, span.end, min(across), max(across))
         for span in _spans_after([USpan(min(along), max(along))], traced)
-        if (span.end - span.start) * SCALE > MIN_BOX_PX
+        if (span.end - span.start) * Components.SCALE > Reading.MIN_BOX_PX
     ]
     return boxes
 
@@ -812,13 +808,13 @@ def _word(shape: Mark) -> Word:
     """The word a measured shape makes: its box and its own ink lines, in page
     pixels — the record words.json holds and the reading carries."""
     return Word(
-        x0=shape.x0 * SCALE,
-        y0=shape.y0 * SCALE,
-        x1=shape.x1 * SCALE,
-        y1=shape.y1 * SCALE,
+        x0=shape.x0 * Components.SCALE,
+        y0=shape.y0 * Components.SCALE,
+        x1=shape.x1 * Components.SCALE,
+        y1=shape.y1 * Components.SCALE,
         measurements=WordMeasurements(
-            baseline=shape.baseline * SCALE,
-            waistline=shape.waistline * SCALE,
+            baseline=shape.baseline * Components.SCALE,
+            waistline=shape.waistline * Components.SCALE,
             line=shape.line,
         ),
     )
@@ -855,7 +851,9 @@ def read_page(page_path: Path, trace_dir: Path, split: bool = True) -> list[Box]
     removed = artifacts(mask)
     # the reviewer's traces measure the page's line spacing, which with the
     # writing's own height gives the scale everything else is measured against
-    traced = sorted(float(np.median([point[1] for point in stroke])) * page.height / SCALE for stroke in strokes_raw)
+    traced = sorted(
+        float(np.median([point[1] for point in stroke])) * page.height / Components.SCALE for stroke in strokes_raw
+    )
     writing = Writing.of(mask, traced)
     if split:
         writing = writing.cut(writing.scale.unit)
@@ -883,6 +881,14 @@ class Reading:
     each word a `Word` record carrying its own measured baseline and waistline.
     The drawn-lines correction (`rows.adjust`) groups the words, so the reading
     carries them — the pipeline persists both side by side."""
+
+    BATCH = Path(os.environ.get("LOFT_BATCH", "/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004"))
+    PAGE = BATCH / "oriented/page-01.jpg"
+    TRACE = Path(os.environ.get("LOFT_TRACE_DIR", "/tmp/trace"))
+    INK_DELTA = 25  # grey levels below the local paper level = ink
+    MIN_BOX_PX = 20  # full-res px: a leftover sliver thinner than this is noise
+    WAIST_RUN = 10  # columns: a cut row running this far is a band of ink, not a stroke tip
+    WAIST_OVERLAP = 0.5  # of the shorter longest-run: this much overlap is one band
 
     lines: list[dict[str, Any]]
     words: list[Word]
@@ -915,10 +921,10 @@ def reading_for_page(page: Image.Image) -> Reading:
                 "index": index,
                 "text": "",
                 "box": [
-                    min(xs) * SCALE,
-                    min(ys) * SCALE,
-                    max(xs) * SCALE,
-                    max(ys) * SCALE,
+                    min(xs) * Components.SCALE,
+                    min(ys) * Components.SCALE,
+                    max(xs) * Components.SCALE,
+                    max(ys) * Components.SCALE,
                 ],
                 "orientation": 0,
                 "box_source": "reader",
@@ -931,9 +937,9 @@ def reading_for_page(page: Image.Image) -> Reading:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Box every line of writing on a scanned page.")
-    parser.add_argument("--page", type=Path, default=PAGE, help="the page image")
+    parser.add_argument("--page", type=Path, default=Reading.PAGE, help="the page image")
     parser.add_argument(
-        "--trace-dir", type=Path, default=TRACE, help="where strokes.json lives and boxes.json is written"
+        "--trace-dir", type=Path, default=Reading.TRACE, help="where strokes.json lives and boxes.json is written"
     )
     args = parser.parse_args(argv)
     read_page(args.page, args.trace_dir)

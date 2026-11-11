@@ -18,16 +18,22 @@ from PIL import Image
 
 from document.colour import Colour
 from document.point import Point
-from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop
+from pipeline.rows.page_visuals import CaptionSheet, Crop, PagePainter, halo_text, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 if not SCAN.exists():
     raise SystemExit(f"render_* needs the adopt batch mounted - the scan is not at {SCAN}")
-OUT = Path(__file__).resolve().parent / "evidence" / "myra-bridge.jpg"
+
+
+class Config:
+    """This script's fixed inputs and outputs."""
+
+    OUT = Path(__file__).resolve().parent / "evidence" / "myra-bridge.jpg"
+    STROKE = (1918.0, 2550.0, 1934.0, 2556.0)
+
 
 # The two words and the guilty stroke between them, at reading scale.
 X0, Y0, X1, Y1, SCALE_OUT = 1840.0, 2510.0, 1980.0, 2610.0, 6.0
-STROKE = (1918.0, 2550.0, 1934.0, 2556.0)
 
 
 def _main() -> int:
@@ -38,7 +44,7 @@ def _main() -> int:
         "red box: the stroke, as dark as the letters themselves",
         "without it, two separate words; with it, the detector sees one",
     ]
-    sheet = captioned_sheet(crop, caption)
+    sheet = CaptionSheet.captioned_sheet(crop, caption)
     draw = sheet.draw
     bar_h = sheet.bar_height
 
@@ -49,15 +55,18 @@ def _main() -> int:
         return (v - Y0) * SCALE_OUT + bar_h
 
     draw.rectangle(
-        [px(STROKE[0]), py(STROKE[1]), px(STROKE[2]), py(STROKE[3])],
+        [px(Config.STROKE[0]), py(Config.STROKE[1]), px(Config.STROKE[2]), py(Config.STROKE[3])],
         outline=(200, 0, 0, 255),
         width=3,
     )
     halo_text(
-        draw, Point(x=px(STROKE[2]) + 8, y=py(STROKE[1]) - 12), "this stroke", fill=Colour(red=200, green=0, blue=0)
+        draw,
+        Point(x=px(Config.STROKE[2]) + 8, y=py(Config.STROKE[1]) - 12),
+        "this stroke",
+        fill=Colour(red=200, green=0, blue=0),
     )
-    OUT.write_bytes(review_image(sheet.sheet))
-    print(f"bridge -> {OUT} ({OUT.stat().st_size // 1024}KB)")
+    Config.OUT.write_bytes(PagePainter.review_image(sheet.sheet))
+    print(f"bridge -> {Config.OUT} ({Config.OUT.stat().st_size // 1024}KB)")
     return 0
 
 

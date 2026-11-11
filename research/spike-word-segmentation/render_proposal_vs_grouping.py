@@ -24,7 +24,7 @@ from document.word import Word
 from pipeline.detect.reader import reading_for_page
 from pipeline.layout_line import LayoutLine
 from pipeline.rows.box_difference import BoxDifference
-from pipeline.rows.page_visuals import captioned_sheet, stack_sheets
+from pipeline.rows.page_visuals import CaptionSheet, stack_sheets
 from pipeline.rows.render import render_rows
 from pipeline.rows.row_set import RowSet
 from pipeline.rows.rows import Rows
@@ -35,7 +35,14 @@ BOXES = Path("tests/fixtures/page01-wordseg/boxes.json")
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 OUT = Path("research/spike-word-segmentation/rows-proposal-vs-grouping.jpg")
 ZOOM = Path("research/spike-word-segmentation/rows-proposal-vs-grouping-zoom.jpg")
-SPACING = 67.6
+
+
+class Config:
+    """This script's fixed inputs and outputs."""
+
+    SPACING = 67.6
+
+
 PAGE_SIZE = PageSize.from_dict(json.loads(BOXES.read_text(encoding="utf-8"))["page"])
 
 spec = importlib.util.spec_from_file_location("gold", Path("research/render_rows_gold.py"))
@@ -60,7 +67,7 @@ def _zoom_panels(
         top, bottom = max(0, int(window.start)), min(drawn.height, int(window.end))
         crop = drawn.crop((0, top, drawn.width, bottom))
         fitted = crop.resize((width, int(crop.height * width / crop.width)), Image.Resampling.LANCZOS)
-        sheet = captioned_sheet(fitted, [rowset.title])
+        sheet = CaptionSheet.captioned_sheet(fitted, [rowset.title])
         panels.append(sheet.sheet)
     return stack_sheets(panels, max_width=width)
 

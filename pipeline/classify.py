@@ -1,4 +1,4 @@
-"""Content routing for batches: the PAGE CATEGORY, from the vision model
+"""Content routing for batches: the ATmodel
 (TECHSPEC §16.14; docs/PLAN/page-categories.md).
 
 One small call per raw page names what it is — a photograph, printed writing,
@@ -34,37 +34,105 @@ from tools.loft_paths import LoftPaths
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 
-def category_of(entry: dict[str, Any]) -> str:
-    """A classify record's category, old spellings included: a record written
-    before the 2026-11-02 vocabulary says "text"/"photo", and is read as the
-    category it names, never rewritten."""
-    kind = str(entry.get("kind", "")).strip().lower()
-    return LEGACY_KINDS.get(kind, kind)
+class PageKinds:
+    """The page-category vocabulary and the one routing rule: what a scan
+    shows, and how that kind of page is read."""
 
+    CONTENT_KINDS = ("photograph", "printed", "handwriting", "postcard_face", "form", "drawing")
+    MEDIUMS = ("printed", "handwritten")
+    # the categories that carry writing to read; the rest carry none (a photograph's
+    # image is the evidence; a drawing's labels are not a transcription)
+    TEXT_KINDS = ("printed", "handwriting", "postcard_face", "form")
+    # what the categories were called before 2026-11-02 — the classify records on
+    # disk carry the old names, and a record is never rewritten to a new spelling
+    LEGACY_KINDS = {"text": "handwriting", "photo": "photograph"}
 
-def read_route(entry: dict[str, Any]) -> str:
-    """How a page is read, by its category — the one routing rule:
+    # how a page's writing is read, by its category (docs/PLAN/page-categories.md):
+    # no text / one direct VLM read / the row pipeline (auto rows + the human row
+    # check) / a structured read (labels and values)
+    READ_ROUTES = ("none", "direct", "rows", "structured")
+    # the two page SHAPES whose writing may be printed or handwritten
+    MEDIUM_SHAPES = ("postcard_face", "form")
 
-    - a photograph or a drawing: nothing to transcribe;
-    - printed writing: one direct VLM read;
-    - handwriting: the row pipeline (auto rows, then the human row check);
-    - a postcard face: printed faces take the direct read; handwritten ones the
-      row pipeline (their two orientations are the reviewer's lines' problem
-      when the auto detection is bad);
-    - a form: a structured read (labels and values), whatever the medium — a
-      form read as prose loses its meaning.
-    A page whose category was never recorded (the legacy "text") is read as
-    handwriting, the safe route."""
-    kind = category_of(entry)
-    if kind == "printed":
-        return "direct"
-    if kind == "postcard_face":
-        return "direct" if entry.get("medium") == "printed" else "rows"
-    if kind == "form":
-        return "structured"
-    if kind == "handwriting":
-        return "rows"
-    return "none"
+    PAGE_KIND_PROMPT = (
+        "What does this scanned page SHOW? Reply with JSON only: "
+        '{"kind": "photograph"|"printed"|"handwriting"|"postcard_face"|"form"|"drawing", '
+        '"confidence": <0.0-1.0>, "medium": "printed"|"handwritten"|null}. '
+        '"photograph": a picture of people, places or things — a snapshot, however it was scanned; '
+        '"printed": writing made by type, print or typescript — a typed letter, a newspaper, a caption; '
+        '"handwriting": writing made by hand — pen or pencil, however neat; '
+        '"postcard_face": the picture side of a postcard, with or without a printed caption or a handwritten message; '
+        '"form": a form — printed labels and the entries filled against them; '
+        '"drawing": an illustration or sketch, not a photograph. '
+        'For "postcard_face" and "form", "medium" names the writing on the page: '
+        '"printed" for type or print, "handwritten" for pen or pencil, null when it carries none. '
+        "It is null for every other kind. "
+        'Judge the page\'s content, never its paper: a scanned printed letter is "printed" '
+        "even though the scan is photographic. The confidence is your own."
+    )
+
+    @staticmethod
+    def category_of(entry: dict[str, Any]) -> str:
+        """A classify record's category, old spellings included: a record written
+        before the 2026-11-02 vocabulary says "text"/"photo", and is read as the
+        category it names, never rewritten."""
+        kind = str(entry.get("kind", "")).strip().lower()
+        return PageKinds.LEGACY_KINDS.get(kind, kind)
+
+    @staticmethod
+    def read_route(entry: dict[str, Any]) -> str:
+        """How a page is read, by its category — the one routing rule:
+
+        - a photograph or a drawing: nothing to transcribe;
+        - printed writing: one direct VLM read;
+        - handwriting: the row pipeline (auto rows, then the human row check);
+        - a postcard face: printed faces take the direct read; handwritten ones the
+          row pipeline (their two orientations are the reviewer's lines' problem
+          when the auto detection is bad);
+        - a form: a structured read (labels and values), whatever the medium — a
+          form read as prose loses its meaning.
+        A page whose category was never recorded (the legacy "text") is read as
+        handwriting, the safe route."""
+        kind = PageKinds.category_of(entry)
+        if kind == "printed":
+            return "direct"
+        if kind == "postcard_face":
+            return "direct" if entry.get("medium") == "printed" else "rows"
+        if kind == "form":
+            return "structured"
+        if kind == "handwriting":
+            return "rows"
+        return "none"
+
+    @staticmethod
+    def classify_page(
+        image: Path, *, max_tokens: int = 1000, timeout: float = 120.0, urlopen: Any = None
+    ) -> PageClassification:
+        """The page's content kind, named by the vision model that reads the
+        image itself — one small call per raw page, thinking off, so the answer
+        is a reading and not a deliberation."""
+        answer = transcribe_image_vlm(
+            image,
+            system="You classify scanned pages.",
+            user_text=PageKinds.PAGE_KIND_PROMPT,
+            max_tokens=max_tokens,
+            timeout=timeout,
+            urlopen=urlopen,
+        )
+        raw = extract_json(answer.answer)
+        if not isinstance(raw, dict):
+            raise VlmError(f"no classification in the model's answer: {answer.answer[:120]!r}")
+        try:
+            kind = str(raw["kind"]).strip().lower()
+            confidence = float(raw["confidence"])
+            medium = None if raw.get("medium") is None else str(raw["medium"]).strip().lower()
+        except (KeyError, TypeError, ValueError) as e:
+            raise VlmError(f"unusable classification: {answer.answer[:120]!r}") from e
+        if kind not in PageKinds.CONTENT_KINDS or not 0.0 <= confidence <= 1.0:
+            raise VlmError(f"unusable classification: {answer.answer[:120]!r}")
+        if kind in PageKinds.MEDIUM_SHAPES and medium is not None and medium not in PageKinds.MEDIUMS:
+            raise VlmError(f"unusable medium: {answer.answer[:120]!r}")
+        return PageClassification.from_confidences({kind: confidence}, medium)
 
 
 def classify_pages(
@@ -75,75 +143,6 @@ def classify_pages(
     """One classification per page keyed by its path RELATIVE to the pile root
     (the registry's key space — basenames collide for piles with subfolders)."""
     return {str(page.relative_to(root)): classifier(page) for page in pages}
-
-
-# the PAGE CATEGORIES (docs/PLAN/page-categories.md): what one scan is. A
-# document type (letter, postcard, form) is derived from the pages a group holds.
-# printing is writing too: the hand script is its own category, and printed
-# text its own; a postcard face or a form is a page SHAPE whose writing may be
-# either, so those two carry the medium
-CONTENT_KINDS = ("photograph", "printed", "handwriting", "postcard_face", "form", "drawing")
-MEDIUMS = ("printed", "handwritten")
-# the categories that carry writing to read; the rest carry none (a photograph's
-# image is the evidence; a drawing's labels are not a transcription)
-TEXT_KINDS = ("printed", "handwriting", "postcard_face", "form")
-# what the categories were called before 2026-11-02 — the classify records on
-# disk carry the old names, and a record is never rewritten to a new spelling
-LEGACY_KINDS = {"text": "handwriting", "photo": "photograph"}
-
-# how a page's writing is read, by its category (docs/PLAN/page-categories.md):
-# no text / one direct VLM read / the row pipeline (auto rows + the human row
-# check) / a structured read (labels and values)
-READ_ROUTES = ("none", "direct", "rows", "structured")
-# the two page SHAPES whose writing may be printed or handwritten
-MEDIUM_SHAPES = ("postcard_face", "form")
-
-PAGE_KIND_PROMPT = (
-    "What does this scanned page SHOW? Reply with JSON only: "
-    '{"kind": "photograph"|"printed"|"handwriting"|"postcard_face"|"form"|"drawing", '
-    '"confidence": <0.0-1.0>, "medium": "printed"|"handwritten"|null}. '
-    '"photograph": a picture of people, places or things — a snapshot, however it was scanned; '
-    '"printed": writing made by type, print or typescript — a typed letter, a newspaper, a caption; '
-    '"handwriting": writing made by hand — pen or pencil, however neat; '
-    '"postcard_face": the picture side of a postcard, with or without a printed caption or a handwritten message; '
-    '"form": a form — printed labels and the entries filled against them; '
-    '"drawing": an illustration or sketch, not a photograph. '
-    'For "postcard_face" and "form", "medium" names the writing on the page: '
-    '"printed" for type or print, "handwritten" for pen or pencil, null when it carries none. '
-    "It is null for every other kind. "
-    'Judge the page\'s content, never its paper: a scanned printed letter is "printed" '
-    "even though the scan is photographic. The confidence is your own."
-)
-
-
-def classify_page(
-    image: Path, *, max_tokens: int = 1000, timeout: float = 120.0, urlopen: Any = None
-) -> PageClassification:
-    """The page's content kind, named by the vision model that reads the
-    image itself — one small call per raw page, thinking off, so the answer
-    is a reading and not a deliberation."""
-    answer = transcribe_image_vlm(
-        image,
-        system="You classify scanned pages.",
-        user_text=PAGE_KIND_PROMPT,
-        max_tokens=max_tokens,
-        timeout=timeout,
-        urlopen=urlopen,
-    )
-    raw = extract_json(answer.answer)
-    if not isinstance(raw, dict):
-        raise VlmError(f"no classification in the model's answer: {answer.answer[:120]!r}")
-    try:
-        kind = str(raw["kind"]).strip().lower()
-        confidence = float(raw["confidence"])
-        medium = None if raw.get("medium") is None else str(raw["medium"]).strip().lower()
-    except (KeyError, TypeError, ValueError) as e:
-        raise VlmError(f"unusable classification: {answer.answer[:120]!r}") from e
-    if kind not in CONTENT_KINDS or not 0.0 <= confidence <= 1.0:
-        raise VlmError(f"unusable classification: {answer.answer[:120]!r}")
-    if kind in MEDIUM_SHAPES and medium is not None and medium not in MEDIUMS:
-        raise VlmError(f"unusable medium: {answer.answer[:120]!r}")
-    return PageClassification.from_confidences({kind: confidence}, medium)
 
 
 def run_classify(
@@ -177,7 +176,7 @@ def run_classify(
     ]
     if not todo:
         return classify_path
-    classify = classifier if classifier is not None else classify_page
+    classify = classifier if classifier is not None else PageKinds.classify_page
     results = classify_pages(todo, classify, folder)
     merged = {**existing, **{name: result.to_dict() for name, result in results.items()}}
     classify_path.parent.mkdir(parents=True, exist_ok=True)

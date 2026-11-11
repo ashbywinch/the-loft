@@ -64,33 +64,6 @@ from tools.reading import order_lines
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 from tools.text import is_struck, jaccard, normalize, vlm_line_words, words
 
-# The minimum word-set overlap (Jaccard) for a detector line to claim a VLM
-# line. The rec text is noisy on cursive — that noise IS the confidence
-# signal — so the matcher tolerates it: one word in common is not a match.
-MATCH_THRESHOLD = 0.34
-
-# The VLM's box coordinate system: normalized 0-1000 (fractions of the
-# image's width/height, times 1000), rescaled to pixels when anchored.
-NORMALIZED_BOX_SCALE = 1000
-
-# Float tolerance for division-underflow protection.
-_MIN_AREA_EPSILON = 1e-9
-QUARTERS_PER_FULL_TURN = 4  # a full rotation is four quarter-turns (90° each)
-
-# The multi-orientation admission (PRD VR15): a detected line is
-# admitted only when the recognizer read REAL text at that orientation
-# — confidence + plausibility — never on box shape alone, so an
-# accidental upside-down pass's boxes are rejected.
-REC_SCORE_GATE = 0.85  # recognition confidence: real words read at the right orientation
-MIN_LETTERS = 2  # plausibility: a "real word" has letters, not just shapes
-_DEDUPE_OVERLAP = 0.3  # two passes' lines sharing this much of the smaller box are the same physical region
-_LOCATED_OVERLAP = 0.5  # the report box must claim at least half of the matched detection's ink to anchor it
-_CLIP_INK_MIN = 0.001  # a line clip must carry >= 0.1% dark pixels — a blank clip has nothing to recognize
-# A multi line the rec read below this is doubtful — its words flag (conf
-# 0.0), the review's red doubt + the mark-fine button (VR4: the rec score
-# is the doubt signal — the multi path has no self-report).
-WORD_FLAG_THRESHOLD = 0.95
-
 
 @dataclass(frozen=True)
 class PageGeometry:
@@ -147,7 +120,7 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> Associ
 
     Reading orders differ (the engines disagree on where a marginal note
     sits), so the match is best normalized word-set overlap above
-    MATCH_THRESHOLD, ties broken by reading order (y-first). Each VLM line
+    Layout.MATCH_THRESHOLD, ties broken by reading order (y-first). Each VLM line
     claims at most one detector line and vice versa. Returns (matches,
     unmatched_detections), where matches are in VLM line order.
     """
@@ -168,7 +141,7 @@ def associate_lines(vlm_lines: list[str], detections: list[Detection]) -> Associ
             score = jaccard(det_set, vlm_sets[vi])
             if score > best[0]:
                 best = (score, vi)
-        if best[0] >= MATCH_THRESHOLD and best[1] >= 0:
+        if best[0] >= Layout.MATCH_THRESHOLD and best[1] >= 0:
             vi = best[1]
             used_vlm.add(vi)
             used_det.add(di)
@@ -279,6 +252,32 @@ class Layout:
     and written through the store. The dict form (``to_dict``) is the
     JSON the review surface reads."""
 
+    # The minimum word-set overlap (Jaccard) for a detector line to claim a VLM
+    # line. The rec text is noisy on cursive — that noise IS the confidence
+    # signal — so the matcher tolerates it: one word in common is not a match.
+    MATCH_THRESHOLD = 0.34
+    # The VLM's box coordinate system: normalized 0-1000 (fractions of the
+    # image's width/height, times 1000), rescaled to pixels when anchored.
+    NORMALIZED_BOX_SCALE = 1000
+    # Float tolerance for division-underflow protection.
+    _MIN_AREA_EPSILON = 1e-9
+    QUARTERS_PER_FULL_TURN = 4  # a full rotation is four quarter-turns (90° each)
+    # The multi-orientation admission (PRD VR15): a detected line is
+    # admitted only when the recognizer read REAL text at that orientation
+    # — confidence + plausibility — never on box shape alone, so an
+    # accidental upside-down pass's boxes are rejected.
+    REC_SCORE_GATE = 0.85  # recognition confidence: real words read at the right orientation
+    MIN_LETTERS = 2  # plausibility: a "real word" has letters, not just shapes
+    _DEDUPE_OVERLAP = 0.3  # two passes' lines sharing this much of the smaller box are the same physical region
+    _LOCATED_OVERLAP = 0.5  # the report box must claim at least half of the matched detection's ink to anchor it
+    _CLIP_INK_MIN = 0.001  # a line clip must carry >= 0.1% dark pixels — a blank clip has nothing to recognize
+    # A multi line the rec read below this is doubtful — its words flag (conf
+    # 0.0), the review's red doubt + the mark-fine button (VR4: the rec score
+    # is the doubt signal — the multi path has no self-report).
+    WORD_FLAG_THRESHOLD = 0.95
+    # the box coordinate frame the stage's entry points declare
+    BOX_SPACE_ORIGINAL = "original-image"
+
     page: str
     width: int
     height: int
@@ -308,7 +307,7 @@ class Layout:
         """The single-orientation layout: the guess text anchored at the
         transcription's own boxes, the rec association filling the rest."""
         layout = build_layout(page, width, height, vlm_text, detections, selfreport=selfreport, vlm_boxes=vlm_boxes)
-        layout.box_space = BOX_SPACE_ORIGINAL
+        layout.box_space = Layout.BOX_SPACE_ORIGINAL
         return layout
 
     # the multi-path build's inputs mirror multi_layout's — a parameter object would obscure the combined pass
@@ -339,7 +338,7 @@ class Layout:
             recognize=recognize,
             trust_report_degrees=trust_report_degrees,
         )
-        layout.box_space = BOX_SPACE_ORIGINAL
+        layout.box_space = Layout.BOX_SPACE_ORIGINAL
         return layout
 
     @classmethod
@@ -460,9 +459,6 @@ class Layout:
 
 # the keys the artefact models itself — everything else is carried through
 _LAYOUT_KEYS = frozenset({"page", "width", "height", "box_space", "lines", "unmatched"})
-
-# the box coordinate frame the stage's entry points declare
-BOX_SPACE_ORIGINAL = "original-image"
 
 
 # detections, self-report, VLM boxes — each consumed once by the pure pass; no second function shares the group
@@ -605,7 +601,7 @@ def is_admissible(text: str, score: float) -> bool:
     """Admit a detected line only when the recognizer read real text at
     this orientation (confidence + plausibility) — never on box shape
     alone (PRD VR15)."""
-    return float(score) >= REC_SCORE_GATE and sum(1 for ch in text if ch.isalpha()) >= MIN_LETTERS
+    return float(score) >= Layout.REC_SCORE_GATE and sum(1 for ch in text if ch.isalpha()) >= Layout.MIN_LETTERS
 
 
 def remap_box(
@@ -701,7 +697,7 @@ def _weaker_duplicate(a: LayoutLine, b: LayoutLine) -> bool:
     a duplicate."""
     if a.box is None or b.box is None:
         return False
-    return overlap(a.box, b.box) > _DEDUPE_OVERLAP and b.richness() > a.richness()
+    return overlap(a.box, b.box) > Layout._DEDUPE_OVERLAP and b.richness() > a.richness()
 
 
 def dedupe_regions(lines: list[LayoutLine]) -> list[LayoutLine]:
@@ -739,7 +735,7 @@ def _multi_line_words(text: str, boxes: list[DetectionWord], score: float) -> li
     out: list[LayoutWord] = []
     for i, token in enumerate(tokens):
         box = boxes[i].box if i < len(boxes) else None
-        out.append(LayoutWord(word=token, box=box, conf=0.0 if score < WORD_FLAG_THRESHOLD else score))
+        out.append(LayoutWord(word=token, box=box, conf=0.0 if score < Layout.WORD_FLAG_THRESHOLD else score))
     return out
 
 
@@ -764,10 +760,10 @@ def _anchored_lines(
                 index=len(lines),
                 text=text,
                 box=[
-                    b[0] / NORMALIZED_BOX_SCALE * geometry.width,
-                    b[1] / NORMALIZED_BOX_SCALE * geometry.height,
-                    b[2] / NORMALIZED_BOX_SCALE * geometry.width,
-                    b[3] / NORMALIZED_BOX_SCALE * geometry.height,
+                    b[0] / Layout.NORMALIZED_BOX_SCALE * geometry.width,
+                    b[1] / Layout.NORMALIZED_BOX_SCALE * geometry.height,
+                    b[2] / Layout.NORMALIZED_BOX_SCALE * geometry.width,
+                    b[3] / Layout.NORMALIZED_BOX_SCALE * geometry.height,
                 ],
                 conf=1.0 if is_confirmed else 0.0,
                 orientation=int(report.degrees),
@@ -836,7 +832,7 @@ class Anchor:
         when they agree (overlap); the match's OWN box keeps its source
         otherwise. The one decision both match branches make."""
         assert match.box is not None  # the callers refine only a located match
-        if overlap(scaled, match.box) >= _LOCATED_OVERLAP:
+        if overlap(scaled, match.box) >= Layout._LOCATED_OVERLAP:
             return BoxChoice(box=scaled, source=LayoutLine.BOX_SOURCE_REPORT)
         return BoxChoice(box=match.box, source=fallback_source)
 
@@ -852,10 +848,10 @@ class Anchor:
             self._orientation = self._resolve_orientation(self._box)
             return
         scaled = [
-            report_box[0] / NORMALIZED_BOX_SCALE * width,
-            report_box[1] / NORMALIZED_BOX_SCALE * height,
-            report_box[2] / NORMALIZED_BOX_SCALE * width,
-            report_box[3] / NORMALIZED_BOX_SCALE * height,
+            report_box[0] / Layout.NORMALIZED_BOX_SCALE * width,
+            report_box[1] / Layout.NORMALIZED_BOX_SCALE * height,
+            report_box[2] / Layout.NORMALIZED_BOX_SCALE * width,
+            report_box[3] / Layout.NORMALIZED_BOX_SCALE * height,
         ]
         assert report_line is not None
         report_orientation = int(report_line.degrees)
@@ -889,7 +885,7 @@ class Anchor:
             self._box, self._box_source = choice.box, choice.source
             if (
                 self._box_source == LayoutLine.BOX_SOURCE_POSITIONAL
-                and jaccard(match.rec_word_set(), set(words(text))) < MATCH_THRESHOLD
+                and jaccard(match.rec_word_set(), set(words(text))) < Layout.MATCH_THRESHOLD
             ):
                 # the rec did NOT read the line's own text there — the
                 # unrelated ink must not displace the report box
@@ -946,7 +942,7 @@ def drop_inkless_boxes(lines: list[LayoutLine], image: Path) -> int:
                 if x1 <= x0 or y1 <= y0:
                     continue
                 gray = im.crop((x0, y0, x1, y1)).convert("L")
-                if sum(gray.histogram()[:128]) < _CLIP_INK_MIN * gray.width * gray.height:
+                if sum(gray.histogram()[:128]) < Layout._CLIP_INK_MIN * gray.width * gray.height:
                     line.box = None
                     dropped += 1
             return dropped
@@ -1037,7 +1033,7 @@ def recognize_extra(
     # the model would spiral on it; fail fast BEFORE the call, the line
     # is dropped
     gray = clip.convert("L")
-    if sum(gray.histogram()[:128]) < _CLIP_INK_MIN * clip.width * clip.height:
+    if sum(gray.histogram()[:128]) < Layout._CLIP_INK_MIN * clip.width * clip.height:
         return None
     try:
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
@@ -1298,7 +1294,7 @@ def rotate_detections(detections: list[Detection], quarters: int, w: int, h: int
     CW — because the extent/aspect gates judge the box against it (a
     dropped orientation reads a tall box as horizontal and refuses the
     write)."""
-    q = quarters % QUARTERS_PER_FULL_TURN
+    q = quarters % Layout.QUARTERS_PER_FULL_TURN
     if q == 0:
         return list(detections)
     rotated: list[Detection] = []
@@ -1316,7 +1312,7 @@ def rotate_detections(detections: list[Detection], quarters: int, w: int, h: int
                 text=det["text"],
                 score=det["score"],
                 words=det.get("words", []),
-                orientation=(det.get("orientation", 0) + (360 // QUARTERS_PER_FULL_TURN) * q) % 360,
+                orientation=(det.get("orientation", 0) + (360 // Layout.QUARTERS_PER_FULL_TURN) * q) % 360,
             )
         )
     return rotated

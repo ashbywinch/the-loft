@@ -11,7 +11,7 @@ import pytest
 from PIL import Image
 
 from pipeline.model.vlm import VlmError
-from pipeline.orient import orient_pages, page_rotation
+from pipeline.orient import PageOrientation
 
 
 def _page(tmp_path: Path, size: tuple[int, int] = (60, 40)) -> Path:
@@ -43,21 +43,21 @@ def _answer(content: str) -> bytes:
 
 def test_the_rotation_is_the_models_answer(tmp_path: Path) -> None:
     page = _page(tmp_path)
-    assert page_rotation(page, urlopen=lambda *a, **k: _Response(_answer('{"rotate": 90}'))) == 90
+    assert PageOrientation.rotation(page, urlopen=lambda *a, **k: _Response(_answer('{"rotate": 90}'))) == 90
 
 
 def test_an_unusable_answer_is_refused(tmp_path: Path) -> None:
     page = _page(tmp_path)
     with pytest.raises(VlmError):
-        page_rotation(page, urlopen=lambda *a, **k: _Response(_answer('{"rotate": 45}')))
+        PageOrientation.rotation(page, urlopen=lambda *a, **k: _Response(_answer('{"rotate": 45}')))
     with pytest.raises(VlmError):
-        page_rotation(page, urlopen=lambda *a, **k: _Response(_answer("upright, I think")))
+        PageOrientation.rotation(page, urlopen=lambda *a, **k: _Response(_answer("upright, I think")))
 
 
 def test_orient_pages_turns_each_page_and_keeps_its_name(tmp_path: Path) -> None:
     page = _page(tmp_path)
     out = tmp_path / "oriented"
-    written = orient_pages([page], out, rotation=lambda _p: 90)
+    written = PageOrientation.pages([page], out, rotation=lambda _p: 90)
     assert [p.name for p in written] == ["p.jpg"]
     with Image.open(written[0]) as turned:
         # a 60x40 page rotated 90 degrees is 40x60
@@ -66,6 +66,6 @@ def test_orient_pages_turns_each_page_and_keeps_its_name(tmp_path: Path) -> None
 
 def test_an_upright_page_is_copied_not_turned(tmp_path: Path) -> None:
     page = _page(tmp_path)
-    written = orient_pages([page], tmp_path / "oriented", rotation=lambda _p: 0)
+    written = PageOrientation.pages([page], tmp_path / "oriented", rotation=lambda _p: 0)
     with Image.open(written[0]) as same:
         assert (same.width, same.height) == (60, 40)

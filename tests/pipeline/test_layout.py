@@ -18,7 +18,6 @@ from pipeline.detection import Detection
 from pipeline.detection_pass import DetectionPass
 from pipeline.detection_word import DetectionWord
 from pipeline.layout import (
-    MATCH_THRESHOLD,
     Layout,
     associate_lines,
     build_layout,
@@ -459,8 +458,8 @@ class TestDetections:
 
 def test_threshold_is_named() -> None:
     # the matcher's tolerance is a named constant — not a magic number
-    assert isinstance(MATCH_THRESHOLD, float)
-    assert 0.0 < MATCH_THRESHOLD < 1.0
+    assert isinstance(Layout.MATCH_THRESHOLD, float)
+    assert 0.0 < Layout.MATCH_THRESHOLD < 1.0
 
 
 def test_build_layout_uses_the_vlm_boxes_when_present(tmp_path: Path) -> None:

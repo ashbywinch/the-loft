@@ -63,13 +63,13 @@ def default_knowledge() -> Knowledge:
 def review_outputs(client: AIClient) -> dict[str, ReviewVerdict]:
     """Run every review flow ONCE and cache the outputs — the condition
     tests are independent and unaware they share the runs."""
-    return {f.name: review_evals.run_flow(client, f) for f in review_evals.FLOWS}
+    return {f.name: review_evals.run_flow(client, f) for f in review_evals.ReviewFixtures.FLOWS}
 
 
 @pytest.mark.eval
 @pytest.mark.eval_review
-@pytest.mark.parametrize("flow", review_evals.FLOWS, ids=lambda f: f.name)
-@pytest.mark.parametrize("condition", review_evals.REVIEW_CONDITIONS, ids=lambda c: c[0])
+@pytest.mark.parametrize("flow", review_evals.ReviewFixtures.FLOWS, ids=lambda f: f.name)
+@pytest.mark.parametrize("condition", review_evals.ReviewFixtures.CONDITIONS, ids=lambda c: c[0])
 def test_review_condition(
     review_outputs: dict[str, ReviewVerdict],
     flow: review_evals.ReviewFlow,

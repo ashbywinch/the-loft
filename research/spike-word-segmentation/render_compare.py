@@ -15,26 +15,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from PIL import Image
 
-from pipeline.rows.page_visuals import review_image, stack_sheets
+from pipeline.rows.page_visuals import PagePainter, stack_sheets
 
-CASES = Path(__file__).resolve().parent / "split-cases"
-OUT = Path(__file__).resolve().parent / "evidence"
 
-# comparison name -> the rendered case sheets it stacks, top to bottom
-GROUPS = {
-    "compare-pair": ["case10_twowords", "case8_oneword"],
-    "compare-slivers": ["case15_bug_slivers"],
-    "compare-three": ["case11_pair", "case6_oneword", "case9_oneword"],
-    "compare-rule": ["case16_rule"],
-}
+class Config:
+    """This script's fixed inputs and outputs."""
+
+    CASES = Path(__file__).resolve().parent / "split-cases"
+    OUT = Path(__file__).resolve().parent / "evidence"
+    # comparison name -> the rendered case sheets it stacks, top to bottom
+    GROUPS = {
+        "compare-pair": ["case10_twowords", "case8_oneword"],
+        "compare-slivers": ["case15_bug_slivers"],
+        "compare-three": ["case11_pair", "case6_oneword", "case9_oneword"],
+        "compare-rule": ["case16_rule"],
+    }
 
 
 def _main() -> int:
-    for name, members in GROUPS.items():
-        sheets = [Image.open(CASES / f"{member}.png") for member in members]
+    for name, members in Config.GROUPS.items():
+        sheets = [Image.open(Config.CASES / f"{member}.png") for member in members]
         contact = stack_sheets(sheets)
-        out = OUT / f"{name}.jpg"
-        out.write_bytes(review_image(contact))
+        out = Config.OUT / f"{name}.jpg"
+        out.write_bytes(PagePainter.review_image(contact))
         print(f"{name} <- {members} -> {out} ({out.stat().st_size // 1024}KB)")
     return 0
 

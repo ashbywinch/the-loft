@@ -28,10 +28,10 @@ from pipeline.artefacts import BatchArtefacts
 from pipeline.evals.eval_geometry import CropLine, CropReading, PageSize, assemble_crop_grid, grid_crops
 from pipeline.layout import Layout, load_layout_store
 from pipeline.layout_line import LayoutLine
-from pipeline.model.config import VISION_MODEL
+from pipeline.model.ai_client import AIClient
+from pipeline.model.config import ModelConfig
 from pipeline.model.transcription import Transcription
 from pipeline.model.vlm import (
-    DEFAULT_BASE_URL,
     VlmError,
     parse_transcription_response,
     transcribe_image_vlm,
@@ -262,8 +262,8 @@ def run(
     work_dir: Path,
     cols: int = 2,
     rows: int = 3,
-    model: str = VISION_MODEL,
-    base_url: str = DEFAULT_BASE_URL,
+    model: str = ModelConfig.VISION_MODEL,
+    base_url: str = AIClient.DEFAULT_BASE_URL,
     api_key: str | None = None,
 ) -> CropGridReport:
     """Read the page's crops, stitch, and report — the geometry
@@ -325,7 +325,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cols", type=int, default=2)
     parser.add_argument("--rows", type=int, default=3)
     parser.add_argument("--work-dir", type=Path, default=LoftPaths.WORK_DIR)
-    parser.add_argument("--model", default=VISION_MODEL, help="the model to trial")
+    parser.add_argument("--model", default=ModelConfig.VISION_MODEL, help="the model to trial")
     parser.add_argument("--base-url", default=None, help="the API base (default: the gateway)")
     parser.add_argument(
         "--api-key",

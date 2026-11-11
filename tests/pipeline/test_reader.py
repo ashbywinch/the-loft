@@ -317,25 +317,28 @@ def test_each_mark_spans_both_lines(page01_marks) -> None:
     """Each side's mark welds the upper word to the lower: the left mark
     covering (1900, 2570) also reaches the upper line (y <= 2540), and so
     does the right mark covering (1975, 2570)."""
-    from pipeline.detect.mark import SCALE
+    from pipeline.detect.mark import Components
 
     for x, y in ((1900, 2570), (1975, 2570)):
         covering = list(_covering(page01_marks, x, y))
         assert covering, f"no small mark covers ({x}, {y})"
-        tops = [page01_marks[sid].y0 * SCALE for sid in covering]
+        tops = [page01_marks[sid].y0 * Components.SCALE for sid in covering]
         assert min(tops) <= 2545, f"mark(s) {covering} start at {min(tops):.0f}, reach no upper word"
 
 
 def _covering(page01_marks, x: float, y: float) -> set[str]:
     """Ids of small marks covering point (x, y) in page px — the giant
     welded shape 4847 spans the whole block and is excluded by area."""
-    from pipeline.detect.mark import SCALE
+    from pipeline.detect.mark import Components
 
     found = set()
     for s in page01_marks.values():
         if s.area >= 2000:
             continue
-        if s.x0 * SCALE <= x <= s.x1 * SCALE and s.y0 * SCALE <= y <= s.y1 * SCALE:
+        if (
+            s.x0 * Components.SCALE <= x <= s.x1 * Components.SCALE
+            and s.y0 * Components.SCALE <= y <= s.y1 * Components.SCALE
+        ):
             found.add(s.id)
     return found
 
@@ -348,12 +351,12 @@ def page01_shapes() -> tuple:
     find_marks or fit_lines that moves a case fails loudly here, not
     silently in a sheet."""
     from pipeline.detect.reader import LineFitter
-    from pipeline.detect.ruler import Ruler, line_ratio, traced_pitch, writing_scale
+    from pipeline.detect.ruler import Ruler, writing_scale
 
     shapes = [m for m in _fixture_marks()]
     strokes = _fixture_strokes()
     traced = sorted(float(np.median([p[1] for p in s])) * PAGE_HEIGHT / 2 for s in strokes)
-    ratio = line_ratio(traced_pitch(traced), writing_scale([s.height for s in shapes]))
+    ratio = Ruler.line_ratio(Ruler.traced_pitch(traced), writing_scale([s.height for s in shapes]))
     scale = Ruler.of([s.height for s in shapes], ratio)
     return {s.id: s for s in shapes}, LineFitter(scale).fit(shapes), scale
 
@@ -409,13 +412,16 @@ def test_an_underline_does_not_join_words(page01_writing) -> None:
     consider an underline as joining anything.' The ink that arrived as one
     mark holding five words under one underline therefore comes back as
     five separate marks — the underline's ink is out of the raster."""
-    from pipeline.detect.mark import SCALE
+    from pipeline.detect.mark import Components
 
     marks, _lines, _scale, _stripped = page01_writing
     window = [
         s
         for s in marks.values()
-        if s.x0 * SCALE >= 1164 and s.x1 * SCALE <= 1802 and s.y0 * SCALE >= 3640 and s.y1 * SCALE <= 3718
+        if s.x0 * Components.SCALE >= 1164
+        and s.x1 * Components.SCALE <= 1802
+        and s.y0 * Components.SCALE >= 3640
+        and s.y1 * Components.SCALE <= 3718
     ]
     # six marks: the underline's residue is stripped before the weld, so the
     # five words return separately AND the island that was inside the weld's
@@ -429,15 +435,20 @@ def page01_words() -> list[tuple[float, float, float, float]]:
     """The pipeline's words: the page measured and cut, as (x0, y0, x1, y1)
     in page pixels — the boxes the renders draw. From the committed marks
     (the mask rebuilt from their pixels); no scan, no image."""
-    from pipeline.detect.mark import SCALE
+    from pipeline.detect.mark import Components
     from pipeline.detect.reader import Writing
 
     marks = _fixture_marks()
     mask = _fixture_mask(marks)
-    traced = sorted(float(np.median([p[1] for p in s])) * PAGE_HEIGHT / SCALE for s in _fixture_strokes())
+    traced = sorted(float(np.median([p[1] for p in s])) * PAGE_HEIGHT / Components.SCALE for s in _fixture_strokes())
     writing = Writing.of(mask, traced)
     return [
-        (word.x0 * SCALE, word.y0 * SCALE, word.x1 * SCALE, word.y1 * SCALE)
+        (
+            word.x0 * Components.SCALE,
+            word.y0 * Components.SCALE,
+            word.x1 * Components.SCALE,
+            word.y1 * Components.SCALE,
+        )
         for word in writing.cut(writing.scale.unit).marks
     ]
 
@@ -486,15 +497,17 @@ def test_the_crossed_out_rows_split_at_the_gap(page01_shapes) -> None:
     line its own box'). The gap rule cuts at the near-empty rows y2730-2734
     between the bands — the boundary lands in the gap, neither row loses its
     ink."""
-    from pipeline.detect.mark import SCALE
+    from pipeline.detect.mark import Components
     from pipeline.detect.reader import split_shapes
 
     by_id, lines, scale = page01_shapes
     got = split_shapes([by_id["4847"]], lines, scale.unit)
     assert len(got) == 2, f"4847 gave {len(got)} piece(s), want the two crossed-out rows"
     upper, lower = sorted(got, key=lambda p: p.y0)
-    assert 2720 <= upper.y1 * SCALE <= 2748, f"split at {upper.y1 * SCALE:.0f}, outside the gap y2730-2734"
-    assert lower.y1 * SCALE >= 2760, "the lower row lost its bottom"
+    assert 2720 <= upper.y1 * Components.SCALE <= 2748, (
+        f"split at {upper.y1 * Components.SCALE:.0f}, outside the gap y2730-2734"
+    )
+    assert lower.y1 * Components.SCALE >= 2760, "the lower row lost its bottom"
 
 
 def test_the_split_pair_is_one_word(page01_shapes) -> None:
@@ -534,13 +547,13 @@ def test_stacked_pair_stays_two_words(page01_shapes) -> None:
     """User: render 327 (raw 23194's upper piece) sits above a separate
     lower word with clean paper between — the split is correct and the
     pieces must stay two words, never merged."""
-    from pipeline.detect.mark import SCALE
+    from pipeline.detect.mark import Components
     from pipeline.detect.reader import split_shapes
 
     by_id, lines, scale = page01_shapes
     got = split_shapes([by_id["23194"]], lines, scale.unit)
     assert len(got) == 2, f"id=23194: {len(got)} pieces, want the two words apart"
-    assert got[0].y1 * SCALE < got[1].y0 * SCALE, "the stacked pieces overlap"
+    assert got[0].y1 * Components.SCALE < got[1].y0 * Components.SCALE, "the stacked pieces overlap"
 
 
 def test_the_gapped_marks_keep_their_own_pieces(page01_shapes) -> None:

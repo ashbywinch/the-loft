@@ -250,10 +250,10 @@ class TestPlainTranscriptionFormat:
         assert "Alex Hale" in system  # context still rides along
 
     def test_default_still_requests_boxes(self) -> None:
-        from pipeline.model.vlm import VLM_SYSTEM, transcription_system_with_context
+        from pipeline.model.vlm import VlmPrompts, transcription_system_with_context
 
         # every existing caller keeps today's behaviour
-        assert '"lines"' in VLM_SYSTEM
+        assert '"lines"' in VlmPrompts.SYSTEM
         assert '"lines"' in transcription_system_with_context()
 
 

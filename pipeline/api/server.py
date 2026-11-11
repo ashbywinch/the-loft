@@ -97,10 +97,6 @@ from tools.store import FileStore
 
 logger = logging.getLogger(__name__)
 
-MAX_BODY_BYTES = 1_000_000
-
-TRANSCRIPTION_PREFIX_BYTES = 4096  # the first-chunk transcription read — enough to spot a mention, never the whole file
-
 
 def _atomic_write(path: Path, data: Any) -> None:
     """Replace a derived file atomically (temp + rename) — never half-written.
@@ -562,7 +558,8 @@ def build_app(
                     # people refs yet) must still reach the model — the
                     # transcription is the evidence, never the summary
                     transcription = (
-                        archive.read_content_prefix(item_id, "transcription.txt", TRANSCRIPTION_PREFIX_BYTES) or ""
+                        archive.read_content_prefix(item_id, "transcription.txt", Server.TRANSCRIPTION_PREFIX_BYTES)
+                        or ""
                     )
                     if not any(n in transcription.lower() for n in needles):
                         continue
@@ -1205,6 +1202,10 @@ def create_server(
 
 
 class Server:
+    # the first-chunk transcription read — enough to spot a mention, never the
+    # whole file
+    TRANSCRIPTION_PREFIX_BYTES = 4096
+
     """The archive's serving noun — one server, one serve().
 
     ``Server(...).serve()`` serves the app (no-cache) and the memory-capture

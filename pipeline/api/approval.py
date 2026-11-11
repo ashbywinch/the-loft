@@ -24,9 +24,9 @@ from document.document import Document
 from pipeline.artefacts import BatchArtefacts
 from pipeline.batch_record import BatchRecord
 from pipeline.boundary import Boundary
-from pipeline.classify import category_of
+from pipeline.classify import PageKinds
 from pipeline.registry import load_batch, record_path
-from pipeline.stage_table import TEXT_KINDS, classification_of
+from pipeline.stage_table import classification_of
 from pipeline.store import PipelineStore
 from tools.archive import Archive
 from tools.loft_paths import LoftPaths
@@ -172,7 +172,7 @@ class _DocumentPages:
         text = [
             name
             for name in self.document.pages
-            if name in self.classify and category_of(self.classify[name]) in TEXT_KINDS
+            if name in self.classify and PageKinds.category_of(self.classify[name]) in PageKinds.TEXT_KINDS
         ]
         return text or list(self.document.pages)
 

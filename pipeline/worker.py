@@ -38,7 +38,7 @@ from watchfiles import Change, watch
 from pipeline.adopt import is_page_image, register_adopted
 from pipeline.adoption_result import AdoptionResult
 from pipeline.batch_failure import BatchFailure
-from pipeline.batch_record import STATUS_PENDING, STATUS_PROCESSING, BatchRecord
+from pipeline.batch_record import BatchRecord
 from pipeline.reconcile import Reconciler
 from pipeline.registry import RegistryError, list_batches, load_batch, set_status
 from pipeline.store import VERSION_SUFFIX
@@ -187,9 +187,9 @@ class Worker:
         requeued: list[str] = []
         now = self._now()
         for record in list_batches(self.paths.registry_dir):
-            if record.status != STATUS_PROCESSING or self._pass_alive(record, now):
+            if record.status != BatchRecord.STATUS_PROCESSING or self._pass_alive(record, now):
                 continue
-            _ = set_status(record.batch_id, STATUS_PENDING, self.paths.registry_dir)
+            _ = set_status(record.batch_id, BatchRecord.STATUS_PENDING, self.paths.registry_dir)
             self.write_line(f"requeue: {record.batch_id} — its pass is gone; back in the queue")
             requeued.append(record.batch_id)
         return tuple(requeued)
@@ -198,7 +198,7 @@ class Worker:
         """Put one batch back in the queue, whatever it was doing — the
         explicit re-entry for a batch a person has finished with (a legacy
         `review` from before the rows stage) or one a crash left behind."""
-        record = set_status(batch_id, STATUS_PENDING, self.paths.registry_dir)
+        record = set_status(batch_id, BatchRecord.STATUS_PENDING, self.paths.registry_dir)
         self.write_line(f"requeue: {record.batch_id} — back in the queue")
         return record
 

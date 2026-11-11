@@ -23,19 +23,10 @@ from typing import Any, final
 from pipeline.model.backoff import Backoff
 from pipeline.model.chat_message import ChatMessage
 from pipeline.model.chat_request import ChatRequest
-from pipeline.model.config import CHAT_MODEL, GATEWAY_BASE_URL
-from pipeline.model.http_headers import USER_AGENT, HttpHeaders
+from pipeline.model.config import ModelConfig
+from pipeline.model.http_headers import HttpHeaders
 
 logger = logging.getLogger(__name__)
-
-# The endpoint and the model aliases live in pipeline/model/config.py — the one
-# file that names the models. It is the Cloudflare AI Gateway (OPENAI_BASE_URL
-# from the operator's environment; OPENAI_API_KEY is the gateway token).
-DEFAULT_BASE_URL: str = GATEWAY_BASE_URL
-DEFAULT_MODEL = CHAT_MODEL
-
-# Providers whose api keys opencode may have stored in its auth.json.
-AUTH_JSON_PROVIDER_HINTS = ("opencode-go", "opencode")
 
 
 class AIClientError(RuntimeError):
@@ -44,6 +35,16 @@ class AIClientError(RuntimeError):
 
 @final
 class AIClient:
+    # The endpoint and the model aliases live in ModelConfig — the one file
+    # that names the models. This is the Cloudflare AI Gateway
+    # (OPENAI_BASE_URL from the operator's environment; OPENAI_API_KEY is the
+    # gateway token).
+    DEFAULT_BASE_URL: str = ModelConfig.GATEWAY_BASE_URL
+    DEFAULT_MODEL = ModelConfig.CHAT_MODEL
+
+    # Providers whose api keys opencode may have stored in its auth.json.
+    AUTH_JSON_PROVIDER_HINTS = ("opencode-go", "opencode")
+
     """Chat completions against an OpenAI-compatible endpoint (JSON out)."""
 
     # — production constructs AIClient() bare or with a single max_tokens override (cli.py, pipeline.py); a config
@@ -70,8 +71,8 @@ class AIClient:
         # stays as an opt-in for gateways that handle it.
         reasoning_budget: int | None = None,
     ) -> None:
-        self.model: str = model or DEFAULT_MODEL
-        self.base_url: str = (base_url or DEFAULT_BASE_URL).rstrip("/")
+        self.model: str = model or AIClient.DEFAULT_MODEL
+        self.base_url: str = (base_url or AIClient.DEFAULT_BASE_URL).rstrip("/")
         self.api_key: str = (
             api_key
             or os.environ.get("OPENAI_API_KEY")
@@ -149,7 +150,7 @@ class AIClient:
             headers=HttpHeaders(
                 content_type="application/json",
                 authorization=f"Bearer {self.api_key}",
-                user_agent=USER_AGENT,
+                user_agent=HttpHeaders.USER_AGENT,
             ).to_dict(),
             method="POST",
         )
@@ -316,7 +317,7 @@ def find_api_key(_env: Mapping[str, str] | None = None, _home: Path | None = Non
             auth = json.loads(auth_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
             raise AIClientError(f"cannot read the opencode auth file {auth_path}: {e}") from e
-        for hint in AUTH_JSON_PROVIDER_HINTS:
+        for hint in AIClient.AUTH_JSON_PROVIDER_HINTS:
             entry = auth.get(hint)
             if isinstance(entry, dict) and entry.get("type") == "api" and entry.get("key"):
                 return entry["key"]

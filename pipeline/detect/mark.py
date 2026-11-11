@@ -3,7 +3,7 @@
 The reviewer's word: a word is a mark made of one or more letters. A mark is
 the finest grain the detector sees - its bounds, its measured baseline and
 waistline (the x-height between them), and its ink. Marks are found at the
-working resolution SCALE ; everything else
+working resolution Components.SCALE ; everything else
 measures from them.
 """
 
@@ -35,22 +35,6 @@ class WordGeometry:
         return self.baseline - self.waistline
 
 
-SCALE = 2  # work at half resolution (2px geometry precision)
-STREAK_TALL = 40  # 1/2 px: a run this tall and ≤3 wide is a scan line
-STREAK_WIDE = 60  # 1/2 px: a run this wide and ≤4 tall is a rule
-SHAPE_MIN_AREA = 60  # 1/2 px²: smaller components are specks
-RULE_TOUCH = 0.15  # of its width: a line is nearly disconnected from the writing
-LINE_GAP = 0.75  # × the writing's height: a line further below it is not underscoring it
-LINE_ALIGN = 0.2  # of the writing's width: an underline matches it, a rule does not
-LINE_HEIGHT = 0.65  # × the x-height: a line is a pen stroke, not a band
-WORD_MIN_HEIGHT = 0.38  # × the x-height: shorter ink is a word's fragment
-WORD_FULL_LINE = 0.6  # × the x-height: this tall and the piece is a line of writing
-WORD_MIN_WIDTH = 0.8  # × the x-height: narrower ink cannot hold a word
-WORD_EMPTY_MAX = 0.25  # of its columns, under a full line: disconnected ascender
-BAND_RUN = 0.6  # of a mark's width: rows running this far are a line's ink
-RULE_LONG = 70  # 1/2 px: a line spans more than a word; a word's tail does not
-
-
 @dataclass(frozen=True)
 class WordShape:
     """A piece's shape as the word tests read it: height, width and
@@ -78,6 +62,19 @@ def word_measures(piece: Mark) -> WordShape:
 @dataclass
 class Mark:
     """A connected run of ink — a word, or a letter in print."""
+
+    STREAK_TALL = 40  # 1/2 px: a run this tall and ≤3 wide is a scan line
+    STREAK_WIDE = 60  # 1/2 px: a run this wide and ≤4 tall is a rule
+    RULE_TOUCH = 0.15  # of its width: a line is nearly disconnected from the writing
+    LINE_GAP = 0.75  # × the writing's height: a line further below it is not underscoring it
+    LINE_ALIGN = 0.2  # of the writing's width: an underline matches it, a rule does not
+    LINE_HEIGHT = 0.65  # × the x-height: a line is a pen stroke, not a band
+    WORD_MIN_HEIGHT = 0.38  # × the x-height: shorter ink is a word's fragment
+    WORD_FULL_LINE = 0.6  # × the x-height: this tall and the piece is a line of writing
+    WORD_MIN_WIDTH = 0.8  # × the x-height: narrower ink cannot hold a word
+    WORD_EMPTY_MAX = 0.25  # of its columns, under a full line: disconnected ascender
+    BAND_RUN = 0.6  # of a mark's width: rows running this far are a line's ink
+    RULE_LONG = 70  # 1/2 px: a line spans more than a word; a word's tail does not
 
     x0: float
     y0: float
@@ -109,7 +106,7 @@ class Mark:
     def is_streak(self) -> bool:
         """A long thin run of ink is a scan line or a rule, never writing."""
         width, height = self.x1 - self.x0, self.y1 - self.y0
-        return (width > STREAK_WIDE and height <= 4) or (height > STREAK_TALL and width <= 3)
+        return (width > Mark.STREAK_WIDE and height <= 4) or (height > Mark.STREAK_TALL and width <= 3)
 
     def rows(self) -> dict[int, list[int]]:
         """The shape's ink by row — how a straddling shape is cut between lines."""
@@ -169,20 +166,20 @@ class Mark:
         ascenders into a word, so they stay enforced (user: the gap rule
         must never accept 'just two ascenders')."""
         shape = word_measures(self)
-        if shape.height < WORD_MIN_HEIGHT * unit or (shape.width < WORD_MIN_WIDTH * unit and not waive_width):
+        if shape.height < Mark.WORD_MIN_HEIGHT * unit or (shape.width < Mark.WORD_MIN_WIDTH * unit and not waive_width):
             return False
         if not waive_band and shape.width >= Word.RULE_ASPECT * shape.height:
             return False  # a band this wide for its height is a line, not a word
-        if shape.height < WORD_FULL_LINE * unit:
+        if shape.height < Mark.WORD_FULL_LINE * unit:
             # too short to be a whole line of writing: it must be joined up, not
             # the detached tips of a word's ascenders
-            return shape.empty <= WORD_EMPTY_MAX
+            return shape.empty <= Mark.WORD_EMPTY_MAX
         return True
 
     def classify_line(self, others: list[Mark], page: list[Mark], unit: float) -> str | None:
         """The line this piece is, if it is one: "underline" or "rule", else None.
 
-        A line is a pen stroke: thin (LINE_HEIGHT × the writing's x-height at
+        A line is a pen stroke: thin (Mark.LINE_HEIGHT × the writing's x-height at
         most) and long (Word.RULE_ASPECT wider than tall), and detached from the
         writing it accompanies — a word's chopped half shares its boundary with
         the rest of the word (user: 'an underline is entirely or nearly
@@ -193,12 +190,12 @@ class Mark:
         a rule is a line that is not aligned with the words above it,
         whether wider or narrower or offset)."""
         width, height = self.x1 - self.x0, self.y1 - self.y0
-        if height <= 0 or height > LINE_HEIGHT * unit or width < Word.RULE_ASPECT * height:
+        if height <= 0 or height > Mark.LINE_HEIGHT * unit or width < Word.RULE_ASPECT * height:
             return None
         ys, xs = np.asarray(self.pix[0]).astype(int), np.asarray(self.pix[1]).astype(int)
         runs = list(Ink(ys, xs).longest_runs().values())
-        stroke = len(runs) >= 2 and all(run >= BAND_RUN * width for run in runs) and width >= RULE_LONG
-        if not stroke and sum(self._bridge_columns(other) for other in others) > RULE_TOUCH * width:
+        stroke = len(runs) >= 2 and all(run >= Mark.BAND_RUN * width for run in runs) and width >= Mark.RULE_LONG
+        if not stroke and sum(self._bridge_columns(other) for other in others) > Mark.RULE_TOUCH * width:
             return None  # welded to the rest of the word: a fragment, not a line
 
         above = [
@@ -207,12 +204,12 @@ class Mark:
             if other is not self
             and other.y1 <= self.y0
             and min(other.x1, self.x1) - max(other.x0, self.x0) > 0
-            and self.y0 - other.y1 <= LINE_GAP * max(other.height, 1.0)
+            and self.y0 - other.y1 <= Mark.LINE_GAP * max(other.height, 1.0)
         ]
         if not above:
             return "rule"  # no writing close above it
         writing = max(other.x1 for other in above) - min(other.x0 for other in above)
-        return "underline" if abs(width - writing) <= LINE_ALIGN * max(writing, 1.0) else "rule"
+        return "underline" if abs(width - writing) <= Mark.LINE_ALIGN * max(writing, 1.0) else "rule"
 
     def line_band(self) -> Mark | None:
         """The fused underline band this piece holds at its bottom, cut off
@@ -221,7 +218,7 @@ class Mark:
         can only see pieces the split made. A word's underline residue is
         welded into the word's own piece, so it never reaches the
         classifier; this carve separates it (a bottom row-run whose spans
-        run RULE_LONG far, with a gap of non-band rows above it), shrinks
+        run Mark.RULE_LONG far, with a gap of non-band rows above it), shrinks
         the piece to its remaining ink, and returns the band for
         `line_pieces` to feed the existing classifier (user: use the
         underline detection we already have)."""
@@ -234,11 +231,11 @@ class Mark:
             cols = sorted(rows[y])
             # a carve CANDIDATE may be shorter than a whole line: a stripped
             # underline reaches this piece as a fragment (the full row spans
-            # RULE_LONG); and it is a PEN STROKE, dense across its span (the
+            # Mark.RULE_LONG); and it is a PEN STROKE, dense across its span (the
             # letters' rows are sparse fragments). The existing classifier is
             # the judge; the carve is only the door.
             span = cols[-1] - cols[0]
-            if span < RULE_LONG / 2 or len(cols) < BROAD_FRACTION * (span + 1):
+            if span < Mark.RULE_LONG / 2 or len(cols) < Ink.BROAD_FRACTION * (span + 1):
                 break
             if band_rows and max(band_rows) - y > 1:
                 break  # a gap of empty rows: the band is a separate stroke
@@ -274,10 +271,6 @@ class Mark:
         return band
 
 
-BROAD_FRACTION = 0.25  # x the word's width: a row holding this much ink is the writing
-UNDERLINE_RUN = 8.0  # px: an underline's rows are this wide at minimum
-
-
 @dataclass(frozen=True)
 class Ink:
     """One piece of ink, as the two arrays every measurement needs: the rows
@@ -285,6 +278,9 @@ class Ink:
 
     The measurements are its methods — they all read the same pair, which is
     what made them a clump of free functions taking (ys, xs)."""
+
+    BROAD_FRACTION = 0.25  # x the word's width: a row holding this much ink is the writing
+    UNDERLINE_RUN = 8.0  # px: an underline's rows are this wide at minimum
 
     ys: np.ndarray
     xs: np.ndarray
@@ -334,7 +330,7 @@ class Ink:
         welded underline), plus their 2px fringe. Such rows are never the
         writing's feet."""
         runs = self.longest_runs()
-        broad = {y for y, run in runs.items() if run >= BROAD_FRACTION * span}
+        broad = {y for y, run in runs.items() if run >= Ink.BROAD_FRACTION * span}
         thick: set[int] = {y for y in broad if any(near in broad for near in (y - 1, y + 1))}
         return set(range(min(thick) - 2, max(thick) + 3)) if thick else set()
 
@@ -360,7 +356,7 @@ class Ink:
         peak_row = int(np.argmax(intensities))
         top, bottom = int(ys.min()), int(ys.max())
         row_runs = self.longest_runs()
-        broad = {y for y, run in row_runs.items() if run >= max(0.15 * span, UNDERLINE_RUN)}
+        broad = {y for y, run in row_runs.items() if run >= max(0.15 * span, Ink.UNDERLINE_RUN)}
         bands = _consecutive_bands(broad)
         band_at_foot = bool(
             bands
@@ -405,13 +401,13 @@ class Ink:
         )
 
     def _broad_waistline(self, width: float) -> int | None:
-        """The first row from the top whose ink run spans BROAD_FRACTION of the
+        """The first row from the top whose ink run spans Ink.BROAD_FRACTION of the
         word: the crown of the letters' bodies. Ascender tails and descenders are
         narrow strokes; a big loop's crown ('group' - the reviewer's g-word) is
         broad, so it lands the line where the old profile walk stopped short."""
         ys, xs = self.ys, self.xs
         rows = _columns_by_row(ys, xs)
-        threshold = BROAD_FRACTION * width
+        threshold = Ink.BROAD_FRACTION * width
         for y in sorted(rows):
             ordered = sorted(set(rows[y]))
             run = 1
@@ -440,7 +436,7 @@ class Ink:
         span = float(xs.max() - xs.min() + 1)
         forbidden = set()
         row_runs = self.longest_runs()
-        broad = {y for y, run in row_runs.items() if run >= max(0.15 * span, UNDERLINE_RUN)}
+        broad = {y for y, run in row_runs.items() if run >= max(0.15 * span, Ink.UNDERLINE_RUN)}
         bands2 = _consecutive_bands(broad)
         top, bottom = int(ys.min()), int(ys.max())
         if bands2 and (bottom - bands2[-1].bottom) <= 0.25 * (bottom - top):
@@ -503,6 +499,9 @@ class Components:
     pass builds `rows` (the runs per row, each with its run id) and answers
     `labels`, the per-pixel component ids."""
 
+    SCALE = 2  # work at half resolution (2px geometry precision)
+    SHAPE_MIN_AREA = 60  # 1/2 px²: smaller components are specks
+
     def __init__(self) -> None:
         self._components = UnionFind()
         self.rows: list[list[ColumnRun]] = []
@@ -543,7 +542,7 @@ class Components:
         return labels
 
 
-def find_marks(mask: np.ndarray, min_area: int = SHAPE_MIN_AREA) -> list[Mark]:
+def find_marks(mask: np.ndarray, min_area: int = Components.SHAPE_MIN_AREA) -> list[Mark]:
     """The page's marks: every 8-connected piece of ink, specks aside."""
     components = Components()
     for row in mask:

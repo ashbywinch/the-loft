@@ -17,27 +17,44 @@ from PIL import Image
 from document.page_size import PageSize
 from document.rectangle import Rectangle
 from document.word import Word
-from pipeline.rows.page_visuals import captioned_sheet, review_image
+from pipeline.rows.page_visuals import CaptionSheet, PagePainter
 from pipeline.rows.rows import MapView, Row, Rows, render_map
 from tools.word_numbering import numbered_order
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
-FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-rows-gold"
-FIXTURE_WORDSEG = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-wordseg"
-OUT = Path(__file__).resolve().parent / "evidence"
-PAGE = json.loads((FIXTURE_WORDSEG / "boxes.json").read_text(encoding="utf-8"))["page"]
 
-WORDS = json.loads((FIXTURE / "words.json").read_text(encoding="utf-8"))["words"]
-LINES = json.loads((FIXTURE / "user-row-adjustments.json").read_text(encoding="utf-8"))["lines"]
-ROWS = json.loads((FIXTURE / "rows.json").read_text(encoding="utf-8"))["rows"]
-RENDER_ID = {
-    page: render
-    for render, page in enumerate(numbered_order([(w["x0"], w["y0"], w["x1"], w["y1"]) for w in WORDS]), start=1)
-}
-BOX_OF = {
-    render: (round(WORDS[i]["x0"]), round(WORDS[i]["y0"]), round(WORDS[i]["x1"]), round(WORDS[i]["y1"]))
-    for i, render in RENDER_ID.items()
-}
+
+class Config:
+    """This script's fixed inputs and outputs."""
+
+    FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-rows-gold"
+    FIXTURE_WORDSEG = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-wordseg"
+    OUT = Path(__file__).resolve().parent / "evidence"
+    PAGE = json.loads((FIXTURE_WORDSEG / "boxes.json").read_text(encoding="utf-8"))["page"]
+    WORDS = json.loads((FIXTURE / "words.json").read_text(encoding="utf-8"))["words"]
+    LINES = json.loads((FIXTURE / "user-row-adjustments.json").read_text(encoding="utf-8"))["lines"]
+    ROWS = json.loads((FIXTURE / "rows.json").read_text(encoding="utf-8"))["rows"]
+
+    @staticmethod
+    def render_id() -> dict:
+        return {
+            page: render
+            for render, page in enumerate(
+                numbered_order([(w["x0"], w["y0"], w["x1"], w["y1"]) for w in Config.WORDS]), start=1
+            )
+        }
+
+    @staticmethod
+    def box_of() -> dict:
+        return {
+            render: (
+                round(Config.WORDS[i]["x0"]),
+                round(Config.WORDS[i]["y0"]),
+                round(Config.WORDS[i]["x1"]),
+                round(Config.WORDS[i]["y1"]),
+            )
+            for i, render in Config.render_id().items()
+        }
 
 
 def adjudicated_rows() -> list[Row]:
@@ -49,36 +66,39 @@ def adjudicated_rows() -> list[Row]:
             word_boxes=[Word(b["x0"], b["y0"], b["x1"], b["y1"]) for b in row["word_boxes"]],
             band=Rectangle(row["band"]["x0"], row["band"]["y0"], row["band"]["x1"], row["band"]["y1"]),
         )
-        for row in ROWS
+        for row in Config.ROWS
     ]
 
 
 def library_rows() -> list[Row]:
     return Rows.from_words(
-        [Word(w["x0"], w["y0"], w["x1"], w["y1"], baseline=w.get("baseline"), line=w.get("line")) for w in WORDS],
-        PageSize(PAGE["width"], PAGE["height"]),
-    ).adjust(LINES)
+        [
+            Word(w["x0"], w["y0"], w["x1"], w["y1"], baseline=w.get("baseline"), line=w.get("line"))
+            for w in Config.WORDS
+        ],
+        PageSize(Config.PAGE["width"], Config.PAGE["height"]),
+    ).adjust(Config.LINES)
 
 
 def numbers_of(word_ids: list[int]) -> dict[tuple[float, float, float, float], int]:
-    return {BOX_OF[rid]: rid for rid in word_ids}
+    return {Config.box_of()[rid]: rid for rid in word_ids}
 
 
 def pair(name: str, window: Rectangle, scale: float, word_ids: list[int]) -> None:
     page = Image.open(SCAN).convert("RGB")
     view = MapView(window, scale, word_numbers=numbers_of(word_ids))
-    user_map = render_map(page, adjudicated_rows(), OUT / (name + ".u.jpg"), view)
-    lib_map = render_map(page, library_rows(), OUT / (name + ".l.jpg"), view)
-    user_cap = captioned_sheet(user_map, ["your rows (confirmed 2026-09-12)"])
+    user_map = render_map(page, adjudicated_rows(), Config.OUT / (name + ".u.jpg"), view)
+    lib_map = render_map(page, library_rows(), Config.OUT / (name + ".l.jpg"), view)
+    user_cap = CaptionSheet.captioned_sheet(user_map, ["your rows (confirmed 2026-09-12)"])
     user_sheet = user_cap.sheet
-    lib_cap = captioned_sheet(lib_map, ["the library's rows (`rows.adjust)`"])
+    lib_cap = CaptionSheet.captioned_sheet(lib_map, ["the library's rows (`rows.adjust)`"])
     lib_sheet = lib_cap.sheet
     width = user_sheet.width + lib_sheet.width + 10
     height = max(user_sheet.height, lib_sheet.height)
     sheet = Image.new("RGB", (width, height), (255, 255, 255))
     sheet.paste(user_sheet, (0, 0))
     sheet.paste(lib_sheet, (user_sheet.width + 8, 0))
-    (OUT / (name + ".jpg")).write_bytes(review_image(sheet))
+    (Config.OUT / (name + ".jpg")).write_bytes(PagePainter.review_image(sheet))
     print("saved", name)
 
 

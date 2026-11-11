@@ -40,3 +40,14 @@ def test_view_image_rebuilds_when_the_source_changes(tmp_path: Path) -> None:
     os.utime(source, ns=(first + 1_000_000, first + 1_000_000))
     rebuilt = batch.view_image("p1.jpg")
     assert rebuilt.stat().st_mtime_ns != first
+
+
+def test_view_image_applies_exif_orientation(tmp_path: Path) -> None:
+    batch = BatchArtefacts(tmp_path, "b")
+    source = batch.oriented("phone.jpg")
+    source.parent.mkdir(parents=True, exist_ok=True)
+    exif = Image.Exif()
+    exif[274] = 6  # rotate 90 CW on display
+    Image.new("RGB", (400, 800), (200, 180, 150)).save(source, "JPEG", exif=exif)
+    with Image.open(batch.view_image("phone.jpg")) as view:
+        assert view.size == (800, 400)

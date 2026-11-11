@@ -16,7 +16,8 @@ Serve it with `make serve`.
 
 ```sh
 make setup    # create venv, install deps (Python + JS), install pre-commit hooks
-make serve    # serve app/ on the LAN — the printed address works on any device (phone included)
+make serve    # build the boot bundle, then serve app/ on the LAN — the printed address works on any device (phone included)
+make app-build # rebuild after editing app/ source — the server reload watches the backend only
 make test     # lint + typecheck gate, then pytest + vitest
 make coverage # tests with coverage report
 ```

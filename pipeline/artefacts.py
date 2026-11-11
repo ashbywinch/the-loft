@@ -16,11 +16,13 @@ word that the read finished.
 
 from __future__ import annotations
 
-import os
+import io
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageOps
+
+from tools.atomic import atomic_write
 
 # The review surface's image: the page must read and check rows on a phone,
 # not carry the 12-megapixel JPEG over the LAN. Re-encode as WebP at the
@@ -85,7 +87,8 @@ class BatchArtefacts:
         return self.oriented_dir / page
 
     def view(self, page: str) -> Path:
-        """The cached review derivative of one page (WebP, capped at 2000px)."""
+        """The cached review derivative of one page (WebP; the page's own
+        pixel dimensions until the box-normalisation change permits 2000px)."""
         return self.view_dir / f"{Path(page).stem}.webp"
 
     def view_image(self, page: str, source: Path | None = None) -> Path:
@@ -101,14 +104,13 @@ class BatchArtefacts:
         target = self.view(page)
         if target.is_file() and target.stat().st_mtime >= source.stat().st_mtime:
             return target
-        target.parent.mkdir(parents=True, exist_ok=True)
         with Image.open(source) as opened:
-            image = opened.convert("RGB")
+            image = ImageOps.exif_transpose(opened).convert("RGB")
             if VIEW_MAX_EDGE is not None:
                 image.thumbnail((VIEW_MAX_EDGE, VIEW_MAX_EDGE), Image.Resampling.LANCZOS)
-            temporary = target.with_name(target.name + ".tmp")
-            image.save(temporary, "WEBP", quality=VIEW_QUALITY, method=4)
-        os.replace(temporary, target)
+            buffer = io.BytesIO()
+            image.save(buffer, "WEBP", quality=VIEW_QUALITY, method=4)
+        atomic_write(target, buffer.getvalue())
         return target
 
     def text(self, page: str) -> Path:

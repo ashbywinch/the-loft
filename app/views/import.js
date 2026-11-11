@@ -143,8 +143,10 @@ function reviewSession(state, session, countEl) {
     if (!doc) return null;
     // Rule L: a draft transcription's sentence is
     // never presented as the document's own words — only verified text is
-    // quoted as "it says"
-    const quote = doc.transcription_status === "draft" ? null : quoteFrom((doc.transcription || "").trim(), p.name);
+    // quoted as "it says". The text comes from transcripts.json (loaded for
+    // the import route); the inline field is the old-data fallback.
+    const transcription = state.transcripts?.[doc.id] ?? doc.transcription ?? "";
+    const quote = doc.transcription_status === "draft" ? null : quoteFrom(transcription.trim(), p.name);
     return { id: doc.id, title: doc.title, quote };
   };
 

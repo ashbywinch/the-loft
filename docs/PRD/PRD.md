@@ -424,7 +424,7 @@ import sessions — they bind every screen and every data decision:
 **Devices:** Android-first — the phone is the primary **curation** surface; any modern tablet/phone browser for browsing (no iOS requirement). Landscape + portrait. PWA installable ("Add to Home Screen").
 
 **Performance (at 10,000 items / 50,000 images):**
-- First meaningful paint ≤ 2 s on 4G; initial JS/CSS payload ≤ 100 KB (the stack decision is `TECHSPEC.md` §15's).
+- First meaningful paint ≤ 2 s on 4G; initial JS/CSS payload ≤ 100 KB (the stack decision is `docs/TECHSPEC/01-foundations.md` §2).
 - Scrolling at 60 fps; images lazy-loaded; opening an item shows the **view image** — readable and row-checkable, not a thumbnail; full resolution stays on the LAN.
 - Index loads incrementally (decade/year segments), never one giant fetch.
 - Runtime reads ride the family-only projection only — the app **never reads the archive directly** (the front end proposes through the sync contract; the backend records; full-res placement TBD, §15). The phone stores nothing.
@@ -504,7 +504,7 @@ import sessions — they bind every screen and every data decision:
 4. **Audio/video — RESOLVED:** some recordings likely exist but probably unrecoverable; **BBC archive is a research lead**; the schema stays future-proofed.
 5. **Back-of-photo writing — RESOLVED:** happens but rare → capture default is front-first; back captured when writing is noticed.
 6. **TV/second-screen mode — RESOLVED (via plan):** yes — gatherings are the activation metric; Show mode (Slice 3) and TV mode (Slice 6) are planned in `docs/PLAN/PLAN.md`.
-7. **Technical appetite — RESOLVED (user):** vanilla-first, no framework (recorded in `TECHSPEC.md` §15).
+7. **Technical appetite — RESOLVED (user):** vanilla-first, no framework (recorded in `docs/TECHSPEC/01-foundations.md` §2; a dev-only boot bundle is D49).
 8. **Secondary narrators — OPEN:** a family member is the physical collaborator for the clearing-out; do others hold stories worth harvesting?
 9. **The elders and the app — RESOLVED (via plan):** yes — elders may be shown familiar photos, via Show mode (`docs/PLAN/PLAN.md` Slice 3); the family decides when, and it is never a dependency. (Sensitive; see §4.)
 10. **Private letters** — are any letters/items not for the future user's eyes (e.g., while he's a child), and should the app support per-item privacy flags? (Currently everything is household-private; this is about *within*-family boundaries over time.)

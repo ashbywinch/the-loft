@@ -2,6 +2,9 @@
 
 **Status:** v0.2 — A0–A1 landed; the rest are `todo`. Change a row's State to
 its PR when it lands.
+**PR:** #89 carries A0/A1 and the boot-path fixes as one review unit (the
+user's call); the ladder's one-increment-per-PR rule applies to later
+increments.
 **Date:** 2026-11-09.
 **Companion:** `docs/TECHSPEC.md` v1.0 is the target. `docs/PLAN/PLAN.md` is
 the product backlog. `docs/PLAN/WORK-PLAN.md` is the active subset. This file

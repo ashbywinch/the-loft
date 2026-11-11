@@ -24,6 +24,7 @@
         var app = document.getElementById("app");
         window.__loftBoot = [];
         window.__loftStage = "inline script ran";
+        window.__loftReady = false;
 
         var loading = document.createElement("div");
         loading.id = "boot-loading";
@@ -37,6 +38,9 @@
         function paintBootFailure(what) {
           console.error("[boot]", what);
           window.__loftBoot.push(what);
+          // After boot the app owns its failures: a view's try/catch or an
+          // event handler must not replace a working page with a boot error.
+          if (window.__loftReady) return;
           var root = document.getElementById("app");
           if (!root) return;
           root.innerHTML = "";
@@ -69,8 +73,11 @@
         // The module graph can fail before boot() runs. Say so after 8s
         // instead of leaving the marker (or a blank page) forever.
         setTimeout(function () {
+          if (window.__loftReady) return;
           var stage = window.__loftStage;
-          if (stage === "inline script ran" || stage === "module queued" || stage === "module load" || stage === "start") {
+          // "start" is a pending identity/bootstrap request, not a dead
+          // module graph — a slow phone must not get a false failure.
+          if (stage === "inline script ran" || stage === "module queued" || stage === "module load") {
             paintBootFailure("boot did not finish (stage: " + stage + ")");
           }
         }, 8000);

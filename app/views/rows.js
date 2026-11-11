@@ -129,7 +129,9 @@ export async function render(main, ctx, state) {
   }
 
   const tints = doc.tints?.[page] || [];
-  const checked = new Set(Object.keys(doc.adjusted_rows || {}));
+  // The page-scoped payload carries only this page's adjusted rows; the
+  // server also names every checked page so "next still to check" survives.
+  const checked = new Set(doc.checked_pages ?? Object.keys(doc.adjusted_rows || {}));
   const root = el("div", { class: "rv rv-rows" });
   const bar = el("button", { class: "rv-btn rv-btn--primary", type: "button" }, "Rows are right");
   root.append(

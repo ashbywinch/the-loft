@@ -61,7 +61,9 @@ client and the domain types.
 - **`loft/live/` is the only package that imports `sqlite3`, and the
   service is the only process that hosts it.** The server calls `LiveStore`
   in process; the worker, sync agent, exporter and CLI call the service's
-  local API and never open the database.
+  local API and never open the database. The one exception is the
+  pre-service bootstrap: `loft db init` and `loft verify --schema` open the
+  store in process because they create/verify it before the service exists.
 - The service's public surface is deliberately small: `LiveStore`, `Change`,
   the view records (`TimelineEntry`, `PersonPage`, `ItemDetail`,
   `ReviewQueueEntry`, `SearchHit`, `ExportView`, `Snapshot`), and the error

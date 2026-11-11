@@ -1086,7 +1086,7 @@ def build_story(
     recorded = recorded or date.today().isoformat()
     # an ongoing draft keeps ONE id through its life: the client's auto-saves
     # and the final save supersede the same story in place (append-only —
-    # every version stays, the newest wins; docs/TECHSPEC.md §3). A fresh
+    # every version stays, the newest wins; docs/archive-durability.md). A fresh
     # save without an id mints the next story id.
     story_id = request.story_id or _next_story_id(recorded, existing_ids)
     speaker_id = knowledge.speaker_for(request.who)

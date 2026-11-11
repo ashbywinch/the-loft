@@ -3,7 +3,7 @@
 Primary content is held in files the sidecar references (a story is
 story.txt, a letter's transcription is transcription.txt), never as a
 sidecar JSON field — the split is the pair the archive's write seam takes
-(docs/TECHSPEC.md §3), and it travels as one record rather than a
+(docs/TECHSPEC/02-archive-and-capture.md), and it travels as one record rather than a
 positional pair.
 """
 

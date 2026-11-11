@@ -1,6 +1,6 @@
 /** A tiny markdown renderer for the transcriptions (user: a medal index
  *  card is a table — the site must render the structure, not a run-on
- *  paragraph). The app has no runtime dependencies (TECH-SPEC §15),
+ *  paragraph). The app has no runtime dependencies (TECHSPEC/01 §2),
  *  so this is in-house and deliberately small: pipe tables + paragraphs.
  *  The transcription data keeps the markdown verbatim; the renderer turns
  *  it into DOM nodes (text nodes only — no HTML injection from the data).

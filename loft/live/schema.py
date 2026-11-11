@@ -83,4 +83,11 @@ def verify_schema(connection: sqlite3.Connection) -> tuple[str, ...]:
         versions = [row[0] for row in connection.execute("SELECT version FROM schema_migrations ORDER BY version")]
         if versions != [SCHEMA_VERSION]:
             findings.append(f"schema_migrations is {versions}, not [{SCHEMA_VERSION}]")
+        else:
+            stored = connection.execute(
+                "SELECT sql_sha256 FROM schema_migrations WHERE version = ?", (SCHEMA_VERSION,)
+            ).fetchone()[0]
+            digest = hashlib.sha256(f"{truth}\n{projections}".encode()).hexdigest()
+            if stored != digest:
+                findings.append("schema_migrations sql_sha256 does not match the schema files")
     return tuple(findings)

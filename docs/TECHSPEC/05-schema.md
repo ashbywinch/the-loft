@@ -30,7 +30,7 @@ Everything else is a projection or operational state:
 - **Projections** (droppable, rebuildable from `events` + `content`):
   `items`, `people`, `places`, `orgs`, `themes`, `relationships`,
   `documents`, `document_pages`, `batches`, `scans`, `pages`, `page_rows`,
-  `page_row_links`, `row_checks`, `readings`, `review_sessions`, `claims`,
+  `page_row_links`, `row_checks`, `row_adjustments`, `readings`, `review_sessions`, `claims`,
   `review_messages`, `review_decisions`, `assets`, `item_refs`,
   `item_assets`, `item_content`, `person_residences`, `theme_items`,
   `aliases`, `withdrawals`, `commands`, `search_docs` and the FTS index.
@@ -251,9 +251,10 @@ source. The mentions in `date_mentions_json` use the same value.
 | `sync_state` | cursor progress and `last_verified_export_at`; operational |
 | `jobs` | the worker queue, leases and attempts; rebuilt from `job/*` |
 
-**Auth state is not a projection.** `accounts(account_id, email, subject,
-person_id, role, status)` is the login authority in D1; SQLite mirrors the
-linked accounts for LAN auth, attribution and backup. `events.actor_id` is the
+**Auth state is not a projection.** D1's `accounts(account_id, email, subject,
+person_id, role, status)` is the login authority; SQLite mirrors the linked
+account as `accounts(account_id, person_id, email, role, created_at,
+disabled_at)` — the Google `subject` binding is D1's, not the LAN mirror's. `events.actor_id` is the
 **person id**, not the account id; the log never stores an email. A person may
 have no account — most of the cast never will — and a contributor who is not
 yet in the cast gets a proposed person record. The owner invites an email; the

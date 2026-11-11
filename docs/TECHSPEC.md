@@ -42,7 +42,7 @@ restate it.
 |---|---|
 | Deployments, noun ownership, topology blast radius | [00-deployments.md](TECHSPEC/00-deployments.md) |
 | Principles, stack, deferred seams | [01-foundations.md](TECHSPEC/01-foundations.md) |
-| The record wire shape, maps, PWA, search, tools (the legacy file layout/capture/privacy/performance are in `99`) | [02-archive-and-capture.md](TECHSPEC/02-archive-and-capture.md) |
+| The record wire shape, maps, PWA, search, tools (the legacy file layout/capture/privacy/performance sections are retired) | [02-archive-and-capture.md](TECHSPEC/02-archive-and-capture.md) |
 | The capture pipeline, reading path and review surface (the import flow is a record) | [03-import-and-pipeline.md](TECHSPEC/03-import-and-pipeline.md) |
 | The live system's shape, the remote API, command/read flow, failure modes | [04-live-system.md](TECHSPEC/04-live-system.md) §17 |
 | The schema's concepts, event log, content, projections, migrations, withdrawal; the D1 store | [05-schema.md](TECHSPEC/05-schema.md) §18.1–18.7, §18.13 |

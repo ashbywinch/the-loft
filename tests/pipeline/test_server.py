@@ -204,6 +204,14 @@ def test_bootstrap_requires_a_session(server: ServerFixture) -> None:
     assert status == 401
 
 
+def test_bootstrap_refuses_an_unpublished_projection(server: ServerFixture) -> None:
+    """A missing app/data is an operator error, not an empty archive."""
+    (server.data_dir / "index.json").unlink()
+    status, raw = server.get("/api/bootstrap", cookie=server.cookie)
+    assert status == 503
+    assert b"not published" in raw
+
+
 def test_bootstrap_returns_identity_and_projection(server: ServerFixture) -> None:
     """One auth-gated request carries what the home used to fetch in six."""
     status, raw = server.get("/api/bootstrap", cookie=server.cookie)
@@ -1074,6 +1082,7 @@ def test_sync_drafts_page_scope_returns_one_page(server: ServerFixture) -> None:
     assert document["pages"] == ["p1.jpg"]
     assert document["texts"] == {"p1.jpg": "Chère Maman."}
     assert document["greeting"] == "Chère Maman."
+    assert document["checked_pages"] == []  # the whole batch's checked set, not this page's
     status, _ = server.get("/api/sync/batch/adopt-0001/drafts?doc=0&page=99", cookie=server.cookie)
     assert status == 400
 

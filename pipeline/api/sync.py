@@ -1,4 +1,4 @@
-"""The two-app sync contract (TECHSPEC §16.15, MULTI-DOC-IMPORT-PRD.md R14).
+"""The two-app sync contract (TECHSPEC/04 §17.5, MULTI-DOC-IMPORT-PRD.md R14).
 
 The backend owns the archive's write seam; the frontend proposes, the
 backend records. This module is the shared contract:
@@ -360,7 +360,7 @@ def record_confirmation(
     registry_dir: Path = REGISTRY_DIR,
 ) -> str:
     """The backend's single write path for a reviewed document — shared by
-    the CLI review gate and the sync receiver (TECHSPEC §16.15).
+    the CLI review gate and the sync receiver (TECHSPEC/04 §17.5).
 
     An agreed document becomes an archive item: the review's facts (title,
     date) mint it, or supersede the item the document already became

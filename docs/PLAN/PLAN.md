@@ -163,7 +163,7 @@ from fake-data demo to real-archive feature.
 
 ## Sequencing logic
 
-- **Release gate — F6 before any public deploy.** Slice 1 publishes the projection (which carries transcriptions — transcription hosting is the product, PRD §6) to the static host; accounts (F6) are Slice 2. The first *public* deploy therefore waits for F6, or the projection deploys to a family-only host until then; until that gate, `make serve` is the only serving surface. (The projection posture lives in TECHSPEC §7.)
+- **Release gate — F6 before any public deploy.** Slice 1 publishes the projection (which carries transcriptions — transcription hosting is the product, PRD §6) to the static host; accounts (F6) are Slice 2. The first *public* deploy therefore waits for F6, or the projection deploys to a family-only host until then; until that gate, `make serve` is the only serving surface. (The projection posture lives in `docs/TECHSPEC/00-deployments.md` and `04-live-system.md` §17.6.)
 - **1 before 2–6:** the scans are the irreplaceable layer; every month risks
   the physical deadline (house sale) and the narrator's fidelity.
 - **2 before 3:** the phone is Alex's stated work surface. *Knob:* if a

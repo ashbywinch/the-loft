@@ -14,4 +14,10 @@ describe("the front page's boot budget", () => {
     expect(read("app/index.html")).not.toContain("vendor/leaflet.js");
     expect(read("app/app.js")).toContain("loadLeaflet");
   });
+
+  it("the built boot bundle exists after setup", () => {
+    // make setup builds app/dist; a missing bundle must fail here rather than
+    // in a browser as a 404 for the shell's only script.
+    expect(read("app/dist/boot.js").length).toBeGreaterThan(1000);
+  });
 });

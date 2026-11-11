@@ -2,7 +2,7 @@
 
 House conventions, copied in full from the canonical global standard
 (`docs/coding-standards.md` in the omp-config repo) and adapted to this
-project's explicit decisions (see `docs/TECHSPEC.md` §15 for the rationale).
+project's explicit decisions (see `docs/TECHSPEC/01-foundations.md` §2 for the rationale).
 The reviewer (PR-Agent) enforces exactly the rules present in this file — the
 full global standard is copied below, so every rule is in force. When the
 upstream standard changes, refresh this copy.
@@ -89,7 +89,7 @@ good.
 - **Real content never lives in code.** Anything a user provides or states
   directly — scans, story text, the identity tables (people, relationships,
   places, themes), a dated, attributed fact — is archive content
-  (`archive/`), changed only by add (docs/TECHSPEC.md §3). Code is the
+  (`archive/`), changed only by add (`docs/archive-durability.md`). Code is the
   pipeline: `loft publish` (Archive.publish -> Projection) regenerates every derived file
   from the archive; `tools/demo_data.py` is the fictional demo generator and
   a test guards that the real family's names never appear in it. ✗ the
@@ -459,12 +459,12 @@ a check is a wish:
   unload. A chat surface built outside `app/chat.js`, or a send button that
   is not bottom-right and docked, is a finding.
 - Vanilla ES modules. **No runtime dependencies beyond vendored libraries** —
-  the app ships as files; a small vendored runtime library is allowed if it
+  the app ships as source files plus a generated boot bundle (D49); a small vendored runtime library is allowed if it
   degrades gracefully (e.g. Leaflet for the map, with the SVG dot view as the
-  offline fallback — `docs/TECHSPEC.md` §15). Dev tooling (eslint, prettier,
+  offline fallback — `docs/TECHSPEC/01-foundations.md` §2). Dev tooling (eslint, prettier,
   vitest) is allowed and degrades well.
-- **Vanilla is not classless.** The stack decision is no framework, no build
-  step, no runtime deps — `class` is ES2015 and always allowed. A value type
+- **Vanilla is not classless.** The stack decision is no framework, no runtime
+  deps; a dev-only esbuild boot bundle packages the boot graph (D49) — `class` is ES2015 and always allowed. A value type
   with real behavior and several consumers earns a class in `app/` too (the
   date model is the planned first one: a `PreciseDate` twin of the Python
   class, pinned by parity tests). What never belongs in a view is a second
@@ -477,7 +477,7 @@ a check is a wish:
   never fetch or reach into module singletons.
 - No framework — if the code "starts to get messy," that is a decision point
   to revisit with the user, not a license to adopt one silently
-  (`docs/TECHSPEC.md` §15).
+  (`docs/TECHSPEC/01-foundations.md` §2).
 
 ## Dependency injection
 

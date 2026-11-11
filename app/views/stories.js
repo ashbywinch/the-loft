@@ -132,9 +132,12 @@ export function reader(main, ctx, state) {
     caption.textContent = `${index + 1} of ${rows.length}`;
     progress.style.width = `${((index + 1) / rows.length) * 100}%`;
     const asset = item.assets?.[0];
+    // The index no longer carries the text; the story route loads
+    // transcripts.json first. The inline field is the old-data fallback.
+    const transcription = state.transcripts?.[item.id] ?? item.transcription ?? "";
     const nodes = [];
     if (asset) nodes.push(el("img", { class: "reader-img", src: assetUrl(item.id, asset.file), alt: item.title }));
-    if (item.transcription) nodes.push(...renderMarkdown(item.transcription));
+    if (transcription) nodes.push(...renderMarkdown(transcription));
     nodes.push(el("a", { class: "reader-open", href: `#/item/${item.id}` }, "Open the item →"));
     body.replaceChildren(...nodes);
     prev.disabled = index === 0;

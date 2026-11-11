@@ -82,6 +82,34 @@ def test_events_refuse_a_duplicate_event(tmp_path: Path) -> None:
         db.close()
 
 
+def test_the_insert_or_replace_hole_is_closed_without_the_pragma(tmp_path: Path) -> None:
+    """18.12.1: `INSERT OR REPLACE`/`OR IGNORE` must abort via the BEFORE
+    INSERT trigger even with recursive_triggers off. Without that trigger,
+    OR REPLACE deletes the old row without firing the delete trigger."""
+    db = LiveDatabase.create(tmp_path / "loft.db", app_version="test")
+    try:
+        db.connection.execute("PRAGMA recursive_triggers = OFF")
+        _event(db.connection)
+        with pytest.raises(sqlite3.IntegrityError, match="already exists"):
+            db.connection.execute(
+                """INSERT OR REPLACE INTO events (event_id, change_id, entity_kind, entity_id, event_no,
+                   entity_version, event_type, payload, payload_schema, recorded_at, actor_kind,
+                   actor_id, command_id, app_version, prev_hash, hash)
+                   VALUES ('e1', 'c2', 'person', 'p1', 1, 1, 'created', '{}', 1,
+                           '2026-01-01T00:00:00Z', 'system', 'test', NULL, 'test', NULL, 'h2')"""
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="already exists"):
+            db.connection.execute(
+                """INSERT OR IGNORE INTO events (event_id, change_id, entity_kind, entity_id, event_no,
+                   entity_version, event_type, payload, payload_schema, recorded_at, actor_kind,
+                   actor_id, command_id, app_version, prev_hash, hash)
+                   VALUES ('e1', 'c3', 'person', 'p1', 1, 1, 'created', '{}', 1,
+                           '2026-01-01T00:00:00Z', 'system', 'test', NULL, 'test', NULL, 'h3')"""
+            )
+    finally:
+        db.close()
+
+
 def test_verify_reports_a_missing_projection(tmp_path: Path) -> None:
     db = LiveDatabase.create(tmp_path / "loft.db", app_version="test")
     try:

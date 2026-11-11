@@ -222,6 +222,13 @@ def build_app(
         session = session_user(request)
         if session is None:
             return JSONResponse(ErrorAnswer("sign in to read the archive").to_dict(), status_code=401)
+        if not (data_dir / "index.json").is_file():
+            # A missing projection is an operator error, not an empty archive:
+            # the home must say so instead of "0 items".
+            return JSONResponse(
+                {"error": "the archive projection is not published", "detail": "run loft publish"},
+                status_code=503,
+            )
         return {
             "me": auth.me_payload(archive, session).to_dict(),
             "index": _projection_document("index.json"),
@@ -336,7 +343,7 @@ def build_app(
         # so the story renders in the app — idempotent, atomic. All archive
         # writes go through the archive library (docs/CONTRIBUTIONS.md). The
         # story text is primary content: it becomes a content file the
-        # sidecar references, never a sidecar JSON field (TECHSPEC §3).
+        # sidecar references, never a sidecar JSON field (archive-durability.md).
         split = split_content(built.story)
         archive.save_item(split.sidecar, content=split.content)
         for person in built.new_people:
@@ -715,7 +722,7 @@ def build_app(
                 return JSONResponse({"ok": False, "error": "sign in to read the archive"}, status_code=401)
         return await call_next(request)
 
-    # -- sync (TECHSPEC §16.15: the backend owns the write seam; the
+    # -- sync (TECHSPEC/04 §17.5: the backend owns the write seam; the
     # frontend proposes, the backend records; the outbox is the catch-up) --
 
     @app.get("/api/sync/batches")
@@ -744,7 +751,7 @@ def build_app(
     @app.get("/api/sync/batch/{batch_id}/drafts")
     def sync_drafts(batch_id: str, request: Request) -> Any:
         """The machine drafts the review surface reads (guesses + boundaries
-        + layout, TECHSPEC §16.16), with the registry's per-document
+        + layout, docs/TECHSPEC/03-import-and-pipeline.md §16.16), with the registry's per-document
         review status merged in (the registry is the status' home — the
         guess stage's boundaries.json never changes after review).
 
@@ -808,10 +815,12 @@ def build_app(
                 if page_number < 0 or page_number >= len(document_pages):
                     return JSONResponse({"error": "no such page"}, status_code=400)
                 page_name = document_pages[page_number]
+                checked_pages = sorted((chosen.get("adjusted_rows") or {}).keys())
                 for key in ("texts", "layouts", "orientations", "row_adjustments", "adjusted_rows", "tints"):
                     value = chosen.get(key)
                     if isinstance(value, dict):
                         chosen[key] = {page_name: value[page_name]} if page_name in value else {}
+                chosen["checked_pages"] = checked_pages
                 documents = [chosen]
             return BatchDraftsAnswer(
                 batch_id=batch_id,

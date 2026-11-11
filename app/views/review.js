@@ -1,5 +1,5 @@
 /**
- * The transcription-review surface (TECH-SPEC §16.16 + the locked wireframe):
+ * The transcription-review surface (TECHSPEC/03 §16.16 + the locked wireframe):
  * the reviewer checks the machine's drafts against the pages
  * before they are archived. The page image (a plain <img> in a scaled
  * layer)
@@ -11,7 +11,7 @@
  * image (the line's box highlights and the image pans to it). The only gate is confirmation — Confirm & Next records the
  * corrected document through the sync seam (POST /api/sync/confirmations)
  * with a localStorage outbox as the catch-up when the backend is
- * unreachable (TECH-SPEC §16.15: nothing confirmed is ever lost to a
+ * unreachable (TECHSPEC/04 §17.5: nothing confirmed is ever lost to a
  * failed push).
  *
  * Phone portrait shows a "turn your phone sideways" prompt; phone

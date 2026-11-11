@@ -135,6 +135,26 @@ describe("the import review is the chat — one conversation resolves the pendin
     expect(main.querySelector(".chat-bar .field").placeholder).toBe("Or type your own answer…");
   });
 
+  it("quotes the document from transcripts when the index no longer carries it", () => {
+    const state = JSON.parse(JSON.stringify(STATE));
+    state.items = [
+      {
+        id: "doc-2001-email",
+        title: "Whitlock family history email, 7 Feb 2001",
+        date: "2001-02-07",
+        type: "document",
+        people: [{ id: "p-judith", status: "confirmed" }],
+      },
+    ];
+    state.byId = new Map(state.items.map((it) => [it.id, it]));
+    state.transcripts = {
+      "doc-2001-email": "I am researching the Whitlock line and would like to make contact. Pearl Whitlock.",
+    };
+    const main = document.createElement("main");
+    render(main, { arg: "import-documents", query: new URLSearchParams() }, state);
+    expect(bubbles(main)[1]).toContain('"I am researching the Whitlock line and would like to make contact."');
+  });
+
   it("the claim names the source document, quotes it directly, and links it", () => {
     const state = JSON.parse(JSON.stringify(STATE));
     state.items = [

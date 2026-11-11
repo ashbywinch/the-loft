@@ -8,6 +8,7 @@ land in A2.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 from pathlib import Path
 from types import TracebackType
@@ -35,7 +36,11 @@ class LiveDatabase:
         if path.exists():
             raise SchemaError(f"{path} exists — refusing to overwrite")
         path.parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(path, isolation_level=None)
+        # Build a hidden sibling and publish it only when the whole schema
+        # verifies: a kill mid-init leaves no half-created `loft.db` to trick
+        # the next run into "already exists — refusing to overwrite".
+        temporary = path.with_name(f".{path.name}.{os.urandom(8).hex()}.init")
+        connection = sqlite3.connect(temporary, isolation_level=None)
         connection.row_factory = sqlite3.Row
         try:
             cls._apply_pragmas(connection)
@@ -43,12 +48,17 @@ class LiveDatabase:
             findings = verify_schema(connection)
             if findings:
                 raise SchemaError("; ".join(findings))
-        except Exception:
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except BaseException:
             connection.close()
             for suffix in ("", "-wal", "-shm"):
-                path.with_name(path.name + suffix).unlink(missing_ok=True)
+                temporary.with_name(temporary.name + suffix).unlink(missing_ok=True)
             raise
-        return cls(connection)
+        connection.close()
+        for suffix in ("-wal", "-shm"):
+            temporary.with_name(temporary.name + suffix).unlink(missing_ok=True)
+        os.replace(temporary, path)
+        return cls.open(path)
 
     @classmethod
     def open(cls, path: Path) -> Self:

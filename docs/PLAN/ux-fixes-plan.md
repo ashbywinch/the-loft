@@ -215,8 +215,8 @@ self-check loop against VR1–VR9 with screenshots at 375×812 / 812×375 /
 1024×768.
 
 **Next**: wire the surface to the real pipeline — layout payload from
-`draft_payloads` (TECHSPEC §16.16), PaddleOCR boxes + cross-reader
-confidence, OpenSeadragon pane, confirmations seam §16.15 — and review it
+`draft_payloads` (docs/TECHSPEC/03-import-and-pipeline.md §16.16), PaddleOCR boxes + cross-reader
+confidence, OpenSeadragon pane, confirmations seam §17.5 — and review it
 against the two live batches.
 
 ## Transcription-review surface — first REAL-DATA usability walk (2026-08-15)

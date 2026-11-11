@@ -22,8 +22,10 @@ const LOADERS = {
   places: async () => {
     try {
       await loadLeaflet();
-    } catch {
-      // the view renders its SVG dot fallback when Leaflet cannot load
+    } catch (error) {
+      // the view renders its SVG dot fallback when Leaflet cannot load;
+      // the failure still has to be diagnosable
+      console.error("leaflet: could not load — using the SVG fallback", error);
     }
     return import("./views/places.js");
   },
@@ -155,6 +157,8 @@ export async function boot() {
     try {
       answer = await loadBootstrap();
     } catch (error) {
+      // Two-tier failure: the visitor's line and the root cause in the log.
+      console.error("boot: failed to load the archive", error);
       const bootRoot = document.getElementById("app");
       bootRoot.replaceChildren(
         el(
@@ -213,7 +217,7 @@ export async function boot() {
           return;
         }
       }
-      if (["item", "search", "identify"].includes(name) && !transcriptsLoaded) {
+      if (["item", "search", "identify", "story", "import"].includes(name) && !transcriptsLoaded) {
         main.append(el("div", { class: "empty" }, "Loading the text…"));
         await ensureTranscripts();
         if (token !== routeToken) return; // a newer navigation won
@@ -252,4 +256,7 @@ export async function boot() {
     if (!revisit) window.scrollTo(0, 0);
   });
   mark("route wired");
+  // From here a view's own error handler owns the page; the boot diagnostic
+  // must not wipe a working app on a later unrelated click/async error.
+  window.__loftReady = true;
 }

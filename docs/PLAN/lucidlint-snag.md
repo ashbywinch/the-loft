@@ -88,7 +88,7 @@ of every doc the reader might need.
 
 In practice, AGENTS.md is a bootloader — it points the reader (or an agent)
 in the right direction based on what they're trying to do. Specialised design
-docs (e.g. `docs/archive-concurrency-plan.md`) are linked from the docs that
+docs (e.g. `docs/archive-durability.md`) are linked from the docs that
 ARE in AGENTS.md's tree (e.g. TECHSPEC, PRD), not directly from AGENTS.md
 itself. Every doc being reachable from AGENTS.md in 0 hops is not the right
 invariant — an indirect hop through a doc the reader already chose is fine.

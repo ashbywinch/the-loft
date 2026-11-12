@@ -13,7 +13,7 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
-.PHONY: help setup serve lint lint-github typecheck typecheck-update-baseline test coverage format clean eval evals eval-changed verify scan-docs scan-photos adopt ingest confirm
+.PHONY: help setup app-build serve lint lint-github typecheck typecheck-update-baseline test coverage format clean eval evals eval-changed verify scan-docs scan-photos adopt ingest confirm
 
 PYTHON := .venv/bin/python
 RUFF := .venv/bin/ruff
@@ -50,11 +50,14 @@ setup:
 	@uv sync --locked
 	@if [ ! -d node_modules ] || [ ! -f node_modules/.package-lock.json ] || [ package-lock.json -nt node_modules/.package-lock.json ]; then $(NPM) ci --no-audit --no-fund; fi  # ci stays reproducible; skipped when the lock is unchanged (2026-08-13: a full reinstall on every make call was the suite's fixed 3 s tax)
 	@uv run pre-commit install
-	@[ -n "$$CI" ] || { [ -f .env ] || cp .env.example .env; }  # CI carries its own gateway env (ci.yml); the copy is for local shells only — .env.example's blank values would wipe it
+	@[ -n "$${CI:-}" ] || { [ -f .env ] || cp .env.example .env; }  # CI carries its own gateway env (ci.yml); the copy is for local shells only — .env.example's blank values would wipe it
+	@$(MAKE) --no-print-directory app-build  # CI builds it too, so a broken bundle fails the gate
 
+app-build:
+	@$(NPM) run build
 
 serve: setup
-	@./loft serve --host 0.0.0.0 --port 8000 --reload
+	@./scripts/loft serve --host 0.0.0.0 --port 8000 --reload
 
 
 lint: setup
@@ -97,10 +100,13 @@ evals: setup
 # release bundle (SHA256SUMS-verified) into lucidlint-dist/ (gitignored), so
 # CI == developer on the same compiled binary.
 #
-# The pin is authoritative (2026-09-16: back to 0.5.0 — 0.6.1 was used to find and fix the
-# pipeline's latent classes (pipeline/detect/reader.py, pipeline/detect/mark.py now pass it with no
-# suppressions); the rest of the repo's findings under 0.6.1 are another session's work.
-# Was 0.5.0 from 2026-09-11, 0.1.0 to 2026-08-29): install-lucidlint verifies the
+# The pin is authoritative. Current: 0.7.1 (2026-11-11) — its two new fail
+# families, global-state and duplicate-module, are judged and recorded in
+# docs/PLAN/lucidlint-review-log.md §1.6/§1.7; the one genuine copy-paste
+# family they found was deduplicated in code. History: 0.5.0 from 2026-09-16
+# (0.6.1 was used to find and fix the pipeline's latent classes —
+# pipeline/detect/reader.py and pipeline/detect/mark.py now pass it with no
+# suppressions), 0.1.0 from 2026-08-29. install-lucidlint verifies the
 # installed bundle's version marker against LUCIDLINT_VERSION and re-downloads
 # only on a mismatch or a missing marker. A bare file-existence guard let a
 # stale bundle from an earlier release sit in the gitignored dist (never
@@ -109,7 +115,7 @@ evals: setup
 # saw. The marker is written only by the verified download; a bundle whose
 # marker matches the pin IS the pinned version.
 .PHONY: install-lucidlint lucidlint
-LUCIDLINT_VERSION ?= 0.5.0
+LUCIDLINT_VERSION ?= 0.7.1
 LUCIDLINT_ARCH ?= x86_64-unknown-linux-musl
 LUCIDLINT_DIST := lucidlint-dist
 LUCIDLINT_BUNDLE := $(LUCIDLINT_DIST)/lucidlint.py

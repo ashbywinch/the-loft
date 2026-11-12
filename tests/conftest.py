@@ -8,10 +8,18 @@ run with ``pytest -m eval``, and they exist to phone the model API."""
 
 from __future__ import annotations
 
+import os
 import socket
 from typing import Any
 
 import pytest
+
+# The unit tests never call a gateway; they inject the transport. A
+# well-formed base URL keeps the client's URL construction deterministic when
+# the operator's shell has none, so `make test` does not depend on `.env`.
+# The real-model evals need the real endpoint, which the operator supplies.
+if not os.environ.get("OPENAI_BASE_URL"):
+    os.environ["OPENAI_BASE_URL"] = "https://gateway.invalid/v1"
 
 _LOOPBACK = ("127.0.0.1", "::1")
 

@@ -96,6 +96,34 @@ describe("the row review's tints — the pipeline's records, painted", () => {
 describe("the row review screen", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it("paints a loading state while the drafts are loading", async () => {
+    let resolveFetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            resolveFetch = resolve;
+          }),
+      ),
+    );
+    const main = document.createElement("main");
+    render(main, { arg: "b1", rest: ["rows", "b1", "0", "0"] }, {});
+    expect(main.textContent).toContain("Loading the page");
+    resolveFetch({ ok: true, status: 200, json: async () => DRAFTS });
+    await vi.waitFor(() => expect(main.querySelector(".rv-page")).toBeTruthy());
+  });
+
+  it("the next-page jump respects every checked page, not just this one", async () => {
+    stubFetch({
+      ...DRAFTS,
+      documents: [{ ...DRAFTS.documents[0], checked_pages: ["p2.jpg"] }],
+    });
+    const { main } = await openPage();
+    main.querySelector(".rv-rowbar .rv-btn--primary").click();
+    await vi.waitFor(() => expect(location.hash).toBe("#/review"));
+  });
+
   it("paints the machine's rows before anything is drawn", async () => {
     stubFetch();
     const { main } = await openPage();

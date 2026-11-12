@@ -326,6 +326,41 @@ describe("the batch list renders the real batches", () => {
     await vi.waitFor(() => expect(main.querySelector(".gate")).toBeTruthy());
     vi.unstubAllGlobals();
   });
+
+  it("paints the review frame before the batches answer", async () => {
+    let resolveFetch;
+    const pending = new Promise((resolve) => {
+      resolveFetch = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn(() => pending));
+    const main = document.createElement("main");
+    render(main, { name: "review" });
+    expect(main.querySelector(".rv-topbar")).not.toBeNull();
+    expect(main.querySelector(".rv-note")?.textContent).toContain("Loading the work");
+    resolveFetch({ ok: true, status: 200, json: async () => ({ batches: [] }) });
+    await vi.waitFor(() => expect(main.textContent).toContain("No review work waiting"));
+    vi.unstubAllGlobals();
+  });
+
+  it("times out with a retry when the batches do not answer", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url, options) =>
+          new Promise((_resolve, reject) => {
+            options.signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+          }),
+      ),
+    );
+    const main = document.createElement("main");
+    render(main, { name: "review" });
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(main.textContent).toContain("took too long");
+    expect(main.textContent).toContain("Try again");
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 });
 
 describe("the review hub shows both transcriptions and import sessions", () => {

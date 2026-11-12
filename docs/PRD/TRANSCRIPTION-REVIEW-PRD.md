@@ -2,7 +2,7 @@
 
 - **Status:** draft for agreement
 - **Epic:** 6.11.3 Transcription Validation (Notion)
-- **Inputs:** `research/OCR Correction UX & Tools Guide.pdf`; the capture pipeline's requirements `MULTI-DOC-IMPORT-PRD.md` R7/R10/R12/R13/R14; the sync contract (TECHSPEC §16.15)
+- **Inputs:** `research/OCR Correction UX & Tools Guide.pdf`; the capture pipeline's requirements `MULTI-DOC-IMPORT-PRD.md` R7/R10/R12/R13/R14; the sync contract (`docs/TECHSPEC/04-live-system.md` §17.5)
 - **Requirements only.** How the screen is built — the viewer, the alignment, the confidence signals, the layout — is the TECHSPEC's job, and the new tech (bounding-box alignment, per-word confidence) is **spiked before the spec** to see what the pipeline can produce. This PRD says what the reviewer experiences, not what the UI is made of.
 
 ## 1. Purpose
@@ -51,7 +51,7 @@ goes where it's needed.)
 corrected-then-confirmed, or rejected — nothing else. The confirmed text
 is the document's words; a rejection is recorded and nothing is silently
 dropped. Only confirmed text reaches the archive (R7; the confirmations
-contract, TECHSPEC §16.15).
+contract, `docs/TECHSPEC/04-live-system.md` §17.5).
 
 **VR6 — The grouping is part of the review.** The reviewer sees which
 pages make up each document and confirms the grouping with the text
@@ -77,14 +77,14 @@ remains in a batch, leave partway, and come back without re-reading what
 they already handled. Progress is visible.
 
 **VR10 — Reorientation is the reviewer's act, immediate and reliable.**
-A page's orientation changes only because the reviewer changed it — never
-on its own, even after a reload or a return visit. When the reviewer does
-change it: (i) the page shows the corrected way round instantly and stays
-that way on every look thereafter, whatever else is happening — what the
-reviewer set is what they see, and it never reverts; and (ii) the
-corrected transcription reliably arrives, and when it arrives late it
-updates the text, never the orientation the reviewer set (user
-requirement).
+The pipeline sets a page's initial rotation; from then on a page's
+orientation changes only because the reviewer changed it — never on its own,
+even after a reload or a return visit. When the reviewer does change it: (i)
+the page shows the corrected way round instantly and stays that way on every
+look thereafter, whatever else is happening — what the reviewer set is what
+they see, and it never reverts; and (ii) the corrected transcription reliably
+arrives, and when it arrives late it updates the text, never the orientation
+the reviewer set (user requirement).
 
 **VR11 — The review proceeds page by page, in any order, at the reviewer's
 pace.** Each page is finished on its own; a document is finished only when

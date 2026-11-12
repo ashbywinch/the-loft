@@ -85,13 +85,20 @@ export function render(main, _ctx, state) {
       ]),
     ),
   );
-  // The portal (UR2): ONE door to the review hub. The hub is the page that
-  // enumerates every pending human item with its count and routes each to
-  // the surface that clears it; the front page names the work waiting and
-  // goes there (a card per item duplicated the hub and drifted from it). The
-  // fetch is fire-and-forget: a 401 means the user isn't signed in, and
-  // nothing pending means no door.
-  const portalSection = el("section", { class: "block review-promo" });
+  // The portal (UR2): ONE door to the review hub. It is built synchronously
+  // and is always present — the link must never disappear because the work
+  // count failed or because nothing is waiting. The fetch only names the
+  // work; the hub is the page that enumerates it.
+  const portalNote = el("div", { class: "review-card-note" }, "Open the review hub");
+  const portalSection = el("section", { class: "block review-promo" }, [
+    el("a", { class: "review-card", href: "#/review" }, [
+      el("div", { class: "review-card-icon" }, "✓"),
+      el("div", { class: "review-card-main" }, [
+        el("div", { class: "review-card-title" }, "Review"),
+        portalNote,
+      ]),
+    ]),
+  ]);
   (async () => {
     let batches;
     try {
@@ -99,7 +106,7 @@ export function render(main, _ctx, state) {
       if (!res.ok) return;
       batches = (await res.json()).batches || [];
     } catch {
-      // server unreachable — no portal; the browse surface still works
+      // the link stays; the hub handles the unreachable server
       return;
     }
     const plural = (count, noun) => `${count} ${noun}${count === 1 ? "" : "s"}`;
@@ -120,20 +127,7 @@ export function render(main, _ctx, state) {
     if (myDrafts.length) {
       waiting.push(`${myDrafts.length} unfinished ${myDrafts.length === 1 ? "story" : "stories"}`);
     }
-    if (!waiting.length) return;
-    portalSection.replaceChildren(
-      el("a", { class: "review-card", href: "#/review" }, [
-        el("div", { class: "review-card-icon" }, "✓"),
-        el("div", { class: "review-card-main" }, [
-          el("div", { class: "review-card-title" }, "Review"),
-          el("div", { class: "review-card-note" }, waiting.join(" · ")),
-        ]),
-      ]),
-    );
-    // insert between the hero/moment/draft area and the doors
-    const doorSection = main.querySelector(".door-grid")?.parentElement;
-    if (doorSection) main.insertBefore(portalSection, doorSection);
-    else main.append(portalSection);
+    portalNote.textContent = waiting.length ? waiting.join(" · ") : "Nothing waiting — everything is confirmed.";
   })();
 
   main.append(
@@ -189,6 +183,8 @@ export function render(main, _ctx, state) {
       `${published(state.items).length} items · the full collection is still arriving. Letters and documents are added by the family; anyone can add a memory from any page.`,
     ),
   );
+  // between the hero/moment/draft area and the doors
+  main.insertBefore(portalSection, doorSection);
 }
 
 /** The owner's unfinished stories — where they find them after dinner

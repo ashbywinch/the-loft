@@ -6,63 +6,89 @@
     <meta name="theme-color" content="#f6efe2" />
     <title>The Loft — a family museum</title>
     <link rel="stylesheet" href="styles.css" />
-    <link rel="stylesheet" href="vendor/leaflet.css" />
   </head>
   <body>
     <div id="app"></div>
-    <script src="vendor/leaflet.js"></script>
-    <script src="vendor/leaflet-heat.js"></script>
+    <noscript>
+      <p style="padding: 1rem; font: 16px system-ui, sans-serif">
+        The Loft needs JavaScript. Enable it for this site, or open the archive in a current browser.
+      </p>
+    </noscript>
     <script>
-      // Boot diagnostics (2026-08-08): a blank #app is a boot failure — the
-      // module graph, the identity check, the data load, or the route render.
-      // A module-graph failure never reaches app.js, so this inline listener
-      // paints the error into #app instead of leaving it blank, and every
-      // failure is logged to the console with the stage. window.__loftBoot
-      // holds the trace for the console.
-      window.__loftBoot = [];
-      // A visible loading marker painted IMMEDIATELY: a white page with no
-      // marker means the page's scripts never ran (a browser-level block),
-      // while a stuck marker shows the last boot stage. The stage is updated
-      // by boot() via window.__loftStage; the timer repaints while the app
-      // is still empty so a hang is visible, not blank.
-      window.__loftStage = "inline script ran";
-      const loading = Object.assign(document.createElement("div"), {
-        id: "boot-loading",
-        textContent: "The Loft — loading…",
-      });
-      document.getElementById("app")?.append(loading);
-      setInterval(() => {
-        const root = document.getElementById("app");
-        const first = root && root.firstElementChild;
-        if (first && first.id === "boot-loading") {
-          loading.textContent = `The Loft — still loading… stage: ${window.__loftStage || "module load"}`;
-        }
-      }, 2000);
-      const paintBootFailure = (what) => {
-        console.error("[boot]", what);
-        const root = document.getElementById("app");
-        if (root && !root.childElementCount) {
-          root.replaceChildren(
-            Object.assign(document.createElement("div"), {
-              className: "empty",
-              textContent: `The app failed to start (${what}). Reload to retry.`,
-            }),
+      // Boot diagnostics: a blank #app is a boot failure — the module graph,
+      // the identity check, the data load, or the route render. This script
+      // is deliberately ES5 so it runs even when the module graph cannot, and
+      // it replaces the loading marker with the failure (a blank page must
+      // never be the visible outcome).
+      (function () {
+        var app = document.getElementById("app");
+        window.__loftBoot = [];
+        window.__loftStage = "inline script ran";
+        window.__loftReady = false;
+
+        var loading = document.createElement("div");
+        loading.id = "boot-loading";
+        loading.setAttribute(
+          "style",
+          "padding:1rem;font:16px system-ui,sans-serif;color:#1b1b1b;background:#fff;",
+        );
+        loading.textContent = "The Loft — loading…";
+        if (app) app.appendChild(loading);
+
+        function paintBootFailure(what) {
+          console.error("[boot]", what);
+          window.__loftBoot.push(what);
+          // After boot the app owns its failures: a view's try/catch or an
+          // event handler must not replace a working page with a boot error.
+          if (window.__loftReady) return;
+          var root = document.getElementById("app");
+          if (!root) return;
+          root.innerHTML = "";
+          var panel = document.createElement("div");
+          panel.className = "empty";
+          panel.setAttribute(
+            "style",
+            "padding:1rem;font:16px system-ui,sans-serif;color:#1b1b1b;background:#fff;",
           );
+          panel.textContent = "The app failed to start (" + what + "). Reload to retry.";
+          root.appendChild(panel);
         }
-      };
-      window.addEventListener("error", (event) => {
-        window.__loftBoot.push("error: " + event.message);
-        paintBootFailure(event.message);
-      });
-      window.addEventListener("unhandledrejection", (event) => {
-        const reason = (event.reason && (event.reason.message || event.reason)) || event.reason;
-        window.__loftBoot.push("rejection: " + reason);
-        paintBootFailure(String(reason));
-      });
+
+        window.addEventListener("error", function (event) {
+          paintBootFailure(event.message || "script error");
+        });
+        window.addEventListener("unhandledrejection", function (event) {
+          var reason = (event.reason && (event.reason.message || event.reason)) || event.reason;
+          paintBootFailure(String(reason));
+        });
+
+        setInterval(function () {
+          var root = document.getElementById("app");
+          var first = root && root.firstElementChild;
+          if (first && first.id === "boot-loading") {
+            first.textContent = "The Loft — still loading… stage: " + (window.__loftStage || "module load");
+          }
+        }, 2000);
+
+        // The module graph can fail before boot() runs. Say so after 8s
+        // instead of leaving the marker (or a blank page) forever.
+        setTimeout(function () {
+          if (window.__loftReady) return;
+          var stage = window.__loftStage;
+          // "start" is a pending identity/bootstrap request, not a dead
+          // module graph — a slow phone must not get a false failure.
+          if (stage === "inline script ran" || stage === "module queued" || stage === "module load") {
+            paintBootFailure("boot did not finish (stage: " + stage + ")");
+          }
+        }, 8000);
+      })();
     </script>
-    <script type="module">
-      import { boot } from "./app.js";
-      boot();
+    <script type="module" src="./dist/boot.js"></script>
+    <script>
+      // A classic marker after the module: modules are deferred, so this
+      // runs while the module graph is still loading. If the watchdog sees
+      // this stage, the module was queued but never reached boot().
+      window.__loftStage = "module queued";
     </script>
   </body>
 </html>

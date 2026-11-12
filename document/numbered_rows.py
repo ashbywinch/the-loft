@@ -90,8 +90,6 @@ MARGIN_LANES = 16
 PILL_TOUCH = 2
 
 
-# lucidlint: ignore latent-class one rendered document: placement, drawing,
-# measures share one state; no field-disjoint partition to split along
 class NumberedRows:
     """An image with one number per row drawn on it, and the numbers it drew.
 

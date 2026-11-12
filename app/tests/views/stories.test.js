@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, themePage } from "../../views/stories.js";
+import { reader, render, themePage } from "../../views/stories.js";
 
 const theme = { id: "t-the-boats", title: "The boats", subtitle: "Built on Iron Wharf", items: [] };
 const storyItem = {
@@ -40,6 +40,26 @@ describe("theme page stories block", () => {
     const main = document.createElement("main");
     themePage(main, { arg: "t-the-boats", query: new URLSearchParams() }, { ...state, items: [], byId: new Map() });
     expect(main.textContent).toContain("No stories yet");
+  });
+});
+
+describe("reader text", () => {
+  it("reads the text from transcripts when the index no longer carries it", () => {
+    const second = { ...storyItem, id: "story-2", title: "The second", themes: [{ id: "t-the-boats" }] };
+    const withItems = { ...theme, items: [{ id: "story-1" }, { id: "story-2" }] };
+    const stateWithText = {
+      ...state,
+      items: [storyItem, second],
+      byId: new Map([
+        [storyItem.id, storyItem],
+        [second.id, second],
+      ]),
+      themes: [withItems],
+      transcripts: { "story-1": "The transcript text." },
+    };
+    const main = document.createElement("main");
+    reader(main, { arg: "t-the-boats" }, stateWithText);
+    expect(main.textContent).toContain("The transcript text.");
   });
 });
 

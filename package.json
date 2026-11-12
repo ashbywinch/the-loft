@@ -3,11 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "The Loft — family history museum (static web app; no build step). Runtime deps: none by design (TECH-SPEC §2).",
+  "description": "The Loft — family history museum (static web app; vanilla ES modules with a generated boot bundle). Runtime deps: none by design (TECH-SPEC §2).",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
+    "build": "esbuild app/entry.js --bundle --format=esm --splitting --minify --outdir=app/dist --entry-names=boot --chunk-names='chunk-[hash]'",
     "lint": "eslint app",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
@@ -16,6 +17,7 @@
   "devDependencies": {
     "@eslint/js": "10.0.1",
     "@vitest/coverage-istanbul": "5.0.2",
+    "esbuild": "^0.28.2",
     "eslint": "10.11.0",
     "eslint-config-prettier": "10.1.8",
     "globals": "17.12.0",

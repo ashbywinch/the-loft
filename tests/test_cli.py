@@ -1,11 +1,14 @@
 """Tests for the loft CLI surface (tools/cli.py): the argument wiring the
-subcommands promise. No commands run — the parser is what broke (a
-GEDCOM refactor dropped capture-memory's --status/--archive and the
-handler still reads them; review-bot finding on PR #61)."""
+subcommands promise, and the database bootstrap that runs without a model or
+the archive."""
 
 from __future__ import annotations
 
-from tools.cli import build_parser
+from pathlib import Path
+
+import pytest
+
+from tools.cli import build_parser, main
 
 
 def test_capture_memory_keeps_its_full_argument_surface() -> None:
@@ -45,3 +48,19 @@ def test_work_can_requeue_one_batch_by_id() -> None:
     args = build_parser().parse_args(["work", "--requeue", "adopt-20260813-201004"])
     assert args.requeue == "adopt-20260813-201004"
     assert build_parser().parse_args(["work"]).requeue == ""
+
+
+def test_db_init_and_verify_are_wired(tmp_path: Path) -> None:
+    path = tmp_path / "loft.db"
+    init = build_parser().parse_args(["db", "init", "--path", str(path)])
+    assert init.fn.__name__ == "cmd_db_init" and init.path == str(path)
+    verify = build_parser().parse_args(["verify", "--schema", "--path", str(path)])
+    assert verify.fn.__name__ == "cmd_verify" and verify.schema is True
+
+
+def test_db_init_and_verify_run(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    path = tmp_path / "loft.db"
+    assert main(["db", "init", "--path", str(path)]) == 0
+    assert path.is_file()
+    assert main(["verify", "--schema", "--path", str(path)]) == 0
+    assert "schema ok" in capsys.readouterr().out

@@ -1,5 +1,5 @@
 """The derivation engine — everything computed from the archive's primary
-data, in one place (docs/TECHSPEC.md §3): resolved items (highest sidecar,
+data, in one place (docs/TECHSPEC/07-exports.md): resolved items (highest sidecar,
 primary content embedded from its file), identity tables, the index and
 transcripts. Publish (batch), import (scan ingest) and the capture server
 (site stories) all derive through this module — never a second copy of the

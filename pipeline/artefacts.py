@@ -16,8 +16,24 @@ word that the read finished.
 
 from __future__ import annotations
 
+import io
 from dataclasses import dataclass
 from pathlib import Path
+
+from PIL import Image, ImageOps
+
+from tools.atomic import atomic_write
+
+# The review surface's image: the page must read and check rows on a phone,
+# not carry the 12-megapixel JPEG over the LAN. Re-encode as WebP at the
+# page's own pixel dimensions for now — both readers still take their box
+# coordinates from the image's natural size, so the 2000px target needs a
+# coordinate change first. The derivative is cached beside the page.
+VIEW_MAX_EDGE: int | None = None
+VIEW_QUALITY = 70
+# Bump when the renderer's output changes: cached derivatives from an older
+# renderer (e.g. one that ignored EXIF orientation) must not survive.
+VIEW_VERSION = 2
 
 # the marker suffix each route's read writes (pipeline/classify.read_route)
 READ_MARKERS: dict[str, tuple[str, ...]] = {
@@ -51,6 +67,10 @@ class BatchArtefacts:
         return self.batch_dir / "oriented"
 
     @property
+    def view_dir(self) -> Path:
+        return self.batch_dir / "view"
+
+    @property
     def raw_dir(self) -> Path:
         return self.batch_dir / "ocr-raw"
 
@@ -68,6 +88,33 @@ class BatchArtefacts:
 
     def oriented(self, page: str) -> Path:
         return self.oriented_dir / page
+
+    def view(self, page: str) -> Path:
+        """The cached review derivative of one page (WebP; the page's own
+        pixel dimensions until the box-normalisation change permits 2000px)."""
+        return self.view_dir / f"{Path(page).stem}.v{VIEW_VERSION}.webp"
+
+    def view_image(self, page: str, source: Path | None = None) -> Path:
+        """Render (or reuse) the page's view image from *source*.
+
+        The derivative is rebuilt when the source is newer, so a rotate or a
+        re-read invalidates it. Written temp-then-rename: a concurrent reader
+        never sees half an image.
+        """
+        source = source or self.oriented(page)
+        if not source.is_file():
+            raise FileNotFoundError(source)
+        target = self.view(page)
+        if target.is_file() and target.stat().st_mtime >= source.stat().st_mtime:
+            return target
+        with Image.open(source) as opened:
+            image = ImageOps.exif_transpose(opened).convert("RGB")
+            if VIEW_MAX_EDGE is not None:
+                image.thumbnail((VIEW_MAX_EDGE, VIEW_MAX_EDGE), Image.Resampling.LANCZOS)
+            buffer = io.BytesIO()
+            image.save(buffer, "WEBP", quality=VIEW_QUALITY, method=4)
+        atomic_write(target, buffer.getvalue())
+        return target
 
     def text(self, page: str) -> Path:
         """The page's text — the review's draft, whatever read wrote it."""

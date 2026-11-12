@@ -6,7 +6,7 @@
 # Sources .env (gitignored — the family's keys) so every loft command sees
 # the same environment; shell secrets (the AI key) pass through untouched.
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 if [ -f .env ]; then
   set -a
   # shellcheck disable=SC1091

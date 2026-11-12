@@ -19,18 +19,15 @@ from dataclasses import replace
 from typing import Any, Protocol
 
 from pipeline.model.ai_client import AIClientError, json_object
-from tools.attested_args import AttestedArgs
 from tools.decision_basis import DecisionBasis
 from tools.item_hit import ItemHit
 from tools.memory import ElicitationError
-from tools.person_args import PersonArgs
 from tools.person_hit import PersonHit
+from tools.person_id_args import PersonIdArgs
 from tools.person_summary import PersonSummary
 from tools.records import Message, Person, ReviewContext
-from tools.relationships_args import RelationshipsArgs
 from tools.review_verdict import ReviewVerdict
-from tools.search_items_args import SearchItemsArgs
-from tools.search_people_args import SearchPeopleArgs
+from tools.search_query_args import SearchQueryArgs
 from tools.tool_error import ToolError
 from tools.tool_note import ToolNote
 from tools.trace_step import TraceStep
@@ -163,10 +160,10 @@ def _facts_ledger(trace: Sequence[TraceStep], limit: int = 400) -> str:
     return "\n".join(lines.values())
 
 
-# The tool-call arguments the model may send, one record per tool — the
-# harness parses the model's wire into the tool's own record and dispatches
-# on the name.
-ToolArgs = SearchPeopleArgs | PersonArgs | RelationshipsArgs | AttestedArgs | SearchItemsArgs
+# The tool-call arguments the model may send — two shapes: a query for the
+# search tools, a person id for the lookups. The harness parses the model's
+# wire into the shape and dispatches on the tool's name.
+ToolArgs = SearchQueryArgs | PersonIdArgs
 
 # The results the read-only tools answer with: the records the model reads,
 # or the archive's own relationship edges verbatim (the people table already
@@ -198,7 +195,7 @@ class _ReviewTools:
             return ToolError(f"unknown tool {tool}")
         return getattr(self, tool)(args)
 
-    def search_people(self, args: SearchPeopleArgs) -> ToolResult:
+    def search_people(self, args: SearchQueryArgs) -> ToolResult:
         if not args.query:
             return ToolError("query required")
         hits: list[ToolEntry] = [
@@ -208,7 +205,7 @@ class _ReviewTools:
         ]
         return hits[:10] or ToolNote("no matches")
 
-    def person(self, args: PersonArgs) -> ToolResult:
+    def person(self, args: PersonIdArgs) -> ToolResult:
         p = next((x for x in self._facts.people if x.id == args.id), None)
         return (
             PersonSummary(id=p.id, name=p.name, relation=p.relation, status=p.status)
@@ -216,13 +213,13 @@ class _ReviewTools:
             else ToolError(f"no person {args.id}")
         )
 
-    def relationships(self, args: RelationshipsArgs) -> ToolResult:
+    def relationships(self, args: PersonIdArgs) -> ToolResult:
         edges: list[ToolEntry] = [
             edge for edge in self._facts.relationships if edge.get("a") == args.id or edge.get("b") == args.id
         ]
         return edges or ToolNote("no recorded relationships")
 
-    def attested(self, args: AttestedArgs) -> ToolResult:
+    def attested(self, args: PersonIdArgs) -> ToolResult:
         """The recorded items that mention the person — their attested facts.
         The sentences that MENTION the person are the part that attests the
         fact, quotable verbatim — with the person's name
@@ -249,7 +246,7 @@ class _ReviewTools:
                 )
         return results or ToolNote("no recorded items mention this person")
 
-    def search_items(self, args: SearchItemsArgs) -> ToolResult:
+    def search_items(self, args: SearchQueryArgs) -> ToolResult:
         """The recorded items whose text mentions the query — follow a place
         or an event the reviewer brings up (a visit, a town, a death)."""
         if not args.query:
@@ -286,15 +283,15 @@ def _tool_args(tool: str, raw: Mapping[str, Any]) -> ToolArgs | None:
     error result)."""
     match tool:
         case "search_people":
-            return SearchPeopleArgs.from_dict(raw)
+            return SearchQueryArgs.from_dict(raw)
         case "person":
-            return PersonArgs.from_dict(raw)
+            return PersonIdArgs.from_dict(raw)
         case "relationships":
-            return RelationshipsArgs.from_dict(raw)
+            return PersonIdArgs.from_dict(raw)
         case "attested":
-            return AttestedArgs.from_dict(raw)
+            return PersonIdArgs.from_dict(raw)
         case "search_items":
-            return SearchItemsArgs.from_dict(raw)
+            return SearchQueryArgs.from_dict(raw)
     return None
 
 
@@ -350,7 +347,6 @@ def render_history(messages: tuple[Message, ...]) -> str:
     lines: list[str] = []
     # branching append: user vs assistant, and the assistant also emits a conditional
     # reasoning line — a comprehension would need sentinel tuples
-    # lucidlint: ignore loop-pipeline branching append with a conditional second line
     for m in messages:
         if m.role == "user":
             lines.append(f"[family] {m.text}")

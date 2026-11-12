@@ -4,6 +4,7 @@ real HTTP stack on an ephemeral port — no network, no AI."""
 
 from __future__ import annotations
 
+import io
 import json
 import threading
 import urllib.error
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any, override
 
 import pytest
+from PIL import Image
 
 from pipeline.api.server import ServerConfig, create_server
 from pipeline.api.sync import Outbox
@@ -195,6 +197,56 @@ def test_the_projection_is_served_from_the_servers_own_data_dir(server: ServerFi
     assert status == 404
     status, _ = server.get("/data/index.json")  # no session
     assert status == 401
+
+
+def test_bootstrap_requires_a_session(server: ServerFixture) -> None:
+    status, _ = server.get("/api/bootstrap")
+    assert status == 401
+
+
+def test_bootstrap_refuses_an_unpublished_projection(server: ServerFixture) -> None:
+    """A missing app/data is an operator error, not an empty archive."""
+    (server.data_dir / "index.json").unlink()
+    status, raw = server.get("/api/bootstrap", cookie=server.cookie)
+    assert status == 503
+    assert b"not published" in raw
+
+
+def test_bootstrap_returns_identity_and_projection(server: ServerFixture) -> None:
+    """One auth-gated request carries what the home used to fetch in six."""
+    status, raw = server.get("/api/bootstrap", cookie=server.cookie)
+    assert status == 200
+    body = json.loads(raw.decode("utf-8"))
+    assert body["me"]["authenticated"] is True
+    assert body["index"]["items"][0]["id"] == "letter-1963-05-14"
+    assert body["people"]["people"][0]["id"] == "p-alex"
+    assert body["places"]["places"][0]["id"] == "pl-marlock"
+    assert "themes" in body and "imports" in body
+
+
+def test_text_responses_are_gzipped(server: ServerFixture) -> None:
+    """The projection and the module graph are text; the phone pays for them."""
+    (server.data_dir / "big.json").write_text(json.dumps({"items": ["x" * 4000]}), encoding="utf-8")
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{server.port}/data/big.json",
+        headers={"Cookie": server.cookie, "Accept-Encoding": "gzip"},
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert response.headers.get("Content-Encoding") == "gzip"
+        assert len(response.read()) < 4_000
+
+
+def test_binary_assets_are_not_gzipped(server: ServerFixture) -> None:
+    """JPEG scans are already compressed; a second pass costs CPU and gains nothing."""
+    assets = server.data_dir / "assets"
+    assets.mkdir(parents=True, exist_ok=True)
+    (assets / "scan.jpg").write_bytes(b"x" * 4096)
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{server.port}/data/assets/scan.jpg",
+        headers={"Cookie": server.cookie, "Accept-Encoding": "gzip"},
+    )
+    with urllib.request.urlopen(request, timeout=5) as response:
+        assert response.headers.get("Content-Encoding") is None
 
 
 def test_health(server: ServerFixture) -> None:
@@ -1016,6 +1068,35 @@ def test_sync_drafts_serves_the_guessed_texts(server: ServerFixture) -> None:
     assert body["documents"][0]["greeting"] == "Chère Maman."
 
 
+def test_sync_drafts_page_scope_returns_one_page(server: ServerFixture) -> None:
+    """The row screen opens one page; it gets that page, not the batch's
+    whole drafts payload (381 KB was a 12-second client parse on a phone)."""
+    import json as _json
+
+    _seed_sync_batch(server)
+    guess = server.work_dir / "adopt-0001" / "ocr-guess"
+    (guess / "p2.txt").write_text("Another page.", encoding="utf-8")
+    for page in ("p1", "p2"):
+        (guess / f"{page}.row-adjustments.json").write_text(_json.dumps({"lines": []}), encoding="utf-8")
+        (guess / f"{page}.rows-adjusted.json").write_text(_json.dumps({"rows": []}), encoding="utf-8")
+    (guess / "boundaries.json").write_text(
+        _json.dumps([{"pages": ["p1.jpg", "p2.jpg"], "greeting": "Chère Maman.", "signoff": None}]),
+        encoding="utf-8",
+    )
+    status, raw = server.get("/api/sync/batch/adopt-0001/drafts?doc=0&page=0", cookie=server.cookie)
+    assert status == 200
+    body = _json.loads(raw.decode("utf-8"))
+    assert len(body["documents"]) == 1
+    document = body["documents"][0]
+    assert document["pages"] == ["p1.jpg", "p2.jpg"]
+    assert document["texts"] == {"p1.jpg": "Chère Maman."}
+    assert document["greeting"] == "Chère Maman."
+    # the whole batch's checked set survives the one-page cut
+    assert document["checked_pages"] == ["p1.jpg", "p2.jpg"]
+    status, _ = server.get("/api/sync/batch/adopt-0001/drafts?doc=0&page=99", cookie=server.cookie)
+    assert status == 400
+
+
 def test_sync_drafts_hides_photo_only_documents(server: ServerFixture) -> None:
     """The transcription review shows only documents with a text page,
     and only their TEXT pages (user): a standalone photo has nothing to
@@ -1232,14 +1313,17 @@ def test_sync_page_requires_a_session(server: ServerFixture) -> None:
     assert status == 401
 
 
-def test_sync_page_serves_the_oriented_image(server: ServerFixture) -> None:
+def test_sync_page_serves_the_view_image(server: ServerFixture) -> None:
     _seed_sync_batch(server)
     oriented = server.work_dir / "adopt-0001" / "oriented"
     oriented.mkdir(parents=True)
-    (oriented / "p1.jpg").write_bytes(b"\xff\xd8fake-jpeg-bytes")
+    Image.new("RGB", (2600, 4000), (200, 180, 150)).save(oriented / "p1.jpg", "JPEG")
     status, raw = server.get("/api/sync/batch/adopt-0001/page/p1.jpg", cookie=server.cookie)
     assert status == 200
-    assert raw == b"\xff\xd8fake-jpeg-bytes"
+    assert raw[:4] == b"RIFF" and raw[8:12] == b"WEBP"
+    with Image.open(io.BytesIO(raw)) as view:
+        # the boxes still live in the page's own pixel space
+        assert view.size == (2600, 4000)
 
 
 def test_sync_page_rejects_unknown_and_unsafe_names(server: ServerFixture) -> None:

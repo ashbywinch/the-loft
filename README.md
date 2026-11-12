@@ -2,7 +2,7 @@
 
 A family history museum on a tablet — a lens over a folder of family artifacts:
 letters, photographs, documents, heirlooms. Vanilla HTML/CSS/JS web app with
-Python tools; no framework, no build step, no runtime backend by design
+Python tools; no framework, no runtime backend; a dev-only esbuild boot bundle
 (`docs/TECHSPEC.md`).
 
 **Status:** product docs complete (PRD v0.9), architecture reviewed, repo
@@ -16,7 +16,8 @@ Serve it with `make serve`.
 
 ```sh
 make setup    # create venv, install deps (Python + JS), install pre-commit hooks
-make serve    # serve app/ on the LAN — the printed address works on any device (phone included)
+make serve    # build the boot bundle, then serve app/ on the LAN — the printed address works on any device (phone included)
+make app-build # rebuild after editing app/ source — the server reload watches the backend only
 make test     # lint + typecheck gate, then pytest + vitest
 make coverage # tests with coverage report
 ```
@@ -30,8 +31,8 @@ run once, inside `make coverage`; never ad-hoc tool commands (see `AGENTS.md`).
 stops it; nothing to configure). For a phone-facing server that must
 survive daemon restarts and omp exits, start it through the hub with:
 
-- **name:** `loft-dev` · **application:** `./loft` · **args:** `serve
-  --host 0.0.0.0 --port 8000 --reload` · **cwd:** repo root
+- **name:** `loft-dev` · **application:** `make` · **args:** `serve` · **cwd:**
+  repo root
 - **detached:** `true` (survives broker/daemon restarts — `persist`
   alone does not)
 - **ready:** log banner `Uvicorn running` **and** TCP port 8000
@@ -41,19 +42,19 @@ launch spec.
 
 ### The worker (scan pickup, UR3)
 
-`./loft work` is one sweep: every pile in the scan area is registered
+`./scripts/loft work` is one sweep: every pile in the scan area is registered
 (adoption hashes it where it sits and never modifies it) and every batch is
 reconciled — the engine stages whose artefacts are missing are run, and no
 finished stage is ever re-run, so the sweep ends where a person takes over:
 each read page waits on its row check. The queue is the artefacts plus the
 registry's records.
 
-`./loft work --watch 600` is the long-running mode: a change under the scan
+`./scripts/loft work --watch 600` is the long-running mode: a change under the scan
 area, the registry or the work tree is mapped to its batch and that batch is
 reconciled then; a quiet interval is a full resync, the safety net for a
-missed event or a lost marker. `./loft work --plan` prints each batch's
+missed event or a lost marker. `./scripts/loft work --plan` prints each batch's
 missing stages (and the reason for each) without running anything;
-`./loft work --batch <batch-id>` reconciles one batch. A pass that dies half-way puts its
+`./scripts/loft work --batch <batch-id>` reconciles one batch. A pass that dies half-way puts its
 batch back to `pending`. A pass that is killed outright — its record left
 `importing` — is put back by the next sweep: on this host the pass's own pid
 decides (a dead pid is a dead pass, however recent the stamp), and a pass
@@ -62,11 +63,11 @@ stamp at all predates the stamping. The failure is printed with the batch's
 id.
 A batch a person has finished with, or one left `review` by a tool before the
 rows stage existed, re-enters the queue explicitly:
-`./loft work --requeue <batch-id>` (which requeues, then sweeps). `review`
+`./scripts/loft work --requeue <batch-id>` (which requeues, then sweeps). `review`
 itself is never touched automatically — it may be someone's work in progress.
 
 For a worker that survives daemon restarts, the launch spec (same rule as
-the server above): **name:** `loft-worker` · **application:** `./loft` ·
+the server above): **name:** `loft-worker` · **application:** `./scripts/loft` ·
 **args:** `work --watch 600` · **cwd:** repo root · **detached:** `true` ·
 **ready:** the banner `worker: watching` (the watch reconciles on changes; 600 s is the resync interval).
 
@@ -76,7 +77,7 @@ the server above): **name:** `loft-worker` · **application:** `./loft` ·
 |---|---|
 | `docs/PRD/PRD.md` | Product requirements — the "why" and the "what" (v0.9) |
 | `docs/PLAN/PLAN.md` | Project plan — thin slices, time to value |
-| `docs/TECHSPEC.md` | Architecture — the "how", decisions, and review record |
+| `docs/TECHSPEC.md` | Architecture — the index; the components are in `docs/TECHSPEC/` |
 | `docs/PRD/MEMORIES.md` | Story-capture flow spec — "Add your memory" |
 | `docs/PRD/IMPORT-PRD.md` | Artifact-import flow spec — the letter-import rules (A–S) |
 | (private) worked-example review | Real-import lessons from the first letter |
@@ -108,4 +109,4 @@ the server above): **name:** `loft-worker` · **application:** `./loft` ·
 
 The archive (scans, sidecars, JSON) is committed to the repo during dev; on
 prod it is not committed but regularly backed up (user, 2026-08-03) — see
-`docs/TECHSPEC.md` §3–5 for where it lives.
+`docs/TECHSPEC/02-archive-and-capture.md` §3–5 for where it lives.

@@ -2,7 +2,7 @@
 
 The archive is immutable by requirement (docs/PRD/PRD.md — append-only): a file,
 once written, is never edited or deleted; a change is a new file that
-supersedes it (docs/TECHSPEC.md §3). This module is the single write path so
+supersedes it (docs/archive-durability.md). This module is the single write path so
 the invariant is enforced, not hoped for. Tests inject ``MemoryStore``, which
 fails on any write to an existing path — an accidental in-place edit fails the
 test that caused it.

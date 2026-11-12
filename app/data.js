@@ -17,6 +17,8 @@ async function fetchJson(url) {
 
 export async function loadData() {
   if (state) return state;
+  // The file-based fallback (a static host with no API) reads every file,
+  // transcriptions included; the server boot uses `loadBootstrap` instead.
   const [index, people, places, themes, transcripts, imports] = await Promise.all([
     fetchJson("data/index.json"),
     fetchJson("data/people.json"),
@@ -36,6 +38,44 @@ export async function loadData() {
     byId: new Map(index.items.map((item) => [item.id, item])),
   };
   return state;
+}
+
+/** The app's one boot read: identity + projection in one request. */
+export async function loadBootstrap() {
+  const res = await fetch("/api/bootstrap", { headers: { Accept: "application/json" } });
+  if (res.status === 404 || res.status === 410) return { noApi: true };
+  if (res.status === 401) return { signedIn: false };
+  if (!res.ok) {
+    // Surface the operator's remedy, not an internal status code.
+    let detail = "";
+    try {
+      const body = await res.json();
+      detail = String(body.detail || body.error || "");
+    } catch {
+      // a non-JSON failure still falls back to the status line below
+    }
+    throw new Error(detail || `bootstrap -> ${res.status}`);
+  }
+  const payload = await res.json();
+  const items = payload.index?.items ?? [];
+  state = {
+    items,
+    people: payload.people?.people ?? [],
+    places: payload.places?.places ?? [],
+    themes: payload.themes?.themes ?? [],
+    relationships: payload.people?.relationships ?? [],
+    imports: payload.imports?.imports ?? [],
+    transcripts: {},
+    byId: new Map(items.map((item) => [item.id, item])),
+    me: payload.me?.authenticated ? payload.me : null,
+  };
+  return { signedIn: Boolean(payload.me?.authenticated), state };
+}
+
+/** The letter texts — one copy, fetched only by the Item/Search/Identify
+ *  routes. The home, timeline and cast never pay for it. */
+export async function loadTranscripts() {
+  return fetchJson("data/transcripts.json");
 }
 
 export function assetUrl(itemId, file) {
@@ -111,7 +151,8 @@ export function documentsToReview(batches) {
  *  front page only counts them behind its single review door. */
 export function documentsToIdentify(state) {
   return (state.items ?? []).filter((item) => {
-    if (item.type !== "document" || !(item.transcription || "").trim()) return false;
+    const hasText = item.has_transcription ?? Boolean((item.transcription || "").trim());
+    if (item.type !== "document" || !hasText) return false;
     const refs = [...(item.people ?? []), ...(item.places ?? [])];
     return !item.identified || refs.some((ref) => ref.status === "proposed");
   });

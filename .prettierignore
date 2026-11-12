@@ -5,4 +5,5 @@
 # Python writers' output, not hand code).
 app/data/
 app/coverage/
+app/dist/
 archive/

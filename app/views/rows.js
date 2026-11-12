@@ -77,9 +77,12 @@ function paintStrokes(svg, strokes, live) {
   }
 }
 
-async function loadDrafts(batchId) {
+async function loadDrafts(batchId, docIndex, pageIndex) {
   try {
-    const res = await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/drafts`);
+    // one page's maps, not the whole batch: the row screen renders exactly
+    // this page, and the whole-batch payload is the 12-second client cost
+    const query = `?doc=${docIndex}&page=${pageIndex}`;
+    const res = await fetch(`/api/sync/batch/${encodeURIComponent(batchId)}/drafts${query}`);
     if (!res.ok) return null;
     return await res.json();
   } catch (error) {
@@ -111,8 +114,11 @@ export async function render(main, ctx, state) {
   const batchId = ctx.arg;
   const docIndex = Number(ctx.rest?.[2]);
   const pageIndex = Number(ctx.rest?.[3]);
-  const drafts = await loadDrafts(batchId);
-  const doc = drafts?.documents?.[docIndex];
+  // The drafts read the batch's work files; a slow disk or link must show
+  // progress, never an empty page.
+  main.replaceChildren(header("Rows", state, "Review"), el("p", { class: "empty" }, "Loading the page…"));
+  const drafts = await loadDrafts(batchId, docIndex, pageIndex);
+  const doc = drafts?.documents?.[0];
   const page = doc?.pages?.[pageIndex];
   if (!doc || !page) {
     main.replaceChildren(
@@ -123,7 +129,9 @@ export async function render(main, ctx, state) {
   }
 
   const tints = doc.tints?.[page] || [];
-  const checked = new Set(Object.keys(doc.adjusted_rows || {}));
+  // The page-scoped payload carries only this page's adjusted rows; the
+  // server also names every checked page so "next still to check" survives.
+  const checked = new Set(doc.checked_pages ?? Object.keys(doc.adjusted_rows || {}));
   const root = el("div", { class: "rv rv-rows" });
   const bar = el("button", { class: "rv-btn rv-btn--primary", type: "button" }, "Rows are right");
   root.append(
@@ -147,7 +155,8 @@ export async function render(main, ctx, state) {
   drawSvg.setAttribute("class", "rv-draw");
   tintsSvg.append(tintGroup);
   layer.append(img, tintsSvg, drawSvg);
-  imgBox.append(layer);
+  const imageNote = el("div", { class: "rv-note" }, "Loading the page image…");
+  imgBox.append(layer, imageNote);
   if (!tints.length) {
     imgBox.append(el("div", { class: "rv-note" }, "No word boxes to correct on this page — re-read it first."));
     bar.disabled = true;
@@ -181,6 +190,7 @@ export async function render(main, ctx, state) {
   const redrawStrokes = () => paintStrokes(drawSvg, session.strokes, session.live);
 
   img.onload = () => {
+    imageNote.remove();
     session.imgSize = { w: img.naturalWidth, h: img.naturalHeight };
     layer.style.width = `${session.imgSize.w}px`;
     layer.style.height = `${session.imgSize.h}px`;
@@ -202,6 +212,7 @@ export async function render(main, ctx, state) {
     renderView();
   };
   img.onerror = () => {
+    imageNote.remove();
     layer.remove();
     imgBox.append(el("div", { class: "rv-note" }, "Could not load the page image."));
   };

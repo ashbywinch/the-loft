@@ -1,9 +1,9 @@
 # Story & Fact Capture — "Add your memory" (Feature PRD)
 
 - **Status:** requirements (the flow shipped; mechanics in
-  `TECHSPEC.md` §3/§4/§16.9/§16.11/§16.12)
-- **Companions:** `PRD.md` §19 (story harvest), `TECHSPEC.md` §16.9/
-  §16.11/§16.12 (mechanics), `docs/PLAN/PLAN.md`
+  `docs/TECHSPEC/02-archive-and-capture.md` §4 and `03-import-and-pipeline.md` §16.9/§16.11/§16.13)
+- **Companions:** `PRD.md` §19 (story harvest), `docs/TECHSPEC/03-import-and-pipeline.md` §16.9/
+  §16.11/§16.13 (mechanics), `docs/PLAN/PLAN.md`
 - **Requirements only.** This file states what the feature must do for the
   family — nothing about how it is built. Mechanics live in TECHSPEC.
 
@@ -157,12 +157,12 @@ anyone else; curation is a role anyone can hold, not a person record.
   another scanned document to a visitor (user).
 - **Privacy:** the AI's reading never happens on the reader's device;
   family content leaves the household machine only for the explicitly
-  requested AI call (house rule; §7 — no third-party cloud processing of
-  family content). The family chooses the posture — cloud by default or
-  local-only.
+  requested AI call, through the family's chosen gateway. The family
+  chooses the posture — cloud is the default; there is no requirement to
+  run models locally.
 - **Append-only:** a memory lands wherever the app stores its info —
   local archive today, hosted later — under the archive's append-only rule
-  (PRD §3 non-goal; mechanics in `TECHSPEC.md` §3).
+  (PRD §3 non-goal; mechanics in `docs/TECHSPEC/02-archive-and-capture.md` §4).
 
 ## Acceptance
 

@@ -81,6 +81,7 @@ from pipeline.api.sync import (
     safe_page_name,
     set_page_job,
 )
+from pipeline.api.text_gzip import TextGZipMiddleware
 from pipeline.artefacts import BatchArtefacts
 from pipeline.identify import IdentificationError
 from pipeline.model.ai_client import AIClient
@@ -148,6 +149,10 @@ def build_app(
     outbox = config.outbox if config.outbox is not None else Outbox(WORK_DIR.parent / "sync-outbox")
 
     app = FastAPI(title="The Loft", docs_url=None, redoc_url=None)
+    # The phone pays for every byte of the projection, the module graph and
+    # the map; compress the text responses (the archive's images are already
+    # compressed). The app shell and data are still revalidated by ETag.
+    app.add_middleware(TextGZipMiddleware, minimum_size=1024)
 
     def session_user(request: Request) -> SessionUser | None:
         return auth.session_user_from_cookie(request.cookies.get(auth.COOKIE_NAME))
@@ -178,6 +183,12 @@ def build_app(
             return []
         return json.loads(path.read_text(encoding="utf-8")).get(key, [])
 
+    def _projection_document(filename: str) -> dict[str, Any]:
+        path = data_dir / filename
+        if not path.exists():
+            return {}
+        return json.loads(path.read_text(encoding="utf-8"))
+
     def existing_ids() -> set[str]:
         ids = {it["id"] for it in _read_projection(filename="index.json", key="items")}
         ids |= set(archive.item_ids()) | archive.proposed_ids()
@@ -198,6 +209,34 @@ def build_app(
         session = session_user(request)
         logger.info("auth: /me saw %s", "a session" if session else "no session")
         return auth.me_payload(archive, session).to_dict()
+
+    @app.get("/api/bootstrap")
+    def bootstrap(request: Request) -> Any:
+        """The app's one boot read: identity + the projection files.
+
+        The home used to pay one auth request and five data requests; the
+        round trips, not the server work, were most of its load. One
+        auth-gated response removes five of them. The transcriptions are
+        not here: only Item/Search/Identify fetch that file.
+        """
+        session = session_user(request)
+        if session is None:
+            return JSONResponse(ErrorAnswer("sign in to read the archive").to_dict(), status_code=401)
+        if not (data_dir / "index.json").is_file():
+            # A missing projection is an operator error, not an empty archive:
+            # the home must say so instead of "0 items".
+            return JSONResponse(
+                {"error": "the archive projection is not published", "detail": "run loft publish"},
+                status_code=503,
+            )
+        return {
+            "me": auth.me_payload(archive, session).to_dict(),
+            "index": _projection_document("index.json"),
+            "people": _projection_document("people.json"),
+            "places": _projection_document("places.json"),
+            "themes": _projection_document("themes.json"),
+            "imports": _projection_document("imports.json"),
+        }
 
     @app.post("/api/auth/logout")
     def logout() -> JSONResponse:
@@ -304,7 +343,7 @@ def build_app(
         # so the story renders in the app — idempotent, atomic. All archive
         # writes go through the archive library (docs/CONTRIBUTIONS.md). The
         # story text is primary content: it becomes a content file the
-        # sidecar references, never a sidecar JSON field (TECHSPEC §3).
+        # sidecar references, never a sidecar JSON field (archive-durability.md).
         split = split_content(built.story)
         archive.save_item(split.sidecar, content=split.content)
         for person in built.new_people:
@@ -635,6 +674,19 @@ def build_app(
     # -- the static app + the data gate ------------------------------------
 
     @app.middleware("http")
+    async def log_shell_request(request: Request, call_next: Any) -> Any:
+        # The shell's client identity is the first thing to know when a phone
+        # shows a blank page; the access log alone carries no User-Agent.
+        if request.url.path == "/":
+            logger.info(
+                "shell: host=%r ua=%r platform=%r",
+                request.headers.get("host"),
+                request.headers.get("user-agent"),
+                request.headers.get("sec-ch-ua-platform"),
+            )
+        return await call_next(request)
+
+    @app.middleware("http")
     async def app_shell_no_cache(request: Request, call_next: Any) -> Any:
         # The app code must never be heuristically cached: StaticFiles sends
         # only ETag/Last-Modified, so a browser's heuristic can keep serving
@@ -670,7 +722,7 @@ def build_app(
                 return JSONResponse({"ok": False, "error": "sign in to read the archive"}, status_code=401)
         return await call_next(request)
 
-    # -- sync (TECHSPEC §16.15: the backend owns the write seam; the
+    # -- sync (TECHSPEC/04 §17.5: the backend owns the write seam; the
     # frontend proposes, the backend records; the outbox is the catch-up) --
 
     @app.get("/api/sync/batches")
@@ -699,9 +751,13 @@ def build_app(
     @app.get("/api/sync/batch/{batch_id}/drafts")
     def sync_drafts(batch_id: str, request: Request) -> Any:
         """The machine drafts the review surface reads (guesses + boundaries
-        + layout, TECHSPEC §16.16), with the registry's per-document
+        + layout, docs/TECHSPEC/03-import-and-pipeline.md §16.16), with the registry's per-document
         review status merged in (the registry is the status' home — the
-        guess stage's boundaries.json never changes after review)."""
+        guess stage's boundaries.json never changes after review).
+
+        With ``doc`` + ``page`` the answer is the one page the row screen
+        opened: the document's maps are cut to that page. The row screen
+        needs one page, not every document and page in the batch."""
         if session_user(request) is None:
             return JSONResponse(ErrorAnswer("sign in to read the drafts").to_dict(), status_code=401)
         try:
@@ -716,7 +772,7 @@ def build_app(
             # photo docs stay "review" until that flow claims them). The
             # picture side of a two-sided item stays in the structure; the
             # review just does not page through it.
-            documents = []
+            documents: list[dict[str, Any]] = []
             for document in draft_payloads(batch_id, work_dir):
                 texts = document.get("texts") or {}
                 if not texts:
@@ -742,6 +798,30 @@ def build_app(
                         "ready": bool(text_pages) and len(pages_ready) == len(text_pages),
                     }
                 )
+            raw_doc = request.query_params.get("doc")
+            raw_page = request.query_params.get("page")
+            if raw_doc is not None or raw_page is not None:
+                if raw_doc is None or raw_page is None:
+                    return JSONResponse({"error": "doc and page must be provided together"}, status_code=400)
+                try:
+                    doc_number = int(raw_doc)
+                    page_number = int(raw_page)
+                except ValueError:
+                    return JSONResponse({"error": "doc and page must be integers"}, status_code=400)
+                if doc_number < 0 or doc_number >= len(documents):
+                    return JSONResponse({"error": "no such document"}, status_code=400)
+                chosen = documents[doc_number]
+                document_pages: list[Any] = list(chosen.get("pages") or [])
+                if page_number < 0 or page_number >= len(document_pages):
+                    return JSONResponse({"error": "no such page"}, status_code=400)
+                page_name = document_pages[page_number]
+                checked_pages = sorted((chosen.get("adjusted_rows") or {}).keys())
+                for key in ("texts", "layouts", "orientations", "row_adjustments", "adjusted_rows", "tints"):
+                    value = chosen.get(key)
+                    if isinstance(value, dict):
+                        chosen[key] = {page_name: value[page_name]} if page_name in value else {}
+                chosen["checked_pages"] = checked_pages
+                documents = [chosen]
             return BatchDraftsAnswer(
                 batch_id=batch_id,
                 label=record.label,
@@ -762,16 +842,24 @@ def build_app(
             return JSONResponse(ErrorAnswer("sign in to read the pages").to_dict(), status_code=401)
         if not BATCH_ID.match(batch_id) or not safe_page_name(page):
             return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
-        image = BatchArtefacts(work_dir, batch_id).oriented(page)
-        if not image.is_file():
+        artefacts = BatchArtefacts(work_dir, batch_id)
+        source = artefacts.oriented(page)
+        if not source.is_file():
             # a photo/drawing page skips orientation entirely (the grouping
             # scorer puts the postcard's picture side into its document —
             # the review surface must still see the image)
             record = load_batch(batch_id, registry_dir)
-            raw = record.path / page
-            if raw.is_file():
-                return FileResponse(raw)
-            return JSONResponse({"error": "no such page"}, status_code=404)
+            source = record.path / page
+            if not source.is_file():
+                return JSONResponse({"error": "no such page"}, status_code=404)
+        try:
+            image = artefacts.view_image(page, source)
+        # a corrupt or unreadable source still has to show; the log names
+        # the page and the source itself is the visible fallback
+        # lucidlint: ignore swallow the source image is the visible fallback
+        except (OSError, ValueError):
+            logger.exception("view image failed for %s/%s", batch_id, page)
+            image = source
         return FileResponse(image)
 
     def _reprocess_page(batch_id: str, page: str) -> None:

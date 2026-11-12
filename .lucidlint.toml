@@ -14,7 +14,30 @@
 # reasoning: docs/PLAN/lucidlint-review-log.md §1.5 and §2.2. The rule stays
 # ignored so the gate's verdict is not polluted by the tool's own bug; a NEW
 # bare dict for a record is still a finding at review.
-ignore = ["record-shape", "class-module", "vague-name", "magic-number"]
+# global-state: the repo standard REQUIRES named constants (a domain string
+# literal or a magic number is itself a finding) and forbids the thing this
+# rule should catch — module-level mutable state. On 0.7.1 the rule flags
+# every UPPER_CASE constant (348 on this tree, all read by their module's
+# own functions); its own message says to keep such a constant. The minimal
+# repro and the standards citation: docs/PLAN/lucidlint-review-log.md §1.6.
+# A NEW module-level mutable value is still a review finding.
+#
+# duplicate-module: the rule compares structural skeletons with identifiers
+# erased, so distinct records that share a shape — `{"error"}` vs `{"note"}`,
+# `x, y` vs `start, end` — read as forks (31 findings). The repo's record
+# doctrine deliberately produces such small records; the one byte-identical
+# family (five tool-argument records) was deduplicated into PersonIdArgs and
+# SearchQueryArgs, which the rule still reports against each other. The
+# reasoning: docs/PLAN/lucidlint-review-log.md §1.7. A real fork is still a
+# review finding.
+ignore = [
+    "record-shape",
+    "class-module",
+    "vague-name",
+    "magic-number",
+    "global-state",
+    "duplicate-module",
+]
 # noqa: no longer ignored (2026-10-17) — every `# noqa` site now carries its
 # why in the tool's format (`# noqa: F401 — the architecture test's
 # store-layer marker`), and the six stale `# noqa: E501` markers are deleted

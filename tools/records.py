@@ -756,6 +756,9 @@ class Session:
     status: Literal["pending", "reviewed"] = "pending"
     current: str | None = None
     attempts: tuple[Attempt, ...] = ()
+    # the optimistic token the live store carries (TECHSPEC/08 §19.3); the
+    # session's wire never writes it
+    version: int = 0
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Session:

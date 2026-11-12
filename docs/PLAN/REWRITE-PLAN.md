@@ -1,6 +1,6 @@
 # The rewrite plan — the database as the system of record
 
-**Status:** v0.2 — A0–A3 landed; A4 is in review; the rest are `todo`. Change a row's State to
+**Status:** v0.2 — A0–A4 landed; A5 is in review; the rest are `todo`. Change a row's State to
 its PR when it lands.
 **PR:** #89 carries A0/A1 and the boot-path fixes as one review unit (the
 user's call); the ladder's one-increment-per-PR rule applies to later
@@ -102,8 +102,8 @@ tests are the oracle and stay green throughout.
 | A1 | `loft/live/` opens the DB; the migration runner applies `schema/truth.sql` + `projections.sql`; `loft db init`, `loft verify --schema`; the architecture test makes `sqlite3` legal only under `loft/live/` | empty → init → verify; UPDATE, DELETE and a duplicate INSERT abort; a reopened connection has the pragmas; runs on a temp `LOFT_DB_PATH` in CI | 18.12.1 | done (2026-11-09; branch `docs/live-system-schema`) |
 | A2 | Events, content and one change: the frozen hash list with `prev_hash`, create-if-absent blobs, `Change`, the `person` projection, `rebuild person`, `MemoryLiveStore` | one write = one event + one row; the chain verifies; a duplicate `command/applied` aborts; a blob round-trips; drop + replay the person projection; the same suite on both stores | 18.12.3; 19.10.1–3 | done (#92) |
 | A3 | Import the identity tables; the old statuses map to disposition + basis + confidence and the old dates to `DateValue` (`WORK-PLAN.md` §5) | a verified backup marker exists (`11` §Preconditions); on the real archive: counts and a field-by-field compare match; the dry-run writes nothing; a re-run is a no-op; five people read back through the new store | `11` §What maps | done (#93) |
-| A4 | Import items, content, refs and assets | counts, versions, refs, bytes; ten items compared field by field; every content sha verifies; the sample export carries the same facts in the new shape | `11` §What maps | in review (#94) |
-| A5 | Import `imports.json` and the review sessions | counts per session; message order; decision mapping; a sample session replays; no message lost or duplicated | `11` §What maps | todo |
+| A4 | Import items, content, refs and assets | counts, versions, refs, bytes; ten items compared field by field; every content sha verifies; the sample export carries the same facts in the new shape | `11` §What maps | done (#94) |
+| A5 | Import `imports.json` and the review sessions | counts per session; message order; decision mapping; a sample session replays; no message lost or duplicated | `11` §What maps | in review (#TBD) |
 | A6 | Import the pipeline state — registry, work files, readings, rows, documents | page and row counts; every reading sha matches its bytes; a sample page's rows equal the work file; the document boundaries equal the registry's; a re-run is a no-op | `11` §What maps | todo |
 | A7 | **Milestone A — the verification gate.** `loft migrate --verify` implements `11` §Verification; `loft rebuild` replays every projection; run it on the big disk | counts; versions; bytes; records; 10 items / 5 people / 5 documents; **rebuild equality**; the old tree byte-identical; the dry-run's list equals the executed operations; the run resumes after a kill | 18.12.3, 18.12.13 | todo |
 | A8 | **Milestone B — the exporter and the operational backup.** The human archive document leg and image leg references; the backup; `loft export`, `loft backup`; a fresh DB rebuilt from the backup | every browsable record in the export; `sha256sum -c`; the backup rebuilds an equal DB; the 2060 walkthrough; the export writes a scratch path, never the live tree | 18.12.4, 18.12.8, 18.12.19 | todo |

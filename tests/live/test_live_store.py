@@ -18,7 +18,7 @@ from loft.live.errors import Conflict, StaleVersion
 from loft.live.items import ContentInput
 from loft.live.memory import MemoryLiveStore
 from loft.live.store import LiveStore
-from tools.records import Item, Org, Person, Place, Relationship
+from tools.records import Item, Org, Person, Place, Relationship, Session
 from tools.theme import Theme
 
 
@@ -285,4 +285,146 @@ def test_rebuild_replays_the_item_projection(store: Any) -> None:
     assert item.version == 2
     assert store.items.content("story-1", "story") == b"The words.\\n"
     assert len(store.items.refs("story-1")) == 1
+    assert store.verify_chain() == ()
+
+
+def _session(
+    session_id: str = "import-test",
+    *,
+    status: str = "pending",
+    messages: list[dict[str, Any]] | None = None,
+) -> Session:
+    return Session.from_dict(
+        {
+            "id": session_id,
+            "kind": "import-review",
+            "title": "The import",
+            "status": status,
+            "current": "p-a",
+            "attempts": [
+                {
+                    "started": "2026-01-01T00:00:00+00:00",
+                    "messages": messages
+                    if messages is not None
+                    else [
+                        {"role": "user", "text": "I think so", "when": "2026-01-01"},
+                        {"role": "assistant", "text": "Thanks", "when": "2026-01-01", "thinking": "raw verdict"},
+                    ],
+                    "decisions": [
+                        {
+                            "person_id": "p-a",
+                            "decision": "estimated",
+                            "when": "2026-01-01",
+                            "basis": {"text": "the family's memory", "by": "Wren", "when": "2026-01-01"},
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+def test_a_review_session_is_one_event_a_row_its_messages_and_decisions(store: Any) -> None:
+    with store.change(actor="import") as change:
+        saved = change.reviews.save(_session())
+    assert saved.version == 1
+    assert store.events_for("import-test", entity_kind="review_session")[0]["event_type"] == "created"
+    session = store.reviews.require("import-test")
+    assert (session.kind, session.status, session.current_attempt) == ("import", "pending", 1)
+    assert (session.subject_kind, session.actor_person_id) == ("batch", "import")
+    assert [message.ordinal for message in store.reviews.messages("import-test")] == [1, 2]
+    assert store.verify_chain() == ()
+
+
+def test_review_decisions_map_to_the_target_vocabulary(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.reviews.save(_session())
+    decision = store.reviews.decisions("import-test")[0]
+    assert (decision.subject_kind, decision.subject_id, decision.decision) == ("person", "p-a", "attested")
+    assert decision.basis == {
+        "basis": "recollection",
+        "confidence": "possible",
+        "text": "the family's memory",
+        "by": "Wren",
+        "when": "2026-01-01",
+    }
+
+
+def test_review_thinking_is_content_addressed(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.reviews.save(_session())
+    messages = store.reviews.messages("import-test")
+    assert messages[0].thinking_sha is None
+    assert messages[1].thinking_sha == hashlib.sha256(b"raw verdict").hexdigest()
+    assert store.reviews.thinking("import-test", 2) == b"raw verdict"
+    assert store.reviews.thinking("import-test", 1) is None
+
+
+def test_a_review_supersede_replaces_the_transcript(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.reviews.save(_session())
+    with store.change(actor="import") as change:
+        second = change.reviews.save(
+            _session(
+                messages=[
+                    {"role": "user", "text": "I think so", "when": "2026-01-01"},
+                    {"role": "assistant", "text": "Thanks", "when": "2026-01-01", "thinking": "raw verdict"},
+                    {"role": "user", "text": "And another thing", "when": "2026-01-02"},
+                ]
+            ),
+            base=1,
+        )
+    assert second.version == 2
+    assert [message.ordinal for message in store.reviews.messages("import-test")] == [1, 2, 3]
+    assert [message.text for message in store.reviews.messages("import-test")][-1] == "And another thing"
+    assert [event["event_type"] for event in store.events_for("import-test", entity_kind="review_session")] == [
+        "created",
+        "superseded",
+    ]
+
+
+def test_a_stale_review_base_is_refused_with_the_current_value(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.reviews.save(_session())
+    with pytest.raises(StaleVersion) as caught, store.change(actor="import") as change:
+        change.reviews.save(_session(), base=0)
+    assert caught.value.current is not None
+    assert store.reviews.require("import-test").version == 1
+
+
+def test_a_failed_review_change_writes_nothing(store: Any) -> None:
+    with pytest.raises(RuntimeError), store.change(actor="import") as change:
+        change.reviews.save(_session())
+        raise RuntimeError("boom")
+    assert store.reviews.get("import-test") is None
+    assert store.events_for("import-test", entity_kind="review_session") == []
+
+
+def test_a_reviewed_session_closes_at_its_last_word(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.reviews.save(_session(status="reviewed"))
+    session = store.reviews.require("import-test")
+    assert session.current_attempt is None
+    assert session.closed_at == "2026-01-01"
+
+
+def test_rebuild_replays_review_sessions(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.reviews.save(_session())
+    with store.change(actor="import") as change:
+        change.reviews.save(
+            _session(
+                messages=[
+                    {"role": "user", "text": "I think so", "when": "2026-01-01"},
+                    {"role": "assistant", "text": "Thanks", "when": "2026-01-01", "thinking": "raw verdict"},
+                    {"role": "user", "text": "And another thing", "when": "2026-01-02"},
+                ]
+            ),
+            base=1,
+        )
+    store.rebuild_reviews()
+    assert store.reviews.require("import-test").version == 2
+    assert len(store.reviews.messages("import-test")) == 3
+    assert store.reviews.decisions("import-test")[0].decision == "attested"
+    assert store.reviews.thinking("import-test", 2) == b"raw verdict"
     assert store.verify_chain() == ()

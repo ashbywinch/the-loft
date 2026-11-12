@@ -261,6 +261,9 @@ class _MemoryPeople:
     def get(self, person_id: str) -> Person | None:
         return self.store._people.get(person_id)
 
+    def all(self) -> tuple[Person, ...]:
+        return tuple(self.store._people[key] for key in sorted(self.store._people))
+
     def require(self, person_id: str) -> Person:
         person = self.get(person_id)
         if person is None:
@@ -305,6 +308,9 @@ class _MemoryItems:
 
     def get(self, item_id: str) -> Item | None:
         return self.store._items.get(item_id)
+
+    def all(self) -> tuple[Item, ...]:
+        return tuple(self.store._items[key] for key in sorted(self.store._items))
 
     def require(self, item_id: str) -> Item:
         item = self.get(item_id)
@@ -473,6 +479,9 @@ class _MemoryBatches:
     def get(self, batch_id: str) -> BatchState | None:
         return self.store._batches.get(batch_id)
 
+    def all(self) -> tuple[BatchState, ...]:
+        return tuple(self.store._batches[key] for key in sorted(self.store._batches))
+
     def require(self, batch_id: str) -> BatchState:
         batch = self.get(batch_id)
         if batch is None:
@@ -635,6 +644,9 @@ class _MemoryDocuments:
                 key=lambda document: document.doc_index,
             )
         )
+
+    def all(self) -> tuple[DocumentState, ...]:
+        return tuple(self.store._documents[key] for key in sorted(self.store._documents))
 
     def save(
         self,
@@ -863,6 +875,9 @@ class _MemoryCollection:
 
     def get(self, entity_id: str) -> object | None:
         return self.records.get(entity_id)
+
+    def all(self) -> tuple[object, ...]:
+        return tuple(self.records[key] for key in sorted(self.records))
 
     def require(self, entity_id: str) -> object:
         record = self.get(entity_id)

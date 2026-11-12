@@ -167,6 +167,13 @@ class DocumentProjection:
             for row in rows
         )
 
+    def all(self) -> tuple[DocumentState, ...]:
+        batch_ids = [
+            row["batch_id"]
+            for row in self.connection.execute("SELECT DISTINCT batch_id FROM documents ORDER BY batch_id")
+        ]
+        return tuple(document for batch_id in batch_ids for document in self.for_batch(batch_id))
+
     def write(self, bundle: DocumentBundle, position: RowPosition, *, base: int | None) -> None:
         values = DocumentRow.to_values(bundle.document, position)
         placeholders = ", ".join("?" for _ in values)

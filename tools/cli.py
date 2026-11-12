@@ -24,7 +24,9 @@ import uvicorn
 
 from loft.live.build import Repo, app_version
 from loft.live.database import LiveDatabase
+from loft.live.export import ExportError, HumanArchive
 from loft.live.migrate import VerificationInputs, migrate, verify
+from loft.live.operational import BackupError, OperationalBackup
 from loft.live.paths import default_database_path
 from loft.live.schema import SchemaError
 from loft.live.store import LiveStore
@@ -384,6 +386,62 @@ def cmd_rebuild(args: argparse.Namespace) -> int:
         store.close()
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    """Write the human archive (the document leg and the views)."""
+    try:
+        store = LiveStore.open(Path(args.path), app_version=app_version())
+    except SchemaError as error:
+        print(f"export: {error}")
+        return 1
+    try:
+        archive = HumanArchive(store, Path(args.out))
+        try:
+            report = archive.write()
+        except (ExportError, OSError) as error:
+            print(f"export: {error}")
+            return 1
+        for key, value in sorted(report.counts.items()):
+            print(f"{key}: {value}")
+        print(f"export: {report.files} file(s) written to {report.out}")
+        if not args.verify:
+            return 0
+        check = archive.verify()
+        for finding in check.findings:
+            print(f"verify: {finding}")
+        print(f"verify: {'ok' if check.ok else 'FAILED'}")
+        return 0 if check.ok else 1
+    finally:
+        store.close()
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    """Write the operational backup and optionally restore-verify it."""
+    try:
+        store = LiveStore.open(Path(args.path), app_version=app_version())
+    except SchemaError as error:
+        print(f"backup: {error}")
+        return 1
+    try:
+        backup = OperationalBackup(store, Path(args.out))
+        try:
+            report = backup.write()
+        except (BackupError, OSError) as error:
+            print(f"backup: {error}")
+            return 1
+        for key, value in sorted(report.counts.items()):
+            print(f"{key}: {value}")
+        print(f"backup: {report.files} file(s), exported through {report.exported_through}")
+        if not args.verify:
+            return 0
+        check = backup.verify()
+        for finding in check.findings:
+            print(f"verify: {finding}")
+        print(f"verify: {'ok' if check.ok else 'FAILED'}")
+        return 0 if check.ok else 1
+    finally:
+        store.close()
+
+
 def cmd_gedcom(args: argparse.Namespace) -> int:
     if args.action == "export":
         return _gedcom_export(args.folder, args.path)
@@ -541,6 +599,26 @@ def build_parser() -> argparse.ArgumentParser:
         fn=cmd_rebuild,
     )
     p.add_argument("--path", default=str(default_database_path()))
+
+    p = _command(
+        sub,
+        name="export",
+        help_text="write the human archive (the dated document leg, views, manifest)",
+        fn=cmd_export,
+    )
+    p.add_argument("--out", required=True, help="an empty scratch directory; never the live tree")
+    p.add_argument("--path", default=str(default_database_path()))
+    p.add_argument("--verify", action="store_true", help="verify the written tree and manifest")
+
+    p = _command(
+        sub,
+        name="backup",
+        help_text="write the operational backup (dump, content, events, schema)",
+        fn=cmd_backup,
+    )
+    p.add_argument("--out", required=True, help="an empty scratch directory; never the live tree")
+    p.add_argument("--path", default=str(default_database_path()))
+    p.add_argument("--verify", action="store_true", help="restore the dump into a scratch DB and compare")
 
     p = sub.add_parser(
         "gedcom",

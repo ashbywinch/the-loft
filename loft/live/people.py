@@ -30,6 +30,10 @@ class People:
     def get(self, person_id: str) -> Person | None:
         return person_row.read_row(self.connection, person_id)
 
+    def all(self) -> tuple[Person, ...]:
+        rows = self.connection.execute("SELECT person_id FROM people ORDER BY person_id").fetchall()
+        return tuple(self.require(row["person_id"]) for row in rows)
+
     def require(self, person_id: str) -> Person:
         person = self.get(person_id)
         if person is None:

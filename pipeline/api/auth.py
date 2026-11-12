@@ -244,9 +244,6 @@ def callback_error_url(error: str) -> str:
 # google.com/device, the id_token minting the session. No redirect URIs at
 # all. The device client is houses' — one family client for the family apps.
 
-GoogleOAuth._DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
-GoogleOAuth._DEVICE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-
 
 def device_client_id() -> str:
     return os.environ.get("THE_LOFT_GOOGLE_DEVICE_CLIENT_ID", "").strip()

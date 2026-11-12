@@ -44,10 +44,6 @@ class NumberedRows:
     _PILL_PAD_X = 12  # px: air either side of the number
     _PILL_PAD_Y = 8  # px: air above and below it
     PILL_INSET = 6  # px: how far the pill's right edge sits left of the band
-    _PILL_LIFT = 0  # px: the pill is centred on its row's own line, not lifted above
-    # it. Lifted, every number reads as belonging to the line above — "all the
-    # numbers seem to be a bit high" (user, on the sheet) — and a row whose band
-    # starts high is lifted furthest, which is how row 7's number came adrift.
     _PAPER = Colour(red=255, green=255, blue=255)
     # the colour the bands are washed into when the page's own paper cannot be sampled
     _PILL_MIN_WIDTH = 30  # px: a one-digit pill is still a pill
@@ -252,7 +248,10 @@ class NumberedRows:
                 (right_edge + cls.PILL_INSET, cls.end_centre(row, left_end=False)),
             )
             for candidate, centre in beside:
-                top = centre - height / 2 - cls._PILL_LIFT
+                # the pill is centred on its row's own line, never lifted: lifted,
+                # every number reads as belonging to the line above — "all the
+                # numbers seem to be a bit high" (user, on the sheet)
+                top = centre - height / 2
                 box = Rectangle(candidate, top, candidate + width, top + height)
                 if NumberedRows._fits(box, ink, boxes):
                     boxes.append(box)
@@ -262,7 +261,10 @@ class NumberedRows:
                 # page's left margin is wide, and a number further out is still
                 # unmistakably its row's
                 centre = cls.end_centre(row, left_end=True)
-                top = centre - height / 2 - cls._PILL_LIFT
+                # the pill is centred on its row's own line, never lifted: lifted,
+                # every number reads as belonging to the line above — "all the
+                # numbers seem to be a bit high" (user, on the sheet)
+                top = centre - height / 2
                 boxes.append(NumberedRows._in_lane(Rectangle(margin, top, margin + width, top + height), ink, boxes))
         return boxes
 

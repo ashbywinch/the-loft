@@ -93,7 +93,6 @@ class Transcriber:
     OUT_DIR = Path("work/eval-rows-transcript")
     # the page the other real-model evals already use (a cursive letter, our best
     # case); a page with no confirmed transcript is still readable
-    DEFAULT_PAGE = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
     SYSTEM = (
         "You read a scanned page of handwriting. The image shows the page with its rows "
         "numbered: one numbered chip per row of writing, in reading order, sitting beside "
@@ -590,7 +589,10 @@ def main(argv: list[str] | None = None) -> int:
         index = args.index("--fixture")
         fixture = Path(args[index + 1])
         del args[index : index + 2]
-    pages = [Path(arg) for arg in args] or [Transcriber.DEFAULT_PAGE]
+    pages = [Path(arg) for arg in args]
+    if not pages:
+        print("usage: python -m pipeline.transcribe.transcripts [--alone N,N] [--fixture DIR] <page> [page ...]")
+        return 2
     code = 0
     for page in pages:
         if not page.is_file():

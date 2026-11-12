@@ -882,8 +882,6 @@ class Reading:
     The drawn-lines correction (`rows.adjust`) groups the words, so the reading
     carries them — the pipeline persists both side by side."""
 
-    BATCH = Path(os.environ.get("LOFT_BATCH", "/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004"))
-    PAGE = BATCH / "oriented/page-01.jpg"
     TRACE = Path(os.environ.get("LOFT_TRACE_DIR", "/tmp/trace"))
     INK_DELTA = 25  # grey levels below the local paper level = ink
     MIN_BOX_PX = 20  # full-res px: a leftover sliver thinner than this is noise
@@ -937,7 +935,7 @@ def reading_for_page(page: Image.Image) -> Reading:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Box every line of writing on a scanned page.")
-    parser.add_argument("--page", type=Path, default=Reading.PAGE, help="the page image")
+    parser.add_argument("--page", type=Path, required=True, help="the page image")
     parser.add_argument(
         "--trace-dir", type=Path, default=Reading.TRACE, help="where strokes.json lives and boxes.json is written"
     )

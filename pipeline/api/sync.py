@@ -297,27 +297,27 @@ class ConfirmationPayload:
         doc_index = payload["doc_index"]
         if isinstance(doc_index, bool) or not isinstance(doc_index, int) or doc_index < 1:
             raise ValueError(f"confirmation doc_index must be a positive integer, got {doc_index!r}")
-        _check_agreement(payload)
+        cls._check_agreement(payload)
         return payload
 
-
-def _check_agreement(payload: dict[str, Any]) -> None:
-    """What an AGREED document needs beyond the shape: its text and its own
-    facts (a title and a date — an item cannot exist without them). A
-    rejection carries none of them."""
-    if payload["status"] == "confirmed":
-        if not isinstance(payload["text"], str):
-            raise ValueError("confirmation text must be a string")
-        title = payload.get("title")
-        if not isinstance(title, str) or not title.strip():
-            raise ValueError("an agreed document needs a title")
-        if not isinstance(payload.get("date"), str) or not payload["date"].strip():
-            raise ValueError("an agreed document needs a date")
-        if payload.get("date_precision") not in PRECISIONS:
-            raise ValueError(
-                f"confirmation date_precision must be one of {sorted(PRECISIONS)}, "
-                f"got {payload.get('date_precision')!r}"
-            )
+    @staticmethod
+    def _check_agreement(payload: dict[str, Any]) -> None:
+        """What an AGREED document needs beyond the shape: its text and its own
+        facts (a title and a date — an item cannot exist without them). A
+        rejection carries none of them."""
+        if payload["status"] == "confirmed":
+            if not isinstance(payload["text"], str):
+                raise ValueError("confirmation text must be a string")
+            title = payload.get("title")
+            if not isinstance(title, str) or not title.strip():
+                raise ValueError("an agreed document needs a title")
+            if not isinstance(payload.get("date"), str) or not payload["date"].strip():
+                raise ValueError("an agreed document needs a date")
+            if payload.get("date_precision") not in PRECISIONS:
+                raise ValueError(
+                    f"confirmation date_precision must be one of {sorted(PRECISIONS)}, "
+                    f"got {payload.get('date_precision')!r}"
+                )
 
 
 class Outbox:

@@ -16,21 +16,21 @@ from pipeline.model.unsure_word import UnsureWord
 from pipeline.model.vlm import (
     VlmError,
     VlmOptions,
+    VlmPrompts,
     extract_json,
     selfreport_words,
-    transcription_system_with_context,
 )
 from pipeline.model.vlm_answer import VlmAnswer
 
 
 class TestTranscriptionSystemWithContext:
     def test_base_verbatim_discipline(self) -> None:
-        system = transcription_system_with_context()
+        system = VlmPrompts.transcription_system_with_context()
         assert "verbatim" in system
         assert "nothing added, nothing removed" in system
 
     def test_context_rides_the_prompt(self) -> None:
-        system = transcription_system_with_context(
+        system = VlmPrompts.transcription_system_with_context(
             people=["Alex Hale"], places=["Kensington Gore"], label="First pile", previous_page="Chère Maman."
         )
         assert "Alex Hale" in system
@@ -41,7 +41,7 @@ class TestTranscriptionSystemWithContext:
     def test_no_optional_parts(self) -> None:
         # an empty places list still names it explicitly ("none") so the
         # model knows the absence is deliberate
-        system = transcription_system_with_context(people=["Alex"], places=[], label=None)
+        system = VlmPrompts.transcription_system_with_context(people=["Alex"], places=[], label=None)
         assert "Known places: none" in system
 
 
@@ -234,27 +234,27 @@ class TestPlainTranscriptionFormat:
     it a structure to fail mid-echoing."""
 
     def test_plain_variant_requests_plain_text(self) -> None:
-        from pipeline.model.vlm import transcription_system_with_context
 
-        system = transcription_system_with_context(request_boxes=False)
+        system = VlmPrompts.transcription_system_with_context(request_boxes=False)
         assert "plain text" in system
         assert '"lines"' not in system
         assert "NORMALIZED" not in system
 
     def test_plain_variant_keeps_the_reading_discipline(self) -> None:
-        from pipeline.model.vlm import transcription_system_with_context
 
-        system = transcription_system_with_context(request_boxes=False, people=["Alex Hale"], label="First pile")
+        system = VlmPrompts.transcription_system_with_context(
+            request_boxes=False, people=["Alex Hale"], label="First pile"
+        )
         assert "verbatim" in system
         assert "~~word~~" in system  # strike markers are content
         assert "Alex Hale" in system  # context still rides along
 
     def test_default_still_requests_boxes(self) -> None:
-        from pipeline.model.vlm import VLM_SYSTEM, transcription_system_with_context
+        from pipeline.model.vlm import VlmPrompts
 
         # every existing caller keeps today's behaviour
-        assert '"lines"' in VLM_SYSTEM
-        assert '"lines"' in transcription_system_with_context()
+        assert '"lines"' in VlmPrompts.SYSTEM
+        assert '"lines"' in VlmPrompts.transcription_system_with_context()
 
 
 class TestTranscribeWithFallbacks:

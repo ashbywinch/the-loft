@@ -21,48 +21,73 @@ from __future__ import annotations
 
 import json as _json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ClassVar
 
 from pipeline.model.ai_client import AIClient
 from tools.records import Message, Person, ReviewContext
 from tools.review import assistant_message, investigate
 from tools.review_verdict import ReviewVerdict
 
-PEOPLE: list[dict[str, Any]] = [
-    {"id": "p-pearl", "name": "Pearl Whitlock"},
-    {"id": "p-nora", "name": "Nora Whitlock"},
-    {"id": "p-walter", "name": "Walter Whitlock", "dod": {"date": "1916-09-15", "precision": "exact"}},
-    # The second Walter — why a family memory can name the wrong man: a LIVING
-    # relative one generation on carries the same name, so the war-dead man
-    # reads as "the other brother". Without this second same-name person the
-    # recollection has no reason to go wrong.
-    {
-        "id": "p-walter-jr",
-        "name": "Walter Ellery Whitlock",
-        "dob": {"date": "1922-06-11", "precision": "exact"},
-    },
-]
-RELATIONSHIPS: list[dict[str, Any]] = [
-    {"a": "p-walter", "b": "p-nora", "kind": "sibling", "label_a": "sibling", "label_b": "sibling"},
-    {"a": "p-nora", "b": "p-walter-jr", "kind": "parent", "label_a": "parent", "label_b": "child"},
-]
-
-ITEMS: list[dict[str, Any]] = [
-    {
-        "id": "item-war-record",
-        "title": "The war record",
-        "type": "document",
-        "story": "Walter Whitlock died on 15 September 1916, aged 21 — the Commonwealth war record.",
-    },
-    {
-        "id": "item-seascale",
-        "title": "The Seascale visit",
-        "type": "story",
-        "story": "We visited Walter in Seascale once when the children were young; he has died since.",
-    },
-]
-
 PERSON: Person = Person.from_dict({"id": "p-walter", "name": "Walter Whitlock", "relation": "sibling of Nora Whitlock"})
+
+
+class ReviewFixtures:
+    FLOWS: ClassVar[tuple[ReviewFlow, ...]] = ()
+    CONDITIONS: ClassVar[tuple[tuple[str, Any], ...]] = ()
+
+    """The review eval's standing fixtures: the family, its edges, the items,
+    and the process jargon the persona must never echo."""
+
+    PEOPLE: list[dict[str, Any]] = [
+        {"id": "p-pearl", "name": "Pearl Whitlock"},
+        {"id": "p-nora", "name": "Nora Whitlock"},
+        {"id": "p-walter", "name": "Walter Whitlock", "dod": {"date": "1916-09-15", "precision": "exact"}},
+        # The second Walter — why a family memory can name the wrong man: a LIVING
+        # relative one generation on carries the same name, so the war-dead man
+        # reads as "the other brother". Without this second same-name person the
+        # recollection has no reason to go wrong.
+        {
+            "id": "p-walter-jr",
+            "name": "Walter Ellery Whitlock",
+            "dob": {"date": "1922-06-11", "precision": "exact"},
+        },
+    ]
+    RELATIONSHIPS: list[dict[str, Any]] = [
+        {"a": "p-walter", "b": "p-nora", "kind": "sibling", "label_a": "sibling", "label_b": "sibling"},
+        {"a": "p-nora", "b": "p-walter-jr", "kind": "parent", "label_a": "parent", "label_b": "child"},
+    ]
+    ITEMS: list[dict[str, Any]] = [
+        {
+            "id": "item-war-record",
+            "title": "The war record",
+            "type": "document",
+            "story": "Walter Whitlock died on 15 September 1916, aged 21 — the Commonwealth war record.",
+        },
+        {
+            "id": "item-seascale",
+            "title": "The Seascale visit",
+            "type": "story",
+            "story": "We visited Walter in Seascale once when the children were young; he has died since.",
+        },
+    ]
+    PERSONA_JARGON = (
+        "the user's recollection",
+        "the import",
+        "import's record",
+        "import proposes",
+        "the archive has a record for",
+        "awaiting",
+        "status",
+        "estimated",
+        "proposed",
+        # the third-person and the dead-ends: the assistant never speaks about
+        # the family as "the reviewer", and never reports a bare absence
+        "the reviewer",
+        "no record connects",
+        "no record of",
+        "cannot confirm",
+        "does not remember",
+    )
 
 
 class ReviewFlow:
@@ -165,7 +190,7 @@ class ExhaustedUncertaintyFlow(ReviewFlow):
     question_concludes = True
 
 
-FLOWS: tuple[ReviewFlow, ...] = (
+ReviewFixtures.FLOWS = (
     OnTopicFlow(),
     OffTopicFlow(),
     WrongPersonContradictionFlow(),
@@ -179,9 +204,9 @@ FLOWS: tuple[ReviewFlow, ...] = (
 
 def _facts() -> ReviewContext:
     return ReviewContext(
-        people=tuple(Person.from_dict(p) for p in PEOPLE),
-        items=tuple(ITEMS),
-        relationships=tuple(RELATIONSHIPS),
+        people=tuple(Person.from_dict(p) for p in ReviewFixtures.PEOPLE),
+        items=tuple(ReviewFixtures.ITEMS),
+        relationships=tuple(ReviewFixtures.RELATIONSHIPS),
     )
 
     # The assistant's words never echo the system's — the hired genealogist's
@@ -196,26 +221,6 @@ def _facts() -> ReviewContext:
     # use about family connections ("his link to Pearl", "the brother link",
     # "the link between them"). The requirement is to spare the
     # family jargon they do not understand; "link" is not that jargon (user).
-
-
-PERSONA_JARGON = (
-    "the user's recollection",
-    "the import",
-    "import's record",
-    "import proposes",
-    "the archive has a record for",
-    "awaiting",
-    "status",
-    "estimated",
-    "proposed",
-    # the third-person and the dead-ends: the assistant never speaks about
-    # the family as "the reviewer", and never reports a bare absence
-    "the reviewer",
-    "no record connects",
-    "no record of",
-    "cannot confirm",
-    "does not remember",
-)
 
 
 def persona_errors(result: ReviewVerdict, reviewer_text: str = "") -> list[str]:
@@ -238,7 +243,7 @@ def persona_errors(result: ReviewVerdict, reviewer_text: str = "") -> list[str]:
     return [
         f"{field} echoes the system ('{word}'): {text}"
         for field, text in fields
-        for word in PERSONA_JARGON
+        for word in ReviewFixtures.PERSONA_JARGON
         if word in text and word not in reviewer_text
     ]
 
@@ -391,7 +396,7 @@ class ReviewRun:
 
 
 # every condition, in the order the condition tests run them
-REVIEW_CONDITIONS: tuple[tuple[str, Any], ...] = (
+ReviewFixtures.CONDITIONS = (
     ("relevance", ReviewRun.relevant),
     ("contradiction", ReviewRun.contradiction),
     ("confidence", ReviewRun.confidence),

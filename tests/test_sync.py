@@ -12,6 +12,7 @@ from PIL import Image
 
 from document.word import Word
 from pipeline.api.sync import (
+    ConfirmationPayload,
     Outbox,
     demote_stale_jobs,
     draft_payloads,
@@ -20,7 +21,6 @@ from pipeline.api.sync import (
     reprocess_page_transcription,
     rotate_page,
     set_page_job,
-    validate_confirmation,
 )
 from pipeline.boundary import Boundary
 from pipeline.detect.reader import Reading
@@ -50,40 +50,40 @@ def _confirmation(**overrides: object) -> dict[str, object]:
 
 
 def test_validate_confirmation_accepts_the_shape() -> None:
-    assert validate_confirmation(_confirmation())["status"] == "confirmed"
+    assert ConfirmationPayload.validate(_confirmation())["status"] == "confirmed"
 
 
 def test_validate_confirmation_rejects_bad_shapes() -> None:
     with pytest.raises(ValueError, match="missing fields"):
-        validate_confirmation({"pages": []})
+        ConfirmationPayload.validate({"pages": []})
     with pytest.raises(ValueError, match="status"):
-        validate_confirmation(_confirmation(status="maybe"))
+        ConfirmationPayload.validate(_confirmation(status="maybe"))
     with pytest.raises(ValueError, match="pages"):
-        validate_confirmation(_confirmation(pages=[]))
+        ConfirmationPayload.validate(_confirmation(pages=[]))
 
 
 def test_validate_confirmation_rejects_non_integer_doc_index() -> None:
     # a float (1e309 -> OverflowError in the receiver's int()) or a bool
     # would 500 instead of 400
     with pytest.raises(ValueError, match="doc_index"):
-        validate_confirmation(_confirmation(doc_index=1.5))
+        ConfirmationPayload.validate(_confirmation(doc_index=1.5))
     with pytest.raises(ValueError, match="doc_index"):
-        validate_confirmation(_confirmation(doc_index=1e309))
+        ConfirmationPayload.validate(_confirmation(doc_index=1e309))
     with pytest.raises(ValueError, match="doc_index"):
-        validate_confirmation(_confirmation(doc_index=True))
+        ConfirmationPayload.validate(_confirmation(doc_index=True))
     with pytest.raises(ValueError, match="doc_index"):
-        validate_confirmation(_confirmation(doc_index=0))
+        ConfirmationPayload.validate(_confirmation(doc_index=0))
     with pytest.raises(ValueError, match="doc_index"):
-        validate_confirmation(_confirmation(doc_index=-2))
+        ConfirmationPayload.validate(_confirmation(doc_index=-2))
 
 
 def test_validate_confirmation_accepts_a_rejection_without_text() -> None:
     # record_confirmation treats text=None as the rejection marker — the
     # validator must not demand a string for it
-    payload = validate_confirmation(_confirmation(status="rejected", text=None))
+    payload = ConfirmationPayload.validate(_confirmation(status="rejected", text=None))
     assert payload["status"] == "rejected"
     with pytest.raises(ValueError, match="text"):
-        validate_confirmation(_confirmation(text=None))  # a CONFIRM needs the text
+        ConfirmationPayload.validate(_confirmation(text=None))  # a CONFIRM needs the text
 
 
 def test_outbox_catch_up_add_pending_mark_received(tmp_path: Path) -> None:

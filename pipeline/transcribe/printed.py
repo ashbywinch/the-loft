@@ -14,9 +14,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pipeline.model.config import VISION_MODEL
+from pipeline.model.config import ModelConfig
 from pipeline.model.transcription import Transcription
-from pipeline.model.vlm import VLM_FORMAT_PLAIN, VLM_SYSTEM, transcribe_image_vlm
+from pipeline.model.vlm import VlmPrompts, transcribe_image_vlm
 from pipeline.model.vlm_answer import VlmAnswer
 
 
@@ -28,7 +28,7 @@ def printed_prompt() -> str:
         "Read it column by column in the page's reading order; keep every printed line on "
         "its own line, and keep the page's headings, labels and marginal notes."
     )
-    return f"{note}\n\n{VLM_FORMAT_PLAIN}"
+    return f"{note}\n\n{VlmPrompts.FORMAT_PLAIN}"
 
 
 def _as_lines(answer: str) -> str:
@@ -44,9 +44,9 @@ def _as_lines(answer: str) -> str:
         return text  # not JSON after all — the answer IS the transcription
 
 
-def printed_transcript(image: Path, *, model: str = VISION_MODEL) -> tuple[str, VlmAnswer]:
+def printed_transcript(image: Path, *, model: str = ModelConfig.VISION_MODEL) -> tuple[str, VlmAnswer]:
     """One printed page transcribed: the page's text and the call's cost."""
-    answer = transcribe_image_vlm(image, model=model, system=VLM_SYSTEM, user_text=printed_prompt())
+    answer = transcribe_image_vlm(image, model=model, system=VlmPrompts.SYSTEM, user_text=printed_prompt())
     return _as_lines(answer.answer), answer
 
 
@@ -63,10 +63,10 @@ def structured_prompt() -> str:
         "Keep rows, columns and any marginal note as separate rows of the table. "
         "Fix nothing, summarise nothing, invent nothing."
     )
-    return f"{note}\n\n{VLM_FORMAT_PLAIN}"
+    return f"{note}\n\n{VlmPrompts.FORMAT_PLAIN}"
 
 
-def structured_transcript(image: Path, *, model: str = VISION_MODEL) -> tuple[str, VlmAnswer]:
+def structured_transcript(image: Path, *, model: str = ModelConfig.VISION_MODEL) -> tuple[str, VlmAnswer]:
     """One form page read as structure: the table text and the call's cost."""
-    answer = transcribe_image_vlm(image, model=model, system=VLM_SYSTEM, user_text=structured_prompt())
+    answer = transcribe_image_vlm(image, model=model, system=VlmPrompts.SYSTEM, user_text=structured_prompt())
     return _as_lines(answer.answer), answer

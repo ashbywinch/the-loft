@@ -32,7 +32,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from document.document import DOCUMENT_DRAFT
+from document.document import Document
 from document.row_adjustments import RowAdjustments
 from document.stages import PageStatus
 from pipeline.api import auth
@@ -90,16 +90,12 @@ from pipeline.rows.rows import Rows
 from tools import memory, review
 from tools.archive import Archive, ArchiveError
 from tools.decision_basis import DecisionBasis
-from tools.loft_paths import REGISTRY_DIR, WORK_DIR
+from tools.loft_paths import LoftPaths
 from tools.memory import ElicitationError, Knowledge
 from tools.records import Item, Person, Place, ReviewContext, ReviewDecision, split_content
 from tools.store import FileStore
 
 logger = logging.getLogger(__name__)
-
-MAX_BODY_BYTES = 1_000_000
-
-TRANSCRIPTION_PREFIX_BYTES = 4096  # the first-chunk transcription read — enough to spot a mention, never the whole file
 
 
 def _atomic_write(path: Path, data: Any) -> None:
@@ -144,9 +140,9 @@ def build_app(
     client = config.client
     data_dir = Path(config.data_dir)
     app_dir = Path(config.app_dir)
-    work_dir = Path(config.work_dir) if config.work_dir else WORK_DIR
-    registry_dir = Path(config.registry_dir) if config.registry_dir else REGISTRY_DIR
-    outbox = config.outbox if config.outbox is not None else Outbox(WORK_DIR.parent / "sync-outbox")
+    work_dir = Path(config.work_dir) if config.work_dir else LoftPaths.WORK_DIR
+    registry_dir = Path(config.registry_dir) if config.registry_dir else LoftPaths.REGISTRY_DIR
+    outbox = config.outbox if config.outbox is not None else Outbox(LoftPaths.WORK_DIR.parent / "sync-outbox")
 
     app = FastAPI(title="The Loft", docs_url=None, redoc_url=None)
     # The phone pays for every byte of the projection, the module graph and
@@ -155,7 +151,7 @@ def build_app(
     app.add_middleware(TextGZipMiddleware, minimum_size=1024)
 
     def session_user(request: Request) -> SessionUser | None:
-        return auth.session_user_from_cookie(request.cookies.get(auth.COOKIE_NAME))
+        return auth.session_user_from_cookie(request.cookies.get(auth.GoogleOAuth.COOKIE_NAME))
 
     def narrator(request: Request) -> Narrator | None:
         """The signed-in narrator — the verified session's person. The
@@ -241,7 +237,7 @@ def build_app(
     @app.post("/api/auth/logout")
     def logout() -> JSONResponse:
         response = JSONResponse({"ok": True})
-        response.delete_cookie(auth.COOKIE_NAME, path="/")
+        response.delete_cookie(auth.GoogleOAuth.COOKIE_NAME, path="/")
         return response
 
     @app.get("/api/auth/callback")
@@ -285,7 +281,7 @@ def build_app(
     def _set_session_cookie(response: JSONResponse | RedirectResponse, user: SessionUser) -> None:
         cookie = auth._make_session_cookie(user)
         response.set_cookie(
-            auth.COOKIE_NAME,
+            auth.GoogleOAuth.COOKIE_NAME,
             cookie,
             max_age=int(auth.SESSION_MAX_AGE.total_seconds()),
             httponly=True,
@@ -562,7 +558,8 @@ def build_app(
                     # people refs yet) must still reach the model — the
                     # transcription is the evidence, never the summary
                     transcription = (
-                        archive.read_content_prefix(item_id, "transcription.txt", TRANSCRIPTION_PREFIX_BYTES) or ""
+                        archive.read_content_prefix(item_id, "transcription.txt", Server.TRANSCRIPTION_PREFIX_BYTES)
+                        or ""
                     )
                     if not any(n in transcription.lower() for n in needles):
                         continue
@@ -717,7 +714,7 @@ def build_app(
         # to read it (user: content gated behind sign-in). The
         # app shell stays public so the gate can load.
         if request.url.path.startswith("/data/"):
-            session = auth.session_user_from_cookie(request.cookies.get(auth.COOKIE_NAME))
+            session = auth.session_user_from_cookie(request.cookies.get(auth.GoogleOAuth.COOKIE_NAME))
             if session is None:
                 return JSONResponse({"ok": False, "error": "sign in to read the archive"}, status_code=401)
         return await call_next(request)
@@ -732,6 +729,17 @@ def build_app(
         the pages waiting in the "Check the rows" queue."""
         if session_user(request) is None:
             return JSONResponse(ErrorAnswer("sign in to read the batches").to_dict(), status_code=401)
+        if not registry_dir.parent.is_dir():
+            # The workspace (the Loft disk) is unmounted: an operator error,
+            # not "no review work" — the hub must say so instead of silently
+            # showing only the import/identify queues and losing the rows.
+            return JSONResponse(
+                {
+                    "error": "the review workspace is not available",
+                    "detail": "is the Loft disk mounted?",
+                },
+                status_code=503,
+            )
         try:
             batches: list[dict[str, Any]] = []
             for batch in list_batches(registry_dir):
@@ -762,7 +770,7 @@ def build_app(
             return JSONResponse(ErrorAnswer("sign in to read the drafts").to_dict(), status_code=401)
         try:
             record = load_batch(batch_id, registry_dir)
-            by_pages = {tuple(b.pages): b.status or DOCUMENT_DRAFT for b in (record.boundaries or [])}
+            by_pages = {tuple(b.pages): b.status or Document.DRAFT for b in (record.boundaries or [])}
             # The transcription review shows only documents with a text
             # page, and only their TEXT pages (2026-08-17, user: "we just
             # don't need to show users any of the photos when they're
@@ -793,7 +801,7 @@ def build_app(
                     {
                         **document,
                         "pages": text_pages,
-                        "status": by_pages.get(tuple(document.get("pages", [])), DOCUMENT_DRAFT),
+                        "status": by_pages.get(tuple(document.get("pages", [])), Document.DRAFT),
                         "pages_ready": pages_ready,
                         "ready": bool(text_pages) and len(pages_ready) == len(text_pages),
                     }
@@ -1205,6 +1213,10 @@ def create_server(
 
 
 class Server:
+    # the first-chunk transcription read — enough to spot a mention, never the
+    # whole file
+    TRANSCRIPTION_PREFIX_BYTES = 4096
+
     """The archive's serving noun — one server, one serve().
 
     ``Server(...).serve()`` serves the app (no-cache) and the memory-capture
@@ -1233,7 +1245,7 @@ class Server:
         # a previous run's reprocess threads died with the process — any page
         # left "transcribing" demotes to "failed" (its text is stale; the
         # warning shows, never a silent half-done page, 2026-08-16)
-        demote_stale_jobs(WORK_DIR)
+        demote_stale_jobs(LoftPaths.WORK_DIR)
         app = build_app(self.config)
         if self.host == "0.0.0.0":
             for url in self.lan_urls():

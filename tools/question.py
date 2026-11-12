@@ -16,42 +16,41 @@ from typing import Any
 
 from tools.parsed_phrase import ParsedPhrase
 
-MAX_QUESTIONS = 5
-MAX_SUGGESTIONS = 3
-MAX_SUGGESTION_CHARS = 60  # a tap-sized label, never a paragraph
-
-QUESTION_TYPES = ("date", "people")
-
-# The words that make a question a date question even when "type" is unset.
-_DATE_ASK_WORDS = (
-    "what year",
-    "which year",
-    "in what year",
-    "in which year",
-    "date of birth",
-    "born",
-    "how old",
-    "your age",
-    "what date",
-    "when did",
-    "when was",
-    "when do",
-    "when were",
-)
-
 
 def _bounded_suggestions(raw: Any) -> tuple[str, ...]:
-    """The tappable suggestions a wire entry states — at most MAX_SUGGESTIONS
+    """The tappable suggestions a wire entry states — at most Question.MAX_SUGGESTIONS
     tap-sized labels, blanks dropped."""
     return tuple(
-        str(s).strip()[:MAX_SUGGESTION_CHARS]
+        str(s).strip()[: Question.MAX_SUGGESTION_CHARS]
         for s in (raw if isinstance(raw, list) else [])
         if isinstance(s, str) and s.strip()
-    )[:MAX_SUGGESTIONS]
+    )[: Question.MAX_SUGGESTIONS]
 
 
 @dataclass(frozen=True)
 class Question:
+    MAX_QUESTIONS = 5
+    MAX_SUGGESTIONS = 3
+    MAX_SUGGESTION_CHARS = 60  # a tap-sized label, never a paragraph
+
+    QUESTION_TYPES = ("date", "people")
+
+    # The words that make a question a date question even when "type" is unset.
+    _DATE_ASK_WORDS = (
+        "what year",
+        "which year",
+        "in what year",
+        "in which year",
+        "date of birth",
+        "born",
+        "how old",
+        "your age",
+        "what date",
+        "when did",
+        "when was",
+        "when do",
+        "when were",
+    )
     """One question — its text, its why, its tappable suggestions, and what
     kind of answer it takes. ``skippable`` is the flow's guarantee, never the
     model's discretion."""
@@ -70,13 +69,13 @@ class Question:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Question:
         """The question a wire entry states, narrowed to the flow's fields —
-        at most MAX_SUGGESTIONS bounded suggestions, and the schema's
+        at most Question.MAX_SUGGESTIONS bounded suggestions, and the schema's
         "skippable": true enforced here, at the seam (the eval's contract pins
         it)."""
         text = raw.get("text")
         if not isinstance(text, str) or not text.strip():
             raise ValueError(f"question needs text: {raw!r}")
-        q_type = raw.get("type") if raw.get("type") in QUESTION_TYPES else None
+        q_type = raw.get("type") if raw.get("type") in Question.QUESTION_TYPES else None
         return cls(
             text=text.strip(),
             why=str(raw.get("why", "")),
@@ -88,12 +87,12 @@ class Question:
 
     @classmethod
     def from_list(cls, raw: Any) -> tuple[Question, ...]:
-        """The questions a wire list states — capped at MAX_QUESTIONS, entries
+        """The questions a wire list states — capped at Question.MAX_QUESTIONS, entries
         the flow cannot use dropped."""
         if not isinstance(raw, list):
             return ()
         out: list[Question] = []
-        for entry in raw[:MAX_QUESTIONS]:
+        for entry in raw[: Question.MAX_QUESTIONS]:
             if not isinstance(entry, dict):
                 continue
             try:
@@ -117,7 +116,7 @@ class Question:
         """Does the question need a date — typed as one, or asked in the words
         the flow recognises? The narrator answers in their own words; the flow
         never shows a hand-rolled picker."""
-        return self.type == "date" or any(word in self.text.lower() for word in _DATE_ASK_WORDS)
+        return self.type == "date" or any(word in self.text.lower() for word in Question._DATE_ASK_WORDS)
 
     def asks_for_a_date_of_birth(self) -> bool:
         """Is this the polite question for the narrator's own date of birth?"""

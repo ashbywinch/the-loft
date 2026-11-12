@@ -342,6 +342,59 @@ describe("the batch list renders the real batches", () => {
     vi.unstubAllGlobals();
   });
 
+  it("retries after the workspace is mounted", async () => {
+    let calls = 0;
+    const batch = {
+      batch_id: "adopt-0001",
+      label: "The first pile",
+      status: "pending",
+      pages: { "p1.jpg": {} },
+      pages_pending: ["p1.jpg"],
+      boundaries: [{ pages: ["p1.jpg"], status: "review" }],
+      documents_ready: [],
+      documents_partial: [],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        calls += 1;
+        if (calls === 1) {
+          return {
+            ok: false,
+            status: 503,
+            json: async () => ({ error: "the review workspace is not available", detail: "is the Loft disk mounted?" }),
+          };
+        }
+        return { ok: true, status: 200, json: async () => ({ batches: [batch] }) };
+      }),
+    );
+    const main = document.createElement("main");
+    render(main, { name: "review" });
+    await vi.waitFor(() => expect(main.textContent).toContain("is the Loft disk mounted?"));
+    main.querySelector("button.btn").click();
+    await vi.waitFor(() => expect(main.textContent).toContain("1 page to check"));
+    vi.unstubAllGlobals();
+  });
+
+  it("surfaces the server's remedy when the workspace is not mounted", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 503,
+        json: async () => ({
+          error: "the review workspace is not available",
+          detail: "is the Loft disk mounted?",
+        }),
+      })),
+    );
+    const main = document.createElement("main");
+    render(main, { name: "review" });
+    await vi.waitFor(() => expect(main.textContent).toContain("is the Loft disk mounted?"));
+    expect(main.textContent).toContain("Try again");
+    vi.unstubAllGlobals();
+  });
+
   it("times out with a retry when the batches do not answer", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(

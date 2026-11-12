@@ -26,7 +26,7 @@ import pytest
 
 from pipeline.api.sync import draft_payloads
 from pipeline.registry import load_batch
-from tools.loft_paths import ARCHIVE_DIR  # the eval's media gate — the pipeline reads the archive's batch
+from tools.loft_paths import LoftPaths  # the eval's media gate — the pipeline reads the archive's batch, LoftPaths
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 BACK = FIXTURES / "godolphin-1906-back.jpg"
@@ -118,7 +118,7 @@ def _assert_contracts(registry: Path, work: Path) -> None:
 
 @pytest.mark.eval
 @pytest.mark.skipif(
-    not (BACK.exists() and FRONT.exists()) or not ARCHIVE_DIR.exists(),
+    not (BACK.exists() and FRONT.exists()) or not LoftPaths.ARCHIVE_DIR.exists(),
     reason="the public-domain fixture images or the archive are missing (media-gated, off-CI)",
 )
 def test_postcard_groups_two_sides_and_boxes_the_transcription(tmp_path: Path) -> None:

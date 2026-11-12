@@ -12,9 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any
 
-KINDS = ("person", "place", "theme", "item")
-BUCKETS = ("proposed", "question", "unresolved")
-
 # The kinds whose name is a TERM the account must use — a person, place or
 # object the story names. A theme is a concept: "moving house" need not appear
 # in those words, so it is exempt.
@@ -61,6 +58,10 @@ class Extraction:
     """One entity the story is about — its kind, the name the account used, the
     record it matched, the bucket, and the model's reason."""
 
+    KINDS = ("person", "place", "theme", "item")
+
+    BUCKETS = ("proposed", "question", "unresolved")
+
     kind: str
     name: str
     match: str | None = None
@@ -68,7 +69,7 @@ class Extraction:
     reason: str = ""
 
     def __post_init__(self) -> None:
-        if self.kind not in KINDS:
+        if self.kind not in Extraction.KINDS:
             raise ValueError(f"unknown extraction kind: {self.kind!r}")
         if not self.name.strip():
             raise ValueError("an extraction needs a name")
@@ -80,9 +81,9 @@ class Extraction:
         validated against the known values."""
         kind = raw.get("kind")
         name = raw.get("name")
-        if kind not in KINDS or not isinstance(name, str) or not name.strip():
+        if kind not in Extraction.KINDS or not isinstance(name, str) or not name.strip():
             raise ValueError(f"extraction needs a known kind and a name: {raw!r}")
-        bucket = raw.get("bucket") if raw.get("bucket") in BUCKETS else "unresolved"
+        bucket = raw.get("bucket") if raw.get("bucket") in Extraction.BUCKETS else "unresolved"
         match = raw.get("match") if isinstance(raw.get("match"), str) else None
         return cls(kind=kind, name=name.strip(), match=match, bucket=bucket, reason=str(raw.get("reason", "")))
 

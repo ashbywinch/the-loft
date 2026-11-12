@@ -51,14 +51,8 @@ from document.row import Row
 from document.row_adjustments import RowAdjustments
 from document.traces import Traces
 from document.word import Word
-from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop
+from pipeline.rows.page_visuals import CaptionSheet, Crop, PagePainter, halo_text, scaled_crop
 from pipeline.rows.render import Colour, tint_row
-
-TOUCH_FRACTION = 0.38  # x the writing height: how far a line's stroke claims a word
-SPACING_RATIO = 1.6  # x the writing height: where one row ends and the next begins
-RULE_ASPECT = 8.0  # x a box's height: this wide for its height is a rule, not writing
-BUTT_GAP_MIN = 4.0  # px floor for a butting adjacency — physical, never unit-dependent razor
-MAX_LINE_SLOPE_DEG = 6.0  # a drawn line runs along the writing (the jig's A5: ~0–2.4° observed)
 
 
 class Rows:
@@ -167,6 +161,11 @@ class _Claims:
     the same words, so they live here once — `rows.adjust` is the
     library's face, this is the measurement behind it."""
 
+    TOUCH_FRACTION = 0.38  # x the writing height: how far a line's stroke claims a word
+    SPACING_RATIO = 1.6  # x the writing height: where one row ends and the next begins
+    BUTT_GAP_MIN = 4.0  # px floor for a butting adjacency — physical, never unit-dependent razor
+    MAX_LINE_SLOPE_DEG = 6.0  # a drawn line runs along the writing (the jig's A5: ~0–2.4° observed)
+
     def __init__(
         self,
         words: list[Word],
@@ -178,8 +177,8 @@ class _Claims:
         # writing height to measure, and every caller downstream (the reading,
         # the review) is about rows that exist
         self.unit = self._writing_height() if words else 0.0
-        self.spacing = SPACING_RATIO * self.unit
-        self.touch = TOUCH_FRACTION * self.unit
+        self.spacing = _Claims.SPACING_RATIO * self.unit
+        self.touch = _Claims.TOUCH_FRACTION * self.unit
         self.spans = _line_spans(adjustments, page_size)
         self.page_size = page_size
         self.discounted: set[int] = set()
@@ -438,7 +437,7 @@ class _Claims:
                     reading_lines.add(line)
             if len(reading_lines) > 1:
                 problems.append(f"line {line_index + 1} merges reading lines {sorted(reading_lines)} into one row")
-            if abs(span.slope) > MAX_LINE_SLOPE_DEG:
+            if abs(span.slope) > _Claims.MAX_LINE_SLOPE_DEG:
                 problems.append(f"line {line_index + 1} runs at {span.slope:.1f}°")
         problems.extend(self._off_page())
         return problems
@@ -463,13 +462,13 @@ class _Claims:
 
         A rule is not part of any row; an underline — which HAS writing
         directly above (the letters it underscores) — is. The box must be at
-        least `RULE_ASPECT` wider than tall, and no other word box (that is
+        least `Word.RULE_ASPECT` wider than tall, and no other word box (that is
         itself not rule-flat) may sit within one line-spacing above it,
         overlapping its width."""
-        if word.height <= 0 or word.width < RULE_ASPECT * word.height:
+        if word.height <= 0 or word.width < Word.RULE_ASPECT * word.height:
             return False
         for other in self.words:
-            if other is word or other.width >= RULE_ASPECT * other.height:
+            if other is word or other.width >= Word.RULE_ASPECT * other.height:
                 continue
             if other.x1 > word.x0 and other.x0 < word.x1 and -self.spacing <= word.y0 - other.y1 <= self.spacing:
                 return False  # writing sits directly above — an underline, part of the row
@@ -515,7 +514,7 @@ class _Claims:
         # pixels, too tight for a split piece's real gap — butting is a
         # physical adjacency, never smaller than a few px (PR review,
         # 2026-09-19).
-        return gap is not None and gap <= max(self.unit / 8, BUTT_GAP_MIN)
+        return gap is not None and gap <= max(self.unit / 8, _Claims.BUTT_GAP_MIN)
 
     def _same_line(self, index: int, candidate: int) -> bool:
         """Roughly the same baseline — the measured baseline when the words
@@ -679,6 +678,6 @@ def render_map(page: Image.Image, rows: list[Row], path: Path, view: MapView) ->
                 for px, py in line
             ]
             label_layer.line(points, fill=line_colour, width=4)
-    sheet = captioned_sheet(crop, [f"{len(rows)} rows, tinted by their words' union"])
-    path.write_bytes(review_image(sheet.sheet))
+    sheet = CaptionSheet.captioned_sheet(crop, [f"{len(rows)} rows, tinted by their words' union"])
+    path.write_bytes(PagePainter.review_image(sheet.sheet))
     return crop

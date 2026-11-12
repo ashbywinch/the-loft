@@ -32,27 +32,21 @@ from typing import Any
 
 from PIL import Image
 
-from document.document import DOCUMENT_AGREED
+from document.document import Document
 from document.page_size import PageSize
 from document.row import Row
 from document.row_adjustments import RowAdjustments
 from document.words import Words
 from pipeline.api.sync import BatchReadings, record_confirmation
 from pipeline.artefacts import BatchArtefacts
-from pipeline.batch_record import (
-    STATUS_CONFIRMED,
-    STATUS_PENDING,
-    STATUS_PROCESSING,
-    STATUS_REVIEW,
-    BatchRecord,
-)
+from pipeline.batch_record import BatchRecord
 from pipeline.boundary import Boundary
-from pipeline.classify import TEXT_KINDS, category_of, read_route, run_classify
+from pipeline.classify import PageKinds, run_classify
 from pipeline.detect.reader import Reading, reading_for_page
 from pipeline.grouping import score_boundaries
 from pipeline.model.ai_client import AIClient, AIClientError
-from pipeline.model.config import BOUNDARY_MODEL as BOUNDARY_MODEL_FROM_CONFIG
-from pipeline.orient import orient_pages
+from pipeline.model.config import ModelConfig
+from pipeline.orient import PageOrientation
 from pipeline.page_flag import PageFlag
 from pipeline.page_text import PageText
 from pipeline.registry import RegistryError as PipelineError
@@ -66,13 +60,8 @@ from pipeline.transcribe.printed import printed_transcript, structured_transcrip
 from pipeline.transcribe.transcripts import Transcriber, row_transcripts
 from tools.archive import Archive
 from tools.atomic import atomic_write
-from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR, LoftPaths
+from tools.loft_paths import LoftPaths
 from tools.store import DiskStore, StoreError  # noqa: F401 — the architecture test's store-layer marker
-
-BOUNDARY_MODEL = BOUNDARY_MODEL_FROM_CONFIG  # judges document boundaries (<provider>/<model>)
-PAGE_LIMIT = 30  # one boundary call per batch; beyond this the context is too big
-GUESS_PAGE_CHUNK = 5  # pages per boundary call (the answer echoes each page's flags)
-AMBIGUITY_FLOOR = 5  # ...and it must clear this many strong words outright
 
 
 def _standing_names(records: list[dict[str, Any]], with_aliases: bool = False) -> list[str]:
@@ -122,9 +111,9 @@ def page_flags(
     """One model call: the document-boundary flags per page.
 
     ``client`` is the chat seam (AIClient.chat shape); injectable for tests."""
-    if len(page_texts) > PAGE_LIMIT:
+    if len(page_texts) > Batch.PAGE_LIMIT:
         raise PipelineError(
-            f"batch has {len(page_texts)} pages — the boundary call handles up to {PAGE_LIMIT} per call; "
+            f"batch has {len(page_texts)} pages — the boundary call handles up to {Batch.PAGE_LIMIT} per call; "
             "chunking is future work"
         )
     system, user = _boundary_prompt(page_texts, label, people, places)
@@ -162,13 +151,15 @@ class Batch:
     state the run stages (BatchRun) and the confirmation gate (ReviewGate)
     both work from."""
 
+    PAGE_LIMIT = 30  # one boundary call per batch; beyond this the context is too big
+
     def __init__(
         self,
         batch_id: str,
         *,
-        work_dir: Path = WORK_DIR,
-        registry_dir: Path = REGISTRY_DIR,
-        archive_dir: Path = ARCHIVE_DIR,
+        work_dir: Path = LoftPaths.WORK_DIR,
+        registry_dir: Path = LoftPaths.REGISTRY_DIR,
+        archive_dir: Path = LoftPaths.ARCHIVE_DIR,
     ) -> None:
         self.batch_id = batch_id
         self.work_dir = work_dir
@@ -181,7 +172,7 @@ class Batch:
         stamps when it started, its pid and its host — the worker's sweep uses
         that to tell a live pass from one that was killed."""
         record.status = status
-        if status == STATUS_PROCESSING:
+        if status == BatchRecord.STATUS_PROCESSING:
             record.started_at = datetime.now(UTC).isoformat(timespec="seconds")
             record.started_pid = os.getpid()
             record.started_host = socket.gethostname()
@@ -212,6 +203,9 @@ class BatchRun(Batch):
     module functions threaded are this object's state; process is the thin
     entry point."""
 
+    BOUNDARY_MODEL = ModelConfig.BOUNDARY_MODEL  # judges document boundaries (<provider>/<model>)
+    GUESS_PAGE_CHUNK = 5  # pages per boundary call (the answer echoes each page's flags)
+
     def clear_stale_stages(self, record: BatchRecord) -> None:
         """A content-changed pile (pages added/removed after adoption): the
         regenerable stages are stale — clear them (never the agreed items) and
@@ -228,7 +222,7 @@ class BatchRun(Batch):
             elif stale.is_dir():
                 shutil.rmtree(stale)
         record.content_changed = False
-        self.update_status(record, STATUS_PROCESSING)
+        self.update_status(record, BatchRecord.STATUS_PROCESSING)
         print("content changed since adoption — regenerable stages cleared; confirmed transcriptions preserved")
 
     def classify_pages(self, pages: list[Path], *, reclassify: Sequence[str] = ()) -> Classification:
@@ -243,8 +237,10 @@ class BatchRun(Batch):
             run_classify(self.batch_id, registry_dir=self.registry_dir, work_dir=self.work_dir, reclassify=reclassify)
             print(f"classified {len(pages)} page(s) -> {self.artefacts.classify}")
         classify = json.loads(store.read_latest(rel_classify))
-        text_pages = [name for name, entry in classify.items() if category_of(entry) in TEXT_KINDS]
-        image_pages = [name for name, entry in classify.items() if category_of(entry) not in TEXT_KINDS]
+        text_pages = [name for name, entry in classify.items() if PageKinds.category_of(entry) in PageKinds.TEXT_KINDS]
+        image_pages = [
+            name for name, entry in classify.items() if PageKinds.category_of(entry) not in PageKinds.TEXT_KINDS
+        ]
         if image_pages:
             print(f"{len(image_pages)} page(s) carry no writing — no transcription")
         return Classification(classify, text_pages, image_pages)
@@ -257,7 +253,7 @@ class BatchRun(Batch):
         return [
             name
             for name in classification.text_pages
-            if read_route(classification.classify[name]) == "rows"
+            if PageKinds.read_route(classification.classify[name]) == "rows"
             and not (self.artefacts.guess_dir / f"{Path(name).stem}.printed.json").is_file()
             and not (self.artefacts.guess_dir / f"{Path(name).stem}.structured.json").is_file()
         ]
@@ -269,7 +265,7 @@ class BatchRun(Batch):
         if all((self.artefacts.oriented_dir / name).is_file() for name in text_pages):
             print("orientation already present — reusing")
             return
-        written = orient_pages([folder / name for name in text_pages], self.artefacts.oriented_dir)
+        written = PageOrientation.pages([folder / name for name in text_pages], self.artefacts.oriented_dir)
         print(f"oriented: {len(written)} page(s) -> {self.artefacts.oriented_dir}")
 
     def read_all(
@@ -281,8 +277,10 @@ class BatchRun(Batch):
         the direct read, forms the structured read, and the rest the row
         pipeline (auto rows, then the human check). A page already read
         directly is never re-read through the row chain."""
-        direct = [n for n in classification.text_pages if read_route(classification.classify[n]) == "direct"]
-        structured = [n for n in classification.text_pages if read_route(classification.classify[n]) == "structured"]
+        direct = [n for n in classification.text_pages if PageKinds.read_route(classification.classify[n]) == "direct"]
+        structured = [
+            n for n in classification.text_pages if PageKinds.read_route(classification.classify[n]) == "structured"
+        ]
         if direct:
             self.printed_pages(
                 pages=direct,
@@ -320,16 +318,20 @@ class BatchRun(Batch):
             texts[name] = store.read_latest(rel) if store.exists(rel) else ""
 
         knowledge = self.standing_knowledge()
-        chat = client if client is not None else AIClient(model=BOUNDARY_MODEL, max_tokens=12000, timeout=900.0).chat
+        chat = (
+            client
+            if client is not None
+            else AIClient(model=BatchRun.BOUNDARY_MODEL, max_tokens=12000, timeout=900.0).chat
+        )
         page_texts = [PageText(name, texts[name] or "") for name in classification.text_pages]
         flags: list[PageFlag] = []
         # each iteration calls page_flags — a model inference with side effects — and extends
         # with its result; a comprehension would bury the side-effecting call inside an expression
         # lucidlint: ignore loop-pipeline side-effecting model call per iteration, not a pure build
-        for start in range(0, len(page_texts), GUESS_PAGE_CHUNK):
+        for start in range(0, len(page_texts), BatchRun.GUESS_PAGE_CHUNK):
             flags.extend(
                 page_flags(
-                    page_texts[start : start + GUESS_PAGE_CHUNK],
+                    page_texts[start : start + BatchRun.GUESS_PAGE_CHUNK],
                     record.label,
                     knowledge.people,
                     knowledge.places,
@@ -347,7 +349,7 @@ class BatchRun(Batch):
                 dims[rel] = PageSize(im.width, im.height)
         boundaries = score_boundaries(
             sorted(record.pages),
-            {page: category_of(entry) for page, entry in classification.classify.items()},
+            {page: PageKinds.category_of(entry) for page, entry in classification.classify.items()},
             dims,
             texts,
             {flag.page: flag for flag in known_flags},
@@ -404,7 +406,7 @@ class BatchRun(Batch):
         work_pages = pages or list(record.pages or {})
         if not work_pages:
             raise PipelineError(f"no pages to read in batch {self.batch_id}")
-        self.update_status(record, STATUS_PROCESSING)
+        self.update_status(record, BatchRecord.STATUS_PROCESSING)
         store = PipelineStore(self.work_dir)
         read_pages: list[str] = []
         for page in work_pages:
@@ -440,7 +442,7 @@ class BatchRun(Batch):
             PipelineStore(self.registry_dir).write(
                 f"{self.batch_id}.json", json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n"
             )
-        self.update_status(load_batch(self.batch_id, self.registry_dir), STATUS_REVIEW)
+        self.update_status(load_batch(self.batch_id, self.registry_dir), BatchRecord.STATUS_REVIEW)
         print(f"{read}: {len(read_pages)} page(s) read — batch {self.batch_id} awaiting review")
 
     def read_pages(
@@ -609,11 +611,11 @@ class BatchRun(Batch):
         if not pages:
             raise PipelineError(f"batch {self.batch_id} has no registered pages")
 
-        self.update_status(record, STATUS_PROCESSING)
+        self.update_status(record, BatchRecord.STATUS_PROCESSING)
         try:
             self._run_stages(record, pages, client, _printed=_printed)
         except Exception:
-            self.update_status(record, STATUS_PENDING)  # a failed pass is work again
+            self.update_status(record, BatchRecord.STATUS_PENDING)  # a failed pass is work again
             raise
 
     def _run_stages(
@@ -639,7 +641,7 @@ class BatchRun(Batch):
         if not view.text_pages():
             # reload: the stages write the registry record themselves (grouping
             # records the boundaries); a stale object would clobber that write
-            self.update_status(load_batch(self.batch_id, self.registry_dir), STATUS_REVIEW)
+            self.update_status(load_batch(self.batch_id, self.registry_dir), BatchRecord.STATUS_REVIEW)
             print(
                 f"batch {self.batch_id}: no text pages — review the classification "
                 "(make confirm will show nothing to transcribe)"
@@ -647,16 +649,16 @@ class BatchRun(Batch):
             return
         if not ran:
             print(f"batch {self.batch_id}: every stage current — nothing re-run")
-        self.update_status(load_batch(self.batch_id, self.registry_dir), STATUS_REVIEW)
+        self.update_status(load_batch(self.batch_id, self.registry_dir), BatchRecord.STATUS_REVIEW)
         print(f"batch {self.batch_id} awaiting review (make confirm ARGS={self.batch_id!r})")
 
 
 def process(
     batch_id: str,
     *,
-    registry_dir: Path = REGISTRY_DIR,
-    work_dir: Path = WORK_DIR,
-    archive_dir: Path = ARCHIVE_DIR,
+    registry_dir: Path = LoftPaths.REGISTRY_DIR,
+    work_dir: Path = LoftPaths.WORK_DIR,
+    archive_dir: Path = LoftPaths.ARCHIVE_DIR,
     client: Callable[[str, str], str] | None = None,
 ) -> None:
     """Classify → orient → read (the category decides: direct read, structured
@@ -758,8 +760,8 @@ class ReviewGate(Batch):
         self.confirm_documents(boundaries, line, write_line)
 
         record = load_batch(self.batch_id, self.registry_dir)
-        self.update_status(record, STATUS_CONFIRMED)
-        confirmed = [b for b in record.boundaries or [] if b.status == DOCUMENT_AGREED]
+        self.update_status(record, BatchRecord.STATUS_CONFIRMED)
+        confirmed = [b for b in record.boundaries or [] if b.status == Document.AGREED]
         write_line(f"\nbatch {self.batch_id} confirmed ({len(confirmed)} document(s))")
 
     def load_boundaries(self, write_line: Callable[[str], None]) -> list[Boundary] | None:

@@ -120,14 +120,14 @@ def test_create_publishes_only_a_verified_database(tmp_path: Path) -> None:
 
 
 def test_verify_reports_a_changed_schema_digest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from loft.live import schema as schema_module
+    from loft.live.schema import Schema
 
     db = LiveDatabase.create(tmp_path / "loft.db", app_version="test")
     try:
         changed = tmp_path / "truth.sql"
-        changed.write_text(schema_module.TRUTH.read_text(encoding="utf-8") + "\n-- changed\n", encoding="utf-8")
+        changed.write_text(Schema.TRUTH.read_text(encoding="utf-8") + "\n-- changed\n", encoding="utf-8")
         # lucidlint: ignore monkeypatch the schema path is the seam under test
-        monkeypatch.setattr(schema_module, "TRUTH", changed)
+        monkeypatch.setattr(Schema, "TRUTH", changed)
         findings = db.verify_schema()
         assert any("sql_sha256" in finding for finding in findings), findings
     finally:

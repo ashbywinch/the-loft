@@ -92,10 +92,10 @@ def _detector_scaled(letter: dict) -> tuple[Image.Image, list, list, float]:
     """The letter at the detector's scale: ink canvas, words and strokes
     all divided by SCALE — the coordinate space of the committed marks,
     so the drawing pins run on the fixture without the scan."""
-    from pipeline.detect.mark import SCALE
+    from pipeline.detect.mark import Components
 
     canvas = _fixture_ink_canvas()
-    scale = float(SCALE)
+    scale = float(Components.SCALE)
     words = [{k: v / scale for k, v in w.items()} if w else None for w in letter["words"]]
     strokes = [[(x * canvas.width / scale, y * canvas.height / scale) for x, y in s] for s in letter["strokes"]]
     return canvas, words, strokes, scale
@@ -294,12 +294,12 @@ def test_contiguous_runs_groups_only_adjacent_rows() -> None:
 
 def test_captioned_sheet_offsets_the_crop_by_the_bar() -> None:
     """The caption bar's height is the contract: the crop starts below it."""
-    from pipeline.rows.page_visuals import CAPTION_LINE_H, CAPTION_PAD, captioned_sheet
+    from pipeline.rows.page_visuals import CaptionSheet
 
     crop = Image.new("RGB", (100, 60), (250, 250, 245))
-    caption = captioned_sheet(crop, ["one", "two", "three"])
+    caption = CaptionSheet.captioned_sheet(crop, ["one", "two", "three"])
     sheet = caption.sheet
-    assert caption.bar_height == CAPTION_PAD + 3 * CAPTION_LINE_H
+    assert caption.bar_height == CaptionSheet.CAPTION_PAD + 3 * CaptionSheet.CAPTION_LINE_H
     assert sheet.size == (100, 60 + caption.bar_height)
     assert sheet.getpixel((50, 6)) == (255, 255, 255)
 
@@ -308,12 +308,12 @@ def test_dashed_hline_marks_the_cut_row() -> None:
     """A cut row reads as red dashes on the row, paper between them."""
     from PIL import ImageDraw
 
-    from pipeline.rows.page_visuals import CUT_RED, DashRule, dashed_hline
+    from pipeline.rows.page_visuals import DashRule, dashed_hline
 
     sheet = Image.new("RGB", (100, 40), (255, 255, 255))
     draw = ImageDraw.Draw(sheet, "RGBA")
     dashed_hline(draw, DashRule(10, 90, 20))
-    assert sheet.getpixel((12, 20)) == CUT_RED[:3]
+    assert sheet.getpixel((12, 20)) == DashRule.CUT_RED[:3]
     assert sheet.getpixel((10 + 8 + 3, 20)) == (255, 255, 255)
 
 
@@ -363,13 +363,13 @@ def test_review_image_is_a_fraction_of_the_png() -> None:
 
     import numpy as np
 
-    from pipeline.rows.page_visuals import review_image
+    from pipeline.rows.page_visuals import PagePainter
 
     rng = np.random.default_rng(7)
     sheet = Image.fromarray(rng.integers(180, 256, (400, 900, 3), dtype=np.uint8))
     buf = io.BytesIO()
     sheet.save(buf, "PNG")
-    small = review_image(sheet)
+    small = PagePainter.review_image(sheet)
     assert len(small) < len(buf.getvalue()) // 4
     assert Image.open(io.BytesIO(small)).size[0] == 900
 
@@ -378,10 +378,10 @@ def test_review_image_never_upscales() -> None:
     """A small sheet keeps its pixels: no blur from pointless scaling."""
     import io
 
-    from pipeline.rows.page_visuals import review_image
+    from pipeline.rows.page_visuals import PagePainter
 
     sheet = Image.new("RGB", (400, 200), (250, 250, 245))
-    assert Image.open(io.BytesIO(review_image(sheet))).size == (400, 200)
+    assert Image.open(io.BytesIO(PagePainter.review_image(sheet))).size == (400, 200)
 
 
 def test_split_sheet_draws_raw_pieces_cuts_and_drops() -> None:

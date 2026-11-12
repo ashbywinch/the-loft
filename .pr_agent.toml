@@ -42,14 +42,26 @@ persistent_comment = false
 require_tests_review = true
 require_security_review = true
 num_max_findings = 50
-extra_instructions = "Check the PR against each file in repo_context_files. Add a 'Compliance' section per doc, listing any violations found or 'No violations'. Flag violations as findings, not just notes: requirement deviations from docs/PRD/PRD.md (a change that violates a stated requirement, constraint, persona, or JTBD is a finding), documentation-standard deviations from docs/writing-documentation.md (docs failing the documentation-quality checklist — context efficiency, density, no-duplication, one topic per file — including that every doc is discoverable from AGENTS.md; skills are exempt from reachability — the harness discovers them (see docs/documentation-structure.md)), and folder-structure deviations from docs/documentation-structure.md (missing or malformed required docs, or a doc that AGENTS.md cannot lead to). The canonical code-repo standards (coding, testing, UX) live in standards/ and are scaffolded into code repos — they do not govern omp-config's own docs, but a PR that edits one must keep it consistent with the rest of the canonical set. A change to a skill or standard must keep the repo self-check (make test) green and mention that the change needs make install + omp restart to take effect."
+# Publish each finding as a verified inline review comment (the pinned action
+# implements get_persistent_comment_bodies/get_recent_inline_comment_bodies).
+inline_key_issues = true
+extra_instructions = "Check the PR against each file in repo_context_files. Before checking compliance, derive the domain glossary from docs/PRD/PRD.md and docs/TECHSPEC.md (entities, actions, personas, states, object model), then read the diff against it two ways. Vocabulary: a domain-level name (class, module, public entry point, domain-typed field) using technical or vague words instead of the documented term is a finding. Latent concepts: domain behaviour smeared across several functions or buried inside one, owned by no identifier, is equally a finding — draw it out under a glossary name, proposing a new glossary term where none fits. Generic helper, plumbing, and config-key names are not glossary checks.  Add a 'Compliance' section per doc, listing any violations found or 'No violations'. Flag violations as findings, not just notes: style and semantic deviations from docs/coding-standards.md, test-standard deviations from docs/testing-standards.md, requirement deviations from docs/PRD/PRD.md (a change that violates a stated requirement, constraint, persona, or JTBD is a finding), documentation-standard deviations from docs/writing-documentation.md (docs failing the documentation-quality checklist — context efficiency, density, no-duplication, one topic per file), folder-structure deviations from docs/documentation-structure.md (missing or malformed required docs — PRD with JTBD/personas/constraints/user requirements, TECHSPEC with choices/spikes/diagrams, UX.md, PLAN with the software's phase inputs/outputs and quality gates — every doc discoverable from AGENTS.md, skills exempt from reachability since the harness discovers them), and UX deviations from docs/ux-standards.md. Structural findings the standards name are findings too: a missed class (bare dict/tuple/list in a record position), a name that violates the object model or domain-noun rules, and separation-of-concerns violations. Suppression comments are findings when their why fails the evidence bar in docs/coding-standards.md ('Suppressions carry checkable evidence') — review every exemption form that section names (`lucidlint: ignore`, `ignore-file`, `# type: ignore`, `#[allow(...)]`, `# noqa`), not only the lucidlint ones."
 
 
 [pr_code_suggestions]
+# DISABLED for the auto run (2026-11-12). The suggestions generator uses the
+# global [config] model chain and, on this PR's 150k-token numbered diff, the
+# model returns empty content (finish_reason: length) after ~30 minutes; the
+# action then fails the whole review run for an advisory tool. /improve stays
+# available as a deliberate comment-triggered command (we do not auto-run it).
 persistent_comment = true
 
 [github_action_config]
 handle_push_trigger = true
+# The agent harness pushes as omp-harness[bot]; the action's default bot-skip
+# would silently never review its pushes (the fail-loud verify job caught it:
+# "Skipping synchronize: bot commit detected"). Review every push.
+push_trigger_ignore_bot_commits = false
 # -i on /review is the ONLY incremental enabler in v0.41.1 (the
 # enable_incremental config key does not exist in this version) — without
 # it every push re-reviews the ENTIRE PR and the diff eventually blows the
@@ -57,4 +69,5 @@ handle_push_trigger = true
 # /improve has NO incremental support in any pr-agent version (verified
 # v0.41.1 and main: pr_code_suggestions has no incremental machinery, and
 # -i on it is a no-op) — it is a full-PR pass by upstream design
-push_commands = ["/review -i", "/improve"]
+push_commands = ["/review -i"]
+skip_commands = ["/skip"]

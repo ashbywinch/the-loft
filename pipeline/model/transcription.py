@@ -12,13 +12,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-BOX_COORDINATE_COUNT = 4  # a box is [x0, y0, x1, y1]
-
-# A box smaller than a third of the median line height is degenerate: the
-# model's boxes COLLAPSE at the page's bottom edge, and a collapsed box is
-# worse than none — the line falls back to the detector's association.
-DEGENERATE_BOX_DIVISOR = 3
-
 
 @dataclass(frozen=True)
 class Transcription:
@@ -28,6 +21,13 @@ class Transcription:
     (the pipeline then falls back to the detector's association: the
     geometry must come from the model that can READ the cursive, not the rec
     engine that merges and misses its lines)."""
+
+    _BOX_COORDINATE_COUNT = 4  # a box is [x0, y0, x1, y1]
+
+    # A box smaller than a third of the median line height is degenerate: the
+    # model's boxes COLLAPSE at the page's bottom edge, and a collapsed box is
+    # worse than none — the line falls back to the detector's association.
+    _DEGENERATE_BOX_DIVISOR = 3
 
     text: str
     boxes: dict[int, list[float]] | None = None
@@ -63,7 +63,7 @@ class Transcription:
             box = entry.get("box")
             if (
                 isinstance(box, list)
-                and len(box) == BOX_COORDINATE_COUNT
+                and len(box) == Transcription._BOX_COORDINATE_COUNT
                 and all(isinstance(v, (int, float)) and v == v for v in box)
             ):
                 boxes[index] = [float(v) for v in box]
@@ -79,6 +79,8 @@ def _drop_degenerate_boxes(boxes: dict[int, list[float]]) -> dict[int, list[floa
     median_h = heights[len(heights) // 2]
     if median_h > 0:
         boxes = {
-            i: [x0, y0, x1, y1] for i, (x0, y0, x1, y1) in boxes.items() if y1 - y0 >= median_h / DEGENERATE_BOX_DIVISOR
+            i: [x0, y0, x1, y1]
+            for i, (x0, y0, x1, y1) in boxes.items()
+            if y1 - y0 >= median_h / Transcription._DEGENERATE_BOX_DIVISOR
         }
     return boxes

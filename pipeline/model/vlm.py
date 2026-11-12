@@ -26,12 +26,12 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from pipeline.model.ai_client import DEFAULT_BASE_URL, find_api_key
+from pipeline.model.ai_client import AIClient, find_api_key
 from pipeline.model.chat_message import ChatMessage
 from pipeline.model.chat_request import ChatRequest
 from pipeline.model.chat_response import ChatResponse
-from pipeline.model.config import VISION_MODEL
-from pipeline.model.http_headers import USER_AGENT, HttpHeaders
+from pipeline.model.config import ModelConfig
+from pipeline.model.http_headers import HttpHeaders
 from pipeline.model.image_content import ImageContent
 from pipeline.model.orientation_report import OrientationReport
 from pipeline.model.text_content import TextContent
@@ -42,100 +42,126 @@ from pipeline.model.vlm_answer import VlmAnswer
 
 logger = logging.getLogger(__name__)
 
-_VLM_READING_RULES = (
-    "You transcribe scanned family documents verbatim. Rules: the document's own "
-    "words, nothing added, nothing removed — fix nothing, summarize nothing, invent "
-    "nothing. Keep the line structure. For printed text and handwriting alike. "
-    "Unreadable words: transcribe your best literal guess. "
-    "Formatting that matters — keep the markers, they are content: a word the "
-    "writer CROSSED OUT is marked ~~word~~ (double tildes either side); a word the "
-    "writer UNDERLINED is marked ~word~ (single tildes either side, the in-house "
-    "sibling of the strike convention — markdown has no standard underline). "
-)
 
-VLM_FORMAT_JSON = (
-    'Return ONLY JSON: {"lines": [{"text": "the line verbatim", "box": '
-    "[x0, y0, x1, y1]}]} — one entry per line IN READING ORDER, top to bottom. "
-    '"box" is the line\'s bounding box in NORMALIZED coordinates 0-1000 '
-    "(fractions of the image's width and height, times 1000); it must enclose "
-    "every glyph of that line, nothing else."
-)
+class VlmPrompts:
+    """The vision model's instruction set: the transcription rules and formats,
+    the self-report and orientation prompts."""
 
-# The no-boxes format: the ink-column pipeline measures
-# geometry from the rec's ink, so its reads need no coordinates. Plain
-# text costs a fraction of the tokens — headroom the reasoning budget
-# was eating (empty content and truncated '{"lines": ...' echoes were
-# both completion-budget failures) — and gives the model no structure
-# to fail mid-echoing.
-VLM_FORMAT_PLAIN = (
-    "Return ONLY the transcription as plain text: one output line per line of "
-    "the document, in reading order, top to bottom; skip blank lines. No "
-    "coordinates, no JSON, no commentary — just the lines."
-)
+    _READING_RULES = (
+        "You transcribe scanned family documents verbatim. Rules: the document's own "
+        "words, nothing added, nothing removed — fix nothing, summarize nothing, invent "
+        "nothing. Keep the line structure. For printed text and handwriting alike. "
+        "Unreadable words: transcribe your best literal guess. "
+        "Formatting that matters — keep the markers, they are content: a word the "
+        "writer CROSSED OUT is marked ~~word~~ (double tildes either side); a word the "
+        "writer UNDERLINED is marked ~word~ (single tildes either side, the in-house "
+        "sibling of the strike convention — markdown has no standard underline). "
+    )
 
-VLM_SYSTEM = _VLM_READING_RULES + VLM_FORMAT_JSON
+    FORMAT_JSON = (
+        'Return ONLY JSON: {"lines": [{"text": "the line verbatim", "box": '
+        "[x0, y0, x1, y1]}]} — one entry per line IN READING ORDER, top to bottom. "
+        '"box" is the line\'s bounding box in NORMALIZED coordinates 0-1000 '
+        "(fractions of the image's width and height, times 1000); it must enclose "
+        "every glyph of that line, nothing else."
+    )
 
-_CODE_FENCE = "```"  # the markdown fence the model sometimes wraps its JSON in
-_CODE_FENCE_LEN = len(_CODE_FENCE)
+    # The no-boxes format: the ink-column pipeline measures
+    # geometry from the rec's ink, so its reads need no coordinates. Plain
+    # text costs a fraction of the tokens — headroom the reasoning budget
+    # was eating (empty content and truncated '{"lines": ...' echoes were
+    # both completion-budget failures) — and gives the model no structure
+    # to fail mid-echoing.
+    FORMAT_PLAIN = (
+        "Return ONLY the transcription as plain text: one output line per line of "
+        "the document, in reading order, top to bottom; skip blank lines. No "
+        "coordinates, no JSON, no commentary — just the lines."
+    )
 
+    SYSTEM = _READING_RULES + FORMAT_JSON
 
-def transcription_system_with_context(
-    *,
-    people: list[str] | None = None,
-    places: list[str] | None = None,
-    label: str | None = None,
-    previous_page: str | None = None,
-    request_boxes: bool = True,
-) -> str:
-    """The verbatim-transcription system prompt plus the context that helps
-    the model READ: the family's known names (a familiar name is read
-    correctly, not guessed letter-by-letter), the places, the pile's label,
-    and the previous page's text for continuity (user: "whatever
-    useful context we have to help it guess better").
+    _CODE_FENCE = "```"  # the markdown fence the model sometimes wraps its JSON in
 
-    ``request_boxes=False`` swaps the JSON-and-coordinates format for
-    plain text — for callers whose geometry comes from elsewhere (the
-    ink-column batch measures from the rec's ink)."""
-    lines = [_VLM_READING_RULES + (VLM_FORMAT_JSON if request_boxes else VLM_FORMAT_PLAIN)]
-    if people or places:
-        lines.append(
-            "Context to help you read — known family people: "
-            f"{', '.join(people) if people else 'none'}. "
-            f"Known places: {', '.join(places) if places else 'none'}. "
-            "Use these spellings when the writing matches them."
-        )
-    if label:
-        lines.append(f"This page belongs to the pile: {label!r}.")
-    if previous_page:
-        lines.append(f"The previous page of this document read:\n---\n{previous_page}\n---")
-    return "\n".join(lines)
+    _CODE_FENCE_LEN = len(_CODE_FENCE)
 
+    SELFREPORT_SYSTEM = (
+        "You transcribed a scanned handwritten letter. Below is your transcription, "
+        "one line per numbered line. Mark the words you are LEAST sure about — where "
+        "the handwriting was hard to read — AND any word that does not make sense in "
+        "the context of the rest of the document: a word that reads oddly, breaks the "
+        "sentence, or looks like a misreading is a great candidate (a transcription "
+        "error often survives because the misread word still looks word-like). "
+        "Context that helps: known family people: {people}. Known places: {places}. "
+        'Return ONLY JSON: {{"unsure": [{{"line": <line number>, "word": "the '
+        'word exactly as transcribed"}}]}}. If everything reads confidently, the '
+        "list is short or empty."
+    )
 
-SELFREPORT_SYSTEM = (
-    "You transcribed a scanned handwritten letter. Below is your transcription, "
-    "one line per numbered line. Mark the words you are LEAST sure about — where "
-    "the handwriting was hard to read — AND any word that does not make sense in "
-    "the context of the rest of the document: a word that reads oddly, breaks the "
-    "sentence, or looks like a misreading is a great candidate (a transcription "
-    "error often survives because the misread word still looks word-like). "
-    "Context that helps: known family people: {people}. Known places: {places}. "
-    'Return ONLY JSON: {{"unsure": [{{"line": <line number>, "word": "the '
-    'word exactly as transcribed"}}]}}. If everything reads confidently, the '
-    "list is short or empty."
-)
+    ANGLE_PROMPT = (
+        "What is the rotation angle of the text in this image, in degrees "
+        "clockwise from upright (0 = the text reads left-to-right with the "
+        "image upright)? Reply with just the number."
+    )
+
+    _ORIENTATION_SYSTEM = "You analyse document layouts precisely. Reply with the requested JSON only."
+
+    _ORIENTATION_PROMPT = (
+        "This is a photo of a document page. A previous transcription read the text "
+        "below, ONE LINE PER ENTRY. Some lines may run in a different direction to the "
+        "page. For EVERY line, give its bounding box and its orientation relative to the "
+        "image exactly as shown. If a line cannot be located, give box [0, 0, 0, 0]. "
+        "Reply with JSON only: "
+        '{"lines": [{"index": <the line number>, "box": [x0, y0, x1, y1], '
+        '"degrees": 0|90|180|270}]} — box coordinates are 0-1000 fractions of the '
+        "image width and height.\n\nThe transcription:\n"
+    )
+
+    _ORIENTATION_TRANSCRIBE_PROMPT = (
+        "This is a photo of a document page. Its text may run in more than one direction "
+        "(for example a message upright and another block rotated 90 degrees). Transcribe ALL "
+        "the text verbatim, ONE LINE PER ENTRY, and for every line give its bounding box and its "
+        "orientation relative to the image exactly as shown. Reply with JSON only: "
+        '{"lines": [{"index": 0, "text": "<one line>", "box": [x0, y0, x1, y1], "degrees": 0|90|180|270}], '
+        '"orientation_hint": [{"region": "<short name>", "degrees": 0|90|180|270, '
+        '"approx_box": [x0, y0, x1, y1]}]} — box coordinates are 0-1000 fractions of the '
+        "image width and height."
+    )
+
+    @staticmethod
+    def transcription_system_with_context(
+        *,
+        people: list[str] | None = None,
+        places: list[str] | None = None,
+        label: str | None = None,
+        previous_page: str | None = None,
+        request_boxes: bool = True,
+    ) -> str:
+        """The verbatim-transcription system prompt plus the context that helps
+        the model READ: the family's known names (a familiar name is read
+        correctly, not guessed letter-by-letter), the places, the pile's label,
+        and the previous page's text for continuity (user: "whatever
+        useful context we have to help it guess better").
+
+        ``request_boxes=False`` swaps the JSON-and-coordinates format for
+        plain text — for callers whose geometry comes from elsewhere (the
+        ink-column batch measures from the rec's ink)."""
+        lines = [VlmPrompts._READING_RULES + (VlmPrompts.FORMAT_JSON if request_boxes else VlmPrompts.FORMAT_PLAIN)]
+        if people or places:
+            lines.append(
+                "Context to help you read — known family people: "
+                f"{', '.join(people) if people else 'none'}. "
+                f"Known places: {', '.join(places) if places else 'none'}. "
+                "Use these spellings when the writing matches them."
+            )
+        if label:
+            lines.append(f"This page belongs to the pile: {label!r}.")
+        if previous_page:
+            lines.append(f"The previous page of this document read:\n---\n{previous_page}\n---")
+        return "\n".join(lines)
 
 
 class VlmError(RuntimeError):
     """A vision-model transcription failed."""
-
-
-_MIME_BY_SUFFIX = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".tif": "image/tiff",
-    ".tiff": "image/tiff",
-}
 
 
 def parse_transcription_response(text: str) -> Transcription:
@@ -233,10 +259,18 @@ class VlmOptions:
     URL, with which key and budgets (the object model's `VlmOptions`). One
     value travels, so a call takes two arguments however many knobs it has."""
 
-    model: str = VISION_MODEL
-    system: str = VLM_SYSTEM
+    _MIME_BY_SUFFIX = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".tif": "image/tiff",
+        ".tiff": "image/tiff",
+    }
+
+    model: str = ModelConfig.VISION_MODEL
+    system: str = VlmPrompts.SYSTEM
     user_text: str | None = None
-    base_url: str = DEFAULT_BASE_URL
+    base_url: str = AIClient.DEFAULT_BASE_URL
     api_key: str | None = None
     timeout: float = 900.0
     max_tokens: int = 64000
@@ -269,7 +303,7 @@ def transcribe_images_vlm(images: list[Path], *, options: VlmOptions | None = No
     opts = options or VlmOptions()
     user_content: list[ImageContent | TextContent] = []
     for image in images:
-        mime = _MIME_BY_SUFFIX.get(image.suffix.lower(), "application/octet-stream")
+        mime = VlmOptions._MIME_BY_SUFFIX.get(image.suffix.lower(), "application/octet-stream")
         data_url = f"data:{mime};base64," + base64.b64encode(image.read_bytes()).decode("ascii")
         user_content.append(ImageContent(url=data_url))
     if opts.user_text:
@@ -298,10 +332,10 @@ def transcribe_images_vlm(images: list[Path], *, options: VlmOptions | None = No
 def transcribe_image_vlm(
     image: Path,
     *,
-    model: str = VISION_MODEL,
-    system: str = VLM_SYSTEM,
+    model: str = ModelConfig.VISION_MODEL,
+    system: str = VlmPrompts.SYSTEM,
     user_text: str | None = None,
-    base_url: str = DEFAULT_BASE_URL,
+    base_url: str = AIClient.DEFAULT_BASE_URL,
     api_key: str | None = None,
     timeout: float = 900.0,
     max_tokens: int = 64000,
@@ -313,7 +347,7 @@ def transcribe_image_vlm(
     headroom for location tasks (64000) but a line-crop classification is
     done with a small budget (1000). ``urlopen`` is the test seam (DI, never
     monkeypatch); None uses urllib.request.urlopen."""
-    mime = _MIME_BY_SUFFIX.get(image.suffix.lower(), "application/octet-stream")
+    mime = VlmOptions._MIME_BY_SUFFIX.get(image.suffix.lower(), "application/octet-stream")
     data_url = f"data:{mime};base64," + base64.b64encode(image.read_bytes()).decode("ascii")
     user_content: list[ImageContent | TextContent] = [ImageContent(url=data_url)]
     if user_text:
@@ -384,7 +418,7 @@ def _vision_post(
                     headers=HttpHeaders(
                         content_type="application/json",
                         authorization=f"Bearer {key}",
-                        user_agent=USER_AGENT,
+                        user_agent=HttpHeaders.USER_AGENT,
                         # A gateway in front of the model may cache completions,
                         # and a measurement served from that cache is not a
                         # measurement: a cached reply "answers" in 0.3s where the
@@ -423,13 +457,6 @@ def _vision_post(
             raise VlmError(f"vision model call failed: {exc}") from exc
 
 
-ANGLE_PROMPT = (
-    "What is the rotation angle of the text in this image, in degrees "
-    "clockwise from upright (0 = the text reads left-to-right with the "
-    "image upright)? Reply with just the number."
-)
-
-
 def line_orientation_degrees(crop: Path, *, max_tokens: int = 4000, timeout: float = 120.0) -> float:
     """The exact clockwise angle of one clipped text line, in degrees.
     A single line crop is a trivial task for the model — ~600 total tokens,
@@ -439,7 +466,7 @@ def line_orientation_degrees(crop: Path, *, max_tokens: int = 4000, timeout: flo
     answer = transcribe_image_vlm(
         crop,
         system="You measure text orientation precisely.",
-        user_text=ANGLE_PROMPT,
+        user_text=VlmPrompts.ANGLE_PROMPT,
         max_tokens=max_tokens,
         timeout=timeout,
     )
@@ -464,7 +491,7 @@ def selfreport_words(
     numbered so the model can cite exact lines; the returned list is
     validated (int lines, string words)."""
     numbered = "\n".join(f"{i + 1}| {line}" for i, line in enumerate(guess_text.split("\n")))
-    system = SELFREPORT_SYSTEM.format(
+    system = VlmPrompts.SELFREPORT_SYSTEM.format(
         people=", ".join(people) if people else "none",
         places=", ".join(places) if places else "none",
     )
@@ -499,8 +526,8 @@ def extract_json(text: str) -> Any:
     stripped = text.strip()
     if stripped.startswith("```"):
         stripped = stripped.split("\n", 1)[-1]
-        if stripped.endswith(_CODE_FENCE):
-            stripped = stripped[:-_CODE_FENCE_LEN]
+        if stripped.endswith(VlmPrompts._CODE_FENCE):
+            stripped = stripped[: -VlmPrompts._CODE_FENCE_LEN]
     try:
         return json.loads(stripped)
     except json.JSONDecodeError:
@@ -511,19 +538,6 @@ def extract_json(text: str) -> Any:
             except json.JSONDecodeError:
                 raise VlmError(f"the model's answer carried no JSON: {text[:300]}") from None
         raise VlmError(f"the model's answer carried no JSON: {text[:300]}") from None
-
-
-_ORIENTATION_SYSTEM = "You analyse document layouts precisely. Reply with the requested JSON only."
-_ORIENTATION_PROMPT = (
-    "This is a photo of a document page. A previous transcription read the text "
-    "below, ONE LINE PER ENTRY. Some lines may run in a different direction to the "
-    "page. For EVERY line, give its bounding box and its orientation relative to the "
-    "image exactly as shown. If a line cannot be located, give box [0, 0, 0, 0]. "
-    "Reply with JSON only: "
-    '{"lines": [{"index": <the line number>, "box": [x0, y0, x1, y1], '
-    '"degrees": 0|90|180|270}]} — box coordinates are 0-1000 fractions of the '
-    "image width and height.\n\nThe transcription:\n"
-)
 
 
 def orientation_report(image: Path, text: str | None = None) -> OrientationReport:
@@ -541,10 +555,10 @@ def orientation_report(image: Path, text: str | None = None) -> OrientationRepor
     report the model did not answer with JSON in the requested shape is
     empty."""
     numbered = "\n".join(f"{i}. {line}" for i, line in enumerate((text or "").splitlines()))
-    prompt = _ORIENTATION_PROMPT + numbered if text else _ORIENTATION_TRANSCRIBE_PROMPT
+    prompt = VlmPrompts._ORIENTATION_PROMPT + numbered if text else VlmPrompts._ORIENTATION_TRANSCRIBE_PROMPT
     answer = transcribe_image_vlm(
         image,
-        system=_ORIENTATION_SYSTEM,
+        system=VlmPrompts._ORIENTATION_SYSTEM,
         user_text=prompt,
     )
     try:
@@ -554,15 +568,3 @@ def orientation_report(image: Path, text: str | None = None) -> OrientationRepor
     if not isinstance(data, dict):
         return OrientationReport()
     return OrientationReport.from_answer(data)
-
-
-_ORIENTATION_TRANSCRIBE_PROMPT = (
-    "This is a photo of a document page. Its text may run in more than one direction "
-    "(for example a message upright and another block rotated 90 degrees). Transcribe ALL "
-    "the text verbatim, ONE LINE PER ENTRY, and for every line give its bounding box and its "
-    "orientation relative to the image exactly as shown. Reply with JSON only: "
-    '{"lines": [{"index": 0, "text": "<one line>", "box": [x0, y0, x1, y1], "degrees": 0|90|180|270}], '
-    '"orientation_hint": [{"region": "<short name>", "degrees": 0|90|180|270, '
-    '"approx_box": [x0, y0, x1, y1]}]} — box coordinates are 0-1000 fractions of the '
-    "image width and height."
-)

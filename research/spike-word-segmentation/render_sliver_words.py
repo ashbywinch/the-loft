@@ -19,16 +19,22 @@ from PIL import Image
 
 from document.colour import Colour
 from document.point import Point
-from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop
+from pipeline.rows.page_visuals import CaptionSheet, Crop, PagePainter, halo_text, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 WORDS = Path("/tmp/reparse-sept14/words.json")
-OUT = Path(__file__).resolve().parent / "evidence" / "sliver-words.jpg"
+
+
+class Config:
+    """This script's fixed inputs and outputs."""
+
+    OUT = Path(__file__).resolve().parent / "evidence" / "sliver-words.jpg"
+    # the slivers (page px, from the splitter)
+    SLIVERS = [(2006.0, 2554.0, 2008.0, 2614.0), (2008.0, 2616.0, 2010.0, 2672.0)]
+
 
 # the window around 4847's slivers (its own box spans x1484-2010 y2276-2768)
 X0, Y0, X1, Y1, SCALE_OUT = 1900.0, 2520.0, 2070.0, 2720.0, 5.0
-# the slivers (page px, from the splitter)
-SLIVERS = [(2006.0, 2554.0, 2008.0, 2614.0), (2008.0, 2616.0, 2010.0, 2672.0)]
 
 
 def _main() -> int:
@@ -40,7 +46,7 @@ def _main() -> int:
         "welded blob, so the splitter's pieces are horizontal bands, not words",
         "red = the two slivers it cut off (2px wide, 60px tall)",
     ]
-    caption_sheet = captioned_sheet(crop, caption)
+    caption_sheet = CaptionSheet.captioned_sheet(crop, caption)
     sheet, draw = caption_sheet.sheet, caption_sheet.draw
     bar_h = caption_sheet.bar_height
 
@@ -55,16 +61,16 @@ def _main() -> int:
         if wy1 < Y0 or wy0 > Y1 or word["x1"] < X0 or word["x0"] > X1:
             continue
         draw.rectangle([px(word["x0"]), py(wy0), px(word["x1"]), py(wy1)], outline=(200, 160, 0, 255), width=1)
-    for sx0, sy0, sx1, sy1 in SLIVERS:
+    for sx0, sy0, sx1, sy1 in Config.SLIVERS:
         draw.rectangle([px(sx0), py(sy0), px(sx1), py(sy1)], outline=(200, 0, 0, 255), width=2)
     halo_text(
         draw,
-        Point(x=px(SLIVERS[0][0]) - 130, y=py(SLIVERS[0][1]) + 10),
+        Point(x=px(Config.SLIVERS[0][0]) - 130, y=py(Config.SLIVERS[0][1]) + 10),
         "the slivers",
         fill=Colour(red=200, green=0, blue=0),
     )
-    OUT.write_bytes(review_image(sheet))
-    print(f"sliver words -> {OUT} ({OUT.stat().st_size // 1024}KB)")
+    Config.OUT.write_bytes(PagePainter.review_image(sheet))
+    print(f"sliver words -> {Config.OUT} ({Config.OUT.stat().st_size // 1024}KB)")
     return 0
 
 

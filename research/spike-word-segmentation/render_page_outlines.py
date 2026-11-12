@@ -19,14 +19,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from PIL import Image
 
 from document.rectangle import Rectangle
-from pipeline.rows.page_visuals import captioned_sheet, review_image
+from pipeline.rows.page_visuals import CaptionSheet, PagePainter
 from tools.word_numbering import render_numbered, unplaced
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 if not SCAN.exists():
     raise SystemExit(f"render_* needs the adopt batch mounted - the scan is not at {SCAN}")
 DATA = Path("/tmp/newpipe")
-OUT = Path(__file__).resolve().parent / "evidence"
+
+
+class Config:
+    """This script's fixed inputs and outputs."""
+
+    OUT = Path(__file__).resolve().parent / "evidence"
 
 
 def _words() -> list[Rectangle]:
@@ -58,9 +63,9 @@ def _draw(path: Path, title: str, boxes: list[Rectangle]) -> None:
     page = Image.open(SCAN).convert("RGB")
     section = Rectangle(x0=0.0, y0=0.0, x1=float(page.width), y1=float(page.height))
     rendered = render_numbered(page, section, [(b.x0, b.y0, b.x1, b.y1) for b in boxes], 1.0)
-    sheet = captioned_sheet(rendered.image, [title, f"{len(boxes)} boxes, numbered in reading order"])
+    sheet = CaptionSheet.captioned_sheet(rendered.image, [title, f"{len(boxes)} boxes, numbered in reading order"])
     sheet.sheet.save(path.with_suffix(".png"))
-    path.write_bytes(review_image(sheet.sheet, width=1400, quality=74))
+    path.write_bytes(PagePainter.review_image(sheet.sheet, width=1400, quality=74))
     missing = unplaced(rendered.chips)
     print(f"{path.name} -> {path} ({path.stat().st_size // 1024}KB); {len(boxes)} boxes, {len(missing)} chips unplaced")
 
@@ -87,9 +92,11 @@ def _draw_half(path: Path, boxes: list[Rectangle], half: _Half) -> None:
     section = Rectangle(x0=0.0, y0=y0, x1=float(page.width), y1=y1)
     inside = [b for b in boxes if b.y1 >= y0 and b.y0 <= y1]
     rendered = render_numbered(page, section, [(b.x0, b.y0, b.x1, b.y1) for b in inside], half.scale)
-    sheet = captioned_sheet(rendered.image, [half.title, f"{len(inside)} boxes, numbered in reading order"])
+    sheet = CaptionSheet.captioned_sheet(
+        rendered.image, [half.title, f"{len(inside)} boxes, numbered in reading order"]
+    )
     sheet.sheet.save(path.with_suffix(".png"))
-    path.write_bytes(review_image(sheet.sheet, width=1400, quality=74))
+    path.write_bytes(PagePainter.review_image(sheet.sheet, width=1400, quality=74))
     missing = unplaced(rendered.chips)
     print(f"{path.name} -> {path.stat().st_size // 1024}KB; {len(inside)} boxes, {len(missing)} chips unplaced")
 
@@ -99,9 +106,9 @@ def _main() -> int:
         ("page-words", "the whole page — every WORD boxed, numbered", _words()),
         ("page-rows", "the whole page — every ROW boxed, numbered", _rows()),
     ):
-        _draw(OUT / f"{name}.jpg", title, boxes)
-        _draw_half(OUT / f"{name}-top.jpg", boxes, _Half(title=f"{title} (top half)", fy0=0.0, fy1=0.5))
-        _draw_half(OUT / f"{name}-bottom.jpg", boxes, _Half(title=f"{title} (bottom half)", fy0=0.5, fy1=1.0))
+        _draw(Config.OUT / f"{name}.jpg", title, boxes)
+        _draw_half(Config.OUT / f"{name}-top.jpg", boxes, _Half(title=f"{title} (top half)", fy0=0.0, fy1=0.5))
+        _draw_half(Config.OUT / f"{name}-bottom.jpg", boxes, _Half(title=f"{title} (bottom half)", fy0=0.5, fy1=1.0))
     return 0
 
 

@@ -112,21 +112,26 @@ All three constants are reported (`X`, `Y`, `NAME`), including the two read
 only by the module's own function. The rule skips call-valued assignments
 (`app = Flask(...)`) and type aliases, but it cannot tell a named measure
 from mutable state — the distinction its message tells the reader to make.
-`document/document.py`'s `DOCUMENT_DRAFT` (a `Literal` state name, commented
-with what it measures) is reported exactly like a mutable module dict would
-be.
 
-The repo's coding standard REQUIRES named constants — "string literals for
-domain concepts are named constants", "magic numbers … are named constants"
-— and forbids the thing the rule should catch (no module-level mutable
-state, no `global`). There is no mutable module-level assignment on this
-tree; all 348 findings are UPPER_CASE constants. The per-site form ("say
-what it measures") would be 348 suppression comments, most of them
-duplicating an inline measure comment that already exists. The family is
-config-ignored (`.lucidlint.toml`, pointing here); a **new module-level
-mutable value remains a review finding**, and the standard is the
-enforcement.
+**Resolution: the class, not an ignore (2026-11-11).** The user's ruling:
+keep every constant, but not at module level — put it on the class that
+owns the work, privately unless another module reads it. All 348 moved
+(class attributes, `ClassVar` on dataclasses; function-local where a module
+is a pure helper with one reader, e.g. `atomic_write`'s retry policy and
+`overlap`'s epsilon). The rule is **on** again (`.lucidlint.toml` no longer
+ignores `global-state`), so a new module-level value fails the gate.
 
+The moves exposed the latent classes the tool had not named: `PageKinds`
+(7 vocabularies + prompt + `category_of`/`read_route`/`classify_page`),
+`PageOrientation` (`ROTATIONS`, the prompt, `rotation`/`pages`),
+`Ranking`/`Investigation`, `Config` in the research scripts, and the
+existing classes that gained their helpers (`Ruler`'s ratio/spacing
+functions, `GroupingScorer`'s paper rules, `CaptionSheet.captioned_sheet`,
+`PagePainter.review_image`, `_AlonePage`'s crop/mask). Filed upstream as a
+`latent-class` miss: the tool reported each constant individually and never
+the class the constants and functions were waiting to become.
+
+### 1.7 `duplicate-module` compares skeletons with identifiers erased — 31 findings on 0.7.1
 ### 1.7 `duplicate-module` compares skeletons with identifiers erased — 31 findings on 0.7.1
 
 The rule claims two modules/classes are "a fork" from Dice similarity of

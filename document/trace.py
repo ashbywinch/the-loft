@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from document.point import Point
-from pipeline.detect.mark import SCALE, Mark
+from pipeline.detect.mark import Components, Mark
 
 Box = list[list[float]]  # a quadrilateral's four corners, page pixels
 
@@ -31,11 +31,16 @@ class Trace:
     covered: list[Mark]
 
     def box(self, stroke_tol: float) -> Box:
-        points = [(p.x / SCALE, p.y / SCALE) for stroke in self.strokes for p in stroke]
+        points = [(p.x / Components.SCALE, p.y / Components.SCALE) for stroke in self.strokes for p in stroke]
         sx0, sx1 = min(p[0] for p in points), max(p[0] for p in points)
         sy0, sy1 = min(p[1] for p in points), max(p[1] for p in points)
         x0 = min(sx0, max(min((w.x0 for w in self.covered), default=sx0), sx0 - stroke_tol))
         x1 = max(sx1, min(max((w.x1 for w in self.covered), default=sx1), sx1 + stroke_tol))
         y0 = min(sy0, min((w.y0 for w in self.covered), default=sy0))
         y1 = max(sy1, max((w.y1 for w in self.covered), default=sy1))
-        return [[x0 * SCALE, y0 * SCALE], [x1 * SCALE, y0 * SCALE], [x1 * SCALE, y1 * SCALE], [x0 * SCALE, y1 * SCALE]]
+        return [
+            [x0 * Components.SCALE, y0 * Components.SCALE],
+            [x1 * Components.SCALE, y0 * Components.SCALE],
+            [x1 * Components.SCALE, y1 * Components.SCALE],
+            [x0 * Components.SCALE, y1 * Components.SCALE],
+        ]

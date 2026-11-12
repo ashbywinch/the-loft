@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from document.page_size import PageSize
-from pipeline.grouping import first_page_number, paper_aspect, same_paper, score_boundaries
+from pipeline.grouping import GroupingScorer, first_page_number, score_boundaries
 from pipeline.page_flag import PageFlag
 
 
@@ -204,6 +204,6 @@ def test_greeting_and_signoff_carry_into_duplex_docs() -> None:
 
 
 def test_paper_aspect_is_rotation_invariant() -> None:
-    assert paper_aspect(3500, 2215) == pytest.approx(paper_aspect(2215, 3500))
-    assert same_paper(PageSize(3500, 2215), PageSize(2333, 3500))  # the postcard's two sides
-    assert not same_paper(PageSize(2480, 3508), PageSize(3500, 1500))  # 0.707 vs 0.429
+    assert GroupingScorer.paper_aspect(3500, 2215) == pytest.approx(GroupingScorer.paper_aspect(2215, 3500))
+    assert GroupingScorer.same_paper(PageSize(3500, 2215), PageSize(2333, 3500))  # the postcard's two sides
+    assert not GroupingScorer.same_paper(PageSize(2480, 3508), PageSize(3500, 1500))  # 0.707 vs 0.429

@@ -20,7 +20,6 @@ from tools.placeholders import asset_svg, initials_of, svg_avatar
 from tools.projection_index import ProjectionIndex
 from tools.published_ids import PublishedIds
 from tools.records import (
-    CONTENT_FILES,
     ImportsTable,
     Item,
     OrgsTable,
@@ -55,7 +54,7 @@ def resolved_items(archive: Archive) -> list[Item]:
         if not raw.get("chat"):
             raw.pop("chat", None)  # a capture record exists or it doesn't — never an empty field
         assets = list(raw.get("assets") or [])
-        for kind in CONTENT_FILES:
+        for kind in Item.CONTENT_FILES:
             entry = next((a for a in assets if a.get("kind") == kind), None)
             if entry is None:
                 continue
@@ -168,13 +167,10 @@ def orgs_projection(archive: Archive) -> OrgsTable:
 # The avatar palette — named hues the placeholder SVGs understand
 # (tools/placeholders.py). A person without a hand-picked hue still gets a
 # stable one derived from the id: same person, same colour, every publish.
-AVATAR_HUES = ("amber", "lilac", "rose", "sage", "sky", "slate")
-
-
 def _hue_for(person: Person) -> str:
     if person.hue:
         return person.hue
-    return AVATAR_HUES[sum(ord(c) for c in person.id) % len(AVATAR_HUES)]
+    return Projection.AVATAR_HUES[sum(ord(c) for c in person.id) % len(Projection.AVATAR_HUES)]
 
 
 def avatar_files(people: tuple[Person, ...]) -> dict[str, str]:
@@ -199,9 +195,6 @@ def asset_contents(archive: Archive, items: list[Item]) -> list[ItemAssets]:
 
 # An extraction states its kind in the singular (person, place, theme, item,
 # org) — the published set it must resolve against is the plural table.
-_EXTRACTION_TABLES = {"person": "people", "place": "places", "theme": "themes", "item": "items", "org": "orgs"}
-
-
 def _validate_refs(items: list[Item], ids: PublishedIds, themes: ThemesTable) -> None:
     """Every link a catalogued item carries must resolve in the published
     projection — a ref to an entity the reader cannot see is dangling.
@@ -219,6 +212,8 @@ def _validate_refs(items: list[Item], ids: PublishedIds, themes: ThemesTable) ->
 
 
 class _RefChecker:
+    _EXTRACTION_TABLES = {"person": "people", "place": "places", "theme": "themes", "item": "items", "org": "orgs"}
+
     """The dangling-link checks for the published projection — owns the
     resolution maps (the published id sets and by_id) the three per-item
     checks all read, with one check per catalogued item as its entry point.
@@ -287,7 +282,7 @@ class _RefChecker:
             match = extraction.get("match")
             if not match:
                 continue  # an unresolved extraction (kinship filter) is honest output
-            table = _EXTRACTION_TABLES.get(str(extraction.get("kind") or ""), "")
+            table = _RefChecker._EXTRACTION_TABLES.get(str(extraction.get("kind") or ""), "")
             if not self._ids.holds(table, match):
                 raise DeriveError(
                     f"{item.id} extraction {extraction.get('name')!r} matches {match}, "
@@ -382,6 +377,8 @@ def _remove_dir(path: Path) -> None:
 
 
 class Projection:
+    AVATAR_HUES = ("amber", "lilac", "rose", "sage", "sky", "slate")
+
     """The derived app-facing surface (app/data) — the noun behind
     ``Archive.publish()``. The projection is a cache: never hand-edited; a
     change is a change to the archive, then re-publish (TECHSPEC §3-5).

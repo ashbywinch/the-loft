@@ -20,16 +20,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from document.document import DOCUMENT_AGREED
+from document.document import Document
 from pipeline.artefacts import BatchArtefacts
 from pipeline.batch_record import BatchRecord
 from pipeline.boundary import Boundary
-from pipeline.classify import category_of
+from pipeline.classify import PageKinds
 from pipeline.registry import load_batch, record_path
-from pipeline.stage_table import TEXT_KINDS, classification_of
+from pipeline.stage_table import classification_of
 from pipeline.store import PipelineStore
 from tools.archive import Archive
-from tools.loft_paths import REGISTRY_DIR, WORK_DIR
+from tools.loft_paths import LoftPaths
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 
@@ -38,8 +38,8 @@ class ApprovalContext:
     """Where an approval is written: the archive and the batch's own trees."""
 
     archive: Archive
-    work_dir: Path = WORK_DIR
-    registry_dir: Path = REGISTRY_DIR
+    work_dir: Path = LoftPaths.WORK_DIR
+    registry_dir: Path = LoftPaths.REGISTRY_DIR
 
 
 @dataclass(frozen=True)
@@ -124,7 +124,7 @@ def approve_page(
     )
     document.item_id = item.id
     if complete:
-        document.reviewed(DOCUMENT_AGREED)
+        document.reviewed(Document.AGREED)
     boundaries = [b for b in record.boundaries or [] if b.pages != document.pages]
     boundaries.append(document)
     record.boundaries = boundaries
@@ -172,7 +172,7 @@ class _DocumentPages:
         text = [
             name
             for name in self.document.pages
-            if name in self.classify and category_of(self.classify[name]) in TEXT_KINDS
+            if name in self.classify and PageKinds.category_of(self.classify[name]) in PageKinds.TEXT_KINDS
         ]
         return text or list(self.document.pages)
 

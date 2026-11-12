@@ -12,15 +12,7 @@ import random
 import pytest
 
 from pipeline.detect.mark import Mark
-from pipeline.detect.ruler import (
-    LINE_RATIO_BOUNDS,
-    LINE_RATIO_DEFAULT,
-    Ruler,
-    line_ratio,
-    traced_pitch,
-    traced_spacings,
-    writing_scale,
-)
+from pipeline.detect.ruler import Ruler, writing_scale
 
 
 def _marks(heights: list[float]) -> list[Mark]:
@@ -62,24 +54,24 @@ def test_spacing_follows_the_writing_height_and_the_traced_lines(height: float, 
 
 def test_spacing_falls_back_to_the_typographic_default_without_traces() -> None:
     heights, _ = synthetic_page(38.0, 60.0)
-    assert Ruler.from_marks(_marks(heights)).pitch == pytest.approx(38.0 * LINE_RATIO_DEFAULT, rel=0.1)
+    assert Ruler.from_marks(_marks(heights)).pitch == pytest.approx(38.0 * Ruler.LINE_RATIO_DEFAULT, rel=0.1)
 
 
 def test_traced_pitch_needs_enough_traces() -> None:
-    assert traced_pitch([100.0, 160.0]) is None
-    assert traced_pitch([100.0, 160.0, 220.0]) == pytest.approx(60.0)
+    assert Ruler.traced_pitch([100.0, 160.0]) is None
+    assert Ruler.traced_pitch([100.0, 160.0, 220.0]) == pytest.approx(60.0)
 
 
 def test_traced_spacings_ignore_impossible_pairs() -> None:
     """Two traces 5px apart (one line, drawn twice) or 400px apart (a skipped line)
     are not a line spacing."""
-    assert traced_spacings([100.0, 105.0, 165.0, 565.0]) == pytest.approx([60.0])
+    assert Ruler.traced_spacings([100.0, 105.0, 165.0, 565.0]) == pytest.approx([60.0])
 
 
 def test_a_measured_ratio_outside_the_plausible_band_is_rejected() -> None:
     """A trace measuring 0.3 × the writing height is two traces on one line, not a page scale."""
-    assert line_ratio(0.3 * 40.0, 40.0) == LINE_RATIO_DEFAULT
-    assert line_ratio(4.0 * 40.0, 40.0) == LINE_RATIO_DEFAULT
+    assert Ruler.line_ratio(0.3 * 40.0, 40.0) == Ruler.LINE_RATIO_DEFAULT
+    assert Ruler.line_ratio(4.0 * 40.0, 40.0) == Ruler.LINE_RATIO_DEFAULT
     measured = 1.5 * 40.0
-    assert line_ratio(measured, 40.0) == pytest.approx(1.5)
-    assert LINE_RATIO_BOUNDS[0] <= 1.5 <= LINE_RATIO_BOUNDS[1]
+    assert Ruler.line_ratio(measured, 40.0) == pytest.approx(1.5)
+    assert Ruler.LINE_RATIO_BOUNDS[0] <= 1.5 <= Ruler.LINE_RATIO_BOUNDS[1]

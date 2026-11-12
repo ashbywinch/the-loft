@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from tools.archive import Archive
-from tools.loft_paths import ARCHIVE_DIR
+from tools.loft_paths import LoftPaths
 from tools.records import Item
 from tools.store import DiskStore
 
@@ -57,9 +57,9 @@ def _visible_via(archive: Archive) -> tuple[set[str], set[str], set[str]]:
 
 
 @pytest.mark.archive
-@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.skipif(not (LoftPaths.ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_every_timeline_item_has_a_parseable_date() -> None:
-    archive = Archive(DiskStore(ARCHIVE_DIR))
+    archive = Archive(DiskStore(LoftPaths.ARCHIVE_DIR))
     broken = []
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)
@@ -73,7 +73,7 @@ def test_every_timeline_item_has_a_parseable_date() -> None:
 
 
 @pytest.mark.archive
-@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.skipif(not (LoftPaths.ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_every_object_and_photo_is_attested() -> None:
     # An object or photo is a specific physical thing — its existence must
     # be attested by an artifact that names it (a letter, a story), or (for
@@ -82,7 +82,7 @@ def test_every_object_and_photo_is_attested() -> None:
     # beach and "you on Sunlight" photos were all invented with placeholder
     # images and removed — the attic's real photos arrive as their own
     # scanned items.
-    archive = Archive(DiskStore(ARCHIVE_DIR))
+    archive = Archive(DiskStore(LoftPaths.ARCHIVE_DIR))
     refs: dict[str, list[str]] = {}
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)
@@ -104,7 +104,7 @@ def test_every_object_and_photo_is_attested() -> None:
 
 
 @pytest.mark.archive
-@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.skipif(not (LoftPaths.ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_every_items_link_is_bidirectional() -> None:
     # All links are bidirectional: the back link ("Referenced
     # by") is derived from the forward items refs at render, so a one-way
@@ -112,7 +112,7 @@ def test_every_items_link_is_bidirectional() -> None:
     # forward ref that cannot resolve (a missing or draft target, so no back
     # link can render). The publish's dangling check enforces this; this
     # eval states the contract over the committed archive.
-    archive = Archive(DiskStore(ARCHIVE_DIR))
+    archive = Archive(DiskStore(LoftPaths.ARCHIVE_DIR))
     catalogued_ids = set()
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)
@@ -130,9 +130,9 @@ def test_every_items_link_is_bidirectional() -> None:
 
 
 @pytest.mark.archive
-@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.skipif(not (LoftPaths.ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_every_fragment_names_a_target_that_exists() -> None:
-    archive = Archive(DiskStore(ARCHIVE_DIR))
+    archive = Archive(DiskStore(LoftPaths.ARCHIVE_DIR))
     people, places, items = _visible_via(archive)
     dangling = []
     for item_id in archive.item_ids():

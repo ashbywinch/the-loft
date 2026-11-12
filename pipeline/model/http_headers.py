@@ -11,12 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-USER_AGENT = "opencode/1.14.20"  # Cloudflare in front of the API rejects the urllib default UA
-
 
 @dataclass(frozen=True)
 class HttpHeaders:
     """One request's headers; a field left unset stays off the wire."""
+
+    # Cloudflare in front of the API rejects the urllib default UA
+    USER_AGENT = "opencode/1.14.20"
 
     authorization: str | None = None
     content_type: str | None = None

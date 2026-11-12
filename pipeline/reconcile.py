@@ -25,7 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from pipeline.batch_record import STATUS_PROCESSING, STATUS_REVIEW, BatchRecord
+from pipeline.batch_record import BatchRecord
 from pipeline.chain import BatchRun
 from pipeline.registry import list_batches, load_batch
 from pipeline.stage_table import EngineView, StageInputs, plan_stages, run_plan
@@ -113,7 +113,7 @@ class Reconciler:
             registry_dir=self.paths.registry_dir,
             archive_dir=self.paths.archive_dir,
         )
-        run.update_status(record, STATUS_PROCESSING)  # stamps the pass (pid, host, time)
+        run.update_status(record, BatchRecord.STATUS_PROCESSING)  # stamps the pass (pid, host, time)
         started = datetime.now(UTC)
         log = _RunJournal(self, record.batch_id)
         try:
@@ -134,7 +134,7 @@ class Reconciler:
                 },
             )
             raise
-        run.update_status(load_batch(record.batch_id, self.paths.registry_dir), STATUS_REVIEW)
+        run.update_status(load_batch(record.batch_id, self.paths.registry_dir), BatchRecord.STATUS_REVIEW)
         took_ms = int((datetime.now(UTC) - started).total_seconds() * 1000)
         self.write_line(f"reconcile: {record.batch_id} — {', '.join(log.done)} done in {took_ms} ms")
         self._journal(record.batch_id, {"action": "reconciled", "stages": log.done, "duration_ms": took_ms})

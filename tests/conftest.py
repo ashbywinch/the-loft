@@ -53,10 +53,10 @@ def _the_real_workspace_is_untouched(request: pytest.FixtureRequest) -> Any:
     if "archive" in request.keywords:
         yield
         return
-    from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR, WORK_DIR
+    from tools.loft_paths import LoftPaths
 
     def snapshot() -> dict[str, set[str]]:
-        roots = {"archive": ARCHIVE_DIR, "registry": REGISTRY_DIR, "work": WORK_DIR}
+        roots = {"archive": LoftPaths.ARCHIVE_DIR, "registry": LoftPaths.REGISTRY_DIR, "work": LoftPaths.WORK_DIR}
         state: dict[str, set[str]] = {}
         for name, root in roots.items():
             if not root.is_dir():

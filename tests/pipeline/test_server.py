@@ -66,7 +66,12 @@ def make_app_data(tmp_path: Path) -> Path:
 
 class ServerFixture:
     def __init__(
-        self, data_dir: Path, store: MemoryStore, client: Any | None = None, _reprocess: Any | None = None
+        self,
+        data_dir: Path,
+        store: MemoryStore,
+        client: Any | None = None,
+        _reprocess: Any | None = None,
+        registry_dir: Path | None = None,
     ) -> None:
         self.store: MemoryStore = store
         self.data_dir: Path = data_dir
@@ -80,7 +85,7 @@ class ServerFixture:
         # (the endpoints must not touch the home disk in tests)
         self.work_dir: Path = data_dir.parent / "work"
         self.outbox: Outbox = Outbox(data_dir.parent / "outbox")
-        self.registry_dir: Path = data_dir.parent / "registry"
+        self.registry_dir: Path = registry_dir or data_dir.parent / "registry"
         # the identity seam: the archive's people carry the
         # verified Google accounts; the capture API resolves the narrator
         # from the session, never from the client
@@ -144,7 +149,7 @@ class ServerFixture:
         from pipeline.api.session_user import SessionUser
 
         user = SessionUser("alex@example.com", "Alex Hale", "")
-        self.cookie = f"{auth.COOKIE_NAME}={auth._make_session_cookie(user)}"
+        self.cookie = f"{auth.GoogleOAuth.COOKIE_NAME}={auth._make_session_cookie(user)}"
 
     def post(self, path: str, body: dict[str, Any], cookie: str | None = None) -> tuple[int, dict[str, Any]]:
         headers = {"Content-Type": "application/json"}
@@ -1306,6 +1311,19 @@ def test_sync_batches_lists_the_pages_waiting_on_a_row_check(server: ServerFixtu
     assert status == 200
     body = _json.loads(raw.decode("utf-8"))
     assert body["batches"][0]["pages_pending"] == ["p2.jpg"]  # p1 is checked, p3 has no reading
+
+
+def test_sync_batches_refuses_a_missing_workspace(tmp_path: Path) -> None:
+    """The review workspace is an operator error when it is absent — an
+    unmounted Loft disk must not read as "no review work" (the review hub
+    would show only the import/identify queues and silently lose the rows)."""
+    fixture = ServerFixture(make_app_data(tmp_path), MemoryStore(), registry_dir=tmp_path / "not-mounted" / "registry")
+    try:
+        status, raw = fixture.get("/api/sync/batches", cookie=fixture.cookie)
+        assert status == 503
+        assert b"not available" in raw
+    finally:
+        fixture.close()
 
 
 def test_sync_page_requires_a_session(server: ServerFixture) -> None:

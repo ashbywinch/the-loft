@@ -138,6 +138,22 @@ class PagePainter:
     the shared data; every paint stays in PAGE coordinates so a crop is the
     only thing that ever changes coordinates."""
 
+    REVIEW_WIDTH = 900  # sheet px: a review copy fits a phone screen at full width
+    REVIEW_QUALITY = 68  # JPEG quality: ink edges stay crisp, paper noise drops out
+
+    @staticmethod
+    def review_image(sheet: Image.Image, width: int = REVIEW_WIDTH, quality: int = REVIEW_QUALITY) -> bytes:
+        """The sheet as a review-size JPEG: downscaled to `width` (never up),
+        saved at `quality`. Handwriting scans are paper-coloured noise around dark
+        ink — JPEG at this quality keeps the ink and drops ~90% of the PNG bytes,
+        so a six-sheet review page loads over LAN in seconds, not tens of
+        seconds."""
+        if sheet.width > width:
+            sheet = sheet.resize((width, int(sheet.height * width / sheet.width)), Image.Resampling.LANCZOS)
+        buf = io.BytesIO()
+        sheet.save(buf, "JPEG", quality=quality)
+        return buf.getvalue()
+
     def __init__(
         self,
         page: Image.Image,
@@ -300,11 +316,6 @@ def audit_geometry(
 
 # ------------------------------------------------------- presentation sheets
 
-CAPTION_LINE_H = 26  # sheet px per caption line
-CAPTION_PAD = 12  # sheet px around the caption block
-CUT_RED = Colour(red=255, green=0, blue=0, alpha=255)  # cut rows read as warnings, never as ink
-DROP_FILL = Colour(red=255, green=0, blue=0, alpha=60)  # dropped ink: translucent red over the band
-
 
 class Crop(NamedTuple):
     """A page window at its read scale: crop in page px, LANCZOS up."""
@@ -327,21 +338,24 @@ class CaptionSheet:
     """The crop under a white caption bar: the sheet, its draw handle and the
     bar height the crop starts at."""
 
+    CAPTION_LINE_H = 26  # sheet px per caption line
+    CAPTION_PAD = 12  # sheet px around the caption block
+
+    @staticmethod
+    def captioned_sheet(crop: Image.Image, caption: Sequence[str], size: int = 22) -> CaptionSheet:
+        """The crop under a white caption bar, one fact per line."""
+        bar_h = CaptionSheet.CAPTION_PAD + CaptionSheet.CAPTION_LINE_H * len(caption)
+        sheet = Image.new("RGB", (crop.width, crop.height + bar_h), (255, 255, 255))
+        sheet.paste(crop, (0, bar_h))
+        draw = ImageDraw.Draw(sheet, "RGBA")
+        font = ImageFont.load_default(size=size)
+        for i, line in enumerate(caption):
+            draw.text((10, 6 + CaptionSheet.CAPTION_LINE_H * i), line, fill=(20, 20, 20), font=font)
+        return CaptionSheet(sheet, draw, bar_h)
+
     sheet: Image.Image
     draw: ImageDraw.ImageDraw
     bar_height: int
-
-
-def captioned_sheet(crop: Image.Image, caption: Sequence[str], size: int = 22) -> CaptionSheet:
-    """The crop under a white caption bar, one fact per line."""
-    bar_h = CAPTION_PAD + CAPTION_LINE_H * len(caption)
-    sheet = Image.new("RGB", (crop.width, crop.height + bar_h), (255, 255, 255))
-    sheet.paste(crop, (0, bar_h))
-    draw = ImageDraw.Draw(sheet, "RGBA")
-    font = ImageFont.load_default(size=size)
-    for i, line in enumerate(caption):
-        draw.text((10, 6 + CAPTION_LINE_H * i), line, fill=(20, 20, 20), font=font)
-    return CaptionSheet(sheet, draw, bar_h)
 
 
 def halo_text(
@@ -365,6 +379,8 @@ def halo_text(
 @dataclass(frozen=True)
 class DashRule:
     """A dashed horizontal rule in sheet pixels: how a cut row reads."""
+
+    CUT_RED = Colour(red=255, green=0, blue=0, alpha=255)  # cut rows read as warnings, never as ink
 
     x0: float
     x1: float
@@ -434,23 +450,6 @@ def stack_sheets(sheets: Sequence[Image.Image], gap: int = 24, max_width: int = 
     return page
 
 
-REVIEW_WIDTH = 900  # sheet px: a review copy fits a phone screen at full width
-REVIEW_QUALITY = 68  # JPEG quality: ink edges stay crisp, paper noise drops out
-
-
-def review_image(sheet: Image.Image, width: int = REVIEW_WIDTH, quality: int = REVIEW_QUALITY) -> bytes:
-    """The sheet as a review-size JPEG: downscaled to `width` (never up),
-    saved at `quality`. Handwriting scans are paper-coloured noise around dark
-    ink — JPEG at this quality keeps the ink and drops ~90% of the PNG bytes,
-    so a six-sheet review page loads over LAN in seconds, not tens of
-    seconds."""
-    if sheet.width > width:
-        sheet = sheet.resize((width, int(sheet.height * width / sheet.width)), Image.Resampling.LANCZOS)
-    buf = io.BytesIO()
-    sheet.save(buf, "JPEG", quality=quality)
-    return buf.getvalue()
-
-
 @dataclass(frozen=True)
 class SplitCase:
     """One splitter case as a captioned sheet: the scan crop with the RAW
@@ -459,6 +458,8 @@ class SplitCase:
     any DROPPED bands (translucent red + label). All geometry is page px;
     the caller computed it from the splitter's own output — the drawing here
     only paints. Colours default to the house row palette in order."""
+
+    DROP_FILL = Colour(red=255, green=0, blue=0, alpha=60)  # dropped ink: translucent red over the band
 
     page: Image.Image
     raw_box: Rectangle
@@ -482,7 +483,7 @@ def split_sheet(case: SplitCase) -> Image.Image:
     x0, y0, x1, y1, scale = case.crop
     crop_img = scaled_crop(case.page, case.crop)
     caption = [case.title, case.summary, *(f"cut y{cy:.0f} -> [{prof}]" for cy, prof in case.cuts)]
-    caption_sheet = captioned_sheet(crop_img, caption)
+    caption_sheet = CaptionSheet.captioned_sheet(crop_img, caption)
     sheet, draw, bar_h = caption_sheet.sheet, caption_sheet.draw, caption_sheet.bar_height
 
     def px(v: float) -> float:
@@ -514,7 +515,7 @@ def split_sheet(case: SplitCase) -> Image.Image:
                 draw, Point(x=right - 150, y=py(cy) - 28), f"cut y{cy:.0f}", fill=Colour(red=200, green=0, blue=0)
             )
     for lo, hi in case.drops:
-        draw.rectangle([px(case.raw_box.x0), py(lo), px(case.raw_box.x1), py(hi)], fill=DROP_FILL)
+        draw.rectangle([px(case.raw_box.x0), py(lo), px(case.raw_box.x1), py(hi)], fill=SplitCase.DROP_FILL)
     if case.drops:
         biggest = max(case.drops, key=lambda run: run[1] - run[0])
         label_y = max(biggest[1], max(box.y1 for box, _label in case.pieces) + 2)

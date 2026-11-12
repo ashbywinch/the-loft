@@ -13,14 +13,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-# The confirmation payload's keys (the sync contract's REQUIRED_FIELDS): a
-# recorded entry carries all of them or none.
-CONFIRMATION_KEYS = ("batch_id", "doc_index", "text", "confirmed_at")
-
 
 @dataclass(frozen=True)
 class Confirmation:
     """The review push's keys as the registry recorded them."""
+
+    # The confirmation payload's keys (the sync contract's REQUIRED_FIELDS): a
+    # recorded entry carries all of them or none.
+    _KEYS = ("batch_id", "doc_index", "text", "confirmed_at")
 
     batch_id: str
     doc_index: int
@@ -31,7 +31,7 @@ class Confirmation:
     def from_dict(cls, raw: dict[str, Any]) -> Confirmation | None:
         """The confirmation a boundary entry carries, or None when the entry
         is the grouping's own (no push has recorded a decision)."""
-        if not all(key in raw for key in CONFIRMATION_KEYS):
+        if not all(key in raw for key in Confirmation._KEYS):
             return None
         return cls(
             batch_id=str(raw["batch_id"]),

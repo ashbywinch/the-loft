@@ -1,28 +1,42 @@
 name: AI Code Review
+
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+
 # One review at a time per PR; a newer push cancels the stale run rather than
 # queueing behind it (dependabot bumps and rapid fix pushes never stack).
 concurrency:
   group: ai-review-${{ github.event.pull_request.number }}
   cancel-in-progress: true
+
 jobs:
   pr-review:
     runs-on: ubuntu-latest
-    # Dependency bumps are mechanical — don't spend review capacity on them.
-    if: github.actor != 'dependabot[bot]'
+    # Dependabot bumps are mechanical and already covered by build-and-test;
+    # the AI review adds noise (and dependabot PRs lack a ticket, which the
+    # ticket-compliance step chokes on). Skip the whole job for them.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     permissions:
       contents: read
       pull-requests: write
       issues: write
       checks: write # the bot publishes its review as a check run (github.publish_as_check_run)
-      actions: read # the fail-loud check reads the bot's own log for the failure reason
     steps:
-      - uses: actions/checkout@v7
-      - uses: the-pr-agent/pr-agent@v0.45.0 # pin a real release tag — @latest does not resolve
-        with:
-          debug: 'true' # the swallow seam hides the model-call error from the step log; debug surfaces it for the fail-loud (2026-09-23)
+      # NO actions/checkout here — deliberate. PR-Agent fetches everything via
+      # the GitHub API (the pinned config branch, the diff, the repo context
+      # files), and the action's config loader ALSO merges a [tool.pr-agent]
+      # section from pyproject.toml found in the working tree. With a checkout
+      # of the PR head, an attacker branch could ship its own pyproject.toml
+      # overriding [openai] api_base; with no checkout there is no working-tree
+      # config to read at all.
+      - uses: the-pr-agent/pr-agent@d265b4250d1d532e35b4428454b665b56b57e9c6
+        # Provenance: d265b4250d = "fix(github): enable verified inline key
+        # issues (#3633)" — the first commit whose GitHub provider implements
+        # get_persistent_comment_bodies()/get_recent_inline_comment_bodies(),
+        # which pr_reviewer.inline_key_issues requires; without them the
+        # setting is a silent no-op on GitHub (findings stay in the summary).
+        # Pin a real release SHA — @latest does not resolve.
         id: pr-agent
         env:
           # the Cloudflare AI Gateway — exactly the local setup (the
@@ -35,17 +49,35 @@ jobs:
           # SECURITY + correctness: the config comes from this pinned branch,
           # never the PR head (a same-repo branch could ship its own
           # api_base/config and exfiltrate the key) — mirrors omp-config.
+          # That branch is fetched via the API; 404 falls back to the default
+          # branch — never the working tree.
           PR_AGENT_CONFIG_BRANCH: pr-agent-config
-      # TEMPORARY diagnostic (2026-09-05): fingerprint the CI credential
-      # (length + suffix, never the value) and probe the gateway, so the
-      # CI-vs-local 401 discrepancy is grounded in evidence.
-      # Fail loud: a silently-failed review reads as a green check. The check
-      # matches "## PR Reviewer Guide" comments (the review never contains the
-      # head SHA — v0.41.1 posts it without the marker) or one posted after
-      # the head commit landed.
+
+  verify:
+    # A SEPARATE job that runs AFTER the bot job completes: GitHub does not
+    # serve a job's log until it finishes, so check_review_posted.py can only
+    # read the bot's failure reason from here — inside the bot's own job the
+    # log endpoint returns 409 and the reason is always the generic fallback.
+    needs: pr-review
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      actions: read # read the bot's completed run log for the failure reason
+    steps:
+      # SECURITY: checkout the DEFAULT branch, not the PR head — the script
+      # runs with GITHUB_TOKEN, and a PR could replace
+      # pipeline/evals/check_review_posted.py with code that exfiltrates it.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
       - name: Fail loud if no review covers the head commit
         env:
           SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 pipeline/evals/check_review_posted.py
+        # SECURITY: python3 -I (isolated) keeps the checkout off sys.path —
+        # a repo-root json.py/urllib.py/sitecustomize.py must not shadow the
+        # script's stdlib imports and run code with GITHUB_TOKEN.
+        run: python3 -I pipeline/evals/check_review_posted.py

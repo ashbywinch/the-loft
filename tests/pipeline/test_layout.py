@@ -18,7 +18,6 @@ from pipeline.detection import Detection
 from pipeline.detection_pass import DetectionPass
 from pipeline.detection_word import DetectionWord
 from pipeline.layout import (
-    MATCH_THRESHOLD,
     Layout,
     associate_lines,
     build_layout,
@@ -27,7 +26,7 @@ from pipeline.layout import (
     rotate_detections,
     words,
 )
-from pipeline.layout_line import BOX_SOURCE_MULTI, BOX_SOURCE_REPORT_UNCONFIRMED, LayoutLine
+from pipeline.layout_line import LayoutLine
 from pipeline.layout_word import LayoutWord
 from pipeline.line_match import LineMatch
 from pipeline.model.orientation_line import OrientationLine
@@ -459,8 +458,8 @@ class TestDetections:
 
 def test_threshold_is_named() -> None:
     # the matcher's tolerance is a named constant — not a magic number
-    assert isinstance(MATCH_THRESHOLD, float)
-    assert 0.0 < MATCH_THRESHOLD < 1.0
+    assert isinstance(Layout.MATCH_THRESHOLD, float)
+    assert 0.0 < Layout.MATCH_THRESHOLD < 1.0
 
 
 def test_build_layout_uses_the_vlm_boxes_when_present(tmp_path: Path) -> None:
@@ -1910,8 +1909,10 @@ def test_dedupe_regions_survives_boxless_lines() -> None:
     from pipeline.layout import dedupe_regions
 
     lines = [
-        LayoutLine(index=0, text="E    R", box=None, conf=0.0, box_source=BOX_SOURCE_REPORT_UNCONFIRMED),
-        LayoutLine(index=1, text="extra fragment", box=[0, 0, 100, 20], conf=0.0, box_source=BOX_SOURCE_MULTI),
+        LayoutLine(index=0, text="E    R", box=None, conf=0.0, box_source=LayoutLine.BOX_SOURCE_REPORT_UNCONFIRMED),
+        LayoutLine(
+            index=1, text="extra fragment", box=[0, 0, 100, 20], conf=0.0, box_source=LayoutLine.BOX_SOURCE_MULTI
+        ),
     ]
     out = dedupe_regions(lines)
     assert [ln.text for ln in out] == ["E    R", "extra fragment"]

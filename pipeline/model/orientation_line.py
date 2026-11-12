@@ -13,18 +13,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-BOX_COORDINATE_COUNT = 4  # a box is [x0, y0, x1, y1]
-
-# The directions a line of text may read at: upright, and the three quarter
-# turns. A model answer outside the set is not a located line.
-READING_DEGREES = (0, 90, 180, 270)
-
 
 @dataclass(frozen=True)
 class OrientationLine:
     """One located line: the transcription line's number, its box in
     NORMALIZED 0-1000 units (the numbers the model sent, verbatim), the
     degrees it reads at, and the line's own text when the report has one."""
+
+    _BOX_COORDINATE_COUNT = 4  # a box is [x0, y0, x1, y1]
+
+    # The directions a line of text may read at: upright, and the three quarter
+    # turns. A model answer outside the set is not a located line.
+    READING_DEGREES = (0, 90, 180, 270)
 
     index: int
     box: list[float]
@@ -45,9 +45,9 @@ class OrientationLine:
         if not isinstance(raw, dict):
             return None
         box = raw.get("box")
-        if not (isinstance(box, list) and len(box) == BOX_COORDINATE_COUNT):
+        if not (isinstance(box, list) and len(box) == cls._BOX_COORDINATE_COUNT):
             return None
-        if raw.get("degrees") not in READING_DEGREES:
+        if raw.get("degrees") not in OrientationLine.READING_DEGREES:
             return None
         index = raw.get("index")
         text = raw.get("text")

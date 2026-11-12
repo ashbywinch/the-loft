@@ -23,7 +23,7 @@ from typing import Any
 
 from PIL import Image, ImageOps
 
-from document.document import DOCUMENT_AGREED, DOCUMENT_REJECTED
+from document.document import Document
 from document.page_size import PageSize
 from document.rectangle import Rectangle
 from document.row_adjustments import RowAdjustments
@@ -32,9 +32,9 @@ from document.traces import Traces
 from document.words import Words
 from pipeline.api.row_correction import RowCorrection
 from pipeline.artefacts import BatchArtefacts
-from pipeline.batch_record import STATUS_PENDING
+from pipeline.batch_record import BatchRecord
 from pipeline.boundary import Boundary
-from pipeline.classify import read_route
+from pipeline.classify import PageKinds
 from pipeline.identification import Identification
 from pipeline.identify import identify
 from pipeline.layout import (
@@ -55,7 +55,7 @@ from pipeline.transcribe.printed import printed_transcript, structured_transcrip
 from tools.archive import Archive, ArchiveError
 from tools.atomic import atomic_write
 from tools.dated_fact import PRECISIONS
-from tools.loft_paths import ARCHIVE_DIR, REGISTRY_DIR
+from tools.loft_paths import LoftPaths
 from tools.memory import ChatClient, Knowledge
 from tools.records import Item
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
@@ -254,8 +254,6 @@ def _rotation_of(reading: RowsReading | Layout) -> int:
 
 logger = logging.getLogger(__name__)
 
-REQUIRED_FIELDS = ("batch_id", "doc_index", "pages", "text", "status", "confirmed_at")
-
 BATCH_ID = re.compile(r"^[A-Za-z0-9-]+$")
 
 # page names from boundaries.json become path segments in the drafts read —
@@ -265,51 +263,61 @@ BATCH_ID = re.compile(r"^[A-Za-z0-9-]+$")
 # guard must not reject real scans.
 _PAGE_NAME = re.compile(r"^[A-Za-z0-9._~-]+$")
 
-# Rotation degrees — the reviewer's orientation corrections are quarter
-# turns of the page; layouts record the cumulative rotation in degrees CW,
-# so the recovery/delta arithmetic works in degrees.
-FULL_ROTATION_DEGREES = 360
-QUARTER_TURN_DEGREES = 90
-QUARTERS_PER_TURN = FULL_ROTATION_DEGREES // QUARTER_TURN_DEGREES  # 4 quarter-turns per full rotation
+
+class Rotation:
+    """The reviewer's orientation corrections: quarter turns of the page.
+    Layouts record the cumulative rotation in degrees CW, so the recovery and
+    delta arithmetic works in degrees."""
+
+    FULL_DEGREES = 360
+    QUARTER_DEGREES = 90
+    QUARTERS_PER_TURN = FULL_DEGREES // QUARTER_DEGREES  # 4 quarter-turns per full rotation
 
 
-def validate_confirmation(payload: dict[str, Any]) -> dict[str, Any]:
-    """The confirmation's required shape; raises ValueError with the reason."""
-    missing = [f for f in REQUIRED_FIELDS if f not in payload]
-    if missing:
-        raise ValueError(f"confirmation missing fields: {missing}")
-    if payload["status"] not in ("confirmed", "rejected"):
-        raise ValueError(f"confirmation status must be confirmed|rejected, got {payload['status']!r}")
-    if not isinstance(payload["pages"], list) or not payload["pages"]:
-        raise ValueError("confirmation pages must be a non-empty list")
-    # doc_index becomes a registry boundary index and a file name — a float
-    # (1e309 -> OverflowError) or bool would slip past the server's int()
-    # and 500 instead of 400 (the receiver's "client errors are 4xx, never
-    # 500" contract)
-    doc_index = payload["doc_index"]
-    if isinstance(doc_index, bool) or not isinstance(doc_index, int) or doc_index < 1:
-        raise ValueError(f"confirmation doc_index must be a positive integer, got {doc_index!r}")
-    _check_agreement(payload)
-    return payload
+class ConfirmationPayload:
+    """The adopted batch's confirmation wire: the fields it must carry, and
+    the shape an agreed document needs beyond them."""
 
+    FIELDS = ("batch_id", "doc_index", "pages", "text", "status", "confirmed_at")
 
-def _check_agreement(payload: dict[str, Any]) -> None:
-    """What an AGREED document needs beyond the shape: its text and its own
-    facts (a title and a date — an item cannot exist without them). A
-    rejection carries none of them."""
-    if payload["status"] == "confirmed":
-        if not isinstance(payload["text"], str):
-            raise ValueError("confirmation text must be a string")
-        title = payload.get("title")
-        if not isinstance(title, str) or not title.strip():
-            raise ValueError("an agreed document needs a title")
-        if not isinstance(payload.get("date"), str) or not payload["date"].strip():
-            raise ValueError("an agreed document needs a date")
-        if payload.get("date_precision") not in PRECISIONS:
-            raise ValueError(
-                f"confirmation date_precision must be one of {sorted(PRECISIONS)}, "
-                f"got {payload.get('date_precision')!r}"
-            )
+    @classmethod
+    def validate(cls, payload: dict[str, Any]) -> dict[str, Any]:
+        """The confirmation's required shape; raises ValueError with the reason."""
+        missing = [field for field in cls.FIELDS if field not in payload]
+        if missing:
+            raise ValueError(f"confirmation missing fields: {missing}")
+        if payload["status"] not in ("confirmed", "rejected"):
+            raise ValueError(f"confirmation status must be confirmed|rejected, got {payload['status']!r}")
+        if not isinstance(payload["pages"], list) or not payload["pages"]:
+            raise ValueError("confirmation pages must be a non-empty list")
+        # doc_index becomes a registry boundary index and a file name — a float
+        # (1e309 -> OverflowError) or bool would slip past the server's int()
+        # and 500 instead of 400 (the receiver's "client errors are 4xx, never
+        # 500" contract)
+        doc_index = payload["doc_index"]
+        if isinstance(doc_index, bool) or not isinstance(doc_index, int) or doc_index < 1:
+            raise ValueError(f"confirmation doc_index must be a positive integer, got {doc_index!r}")
+        cls._check_agreement(payload)
+        return payload
+
+    @staticmethod
+    def _check_agreement(payload: dict[str, Any]) -> None:
+        """What an AGREED document needs beyond the shape: its text and its own
+        facts (a title and a date — an item cannot exist without them). A
+        rejection carries none of them."""
+        if payload["status"] == "confirmed":
+            if not isinstance(payload["text"], str):
+                raise ValueError("confirmation text must be a string")
+            title = payload.get("title")
+            if not isinstance(title, str) or not title.strip():
+                raise ValueError("an agreed document needs a title")
+            if not isinstance(payload.get("date"), str) or not payload["date"].strip():
+                raise ValueError("an agreed document needs a date")
+            if payload.get("date_precision") not in PRECISIONS:
+                raise ValueError(
+                    f"confirmation date_precision must be one of {sorted(PRECISIONS)}, "
+                    f"got {payload.get('date_precision')!r}"
+                )
 
 
 class Outbox:
@@ -326,7 +334,7 @@ class Outbox:
         self.directory = directory
 
     def add(self, payload: dict[str, Any]) -> str:
-        validate_confirmation(payload)
+        ConfirmationPayload.validate(payload)
         self.directory.mkdir(parents=True, exist_ok=True)
         item_id = f"{datetime.now(UTC).strftime('%Y%m%d-%H%M%S-%f')}"
         atomic_write(self.directory / f"{item_id}.json", json.dumps(payload, ensure_ascii=False) + "\n")
@@ -357,7 +365,7 @@ def record_confirmation(
     title: str = "",
     date: str = "",
     date_precision: str = "",
-    registry_dir: Path = REGISTRY_DIR,
+    registry_dir: Path = LoftPaths.REGISTRY_DIR,
 ) -> str:
     """The backend's single write path for a reviewed document — shared by
     the CLI review gate and the sync receiver (TECHSPEC/04 §17.5).
@@ -394,9 +402,9 @@ def record_confirmation(
         )
         item_id = item.id
         document.item_id = item.id
-        document.reviewed(DOCUMENT_AGREED)
+        document.reviewed(Document.AGREED)
     else:
-        document.reviewed(DOCUMENT_REJECTED)
+        document.reviewed(Document.REJECTED)
     boundaries = [b for b in record.boundaries or [] if b.pages != document.pages]
     boundaries.append(document)
     record.boundaries = boundaries
@@ -451,7 +459,7 @@ def apply_row_adjustments(
     adjustments: RowAdjustments,
     work_dir: Path,
     *,
-    registry_dir: Path = REGISTRY_DIR,
+    registry_dir: Path = LoftPaths.REGISTRY_DIR,
 ) -> RowCorrection:
     """The reviewer's drawn row lines -> the page's rows
     (`rows.adjust` over the words the read stage persisted, each with
@@ -497,7 +505,7 @@ def apply_row_adjustments(
     atomic_write(readings.adjustments_path(page), adjustments_json + "\n")
     atomic_write(readings.adjusted_rows_path(page), json.dumps(Rows.to_dict(rows), ensure_ascii=False, indent=1) + "\n")
     if adjustments.lines:
-        _ = set_status(batch_id, STATUS_PENDING, registry_dir)
+        _ = set_status(batch_id, BatchRecord.STATUS_PENDING, registry_dir)
     return RowCorrection(rows=rows, violations=violations, tints=row_tints(rows))
 
 
@@ -659,9 +667,9 @@ def _recover_crashed_layout(
     caller computes the delta from it."""
     try:
         journal = json.loads(journal_path.read_text(encoding="utf-8"))
-        intended = int(journal.get("rotation", 0)) % FULL_ROTATION_DEGREES
-        stale = int(journal.get("from", 0)) % FULL_ROTATION_DEGREES
-        if int(layout.extra.get("rotation", 0)) % FULL_ROTATION_DEGREES == stale:
+        intended = int(journal.get("rotation", 0)) % Rotation.FULL_DEGREES
+        stale = int(journal.get("from", 0)) % Rotation.FULL_DEGREES
+        if int(layout.extra.get("rotation", 0)) % Rotation.FULL_DEGREES == stale:
             swapped = journal.get("swapped")
             if swapped is None:
                 image = ImageOps.exif_transpose(Image.open(image_path))
@@ -673,9 +681,9 @@ def _recover_crashed_layout(
             else:
                 # the image IS rotated — recover the layout to the intent
                 image = ImageOps.exif_transpose(Image.open(image_path))
-                recovery = (intended - stale) % FULL_ROTATION_DEGREES
+                recovery = (intended - stale) % Rotation.FULL_DEGREES
                 if recovery:
-                    steps = recovery // QUARTER_TURN_DEGREES
+                    steps = recovery // Rotation.QUARTER_DEGREES
                     # the stale boxes live in the PRE-turn frame — rotate
                     # them by the STALE LAYOUT's recorded dims, not the
                     # current image's
@@ -728,9 +736,9 @@ def _recover_crashed_rows(
     delta computed from the stale rows would silently misalign them."""
     try:
         journal = json.loads(journal_path.read_text(encoding="utf-8"))
-        intended = int(journal.get("rotation", 0)) % FULL_ROTATION_DEGREES
-        stale = int(journal.get("from", 0)) % FULL_ROTATION_DEGREES
-        if rows.rotation % FULL_ROTATION_DEGREES != stale:
+        intended = int(journal.get("rotation", 0)) % Rotation.FULL_DEGREES
+        stale = int(journal.get("from", 0)) % Rotation.FULL_DEGREES
+        if rows.rotation % Rotation.FULL_DEGREES != stale:
             return True
         swapped = journal.get("swapped")
         if swapped is None:
@@ -741,8 +749,8 @@ def _recover_crashed_rows(
             # still consistent with the current image
             journal_path.unlink(missing_ok=True)
             return True
-        recovery = (intended - stale) % FULL_ROTATION_DEGREES
-        steps = recovery // QUARTER_TURN_DEGREES
+        recovery = (intended - stale) % Rotation.FULL_DEGREES
+        steps = recovery // Rotation.QUARTER_DEGREES
         width, height = rows.width, rows.height
         for _ in range(steps):
             for line in rows.lines:
@@ -797,7 +805,7 @@ def _rotate_rows_reading(
 def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool:
     if not BATCH_ID.match(batch_id) or not safe_page_name(page):
         raise ValueError("invalid batch or page name")
-    quarters = int(quarters) % QUARTERS_PER_TURN
+    quarters = int(quarters) % Rotation.QUARTERS_PER_TURN
     readings = BatchReadings(work_dir, batch_id)
     image_path = readings.artefacts.oriented(page)
     rows_path = readings.rows_path(page)
@@ -808,24 +816,24 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
         raise ValueError(f"no reading for {page} — the read stage must run before a rotate")
     journal_path = readings.artefacts.oriented_dir / f"{Path(page).stem}.rotate.json"
     reading = readings.load_reading(page, journal_path, image_path)
-    current = _rotation_of(reading) % FULL_ROTATION_DEGREES
+    current = _rotation_of(reading) % Rotation.FULL_DEGREES
     words: Words | None = None
-    delta = (quarters * QUARTER_TURN_DEGREES - current) % FULL_ROTATION_DEGREES
+    delta = (quarters * Rotation.QUARTER_DEGREES - current) % Rotation.FULL_DEGREES
     if delta == 0:
         journal_path.unlink(missing_ok=True)
         return False
-    steps = delta // QUARTER_TURN_DEGREES
+    steps = delta // Rotation.QUARTER_DEGREES
     image = ImageOps.exif_transpose(Image.open(image_path))
-    rotated = image.rotate(-QUARTER_TURN_DEGREES * steps, expand=True)  # clockwise
+    rotated = image.rotate(-Rotation.QUARTER_DEGREES * steps, expand=True)  # clockwise
     rotated.info.pop("exif", None)
     words_path = readings.words_path(page)
     if isinstance(reading, RowsReading):
         words = _rotate_rows_reading(reading, words_path, steps, image)
         reading.width, reading.height = rotated.width, rotated.height
-        reading.rotation = (current + delta) % FULL_ROTATION_DEGREES
+        reading.rotation = (current + delta) % Rotation.FULL_DEGREES
     else:
         reading = readings.rebuild_rotated_layout(reading, page, steps, image, rotated)
-        reading.extra["rotation"] = (current + delta) % FULL_ROTATION_DEGREES
+        reading.extra["rotation"] = (current + delta) % Rotation.FULL_DEGREES
     tmp = image_path.with_name(image_path.name + ".tmp")
     rotated.save(tmp, format=image.format or "JPEG")
     # the journal lands BEFORE the image swap with swapped:false — a crash
@@ -950,8 +958,8 @@ def _batch_run(
     return BatchRun(
         batch_id,
         work_dir=work_dir,
-        registry_dir=registry_dir or REGISTRY_DIR,
-        archive_dir=archive_dir or ARCHIVE_DIR,
+        registry_dir=registry_dir or LoftPaths.REGISTRY_DIR,
+        archive_dir=archive_dir or LoftPaths.ARCHIVE_DIR,
     )
 
 
@@ -978,7 +986,7 @@ def _reread_page(
         receipt.unlink(missing_ok=True)
     for suffix in (".selfreport.json", ".vlm.json", ".orientation.json"):
         (artefacts.guess_dir / Path(page).with_suffix(suffix)).unlink(missing_ok=True)
-    route = read_route(classification_of(artefacts).get(page, {}))
+    route = PageKinds.read_route(classification_of(artefacts).get(page, {}))
     if route == "direct":
         run.printed_pages([page], _transcribe=transcribe or printed_transcript, provisional_boundary=False)
     elif route == "structured":

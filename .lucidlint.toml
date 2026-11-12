@@ -14,13 +14,14 @@
 # reasoning: docs/PLAN/lucidlint-review-log.md §1.5 and §2.2. The rule stays
 # ignored so the gate's verdict is not polluted by the tool's own bug; a NEW
 # bare dict for a record is still a finding at review.
-# global-state: the repo standard REQUIRES named constants (a domain string
-# literal or a magic number is itself a finding) and forbids the thing this
-# rule should catch — module-level mutable state. On 0.7.1 the rule flags
-# every UPPER_CASE constant (348 on this tree, all read by their module's
-# own functions); its own message says to keep such a constant. The minimal
-# repro and the standards citation: docs/PLAN/lucidlint-review-log.md §1.6.
-# A NEW module-level mutable value is still a review finding.
+# global-state: the repo standard REQUIRES named constants and forbids the
+# thing this rule should catch — module-level mutable state. On 0.7.1 the rule
+# flags every module-level constant (348 on this tree); the repo's answer is
+# the rule's own: the value goes on the class that owns the work, privately
+# unless another module reads it. The constants sweep moved all 348; the rule
+# stays ON so a new module-level value fails the gate. The tool-behaviour note
+# (its message permits a constant its own finding still reports) stays in
+# docs/PLAN/lucidlint-review-log.md §1.6.
 #
 # duplicate-module: the rule compares structural skeletons with identifiers
 # erased, so distinct records that share a shape — `{"error"}` vs `{"note"}`,
@@ -35,7 +36,6 @@ ignore = [
     "class-module",
     "vague-name",
     "magic-number",
-    "global-state",
     "duplicate-module",
 ]
 # noqa: no longer ignored (2026-10-17) — every `# noqa` site now carries its

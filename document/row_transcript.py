@@ -27,11 +27,7 @@ partial read pretending to be a whole one.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
-
-KINDS = ("body", "injection", "marginalia")
-"""What a segment of writing can be. `rule` is absent on purpose: a rule is a
-detector artefact, not writing, and it carries no transcript."""
+from typing import Any, ClassVar
 
 
 @dataclass(frozen=True)
@@ -48,6 +44,10 @@ class RowTranscript:
     kind: str
     injection_after: int | None
 
+    # What a segment of writing can be. `rule` is absent on purpose: a rule is a
+    # detector artefact, not writing, and it carries no transcript.
+    _KINDS: ClassVar[tuple[str, ...]] = ("body", "injection", "marginalia")
+
     @classmethod
     def from_dict(cls, raw: dict[str, Any], *, index: int, rows: int) -> RowTranscript:
         """The transcript a model answer's record describes, read against the
@@ -63,8 +63,8 @@ class RowTranscript:
         if len(set(numbers)) != len(numbers):
             raise ValueError(f"transcript {index} repeats a row: {numbers!r}")
         kind = raw.get("type")
-        if kind not in KINDS:
-            raise ValueError(f"reading {index}: unknown type {kind!r} (not {KINDS})")
+        if kind not in cls._KINDS:
+            raise ValueError(f"reading {index}: unknown type {kind!r} (not {cls._KINDS})")
         text = raw.get("transcript")
         if not isinstance(text, str):
             raise ValueError(f"transcript {index} has no transcript: {raw!r}")

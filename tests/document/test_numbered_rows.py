@@ -19,13 +19,15 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from document.colour import Colour
-from document.numbered_rows import PILL_INSET as PILL_GAP
-from document.numbered_rows import PILL_POINTER, NumberedRows
+from document.numbered_rows import NumberedRows
 from document.page_size import PageSize
 from document.rectangle import Rectangle
 from document.row import Row
 from pipeline.rows.rows import Rows
 from pipeline.transcribe.transcripts import drawn_lines, words_from
+
+PILL_GAP = NumberedRows.PILL_INSET
+PILL_POINTER = NumberedRows.PILL_POINTER
 
 FIXTURE = Path(__file__).parent.parent / "fixtures" / "page01-rows-gold"
 

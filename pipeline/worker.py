@@ -35,10 +35,10 @@ from typing import Any
 
 from watchfiles import Change, watch
 
-from pipeline.adopt import IMAGE_EXTENSIONS, register_adopted
+from pipeline.adopt import is_page_image, register_adopted
 from pipeline.adoption_result import AdoptionResult
 from pipeline.batch_failure import BatchFailure
-from pipeline.batch_record import STATUS_PENDING, STATUS_PROCESSING, BatchRecord
+from pipeline.batch_record import BatchRecord
 from pipeline.reconcile import Reconciler
 from pipeline.registry import RegistryError, list_batches, load_batch, set_status
 from pipeline.store import VERSION_SUFFIX
@@ -57,7 +57,7 @@ def _is_pile(folder: Path) -> bool:
     instead; a pile that keeps its scans in a subfolder (`pile/2026-08-17/`)
     is reached the same way, because the folder that holds the images is the
     pile."""
-    return any(path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS for path in folder.iterdir())
+    return any(is_page_image(path) for path in folder.iterdir())
 
 
 def _piles_under(folder: Path) -> list[Path]:
@@ -187,9 +187,9 @@ class Worker:
         requeued: list[str] = []
         now = self._now()
         for record in list_batches(self.paths.registry_dir):
-            if record.status != STATUS_PROCESSING or self._pass_alive(record, now):
+            if record.status != BatchRecord.STATUS_PROCESSING or self._pass_alive(record, now):
                 continue
-            _ = set_status(record.batch_id, STATUS_PENDING, self.paths.registry_dir)
+            _ = set_status(record.batch_id, BatchRecord.STATUS_PENDING, self.paths.registry_dir)
             self.write_line(f"requeue: {record.batch_id} — its pass is gone; back in the queue")
             requeued.append(record.batch_id)
         return tuple(requeued)
@@ -198,7 +198,7 @@ class Worker:
         """Put one batch back in the queue, whatever it was doing — the
         explicit re-entry for a batch a person has finished with (a legacy
         `review` from before the rows stage) or one a crash left behind."""
-        record = set_status(batch_id, STATUS_PENDING, self.paths.registry_dir)
+        record = set_status(batch_id, BatchRecord.STATUS_PENDING, self.paths.registry_dir)
         self.write_line(f"requeue: {record.batch_id} — back in the queue")
         return record
 

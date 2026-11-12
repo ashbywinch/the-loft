@@ -19,10 +19,9 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from typing import ClassVar
 
 from document.row_transcript import RowTranscript
-
-_FENCE = "```"  # the markdown fence the model sometimes wraps its JSON in
 
 
 class TranscriptError(ValueError):
@@ -32,11 +31,16 @@ class TranscriptError(ValueError):
 class Transcript:
     """The page's text, row by row, as the machine read it (the raw stage).
 
+    The model sometimes wraps its JSON in a markdown fence; `Transcript._FENCE` is the
+    mark `parse_segments` strips.
+
     `from_answer` is the whole contract: the model's answer and the number of
     rows that were numbered when it was asked. Every numbered row must appear
     in exactly one transcript — none missing, none twice — because a page read in
     part is a page that will be confirmed in part.
     """
+
+    _FENCE: ClassVar[str] = "```"
 
     def __init__(self, row_transcripts: tuple[RowTranscript, ...]) -> None:
         self.row_transcripts = row_transcripts
@@ -106,10 +110,10 @@ def parse_segments(answer: str, *, rows: int) -> list[RowTranscript]:
     `RowTranscript.from_dict`, so a caller gets transcripts it can trust or a
     refusal naming the segment and what is wrong with it."""
     stripped = answer.strip()
-    if stripped.startswith(_FENCE):
+    if stripped.startswith(Transcript._FENCE):
         lines = stripped.splitlines()
-        lines = lines[1:] if lines[0].strip().startswith(_FENCE) else lines
-        stripped = "\n".join(line for line in lines if not line.strip().startswith(_FENCE)).strip()
+        lines = lines[1:] if lines[0].strip().startswith(Transcript._FENCE) else lines
+        stripped = "\n".join(line for line in lines if not line.strip().startswith(Transcript._FENCE)).strip()
     try:
         parsed = json.loads(stripped)
     except json.JSONDecodeError as exc:

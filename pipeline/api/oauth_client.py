@@ -11,13 +11,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
-TOKEN_URI = "https://oauth2.googleapis.com/token"
-
 
 @dataclass(frozen=True)
 class OAuthClient:
     """The web client the authorization-code flow runs as."""
+
+    _AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
+
+    _TOKEN_URI = "https://oauth2.googleapis.com/token"
 
     client_id: str
     client_secret: str
@@ -29,8 +30,8 @@ class OAuthClient:
             "web": {
                 "client_id": self.client_id,
                 "client_secret": self.client_secret,
-                "auth_uri": AUTH_URI,
-                "token_uri": TOKEN_URI,
+                "auth_uri": OAuthClient._AUTH_URI,
+                "token_uri": OAuthClient._TOKEN_URI,
                 "redirect_uris": [self.redirect_uri],
             }
         }

@@ -13,17 +13,16 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-# Temp-sibling naming: retry a few times with fresh entropy — a collision
-# means another writer grabbed the name (O_EXCL makes it visible, never
-# dangerous); a new file is created 0o666 so the kernel applies the process
-# umask at creation (see atomic_write's note below).
-TEMP_NAME_ATTEMPTS = 8
-TEMP_NAME_RANDOM_BYTES = 8
-NEW_FILE_MODE = 0o666
-
 
 def atomic_write(path: Path, content: str | bytes) -> None:
     """Write ``content`` to ``path`` atomically (temp sibling + fsync + rename)."""
+    # Temp-sibling naming: retry a few times with fresh entropy — a collision
+    # means another writer grabbed the name (O_EXCL makes it visible, never
+    # dangerous); a new file is created 0o666 so the kernel applies the process
+    # umask at creation (see the note below).
+    temp_name_attempts = 8
+    temp_name_random_bytes = 8
+    new_file_mode = 0o666
     data = content.encode("utf-8") if isinstance(content, str) else content
     path.parent.mkdir(parents=True, exist_ok=True)
     # O_EXCL + 0o666: the kernel applies the current umask atomically at
@@ -33,10 +32,10 @@ def atomic_write(path: Path, content: str | bytes) -> None:
     # (world-readable) in an archive of intimate family letters.
     tmp = None
     fd = -1
-    for _ in range(TEMP_NAME_ATTEMPTS):
-        candidate = path.parent / f".{path.name}.{os.urandom(TEMP_NAME_RANDOM_BYTES).hex()}.tmp"
+    for _ in range(temp_name_attempts):
+        candidate = path.parent / f".{path.name}.{os.urandom(temp_name_random_bytes).hex()}.tmp"
         try:
-            fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, NEW_FILE_MODE)
+            fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, new_file_mode)
             tmp = candidate
             break
         except FileExistsError:

@@ -12,12 +12,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-BOX_COORDINATE_COUNT = 4  # a box is [x0, y0, x1, y1]
-
 
 @dataclass(frozen=True)
 class TranscriptionLine:
     """One transcribed line and the box the model measured for it."""
+
+    _BOX_COORDINATE_COUNT = 4  # a box is [x0, y0, x1, y1]
 
     text: str
     box: list[float]
@@ -30,7 +30,7 @@ class TranscriptionLine:
         if not isinstance(raw, dict):
             return None
         box = raw.get("box")
-        if not (isinstance(box, list) and len(box) == BOX_COORDINATE_COUNT):
+        if not (isinstance(box, list) and len(box) == TranscriptionLine._BOX_COORDINATE_COUNT):
             return None
         if not all(isinstance(v, (int, float)) and v == v for v in box):
             return None

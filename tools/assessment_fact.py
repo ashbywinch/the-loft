@@ -17,18 +17,21 @@ from dataclasses import dataclass
 from typing import Any
 
 from tools.dated_fact import DatedFact
-from tools.parsed_phrase import CLAIMED_PRECISIONS, asserted_date
-
-FACT_KINDS = ("dob", "event_date", "age")
-MAX_AGE_YEARS = 110  # the oldest plausible human age — older assertions are rejected
-MAX_FACT_TEXT = 300  # the verbatim quote is provenance, not an essay
-MAX_ENTITY_CHARS = 64  # a record id, never a paragraph
+from tools.parsed_phrase import ParsedPhrase, asserted_date
 
 
 @dataclass(frozen=True)
 class AssessmentFact:
     """One fact the account states — its kind, the verbatim words it was stated
     in, the person it belongs to, and the validated value and precision."""
+
+    FACT_KINDS = ("dob", "event_date", "age")
+
+    _MAX_AGE_YEARS = 110  # the oldest plausible human age — older assertions are rejected
+
+    MAX_FACT_TEXT = 300  # the verbatim quote is provenance, not an essay
+
+    _MAX_ENTITY_CHARS = 64  # a record id, never a paragraph
 
     kind: str
     text: str
@@ -38,7 +41,7 @@ class AssessmentFact:
     status: str | None = None
 
     def __post_init__(self) -> None:
-        if self.kind not in FACT_KINDS:
+        if self.kind not in AssessmentFact.FACT_KINDS:
             raise ValueError(f"unknown fact kind: {self.kind!r}")
         if not self.text.strip():
             raise ValueError("a fact needs the verbatim text it was stated in")
@@ -49,13 +52,13 @@ class AssessmentFact:
         verbatim text is required, and the value is normalized by the library —
         a date by dateparser, an age by the plausible bound."""
         kind = str(raw.get("kind", ""))
-        if kind not in FACT_KINDS:
+        if kind not in AssessmentFact.FACT_KINDS:
             raise ValueError(f"unknown fact kind: {kind!r}")
         text = raw.get("text")
         if not isinstance(text, str) or not text.strip():
             raise ValueError(f"fact needs the verbatim text it was stated in: {raw!r}")
         entity = raw.get("entity")
-        entity = str(entity)[:MAX_ENTITY_CHARS] if entity else None
+        entity = str(entity)[: AssessmentFact._MAX_ENTITY_CHARS] if entity else None
         status = raw.get("status")
         status = status if isinstance(status, str) and status else None
         if kind == "age":
@@ -63,13 +66,13 @@ class AssessmentFact:
             if age is None:
                 raise ValueError(f"age fact with no plausible age: {raw!r}")
             value: str | int | None = age
-            precision = raw.get("precision") if raw.get("precision") in CLAIMED_PRECISIONS else "approx"
+            precision = raw.get("precision") if raw.get("precision") in ParsedPhrase.CLAIMED_PRECISIONS else "approx"
         else:
             dated = asserted_date(raw.get("value"), raw.get("precision"))
             value, precision = (dated.date, dated.precision) if dated else (None, None)
         return cls(
             kind=kind,
-            text=text.strip()[:MAX_FACT_TEXT],
+            text=text.strip()[: AssessmentFact.MAX_FACT_TEXT],
             entity=entity,
             value=value,
             precision=precision,
@@ -101,7 +104,7 @@ class AssessmentFact:
             age = int(value)
         except (TypeError, ValueError):
             return None
-        return age if 0 < age < MAX_AGE_YEARS else None
+        return age if 0 < age < AssessmentFact._MAX_AGE_YEARS else None
 
     def to_dict(self) -> dict[str, Any]:
         """The fact as its wire record — the status only where the narrator's

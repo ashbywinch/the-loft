@@ -28,67 +28,6 @@ from document.row import Row
 from document.span import Span
 from pipeline.rows.render import RenderStyle
 
-ROW_NUM_SIZE = 26  # px: the pill's number, the review surface's own type size
-PILL_POINTER = 14  # px: how far the pill's pointer reaches back toward its row
-COLUMN_WIDTH = 120  # px: the numbered column added to the page's right side
-COLUMN_GAP = 24  # px: air between the writing's widest line and the column
-PILL_RADIUS = 12  # px: the pill's corner (`.rv-rownum`'s 10px at page scale)
-PILL_PAD_X = 12  # px: air either side of the number
-PILL_PAD_Y = 8  # px: air above and below it
-PILL_INSET = 6  # px: how far the pill's right edge sits left of the band
-PILL_LIFT = 0  # px: the pill is centred on its row's own line, not lifted above
-# it. Lifted, every number reads as belonging to the line above — "all the
-# numbers seem to be a bit high" (user, on the sheet) — and a row whose band
-# starts high is lifted furthest, which is how row 7's number came adrift.
-PAPER: Colour = Colour(red=255, green=255, blue=255)
-# the colour the bands are washed into when the page's own paper cannot be sampled
-PILL_MIN_WIDTH = 30  # px: a one-digit pill is still a pill
-PILL_STEP = 6  # px: the gap between two pills that had to be stepped apart
-# Bands are cut SHORT on purpose, and by HEIGHT. The vision model resizes an
-# image by its long edge, so a tall band comes back with the writing at less
-# than half the page's resolution — page-01's numbers at the foot arrive
-# unreadably small and the reading stops where it can still see them.
-#
-# Measured (tools/eval_band_size.py, 2026-10-07). Two separate effects:
-#   * the whole writing on one image (2360px) lost the BOTTOM EIGHT row numbers
-#     — 33 of 41 read — which is resolution, and is what bands are for;
-#   * a band's call can come back EMPTY: the same 1286px bands that read 41/41
-#     twice named nothing at all once, its neighbour band's 20 rows then missing
-#     from the page. That is the model, not the size, and the masked alone path
-#     is what repairs it.
-# This height read 41/41 in four separate passes, so it sits at the measured-safe
-# end of the range rather than at its boundary.
-MAX_BAND_HEIGHT = 856  # px: the tallest band measured read in full
-STRIPS_MAX = 8  # bands beyond this are cuts without rows to hold
-# Neighbouring bands do NOT overlap. They did (60px), to be safe against a cut
-# through a row — but the cuts are placed in the gaps BETWEEN rows, so there is
-# nothing to be safe about, and the overlap made the model read the shared
-# writing twice: page-01's rows 15, 16 and 27 appeared in two bands, and the
-# model returned band 2's top lines as rows 17-20 — the same text as 13-16.
-BAND_OVERLAP = 0  # px: bands are exclusive; a row is numbered in exactly one
-INK_MARGIN = 40  # px: air either side of the writing — the numbers reach into it,
-# and `numbers_extent` widens this left edge when a stepped pill needs more
-
-# The chip is the colour its row's BAND is, drawn opaque instead of translucent:
-# the same mix of the row's hue into the paper that the band shows, so a number
-# and its row are visibly one colour. Two earlier attempts got this wrong in the
-# same way — matching the hue and calling it a match. Measured on the rendered
-# sheet, the band washes sit at saturation 0.06-0.19 / value 0.90-0.98, and a
-# chip at 0.80 / 0.52 is 4-10x more saturated and half as bright: a dark blob
-# that belongs to no row. The digit is that same hue taken dark, which reads on
-# the wash and introduces no colour of its own.
-DIGIT_SATURATION = 0.75
-DIGIT_VALUE = 0.42
-# A number that cannot sit beside its row steps OUT into the margin, lane by
-# lane, and never up or down: a number level with the wrong row points at the
-# wrong row (the user saw 38 beside 39). The lanes run out at the page's edge.
-MARGIN_LANES = 16
-
-# px the pointer and the leader stop SHORT of a row's writing. Zero was tried:
-# a tip exactly on the word's edge paints its outer pixel inside the box — the
-# drawing is a few px wide — which is the overlap the user saw.
-PILL_TOUCH = 2
-
 
 class NumberedRows:
     """An image with one number per row drawn on it, and the numbers it drew.
@@ -97,6 +36,61 @@ class NumberedRows:
     rendered page (or one band of it). The pair is what an attempt needs: the
     image to show and the numbers to check the answer against.
     """
+
+    _ROW_NUM_SIZE = 26  # px: the pill's number, the review surface's own type size
+    PILL_POINTER = 14  # px: how far the pill's pointer reaches back toward its row
+    _COLUMN_GAP = 24  # px: air between the writing's widest line and the column
+    _PILL_RADIUS = 12  # px: the pill's corner (`.rv-rownum`'s 10px at page scale)
+    _PILL_PAD_X = 12  # px: air either side of the number
+    _PILL_PAD_Y = 8  # px: air above and below it
+    PILL_INSET = 6  # px: how far the pill's right edge sits left of the band
+    _PAPER = Colour(red=255, green=255, blue=255)
+    # the colour the bands are washed into when the page's own paper cannot be sampled
+    _PILL_MIN_WIDTH = 30  # px: a one-digit pill is still a pill
+    # Bands are cut SHORT on purpose, and by HEIGHT. The vision model resizes an
+    # image by its long edge, so a tall band comes back with the writing at less
+    # than half the page's resolution — page-01's numbers at the foot arrive
+    # unreadably small and the reading stops where it can still see them.
+    #
+    # Measured (tools/eval_band_size.py, 2026-10-07). Two separate effects:
+    #   * the whole writing on one image (2360px) lost the BOTTOM EIGHT row numbers
+    #     — 33 of 41 read — which is resolution, and is what bands are for;
+    #   * a band's call can come back EMPTY: the same 1286px bands that read 41/41
+    #     twice named nothing at all once, its neighbour band's 20 rows then missing
+    #     from the page. That is the model, not the size, and the masked alone path
+    #     is what repairs it.
+    # This height read 41/41 in four separate passes, so it sits at the measured-safe
+    # end of the range rather than at its boundary.
+    _MAX_BAND_HEIGHT = 856  # px: the tallest band measured read in full
+    _STRIPS_MAX = 8  # bands beyond this are cuts without rows to hold
+    # Neighbouring bands do NOT overlap. They did (60px), to be safe against a cut
+    # through a row — but the cuts are placed in the gaps BETWEEN rows, so there is
+    # nothing to be safe about, and the overlap made the model read the shared
+    # writing twice: page-01's rows 15, 16 and 27 appeared in two bands, and the
+    # model returned band 2's top lines as rows 17-20 — the same text as 13-16.
+    _BAND_OVERLAP = 0  # px: bands are exclusive; a row is numbered in exactly one
+    _INK_MARGIN = 40  # px: air either side of the writing — the numbers reach into it,
+    # and `numbers_extent` widens this left edge when a stepped pill needs more
+
+    # The chip is the colour its row's BAND is, drawn opaque instead of translucent:
+    # the same mix of the row's hue into the paper that the band shows, so a number
+    # and its row are visibly one colour. Two earlier attempts got this wrong in the
+    # same way — matching the hue and calling it a match. Measured on the rendered
+    # sheet, the band washes sit at saturation 0.06-0.19 / value 0.90-0.98, and a
+    # chip at 0.80 / 0.52 is 4-10x more saturated and half as bright: a dark blob
+    # that belongs to no row. The digit is that same hue taken dark, which reads on
+    # the wash and introduces no colour of its own.
+    _DIGIT_SATURATION = 0.75
+    _DIGIT_VALUE = 0.42
+    # A number that cannot sit beside its row steps OUT into the margin, lane by
+    # lane, and never up or down: a number level with the wrong row points at the
+    # wrong row (the user saw 38 beside 39). The lanes run out at the page's edge.
+    _MARGIN_LANES = 16
+
+    # px the pointer and the leader stop SHORT of a row's writing. Zero was tried:
+    # a tip exactly on the word's edge paints its outer pixel inside the box — the
+    # drawing is a few px wide — which is the overlap the user saw.
+    _PILL_TOUCH = 2
 
     def __init__(self, image: Image.Image, numbers: dict[str, int]) -> None:
         self.image = image
@@ -115,7 +109,7 @@ class NumberedRows:
 
     @classmethod
     def render_strips(
-        cls, page: Image.Image, rows: list[Row], *, max_band_height: float = MAX_BAND_HEIGHT
+        cls, page: Image.Image, rows: list[Row], *, max_band_height: float = _MAX_BAND_HEIGHT
     ) -> list[NumberedRows]:
         """The page in bands, top to bottom, numbered — one image per band, one
         call per band.
@@ -146,10 +140,10 @@ class NumberedRows:
         # for may leave a band too tall (rows far apart make wide gaps), and the
         # count then climbs until each band fits — a fragment or a postcard
         # never gets cut at all
-        most_bands = max(1, min(len(ordered), STRIPS_MAX))
+        most_bands = max(1, min(len(ordered), cls._STRIPS_MAX))
         bands = max(1, min(math.ceil((bottom - top) / max_band_height), most_bands))
         while True:
-            bounds = [top, *_cut_gaps(ordered, strips=bands, top=top, bottom=bottom), bottom]
+            bounds = [top, *NumberedRows._cut_gaps(ordered, strips=bands, top=top, bottom=bottom), bottom]
             tallest = max(high - low for low, high in zip(bounds[:-1], bounds[1:], strict=True))
             if bands >= most_bands or tallest <= max_band_height:
                 break
@@ -159,12 +153,12 @@ class NumberedRows:
         ]
         # the crop spans the numbers (now in the LEFT margin) and the writing
         number_span = cls.numbers_extent(ordered)
-        ink_left = max(0, int(min(float(min(xs) if xs else 0), float(number_span.start))) - INK_MARGIN)
-        ink_right = min(page.width, int(max(xs) if xs else page.width) + INK_MARGIN)
+        ink_left = max(0, int(min(float(min(xs) if xs else 0), float(number_span.start))) - cls._INK_MARGIN)
+        ink_right = min(page.width, int(max(xs) if xs else page.width) + cls._INK_MARGIN)
         out: list[NumberedRows] = []
         for index in range(bands):
-            band_top = int(bounds[index]) - (BAND_OVERLAP if index else 0)
-            band_bottom = int(bounds[index + 1]) + (BAND_OVERLAP if index + 1 < bands else 0)
+            band_top = int(bounds[index]) - (cls._BAND_OVERLAP if index else 0)
+            band_bottom = int(bounds[index + 1]) + (cls._BAND_OVERLAP if index + 1 < bands else 0)
             band_top, band_bottom = max(0, band_top), min(page.height, band_bottom)
             inside = [
                 row
@@ -237,26 +231,29 @@ class NumberedRows:
         lane outward. A number never moves up or down to find room: level with
         the wrong row, it points at the wrong row."""
         draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
-        font = _font()
+        font = NumberedRows._font()
         boxes: list[Rectangle] = []
         ink = [w.rect for r in rows for w in r.word_boxes]
-        margin = _margin_column(rows, width=PILL_MIN_WIDTH + 2 * PILL_PAD_X + 12)
+        margin = NumberedRows._margin_column(rows, width=cls._PILL_MIN_WIDTH + 2 * cls._PILL_PAD_X + 12)
         for row in rows:
             measured = draw.textbbox((0, 0), str(row.number), font=font)
-            width = max(PILL_MIN_WIDTH, (measured[2] - measured[0]) + 2 * PILL_PAD_X)
-            height = (measured[3] - measured[1]) + 2 * PILL_PAD_Y
+            width = max(cls._PILL_MIN_WIDTH, (measured[2] - measured[0]) + 2 * cls._PILL_PAD_X)
+            height = (measured[3] - measured[1]) + 2 * cls._PILL_PAD_Y
             left_edge = min((w.rect.x0 for w in row.word_boxes), default=row.band.x0)
             right_edge = max((w.rect.x1 for w in row.word_boxes), default=row.band.x1)
             # each candidate sits level with the END of the line it stands
             # beside, not with the line's middle
             beside = (
-                (left_edge - PILL_INSET - width, cls.end_centre(row, left_end=True)),
-                (right_edge + PILL_INSET, cls.end_centre(row, left_end=False)),
+                (left_edge - cls.PILL_INSET - width, cls.end_centre(row, left_end=True)),
+                (right_edge + cls.PILL_INSET, cls.end_centre(row, left_end=False)),
             )
             for candidate, centre in beside:
-                top = centre - height / 2 - PILL_LIFT
+                # the pill is centred on its row's own line, never lifted: lifted,
+                # every number reads as belonging to the line above — "all the
+                # numbers seem to be a bit high" (user, on the sheet)
+                top = centre - height / 2
                 box = Rectangle(candidate, top, candidate + width, top + height)
-                if _fits(box, ink, boxes):
+                if NumberedRows._fits(box, ink, boxes):
                     boxes.append(box)
                     break
             else:
@@ -264,8 +261,11 @@ class NumberedRows:
                 # page's left margin is wide, and a number further out is still
                 # unmistakably its row's
                 centre = cls.end_centre(row, left_end=True)
-                top = centre - height / 2 - PILL_LIFT
-                boxes.append(_in_lane(Rectangle(margin, top, margin + width, top + height), ink, boxes))
+                # the pill is centred on its row's own line, never lifted: lifted,
+                # every number reads as belonging to the line above — "all the
+                # numbers seem to be a bit high" (user, on the sheet)
+                top = centre - height / 2
+                boxes.append(NumberedRows._in_lane(Rectangle(margin, top, margin + width, top + height), ink, boxes))
         return boxes
 
     @classmethod
@@ -283,7 +283,7 @@ class NumberedRows:
         colour instead of two nearly-matching ones."""
         red, green, blue, alpha = RenderStyle().colour(index)
         share = alpha / 255
-        layers = zip((red, green, blue), (background or PAPER)[:3], strict=True)
+        layers = zip((red, green, blue), (background or cls._PAPER)[:3], strict=True)
         mixed = [int(channel * share + paper * (1 - share)) for channel, paper in layers]
         first, second, third = mixed
         return Colour(first, second, third)
@@ -301,14 +301,16 @@ class NumberedRows:
         ordered = sorted(rows, key=lambda row: row.band.y0)
         if not ordered:
             return Colour(red=255, green=255, blue=255)
-        gap_y = (ordered[0].band.y1 + ordered[1].band.y0) / 2 if len(ordered) > 1 else ordered[0].band.y0 - COLUMN_GAP
+        gap_y = (
+            (ordered[0].band.y1 + ordered[1].band.y0) / 2 if len(ordered) > 1 else ordered[0].band.y0 - cls._COLUMN_GAP
+        )
         ink_left = min(
             (word.x0 - offset_x for row in ordered for word in row.word_boxes),
             default=ordered[0].band.x0 - offset_x,
         )
-        x = min(max(int(ink_left) - COLUMN_GAP, 0), canvas.width - 1)
+        x = min(max(int(ink_left) - cls._COLUMN_GAP, 0), canvas.width - 1)
         y = min(max(int(gap_y - offset_y), 0), canvas.height - 1)
-        sample = _rgb(canvas.convert("RGB").getpixel((x, y)))
+        sample = NumberedRows._rgb(canvas.convert("RGB").getpixel((x, y)))
         # a cropped canvas can carry the page's dark edge where the margin
         # should be, which is no background to wash a hue into
         return sample if sum(sample) > 450 else Colour(red=255, green=255, blue=255)
@@ -317,7 +319,7 @@ class NumberedRows:
     def digit_colour(cls, index: int) -> Colour:
         """The same hue taken dark: it reads on the row's own wash and adds no
         colour that is not the row's."""
-        red, green, blue = colorsys.hsv_to_rgb(cls.hue_of(index), DIGIT_SATURATION, DIGIT_VALUE)
+        red, green, blue = colorsys.hsv_to_rgb(cls.hue_of(index), cls._DIGIT_SATURATION, cls._DIGIT_VALUE)
         return Colour(int(red * 255), int(green * 255), int(blue * 255))
 
     @classmethod
@@ -336,7 +338,7 @@ class NumberedRows:
         numbers = {row.id: row.number for row in rows}
         background = cls.background_of(canvas, rows, offset_x=offset_x, offset_y=offset_y)
         draw = ImageDraw.Draw(canvas)
-        font = _font()
+        font = NumberedRows._font()
         for row, box in zip(rows, cls._pill_boxes(rows), strict=False):
             left, top = box.x0 - offset_x, box.y0 - offset_y
             right, bottom = box.x1 - offset_x, box.y1 - offset_y
@@ -361,11 +363,11 @@ class NumberedRows:
             # the end of its line that overshot the 6px inset by 8px and landed
             # on the writing.
             if cls.pointer_side(box, row) == "left":
-                touch = edge_right + PILL_TOUCH
-                tip, root, row_edge = max(left - PILL_POINTER, touch), left, touch
+                touch = edge_right + cls._PILL_TOUCH
+                tip, root, row_edge = max(left - cls.PILL_POINTER, touch), left, touch
             else:
-                touch = edge_left - PILL_TOUCH
-                tip, root, row_edge = min(right + PILL_POINTER, touch), right, touch
+                touch = edge_left - cls._PILL_TOUCH
+                tip, root, row_edge = min(right + cls.PILL_POINTER, touch), right, touch
             draw.line([(row_edge, centre_y), (root, centre_y)], fill=ink, width=3)
             draw.polygon(
                 [
@@ -376,9 +378,9 @@ class NumberedRows:
                 fill=fill,
                 outline=ink,
             )
-            draw.rounded_rectangle((left, top, right, bottom), radius=PILL_RADIUS, fill=fill, outline=ink)
+            draw.rounded_rectangle((left, top, right, bottom), radius=cls._PILL_RADIUS, fill=fill, outline=ink)
             draw.text(
-                (left + PILL_PAD_X - measured[0], top + PILL_PAD_Y - measured[1]),
+                (left + cls._PILL_PAD_X - measured[0], top + cls._PILL_PAD_Y - measured[1]),
                 str(row.number),
                 fill=ink,
                 font=font,
@@ -390,81 +392,83 @@ class NumberedRows:
         cover (one reading per number, none missing)."""
         return len(self.numbers)
 
+    @staticmethod
+    def _fits(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> bool:
+        """Whether a number's box would cover ink or another number."""
+        return not any(box.overlaps(other) for other in [*ink, *placed])
+
+    @staticmethod
+    def _in_lane(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> Rectangle:
+        """The box in the first free lane of the margin, at its own height.
+
+        Lanes run outward from the writing's widest line; the page's left margin is
+        wide, and a number further out is still unmistakably its row's. Stepping up
+        or down instead is what put 38's number beside 39.
+        """
+        for lane in range(NumberedRows._MARGIN_LANES):
+            left = box.x0 - lane * (box.width + NumberedRows._COLUMN_GAP)
+            if left < 0:
+                break
+            candidate = Rectangle(left, box.y0, left + box.width, box.y1)
+            if NumberedRows._fits(candidate, ink, placed):
+                return candidate
+        return box
+
+    @staticmethod
+    def _margin_column(rows: list[Row], *, width: float = 0.0) -> float:
+        """The numbered column's left edge: in the page's LEFT margin, clear of
+        every word, so no number can cover writing whatever its height.
+
+        Each pill then sits at its own row's height with a leader line back to it.
+        Placing pills beside their own rows failed twice over: the ragged writing
+        pushed thirteen of page-01's numbers into the right margin where the model
+        never found them, and where rows sit 20px apart the pills covered each
+        other."""
+        edges = [w.rect.x0 for row in rows for w in row.word_boxes] or [row.band.x0 for row in rows]
+        return max(0.0, min(edges) - NumberedRows._COLUMN_GAP - width)
+
+    @staticmethod
+    def _rgb(pixel: object) -> Colour:
+        """A pixel as three channels — PIL hands back a tuple on an RGB image, and
+        on an RGB image only, which is what every canvas here is."""
+        # every canvas here is RGB, so getpixel returns channels, never a float
+        channels: tuple[int, ...] = tuple(pixel)  # type: ignore[arg-type]  # RGB canvas, so channels not a float
+        first, second, third = channels[:3]
+        return Colour(first, second, third)
+
+    @staticmethod
+    def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> list[float]:
+        """Where to cut `strips` bands of writing without cutting a row: the
+        largest gaps between consecutive bands, at the boundaries a naive equal
+        split would have chosen."""
+        gaps = sorted(
+            (
+                (rows[i + 1].band.y0 - rows[i].band.y1, (rows[i + 1].band.y0 + rows[i].band.y1) / 2)
+                for i in range(len(rows) - 1)
+            ),
+            reverse=True,
+        )
+
+        wanted = [top + (bottom - top) * index / strips for index in range(1, strips)]
+        chosen: list[float] = []
+        for target in wanted:
+            # one gap per cut: two cuts in the same gap make a band with no rows,
+            # which is an image of a margin and a wasted look (a 6-band page has
+            # fewer distinct gaps than that on its thin stretches)
+            free = [gap for gap in gaps if gap[1] not in chosen]
+            if not free:
+                break
+            chosen.append(min(free, key=lambda gap: abs(gap[1] - target) + (0 if gap[0] >= 0 else 10_000))[1])
+        return sorted(chosen)
+
+    @staticmethod
+    def _font() -> ImageDraw.ImageFont.ImageFont | ImageDraw.ImageFont.FreeTypeFont:
+        try:
+            return ImageDraw.ImageFont.load_default(size=NumberedRows._ROW_NUM_SIZE)
+        except TypeError:  # Pillow older than the size-capable default font
+            return ImageDraw.ImageFont.load_default()
+
 
 # a number's box, the ink on the page, and the numbers already placed are three
 # things, not one clump: the box is a `Rectangle` (the geometry the model
 # already has) and the other two are the lists it must stay clear of
-def _fits(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> bool:
-    """Whether a number's box would cover ink or another number."""
-    return not any(box.overlaps(other) for other in [*ink, *placed])
-
-
-def _in_lane(box: Rectangle, ink: list[Rectangle], placed: list[Rectangle]) -> Rectangle:
-    """The box in the first free lane of the margin, at its own height.
-
-    Lanes run outward from the writing's widest line; the page's left margin is
-    wide, and a number further out is still unmistakably its row's. Stepping up
-    or down instead is what put 38's number beside 39.
-    """
-    for lane in range(MARGIN_LANES):
-        left = box.x0 - lane * (box.width + COLUMN_GAP)
-        if left < 0:
-            break
-        candidate = Rectangle(left, box.y0, left + box.width, box.y1)
-        if _fits(candidate, ink, placed):
-            return candidate
-    return box
-
-
-def _margin_column(rows: list[Row], *, width: float = 0.0) -> float:
-    """The numbered column's left edge: in the page's LEFT margin, clear of
-    every word, so no number can cover writing whatever its height.
-
-    Each pill then sits at its own row's height with a leader line back to it.
-    Placing pills beside their own rows failed twice over: the ragged writing
-    pushed thirteen of page-01's numbers into the right margin where the model
-    never found them, and where rows sit 20px apart the pills covered each
-    other."""
-    edges = [w.rect.x0 for row in rows for w in row.word_boxes] or [row.band.x0 for row in rows]
-    return max(0.0, min(edges) - COLUMN_GAP - width)
-
-
-def _rgb(pixel: object) -> Colour:
-    """A pixel as three channels — PIL hands back a tuple on an RGB image, and
-    on an RGB image only, which is what every canvas here is."""
-    # every canvas here is RGB, so getpixel returns channels, never a float
-    channels: tuple[int, ...] = tuple(pixel)  # type: ignore[arg-type]  # RGB canvas, so channels not a float
-    first, second, third = channels[:3]
-    return Colour(first, second, third)
-
-
-def _cut_gaps(rows: list[Row], *, strips: int, top: float, bottom: float) -> list[float]:
-    """Where to cut `strips` bands of writing without cutting a row: the
-    largest gaps between consecutive bands, at the boundaries a naive equal
-    split would have chosen."""
-    gaps = sorted(
-        (
-            (rows[i + 1].band.y0 - rows[i].band.y1, (rows[i + 1].band.y0 + rows[i].band.y1) / 2)
-            for i in range(len(rows) - 1)
-        ),
-        reverse=True,
-    )
-
-    wanted = [top + (bottom - top) * index / strips for index in range(1, strips)]
-    chosen: list[float] = []
-    for target in wanted:
-        # one gap per cut: two cuts in the same gap make a band with no rows,
-        # which is an image of a margin and a wasted look (a 6-band page has
-        # fewer distinct gaps than that on its thin stretches)
-        free = [gap for gap in gaps if gap[1] not in chosen]
-        if not free:
-            break
-        chosen.append(min(free, key=lambda gap: abs(gap[1] - target) + (0 if gap[0] >= 0 else 10_000))[1])
-    return sorted(chosen)
-
-
-def _font() -> ImageDraw.ImageFont.ImageFont | ImageDraw.ImageFont.FreeTypeFont:
-    try:
-        return ImageDraw.ImageFont.load_default(size=ROW_NUM_SIZE)
-    except TypeError:  # Pillow older than the size-capable default font
-        return ImageDraw.ImageFont.load_default()

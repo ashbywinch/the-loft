@@ -18,49 +18,53 @@ from PIL import Image
 from document.colour import Colour
 from document.point import Point
 from pipeline.rows.page_visuals import (
+    CaptionSheet,
     Crop,
     DashRule,
-    captioned_sheet,
+    PagePainter,
     dashed_hline,
     halo_text,
-    review_image,
     scaled_crop,
     stack_sheets,
 )
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
-OUT = Path(__file__).resolve().parent / "evidence" / "cut-zooms.jpg"
 
-# (x0, y0, x1, y1, scale) page px, cut rows (page y), caption lines
-ZOOMS: list[tuple[tuple[float, float, float, float, float], list[float], list[str]]] = [
-    (
-        (1930, 2505, 2035, 2615, 7.0),
-        [2553],
-        [
-            "2875: the cut at y2553 gives two pieces",
-            "upper: 16x10 page px (the piece called 'the rule')",
-            "lower: 52x42 page px (the word)",
-        ],
-    ),
-    (
-        (1470, 2750, 1710, 2840, 5.0),
-        [2791],
-        ["5514: cut at y2791 must STAND", "upper 138x18, lower 198x32 page px"],
-    ),
-    (
-        (1060, 2755, 1140, 2865, 7.0),
-        [2787, 2825],
-        ["5555: cuts at y2787 and y2825 must be REFUSED", "one word arrives in three pieces"],
-    ),
-]
+
+class Config:
+    """This script's fixed inputs and outputs."""
+
+    OUT = Path(__file__).resolve().parent / "evidence" / "cut-zooms.jpg"
+    # (x0, y0, x1, y1, scale) page px, cut rows (page y), caption lines
+    ZOOMS: list[tuple[tuple[float, float, float, float, float], list[float], list[str]]] = [
+        (
+            (1930, 2505, 2035, 2615, 7.0),
+            [2553],
+            [
+                "2875: the cut at y2553 gives two pieces",
+                "upper: 16x10 page px (the piece called 'the rule')",
+                "lower: 52x42 page px (the word)",
+            ],
+        ),
+        (
+            (1470, 2750, 1710, 2840, 5.0),
+            [2791],
+            ["5514: cut at y2791 must STAND", "upper 138x18, lower 198x32 page px"],
+        ),
+        (
+            (1060, 2755, 1140, 2865, 7.0),
+            [2787, 2825],
+            ["5555: cuts at y2787 and y2825 must be REFUSED", "one word arrives in three pieces"],
+        ),
+    ]
 
 
 def _main() -> int:
     page = Image.open(SCAN).convert("RGB")
     sheets = []
-    for (x0, y0, x1, y1, scale), rows, caption in ZOOMS:
+    for (x0, y0, x1, y1, scale), rows, caption in Config.ZOOMS:
         crop = scaled_crop(page, Crop(x0, y0, x1, y1, scale))
-        sheet = captioned_sheet(crop, caption)
+        sheet = CaptionSheet.captioned_sheet(crop, caption)
         draw = sheet.draw
         bar_h = sheet.bar_height
         for row in rows:
@@ -71,8 +75,8 @@ def _main() -> int:
                     draw, Point(x=crop.width - 120, y=y - 26), f"cut y{row:.0f}", fill=Colour(red=200, green=0, blue=0)
                 )
         sheets.append(sheet)
-    out = OUT
-    out.write_bytes(review_image(stack_sheets([x.sheet for x in sheets])))
+    out = Config.OUT
+    out.write_bytes(PagePainter.review_image(stack_sheets([x.sheet for x in sheets])))
     print(f"cut zooms -> {out} ({out.stat().st_size // 1024}KB)")
     return 0
 

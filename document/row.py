@@ -22,10 +22,6 @@ from typing import Any, ClassVar
 from document.rectangle import Rectangle
 from document.word import Word
 
-# the fields a row record carries; its text and stage are the row's reading and
-# its trust, and a record from before a reading ran carries neither
-ROW_FIELDS = ("id", "kind", "number", "word_boxes", "band")
-
 
 @dataclass(frozen=True)
 class Row:
@@ -45,6 +41,10 @@ class Row:
     # confirmation — plus "" for a row no reading has filled yet
     STAGES: ClassVar[tuple[str, ...]] = ("", "raw", "guess", "confirmed")
 
+    # the fields a row record carries; its text and stage are the row's reading
+    # and its trust, and a record from before a reading ran carries neither
+    _FIELDS: ClassVar[tuple[str, ...]] = ("id", "kind", "number", "word_boxes", "band")
+
     def __post_init__(self) -> None:
         if self.stage not in self.STAGES:
             raise ValueError(f"a row's stage {self.stage!r} is not one of {sorted(self.STAGES)}")
@@ -56,7 +56,7 @@ class Row:
         file's word ids), its band, and its own text and trust stage — a
         record from before a reading ran carries neither, which reads as
         unread ("")."""
-        missing = [key for key in ROW_FIELDS if key not in raw]
+        missing = [key for key in cls._FIELDS if key not in raw]
         if missing:
             raise ValueError(f"a row record is missing {sorted(missing)}")
         text = raw.get("text", "")

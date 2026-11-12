@@ -14,40 +14,15 @@ import html
 
 from tools.records import Item
 
-FILLS = {
-    "amber": "#e8c39a",
-    "sage": "#b9c4a4",
-    "slate": "#b7c0c9",
-    "rose": "#e0b8b0",
-    "sky": "#aec9d6",
-    "lilac": "#c9bcd6",
-}
-
-# A letter asset that isn't page-N (an envelope, a back) — the page parse
-# falls back to 1. A shared tuple keeps the except clause short; the
-# py313 target (pyproject.toml) makes ruff PRESERVE parenthesised except
-# clauses, so the old "ruff strips the parens" justification no longer
-# applies.
-_PAGE_PARSE_ERRORS = (IndexError, ValueError)
-
-# The ruled-paper look's SVG geometry (tuned once): 11 hand-written lines,
-# the first at y=40, 22px apart; each line's gentle wave starts 40px in and
-# steps 10px every 3 lines.
-_RULED_LINE_COUNT = 11
-_FIRST_LINE_Y = 40
-_LINE_SPACING = 22
-_WAVE_X_BASE = 40
-_WAVE_X_STEP = 10
-_WAVE_CYCLE_LINES = 3
-
 
 def svg_paper(page_no: int, n_pages: int) -> str:
     """A letter page: paper with hand-written-looking lines."""
     lines = "\n".join(
-        f'<path d="M24 {_FIRST_LINE_Y + i * _LINE_SPACING} '
-        f'q {_WAVE_X_BASE + (i % _WAVE_CYCLE_LINES) * _WAVE_X_STEP} -6 220 -2" '
+        f'<path d="M24 {PlaceholderPaper._FIRST_LINE_Y + i * PlaceholderPaper._LINE_SPACING} '
+        f"q {PlaceholderPaper._WAVE_X_BASE + (i % PlaceholderPaper._WAVE_CYCLE_LINES) * PlaceholderPaper._WAVE_X_STEP} "
+        f'-6 220 -2" '
         f'stroke="#8a7a63" stroke-width="2.4" fill="none" stroke-linecap="round" opacity="0.55"/>'
-        for i in range(_RULED_LINE_COUNT)
+        for i in range(PlaceholderPaper._RULED_LINE_COUNT)
     )
     return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 420">
   <rect width="320" height="420" rx="6" fill="#f3ead6"/>
@@ -59,7 +34,7 @@ def svg_paper(page_no: int, n_pages: int) -> str:
 
 def svg_photo(label: str, hue: str) -> str:
     return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">
-  <rect width="400" height="300" rx="8" fill="{FILLS[hue]}"/>
+  <rect width="400" height="300" rx="8" fill="{PlaceholderPhoto.FILLS[hue]}"/>
   <rect x="14" y="14" width="372" height="272" rx="6" fill="none" stroke="rgba(90,70,50,.35)"/>
   <circle cx="200" cy="120" r="42" fill="rgba(255,255,255,.5)"/>
   <rect x="120" y="196" width="160" height="14" rx="7" fill="rgba(255,255,255,.65)"/>
@@ -75,7 +50,7 @@ def initials_of(name: str) -> str:
 
 def svg_avatar(initials: str, hue: str) -> str:
     return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
-  <rect width="120" height="120" rx="60" fill="{FILLS[hue]}"/>
+  <rect width="120" height="120" rx="60" fill="{PlaceholderPhoto.FILLS[hue]}"/>
   <text x="60" y="72" text-anchor="middle" font-family="Georgia, serif" font-size="34" fill="#4c3d2c">{initials}</text>
 </svg>"""
 
@@ -100,7 +75,7 @@ def _letter_page_no(filename: str) -> int:
     letter assets (envelopes, backs)."""
     try:
         return int(filename.split("-")[1].split(".")[0])
-    except _PAGE_PARSE_ERRORS:
+    except PlaceholderPaper._PAGE_PARSE_ERRORS:
         return 1
 
 
@@ -120,6 +95,20 @@ def asset_svg(item: Item, filename: str) -> str:
 
 
 class PlaceholderPaper:
+    # A letter asset that isn't page-N (an envelope, a back) — the page parse
+    # falls back to 1.
+    _PAGE_PARSE_ERRORS = (IndexError, ValueError)
+
+    # The ruled-paper look's SVG geometry (tuned once): 11 hand-written lines,
+    # the first at y=40, 22px apart; each line's gentle wave starts 40px in and
+    # steps 10px every 3 lines.
+    _RULED_LINE_COUNT = 11
+    _FIRST_LINE_Y = 40
+    _LINE_SPACING = 22
+    _WAVE_X_BASE = 40
+    _WAVE_X_STEP = 10
+    _WAVE_CYCLE_LINES = 3
+
     """The paper stand-in for a letter/document page — honest: visibly a
     stand-in, never mistaken for the artifact."""
 
@@ -129,6 +118,15 @@ class PlaceholderPaper:
 
 
 class PlaceholderPhoto:
+    FILLS = {
+        "amber": "#e8c39a",
+        "sage": "#b9c4a4",
+        "slate": "#b7c0c9",
+        "rose": "#e0b8b0",
+        "sky": "#aec9d6",
+        "lilac": "#c9bcd6",
+    }
+
     """The photo-frame stand-in for a missing photo."""
 
     @staticmethod

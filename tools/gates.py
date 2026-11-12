@@ -8,7 +8,7 @@ inkless estimates, the duplicated regions).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, override
+from typing import TYPE_CHECKING, ClassVar, override
 
 from pipeline.layout_line import LayoutLine
 from tools.box import aspect_consistent, overlap, reading_axis
@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 class Gate:
     """One fail-fast check over a layout; ``violations`` returns the
     plain-language findings ([] = the gate passes)."""
+
+    REGISTRY: ClassVar[tuple[Gate, ...]] = ()
 
     def violations(self, layout: Layout, tolerance: float = 4.0) -> list[str]:
         raise NotImplementedError
@@ -206,11 +208,11 @@ class BoxlessGate(Gate):
 # The gates in their run order — the integrity first (a malformed box
 # cannot be checked for aspect or extent), then the line-level geometry,
 # then the region-level ambiguity. A tuple: the collection is fixed.
-GATES: tuple[Gate, ...] = (IntegrityGate(), AspectGate(), TextExtentGate(), RegionGate(), BoxlessGate())
+Gate.REGISTRY = (IntegrityGate(), AspectGate(), TextExtentGate(), RegionGate(), BoxlessGate())
 
 
 def validate_layout(layout: Layout, tolerance: float = 4.0) -> list[str]:
     """The fail-fast guard: a layout whose lines fail any
     gate must NEVER reach the front end — the reviewer must never see
     wrong boxes. Returns the violations; [] = clean."""
-    return [violation for gate in GATES for violation in gate.violations(layout, tolerance)]
+    return [violation for gate in Gate.REGISTRY for violation in gate.violations(layout, tolerance)]

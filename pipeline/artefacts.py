@@ -19,37 +19,39 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 from PIL import Image, ImageOps
 
 from tools.atomic import atomic_write
 
-# The review surface's image: the page must read and check rows on a phone,
-# not carry the 12-megapixel JPEG over the LAN. Re-encode as WebP at the
-# page's own pixel dimensions for now — both readers still take their box
-# coordinates from the image's natural size, so the 2000px target needs a
-# coordinate change first. The derivative is cached beside the page.
-VIEW_MAX_EDGE: int | None = None
-VIEW_QUALITY = 70
-# Bump when the renderer's output changes: cached derivatives from an older
-# renderer (e.g. one that ignored EXIF orientation) must not survive.
-VIEW_VERSION = 2
-
-# the marker suffix each route's read writes (pipeline/classify.read_route)
-READ_MARKERS: dict[str, tuple[str, ...]] = {
-    "direct": ("printed", "structured"),
-    "structured": ("structured",),
-    "rows": ("rows",),
-    "none": (),
-}
-# the reviewer's correction files, written beside the reading
-ADJUSTMENTS = "row-adjustments.json"
-ADJUSTED_ROWS = "rows-adjusted.json"
-
 
 @dataclass(frozen=True)
 class BatchArtefacts:
     """One batch's stage paths, and the read-completion rule over them."""
+
+    # The review surface's image: the page must read and check rows on a phone,
+    # not carry the 12-megapixel JPEG over the LAN. Re-encode as WebP at the
+    # page's own pixel dimensions for now — both readers still take their box
+    # coordinates from the image's natural size, so the 2000px target needs a
+    # coordinate change first. The derivative is cached beside the page.
+    _VIEW_MAX_EDGE: ClassVar[int | None] = None
+    _VIEW_QUALITY = 70
+    # Bump when the renderer's output changes: cached derivatives from an older
+    # renderer (e.g. one that ignored EXIF orientation) must not survive.
+    _VIEW_VERSION = 2
+
+    # the marker suffix each route's read writes (pipeline/classify.read_route)
+    _READ_MARKERS: ClassVar[dict[str, tuple[str, ...]]] = {
+        "direct": ("printed", "structured"),
+        "structured": ("structured",),
+        "rows": ("rows",),
+        "none": (),
+    }
+
+    # the reviewer's correction files, written beside the reading
+    _ADJUSTMENTS = "row-adjustments.json"
+    _ADJUSTED_ROWS = "rows-adjusted.json"
 
     work_dir: Path
     batch_id: str
@@ -92,7 +94,7 @@ class BatchArtefacts:
     def view(self, page: str) -> Path:
         """The cached review derivative of one page (WebP; the page's own
         pixel dimensions until the box-normalisation change permits 2000px)."""
-        return self.view_dir / f"{Path(page).stem}.v{VIEW_VERSION}.webp"
+        return self.view_dir / f"{Path(page).stem}.v{BatchArtefacts._VIEW_VERSION}.webp"
 
     def view_image(self, page: str, source: Path | None = None) -> Path:
         """Render (or reuse) the page's view image from *source*.
@@ -109,10 +111,12 @@ class BatchArtefacts:
             return target
         with Image.open(source) as opened:
             image = ImageOps.exif_transpose(opened).convert("RGB")
-            if VIEW_MAX_EDGE is not None:
-                image.thumbnail((VIEW_MAX_EDGE, VIEW_MAX_EDGE), Image.Resampling.LANCZOS)
+            if BatchArtefacts._VIEW_MAX_EDGE is not None:
+                image.thumbnail(
+                    (BatchArtefacts._VIEW_MAX_EDGE, BatchArtefacts._VIEW_MAX_EDGE), Image.Resampling.LANCZOS
+                )
             buffer = io.BytesIO()
-            image.save(buffer, "WEBP", quality=VIEW_QUALITY, method=4)
+            image.save(buffer, "WEBP", quality=BatchArtefacts._VIEW_QUALITY, method=4)
         atomic_write(target, buffer.getvalue())
         return target
 
@@ -130,11 +134,11 @@ class BatchArtefacts:
 
     def adjustments(self, page: str) -> Path:
         """The reviewer's drawn row lines."""
-        return self.guess_dir / f"{Path(page).stem}.{ADJUSTMENTS}"
+        return self.guess_dir / f"{Path(page).stem}.{BatchArtefacts._ADJUSTMENTS}"
 
     def adjusted_rows(self, page: str) -> Path:
         """The correction's rows (the wire contract)."""
-        return self.guess_dir / f"{Path(page).stem}.{ADJUSTED_ROWS}"
+        return self.guess_dir / f"{Path(page).stem}.{BatchArtefacts._ADJUSTED_ROWS}"
 
     def read_receipts(self, page: str) -> tuple[Path, ...]:
         """Everything that says this page's read is done: its text and every
@@ -148,7 +152,7 @@ class BatchArtefacts:
     def direct_marker(self, page: str) -> Path:
         """The page's direct-read marker, whichever read wrote it (printed
         prose, or a form's structure); the printed path when there is none."""
-        for kind in READ_MARKERS["direct"]:
+        for kind in BatchArtefacts._READ_MARKERS["direct"]:
             marker = self.marker(page, kind)
             if marker.is_file():
                 return marker
@@ -156,7 +160,7 @@ class BatchArtefacts:
 
     def read_kind(self, page: str, route: str) -> str | None:
         """The marker kind that completed this page's read, or None."""
-        for kind in READ_MARKERS.get(route, ()):
+        for kind in BatchArtefacts._READ_MARKERS.get(route, ()):
             if self.marker(page, kind).is_file():
                 return kind
         return None

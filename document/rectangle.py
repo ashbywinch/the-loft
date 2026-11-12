@@ -10,10 +10,6 @@ from __future__ import annotations
 import math
 from typing import Any, NamedTuple
 
-# the fields a box record carries; a record with any other field is a word's
-# record (its line, baseline and waistline are measures, not a box's)
-BOX_FIELDS = ("x0", "y0", "x1", "y1")
-
 
 class Rectangle(NamedTuple):
     """A rectangle in page pixels: the geometry every box shares."""
@@ -22,6 +18,10 @@ class Rectangle(NamedTuple):
     y0: float
     x1: float
     y1: float
+
+    # the fields a box record carries; a record with any other field is a word's
+    # record (its line, baseline and waistline are measures, not a box's)
+    _FIELDS = ("x0", "y0", "x1", "y1")
 
     @property
     def width(self) -> float:
@@ -46,10 +46,10 @@ class Rectangle(NamedTuple):
         waistline) is a word's record, not a box's."""
         if not isinstance(raw, dict):
             raise ValueError("a box record is not an object")
-        missing = [key for key in BOX_FIELDS if key not in raw]
+        missing = [key for key in cls._FIELDS if key not in raw]
         if missing:
             raise ValueError(f"a box record is missing {sorted(missing)}")
-        extra = [key for key in raw if key not in BOX_FIELDS]
+        extra = [key for key in raw if key not in cls._FIELDS]
         if extra:
             raise ValueError(f"a box record carries fields that are not a box's: {sorted(extra)}")
         return cls(float(raw["x0"]), float(raw["y0"]), float(raw["x1"]), float(raw["y1"]))

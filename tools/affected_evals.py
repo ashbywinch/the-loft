@@ -15,19 +15,22 @@ from __future__ import annotations
 import subprocess
 import sys
 
-# The marker expression per changed file — "or" joins the suites the file
-# feeds (a shared module is imported by several).
-CHANGED_TO_MARKERS: dict[str, str] = {
-    "tools/review.py": "eval_review",
-    "tools/eval_review.py": "eval_review",
-    "tools/records.py": "eval_review or eval_memory",
-    "tools/archive.py": "eval_review",
-    "tools/server.py": "eval_review",
-    "tools/ai_client.py": "eval_review or eval_memory",
-    "app/views/import.js": "eval_review",
-    "tools/memory.py": "eval_memory",
-    "tools/eval_memory.py": "eval_memory",
-}
+
+class AffectedEvals:
+    """The marker expression per changed file — "or" joins the suites the file
+    feeds (a shared module is imported by several)."""
+
+    MARKERS: dict[str, str] = {
+        "tools/review.py": "eval_review",
+        "tools/eval_review.py": "eval_review",
+        "tools/records.py": "eval_review or eval_memory",
+        "tools/archive.py": "eval_review",
+        "tools/server.py": "eval_review",
+        "tools/ai_client.py": "eval_review or eval_memory",
+        "app/views/import.js": "eval_review",
+        "tools/memory.py": "eval_memory",
+        "tools/eval_memory.py": "eval_memory",
+    }
 
 
 def _git_base() -> str:
@@ -48,7 +51,7 @@ def affected_markers() -> str:
         files += result.stdout.splitlines()
     result = subprocess.run(["git", "diff", "--name-only", _git_base()], capture_output=True, text=True)
     files += result.stdout.splitlines()
-    markers = {m for f in files if f in CHANGED_TO_MARKERS for m in CHANGED_TO_MARKERS[f].split(" or ")}
+    markers = {m for f in files if f in AffectedEvals.MARKERS for m in AffectedEvals.MARKERS[f].split(" or ")}
     return " or ".join(sorted(markers)) or "none"
 
 

@@ -26,32 +26,7 @@ from document.page_size import PageSize
 from pipeline.boundary import Boundary
 from pipeline.page_flag import PageFlag
 
-_ASPECT_EPS = 1e-9  # float division-underflow guard
-
-# The paper-size tolerance for phone scans: the SAME physical sheet
-# photographed twice differs in pixel dims (distance, crop — the
-# postcard's two sides measure 3500x2215 and 2333x3500), so
-# the comparison is the normalized aspect (min/max), within 12%: a
-# postcard (0.63-0.70) vs A4 (0.71) vs letter (0.77) stay separable
-# while the two sides of one sheet match.
-PAPER_TOLERANCE = 0.12
-
-_LIGHT_KINDS = ("photo", "drawing")
-
 _PAGE_NUMBER = re.compile(r"^\s*(?:page\s*)?(\d{1,3})\s*[.)]?\s*$", re.IGNORECASE)
-
-
-def paper_aspect(width: int, height: int) -> float:
-    """The rotation-invariant shape: the normalized aspect (min/max)."""
-    return min(width, height) / max(width, height)
-
-
-def same_paper(a: PageSize, b: PageSize, tolerance: float = PAPER_TOLERANCE) -> bool:
-    """Two page images are the same physical paper when their normalized
-    aspects agree within the tolerance (the phone-scan proxy for paper
-    size)."""
-    pa, pb = paper_aspect(a.width, a.height), paper_aspect(b.width, b.height)
-    return abs(pa - pb) / max(min(pa, pb), _ASPECT_EPS) <= tolerance
 
 
 def first_page_number(text: str | None) -> int | None:
@@ -65,16 +40,39 @@ def first_page_number(text: str | None) -> int | None:
     return int(m.group(1)) if m else None
 
 
-def _is_light(kind: str) -> bool:
-    return kind in _LIGHT_KINDS
-
-
 class GroupingScorer:
     """The document-grouping scorer (TECHSPEC §16.14): the page evidence —
     kinds, paper sizes, corrected texts, the model's flags — and the
     boundary decisions over the full sequence. The evidence lives here
     once; the helpers that used to receive (page, flags) everywhere read
     it off the scorer."""
+
+    _ASPECT_EPS = 1e-9  # float division-underflow guard
+    # The paper-size tolerance for phone scans: the SAME physical sheet
+    # photographed twice differs in pixel dims (distance, crop — the
+    # postcard's two sides measure 3500x2215 and 2333x3500), so
+    # the comparison is the normalized aspect (min/max), within 12%: a
+    # postcard (0.63-0.70) vs A4 (0.71) vs letter (0.77) stay separable
+    # while the two sides of one sheet match.
+    PAPER_TOLERANCE = 0.12
+    _LIGHT_KINDS = ("photo", "drawing")
+
+    @staticmethod
+    def paper_aspect(width: int, height: int) -> float:
+        """The rotation-invariant shape: the normalized aspect (min/max)."""
+        return min(width, height) / max(width, height)
+
+    @staticmethod
+    def same_paper(a: PageSize, b: PageSize, tolerance: float = PAPER_TOLERANCE) -> bool:
+        """Two page images are the same physical paper when their normalized
+        aspects agree within the tolerance (the phone-scan proxy for paper
+        size)."""
+        pa, pb = GroupingScorer.paper_aspect(a.width, a.height), GroupingScorer.paper_aspect(b.width, b.height)
+        return abs(pa - pb) / max(min(pa, pb), GroupingScorer._ASPECT_EPS) <= tolerance
+
+    @staticmethod
+    def _is_light(kind: str) -> bool:
+        return kind in GroupingScorer._LIGHT_KINDS
 
     def __init__(
         self,
@@ -104,7 +102,7 @@ class GroupingScorer:
         document) or "split" (False, a new document at ``page``), in the
         2026-08-17 priority order: paper size, then page numbers, then the
         model's greeting/sign-off flags."""
-        if not same_paper(self._dims[prev], self._dims[page]):
+        if not GroupingScorer.same_paper(self._dims[prev], self._dims[page]):
             return False  # 2. different papers are not the same document
         n = first_page_number(self._texts.get(page))
         if n is not None:
@@ -139,14 +137,14 @@ class GroupingScorer:
             # 1. the duplex cue (strongest): one light side + one text side,
             # the same paper — the two sides of one sheet, same document.
             if (
-                _is_light(kind) != _is_light(prev_kind)
-                and same_paper(self._dims[prev], self._dims[page])
+                GroupingScorer._is_light(kind) != GroupingScorer._is_light(prev_kind)
+                and GroupingScorer.same_paper(self._dims[prev], self._dims[page])
                 and page not in claimed
                 and prev not in claimed
             ):
                 claimed.add(prev)
                 claimed.add(page)
-                if _is_light(kind) and not _is_light(prev_kind):
+                if GroupingScorer._is_light(kind) and not GroupingScorer._is_light(prev_kind):
                     # the picture side was scanned AFTER its text side — it
                     # is still page 1 (user, 2026-08-17: the picture side of
                     # a postcard is the first page, whatever the scan order)

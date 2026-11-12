@@ -17,14 +17,14 @@ from pathlib import Path
 
 import pytest
 
-from tools.loft_paths import ARCHIVE_DIR
+from tools.loft_paths import LoftPaths
 from tools.pii_markers import family_markers, file_offenders
 
 REPO = Path(__file__).resolve().parent.parent
 
 
 @pytest.mark.archive
-@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.skipif(not (LoftPaths.ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_no_family_pii_in_tracked_files() -> None:
     markers = family_markers()
     assert markers, "no markers loaded — the dataset lookup must have found the family"

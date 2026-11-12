@@ -14,11 +14,11 @@ import json
 import pytest
 
 from pipeline.layout import Layout, validate_layout
-from tools.loft_paths import WORK_DIR
+from tools.loft_paths import LoftPaths
 
 
 @pytest.mark.archive
-@pytest.mark.skipif(not WORK_DIR.is_dir(), reason="work disk not mounted")
+@pytest.mark.skipif(not LoftPaths.WORK_DIR.is_dir(), reason="work disk not mounted")
 def test_every_stored_layout_is_clean_or_loudly_refused() -> None:
     """No layout on disk may be structurally dirty: each file either
     validates clean or its page has no business serving boxes. The first
@@ -27,7 +27,7 @@ def test_every_stored_layout_is_clean_or_loudly_refused() -> None:
     the clean-skip."""
     dirty: list[str] = []
     stale: list[str] = []
-    for batch_dir in sorted(WORK_DIR.iterdir()):
+    for batch_dir in sorted(LoftPaths.WORK_DIR.iterdir()):
         guess_dir = batch_dir / "ocr-guess"
         if not guess_dir.is_dir():
             continue
@@ -53,7 +53,7 @@ def test_every_stored_layout_is_clean_or_loudly_refused() -> None:
 
 
 @pytest.mark.archive
-@pytest.mark.skipif(not WORK_DIR.is_dir(), reason="work disk not mounted")
+@pytest.mark.skipif(not LoftPaths.WORK_DIR.is_dir(), reason="work disk not mounted")
 def test_serve_walk_boxes_carry_ink_and_single_lines() -> None:
     """The image-aware gates at batch level: every boxed
     line must sit on ink (Gate D) and enclose ONE text band (the
@@ -67,7 +67,7 @@ def test_serve_walk_boxes_carry_ink_and_single_lines() -> None:
 
     offenders: list[str] = []
     checked = 0
-    for batch_dir in sorted(WORK_DIR.iterdir()):
+    for batch_dir in sorted(LoftPaths.WORK_DIR.iterdir()):
         guess_dir = batch_dir / "ocr-guess"
         oriented_dir = batch_dir / "oriented"
         if not guess_dir.is_dir() or not oriented_dir.is_dir():

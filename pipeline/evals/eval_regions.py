@@ -28,7 +28,7 @@ from pipeline.evals.eval_crop_grid import read_crop
 from pipeline.evals.eval_geometry import CropReading
 from pipeline.layout import Layout
 from pipeline.layout_line import LayoutLine
-from tools.loft_paths import WORK_DIR
+from tools.loft_paths import LoftPaths
 
 
 @dataclass(frozen=True)
@@ -207,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--model", default="z-ai/glm-4.6v")
     parser.add_argument("--base-url", default="https://openrouter.ai/api/v1")
     parser.add_argument("--api-key", default=None)
-    parser.add_argument("--work-dir", type=Path, default=WORK_DIR)
+    parser.add_argument("--work-dir", type=Path, default=LoftPaths.WORK_DIR)
     args = parser.parse_args(argv)
 
     report = run(

@@ -38,7 +38,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
-from typing import override
+from typing import ClassVar, override
 from urllib.error import HTTPError
 
 # CI runs this as a FILE (`python3 pipeline/evals/check_review_posted.py`), so
@@ -50,25 +50,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from pipeline.model.http_headers import HttpHeaders  # noqa: E402 — the bootstrap above must run first
 
-BOT_STEP_MARK = "Run the-pr-agent/pr-agent"
-
-# The markers the bot leaves when a review dies inside the (swallowed)
-# exception seam, plus the size signal that precedes a died model call.
-_ERROR_MARKERS = (
-    "Failed to process the command.",
-    "Traceback (most recent call last)",
-    # the route/auth class: the review 401s at the API boundary and dies
-    # silently
-    "AuthenticationError",
-    "Invalid API key",
-    "Unauthorized",
-    "401",
-)
 _SIZE_RE = re.compile(r"Tokens:\s*(\d+),\s*total tokens over limit:\s*(\d+)")
-_TRACEBACK_TAIL = 12  # lines after a traceback/marker worth reporting
 
 
 class _GitHub:
+    _ERROR_MARKERS: ClassVar[tuple[str, ...]] = ()
+    _TRACEBACK_TAIL: ClassVar[int] = 0
+
     """The API client this check speaks: every call carries the same token and
     asks for the same JSON accept header, so they travel as this class's state.
     The transport is injected (the repo's DI convention) — the tests drive the
@@ -106,6 +94,22 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _OPENER = urllib.request.build_opener(_NoRedirect())
+
+
+# The markers the bot leaves when a review dies inside the (swallowed)
+# exception seam, plus the size signal that precedes a died model call.
+_GitHub._ERROR_MARKERS = (
+    "Failed to process the command.",
+    "Traceback (most recent call last)",
+    # the route/auth class: the review 401s at the API boundary and dies
+    # silently
+    "AuthenticationError",
+    "Invalid API key",
+    "Unauthorized",
+    "401",
+)
+
+_GitHub._TRACEBACK_TAIL = 12  # lines after a traceback/marker worth reporting
 
 
 def _job_log(repo: str, token: str) -> str | None:
@@ -206,8 +210,8 @@ def _size_reason(bot_lines: list[str]) -> str | None:
 def _error_marker_reason(bot_lines: list[str]) -> str | None:
     """The swallowed-exception seam: the traceback the bot logged and hid."""
     for i, ln in enumerate(bot_lines):
-        if any(mark in ln for mark in _ERROR_MARKERS):
-            tail = [line for line in bot_lines[i : i + _TRACEBACK_TAIL] if line.strip()]
+        if any(mark in ln for mark in _GitHub._ERROR_MARKERS):
+            tail = [line for line in bot_lines[i : i + _GitHub._TRACEBACK_TAIL] if line.strip()]
             snippet = " | ".join(line.split("\t")[-1][:200] for line in tail[:4])
             return f"the bot logged an error before dying: {snippet}"
     return None

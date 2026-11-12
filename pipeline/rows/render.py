@@ -24,15 +24,15 @@ from document.colour import Colour
 from document.row import Row
 from document.row_tint import RowTint
 
-# Pillow 9.2 added the size argument to ImageFont.load_default - earlier
-# Pillows take no size. A version capability, checked once - never an
-# exception-based fallback (the try/except was an invisible swallow).
-_PILLOW_HAS_SIZEABLE_DEFAULT_FONT = tuple(int(part) for part in PIL.__version__.split(".")) >= (9, 2)
-
 
 @dataclass(frozen=True)
 class RenderStyle:
     """How much of the join band to draw, and how opaque the tint is."""
+
+    # Pillow 9.2 added the size argument to ImageFont.load_default - earlier
+    # Pillows take no size. A version capability, checked once - never an
+    # exception-based fallback (the try/except was an invisible swallow).
+    _PILLOW_HAS_SIZEABLE_DEFAULT_FONT = tuple(int(part) for part in PIL.__version__.split(".")) >= (9, 2)
 
     tint: int = 55  # 0-255: the row colour's alpha over the paper
 
@@ -49,7 +49,7 @@ DEFAULT_STYLE = RenderStyle()
 def _stroke_font() -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
     """The stroke numbers' font: the size-capable default when the Pillow
     in use has one (9.2+), else the plain unscaled default."""
-    if _PILLOW_HAS_SIZEABLE_DEFAULT_FONT:
+    if RenderStyle._PILLOW_HAS_SIZEABLE_DEFAULT_FONT:
         return ImageFont.load_default(size=52)
     return ImageFont.load_default()
 

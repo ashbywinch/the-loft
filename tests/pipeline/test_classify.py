@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from pipeline.classify import classify_page, classify_pages, run_classify
+from pipeline.classify import PageKinds, classify_pages, run_classify
 from pipeline.model.vlm import VlmError
 from pipeline.page_classification import PageClassification
 
@@ -105,7 +105,7 @@ def test_classify_page_reads_the_models_kind(tmp_path: Path) -> None:
     def good(request: object, timeout: float | None = None) -> _BytesResponse:
         return _BytesResponse(_completion('{"kind": "photograph", "confidence": 0.93}'))
 
-    result = classify_page(image, urlopen=good)
+    result = PageKinds.classify_page(image, urlopen=good)
     assert result.kind == "photograph"
     assert result.confidences["photograph"] == 0.93
 
@@ -113,13 +113,13 @@ def test_classify_page_reads_the_models_kind(tmp_path: Path) -> None:
         return _BytesResponse(_completion('{"kind": "postcard", "confidence": 0.5}'))
 
     with pytest.raises(VlmError):
-        classify_page(image, urlopen=unknown_kind)
+        PageKinds.classify_page(image, urlopen=unknown_kind)
 
     def garbage(request: object, timeout: float | None = None) -> _BytesResponse:
         return _BytesResponse(_completion("I could not classify this page"))
 
     with pytest.raises(VlmError):
-        classify_page(image, urlopen=garbage)
+        PageKinds.classify_page(image, urlopen=garbage)
 
 
 def test_the_classifier_names_the_medium_of_a_text_page(tmp_path: Path) -> None:
@@ -131,20 +131,20 @@ def test_the_classifier_names_the_medium_of_a_text_page(tmp_path: Path) -> None:
     def printed(request: object, timeout: float | None = None) -> _BytesResponse:
         return _BytesResponse(_completion('{"kind": "printed", "confidence": 0.97}'))
 
-    result = classify_page(image, urlopen=printed)
+    result = PageKinds.classify_page(image, urlopen=printed)
     assert result.kind == "printed" and result.medium is None
     assert PageClassification.from_dict(result.to_dict()) == result
 
     def photo(request: object, timeout: float | None = None) -> _BytesResponse:
         return _BytesResponse(_completion('{"kind": "photograph", "confidence": 0.9, "medium": null}'))
 
-    assert classify_page(image, urlopen=photo).medium is None
+    assert PageKinds.classify_page(image, urlopen=photo).medium is None
 
     def scrawl(request: object, timeout: float | None = None) -> _BytesResponse:
         return _BytesResponse(_completion('{"kind": "form", "confidence": 0.9, "medium": "scrawl"}'))
 
     with pytest.raises(VlmError):
-        classify_page(image, urlopen=scrawl)
+        PageKinds.classify_page(image, urlopen=scrawl)
 
 
 def test_the_read_route_is_the_category_table() -> None:
@@ -152,16 +152,16 @@ def test_the_read_route_is_the_category_table() -> None:
     a photograph or a drawing is not read; printed writing is one direct read;
     handwriting and a postcard face take the row pipeline; a form is structured.
     A record written in the old vocabulary routes by what it named."""
-    from pipeline.classify import read_route
+    from pipeline.classify import PageKinds
 
-    assert read_route({"kind": "photograph"}) == "none"
-    assert read_route({"kind": "drawing"}) == "none"
-    assert read_route({"kind": "printed"}) == "direct"
-    assert read_route({"kind": "handwriting"}) == "rows"
-    assert read_route({"kind": "postcard_face", "medium": "printed"}) == "direct"
-    assert read_route({"kind": "postcard_face", "medium": "handwritten"}) == "rows"
-    assert read_route({"kind": "postcard_face"}) == "rows"
-    assert read_route({"kind": "form", "medium": "handwritten"}) == "structured"
+    assert PageKinds.read_route({"kind": "photograph"}) == "none"
+    assert PageKinds.read_route({"kind": "drawing"}) == "none"
+    assert PageKinds.read_route({"kind": "printed"}) == "direct"
+    assert PageKinds.read_route({"kind": "handwriting"}) == "rows"
+    assert PageKinds.read_route({"kind": "postcard_face", "medium": "printed"}) == "direct"
+    assert PageKinds.read_route({"kind": "postcard_face", "medium": "handwritten"}) == "rows"
+    assert PageKinds.read_route({"kind": "postcard_face"}) == "rows"
+    assert PageKinds.read_route({"kind": "form", "medium": "handwritten"}) == "structured"
     # the pre-2026-11-02 records
-    assert read_route({"kind": "text"}) == "rows"
-    assert read_route({"kind": "photo"}) == "none"
+    assert PageKinds.read_route({"kind": "text"}) == "rows"
+    assert PageKinds.read_route({"kind": "photo"}) == "none"

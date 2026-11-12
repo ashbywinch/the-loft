@@ -24,7 +24,7 @@ import re
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, replace
 from datetime import UTC
-from typing import Any, Literal, TypeVar, cast
+from typing import Any, ClassVar, Literal, TypeVar, cast
 
 from tools.asset import Asset
 from tools.date_mention import DateMention
@@ -859,14 +859,6 @@ class ReviewQueue:
     already: int
 
 
-# The item's primary content, held outside the sidecar (docs/TECHSPEC.md
-# §3): a story is story.txt, a letter or document's transcription is
-# transcription.txt. Content files version with their sidecar: v1 ->
-# story.txt, v2 -> story-2.txt, … (append-only).
-CONTENT_FILES: dict[str, str] = {"story": "story.txt", "transcription": "transcription.txt"}
-CONTENT_CAPTIONS: dict[str, str] = {"story": "The story, verbatim", "transcription": "The transcription"}
-
-
 def _capture_transcription(sidecar: MutableMapping[str, Any], content: dict[str, str]) -> None:
     """Move the transcription out of the sidecar — it is primary content,
     not metadata — and, when present, keep it as a content file."""
@@ -913,6 +905,16 @@ def _story_flag(raw: Mapping[str, Any], item_type: str, key: str, story_message:
 
 @dataclass(frozen=True)
 class Item:
+    # The item's primary content, held outside the sidecar (docs/TECHSPEC.md
+    # §3): a story is story.txt, a letter or document's transcription is
+    # transcription.txt. Content files version with their sidecar: v1 ->
+    # story.txt, v2 -> story-2.txt, … (append-only).
+    CONTENT_FILES: ClassVar[dict[str, str]] = {"story": "story.txt", "transcription": "transcription.txt"}
+    CONTENT_CAPTIONS: ClassVar[dict[str, str]] = {
+        "story": "The story, verbatim",
+        "transcription": "The transcription",
+    }
+
     """An archive item — the sidecar wire format (letter, document, photo,
     object, story, ...), the identity records' sibling. The whole object
     model lives in this module: validated at the write seam
@@ -1111,15 +1113,17 @@ def _validate_date_mentions(mentions: Any) -> None:
 IdentityTable = PeopleTable | PlacesTable | OrgsTable | ThemesTable | ImportsTable
 
 
-# The identity tables, by the name the archive's store knows them by — one
-# typed record per name, the publish seam's dispatch.
-_IDENTITY_TABLES: tuple[tuple[str, type[IdentityTable]], ...] = (
-    ("people", PeopleTable),
-    ("places", PlacesTable),
-    ("orgs", OrgsTable),
-    ("themes", ThemesTable),
-    ("imports", ImportsTable),
-)
+class IdentityTables:
+    """The identity tables, by the name the archive's store knows them by —
+    one typed record per name, the publish seam's dispatch."""
+
+    TABLES: tuple[tuple[str, type[IdentityTable]], ...] = (
+        ("people", PeopleTable),
+        ("places", PlacesTable),
+        ("orgs", OrgsTable),
+        ("themes", ThemesTable),
+        ("imports", ImportsTable),
+    )
 
 
 def validate_identity(name: str, table: Mapping[str, Any]) -> IdentityTable:
@@ -1129,7 +1133,7 @@ def validate_identity(name: str, table: Mapping[str, Any]) -> IdentityTable:
     break; derive wraps it as a DeriveError so a bad table fails publish
     loudly."""
     record = dict(table)
-    for table_name, table_type in _IDENTITY_TABLES:
+    for table_name, table_type in IdentityTables.TABLES:
         if table_name == name:
             return table_type.from_dict(record)
     raise ValueError(f"unknown identity table: {name}")

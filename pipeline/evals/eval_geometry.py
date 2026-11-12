@@ -423,6 +423,9 @@ def detection_report(fixtures: list[Fixture], label: str) -> str:
 
 @dataclass
 class LocationCost:
+    _OVERHEAD_TOKENS = 800
+    _CLIP_TOKENS = 300
+
     """The clip-location candidate's cost for one fixture: the number of
     model calls and the estimated tokens. The model's per-call overhead
     (the system prompt + the image tokens) dominates small batches — the
@@ -438,16 +441,12 @@ class LocationCost:
 # The model call's fixed overhead: the system prompt + one image's tokens.
 # A line clip at the marker-box resolution is ~a few hundred tokens; the
 # overhead is the dominant term at batch size 1.
-_OVERHEAD_TOKENS = 800
-_CLIP_TOKENS = 300
-
-
 def clip_location_cost(n_lines: int, batch_size: int) -> LocationCost:
     """The cost of locating ``n_lines`` in batches of ``batch_size``:
     each call carries the overhead + the batch's clips. The larger
     batches amortize the overhead — the sweep's point."""
     calls = ceil(n_lines / batch_size) if n_lines else 0
-    tokens = calls * _OVERHEAD_TOKENS + n_lines * _CLIP_TOKENS
+    tokens = calls * LocationCost._OVERHEAD_TOKENS + n_lines * LocationCost._CLIP_TOKENS
     return LocationCost(calls, tokens)
 
 

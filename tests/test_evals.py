@@ -36,7 +36,7 @@ from pipeline.identification import Identification
 from pipeline.identify import identify
 from pipeline.model.ai_client import AIClient, AIClientError
 from tools.assessment import Assessment
-from tools.memory import ASSESS_MAX_TOKENS, Knowledge
+from tools.memory import Assessor, Knowledge
 from tools.records import Item, Person
 from tools.review_verdict import ReviewVerdict
 
@@ -44,7 +44,7 @@ from tools.review_verdict import ReviewVerdict
 @pytest.fixture(scope="session")
 def client() -> AIClient:
     try:
-        return AIClient(max_tokens=ASSESS_MAX_TOKENS)
+        return AIClient(max_tokens=Assessor.ASSESS_MAX_TOKENS)
     except AIClientError as e:
         # fail loudly, never a silent skip: an eval that cannot run must say
         # so — a skip would green a suite that never ran
@@ -63,13 +63,13 @@ def default_knowledge() -> Knowledge:
 def review_outputs(client: AIClient) -> dict[str, ReviewVerdict]:
     """Run every review flow ONCE and cache the outputs — the condition
     tests are independent and unaware they share the runs."""
-    return {f.name: review_evals.run_flow(client, f) for f in review_evals.FLOWS}
+    return {f.name: review_evals.run_flow(client, f) for f in review_evals.ReviewFixtures.FLOWS}
 
 
 @pytest.mark.eval
 @pytest.mark.eval_review
-@pytest.mark.parametrize("flow", review_evals.FLOWS, ids=lambda f: f.name)
-@pytest.mark.parametrize("condition", review_evals.REVIEW_CONDITIONS, ids=lambda c: c[0])
+@pytest.mark.parametrize("flow", review_evals.ReviewFixtures.FLOWS, ids=lambda f: f.name)
+@pytest.mark.parametrize("condition", review_evals.ReviewFixtures.CONDITIONS, ids=lambda c: c[0])
 def test_review_condition(
     review_outputs: dict[str, ReviewVerdict],
     flow: review_evals.ReviewFlow,
@@ -120,7 +120,7 @@ def memory_outputs(client: AIClient, default_knowledge: Knowledge) -> dict[str, 
     unit of iteration is the suite's prompt, not the single test. An identical
     repeat run is not served from a cache either (measured: two runs of the
     same requests took 14 and 19 minutes), so a repeat re-samples the model."""
-    return {f.name: memory_evals.run_flow(client, f, default_knowledge) for f in memory_evals.FLOWS}
+    return {f.name: memory_evals.run_flow(client, f, default_knowledge) for f in memory_evals.MemoryFlow.ALL}
 
 
 @pytest.mark.eval
@@ -130,7 +130,7 @@ def memory_outputs(client: AIClient, default_knowledge: Knowledge) -> dict[str, 
     not (Path("app/data/people.json")).exists(),
     reason="projection not built — run `loft publish` (the memory evals read the archive's projection)",
 )
-@pytest.mark.parametrize("flow", memory_evals.FLOWS, ids=lambda f: f.name)
+@pytest.mark.parametrize("flow", memory_evals.MemoryFlow.ALL, ids=lambda f: f.name)
 def test_memory_contract(memory_outputs: dict[str, Assessment], flow: memory_evals.MemoryFlow) -> None:
     errors = memory_evals.condition_contract(memory_outputs[flow.name])
     assert not errors, "\n".join(errors)
@@ -143,7 +143,7 @@ def test_memory_contract(memory_outputs: dict[str, Assessment], flow: memory_eva
     not (Path("app/data/people.json")).exists(),
     reason="projection not built — run `loft publish` (the memory evals read the archive's projection)",
 )
-@pytest.mark.parametrize("flow", memory_evals.FLOWS, ids=lambda f: f.name)
+@pytest.mark.parametrize("flow", memory_evals.MemoryFlow.ALL, ids=lambda f: f.name)
 def test_memory_flow_conditions(memory_outputs: dict[str, Assessment], flow: memory_evals.MemoryFlow) -> None:
     errors = flow.assert_(memory_outputs[flow.name])
     assert not errors, "\n".join(errors)

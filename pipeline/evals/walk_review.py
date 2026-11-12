@@ -19,16 +19,15 @@ from PIL import Image, ImageDraw
 from pipeline.artefacts import BatchArtefacts
 from pipeline.layout import Layout, load_layout_store
 from pipeline.store import PipelineStore
-from tools.loft_paths import WORK_DIR
-
-MAX_SHEET_WIDTH = 1600  # vision-legible; scans here are 3000-4000px
+from tools.loft_paths import LoftPaths
 
 
 def annotate_page(image_path: Path, layout: Layout, out_path: Path) -> int:
     """Draw the layout's line boxes (red, indexed) on the page image."""
+    max_sheet_width = 1600  # vision-legible; scans here are 3000-4000px
     with Image.open(image_path) as im:
         im = im.convert("RGB")
-        scale = min(1.0, MAX_SHEET_WIDTH / im.width)
+        scale = min(1.0, max_sheet_width / im.width)
         if scale < 1.0:
             im = im.resize((round(im.width * scale), round(im.height * scale)))
         draw = ImageDraw.Draw(im)
@@ -46,10 +45,10 @@ def annotate_page(image_path: Path, layout: Layout, out_path: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    batches = argv if argv else [p.name for p in sorted(WORK_DIR.iterdir()) if p.is_dir()]
-    store = PipelineStore(WORK_DIR)
+    batches = argv if argv else [p.name for p in sorted(LoftPaths.WORK_DIR.iterdir()) if p.is_dir()]
+    store = PipelineStore(LoftPaths.WORK_DIR)
     for batch in batches:
-        artefacts = BatchArtefacts(WORK_DIR, batch)
+        artefacts = BatchArtefacts(LoftPaths.WORK_DIR, batch)
         guess_dir = artefacts.guess_dir
         if not guess_dir.is_dir():
             continue
@@ -60,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
             if not image_path.is_file():
                 continue
             try:
-                layout = load_layout_store(store, str(layout_path.relative_to(WORK_DIR)))
+                layout = load_layout_store(store, str(layout_path.relative_to(LoftPaths.WORK_DIR)))
             # lucidlint: ignore broad-except the per-page boundary: one unloadable layout is reported and skipped
             except Exception as exc:
                 print(f"{batch}/{page}: UNLOADABLE ({exc})")

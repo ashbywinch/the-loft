@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from tools.archive import Archive
-from tools.loft_paths import ARCHIVE_DIR
+from tools.loft_paths import LoftPaths
 from tools.records import Item
 from tools.store import DiskStore
 
@@ -46,9 +46,9 @@ def _narrator_stated_it(transcript: str, told_day: str) -> bool:
 
 
 @pytest.mark.archive
-@pytest.mark.skipif(not (ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.skipif(not (LoftPaths.ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
 def test_no_catalogued_story_is_dated_by_its_told_day() -> None:
-    archive = Archive(DiskStore(ARCHIVE_DIR))
+    archive = Archive(DiskStore(LoftPaths.ARCHIVE_DIR))
     offenders = []
     for item_id in archive.item_ids():
         item = archive.get_item(item_id)

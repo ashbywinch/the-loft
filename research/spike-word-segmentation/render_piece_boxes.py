@@ -19,92 +19,96 @@ from PIL import Image
 
 from document.colour import Colour
 from document.point import Point
-from pipeline.detect.mark import SCALE, find_marks
+from pipeline.detect.mark import Components, find_marks
 from pipeline.detect.reader import LineFitter, artifacts, ink_mask, split_shapes
-from pipeline.detect.ruler import Ruler, line_ratio, traced_pitch, writing_scale
-from pipeline.rows.page_visuals import Crop, captioned_sheet, halo_text, review_image, scaled_crop, stack_sheets
+from pipeline.detect.ruler import Ruler, writing_scale
+from pipeline.rows.page_visuals import CaptionSheet, Crop, PagePainter, halo_text, scaled_crop, stack_sheets
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 if not SCAN.exists():
     raise SystemExit(f"render_* needs the adopt batch mounted - the scan is not at {SCAN}")
-FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-wordseg"
-OUT = Path(__file__).resolve().parent / "evidence" / "piece-boxes.jpg"
 
-# mark id -> (window, scale, [(piece index, label)], caption lines)
-PANELS: dict[str, tuple] = {
-    "2875": (
-        (1920, 2500, 2045, 2620, 6.0),
-        [(0, "P1 16x10"), (1, "P2 52x42")],
-        [
-            "2875: P1 (red) 16x10 and P2 (blue) 52x42 — neither is a line",
-            "the cut stands as the upper/lower word separation (you ruled 2 words)",
-        ],
-    ),
-    "7105": (
-        (950, 2975, 1550, 3075, 2.5),
-        [(1, "P2 564x24")],
-        [
-            "7105: P1 (red) is a rule — 564px wide against 410px of text above",
-            "not aligned, so a rule (and a rule is not a word)",
-        ],
-    ),
-    "14187": (
-        (1130, 3610, 1840, 3760, 2.5),
-        [(0, "P0 448x56"), (1, "P1 618x20")],
-        [
-            "14187: P0 (448x56) is the five words — kept (too tall to be a line)",
-            "P1 (618x20) is an underline: 618 wide vs 640 of text above",
-        ],
-    ),
-    "9676": (
-        (1415, 3195, 1850, 3300, 3.0),
-        [(1, "P1 382x20")],
-        [
-            "9676: P1 (red) is an underline — 382 wide vs the text above",
-            "aligned with the words, so a line, not a word",
-        ],
-    ),
-    "683": (
-        (1380, 2270, 1545, 2375, 6.0),
-        [(2, "P3 26x8")],
-        ["683: P3 (red) 26x8 is not a line (aspect 3.2, not 8)", "so it stays with its word — 683 is one piece"],
-    ),
-}
+
+class Config:
+    """This script's fixed inputs and outputs."""
+
+    FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-wordseg"
+    OUT = Path(__file__).resolve().parent / "evidence" / "piece-boxes.jpg"
+    # mark id -> (window, scale, [(piece index, label)], caption lines)
+    PANELS: dict[str, tuple] = {
+        "2875": (
+            (1920, 2500, 2045, 2620, 6.0),
+            [(0, "P1 16x10"), (1, "P2 52x42")],
+            [
+                "2875: P1 (red) 16x10 and P2 (blue) 52x42 — neither is a line",
+                "the cut stands as the upper/lower word separation (you ruled 2 words)",
+            ],
+        ),
+        "7105": (
+            (950, 2975, 1550, 3075, 2.5),
+            [(1, "P2 564x24")],
+            [
+                "7105: P1 (red) is a rule — 564px wide against 410px of text above",
+                "not aligned, so a rule (and a rule is not a word)",
+            ],
+        ),
+        "14187": (
+            (1130, 3610, 1840, 3760, 2.5),
+            [(0, "P0 448x56"), (1, "P1 618x20")],
+            [
+                "14187: P0 (448x56) is the five words — kept (too tall to be a line)",
+                "P1 (618x20) is an underline: 618 wide vs 640 of text above",
+            ],
+        ),
+        "9676": (
+            (1415, 3195, 1850, 3300, 3.0),
+            [(1, "P1 382x20")],
+            [
+                "9676: P1 (red) is an underline — 382 wide vs the text above",
+                "aligned with the words, so a line, not a word",
+            ],
+        ),
+        "683": (
+            (1380, 2270, 1545, 2375, 6.0),
+            [(2, "P3 26x8")],
+            ["683: P3 (red) 26x8 is not a line (aspect 3.2, not 8)", "so it stays with its word — 683 is one piece"],
+        ),
+    }
 
 
 def _main() -> int:
     page = Image.open(SCAN).convert("RGB")
-    strokes_raw = json.loads((FIXTURE / "strokes.json").read_text())["strokes"]
+    strokes_raw = json.loads((Config.FIXTURE / "strokes.json").read_text())["strokes"]
     mask = ink_mask(page)
     artifacts(mask)
     shapes = find_marks(mask)
-    traced = sorted(float(np.median([p[1] for p in s])) * page.height / SCALE for s in strokes_raw)
-    ratio = line_ratio(traced_pitch(traced), writing_scale([s.height for s in shapes]))
+    traced = sorted(float(np.median([p[1] for p in s])) * page.height / Components.SCALE for s in strokes_raw)
+    ratio = Ruler.line_ratio(Ruler.traced_pitch(traced), writing_scale([s.height for s in shapes]))
     scale = Ruler.of([s.height for s in shapes], ratio)
     lines = LineFitter(scale).fit(shapes)
     by_id = {s.id: s for s in shapes}
     sheets = []
-    for mark_id, ((x0, y0, x1, y1, zoom), boxes, caption) in PANELS.items():
+    for mark_id, ((x0, y0, x1, y1, zoom), boxes, caption) in Config.PANELS.items():
         pieces = split_shapes([by_id[mark_id]], lines, scale.unit)
         crop = scaled_crop(page, Crop(x0, y0, x1, y1, zoom))
-        sheet = captioned_sheet(crop, caption)
+        sheet = CaptionSheet.captioned_sheet(crop, caption)
         draw = sheet.draw
         bar_h = sheet.bar_height
         for index, label in boxes:
             piece = pieces[index]
             colour = (200, 0, 0) if index == boxes[0][0] else (0, 120, 200)
             rect = [
-                (piece.x0 * SCALE - x0) * zoom,
-                (piece.y0 * SCALE - y0) * zoom + bar_h,
-                (piece.x1 * SCALE - x0) * zoom,
-                (piece.y1 * SCALE - y0) * zoom + bar_h,
+                (piece.x0 * Components.SCALE - x0) * zoom,
+                (piece.y0 * Components.SCALE - y0) * zoom + bar_h,
+                (piece.x1 * Components.SCALE - x0) * zoom,
+                (piece.y1 * Components.SCALE - y0) * zoom + bar_h,
             ]
             draw.rectangle(rect, outline=colour + (255,), width=2)
             halo_text(draw, Point(x=rect[0] + 2, y=rect[1] - 26), label, fill=Colour(*colour))
         sheets.append(sheet)
         print(f"{mark_id}: {len(pieces)} pieces, boxed {[b[0] for b in boxes]}")
-    OUT.write_bytes(review_image(stack_sheets([x.sheet for x in sheets])))
-    print(f"piece boxes -> {OUT} ({OUT.stat().st_size // 1024}KB)")
+    Config.OUT.write_bytes(PagePainter.review_image(stack_sheets([x.sheet for x in sheets])))
+    print(f"piece boxes -> {Config.OUT} ({Config.OUT.stat().st_size // 1024}KB)")
     return 0
 
 

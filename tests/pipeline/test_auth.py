@@ -83,7 +83,7 @@ def test_me_payload_uses_the_archive_person(monkeypatch: pytest.MonkeyPatch) -> 
             {"people": [{"id": "p-alex", "name": "Alex Hale", "email": "alex@example.com"}], "relationships": []},
         ),
     )
-    cookie = f"{auth.COOKIE_NAME}={auth._make_session_cookie(SessionUser('alex@example.com', 'A', ''))}"
+    cookie = f"{auth.GoogleOAuth.COOKIE_NAME}={auth._make_session_cookie(SessionUser('alex@example.com', 'A', ''))}"
     session = auth.session_user_from_cookie(cookie)
     assert session is not None
     answer = auth.me_payload(archive, session)

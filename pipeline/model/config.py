@@ -17,13 +17,17 @@ from __future__ import annotations
 
 import os
 
-# the endpoint: the Cloudflare AI Gateway's OpenAI-compatible URL, from the
-# environment the operator sources (`.env` + scripts/model-env.sh)
-GATEWAY_VAR = "OPENAI_BASE_URL"
-CLOUDFLARE_GATEWAY_PREFIX = "https://gateway.ai.cloudflare.com/"
-GATEWAY_BASE_URL: str = os.environ.get(GATEWAY_VAR, "")
 
-# the model aliases — the ONE place they are written
-VISION_MODEL = "dynamic/image"  # classify, orient, printed and structured reads
-CHAT_MODEL = "dynamic/fallback2"  # the general chat default
-BOUNDARY_MODEL = "deepseek/deepseek-v4-flash"  # the document-boundary judgment
+class ModelConfig:
+    """Every model call's endpoint and model alias — the one place they are
+    written."""
+
+    # the endpoint: the Cloudflare AI Gateway's OpenAI-compatible URL, from the
+    # environment the operator sources (`.env` + scripts/model-env.sh)
+    GATEWAY_VAR = "OPENAI_BASE_URL"
+    GATEWAY_BASE_URL: str = os.environ.get(GATEWAY_VAR, "")
+
+    # the model aliases — the ONE place they are written
+    VISION_MODEL = "dynamic/image"  # classify, orient, printed and structured reads
+    CHAT_MODEL = "dynamic/fallback2"  # the general chat default
+    BOUNDARY_MODEL = "deepseek/deepseek-v4-flash"  # the document-boundary judgment

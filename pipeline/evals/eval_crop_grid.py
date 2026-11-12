@@ -28,20 +28,20 @@ from pipeline.artefacts import BatchArtefacts
 from pipeline.evals.eval_geometry import CropLine, CropReading, PageSize, assemble_crop_grid, grid_crops
 from pipeline.layout import Layout, load_layout_store
 from pipeline.layout_line import LayoutLine
-from pipeline.model.config import VISION_MODEL
+from pipeline.model.ai_client import AIClient
+from pipeline.model.config import ModelConfig
 from pipeline.model.transcription import Transcription
 from pipeline.model.vlm import (
-    DEFAULT_BASE_URL,
     VlmError,
+    VlmPrompts,
     parse_transcription_response,
     transcribe_image_vlm,
-    transcription_system_with_context,
 )
 from pipeline.model.vlm_answer import VlmAnswer
 from pipeline.store import PipelineStore
 from pipeline.unmatched_line import UnmatchedLine
 from tools.box import overlap
-from tools.loft_paths import WORK_DIR
+from tools.loft_paths import LoftPaths
 from tools.text import normalize
 
 
@@ -79,7 +79,7 @@ def _read_transcription(path: Path, model: str, base_url: str, api_key: str | No
     return transcribe_image_vlm(
         path,
         model=model,
-        system=transcription_system_with_context(),
+        system=VlmPrompts.transcription_system_with_context(),
         base_url=base_url,
         api_key=api_key,
         # the crop read's completion is ~1-4k tokens; 64000 (the
@@ -262,8 +262,8 @@ def run(
     work_dir: Path,
     cols: int = 2,
     rows: int = 3,
-    model: str = VISION_MODEL,
-    base_url: str = DEFAULT_BASE_URL,
+    model: str = ModelConfig.VISION_MODEL,
+    base_url: str = AIClient.DEFAULT_BASE_URL,
     api_key: str | None = None,
 ) -> CropGridReport:
     """Read the page's crops, stitch, and report — the geometry
@@ -324,8 +324,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("page")
     parser.add_argument("--cols", type=int, default=2)
     parser.add_argument("--rows", type=int, default=3)
-    parser.add_argument("--work-dir", type=Path, default=WORK_DIR)
-    parser.add_argument("--model", default=VISION_MODEL, help="the model to trial")
+    parser.add_argument("--work-dir", type=Path, default=LoftPaths.WORK_DIR)
+    parser.add_argument("--model", default=ModelConfig.VISION_MODEL, help="the model to trial")
     parser.add_argument("--base-url", default=None, help="the API base (default: the gateway)")
     parser.add_argument(
         "--api-key",

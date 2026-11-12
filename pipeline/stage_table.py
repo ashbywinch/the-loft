@@ -19,18 +19,15 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pipeline.artefacts import BatchArtefacts
 from pipeline.batch_record import BatchRecord
-from pipeline.classify import LEGACY_KINDS, category_of, read_route
+from pipeline.classify import PageKinds
 from pipeline.registry import load_batch
 
 if TYPE_CHECKING:  # the runner is duck-typed: BatchRun supplies it at runtime
     from pipeline.chain import BatchRun
-
-# the categories whose pages carry writing to read
-TEXT_KINDS = ("printed", "handwriting", "postcard_face", "form")
 
 
 @dataclass(frozen=True)
@@ -53,17 +50,23 @@ class EngineView:
 
     def text_pages(self) -> list[str]:
         """The pages whose category carries writing to read."""
-        return [name for name in self.pages if name in self.classify and category_of(self.classify[name]) in TEXT_KINDS]
+        return [
+            name
+            for name in self.pages
+            if name in self.classify and PageKinds.category_of(self.classify[name]) in PageKinds.TEXT_KINDS
+        ]
 
     def row_pages(self) -> list[str]:
         """The text pages the row pipeline reads (they need an upright first)."""
-        return [name for name in self.text_pages() if read_route(self.classify[name]) == "rows"]
+        return [name for name in self.text_pages() if PageKinds.read_route(self.classify[name]) == "rows"]
 
     def classify_gap(self) -> str | None:
         """The classification's gap: a page with no record, or a pre-category one."""
         unclassified = [name for name in self.pages if name not in self.classify]
         legacy = [
-            name for name in self.pages if name in self.classify and self.classify[name].get("kind") in LEGACY_KINDS
+            name
+            for name in self.pages
+            if name in self.classify and self.classify[name].get("kind") in PageKinds.LEGACY_KINDS
         ]
         if unclassified:
             return f"classify: {len(unclassified)} page(s) have no category, e.g. {unclassified[0]!r}"
@@ -81,7 +84,9 @@ class EngineView:
 
     def read_gap(self) -> str | None:
         unread = [
-            name for name in self.text_pages() if not self.artefacts.is_read(name, read_route(self.classify[name]))
+            name
+            for name in self.text_pages()
+            if not self.artefacts.is_read(name, PageKinds.read_route(self.classify[name]))
         ]
         if not unread:
             return None
@@ -99,7 +104,9 @@ class EngineView:
     def stale(self) -> list[str]:
         """The pages whose classification is missing or pre-category."""
         return [
-            name for name in self.pages if name not in self.classify or self.classify[name].get("kind") in LEGACY_KINDS
+            name
+            for name in self.pages
+            if name not in self.classify or self.classify[name].get("kind") in PageKinds.LEGACY_KINDS
         ]
 
 
@@ -146,6 +153,8 @@ class StageContext:
 
 @dataclass(frozen=True)
 class StageSpec:
+    ALL: ClassVar[tuple[StageSpec, ...]] = ()
+
     """One engine stage: its name, its gap check, and its runner."""
 
     name: str
@@ -153,7 +162,7 @@ class StageSpec:
     run: Callable[[StageContext], None]
 
 
-STAGES: tuple[StageSpec, ...] = (
+StageSpec.ALL = (
     StageSpec("classify", EngineView.classify_gap, StageContext.classify),
     StageSpec("orient", EngineView.orient_gap, StageContext.orient),
     StageSpec("read", EngineView.read_gap, StageContext.read),
@@ -164,7 +173,7 @@ STAGES: tuple[StageSpec, ...] = (
 def plan_stages(view: EngineView) -> list[tuple[StageSpec, str]]:
     """The stages this batch still needs, with the reason for each — in order."""
     gaps: list[tuple[StageSpec, str]] = []
-    for spec in STAGES:
+    for spec in StageSpec.ALL:
         reason = spec.missing(view)
         if reason is not None:
             gaps.append((spec, reason))

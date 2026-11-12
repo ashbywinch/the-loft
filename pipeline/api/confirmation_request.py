@@ -8,7 +8,7 @@ for an agreed document, its own facts: the title and the date the family
 gives it (a document cannot become an archive item without them).
 
 The shape is validated by the sync contract's own guard
-(``validate_confirmation``), so the receiver and the CLI review gate read ONE
+(``ConfirmationPayload.validate``), so the receiver and the CLI review gate read ONE
 rule.
 """
 
@@ -18,7 +18,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from pipeline.api.sync import validate_confirmation
+from pipeline.api.sync import ConfirmationPayload
 from pipeline.boundary import Boundary
 
 
@@ -38,7 +38,7 @@ class ConfirmationRequest:
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> ConfirmationRequest:
         """The confirmation a client states."""
-        payload = validate_confirmation(dict(raw))
+        payload = ConfirmationPayload.validate(dict(raw))
         return cls(
             batch_id=str(payload["batch_id"]),
             doc_index=int(payload["doc_index"]),

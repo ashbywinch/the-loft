@@ -31,25 +31,15 @@ from typing import Any, Literal, Protocol, cast
 from pipeline.model.ai_client import AIClientError, json_object
 from tools.anchor import Anchor
 from tools.assessment import Assessment
-from tools.assessment_fact import FACT_KINDS, AssessmentFact
+from tools.assessment_fact import AssessmentFact
 from tools.dated_fact import DatedFact
-from tools.extraction import BUCKETS, KINDS, Extraction
+from tools.extraction import Extraction
 from tools.fact_answer import FactAnswer
 from tools.pending_fact import PendingFact
-from tools.question import MAX_QUESTIONS, MAX_SUGGESTIONS, Question
+from tools.question import Question
 from tools.records import Item, Person, Place
 from tools.ref import Ref, RefStatus
 from tools.theme import Theme
-
-MAX_ASSESS_ATTEMPTS = 3
-
-# The assess passes' output budget. A reasoning model spends most of its tokens
-# thinking before it writes the small JSON, so the 3,000-token default starved
-# the questions pass (finish_reason=length, no answer) on every story longer
-# than a sentence. Measured on the real flows: the content pass needs ~2,500
-# tokens and the questions pass ~3,300; 8,000 gives both comfortable room. The
-# review pass asks for 16,000 of its own (its call is a thinking one).
-ASSESS_MAX_TOKENS = 8000
 
 
 class ChatClient(Protocol):
@@ -58,141 +48,6 @@ class ChatClient(Protocol):
     # instance method using self
 
     def chat(self, system: str, user: str) -> str: ...
-
-
-# The assessor runs in TWO passes — the content (title, extractions, facts) and
-# then the questions — each with only its own rules. ONE multi-part call made
-# the model deliberate over every field at once: measured on a one-sentence
-# story, 12,000-73,000 characters of reasoning for a 1,000-character answer,
-# which starved the output budget (finish_reason=length, no answer at all).
-# Split, each pass reasons for a few thousand characters, inside the budget
-# ASSESS_MAX_TOKENS sets. What the model judges stays the model's: the question
-# fields — text, why, suggestions, and the input surface (`type`, `date_kind`)
-# — are all its own answer, validated at the record's seam; the code never
-# derives a judgment from a string match.
-_CONTENT_PURPOSE = (
-    "You are the contribution assistant for a private family archive. A contributor "
-    "has told a story about something in the archive. This pass produces three parts of the "
-    "assessment: a suggested title; the extractions (the people, places, themes and artifacts "
-    "the story is about); and the facts (the dates, dates of birth and ages the account "
-    "states). A separate pass asks the questions.\n\n"
-)
-
-_EXTRACTION_RULES = (
-    "Extraction rules. Link an entity only when the story is about it: a passing "
-    "mention is not a link, and a name that merely shares a name or alias with "
-    "someone in the standing knowledge is NOT a match — same name, different person. "
-    'A kinship term ("Dad", "Mum", "Aunt X", "Grandma") names the WRITER\'s own '
-    "relative: it matches only where the account evidences the writer's own family. "
-    "Ask a question only when it is genuinely ambiguous which person is meant, and never "
-    "guess an identity — an unnamed or ambiguous person is a question or stays unresolved. "
-    "When in doubt between a link and a mention, choose unresolved: a false link is "
-    "worse than no link. A person mentioned near a place is not automatically at that "
-    "place, and presence must be plausible for the story's time. The anchor is the "
-    "archive record the story is filed under: never an extraction.\n\n"
-    "An entity the story is about that is not in the standing knowledge — of any "
-    'kind — is listed with "match": null and bucket "proposed": a new proposed record '
-    "the narrator verifies in the review. Artifacts (items) are the named objects the "
-    "story mentions — a boat, a document, a letter, a photograph; a meal, a "
-    "celebration or a generic thing is not an artifact. They are linked by title; one "
-    'the story mentions that is not in the catalog stays "unresolved", and no '
-    'artifact record is ever created. Bucket meanings: "proposed" = a confident link '
-    'worth one review tap; "question" = genuinely ambiguous, needs a question; '
-    '"unresolved" = leave as plain text.\n\n'
-)
-
-_FACT_RULES = (
-    "Fact rules. Assert every date, date of birth and age the account STATES, and "
-    'never invent one. "kind": "dob" for a date of birth (entity = the person\'s id '
-    'when you can match them to the standing knowledge, else null), "event_date" for '
-    'when the events happened, "age" for an age the narrator gives about themselves. '
-    'Quote the exact phrase as "text"; give the best "value" (ISO: a full date must '
-    "be YYYY-MM-DD, a month YYYY-MM, a year YYYY — never a phrase, which would lose "
-    'its day; or an integer for an age) and an honest "precision" (exact | month | '
-    'year | approx). Incomplete forms ("the summer of 1979", "born in 1979") get what '
-    'is there. If a phrase makes no sense as a date at all, "value": null.\n\n'
-)
-
-_QUESTIONS_PURPOSE = (
-    "You are the contribution assistant for a private family archive. You are given a story, "
-    "the standing knowledge, and the title, extractions and facts a first pass produced. This "
-    "pass produces the questions worth asking about what is still missing.\n\n"
-)
-
-_QUESTION_RULES = (
-    f"Question rules. Ask only what is missing and matters, at most {MAX_QUESTIONS}; "
-    "every question is skippable and nothing is required. A date the account states "
-    "is asserted as a fact instead, and a year computable from an asserted date of "
-    "birth and age is not asked for. Ask for: the event date; the date of birth when the "
-    "account gives an age and no date of birth is known or stated — asked politely, never "
-    "required; who was actually present; the identity of unnamed people; place precision "
-    '("the old ford" — which one?); the connection of a narrator not in the standing '
-    "knowledge — ask this whenever the contributor is absent from the standing knowledge, "
-    "unless the story itself states the relation; and a specific artifact the story names "
-    "that is not in the catalog — a particular boat, object or document — since that is how "
-    "its archive page gets built. A boat is no more worthy than a letter, a photograph or a "
-    "tool; the same goes for a named person or place that matters to the story. A question "
-    'whose answer is one or more people carries "type": "people" — the narrator picks names '
-    'from the cast, any number — so its "suggestions" are the likely people; a question '
-    'needing a date carries "type": "date" and "date_kind": "dob" when asking for a date of '
-    'birth, else "event", and the narrator answers it in their own words; every other '
-    'question carries "type": null. Every question carries up to '
-    f'{MAX_SUGGESTIONS} short "suggestions" the narrator can tap instead of typing: give '
-    "them only where they are plausible for this narrator — never a date before their "
-    "birth, and consistent with their stated age and with the story's stated time; with "
-    "neither known, leave them out. A suggestion is an answer to tap, never a match: the "
-    "never-guess rule binds what the first pass links, not what you offer here.\n\n"
-    'If nothing is missing, "questions" is an empty list.\n\n'
-)
-
-_CONTENT_JSON = (
-    f'{{"title": string, "extractions": [{{"kind": "{"|".join(KINDS)}", "name": string, '
-    f'"match": "<id>"|null, "bucket": "{"|".join(BUCKETS)}", "reason": string}}], '
-    f'"facts": [{{"kind": "{"|".join(FACT_KINDS)}", "entity": "<person id>"|null, '
-    f'"text": "<verbatim quote>", "value": "<date or integer>"|null, '
-    f'"precision": "exact|month|year|approx"|null}}]}}'
-)
-
-# The tappable suggestions and the question's input surface (`type`, `date_kind`)
-# are the MODEL's judgment: the buttons are a requirement (docs/PRD/MEMORIES.md)
-# and which surface a question takes is a reading of the question, not a string
-# match. They cost reasoning, which is what ASSESS_MAX_TOKENS is for.
-_QUESTIONS_JSON = (
-    '{"questions": [{"text": string, "why": string, "suggestions": [string], '
-    '"type": "date"|"people"|null, "date_kind": "dob"|"event"|null}]}'
-)
-
-_CONTENT_SYSTEM = f"{_CONTENT_PURPOSE}{_EXTRACTION_RULES}{_FACT_RULES}Respond with ONLY this JSON: {_CONTENT_JSON}"
-_QUESTIONS_SYSTEM = f"{_QUESTIONS_PURPOSE}{_QUESTION_RULES}Respond with ONLY this JSON: {_QUESTIONS_JSON}"
-
-
-_REVIEWER_SYSTEM_PROMPT = """\
-You are the review pass for a family-archive contribution. You are given the \
-story, the standing knowledge, and the assessor's proposed extractions, facts \
-and questions. Find ONLY genuine rule violations:
-- an extraction links an entity the story merely mentions (a passing mention, \
-  or a same-name person in a different family: the narrator's own \"Dad\", \
-  \"Mum\", \"Aunt Nora\", a neighbour) instead of being about it;
-- a match that presence or the story's own time makes impossible;
-- a question that the account, the facts, or the standing knowledge already \
-  answers;
-- a date question when the year is computable: the facts include a date of \
-  birth and an age for the narrator, or the standing knowledge has their date \
-  of birth and the account gives an age;
-- the account gave an age, no date of birth is known or stated, and no \
-  question asks politely for the date of birth or the year (with a decline \
-  option);
-- a date, date of birth, or age stated in the account that is not asserted in \
-  the facts;
-- the narrator is not in the standing knowledge and no question asks how they \
-  are connected to the family (unless the story already makes it obvious);
-- a specific new artifact named in the story (a particular boat, object, or \
-  document not in the catalog) with no question asking about it.
-Be conservative: do NOT flag style, or anything a reasonable person could \
-confirm. A clean assessment gets an empty list.
-
-Respond with ONLY this JSON: {"violations": [string]} — each a short, \
-specific description of what to fix."""
 
 
 class ElicitationError(RuntimeError):
@@ -328,6 +183,34 @@ class _AssessmentReview:
     pass all read (docs/coding-standards.md: deterministic checks beat
     model judgment)."""
 
+    _REVIEWER_SYSTEM_PROMPT = """\
+You are the review pass for a family-archive contribution. You are given the \
+story, the standing knowledge, and the assessor's proposed extractions, facts \
+and questions. Find ONLY genuine rule violations:
+- an extraction links an entity the story merely mentions (a passing mention, \
+  or a same-name person in a different family: the narrator's own \"Dad\", \
+  \"Mum\", \"Aunt Nora\", a neighbour) instead of being about it;
+- a match that presence or the story's own time makes impossible;
+- a question that the account, the facts, or the standing knowledge already \
+  answers;
+- a date question when the year is computable: the facts include a date of \
+  birth and an age for the narrator, or the standing knowledge has their date \
+  of birth and the account gives an age;
+- the account gave an age, no date of birth is known or stated, and no \
+  question asks politely for the date of birth or the year (with a decline \
+  option);
+- a date, date of birth, or age stated in the account that is not asserted in \
+  the facts;
+- the narrator is not in the standing knowledge and no question asks how they \
+  are connected to the family (unless the story already makes it obvious);
+- a specific new artifact named in the story (a particular boat, object, or \
+  document not in the catalog) with no question asking about it.
+Be conservative: do NOT flag style, or anything a reasonable person could \
+confirm. A clean assessment gets an empty list.
+
+Respond with ONLY this JSON: {"violations": [string]} — each a short, \
+specific description of what to fix."""
+
     def __init__(self, assessment: Assessment, who: str, knowledge: Knowledge) -> None:
         self.assessment = assessment
         self.who = who
@@ -400,7 +283,7 @@ class _AssessmentReview:
             ]
         )
         try:
-            raw = client.chat(_REVIEWER_SYSTEM_PROMPT, user)
+            raw = client.chat(_AssessmentReview._REVIEWER_SYSTEM_PROMPT, user)
             parsed = json_object(raw)
             violations = parsed.get("violations", [])
             if not isinstance(violations, list):
@@ -519,27 +402,6 @@ class _AssessmentReview:
         return violations
 
 
-_PENDING_FACT_PROMPT = """\
-You are the date interpreter for a family archive. The narrator answered a \
-date question in their own words; each answer must become a structured date \
-fact.
-
-Rules:
-- "value": the date the answer states, as ISO text ("1981-09-15", \
-"1979-07", "1979") — a full date MUST be emitted as YYYY-MM-DD, never as a \
-phrase ("31 July 1979" would lose its day) — or null when the answer \
-contains no usable date ("I'd rather not say", "no idea").
-- "precision": "exact" | "month" | "year" | "approx" — only as precise as \
-the words are ("31 July 1979" = exact; "July 1979" = month; "the summer of \
-1970" = approx; "1979" = year). Never claim a precision the words do not \
-support.
-- "text": quote the answer verbatim.
-Never invent a date the answer does not state.
-
-Respond with ONLY this JSON: {"answers": [{"text": string, "value": \
-string|null, "precision": "exact"|"month"|"year"|"approx"|null}]}"""
-
-
 def resolve_pending_facts(
     client: ChatClient | None, raw_facts: Iterable[Mapping[str, Any]]
 ) -> tuple[AssessmentFact, ...]:
@@ -566,7 +428,7 @@ def _answer_pending_facts(client: ChatClient, pending: tuple[PendingFact, ...]) 
     facts pending (an offline save never runs without a client)."""
     try:
         raw = client.chat(
-            _PENDING_FACT_PROMPT,
+            Memory._PENDING_FACT_PROMPT,
             json.dumps([fact.to_dict() for fact in pending], ensure_ascii=False),
         )
         parsed = json_object(raw)
@@ -606,6 +468,122 @@ class Assessor:
     methods (docs/coding-standards.md: groups that travel together are a type).
     """
 
+    MAX_ASSESS_ATTEMPTS = 3
+
+    # The assess passes' output budget. A reasoning model spends most of its tokens
+    # thinking before it writes the small JSON, so the 3,000-token default starved
+    # the questions pass (finish_reason=length, no answer) on every story longer
+    # than a sentence. Measured on the real flows: the content pass needs ~2,500
+    # tokens and the questions pass ~3,300; 8,000 gives both comfortable room. The
+    # review pass asks for 16,000 of its own (its call is a thinking one).
+    ASSESS_MAX_TOKENS = 8000
+
+    # The assessor runs in TWO passes — the content (title, extractions, facts) and
+    # then the questions — each with only its own rules. ONE multi-part call made
+    # the model deliberate over every field at once: measured on a one-sentence
+    # story, 12,000-73,000 characters of reasoning for a 1,000-character answer,
+    # which starved the output budget (finish_reason=length, no answer at all).
+    # Split, each pass reasons for a few thousand characters, inside the budget
+    # Assessor.ASSESS_MAX_TOKENS sets. What the model judges stays the model's: the question
+    # fields — text, why, suggestions, and the input surface (`type`, `date_kind`)
+    # — are all its own answer, validated at the record's seam; the code never
+    # derives a judgment from a string match.
+    _CONTENT_PURPOSE = (
+        "You are the contribution assistant for a private family archive. A contributor "
+        "has told a story about something in the archive. This pass produces three parts of the "
+        "assessment: a suggested title; the extractions (the people, places, themes and artifacts "
+        "the story is about); and the facts (the dates, dates of birth and ages the account "
+        "states). A separate pass asks the questions.\n\n"
+    )
+
+    _EXTRACTION_RULES = (
+        "Extraction rules. Link an entity only when the story is about it: a passing "
+        "mention is not a link, and a name that merely shares a name or alias with "
+        "someone in the standing knowledge is NOT a match — same name, different person. "
+        'A kinship term ("Dad", "Mum", "Aunt X", "Grandma") names the WRITER\'s own '
+        "relative: it matches only where the account evidences the writer's own family. "
+        "Ask a question only when it is genuinely ambiguous which person is meant, and never "
+        "guess an identity — an unnamed or ambiguous person is a question or stays unresolved. "
+        "When in doubt between a link and a mention, choose unresolved: a false link is "
+        "worse than no link. A person mentioned near a place is not automatically at that "
+        "place, and presence must be plausible for the story's time. The anchor is the "
+        "archive record the story is filed under: never an extraction.\n\n"
+        "An entity the story is about that is not in the standing knowledge — of any "
+        'kind — is listed with "match": null and bucket "proposed": a new proposed record '
+        "the narrator verifies in the review. Artifacts (items) are the named objects the "
+        "story mentions — a boat, a document, a letter, a photograph; a meal, a "
+        "celebration or a generic thing is not an artifact. They are linked by title; one "
+        'the story mentions that is not in the catalog stays "unresolved", and no '
+        'artifact record is ever created. Bucket meanings: "proposed" = a confident link '
+        'worth one review tap; "question" = genuinely ambiguous, needs a question; '
+        '"unresolved" = leave as plain text.\n\n'
+    )
+
+    _FACT_RULES = (
+        "Fact rules. Assert every date, date of birth and age the account STATES, and "
+        'never invent one. "kind": "dob" for a date of birth (entity = the person\'s id '
+        'when you can match them to the standing knowledge, else null), "event_date" for '
+        'when the events happened, "age" for an age the narrator gives about themselves. '
+        'Quote the exact phrase as "text"; give the best "value" (ISO: a full date must '
+        "be YYYY-MM-DD, a month YYYY-MM, a year YYYY — never a phrase, which would lose "
+        'its day; or an integer for an age) and an honest "precision" (exact | month | '
+        'year | approx). Incomplete forms ("the summer of 1979", "born in 1979") get what '
+        'is there. If a phrase makes no sense as a date at all, "value": null.\n\n'
+    )
+
+    _QUESTIONS_PURPOSE = (
+        "You are the contribution assistant for a private family archive. You are given a story, "
+        "the standing knowledge, and the title, extractions and facts a first pass produced. This "
+        "pass produces the questions worth asking about what is still missing.\n\n"
+    )
+
+    _QUESTION_RULES = (
+        f"Question rules. Ask only what is missing and matters, at most {Question.MAX_QUESTIONS}; "
+        "every question is skippable and nothing is required. A date the account states "
+        "is asserted as a fact instead, and a year computable from an asserted date of "
+        "birth and age is not asked for. Ask for: the event date; the date of birth when the "
+        "account gives an age and no date of birth is known or stated — asked politely, never "
+        "required; who was actually present; the identity of unnamed people; place precision "
+        '("the old ford" — which one?); the connection of a narrator not in the standing '
+        "knowledge — ask this whenever the contributor is absent from the standing knowledge, "
+        "unless the story itself states the relation; and a specific artifact the story names "
+        "that is not in the catalog — a particular boat, object or document — since that is how "
+        "its archive page gets built. A boat is no more worthy than a letter, a photograph or a "
+        "tool; the same goes for a named person or place that matters to the story. A question "
+        'whose answer is one or more people carries "type": "people" — the narrator picks names '
+        'from the cast, any number — so its "suggestions" are the likely people; a question '
+        'needing a date carries "type": "date" and "date_kind": "dob" when asking for a date of '
+        'birth, else "event", and the narrator answers it in their own words; every other '
+        'question carries "type": null. Every question carries up to '
+        f'{Question.MAX_SUGGESTIONS} short "suggestions" the narrator can tap instead of typing: give '
+        "them only where they are plausible for this narrator — never a date before their "
+        "birth, and consistent with their stated age and with the story's stated time; with "
+        "neither known, leave them out. A suggestion is an answer to tap, never a match: the "
+        "never-guess rule binds what the first pass links, not what you offer here.\n\n"
+        'If nothing is missing, "questions" is an empty list.\n\n'
+    )
+
+    _CONTENT_JSON = (
+        f'{{"title": string, "extractions": [{{"kind": "{"|".join(Extraction.KINDS)}", "name": string, '
+        f'"match": "<id>"|null, "bucket": "{"|".join(Extraction.BUCKETS)}", "reason": string}}], '
+        f'"facts": [{{"kind": "{"|".join(AssessmentFact.FACT_KINDS)}", "entity": "<person id>"|null, '
+        f'"text": "<verbatim quote>", "value": "<date or integer>"|null, '
+        f'"precision": "exact|month|year|approx"|null}}]}}'
+    )
+
+    # The tappable suggestions and the question's input surface (`type`, `date_kind`)
+    # are the MODEL's judgment: the buttons are a requirement (docs/PRD/MEMORIES.md)
+    # and which surface a question takes is a reading of the question, not a string
+    # match. They cost reasoning, which is what Assessor.ASSESS_MAX_TOKENS is for.
+    _QUESTIONS_JSON = (
+        '{"questions": [{"text": string, "why": string, "suggestions": [string], '
+        '"type": "date"|"people"|null, "date_kind": "dob"|"event"|null}]}'
+    )
+
+    _CONTENT_SYSTEM = f"{_CONTENT_PURPOSE}{_EXTRACTION_RULES}{_FACT_RULES}Respond with ONLY this JSON: {_CONTENT_JSON}"
+
+    _QUESTIONS_SYSTEM = f"{_QUESTIONS_PURPOSE}{_QUESTION_RULES}Respond with ONLY this JSON: {_QUESTIONS_JSON}"
+
     def __init__(
         self,
         client: ChatClient,
@@ -635,11 +613,11 @@ class Assessor:
         sampling-twice-and-picking."""
         assessment: Assessment | None = None
         feedback = ""
-        for attempt in range(MAX_ASSESS_ATTEMPTS):
+        for attempt in range(Assessor.MAX_ASSESS_ATTEMPTS):
             content = self.content(feedback)
             questions = self.questions(content, feedback)
             assessment = _assemble(content, questions)
-            if attempt >= MAX_ASSESS_ATTEMPTS - 1:
+            if attempt >= Assessor.MAX_ASSESS_ATTEMPTS - 1:
                 break  # last attempt: accept the best effort
             review = _AssessmentReview(assessment, self._who, self._knowledge)
             violations = review.violations(self._account)
@@ -659,7 +637,7 @@ class Assessor:
         """The content pass: the model's answer as its object, or a loud
         ElicitationError — a malformed shape never reaches the assembly."""
         try:
-            parsed = json_object(self._client.chat(_CONTENT_SYSTEM, self._context + feedback))
+            parsed = json_object(self._client.chat(Assessor._CONTENT_SYSTEM, self._context + feedback))
         except AIClientError as e:
             raise ElicitationError(f"assessment failed: {e}") from e
         if not isinstance(parsed, dict):
@@ -672,7 +650,7 @@ class Assessor:
         takes, validated at the record's own seam."""
         user = self._context + feedback + _content_note(content)
         try:
-            parsed = json_object(self._client.chat(_QUESTIONS_SYSTEM, user))
+            parsed = json_object(self._client.chat(Assessor._QUESTIONS_SYSTEM, user))
         except AIClientError as e:
             raise ElicitationError(f"assessment failed: {e}") from e
         if not isinstance(parsed, dict):
@@ -682,7 +660,7 @@ class Assessor:
             raise ElicitationError(f"the questions answer carries no list: {parsed!r}")
         return tuple(
             Question.from_dict(entry)
-            for entry in entries[:MAX_QUESTIONS]
+            for entry in entries[: Question.MAX_QUESTIONS]
             if isinstance(entry, dict) and str(entry.get("text", "")).strip()
         )
 
@@ -905,7 +883,7 @@ class Fact:
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Fact:
         kind = str(raw.get("kind", ""))
-        if kind not in FACT_KINDS:
+        if kind not in AssessmentFact.FACT_KINDS:
             raise ValueError(f"unknown fact kind: {kind!r}")
         status = str(raw.get("status", "proposed"))
         if status not in ("confirmed", "proposed"):
@@ -1191,6 +1169,26 @@ class Memory:
     draft into the archive sidecar. The class is the noun the server and
     the CLI drive; the module functions are its machinery.
     """
+
+    _PENDING_FACT_PROMPT = """\
+You are the date interpreter for a family archive. The narrator answered a \
+date question in their own words; each answer must become a structured date \
+fact.
+
+Rules:
+- "value": the date the answer states, as ISO text ("1981-09-15", \
+"1979-07", "1979") — a full date MUST be emitted as YYYY-MM-DD, never as a \
+phrase ("31 July 1979" would lose its day) — or null when the answer \
+contains no usable date ("I'd rather not say", "no idea").
+- "precision": "exact" | "month" | "year" | "approx" — only as precise as \
+the words are ("31 July 1979" = exact; "July 1979" = month; "the summer of \
+1970" = approx; "1979" = year). Never claim a precision the words do not \
+support.
+- "text": quote the answer verbatim.
+Never invent a date the answer does not state.
+
+Respond with ONLY this JSON: {"answers": [{"text": string, "value": \
+string|null, "precision": "exact"|"month"|"year"|"approx"|null}]}"""
 
     def __init__(self, client: ChatClient, knowledge: Knowledge) -> None:
         self.client = client

@@ -13,9 +13,9 @@ Contract, from the plan and the user's checks:
 - the number on a transparent chip (a thin ring in the word's hue, the page
   showing through) at the box's top-left corner when free, else the first
   free direction (above, below, left, right, then further along the
-  perimeter), hugging the box at CHIP_GAP;
+  perimeter), hugging the box at NumberedWords.CHIP_GAP;
 - the chip's bounding box IS the number's text bbox plus the ring pad — a
-  chip is never larger than its text needs, and never beyond MAX_CHIP on
+  chip is never larger than its text needs, and never beyond NumberedWords.MAX_CHIP on
   either side;
 - collision-free: a chip never covers another word's box OR another chip — a
   word whose every position is taken is reported, never silently overlapped.
@@ -29,6 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import ClassVar
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -42,32 +43,6 @@ from tools.numbered_word import NumberedWord
 from tools.numbering_candidate import NumberingCandidate
 
 Box = tuple[float, float, float, float]  # x0, y0, x1, y1, page px
-
-# 12 hues: spread around the wheel, varied lightness so the greys differ too
-PALETTE: tuple[tuple[int, int, int], ...] = (
-    (214, 39, 40),  # red
-    (31, 119, 180),  # blue
-    (44, 160, 44),  # green
-    (255, 127, 14),  # orange
-    (148, 103, 189),  # purple
-    (23, 190, 207),  # cyan
-    (227, 119, 194),  # pink
-    (188, 189, 34),  # olive
-    (140, 86, 75),  # brown
-    (127, 127, 127),  # grey
-    (255, 152, 150),  # light red
-    (152, 223, 138),  # light green
-)
-
-CHIP_GAP = 1.5  # section px between a chip and the word it labels
-CHIP_PAD = 3.0  # section px: the ring's padding around the number on each side
-EDGE_PAD = 1.0  # section px: a chip may not come this close to another box
-FONT_FRACTION = 0.55  # x the word's height: the number's font size
-MIN_FONT = 8.0  # section px: below this the number is unreadable
-MAX_FONT = 20.0  # section px: a number never needs to be bigger
-MAX_CHIP = 40.0  # section px: a chip's side never exceeds this
-CHIP_SHRINK_STEPS = (1.0, 0.7, 0.5, 0.35)  # x the font size, tried in order
-UNPLACED = "unplaced"  # the placement verdict when every position is taken
 
 
 @lru_cache(maxsize=64)
@@ -86,32 +61,32 @@ def _text_bbox(text: str, font: ImageFont.FreeTypeFont | ImageFont.ImageFont) ->
 
 def chip_extent(text: str, font_size: float) -> ChipExtent:
     """The chip's extent for a number: the text's bounding box at that
-    font, plus the ring pad, capped at MAX_CHIP — the chip's bbox matches
+    font, plus the ring pad, capped at NumberedWords.MAX_CHIP — the chip's bbox matches
     the font size, never larger than the cap."""
     font = _font_at(max(7, round(font_size)))
     tb = _text_bbox(text, font)
-    width = float(tb[2] - tb[0] + 2 * CHIP_PAD)
-    height = float(tb[3] - tb[1] + 2 * CHIP_PAD)
-    if width <= MAX_CHIP and height <= MAX_CHIP:
+    width = float(tb[2] - tb[0] + 2 * NumberedWords.CHIP_PAD)
+    height = float(tb[3] - tb[1] + 2 * NumberedWords.CHIP_PAD)
+    if width <= NumberedWords.MAX_CHIP and height <= NumberedWords.MAX_CHIP:
         return ChipExtent(width, height)
     # the number is too wide for the cap: shrink the font so the TEXT fits
     # (the padding is not linear in the font size), then clamp the final
     # result so glyph rounding can never exceed the cap
-    target = MAX_CHIP - 2 * CHIP_PAD
-    text_width = width - 2 * CHIP_PAD
-    text_height = height - 2 * CHIP_PAD
+    target = NumberedWords.MAX_CHIP - 2 * NumberedWords.CHIP_PAD
+    text_width = width - 2 * NumberedWords.CHIP_PAD
+    text_height = height - 2 * NumberedWords.CHIP_PAD
     font = _font_at(max(7, round(font_size * target / max(text_width, text_height))))
     tb = _text_bbox(text, font)
     return ChipExtent(
-        min(float(tb[2] - tb[0] + 2 * CHIP_PAD), MAX_CHIP),
-        min(float(tb[3] - tb[1] + 2 * CHIP_PAD), MAX_CHIP),
+        min(float(tb[2] - tb[0] + 2 * NumberedWords.CHIP_PAD), NumberedWords.MAX_CHIP),
+        min(float(tb[3] - tb[1] + 2 * NumberedWords.CHIP_PAD), NumberedWords.MAX_CHIP),
     )
 
 
 def _base_font(box: Box) -> float:
     """The number's font size for a word: the word's height scaled, floored
     and capped."""
-    return max(MIN_FONT, min((box[3] - box[1]) * FONT_FRACTION, MAX_FONT))
+    return max(NumberedWords.MIN_FONT, min((box[3] - box[1]) * NumberedWords.FONT_FRACTION, NumberedWords.MAX_FONT))
 
 
 @dataclass(frozen=True)
@@ -127,6 +102,32 @@ class NumberedWords:
     words: list[NumberedWord]
     scaled: list[Box]
     chips: list[Chip]
+
+    # 12 hues: spread around the wheel, varied lightness so the greys differ too
+    PALETTE: ClassVar[tuple[tuple[int, int, int], ...]] = (
+        (214, 39, 40),  # red
+        (31, 119, 180),  # blue
+        (44, 160, 44),  # green
+        (255, 127, 14),  # orange
+        (148, 103, 189),  # purple
+        (23, 190, 207),  # cyan
+        (227, 119, 194),  # pink
+        (188, 189, 34),  # olive
+        (140, 86, 75),  # brown
+        (127, 127, 127),  # grey
+        (255, 152, 150),  # light red
+        (152, 223, 138),  # light green
+    )
+
+    CHIP_GAP = 1.5  # section px between a chip and the word it labels
+    CHIP_PAD = 3.0  # section px: the ring's padding around the number on each side
+    EDGE_PAD = 1.0  # section px: a chip may not come this close to another box
+    FONT_FRACTION = 0.55  # x the word's height: the number's font size
+    MIN_FONT = 8.0  # section px: below this the number is unreadable
+    MAX_FONT = 20.0  # section px: a number never needs to be bigger
+    MAX_CHIP = 40.0  # section px: a chip's side never exceeds this
+    CHIP_SHRINK_STEPS = (1.0, 0.7, 0.5, 0.35)  # x the font size, tried in order
+    UNPLACED = "unplaced"  # the placement verdict when every position is taken
 
 
 def numbered_order(words: list[Box]) -> list[int]:
@@ -145,7 +146,7 @@ def candidates(box: Box, width: float, height: float) -> list[NumberingCandidate
     rect collides with no other word's box wins."""
     x0, y0, x1, y1 = box
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-    gap = CHIP_GAP
+    gap = NumberedWords.CHIP_GAP
     w, h = width, height
     box_w, box_h = x1 - x0, y1 - y0
     return [
@@ -180,7 +181,12 @@ def _intersects(chip: Box, box: Box) -> bool:
     """A chip collides when it reaches another word's box, padded."""
     c0, c1, c2, c3 = chip
     b0, b1, b2, b3 = box
-    return not (c2 + EDGE_PAD <= b0 or c0 - EDGE_PAD >= b2 or c3 + EDGE_PAD <= b1 or c1 - EDGE_PAD >= b3)
+    return not (
+        c2 + NumberedWords.EDGE_PAD <= b0
+        or c0 - NumberedWords.EDGE_PAD >= b2
+        or c3 + NumberedWords.EDGE_PAD <= b1
+        or c1 - NumberedWords.EDGE_PAD >= b3
+    )
 
 
 def place_chips(boxes: list[Box], order: list[int]) -> list[Chip]:
@@ -189,7 +195,7 @@ def place_chips(boxes: list[Box], order: list[int]) -> list[Chip]:
     The chip is sized by its number's text at a word-scaled font (capped at
     MAX_CHIP); the shrink pass steps the font down. A chip collides when it
     reaches another word's box OR an already-placed chip. A word whose every
-    position is taken at every font size reports verdict UNPLACED (its rect
+    position is taken at every font size reports verdict NumberedWords.UNPLACED (its rect
     is the corner position; the caller must not draw it silently — the spike
     reports unplaced words loudly).
     """
@@ -201,8 +207,8 @@ def place_chips(boxes: list[Box], order: list[int]) -> list[Chip]:
         text = str(render_id)
         chosen: NumberingCandidate | None = None
         chosen_font = 0.0
-        for fraction in CHIP_SHRINK_STEPS:
-            font_size = max(MIN_FONT, _base_font(box) * fraction)
+        for fraction in NumberedWords.CHIP_SHRINK_STEPS:
+            font_size = max(NumberedWords.MIN_FONT, _base_font(box) * fraction)
             size = chip_extent(text, font_size)
             for candidate in candidates(box, size.width, size.height):
                 blocked = any(_intersects(candidate.rect, other) for other in occupied if other is not box)
@@ -215,17 +221,17 @@ def place_chips(boxes: list[Box], order: list[int]) -> list[Chip]:
         if chosen is None:
             size = chip_extent(text, _base_font(box))
             corner = candidates(box, size.width, size.height)[0]
-            chosen, chosen_font = NumberingCandidate(UNPLACED, corner.rect), _base_font(box)
+            chosen, chosen_font = NumberingCandidate(NumberedWords.UNPLACED, corner.rect), _base_font(box)
         chips.append(
             Chip(
                 render_id=render_id,
                 rect=chosen.rect,
-                colour=Colour(*PALETTE[word_index % len(PALETTE)]),
+                colour=Colour(*NumberedWords.PALETTE[word_index % len(NumberedWords.PALETTE)]),
                 verdict=chosen.verdict,
                 font_size=chosen_font,
             )
         )
-        if chosen.verdict != UNPLACED:
+        if chosen.verdict != NumberedWords.UNPLACED:
             placed_rects.append(chosen.rect)
     return chips
 
@@ -240,7 +246,7 @@ def number_words(boxes: list[Box]) -> list[NumberedWord]:
             render_id=render_id,
             page_index=word_index,
             box=boxes[word_index],
-            colour=PALETTE[word_index % len(PALETTE)],
+            colour=NumberedWords.PALETTE[word_index % len(NumberedWords.PALETTE)],
         )
         for render_id, word_index in enumerate(numbered_order(boxes), start=1)
     ]
@@ -285,7 +291,7 @@ def draw_numbering(page: Image.Image, staged: NumberedWords) -> Image.Image:
         x0w, y0w, x1w, y1w = scaled[entry.page_index]
         draw.rectangle((x0w, y0w, x1w, y1w), outline=entry.colour, width=box_width)
     for chip in chips:
-        if chip.verdict == UNPLACED:
+        if chip.verdict == NumberedWords.UNPLACED:
             continue  # the caller reports the unplaced words; never draw a lie
         cx0, cy0, cx1, cy1 = chip.rect
         # transparent chip: a thin ring around the number's own footprint, the
@@ -319,10 +325,10 @@ def render_numbered(
 
 def unplaced(chips: list[Chip]) -> list[int]:
     """The render ids that found no free position — the caller reports them."""
-    return [chip.render_id for chip in chips if chip.verdict == UNPLACED]
+    return [chip.render_id for chip in chips if chip.verdict == NumberedWords.UNPLACED]
 
 
 # lucidlint: ignore unused a test seam: the numbering tests check the palette directly (DI convention)
 def palette_luminances() -> np.ndarray:
     """The palette's grayscale values — distinct under the model's downscale."""
-    return np.asarray([0.299 * r + 0.587 * g + 0.114 * b for r, g, b in PALETTE])
+    return np.asarray([0.299 * r + 0.587 * g + 0.114 * b for r, g, b in NumberedWords.PALETTE])

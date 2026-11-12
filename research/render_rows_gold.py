@@ -27,7 +27,7 @@ from document.row_adjustments import RowAdjustments
 from document.word import Word
 from pipeline.detect.reader import reading_for_page
 from pipeline.layout_line import LayoutLine
-from pipeline.rows.page_visuals import captioned_sheet, review_image, stack_sheets
+from pipeline.rows.page_visuals import CaptionSheet, PagePainter, stack_sheets
 from pipeline.rows.render import render_rows
 from pipeline.rows.row_score import RowScore
 from pipeline.rows.row_set import RowSet
@@ -38,7 +38,12 @@ FIXTURE = Path("tests/fixtures/page01-rows-gold")
 BOXES = Path("tests/fixtures/page01-wordseg/boxes.json")
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 OUT = Path("research/spike-word-segmentation/rows-gold-vs-library.jpg")
-SPACING = 67.6
+
+
+class Config:
+    """This script's fixed inputs and outputs."""
+
+    SPACING = 67.6
 
 
 def iou(a: Rectangle, b: Rectangle) -> float:
@@ -148,7 +153,7 @@ def _panels(
     for rowset in rowsets:
         drawn = render_rows(page, list(rowset.rows), strokes)
         fitted = drawn.resize((1000, int(drawn.height * 1000 / drawn.width)), Image.Resampling.LANCZOS)
-        sheet = captioned_sheet(fitted, [rowset.title])
+        sheet = CaptionSheet.captioned_sheet(fitted, [rowset.title])
         panels.append(sheet.sheet)
     return stack_sheets(panels, max_width=1000)
 
@@ -206,7 +211,7 @@ def main() -> None:
         ),
     ]
     contact = _panels(SCAN, strokes, rowsets)
-    OUT.write_bytes(review_image(contact))
+    OUT.write_bytes(PagePainter.review_image(contact))
     print(f"wrote {OUT}: {OUT.stat().st_size // 1024} KB, {contact.width}x{contact.height}")
 
 

@@ -12,17 +12,17 @@ the detector in memory.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, ClassVar
 
 from document.word import Word
-
-# the fields a RAW word record carries: the detector's own stage. A record
-# without them is a box (a row's inline word), never a words.json entry.
-RAW_FIELDS = ("x0", "y0", "x1", "y1", "line", "baseline", "waistline")
 
 
 class Words:
     """The words a page's detector measured — the words.json artefact."""
+
+    # the fields a RAW word record carries: the detector's own stage. A record
+    # without them is a box (a row's inline word), never a words.json entry.
+    _FIELDS: ClassVar[tuple[str, ...]] = ("x0", "y0", "x1", "y1", "line", "baseline", "waistline")
 
     def __init__(self, words: list[Word]) -> None:
         self.words = list(words)
@@ -47,7 +47,7 @@ class Words:
         for index, record in enumerate(records):
             if not isinstance(record, dict):
                 raise ValueError(f"words[{index}] is not a record")
-            missing = [key for key in RAW_FIELDS if key not in record]
+            missing = [key for key in cls._FIELDS if key not in record]
             if missing:
                 raise ValueError(f"words[{index}] missing {sorted(missing)} — not a raw word record")
             words.append(Word.from_dict(record))

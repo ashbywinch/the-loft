@@ -44,10 +44,7 @@ def _split_by_x_gap(row: PieceRow, gap: float = 300.0) -> list[PieceRow]:
     return parts
 
 
-ROW_HEIGHT_FACTOR = 2.5
-
-
-def _split_tall_row(row: PieceRow, factor: float = ROW_HEIGHT_FACTOR) -> list[PieceRow]:
+def _split_tall_row(row: PieceRow, factor: float = 2.5) -> list[PieceRow]:
     """Split an implausibly tall row at its internal y-gaps until every
     part could be ONE line: single-linkage chaining merges pieces whose
     every ADJACENT gap is small into rows spanning many real lines — the

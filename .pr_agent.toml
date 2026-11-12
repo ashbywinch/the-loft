@@ -49,6 +49,11 @@ extra_instructions = "Check the PR against each file in repo_context_files. Befo
 
 
 [pr_code_suggestions]
+# DISABLED for the auto run (2026-11-12). The suggestions generator uses the
+# global [config] model chain and, on this PR's 150k-token numbered diff, the
+# model returns empty content (finish_reason: length) after ~30 minutes; the
+# action then fails the whole review run for an advisory tool. /improve stays
+# available as a deliberate comment-triggered command (we do not auto-run it).
 persistent_comment = true
 
 [github_action_config]
@@ -64,4 +69,5 @@ push_trigger_ignore_bot_commits = false
 # /improve has NO incremental support in any pr-agent version (verified
 # v0.41.1 and main: pr_code_suggestions has no incremental machinery, and
 # -i on it is a no-op) — it is a full-PR pass by upstream design
-push_commands = ["/review -i", "/improve"]
+push_commands = ["/review -i"]
+skip_commands = ["/skip"]

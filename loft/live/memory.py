@@ -13,10 +13,13 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Any, Self
 
+from loft.live import item_row
 from loft.live.errors import Conflict, NotFound, StaleVersion
 from loft.live.event import event_hash
 from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Kind, record_id
-from tools.records import Person
+from loft.live.item_row import AssetRecord, ItemAsset, ItemContent, ItemRef
+from loft.live.items import ContentInput, build_contents, item_payload, payload_assets, payload_contents
+from tools.records import Item, Person, split_content
 
 
 class MemoryContentStore:
@@ -47,10 +50,16 @@ class MemoryLiveStore:
     def __init__(self, *, app_version: str = "test") -> None:
         self.app_version = app_version
         self._people: dict[str, Person] = {}
+        self._items: dict[str, Item] = {}
+        self._item_refs: dict[str, tuple[ItemRef, ...]] = {}
+        self._item_assets: dict[str, tuple[ItemAsset, ...]] = {}
+        self._item_contents: dict[str, tuple[ItemContent, ...]] = {}
+        self._assets: dict[str, AssetRecord] = {}
         self._content: dict[str, bytes] = {}
         self._events: list[dict[str, Any]] = []
         self._applied: set[str] = set()
         self.people = _MemoryPeople(self)
+        self.items = _MemoryItems(self)
         self._collections: dict[str, dict[str, object]] = {kind.name: {} for kind in (PLACE, ORG, THEME, RELATIONSHIP)}
         self.places = _MemoryCollection(self, PLACE)
         self.orgs = _MemoryCollection(self, ORG)
@@ -90,6 +99,35 @@ class MemoryLiveStore:
             )
         self._people.clear()
         self._people.update(rebuilt)
+
+    def rebuild_items(self) -> None:
+        """Replay the item events into fresh item projections and catalog."""
+        rebuilt: dict[str, Item] = {}
+        refs: dict[str, tuple[ItemRef, ...]] = {}
+        edges: dict[str, tuple[ItemAsset, ...]] = {}
+        contents: dict[str, tuple[ItemContent, ...]] = {}
+        catalog: dict[str, AssetRecord] = {}
+        for event in self._events:
+            if event["entity_kind"] != "item" or event["entity_version"] is None:
+                continue
+            payload = json.loads(event["payload"])
+            item = Item.from_dict(payload["item"])
+            records = tuple(replace(record, event_seq=event["seq"]) for record in payload_assets(payload))
+            rebuilt[item.id] = replace(item, version=int(event["entity_version"]))
+            refs[item.id] = item_row.ItemRow.refs(item)
+            edges[item.id] = item_row.ItemRow.assets(item, records)
+            contents[item.id] = payload_contents(payload)
+            catalog.update({record.asset_id: record for record in records})
+        self._items.clear()
+        self._items.update(rebuilt)
+        self._item_refs.clear()
+        self._item_refs.update(refs)
+        self._item_assets.clear()
+        self._item_assets.update(edges)
+        self._item_contents.clear()
+        self._item_contents.update(contents)
+        self._assets.clear()
+        self._assets.update(catalog)
 
     def close(self) -> None:
         return None
@@ -140,6 +178,106 @@ class _MemoryPeople:
         return saved
 
 
+class _MemoryItems:
+    """The item collection in memory, with the same aggregate and write rules."""
+
+    def __init__(self, store: MemoryLiveStore, change: _MemoryChange | None = None) -> None:
+        self.store = store
+        self.change = change
+
+    def get(self, item_id: str) -> Item | None:
+        return self.store._items.get(item_id)
+
+    def require(self, item_id: str) -> Item:
+        item = self.get(item_id)
+        if item is None:
+            raise NotFound(f"no item {item_id}")
+        return item
+
+    def refs(self, item_id: str) -> tuple[ItemRef, ...]:
+        return self.store._item_refs.get(item_id, ())
+
+    def assets(self, item_id: str) -> tuple[ItemAsset, ...]:
+        return self.store._item_assets.get(item_id, ())
+
+    def asset(self, asset_id: str) -> AssetRecord | None:
+        return self.store._assets.get(asset_id)
+
+    def contents(self, item_id: str) -> tuple[ItemContent, ...]:
+        return self.store._item_contents.get(item_id, ())
+
+    def content_sha(self, item_id: str, kind: str) -> str | None:
+        for content in self.contents(item_id):
+            if content.kind == kind:
+                return content.sha256
+        return None
+
+    def content(self, item_id: str, kind: str) -> bytes | None:
+        sha = self.content_sha(item_id, kind)
+        return None if sha is None else self.store.content.get(sha)
+
+    def save(
+        self,
+        item: Item,
+        *,
+        base: int | None = None,
+        content: tuple[ContentInput, ...] = (),
+        files: dict[str, bytes] | None = None,
+    ) -> Item:
+        change = self.change
+        if change is None:
+            raise Conflict("items.save needs a change")
+        split = split_content(item)
+        sidecar = split.sidecar
+        current = self.get(sidecar.id)
+        if base is None:
+            if current is not None:
+                raise Conflict(f"item {sidecar.id} exists")
+            event_type = "deleted" if sidecar.status == "deleted" else "created"
+            version = 1
+        else:
+            if current is None:
+                raise NotFound(f"no item {sidecar.id}")
+            if current.version != base:
+                raise StaleVersion(current=current, base=base)
+            event_type = "deleted" if sidecar.status == "deleted" else "superseded"
+            version = base + 1
+        contents = build_contents(change.content, sidecar, split.content, content)
+        supplied = files or {}
+        catalog: list[AssetRecord] = []
+        for asset in sidecar.assets:
+            data = supplied.get(asset.file)
+            if data is None:
+                raise Conflict(f"item {sidecar.id} has no bytes for asset {asset.file}")
+            record = item_row.ItemRow.catalog_entry(sidecar.id, asset, data, 0)
+            existing = self.store._assets.get(record.asset_id)
+            if existing is not None:
+                if (
+                    existing.sha256,
+                    existing.kind,
+                    existing.mime,
+                    existing.size,
+                    existing.path,
+                ) != (record.sha256, record.kind, record.mime, record.size, record.path):
+                    raise Conflict(f"asset {record.asset_id} exists with different bytes")
+                record = existing
+            catalog.append(record)
+        change.append(
+            entity_kind="item",
+            entity_id=sidecar.id,
+            event_type=event_type,
+            entity_version=version,
+            payload=item_payload(sidecar, contents, tuple(catalog)),
+        )
+        saved = replace(sidecar, version=version)
+        self.store._items[sidecar.id] = saved
+        self.store._item_refs[sidecar.id] = item_row.ItemRow.refs(sidecar)
+        self.store._item_assets[sidecar.id] = item_row.ItemRow.assets(sidecar, tuple(catalog))
+        self.store._item_contents[sidecar.id] = contents
+        self.store._assets.update({record.asset_id: record for record in catalog})
+        return saved
+
+
 class _MemoryChange:
     def __init__(self, store: MemoryLiveStore, *, actor: str, note: str, command_id: str | None) -> None:
         self.store = store
@@ -148,12 +286,18 @@ class _MemoryChange:
         self.command_id = command_id
         self.change_id = uuid.uuid4().hex
         self.content = store.content
+        self.items = _MemoryItems(store, change=self)
         self.people = _MemoryPeople(store, change=self)
         self.places = _MemoryCollection(store, PLACE, change=self)
         self.orgs = _MemoryCollection(store, ORG, change=self)
         self.themes = _MemoryCollection(store, THEME, change=self)
         self.relationships = _MemoryCollection(store, RELATIONSHIP, change=self)
         self._people: dict[str, Person] | None = None
+        self._items: dict[str, Item] | None = None
+        self._item_refs: dict[str, tuple[ItemRef, ...]] | None = None
+        self._item_assets: dict[str, tuple[ItemAsset, ...]] | None = None
+        self._item_contents: dict[str, tuple[ItemContent, ...]] | None = None
+        self._assets: dict[str, AssetRecord] | None = None
         self._content: dict[str, bytes] | None = None
         self._events: list[dict[str, Any]] | None = None
         self._applied: set[str] | None = None
@@ -161,6 +305,11 @@ class _MemoryChange:
 
     def __enter__(self) -> Self:
         self._people = dict(self.store._people)
+        self._items = dict(self.store._items)
+        self._item_refs = dict(self.store._item_refs)
+        self._item_assets = dict(self.store._item_assets)
+        self._item_contents = dict(self.store._item_contents)
+        self._assets = dict(self.store._assets)
         self._content = dict(self.store._content)
         self._events = list(self.store._events)
         self._applied = set(self.store._applied)
@@ -172,6 +321,19 @@ class _MemoryChange:
         assert self._events is not None and self._applied is not None
         self.store._people.clear()
         self.store._people.update(self._people)
+        assert self._items is not None and self._item_refs is not None
+        assert self._item_assets is not None and self._item_contents is not None
+        assert self._assets is not None
+        self.store._items.clear()
+        self.store._items.update(self._items)
+        self.store._item_refs.clear()
+        self.store._item_refs.update(self._item_refs)
+        self.store._item_assets.clear()
+        self.store._item_assets.update(self._item_assets)
+        self.store._item_contents.clear()
+        self.store._item_contents.update(self._item_contents)
+        self.store._assets.clear()
+        self.store._assets.update(self._assets)
         self.store._content.clear()
         self.store._content.update(self._content)
         self.store._events[:] = self._events

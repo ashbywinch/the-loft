@@ -9,17 +9,20 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 from typing import Self
 
-from loft.live import person_row
+from loft.live import item_row, person_row
 from loft.live.change import Change
 from loft.live.content import ContentStore
 from loft.live.database import LiveDatabase
 from loft.live.event import event_hash
 from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection
+from loft.live.item_row import RowPosition
+from loft.live.items import Items, payload_assets, payload_contents
 from loft.live.people import People
-from tools.records import Person
+from tools.records import Item, Person
 
 
 class LiveStore:
@@ -29,6 +32,7 @@ class LiveStore:
         self.database = database
         self.app_version = app_version
         self.people = People(database.connection)
+        self.items = Items(database.connection, ContentStore(database.connection))
         self.places = Collection(database.connection, PLACE)
         self.orgs = Collection(database.connection, ORG)
         self.themes = Collection(database.connection, THEME)
@@ -93,6 +97,36 @@ class LiveStore:
                     updated_at=event["recorded_at"],
                 ),
                 base=current.version if current is not None else None,
+            )
+        self.connection.commit()
+
+    def rebuild_items(self) -> None:
+        """Drop the item projections (and the asset catalog) and replay their events."""
+        for table in ("item_refs", "item_assets", "item_content", "items", "assets"):
+            self.connection.execute(f"DELETE FROM {table}")
+        projection = item_row.ItemProjection(self.connection)
+        for row in self.connection.execute("SELECT * FROM events WHERE entity_kind = 'item' ORDER BY seq").fetchall():
+            event = dict(row)
+            if event["entity_version"] is None:
+                continue
+            payload = json.loads(event["payload"])
+            item = Item.from_dict(payload["item"])
+            catalog = tuple(replace(record, event_seq=event["seq"]) for record in payload_assets(payload))
+            projection.write(
+                item_row.ItemState(
+                    item=replace(item, version=int(event["entity_version"])),
+                    position=RowPosition(
+                        version=int(event["entity_version"]),
+                        event_no=int(event["event_no"]),
+                        event_seq=int(event["seq"]),
+                        updated_at=event["recorded_at"],
+                    ),
+                    refs=item_row.ItemRow.refs(item),
+                    assets=item_row.ItemRow.assets(item, catalog),
+                    contents=payload_contents(payload),
+                    catalog=catalog,
+                ),
+                base=projection.current_version(item.id),
             )
         self.connection.commit()
 

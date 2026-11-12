@@ -246,6 +246,17 @@ def test_item_ids_lists_every_folder() -> None:
     assert archive.item_ids() == ["a-item", "b-item"]
 
 
+def test_item_versions_and_one_sidecar_version_read_the_chain() -> None:
+    """The migration reads the whole chain, not only the wins — the two
+    public reads A4 needs (the contiguous-version rule stays the facade's)."""
+    archive, _ = make_archive()
+    _ = archive.save_item(_record(title="One"))
+    _ = archive.save_item(_record(title="Two"))
+    assert archive.item_versions("story-x") == [1, 2]
+    assert archive.get_item_version("story-x", 1).title == "One"
+    assert archive.get_item_version("story-x", 2).title == "Two"
+
+
 def test_store_delete_removes_a_file_and_fails_on_missing() -> None:
     """The proposed queue's reject path: a dropped proposal is gone. This is
     the ONE delete on the store — primary content (items, identity tables,

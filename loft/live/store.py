@@ -22,7 +22,7 @@ from loft.live.database import LiveDatabase
 from loft.live.document_row import DocumentBundle, DocumentProjection
 from loft.live.documents import Documents, document_from_payload
 from loft.live.event import event_hash
-from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection
+from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection, Kind
 from loft.live.item_row import RowPosition
 from loft.live.items import Items, payload_assets, payload_contents
 from loft.live.page_row import PageProjection
@@ -35,6 +35,8 @@ from tools.records import Item, Person
 
 class LiveStore:
     """The SQLite live store: one connection, one writer, one change at a time."""
+
+    IDENTITY_KINDS: tuple[Kind, ...] = (PLACE, ORG, THEME, RELATIONSHIP)
 
     def __init__(self, database: LiveDatabase, app_version: str) -> None:
         self.database = database
@@ -90,6 +92,7 @@ class LiveStore:
 
     def rebuild_people(self) -> None:
         """Drop the person projection and replay its events in seq order."""
+        self.connection.execute("DELETE FROM person_residences")
         self.connection.execute("DELETE FROM people")
         for row in self.connection.execute("SELECT * FROM events WHERE entity_kind = 'person' ORDER BY seq").fetchall():
             event = dict(row)
@@ -218,6 +221,41 @@ class LiveStore:
                     base=documents.current_version(document.document_id),
                 )
         self.connection.commit()
+
+    def rebuild_identities(self) -> None:
+        """Drop places/orgs/themes/relationships (and theme items) and replay them."""
+        for table in ("theme_items", "places", "orgs", "themes", "relationships"):
+            self.connection.execute(f"DELETE FROM {table}")
+        kinds = {kind.entity_kind: kind for kind in self.IDENTITY_KINDS}
+        for row in self.connection.execute(
+            """SELECT * FROM events
+               WHERE entity_kind IN ('place', 'org', 'theme', 'relationship') ORDER BY seq"""
+        ).fetchall():
+            event = dict(row)
+            if event["entity_version"] is None:
+                continue
+            kind = kinds[event["entity_kind"]]
+            record = kind.from_payload(json.loads(event["payload"]))
+            collection = getattr(self, kind.name)
+            collection.project(
+                record,
+                version=int(event["entity_version"]),
+                position=RowPosition(
+                    version=int(event["entity_version"]),
+                    event_no=int(event["event_no"]),
+                    event_seq=int(event["seq"]),
+                    updated_at=event["recorded_at"],
+                ),
+            )
+        self.connection.commit()
+
+    def rebuild_all(self) -> None:
+        """Replay every projection from the event log — the rebuild gate."""
+        self.rebuild_identities()
+        self.rebuild_people()
+        self.rebuild_items()
+        self.rebuild_reviews()
+        self.rebuild_pipeline()
 
     def close(self) -> None:
         self.database.close()

@@ -24,8 +24,11 @@ import uvicorn
 
 from loft.live.build import Repo, app_version
 from loft.live.database import LiveDatabase
+from loft.live.migrate import VerificationInputs, migrate, verify
 from loft.live.paths import default_database_path
 from loft.live.schema import SchemaError
+from loft.live.store import LiveStore
+from loft.live.verify import Projections, tree_digest
 from pipeline.api.server import Server, ServerConfig, build_app, lan_addresses
 from pipeline.model.ai_client import AIClient, AIClientError
 from pipeline.registry import RegistryError, list_batches
@@ -281,6 +284,106 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def _report_verification(store: LiveStore, run: Any, inputs: VerificationInputs) -> int:
+    """Print the A7 gate's findings and verdict; 0 when it passes."""
+    report = verify(store, run, inputs)
+    for finding in report.findings:
+        print(f"verify: {finding}")
+    print(
+        f"verify: {'ok' if report.ok else 'FAILED'}; rebuild {report.digest_before[:12]} -> {report.digest_after[:12]}"
+    )
+    return 0 if report.ok else 1
+
+
+def _migration_store(path: Path, dry_run: bool) -> LiveStore | None:
+    """The database the migration writes to; a dry run never creates one."""
+    try:
+        if path.exists():
+            return LiveStore.open(path, app_version=app_version())
+        if dry_run:
+            print(f"migrate: no database at {path} — run `loft db init` first")
+            return None
+        return LiveStore.create(path, app_version=app_version())
+    except SchemaError as error:
+        print(f"migrate: {error}")
+        return None
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    """Import the archive and the workspace into the live database."""
+    if args.dry_run and args.verify:
+        print("migrate: --dry-run and --verify cannot be combined")
+        return 2
+    path = Path(args.path)
+    archive_dir = Path(args.archive)
+    workspace = Path(args.workspace)
+    store = _migration_store(path, args.dry_run)
+    if store is None:
+        return 1
+    try:
+        tree_before = tree_digest((archive_dir, workspace / "registry", workspace / "work")) if args.verify else ""
+        dry = (
+            migrate(store, archive_dir=archive_dir, workspace=workspace, backup_marker=Path(args.marker), dry_run=True)
+            if args.verify
+            else None
+        )
+        run = migrate(
+            store,
+            archive_dir=archive_dir,
+            workspace=workspace,
+            backup_marker=Path(args.marker),
+            dry_run=args.dry_run,
+        )
+        if args.dry_run:
+            for operation in run.operations:
+                print(operation)
+            print(f"migrate: {len(run.operations)} operation(s) — dry run, nothing written")
+            return 0
+        for key, value in sorted(run.counts.items()):
+            print(f"{key}: {value}")
+        for mismatch in run.mismatches:
+            print(f"migrate: {mismatch}")
+        if dry is not None:
+            verdict = _report_verification(
+                store,
+                run,
+                VerificationInputs(
+                    archive_dir=archive_dir,
+                    workspace=workspace,
+                    dry_operations=dry.operations,
+                    tree_before=tree_before,
+                ),
+            )
+            if verdict:
+                return verdict
+        print(f"migrate: {len(run.operations)} operation(s) applied")
+        return 1 if run.mismatches else 0
+    finally:
+        store.close()
+
+
+def cmd_rebuild(args: argparse.Namespace) -> int:
+    """Drop every projection, replay the event log, and compare the result."""
+    path = Path(args.path)
+    try:
+        store = LiveStore.open(path, app_version=app_version())
+    except SchemaError as error:
+        print(f"rebuild: {error}")
+        return 1
+    try:
+        before = Projections.digest(store.connection)
+        store.rebuild_all()
+        after = Projections.digest(store.connection)
+        print(f"rebuild: {before} -> {after}")
+        if before != after:
+            print("rebuild: the projections changed — the rebuild is not equal")
+            return 1
+        print("rebuild: ok")
+        return 0
+    finally:
+        store.close()
+
+
 def cmd_gedcom(args: argparse.Namespace) -> int:
     if args.action == "export":
         return _gedcom_export(args.folder, args.path)
@@ -416,6 +519,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = _command(sub, name="verify", help_text="verify the live database", fn=cmd_verify)
     p.add_argument("--schema", action="store_true", help="verify the schema, pragmas and migration head")
+    p.add_argument("--path", default=str(default_database_path()))
+
+    p = _command(
+        sub,
+        name="migrate",
+        help_text="import the archive and workspace into the live database",
+        fn=cmd_migrate,
+    )
+    p.add_argument("--path", default=str(default_database_path()))
+    p.add_argument("--archive", default=str(LoftPaths.ARCHIVE_DIR))
+    p.add_argument("--workspace", default=str(LoftPaths.WORKSPACE))
+    p.add_argument("--marker", required=True, help="the verified backup marker (TECHSPEC/11 §Preconditions)")
+    p.add_argument("--dry-run", action="store_true", help="print the operation list and write nothing")
+    p.add_argument("--verify", action="store_true", help="run the A7 verification gate after the import")
+
+    p = _command(
+        sub,
+        name="rebuild",
+        help_text="drop every projection, replay the event log and compare",
+        fn=cmd_rebuild,
+    )
     p.add_argument("--path", default=str(default_database_path()))
 
     p = sub.add_parser(

@@ -165,3 +165,10 @@ ignore = ["god-class"]
 # step onto Change would put the page's row mapping in the transaction object.
 [lucidlint."loft/live/pages.py"]
 ignore = ["feature-envy"]
+
+# latent-class: LiveStore is the one public facade TECHSPEC/08 §19.3 names —
+# the read half (events_for, verify_chain, rebuild_*) and the write half
+# (change, connection) are one seam by design; splitting it would move the
+# store's API between two objects and break the "one facade" rule.
+[lucidlint."loft/live/store.py"]
+ignore = ["partition"]

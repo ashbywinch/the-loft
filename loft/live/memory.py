@@ -129,6 +129,19 @@ class MemoryLiveStore:
         self._people.clear()
         self._people.update(rebuilt)
 
+    def rebuild_identities(self) -> None:
+        """Replay the place/org/theme/relationship events into fresh collections."""
+        kinds = {kind.entity_kind: kind for kind in (PLACE, ORG, THEME, RELATIONSHIP)}
+        rebuilt: dict[str, dict[str, object]] = {kind.name: {} for kind in kinds.values()}
+        for event in self._events:
+            if event["entity_kind"] not in kinds or event["entity_version"] is None:
+                continue
+            kind = kinds[event["entity_kind"]]
+            record = kind.from_payload(json.loads(event["payload"]))
+            rebuilt[kind.name][record_id(kind, record)] = replace(record, version=int(event["entity_version"]))
+        self._collections.clear()
+        self._collections.update(rebuilt)
+
     def rebuild_items(self) -> None:
         """Replay the item events into fresh item projections and catalog."""
         rebuilt: dict[str, Item] = {}
@@ -225,6 +238,14 @@ class MemoryLiveStore:
         self._documents.update(documents)
         self._document_pages.clear()
         self._document_pages.update(document_pages)
+
+    def rebuild_all(self) -> None:
+        """Replay every projection from the event log — the rebuild gate."""
+        self.rebuild_identities()
+        self.rebuild_people()
+        self.rebuild_items()
+        self.rebuild_reviews()
+        self.rebuild_pipeline()
 
     def close(self) -> None:
         return None

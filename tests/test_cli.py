@@ -64,3 +64,40 @@ def test_db_init_and_verify_run(tmp_path: Path, capsys: pytest.CaptureFixture[st
     assert path.is_file()
     assert main(["verify", "--schema", "--path", str(path)]) == 0
     assert "schema ok" in capsys.readouterr().out
+
+
+def test_migrate_and_rebuild_are_wired() -> None:
+    args = build_parser().parse_args(["migrate", "--marker", "m.json", "--path", "loft.db"])
+    assert args.fn.__name__ == "cmd_migrate"
+    assert (args.dry_run, args.verify, args.marker) == (False, False, "m.json")
+    args = build_parser().parse_args(["migrate", "--marker", "m.json", "--dry-run", "--verify"])
+    assert args.dry_run is True and args.verify is True
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["migrate"])  # the marker is required
+    args = build_parser().parse_args(["rebuild", "--path", "loft.db"])
+    assert args.fn.__name__ == "cmd_rebuild" and args.path == "loft.db"
+
+
+def test_the_migration_gate_runs_from_the_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from tests.live.test_migrate import _fixture
+
+    archive, workspace, marker = _fixture(tmp_path)
+    path = tmp_path / "loft.db"
+    assert main(["db", "init", "--path", str(path)]) == 0
+    common = [
+        "--path",
+        str(path),
+        "--archive",
+        str(archive),
+        "--workspace",
+        str(workspace),
+        "--marker",
+        str(marker),
+    ]
+    assert main(["migrate", "--dry-run", *common]) == 0
+    assert "dry run, nothing written" in capsys.readouterr().out
+    assert main(["migrate", "--verify", *common]) == 0
+    output = capsys.readouterr().out
+    assert "verify: ok" in output
+    assert main(["rebuild", "--path", str(path)]) == 0
+    assert "rebuild: ok" in capsys.readouterr().out

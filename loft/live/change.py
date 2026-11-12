@@ -16,6 +16,7 @@ from typing import Any, Self
 from loft.live.content import ContentStore
 from loft.live.errors import Conflict
 from loft.live.event import event_hash
+from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection
 from loft.live.people import People
 
 
@@ -45,6 +46,10 @@ class Change:
         self.change_id = uuid.uuid4().hex
         self.content = ContentStore(connection)
         self.people = People(connection, change=self)
+        self.places = Collection(connection, PLACE, change=self)
+        self.orgs = Collection(connection, ORG, change=self)
+        self.themes = Collection(connection, THEME, change=self)
+        self.relationships = Collection(connection, RELATIONSHIP, change=self)
         self._entered = False
 
     def __enter__(self) -> Self:

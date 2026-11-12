@@ -58,7 +58,7 @@ def _archive(root: Path) -> Path:
         ),
     )
     # a letter whose transcription and page are files; the ref is a recollection
-    trans = b"Dear Ada,\n\nThe flat is cold.\n"
+    trans = b"Dear Wren,\n\nThe flat is cold.\n"
     letter = _item(
         "letter-1",
         title="A cold flat",
@@ -171,16 +171,16 @@ def test_the_imported_items_read_back_field_by_field(tmp_path: Path) -> None:
             ("transcription", "transcription.txt"),
             ("page", "page-1.svg"),
         ]
-        assert store.items.content("letter-1", "transcription") == b"Dear Ada,\n\nThe flat is cold.\n"
+        assert store.items.content("letter-1", "transcription") == b"Dear Wren,\n\nThe flat is cold.\n"
         assert (
             store.items.content_sha("letter-1", "transcription")
-            == hashlib.sha256(b"Dear Ada,\n\nThe flat is cold.\n").hexdigest()
+            == hashlib.sha256(b"Dear Wren,\n\nThe flat is cold.\n").hexdigest()
         )
         assert [(row.kind, row.trust) for row in store.items.contents("letter-1")] == [("transcription", "draft")]
         assert [(row.kind, row.trust) for row in store.items.contents("story-1")] == [("story", "confirmed")]
         record = store.items.asset(assets[0].asset_id)
         assert record is not None
-        assert record.sha256 == hashlib.sha256(b"Dear Ada,\n\nThe flat is cold.\n").hexdigest()
+        assert record.sha256 == hashlib.sha256(b"Dear Wren,\n\nThe flat is cold.\n").hexdigest()
         assert record.mime == "text/plain"
         page = store.items.asset(assets[1].asset_id)
         assert page is not None

@@ -41,6 +41,7 @@ class Kind:
     to_values: Callable[[Any, RowPosition], tuple[Any, ...]]
     from_row: Callable[[sqlite3.Row], Any]
     entity_kind: str
+    from_payload: Callable[[dict[str, Any]], Any]
 
 
 def _place_values(place: Place, position: RowPosition) -> tuple[Any, ...]:
@@ -107,6 +108,7 @@ PLACE = Kind(
     to_values=_place_values,
     from_row=_place_row,
     entity_kind="place",
+    from_payload=Place.from_dict,
 )
 
 
@@ -165,6 +167,7 @@ ORG = Kind(
     to_values=_org_values,
     from_row=_org_row,
     entity_kind="org",
+    from_payload=Org.from_dict,
 )
 
 
@@ -209,6 +212,7 @@ THEME = Kind(
     to_values=_theme_values,
     from_row=_theme_row,
     entity_kind="theme",
+    from_payload=Theme.from_dict,
 )
 
 
@@ -271,6 +275,7 @@ RELATIONSHIP = Kind(
     to_values=_relationship_values,
     from_row=_relationship_row,
     entity_kind="relationship",
+    from_payload=Relationship.from_dict,
 )
 
 
@@ -329,6 +334,12 @@ class Collection:
         self._write(saved, RowPosition(version, event["event_no"], event["seq"], event["recorded_at"]), base)
         return saved
 
+    def project(self, record: Any, *, version: int, position: RowPosition) -> None:
+        """Write one replayed event's record — the rebuild's write, no event."""
+        entity_id = record_id(self.kind, record)
+        current = self.get(entity_id)
+        self._write(_with_version(record, version), position, current.version if current is not None else None)
+
     def _write(self, record: Any, position: RowPosition, base: int | None) -> None:
         values = self.kind.to_values(record, position)
         placeholders = ", ".join("?" for _ in values)
@@ -344,6 +355,22 @@ class Collection:
         if cursor.rowcount == 0:
             current = self.get(record_id(self.kind, record))
             raise StaleVersion(current=current, base=base)
+        if self.kind is THEME:
+            self._write_theme_items(record)
+
+    def _write_theme_items(self, record: Any) -> None:
+        """The theme's curated entries as the child table's ordinal edges."""
+        self.connection.execute("DELETE FROM theme_items WHERE theme_id = ?", (record.id,))
+        seen: set[str] = set()
+        for ordinal, entry in enumerate(record.raw.get("items") or []):
+            item_id = str(entry.get("id", ""))
+            if not item_id or item_id in seen:
+                continue
+            seen.add(item_id)
+            self.connection.execute(
+                "INSERT INTO theme_items (theme_id, item_id, ordinal) VALUES (?, ?, ?)",
+                (record.id, item_id, ordinal),
+            )
 
 
 def _with_version(record: Any, version: int) -> Any:

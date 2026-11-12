@@ -433,6 +433,48 @@ def test_rebuild_replays_review_sessions(store: Any) -> None:
     assert store.verify_chain() == ()
 
 
+def test_rebuild_replays_the_identity_collections(store: Any) -> None:
+    place = Place.from_dict({"id": "pl-london", "name": "London"})
+    org = Org.from_dict({"id": "org-ministry", "name": "Ministry of Supply"})
+    theme = Theme.from_dict({"id": "t-boats", "title": "The boats", "items": [{"id": "object-1"}]})
+    edge = Relationship.from_dict({"a": "p-a", "b": "p-b", "kind": "parent"})
+    with store.change(actor="import") as change:
+        change.places.save(place)
+        change.orgs.save(org)
+        change.themes.save(theme)
+        change.relationships.save(edge)
+    store.rebuild_identities()
+    assert store.places.require("pl-london").name == "London"
+    assert store.orgs.require("org-ministry").name == "Ministry of Supply"
+    assert store.themes.require("t-boats").title == "The boats"
+    assert store.relationships.require("rel-p-a-p-b-parent").kind == "parent"
+    if hasattr(store, "connection"):
+        rows = store.connection.execute("SELECT item_id FROM theme_items WHERE theme_id = 't-boats'").fetchall()
+        assert [row[0] for row in rows] == ["object-1"]
+
+
+def test_rebuild_all_replays_every_projection(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.people.save(_person())
+        change.places.save(Place.from_dict({"id": "pl-london", "name": "London"}))
+        change.items.save(_item(), content=_story(), files=_files())
+        change.reviews.save(_session())
+    with store.change(actor="import") as change:
+        change.batches.save(_batch(), _scans())
+        change.pages.save(_page(), reading=_reading())
+        change.documents.save(_document(), ("batch-1/page-01.jpg",), text="Dear family")
+    store.rebuild_all()
+    assert store.people.require("p-alex").name == "Alex Hale"
+    assert store.places.require("pl-london").name == "London"
+    assert store.items.require("story-1").title == "A story"
+    assert store.items.content("story-1", "story") == b"The words.\\n"
+    assert store.reviews.require("import-test").status == "pending"
+    assert store.batches.require("batch-1").status == "review"
+    assert store.pages.require("batch-1/page-01.jpg").revision == 1
+    assert store.documents.require("batch-1/doc-1").text_sha is not None
+    assert store.verify_chain() == ()
+
+
 def _batch(batch_id: str = "batch-1", *, status: str = "review") -> BatchState:
     return BatchState(
         batch_id=batch_id,

@@ -15,12 +15,14 @@ import pytest
 
 from loft.live.import_identity import _latest, import_identities
 from loft.live.store import LiveStore
+from tools.loft_paths import LoftPaths
 from tools.records import OrgsTable, PeopleTable, PlacesTable, ThemesTable
 
-ARCHIVE = Path("/run/media/ashby/One Touch/Loft/archive")
+ARCHIVE = LoftPaths.ARCHIVE_DIR
 
 
 @pytest.mark.archive
+@pytest.mark.skipif(not (ARCHIVE / "people.json").exists(), reason="archive not mounted")
 def test_the_real_archive_identity_tables_import_and_read_back(tmp_path: Path) -> None:
     marker = tmp_path / "backup.json"
     marker.write_text(json.dumps({"verified": True}), encoding="utf-8")

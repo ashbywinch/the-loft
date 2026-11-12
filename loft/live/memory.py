@@ -15,6 +15,7 @@ from typing import Any, Self
 
 from loft.live.errors import Conflict, NotFound, StaleVersion
 from loft.live.event import event_hash
+from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Kind, record_id
 from tools.records import Person
 
 
@@ -50,6 +51,11 @@ class MemoryLiveStore:
         self._events: list[dict[str, Any]] = []
         self._applied: set[str] = set()
         self.people = _MemoryPeople(self)
+        self._collections: dict[str, dict[str, object]] = {kind.name: {} for kind in (PLACE, ORG, THEME, RELATIONSHIP)}
+        self.places = _MemoryCollection(self, PLACE)
+        self.orgs = _MemoryCollection(self, ORG)
+        self.themes = _MemoryCollection(self, THEME)
+        self.relationships = _MemoryCollection(self, RELATIONSHIP)
         self.content = MemoryContentStore(self._content)
 
     def change(self, *, actor: str, note: str = "", command_id: str | None = None) -> _MemoryChange:
@@ -143,16 +149,22 @@ class _MemoryChange:
         self.change_id = uuid.uuid4().hex
         self.content = store.content
         self.people = _MemoryPeople(store, change=self)
+        self.places = _MemoryCollection(store, PLACE, change=self)
+        self.orgs = _MemoryCollection(store, ORG, change=self)
+        self.themes = _MemoryCollection(store, THEME, change=self)
+        self.relationships = _MemoryCollection(store, RELATIONSHIP, change=self)
         self._people: dict[str, Person] | None = None
         self._content: dict[str, bytes] | None = None
         self._events: list[dict[str, Any]] | None = None
         self._applied: set[str] | None = None
+        self._collections: dict[str, dict[str, object]] = {}
 
     def __enter__(self) -> Self:
         self._people = dict(self.store._people)
         self._content = dict(self.store._content)
         self._events = list(self.store._events)
         self._applied = set(self.store._applied)
+        self._collections = {name: dict(records) for name, records in self.store._collections.items()}
         return self
 
     def _restore(self) -> None:
@@ -165,6 +177,8 @@ class _MemoryChange:
         self.store._events[:] = self._events
         self.store._applied.clear()
         self.store._applied.update(self._applied)
+        self.store._collections.clear()
+        self.store._collections.update({name: dict(records) for name, records in self._collections.items()})
 
     def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: Any) -> None:
         if exc_type is not None:
@@ -214,3 +228,54 @@ class _MemoryChange:
         event["hash"] = event_hash(event)
         self.store._events.append(event)
         return event
+
+
+class _MemoryCollection:
+    """One identity collection in memory, with the same write rules."""
+
+    def __init__(self, store: MemoryLiveStore, kind: Kind, change: _MemoryChange | None = None) -> None:
+        self.store = store
+        self.kind = kind
+        self.change = change
+
+    @property
+    def records(self) -> dict[str, object]:
+        return self.store._collections[self.kind.name]
+
+    def get(self, entity_id: str) -> object | None:
+        return self.records.get(entity_id)
+
+    def require(self, entity_id: str) -> object:
+        record = self.get(entity_id)
+        if record is None:
+            raise NotFound(f"no {self.kind.name[:-1]} {entity_id}")
+        return record
+
+    def save(self, record: Any, base: int | None = None) -> Any:
+        if self.change is None:
+            raise Conflict(f"{self.kind.name}.save needs a change")
+        entity_id = record_id(self.kind, record)
+        current = self.get(entity_id)
+        if base is None:
+            if current is not None:
+                raise Conflict(f"{self.kind.name[:-1]} {entity_id} exists")
+            event_type = "created"
+            version = 1
+        else:
+            if current is None:
+                raise NotFound(f"no {self.kind.name[:-1]} {entity_id}")
+            if getattr(current, "version", 0) != base:
+                raise StaleVersion(current=current, base=base)
+            event_type = "superseded"
+            version = base + 1
+        payload = json.dumps(record.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        self.change.append(
+            entity_kind=self.kind.entity_kind,
+            entity_id=entity_id,
+            event_type=event_type,
+            entity_version=version,
+            payload=payload,
+        )
+        saved = replace(record, version=version)
+        self.records[entity_id] = saved
+        return saved

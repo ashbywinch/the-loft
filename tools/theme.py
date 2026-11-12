@@ -20,6 +20,7 @@ class Theme:
     reads named."""
 
     raw: dict[str, Any]
+    version: int = 0  # the live store's optimistic token; never serialised
 
     @property
     def id(self) -> str:

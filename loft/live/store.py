@@ -17,6 +17,7 @@ from loft.live.change import Change
 from loft.live.content import ContentStore
 from loft.live.database import LiveDatabase
 from loft.live.event import event_hash
+from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection
 from loft.live.people import People
 from tools.records import Person
 
@@ -28,6 +29,10 @@ class LiveStore:
         self.database = database
         self.app_version = app_version
         self.people = People(database.connection)
+        self.places = Collection(database.connection, PLACE)
+        self.orgs = Collection(database.connection, ORG)
+        self.themes = Collection(database.connection, THEME)
+        self.relationships = Collection(database.connection, RELATIONSHIP)
         self.content = ContentStore(database.connection)
 
     @classmethod

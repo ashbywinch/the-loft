@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from loft.live.errors import StaleVersion
+from loft.live.identity_map import date_value
 from tools.records import Person
 
 
@@ -81,6 +82,7 @@ def write_row(
     if cursor.rowcount == 0:
         current = read_row(connection, person.id)
         raise StaleVersion(current=current, base=base)
+    _write_residences(connection, person)
 
 
 def read_row(connection: sqlite3.Connection, person_id: str) -> Person | None:
@@ -88,10 +90,50 @@ def read_row(connection: sqlite3.Connection, person_id: str) -> Person | None:
     row = connection.execute("SELECT * FROM people WHERE person_id = ?", (person_id,)).fetchone()
     if row is None:
         return None
-    return from_row(row)
+    return from_row(row, _residences(connection, person_id))
 
 
-def from_row(row: sqlite3.Row) -> Person:
+def _precision_of(text: str) -> str:
+    return {4: "year", 7: "month", 10: "exact"}.get(len(text.strip()), "year")
+
+
+def _write_residences(connection: sqlite3.Connection, person: Person) -> None:
+    connection.execute("DELETE FROM person_residences WHERE person_id = ?", (person.id,))
+    for residence in person.residence:
+        place = str(residence.get("place", ""))
+        start = str(residence.get("from", ""))
+        end = str(residence.get("to", ""))
+        status = str(residence.get("status", "confirmed"))
+        connection.execute(
+            """INSERT INTO person_residences (person_id, place_id, date_json, from_date, to_date,
+                                              from_precision, to_precision, status, basis_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                person.id,
+                place,
+                json.dumps(date_value(start, "period", end or None), sort_keys=True),
+                start,
+                end or None,
+                _precision_of(start),
+                _precision_of(end) if end else None,
+                status,
+                None,
+            ),
+        )
+
+
+def _residences(connection: sqlite3.Connection, person_id: str) -> list[dict[str, str]]:
+    rows = connection.execute(
+        "SELECT place_id, from_date, to_date, status FROM person_residences WHERE person_id = ? ORDER BY rowid",
+        (person_id,),
+    ).fetchall()
+    return [
+        {"place": row["place_id"], "from": row["from_date"], "to": row["to_date"] or "", "status": row["status"]}
+        for row in rows
+    ]
+
+
+def from_row(row: sqlite3.Row, residences: list[dict[str, str]] | None = None) -> Person:
     def decoded(value: str | None) -> Any:
         return None if value is None else json.loads(value)
 
@@ -105,6 +147,8 @@ def from_row(row: sqlite3.Row) -> Person:
         "aliases": decoded(row["aliases_json"]) or [],
         "occupations": decoded(row["occupations_json"]) or [],
     }
+    if residences:
+        raw["residence"] = residences
     for key, column in (("email", "email"), ("pronouns", "pronouns"), ("hue", "hue")):
         value = row[column]
         if value is not None:

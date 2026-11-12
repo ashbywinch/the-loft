@@ -125,6 +125,19 @@ def _basis(raw: Mapping[str, Any], key: str = "basis") -> dict[str, str] | None:
     basis = raw.get(key)
     if basis is None:
         return None
+    if "basis" in basis or "confidence" in basis:
+        # the live model's disposition basis: knowledge/recollection + certain/
+        # possible, with the reviewer's own words carried alongside
+        kind = str(basis.get("basis", "")).strip()
+        confidence = str(basis.get("confidence", "")).strip()
+        if not kind or not confidence:
+            raise ValueError(f"invalid {key}: {basis!r} — basis and confidence are required")
+        out = {"basis": kind, "confidence": confidence}
+        for field_name in ("text", "by", "when", "note"):
+            value = str(basis.get(field_name, "")).strip()
+            if value:
+                out[field_name] = value
+        return out
     text = str(basis.get("text", "")).strip()
     if not text:
         raise ValueError(f"invalid {key}: {basis!r} — the text is required")
@@ -280,6 +293,7 @@ class Place:
     address: str = ""
     status: Literal["confirmed", "proposed", "estimated"] = "confirmed"
     basis: dict[str, str] | None = None
+    version: int = 0  # the live store's optimistic token; never serialised
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Place:
@@ -343,6 +357,7 @@ class Relationship:
     label_b: str
     date: DatedFact | None = None
     status: Literal["confirmed", "proposed", "estimated"] | None = None
+    version: int = 0  # the live store's optimistic token; never serialised
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Relationship:
@@ -548,6 +563,7 @@ class Org:
     branch: str = ""
     note: str = ""
     status: Literal["confirmed", "proposed", "estimated"] = "confirmed"
+    version: int = 0  # the live store's optimistic token; never serialised
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Org:

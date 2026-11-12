@@ -11,7 +11,10 @@ never modified.
 
 - A verified backup of the archive (`assets/`, the identity tables,
   `imports.json`, `registry/`, `work/`) and its marker. The migration refuses
-  without one.
+  without one. The marker is a JSON file the backup procedure writes, with
+  `"verified": true` (plus whatever provenance it records — the archive path,
+  the time, the hashes); `loft migrate` takes its path and checks it before
+  reading a record.
 - The service is stopped. The DB is empty, or holds the migration's own
   committed prefix from a prior run (the cursor resumes it).
 - The old tree is mounted read-only; the migration only reads it.

@@ -93,6 +93,21 @@ class PipelineStore:
             raise StoreError(f"no versions of {path} exist")
         return self._store.read(path)
 
+    def read_available(self, path: str) -> str:
+        """The base content when it exists, else the newest archived copy.
+
+        ``read_latest`` trusts the base to hold the latest; a partial sync or a
+        hand-cleaned tree can leave only ``-N`` copies. Those copies are older
+        versions (``-2`` is the previous content, ``-3`` older still), so the
+        migration reads the base when present and ``-2`` before ``-3`` when not.
+        """
+        if self._store.exists(path):
+            return self._store.read(path)
+        versions = self.versions(path)
+        if not versions:
+            raise StoreError(f"no versions of {path} exist")
+        return self._store.read(_versioned_path(path, versions[0]))
+
     def exists(self, path: str) -> bool:
         """Does any version of ``path`` exist?"""
         return self._store.exists(path) or self._store.exists(_versioned_path(path, 2))

@@ -13,11 +13,14 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, Self
 
+from loft.live.batches import Batches
 from loft.live.content import ContentStore
+from loft.live.documents import Documents
 from loft.live.errors import Conflict
 from loft.live.event import event_hash
 from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection
 from loft.live.items import Items
+from loft.live.pages import Pages
 from loft.live.people import People
 from loft.live.reviews import Reviews
 
@@ -49,6 +52,9 @@ class Change:
         self.content = ContentStore(connection)
         self.items = Items(connection, self.content, change=self)
         self.reviews = Reviews(connection, self.content, change=self)
+        self.batches = Batches(connection, change=self)
+        self.pages = Pages(connection, self.content, change=self)
+        self.documents = Documents(connection, change=self)
         self.people = People(connection, change=self)
         self.places = Collection(connection, PLACE, change=self)
         self.orgs = Collection(connection, ORG, change=self)

@@ -158,3 +158,10 @@ ignore = ["god-class", "long-param-list", "partition"]
 # latent-class: the band-size sweep's locals carry the run's state — no class for one call site (recorded 2026-10-08, held not split)
 [lucidlint."pipeline/evals/eval_band_size.py"]
 ignore = ["god-class"]
+
+# feature-envy: the page save is the page transaction's own step — it puts the
+# reading blob, appends the one page event and writes the projection through
+# the change, and the change is that write seam, not a second owner. Moving the
+# step onto Change would put the page's row mapping in the transaction object.
+[lucidlint."loft/live/pages.py"]
+ignore = ["feature-envy"]

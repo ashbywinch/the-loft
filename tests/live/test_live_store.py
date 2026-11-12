@@ -14,9 +14,12 @@ from typing import Any
 
 import pytest
 
+from loft.live.batch_row import BatchState, ScanState
+from loft.live.document_row import DocumentState
 from loft.live.errors import Conflict, StaleVersion
 from loft.live.items import ContentInput
 from loft.live.memory import MemoryLiveStore
+from loft.live.page_row import PageState
 from loft.live.store import LiveStore
 from tools.records import Item, Org, Person, Place, Relationship, Session
 from tools.theme import Theme
@@ -427,4 +430,217 @@ def test_rebuild_replays_review_sessions(store: Any) -> None:
     assert len(store.reviews.messages("import-test")) == 3
     assert store.reviews.decisions("import-test")[0].decision == "attested"
     assert store.reviews.thinking("import-test", 2) == b"raw verdict"
+    assert store.verify_chain() == ()
+
+
+def _batch(batch_id: str = "batch-1", *, status: str = "review") -> BatchState:
+    return BatchState(
+        batch_id=batch_id,
+        label="A pile",
+        source="external",
+        path="/scans/pile",
+        status=status,
+        arrived_at="2026-01-01T00:00:00+00:00",
+        started_at="",
+        started_pid=0,
+        started_host="",
+        fingerprint=["sha-b", "sha-a"],
+        content_changed=False,
+    )
+
+
+def _scans(batch_id: str = "batch-1") -> tuple[ScanState, ...]:
+    return tuple(
+        ScanState(
+            scan_id=f"{batch_id}/page-0{index}.jpg",
+            batch_id=batch_id,
+            page_id=f"{batch_id}/page-0{index}.jpg",
+            sha256=f"sha-{index}",
+            path=f"/scans/pile/page-0{index}.jpg",
+            ordinal=index - 1,
+            created_at="2026-01-01T00:00:00+00:00",
+        )
+        for index in (1, 2)
+    )
+
+
+def _page(page_id: str = "batch-1/page-01.jpg", *, revision: int = 1) -> PageState:
+    return PageState(
+        page_id=page_id,
+        image_asset_id=page_id,
+        sha256="sha-1",
+        revision=revision,
+        rotation=180,
+        category="text",
+        status="rows_pending",
+    )
+
+
+def _reading(text: str = "Hello") -> dict[str, Any]:
+    return {
+        "page": "ignored",
+        "width": 100,
+        "height": 200,
+        "rotation": 0,
+        "revision": 1,
+        "lines": [
+            {
+                "index": 0,
+                "text": text,
+                "box": [1, 2, 3, 4],
+                "orientation": 0,
+                "box_source": "reader",
+                "words": [],
+            },
+            {
+                "index": 1,
+                "text": "World",
+                "box": [5, 6, 7, 8],
+                "orientation": 0,
+                "box_source": "reader",
+                "words": [],
+            },
+        ],
+        "words": [{"x0": 1, "y0": 2, "x1": 3, "y1": 4, "line": 0, "baseline": 3, "waistline": 2}],
+    }
+
+
+def _document(
+    document_id: str = "batch-1/doc-1", *, status: str = "review", item_id: str | None = None
+) -> DocumentState:
+    return DocumentState(
+        document_id=document_id,
+        item_id=item_id,
+        batch_id="batch-1",
+        doc_index=1,
+        title=None,
+        date_json=None,
+        date=None,
+        date2=None,
+        date_precision=None,
+        status=status,
+        greeting="Dear",
+        signoff=None,
+        text_sha=None,
+        confirmed_at=None,
+    )
+
+
+def test_a_batch_is_one_event_a_row_and_its_scans(store: Any) -> None:
+    with store.change(actor="import") as change:
+        saved = change.batches.save(_batch(), _scans())
+    assert saved.version == 1
+    assert store.batches.require("batch-1").status == "review"
+    assert [scan.ordinal for scan in store.batches.scans("batch-1")] == [0, 1]
+    assert store.events_for("batch-1", entity_kind="batch")[0]["event_type"] == "created"
+    assert store.verify_chain() == ()
+
+
+def test_a_batch_supersede_is_versioned_and_stale_is_refused(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.batches.save(_batch(), _scans())
+    with store.change(actor="import") as change:
+        second = change.batches.save(_batch(status="confirmed"), _scans(), base=1)
+    assert second.version == 2
+    assert store.batches.require("batch-1").status == "confirmed"
+    with pytest.raises(StaleVersion), store.change(actor="import") as change:
+        change.batches.save(_batch(), _scans(), base=1)
+
+
+def test_a_page_is_one_event_its_reading_rows_and_adjustment(store: Any) -> None:
+    with store.change(actor="import") as change:
+        saved = change.pages.save(
+            _page(),
+            reading=_reading(),
+            adjustment=b'{"lines":[]}',
+            adjustment_at="2026-01-01T00:00:00+00:00",
+        )
+    assert saved.revision == 1
+    page = store.pages.require("batch-1/page-01.jpg")
+    assert (page.rotation, page.category, page.status) == (180, "text", "rows_pending")
+    reading = store.pages.reading("batch-1/page-01.jpg")
+    assert reading is not None and reading.rows == 2 and reading.words == 1
+    rows = store.pages.rows("batch-1/page-01.jpg")
+    assert [row.ordinal for row in rows] == [1, 2]
+    assert [row.text for row in rows] == ["Hello", "World"]
+    assert rows[0].source == "machine"
+    adjustment = store.pages.adjustment("batch-1/page-01.jpg")
+    assert adjustment is not None
+    assert adjustment.sha256 == hashlib.sha256(b'{"lines":[]}').hexdigest()
+    assert store.verify_chain() == ()
+
+
+def test_a_corrected_page_records_human_rows_and_the_corrected_sha(store: Any) -> None:
+    corrected = _reading("Corrected")
+    corrected["corrected"] = "abc123"
+    with store.change(actor="import") as change:
+        change.pages.save(_page(), reading=corrected)
+    reading = store.pages.reading("batch-1/page-01.jpg")
+    assert reading is not None and reading.corrected_sha == "abc123"
+    assert store.pages.rows("batch-1/page-01.jpg")[0].source == "human"
+
+
+def test_a_page_supersede_bumps_the_revision_and_replaces_the_rows(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.pages.save(_page(), reading=_reading())
+    with store.change(actor="import") as change:
+        second = change.pages.save(_page(revision=1), base=1, reading=_reading("Changed"))
+    assert second.revision == 2
+    assert store.pages.require("batch-1/page-01.jpg").revision == 2
+    assert store.pages.rows("batch-1/page-01.jpg")[0].text == "Changed"
+    assert store.pages.rows("batch-1/page-01.jpg")[0].revision == 2
+
+
+def test_a_document_is_one_event_its_pages_and_confirmed_text(store: Any) -> None:
+    with store.change(actor="import") as change:
+        saved = change.documents.save(_document(), ("batch-1/page-01.jpg", "batch-1/page-02.jpg"), text="Dear family")
+    assert saved.text_sha == hashlib.sha256(b"Dear family").hexdigest()
+    assert store.documents.require("batch-1/doc-1").status == "review"
+    assert [page.page_id for page in store.documents.pages("batch-1/doc-1")] == [
+        "batch-1/page-01.jpg",
+        "batch-1/page-02.jpg",
+    ]
+    assert [page.ordinal for page in store.documents.pages("batch-1/doc-1")] == [0, 1]
+    assert saved.text_sha is not None
+    assert store.content.get(saved.text_sha) == b"Dear family"
+    assert store.documents.for_batch("batch-1")[0].document_id == "batch-1/doc-1"
+
+
+def test_a_document_supersede_is_versioned_and_stale_is_refused(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.documents.save(_document(), ("batch-1/page-01.jpg",))
+    with store.change(actor="import") as change:
+        second = change.documents.save(
+            _document(status="confirmed", item_id="item-1"), ("batch-1/page-01.jpg",), base=1
+        )
+    assert second.version == 2
+    assert store.documents.require("batch-1/doc-1").status == "confirmed"
+    with pytest.raises(StaleVersion), store.change(actor="import") as change:
+        change.documents.save(_document(), ("batch-1/page-01.jpg",), base=1)
+
+
+def test_a_failed_pipeline_change_writes_nothing(store: Any) -> None:
+    with pytest.raises(RuntimeError), store.change(actor="import") as change:
+        change.batches.save(_batch(), _scans())
+        change.pages.save(_page(), reading=_reading())
+        raise RuntimeError("boom")
+    assert store.batches.get("batch-1") is None
+    assert store.pages.get("batch-1/page-01.jpg") is None
+    assert store.events_for("batch-1", entity_kind="batch") == []
+
+
+def test_rebuild_replays_the_pipeline(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.batches.save(_batch(), _scans())
+        change.pages.save(_page(), reading=_reading(), adjustment=b'{"lines":[]}')
+        change.documents.save(_document(), ("batch-1/page-01.jpg",), text="Dear family")
+    store.rebuild_pipeline()
+    assert store.batches.require("batch-1").version == 1
+    assert len(store.batches.scans("batch-1")) == 2
+    assert store.pages.require("batch-1/page-01.jpg").revision == 1
+    assert [row.text for row in store.pages.rows("batch-1/page-01.jpg")] == ["Hello", "World"]
+    reading = store.pages.reading("batch-1/page-01.jpg")
+    assert reading is not None and reading.rows == 2
+    assert store.documents.require("batch-1/doc-1").text_sha is not None
+    assert len(store.documents.pages("batch-1/doc-1")) == 1
     assert store.verify_chain() == ()

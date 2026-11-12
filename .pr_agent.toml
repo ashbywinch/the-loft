@@ -53,6 +53,10 @@ persistent_comment = true
 
 [github_action_config]
 handle_push_trigger = true
+# The agent harness pushes as omp-harness[bot]; the action's default bot-skip
+# would silently never review its pushes (the fail-loud verify job caught it:
+# "Skipping synchronize: bot commit detected"). Review every push.
+push_trigger_ignore_bot_commits = false
 # -i on /review is the ONLY incremental enabler in v0.41.1 (the
 # enable_incremental config key does not exist in this version) — without
 # it every push re-reviews the ENTIRE PR and the diff eventually blows the

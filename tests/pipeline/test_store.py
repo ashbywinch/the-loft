@@ -46,6 +46,19 @@ def test_read_latest_returns_highest_version(tmp_path: Path) -> None:
     assert store.read_latest("test.json") == "v3"
 
 
+def test_read_available_prefers_the_base_and_tolerates_a_missing_one(tmp_path: Path) -> None:
+    """The base is the latest; a partial sync can leave only a -N copy (which
+    is older), so the fallback reads the newest archived copy, never a stale
+    higher-numbered one."""
+    store = PipelineStore(tmp_path)
+    store.write("test.json", "v1")
+    store.write("test.json", "v2")
+    assert store.read_available("test.json") == "v2"  # the base wins over -2
+    (tmp_path / "test.json").unlink()
+    assert store.exists("test.json")
+    assert store.read_available("test.json") == "v1"  # the -2 copy is the only one left
+
+
 def test_exists_checks_all_versions(tmp_path: Path) -> None:
     store = PipelineStore(tmp_path)
     assert not store.exists("test.json")

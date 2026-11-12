@@ -14,13 +14,19 @@ from pathlib import Path
 from typing import Self
 
 from loft.live import item_row, person_row
+from loft.live.batch_row import BatchBundle, BatchProjection
+from loft.live.batches import Batches, batch_from_payload
 from loft.live.change import Change
 from loft.live.content import ContentStore
 from loft.live.database import LiveDatabase
+from loft.live.document_row import DocumentBundle, DocumentProjection
+from loft.live.documents import Documents, document_from_payload
 from loft.live.event import event_hash
 from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection
 from loft.live.item_row import RowPosition
 from loft.live.items import Items, payload_assets, payload_contents
+from loft.live.page_row import PageProjection
+from loft.live.pages import Pages, page_from_payload
 from loft.live.people import People
 from loft.live.review_row import ReviewProjection, ReviewRow, session_from_payload
 from loft.live.reviews import Reviews
@@ -33,14 +39,18 @@ class LiveStore:
     def __init__(self, database: LiveDatabase, app_version: str) -> None:
         self.database = database
         self.app_version = app_version
+        content = ContentStore(database.connection)
         self.people = People(database.connection)
-        self.items = Items(database.connection, ContentStore(database.connection))
-        self.reviews = Reviews(database.connection, ContentStore(database.connection))
+        self.items = Items(database.connection, content)
+        self.reviews = Reviews(database.connection, content)
+        self.batches = Batches(database.connection)
+        self.pages = Pages(database.connection, content)
+        self.documents = Documents(database.connection)
         self.places = Collection(database.connection, PLACE)
         self.orgs = Collection(database.connection, ORG)
         self.themes = Collection(database.connection, THEME)
         self.relationships = Collection(database.connection, RELATIONSHIP)
-        self.content = ContentStore(database.connection)
+        self.content = content
 
     @classmethod
     def create(cls, path: Path, *, app_version: str) -> Self:
@@ -156,6 +166,57 @@ class LiveStore:
                 ),
                 base=projection.current_version(session.id),
             )
+        self.connection.commit()
+
+    def rebuild_pipeline(self) -> None:
+        """Drop the pipeline projections and replay the batch/page/document events."""
+        for table in (
+            "document_pages",
+            "documents",
+            "row_adjustments",
+            "page_rows",
+            "readings",
+            "pages",
+            "scans",
+            "batches",
+        ):
+            self.connection.execute(f"DELETE FROM {table}")
+        batches = BatchProjection(self.connection)
+        pages = PageProjection(self.connection)
+        documents = DocumentProjection(self.connection)
+        for row in self.connection.execute(
+            """SELECT * FROM events
+               WHERE entity_kind IN ('batch', 'page', 'document') ORDER BY seq"""
+        ).fetchall():
+            event = dict(row)
+            if event["entity_version"] is None:
+                continue
+            payload = json.loads(event["payload"])
+            position = RowPosition(
+                version=int(event["entity_version"]),
+                event_no=int(event["event_no"]),
+                event_seq=int(event["seq"]),
+                updated_at=event["recorded_at"],
+            )
+            if event["entity_kind"] == "batch":
+                batch, scans = batch_from_payload(payload)
+                batches.write(
+                    BatchBundle(batch=batch, scans=scans), position, base=batches.current_version(batch.batch_id)
+                )
+            elif event["entity_kind"] == "page":
+                bundle = page_from_payload(payload, self.content, int(event["entity_version"]))
+                pages.write(
+                    bundle,
+                    position,
+                    base=pages.current_revision(bundle.page.page_id),
+                )
+            else:
+                document, doc_pages = document_from_payload(payload, int(event["entity_version"]))
+                documents.write(
+                    DocumentBundle(document=document, pages=doc_pages),
+                    position,
+                    base=documents.current_version(document.document_id),
+                )
         self.connection.commit()
 
     def close(self) -> None:

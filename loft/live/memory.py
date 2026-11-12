@@ -14,11 +14,17 @@ from datetime import UTC, datetime
 from typing import Any, Self
 
 from loft.live import item_row
+from loft.live.batch_row import BatchState, ScanState
+from loft.live.batches import batch_from_payload, batch_payload
+from loft.live.document_row import DocumentPage, DocumentState
+from loft.live.documents import document_from_payload, document_payload
 from loft.live.errors import Conflict, NotFound, StaleVersion
 from loft.live.event import event_hash
 from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Kind, record_id
 from loft.live.item_row import AssetRecord, ItemAsset, ItemContent, ItemRef
 from loft.live.items import ContentInput, build_contents, item_payload, payload_assets, payload_contents
+from loft.live.page_row import AdjustmentState, PageRow, PageState, ReadingState, reading_blob, reading_rows
+from loft.live.pages import page_from_payload, page_payload
 from loft.live.review_row import (
     ReviewDecisionRow,
     ReviewMessageRow,
@@ -66,12 +72,23 @@ class MemoryLiveStore:
         self._review_sessions: dict[str, ReviewSessionRow] = {}
         self._review_messages: dict[str, tuple[ReviewMessageRow, ...]] = {}
         self._review_decisions: dict[str, tuple[ReviewDecisionRow, ...]] = {}
+        self._batches: dict[str, BatchState] = {}
+        self._scans: dict[str, tuple[ScanState, ...]] = {}
+        self._pages: dict[str, PageState] = {}
+        self._readings: dict[str, ReadingState] = {}
+        self._page_rows: dict[str, tuple[PageRow, ...]] = {}
+        self._adjustments: dict[str, AdjustmentState] = {}
+        self._documents: dict[str, DocumentState] = {}
+        self._document_pages: dict[str, tuple[DocumentPage, ...]] = {}
         self._content: dict[str, bytes] = {}
         self._events: list[dict[str, Any]] = []
         self._applied: set[str] = set()
         self.people = _MemoryPeople(self)
         self.items = _MemoryItems(self)
         self.reviews = _MemoryReviews(self)
+        self.batches = _MemoryBatches(self)
+        self.pages = _MemoryPages(self)
+        self.documents = _MemoryDocuments(self)
         self._collections: dict[str, dict[str, object]] = {kind.name: {} for kind in (PLACE, ORG, THEME, RELATIONSHIP)}
         self.places = _MemoryCollection(self, PLACE)
         self.orgs = _MemoryCollection(self, ORG)
@@ -160,6 +177,54 @@ class MemoryLiveStore:
         self._review_messages.update(messages)
         self._review_decisions.clear()
         self._review_decisions.update(decisions)
+
+    def rebuild_pipeline(self) -> None:
+        """Replay the batch/page/document events into fresh pipeline projections."""
+        batches: dict[str, BatchState] = {}
+        scans: dict[str, tuple[ScanState, ...]] = {}
+        pages: dict[str, PageState] = {}
+        readings: dict[str, ReadingState] = {}
+        rows: dict[str, tuple[PageRow, ...]] = {}
+        adjustments: dict[str, AdjustmentState] = {}
+        documents: dict[str, DocumentState] = {}
+        document_pages: dict[str, tuple[DocumentPage, ...]] = {}
+        for event in self._events:
+            if event["entity_kind"] not in ("batch", "page", "document") or event["entity_version"] is None:
+                continue
+            payload = json.loads(event["payload"])
+            version = int(event["entity_version"])
+            if event["entity_kind"] == "batch":
+                batch, batch_scans = batch_from_payload(payload)
+                batches[batch.batch_id] = replace(batch, version=version)
+                scans[batch.batch_id] = batch_scans
+            elif event["entity_kind"] == "page":
+                bundle = page_from_payload(payload, self.content, version)
+                pages[bundle.page.page_id] = bundle.page
+                if bundle.reading is not None:
+                    readings[bundle.page.page_id] = bundle.reading
+                rows[bundle.page.page_id] = bundle.rows
+                if bundle.adjustment is not None:
+                    adjustments[bundle.page.page_id] = bundle.adjustment
+            else:
+                document, pages_order = document_from_payload(payload, version)
+                documents[document.document_id] = document
+                document_pages[document.document_id] = pages_order
+        self._batches.clear()
+        self._batches.update(batches)
+        self._scans.clear()
+        self._scans.update(scans)
+        self._pages.clear()
+        self._pages.update(pages)
+        self._readings.clear()
+        self._readings.update(readings)
+        self._page_rows.clear()
+        self._page_rows.update(rows)
+        self._adjustments.clear()
+        self._adjustments.update(adjustments)
+        self._documents.clear()
+        self._documents.update(documents)
+        self._document_pages.clear()
+        self._document_pages.update(document_pages)
 
     def close(self) -> None:
         return None
@@ -377,6 +442,224 @@ class _MemoryReviews:
         return saved
 
 
+class _MemoryBatches:
+    """The batch collection in memory, with the same rows and write rules."""
+
+    def __init__(self, store: MemoryLiveStore, change: _MemoryChange | None = None) -> None:
+        self.store = store
+        self.change = change
+
+    def get(self, batch_id: str) -> BatchState | None:
+        return self.store._batches.get(batch_id)
+
+    def require(self, batch_id: str) -> BatchState:
+        batch = self.get(batch_id)
+        if batch is None:
+            raise NotFound(f"no batch {batch_id}")
+        return batch
+
+    def scans(self, batch_id: str) -> tuple[ScanState, ...]:
+        return self.store._scans.get(batch_id, ())
+
+    def save(self, batch: BatchState, scans: tuple[ScanState, ...] = (), *, base: int | None = None) -> BatchState:
+        change = self.change
+        if change is None:
+            raise Conflict("batches.save needs a change")
+        current = self.get(batch.batch_id)
+        if base is None:
+            if current is not None:
+                raise Conflict(f"batch {batch.batch_id} exists")
+            event_type = "created"
+            version = 1
+        else:
+            if current is None:
+                raise NotFound(f"no batch {batch.batch_id}")
+            if current.version != base:
+                raise StaleVersion(current=current, base=base)
+            event_type = "superseded"
+            version = base + 1
+        change.append(
+            entity_kind="batch",
+            entity_id=batch.batch_id,
+            event_type=event_type,
+            entity_version=version,
+            payload=batch_payload(batch, scans),
+        )
+        saved = replace(batch, version=version)
+        self.store._batches[batch.batch_id] = saved
+        self.store._scans[batch.batch_id] = scans
+        return saved
+
+
+class _MemoryPages:
+    """The page collection in memory, with the same aggregate and write rules."""
+
+    def __init__(self, store: MemoryLiveStore, change: _MemoryChange | None = None) -> None:
+        self.store = store
+        self.change = change
+
+    def get(self, page_id: str) -> PageState | None:
+        return self.store._pages.get(page_id)
+
+    def require(self, page_id: str) -> PageState:
+        page = self.get(page_id)
+        if page is None:
+            raise NotFound(f"no page {page_id}")
+        return page
+
+    def reading(self, page_id: str) -> ReadingState | None:
+        return self.store._readings.get(page_id)
+
+    def rows(self, page_id: str) -> tuple[PageRow, ...]:
+        return self.store._page_rows.get(page_id, ())
+
+    def adjustment(self, page_id: str) -> AdjustmentState | None:
+        return self.store._adjustments.get(page_id)
+
+    def reading_blob(self, page_id: str) -> dict[str, Any] | None:
+        reading = self.reading(page_id)
+        if reading is None:
+            return None
+        return json.loads(self.store.content.get(reading.reading_sha))
+
+    def save(
+        self,
+        page: PageState,
+        *,
+        base: int | None = None,
+        reading: dict[str, Any] | None = None,
+        adjustment: bytes | None = None,
+        adjustment_at: str = "",
+    ) -> PageState:
+        change = self.change
+        if change is None:
+            raise Conflict("pages.save needs a change")
+        current = self.get(page.page_id)
+        if base is None:
+            if current is not None:
+                raise Conflict(f"page {page.page_id} exists")
+            event_type = "created"
+            version = page.revision if page.revision > 0 else 1
+        else:
+            if current is None:
+                raise NotFound(f"no page {page.page_id}")
+            if current.revision != base:
+                raise StaleVersion(current=current, base=base)
+            event_type = "superseded"
+            version = base + 1
+        reading_state: ReadingState | None = None
+        rows: tuple[PageRow, ...] = ()
+        if reading is not None:
+            blob = reading_blob(
+                page.page_id,
+                reading,
+                list(reading.get("words") or []),
+                rotation=page.rotation,
+                revision=version,
+            )
+            sha = change.content.put(
+                json.dumps(blob, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
+                mime="application/json",
+            )
+            corrected = str(blob.get("corrected", ""))
+            rows = reading_rows(page.page_id, blob, revision=version, corrected=bool(corrected))
+            reading_state = ReadingState(page.page_id, sha, corrected, len(rows), len(blob.get("words") or []))
+        adjustment_state: AdjustmentState | None = None
+        if adjustment is not None:
+            adjustment_state = AdjustmentState(
+                page.page_id,
+                change.content.put(adjustment, mime="application/json"),
+                adjustment_at,
+            )
+        change.append(
+            entity_kind="page",
+            entity_id=page.page_id,
+            event_type=event_type,
+            entity_version=version,
+            payload=page_payload(replace(page, revision=version), reading_state, adjustment_state),
+        )
+        saved = replace(page, revision=version)
+        self.store._pages[page.page_id] = saved
+        if reading_state is not None:
+            self.store._readings[page.page_id] = reading_state
+        self.store._page_rows[page.page_id] = rows
+        if adjustment_state is not None:
+            self.store._adjustments[page.page_id] = adjustment_state
+        return saved
+
+
+class _MemoryDocuments:
+    """The document collection in memory, with the same rows and write rules."""
+
+    def __init__(self, store: MemoryLiveStore, change: _MemoryChange | None = None) -> None:
+        self.store = store
+        self.change = change
+
+    def get(self, document_id: str) -> DocumentState | None:
+        return self.store._documents.get(document_id)
+
+    def require(self, document_id: str) -> DocumentState:
+        document = self.get(document_id)
+        if document is None:
+            raise NotFound(f"no document {document_id}")
+        return document
+
+    def pages(self, document_id: str) -> tuple[DocumentPage, ...]:
+        return self.store._document_pages.get(document_id, ())
+
+    def for_batch(self, batch_id: str) -> tuple[DocumentState, ...]:
+        return tuple(
+            sorted(
+                (document for document in self.store._documents.values() if document.batch_id == batch_id),
+                key=lambda document: document.doc_index,
+            )
+        )
+
+    def save(
+        self,
+        document: DocumentState,
+        pages: tuple[str, ...],
+        *,
+        base: int | None = None,
+        text: str | None = None,
+    ) -> DocumentState:
+        change = self.change
+        if change is None:
+            raise Conflict("documents.save needs a change")
+        current = self.get(document.document_id)
+        if base is None:
+            if current is not None:
+                raise Conflict(f"document {document.document_id} exists")
+            event_type = "created"
+            version = 1
+        else:
+            if current is None:
+                raise NotFound(f"no document {document.document_id}")
+            if current.version != base:
+                raise StaleVersion(current=current, base=base)
+            event_type = "superseded"
+            version = base + 1
+        if document.status == "confirmed" and not document.item_id:
+            raise Conflict(f"document {document.document_id} is confirmed without an item")
+        text_sha = document.text_sha
+        if text is not None:
+            text_sha = change.content.put(text.encode("utf-8"), mime="text/plain")
+        saved = replace(document, text_sha=text_sha, version=version)
+        change.append(
+            entity_kind="document",
+            entity_id=document.document_id,
+            event_type=event_type,
+            entity_version=version,
+            payload=document_payload(saved, pages),
+        )
+        self.store._documents[document.document_id] = saved
+        self.store._document_pages[document.document_id] = tuple(
+            DocumentPage(document_id=document.document_id, page_id=page_id, ordinal=index)
+            for index, page_id in enumerate(pages)
+        )
+        return saved
+
+
 class _MemoryChange:
     def __init__(self, store: MemoryLiveStore, *, actor: str, note: str, command_id: str | None) -> None:
         self.store = store
@@ -387,6 +670,9 @@ class _MemoryChange:
         self.content = store.content
         self.items = _MemoryItems(store, change=self)
         self.reviews = _MemoryReviews(store, change=self)
+        self.batches = _MemoryBatches(store, change=self)
+        self.pages = _MemoryPages(store, change=self)
+        self.documents = _MemoryDocuments(store, change=self)
         self.people = _MemoryPeople(store, change=self)
         self.places = _MemoryCollection(store, PLACE, change=self)
         self.orgs = _MemoryCollection(store, ORG, change=self)
@@ -401,6 +687,14 @@ class _MemoryChange:
         self._review_sessions: dict[str, ReviewSessionRow] | None = None
         self._review_messages: dict[str, tuple[ReviewMessageRow, ...]] | None = None
         self._review_decisions: dict[str, tuple[ReviewDecisionRow, ...]] | None = None
+        self._batches: dict[str, BatchState] | None = None
+        self._scans: dict[str, tuple[ScanState, ...]] | None = None
+        self._pages: dict[str, PageState] | None = None
+        self._readings: dict[str, ReadingState] | None = None
+        self._page_rows: dict[str, tuple[PageRow, ...]] | None = None
+        self._adjustments: dict[str, AdjustmentState] | None = None
+        self._documents: dict[str, DocumentState] | None = None
+        self._document_pages: dict[str, tuple[DocumentPage, ...]] | None = None
         self._content: dict[str, bytes] | None = None
         self._events: list[dict[str, Any]] | None = None
         self._applied: set[str] | None = None
@@ -416,6 +710,14 @@ class _MemoryChange:
         self._review_sessions = dict(self.store._review_sessions)
         self._review_messages = dict(self.store._review_messages)
         self._review_decisions = dict(self.store._review_decisions)
+        self._batches = dict(self.store._batches)
+        self._scans = dict(self.store._scans)
+        self._pages = dict(self.store._pages)
+        self._readings = dict(self.store._readings)
+        self._page_rows = dict(self.store._page_rows)
+        self._adjustments = dict(self.store._adjustments)
+        self._documents = dict(self.store._documents)
+        self._document_pages = dict(self.store._document_pages)
         self._content = dict(self.store._content)
         self._events = list(self.store._events)
         self._applied = set(self.store._applied)
@@ -448,6 +750,26 @@ class _MemoryChange:
         self.store._review_messages.update(self._review_messages)
         self.store._review_decisions.clear()
         self.store._review_decisions.update(self._review_decisions)
+        assert self._batches is not None and self._scans is not None
+        assert self._pages is not None and self._readings is not None
+        assert self._page_rows is not None and self._adjustments is not None
+        assert self._documents is not None and self._document_pages is not None
+        self.store._batches.clear()
+        self.store._batches.update(self._batches)
+        self.store._scans.clear()
+        self.store._scans.update(self._scans)
+        self.store._pages.clear()
+        self.store._pages.update(self._pages)
+        self.store._readings.clear()
+        self.store._readings.update(self._readings)
+        self.store._page_rows.clear()
+        self.store._page_rows.update(self._page_rows)
+        self.store._adjustments.clear()
+        self.store._adjustments.update(self._adjustments)
+        self.store._documents.clear()
+        self.store._documents.update(self._documents)
+        self.store._document_pages.clear()
+        self.store._document_pages.update(self._document_pages)
         self.store._content.clear()
         self.store._content.update(self._content)
         self.store._events[:] = self._events

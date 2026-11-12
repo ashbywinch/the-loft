@@ -22,6 +22,8 @@ from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection
 from loft.live.item_row import RowPosition
 from loft.live.items import Items, payload_assets, payload_contents
 from loft.live.people import People
+from loft.live.review_row import ReviewProjection, ReviewRow, session_from_payload
+from loft.live.reviews import Reviews
 from tools.records import Item, Person
 
 
@@ -33,6 +35,7 @@ class LiveStore:
         self.app_version = app_version
         self.people = People(database.connection)
         self.items = Items(database.connection, ContentStore(database.connection))
+        self.reviews = Reviews(database.connection, ContentStore(database.connection))
         self.places = Collection(database.connection, PLACE)
         self.orgs = Collection(database.connection, ORG)
         self.themes = Collection(database.connection, THEME)
@@ -127,6 +130,31 @@ class LiveStore:
                     catalog=catalog,
                 ),
                 base=projection.current_version(item.id),
+            )
+        self.connection.commit()
+
+    def rebuild_reviews(self) -> None:
+        """Drop the review projections and replay the session events."""
+        for table in ("review_messages", "review_decisions", "review_sessions"):
+            self.connection.execute(f"DELETE FROM {table}")
+        projection = ReviewProjection(self.connection)
+        for row in self.connection.execute(
+            "SELECT * FROM events WHERE entity_kind = 'review_session' ORDER BY seq"
+        ).fetchall():
+            event = dict(row)
+            if event["entity_version"] is None:
+                continue
+            payload = json.loads(event["payload"])
+            session, thinking = session_from_payload(payload)
+            projection.write(
+                ReviewRow.build(session, thinking),
+                RowPosition(
+                    version=int(event["entity_version"]),
+                    event_no=int(event["event_no"]),
+                    event_seq=int(event["seq"]),
+                    updated_at=event["recorded_at"],
+                ),
+                base=projection.current_version(session.id),
             )
         self.connection.commit()
 

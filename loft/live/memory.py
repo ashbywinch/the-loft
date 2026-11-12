@@ -19,7 +19,15 @@ from loft.live.event import event_hash
 from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Kind, record_id
 from loft.live.item_row import AssetRecord, ItemAsset, ItemContent, ItemRef
 from loft.live.items import ContentInput, build_contents, item_payload, payload_assets, payload_contents
-from tools.records import Item, Person, split_content
+from loft.live.review_row import (
+    ReviewDecisionRow,
+    ReviewMessageRow,
+    ReviewRow,
+    ReviewSessionRow,
+    session_from_payload,
+    session_payload,
+)
+from tools.records import Item, Person, Session, split_content
 
 
 class MemoryContentStore:
@@ -55,11 +63,15 @@ class MemoryLiveStore:
         self._item_assets: dict[str, tuple[ItemAsset, ...]] = {}
         self._item_contents: dict[str, tuple[ItemContent, ...]] = {}
         self._assets: dict[str, AssetRecord] = {}
+        self._review_sessions: dict[str, ReviewSessionRow] = {}
+        self._review_messages: dict[str, tuple[ReviewMessageRow, ...]] = {}
+        self._review_decisions: dict[str, tuple[ReviewDecisionRow, ...]] = {}
         self._content: dict[str, bytes] = {}
         self._events: list[dict[str, Any]] = []
         self._applied: set[str] = set()
         self.people = _MemoryPeople(self)
         self.items = _MemoryItems(self)
+        self.reviews = _MemoryReviews(self)
         self._collections: dict[str, dict[str, object]] = {kind.name: {} for kind in (PLACE, ORG, THEME, RELATIONSHIP)}
         self.places = _MemoryCollection(self, PLACE)
         self.orgs = _MemoryCollection(self, ORG)
@@ -128,6 +140,26 @@ class MemoryLiveStore:
         self._item_contents.update(contents)
         self._assets.clear()
         self._assets.update(catalog)
+
+    def rebuild_reviews(self) -> None:
+        """Replay the session events into fresh review projections."""
+        sessions: dict[str, ReviewSessionRow] = {}
+        messages: dict[str, tuple[ReviewMessageRow, ...]] = {}
+        decisions: dict[str, tuple[ReviewDecisionRow, ...]] = {}
+        for event in self._events:
+            if event["entity_kind"] != "review_session" or event["entity_version"] is None:
+                continue
+            session, thinking = session_from_payload(json.loads(event["payload"]))
+            rows = ReviewRow.build(session, thinking)
+            sessions[session.id] = replace(rows.session, version=int(event["entity_version"]))
+            messages[session.id] = rows.messages
+            decisions[session.id] = rows.decisions
+        self._review_sessions.clear()
+        self._review_sessions.update(sessions)
+        self._review_messages.clear()
+        self._review_messages.update(messages)
+        self._review_decisions.clear()
+        self._review_decisions.update(decisions)
 
     def close(self) -> None:
         return None
@@ -278,6 +310,73 @@ class _MemoryItems:
         return saved
 
 
+class _MemoryReviews:
+    """The review sessions in memory, with the same rows and write rules."""
+
+    def __init__(self, store: MemoryLiveStore, change: _MemoryChange | None = None) -> None:
+        self.store = store
+        self.change = change
+
+    def get(self, session_id: str) -> ReviewSessionRow | None:
+        return self.store._review_sessions.get(session_id)
+
+    def require(self, session_id: str) -> ReviewSessionRow:
+        session = self.get(session_id)
+        if session is None:
+            raise NotFound(f"no review session {session_id}")
+        return session
+
+    def messages(self, session_id: str) -> tuple[ReviewMessageRow, ...]:
+        return self.store._review_messages.get(session_id, ())
+
+    def decisions(self, session_id: str) -> tuple[ReviewDecisionRow, ...]:
+        return self.store._review_decisions.get(session_id, ())
+
+    def thinking(self, session_id: str, ordinal: int) -> bytes | None:
+        for message in self.messages(session_id):
+            if message.ordinal == ordinal and message.thinking_sha is not None:
+                return self.store.content.get(message.thinking_sha)
+        return None
+
+    def save(self, session: Session, *, base: int | None = None) -> Session:
+        change = self.change
+        if change is None:
+            raise Conflict("reviews.save needs a change")
+        current = self.get(session.id)
+        if base is None:
+            if current is not None:
+                raise Conflict(f"review session {session.id} exists")
+            event_type = "created"
+            version = 1
+        else:
+            if current is None:
+                raise NotFound(f"no review session {session.id}")
+            if current.version != base:
+                raise StaleVersion(current=current, base=base)
+            event_type = "superseded"
+            version = base + 1
+        thinking: dict[str, str] = {}
+        for attempt_index, attempt in enumerate(session.attempts):
+            for message_index, message in enumerate(attempt.messages):
+                if message.thinking:
+                    thinking[ReviewRow.thinking_key(attempt_index, message_index)] = change.content.put(
+                        message.thinking.encode("utf-8"), mime="text/plain"
+                    )
+        change.append(
+            entity_kind="review_session",
+            entity_id=session.id,
+            event_type=event_type,
+            entity_version=version,
+            payload=session_payload(session, thinking),
+        )
+        saved = replace(session, version=version)
+        rows = ReviewRow.build(saved, thinking)
+        self.store._review_sessions[session.id] = replace(rows.session, version=version)
+        self.store._review_messages[session.id] = rows.messages
+        self.store._review_decisions[session.id] = rows.decisions
+        return saved
+
+
 class _MemoryChange:
     def __init__(self, store: MemoryLiveStore, *, actor: str, note: str, command_id: str | None) -> None:
         self.store = store
@@ -287,6 +386,7 @@ class _MemoryChange:
         self.change_id = uuid.uuid4().hex
         self.content = store.content
         self.items = _MemoryItems(store, change=self)
+        self.reviews = _MemoryReviews(store, change=self)
         self.people = _MemoryPeople(store, change=self)
         self.places = _MemoryCollection(store, PLACE, change=self)
         self.orgs = _MemoryCollection(store, ORG, change=self)
@@ -298,6 +398,9 @@ class _MemoryChange:
         self._item_assets: dict[str, tuple[ItemAsset, ...]] | None = None
         self._item_contents: dict[str, tuple[ItemContent, ...]] | None = None
         self._assets: dict[str, AssetRecord] | None = None
+        self._review_sessions: dict[str, ReviewSessionRow] | None = None
+        self._review_messages: dict[str, tuple[ReviewMessageRow, ...]] | None = None
+        self._review_decisions: dict[str, tuple[ReviewDecisionRow, ...]] | None = None
         self._content: dict[str, bytes] | None = None
         self._events: list[dict[str, Any]] | None = None
         self._applied: set[str] | None = None
@@ -310,6 +413,9 @@ class _MemoryChange:
         self._item_assets = dict(self.store._item_assets)
         self._item_contents = dict(self.store._item_contents)
         self._assets = dict(self.store._assets)
+        self._review_sessions = dict(self.store._review_sessions)
+        self._review_messages = dict(self.store._review_messages)
+        self._review_decisions = dict(self.store._review_decisions)
         self._content = dict(self.store._content)
         self._events = list(self.store._events)
         self._applied = set(self.store._applied)
@@ -334,6 +440,14 @@ class _MemoryChange:
         self.store._item_contents.update(self._item_contents)
         self.store._assets.clear()
         self.store._assets.update(self._assets)
+        assert self._review_sessions is not None and self._review_messages is not None
+        assert self._review_decisions is not None
+        self.store._review_sessions.clear()
+        self.store._review_sessions.update(self._review_sessions)
+        self.store._review_messages.clear()
+        self.store._review_messages.update(self._review_messages)
+        self.store._review_decisions.clear()
+        self.store._review_decisions.update(self._review_decisions)
         self.store._content.clear()
         self.store._content.update(self._content)
         self.store._events[:] = self._events

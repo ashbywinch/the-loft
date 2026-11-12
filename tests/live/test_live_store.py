@@ -7,6 +7,7 @@ the SQLite store and the memory store (TECHSPEC/08 §19.7, §19.10.2–3).
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -14,9 +15,10 @@ from typing import Any
 import pytest
 
 from loft.live.errors import Conflict, StaleVersion
+from loft.live.items import ContentInput
 from loft.live.memory import MemoryLiveStore
 from loft.live.store import LiveStore
-from tools.records import Org, Person, Place, Relationship
+from tools.records import Item, Org, Person, Place, Relationship
 from tools.theme import Theme
 
 
@@ -157,3 +159,130 @@ def test_the_event_hash_covers_a_frozen_column_list(store: Any) -> None:
     changed = dict(event)
     changed["seq"] = 999
     assert event_hash(changed) == event["hash"]
+
+
+def _item(
+    item_id: str = "story-1",
+    *,
+    title: str = "A story",
+    status: str = "catalogued",
+    assets: list[dict[str, str]] | None = None,
+    people: list[dict[str, str]] | None = None,
+) -> Item:
+    raw: dict[str, Any] = {
+        "id": item_id,
+        "type": "story",
+        "title": title,
+        "date": "1960",
+        "date_precision": "year",
+        "status": status,
+        "people": people if people is not None else [{"id": "p-alex", "status": "confirmed"}],
+        "places": [],
+        "themes": [],
+        "assets": (
+            assets if assets is not None else [{"kind": "story", "file": "story.txt", "caption": "The story, verbatim"}]
+        ),
+    }
+    if status == "deleted":
+        raw = {
+            "id": item_id,
+            "type": "story",
+            "title": title,
+            "status": "deleted",
+            "reason": "test tombstone",
+        }
+    return Item.from_dict(raw)
+
+
+def _story() -> tuple[ContentInput, ...]:
+    return (ContentInput(kind="story", data=b"The words.\\n", trust="confirmed"),)
+
+
+def _files() -> dict[str, bytes]:
+    return {"story.txt": b"The words.\\n"}
+
+
+def test_an_item_is_one_event_a_row_its_refs_assets_and_content(store: Any) -> None:
+    with store.change(actor="import") as change:
+        saved = change.items.save(_item(), content=_story(), files=_files())
+    assert saved.version == 1
+    item = store.items.require("story-1")
+    assert item.title == "A story"
+    assert item.version == 1
+    assert store.events_for("story-1", entity_kind="item")[0]["event_type"] == "created"
+    assert store.verify_chain() == ()
+
+
+def test_the_item_refs_assets_and_content_read_back(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.items.save(_item(), content=_story(), files=_files())
+    refs = store.items.refs("story-1")
+    assert [(ref.kind, ref.ref_id, ref.status) for ref in refs] == [("person", "p-alex", "confirmed")]
+    assert refs[0].basis == {"basis": "knowledge", "confidence": "certain"}
+    assets = store.items.assets("story-1")
+    assert [(asset.kind, asset.file, asset.caption) for asset in assets] == [
+        ("story", "story.txt", "The story, verbatim")
+    ]
+    record = store.items.asset(assets[0].asset_id)
+    assert record is not None
+    assert record.sha256 == hashlib.sha256(b"The words.\\n").hexdigest()
+    assert record.size == len(b"The words.\\n")
+    assert record.kind == "story"
+    assert store.items.content_sha("story-1", "story") == record.sha256
+    assert store.items.content("story-1", "story") == b"The words.\\n"
+    assert [(row.kind, row.trust) for row in store.items.contents("story-1")] == [("story", "confirmed")]
+
+
+def test_an_item_supersede_is_versioned_and_replaces_the_children(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.items.save(_item(), content=_story(), files=_files())
+    with store.change(actor="import") as change:
+        second = change.items.save(_item(title="A better story", assets=[], people=[]), base=1)
+    assert second.version == 2
+    assert store.items.require("story-1").title == "A better story"
+    assert store.items.refs("story-1") == ()
+    assert store.items.assets("story-1") == ()
+    assert store.items.contents("story-1") == ()
+    assert [e["event_type"] for e in store.events_for("story-1", entity_kind="item")] == ["created", "superseded"]
+
+
+def test_a_tombstone_is_a_deleted_event_that_keeps_the_row(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.items.save(_item(), content=_story(), files=_files())
+    with store.change(actor="import") as change:
+        change.items.save(_item(status="deleted"), base=1)
+    item = store.items.require("story-1")
+    assert item.status == "deleted"
+    assert item.raw["reason"] == "test tombstone"
+    assert [e["event_type"] for e in store.events_for("story-1", entity_kind="item")] == ["created", "deleted"]
+
+
+def test_a_stale_item_base_is_refused_with_the_current_value(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.items.save(_item(), content=_story(), files=_files())
+    with pytest.raises(StaleVersion) as caught, store.change(actor="import") as change:
+        change.items.save(_item(title="Stale"), base=0)
+    assert caught.value.current is not None
+    assert store.items.require("story-1").title == "A story"
+
+
+def test_a_failed_item_change_writes_nothing(store: Any) -> None:
+    with pytest.raises(RuntimeError), store.change(actor="import") as change:
+        change.items.save(_item(), content=_story(), files=_files())
+        raise RuntimeError("boom")
+    assert store.items.get("story-1") is None
+    assert store.events_for("story-1", entity_kind="item") == []
+
+
+def test_rebuild_replays_the_item_projection(store: Any) -> None:
+    with store.change(actor="import") as change:
+        change.items.save(_item(), content=_story(), files=_files())
+    with store.change(actor="import") as change:
+        change.items.save(_item(title="A better story"), base=1, content=_story(), files=_files())
+    store.rebuild_items()
+    item = store.items.require("story-1")
+    assert item.title == "A better story"
+    assert item.version == 2
+    assert store.items.content("story-1", "story") == b"The words.\\n"
+    assert len(store.items.refs("story-1")) == 1
+    assert store.verify_chain() == ()

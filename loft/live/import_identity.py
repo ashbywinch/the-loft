@@ -14,7 +14,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, cast
 
-from loft.live.errors import LiveError
+from loft.live.backup import check_marker
 from loft.live.identity import relationship_id
 from loft.live.identity_map import disposition_of
 from loft.live.store import LiveStore
@@ -29,10 +29,6 @@ from tools.records import (
 from tools.theme import Theme
 
 _VERSION = re.compile(r"-(\d+)\.json$")
-
-
-class BackupMarkerError(LiveError):
-    """The migration refuses to run without a verified backup marker."""
 
 
 @dataclass(frozen=True)
@@ -96,17 +92,6 @@ def _read_tables(archive: Path) -> IdentityTables:
     )
 
 
-def _check_marker(marker: Path) -> None:
-    if not marker.is_file():
-        raise BackupMarkerError(f"no verified backup marker at {marker} — take the snapshot first")
-    try:
-        payload = json.loads(marker.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as error:
-        raise BackupMarkerError(f"backup marker {marker} is unreadable: {error}") from error
-    if payload.get("verified") is not True:
-        raise BackupMarkerError(f"backup marker {marker} is not verified")
-
-
 def _plan(store: LiveStore, archive: Path) -> tuple[list[tuple[str, Any]], dict[str, int]]:
     """The records to import (skipping what the store holds) and the skips."""
     tables = _read_tables(archive)
@@ -167,7 +152,7 @@ def import_identities(
     dry_run: bool = False,
 ) -> IdentityReport:
     """Import people, relationships, places, orgs and themes from the archive."""
-    _check_marker(backup_marker)
+    check_marker(backup_marker)
     planned, skipped = _plan(store, archive)
     counts = {"people": 0, "relationships": 0, "places": 0, "orgs": 0, "themes": 0}
     for kind, _record in planned:

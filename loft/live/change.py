@@ -17,6 +17,7 @@ from loft.live.content import ContentStore
 from loft.live.errors import Conflict
 from loft.live.event import event_hash
 from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection
+from loft.live.items import Items
 from loft.live.people import People
 
 
@@ -45,6 +46,7 @@ class Change:
         self.command_id = command_id
         self.change_id = uuid.uuid4().hex
         self.content = ContentStore(connection)
+        self.items = Items(connection, self.content, change=self)
         self.people = People(connection, change=self)
         self.places = Collection(connection, PLACE, change=self)
         self.orgs = Collection(connection, ORG, change=self)

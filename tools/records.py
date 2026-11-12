@@ -947,6 +947,10 @@ class Item:
 
     raw: dict[str, Any]
 
+    # the optimistic token the live store carries (TECHSPEC/08 §19.3); the
+    # item's wire never writes it
+    version: int = 0
+
     # -- typed accessors for the known vocabulary --------------------------
     @property
     def id(self) -> str:
@@ -959,6 +963,18 @@ class Item:
     @property
     def title(self) -> str:
         return str(self.raw.get("title", ""))
+
+    @property
+    def description(self) -> str:
+        return str(self.raw.get("description", ""))
+
+    @property
+    def provenance(self) -> str:
+        return str(self.raw.get("provenance", ""))
+
+    @property
+    def source(self) -> str:
+        return str(self.raw.get("source", ""))
 
     @property
     def date(self) -> str:

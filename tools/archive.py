@@ -199,6 +199,17 @@ class Archive:
         item = Item(json.loads(self.store.read(self._sidecar_path(item_id, max(versions)))))
         return None if item.status == "deleted" else item
 
+    def item_versions(self, item_id: str) -> list[int]:
+        """Every sidecar version the archive holds, contiguous from 1 — the
+        migration reads the chain, not only its head."""
+        return self._sidecar_versions(item_id)
+
+    def get_item_version(self, item_id: str, version: int) -> Item:
+        """One sidecar version, typed but not validated — the migration's
+        per-version read (the write seam validates; a historical sidecar is
+        read as it was written)."""
+        return Item(json.loads(self.store.read(self._sidecar_path(item_id, version))))
+
     def item_ids(self) -> list[str]:
         """Every item folder in the archive (deleted or not)."""
         return sorted({p.split("/")[1] for p in self.store.list("assets") if p.startswith("assets/")})

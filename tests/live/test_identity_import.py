@@ -10,8 +10,9 @@ from typing import Any
 
 import pytest
 
+from loft.live.backup import BackupMarkerError
 from loft.live.errors import LiveError
-from loft.live.import_identity import BackupMarkerError, import_identities
+from loft.live.import_identity import import_identities
 from loft.live.store import LiveStore
 
 

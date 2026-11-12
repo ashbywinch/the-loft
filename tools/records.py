@@ -186,6 +186,9 @@ class Person:
     # without a basis isn't an estimate; the chip renders only what the
     # dataset carries (user).
     basis: dict[str, str] | None = None
+    # the optimistic token the live store carries (TECHSPEC/08 §19.3); the
+    # identity wire never writes it
+    version: int = 0
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Person:

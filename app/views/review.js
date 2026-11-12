@@ -467,7 +467,18 @@ async function renderBatchList(main, state) {
       signal: controller.signal,
     });
     if (res.status === 401) return signedOut(main);
-    if (!res.ok) throw new Error(`batches (${res.status})`);
+    if (!res.ok) {
+      // Surface the server's remedy, not an internal status code — an
+      // unmounted workspace must say so (the review work is not "none").
+      let detail = "";
+      try {
+        const body = await res.json();
+        detail = String(body.detail || body.error || "");
+      } catch {
+        // a non-JSON failure still falls back to the status line below
+      }
+      throw new Error(detail || `batches (${res.status})`);
+    }
     batches = (await res.json()).batches;
   } catch (error) {
     const message = controller.signal.aborted

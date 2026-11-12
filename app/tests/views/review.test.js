@@ -342,6 +342,25 @@ describe("the batch list renders the real batches", () => {
     vi.unstubAllGlobals();
   });
 
+  it("surfaces the server's remedy when the workspace is not mounted", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: false,
+        status: 503,
+        json: async () => ({
+          error: "the review workspace is not available",
+          detail: "is the Loft disk mounted?",
+        }),
+      })),
+    );
+    const main = document.createElement("main");
+    render(main, { name: "review" });
+    await vi.waitFor(() => expect(main.textContent).toContain("is the Loft disk mounted?"));
+    expect(main.textContent).toContain("Try again");
+    vi.unstubAllGlobals();
+  });
+
   it("times out with a retry when the batches do not answer", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(

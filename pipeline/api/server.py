@@ -729,6 +729,17 @@ def build_app(
         the pages waiting in the "Check the rows" queue."""
         if session_user(request) is None:
             return JSONResponse(ErrorAnswer("sign in to read the batches").to_dict(), status_code=401)
+        if not registry_dir.parent.is_dir():
+            # The workspace (the Loft disk) is unmounted: an operator error,
+            # not "no review work" — the hub must say so instead of silently
+            # showing only the import/identify queues and losing the rows.
+            return JSONResponse(
+                {
+                    "error": "the review workspace is not available",
+                    "detail": "is the Loft disk mounted?",
+                },
+                status_code=503,
+            )
         try:
             batches: list[dict[str, Any]] = []
             for batch in list_batches(registry_dir):

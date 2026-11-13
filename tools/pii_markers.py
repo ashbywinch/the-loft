@@ -8,6 +8,7 @@ guard both load from here, so the markers live in the dataset, not in code).
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -168,9 +169,26 @@ def _table_markers(paths: list[Path], key: str, parse: Callable[[dict[str, Any]]
     return markers
 
 
+def _configured_markers() -> set[str] | None:
+    """The markers the environment supplies — the CI secret, so the guard can
+    run where the archive cannot (a JSON array or one marker per line)."""
+    configured = os.environ.get("PII_MARKERS", "").strip()
+    if not configured:
+        return None
+    # a JSON array (the recommended secret form) or one marker per line; a
+    # malformed JSON secret must fail loudly, not silently fall back to lines
+    parsed = json.loads(configured) if configured.startswith("[") else configured.splitlines()
+    markers = {str(marker).strip() for marker in parsed if str(marker).strip()}
+    return markers or None
+
+
 def family_markers() -> set[str]:
     """Every identifying name, alias, email, place, id, date and coordinate
-    from the live dataset."""
+    from the live dataset — or from `PII_MARKERS` where the archive is
+    absent (the CI secret)."""
+    configured = _configured_markers()
+    if configured is not None:
+        return configured
     people = _table_markers(sorted(LoftPaths.ARCHIVE_DIR.glob("people*.json")), "people", Person.from_dict)
     places = _table_markers(sorted(LoftPaths.ARCHIVE_DIR.glob("places*.json")), "places", Place.from_dict)
     return people | places

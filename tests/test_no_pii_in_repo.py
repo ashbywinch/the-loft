@@ -1,16 +1,19 @@
 """The no-family-PII guard (user): the public repo (the-loft)
 ships code and synthetic fixtures, never family content. Every identifying
 name, alias, email and place from the live dataset must be absent from the
-tracked files — the markers load from the gitignored archive at runtime, so
-this file contains none of them.
+tracked files — the markers load from the gitignored archive at runtime, or
+from the `PII_MARKERS` CI secret where the archive is absent, so this file
+contains none of them.
 
-Dataset-skipped like the other archive evals: CI's checkout has no archive,
-so there is nothing to load and nothing to check; the local environment runs
-it against the real dataset (docs/testing-standards.md).
+The guard runs locally (the archive is in the working tree) and in CI (the
+secret supplies the markers); it scans TEXT files only — a binary's bytes are
+not a text leak, and scanning images as text produced false positives. The
+images themselves are a content decision, not this check's.
 """
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -23,8 +26,14 @@ from tools.pii_markers import family_markers, file_offenders
 REPO = Path(__file__).resolve().parent.parent
 
 
+def _marker_source() -> bool:
+    """The guard runs where the markers are: the local archive, or the
+    `PII_MARKERS` secret CI supplies (the archive is never in the checkout)."""
+    return bool(os.environ.get("PII_MARKERS", "").strip()) or (LoftPaths.ARCHIVE_DIR / "people.json").exists()
+
+
 @pytest.mark.archive
-@pytest.mark.skipif(not (LoftPaths.ARCHIVE_DIR / "people.json").exists(), reason="archive not bootstrapped yet")
+@pytest.mark.skipif(not _marker_source(), reason="no marker source: neither the archive nor PII_MARKERS is present")
 def test_no_family_pii_in_tracked_files() -> None:
     markers = family_markers()
     assert markers, "no markers loaded — the dataset lookup must have found the family"
@@ -40,10 +49,15 @@ def test_no_family_pii_in_tracked_files() -> None:
 
     offenders: list[str] = []
     for name in tracked:
+        if name in ("tools/pii_markers.py", "tests/test_pii_markers.py"):
+            continue  # the guard and its own contract: they name marker literals by design
         path = REPO / name
         if not path.exists():
             continue  # deleted in the working tree
-        text = path.read_text(encoding="utf-8", errors="replace")
+        data = path.read_bytes()
+        if b"\x00" in data[:8192]:
+            continue  # a binary (image, font, archive): the guard is a text check
+        text = data.decode("utf-8", errors="replace")
         lowered = text.lower()
         if not any_marker.search(text) and not any(e.lower() in lowered for e in emails):
             continue

@@ -86,6 +86,30 @@ def test_confirm_a_proposal_is_one_supersede(store: Any) -> None:
     assert store.verify_chain() == ()
 
 
+def test_confirm_normalises_a_proposals_default_basis(store: Any) -> None:
+    """A proposal the importer stored with the default recollection basis must
+    confirm as knowledge — never render as ``estimated`` in the old table."""
+    _seed(
+        store,
+        Person.from_dict(
+            {
+                "id": "p-alex",
+                "name": "Alex Hale",
+                "status": "proposed",
+                "basis": {"text": "the letter names him", "by": "Alex", "when": "2026-08-09"},
+            }
+        ),
+    )
+    confirmed = store.identities.confirm_person("p-alex", actor="p-editor")
+    assert confirmed.basis == {
+        "basis": "knowledge",
+        "confidence": "certain",
+        "text": "the letter names him",
+        "by": "Alex",
+        "when": "2026-08-09",
+    }
+
+
 def test_confirm_pins_the_relation_the_review_settled(store: Any) -> None:
     _seed(store, _person(status="proposed"))
     confirmed = store.identities.confirm_person("p-alex", relation="first cousin once removed", actor="p-editor")

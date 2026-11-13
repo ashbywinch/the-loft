@@ -334,7 +334,7 @@ class _MemoryPeople:
         current = self.require(person_id)
         if current.status != "proposed":
             return current
-        updated = replace(current, status="confirmed")
+        updated = replace(current, status="confirmed", basis=basis_after(current.basis, BasisKinds.KNOWN))
         if relation:
             updated = replace(updated, relation=relation)
         return self.save(updated, base=current.version)
@@ -343,7 +343,10 @@ class _MemoryPeople:
         current = self.require(person_id)
         if current.status != "proposed":
             raise Conflict(f"person {person_id} is {current.status}, not a proposal")
-        return self.save(replace(current, status="confirmed"), base=current.version)
+        return self.save(
+            replace(current, status="confirmed", basis=basis_after(current.basis, BasisKinds.KNOWN)),
+            base=current.version,
+        )
 
     def resolve(self, person_id: str, decision: str, basis: dict[str, str] | None = None) -> Person | GonePerson | None:
         current = self.get(person_id)
@@ -1077,7 +1080,7 @@ class _MemoryCollection:
         current: Any = self.require(entity_id)
         if self.status(current) != "proposed":
             raise Conflict(f"{self.kind.name[:-1]} {entity_id} is {self.status(current)}, not a proposal")
-        return self.save(self._with_status(current, "confirmed"), base=current.version)
+        return self.save(self._with_status(current, "confirmed", confirm_basis=True), base=current.version)
 
     def reject(self, entity_id: str) -> Any:
         current: Any = self.require(entity_id)
@@ -1102,7 +1105,9 @@ class _MemoryCollection:
     def status(record: Any) -> str:
         return str(record.to_dict().get("status", "confirmed"))
 
-    def _with_status(self, record: Any, status: str) -> Any:
+    def _with_status(self, record: Any, status: str, *, confirm_basis: bool = False) -> Any:
         raw = record.to_dict()
         raw["status"] = status
+        if confirm_basis and raw.get("basis"):
+            raw["basis"] = basis_after(raw["basis"], BasisKinds.KNOWN)
         return replace(self.kind.from_payload(raw), version=record.version)

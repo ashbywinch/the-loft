@@ -102,7 +102,10 @@ class People:
         current = self.require(person_id)
         if current.status != "proposed":
             return current
-        updated = replace(current, status="confirmed")
+        # the reviewer's word is knowledge/certain; the proposal's evidence
+        # (its text/by/when) rides along, never the migration's default
+        # recollection basis — a confirmed proposal must not render as estimated
+        updated = replace(current, status="confirmed", basis=basis_after(current.basis, BasisKinds.KNOWN))
         if relation:
             updated = replace(updated, relation=relation)
         return self.save(updated, base=current.version)
@@ -113,7 +116,10 @@ class People:
         current = self.require(person_id)
         if current.status != "proposed":
             raise Conflict(f"person {person_id} is {current.status}, not a proposal")
-        return self.save(replace(current, status="confirmed"), base=current.version)
+        return self.save(
+            replace(current, status="confirmed", basis=basis_after(current.basis, BasisKinds.KNOWN)),
+            base=current.version,
+        )
 
     def resolve(self, person_id: str, decision: str, basis: dict[str, str] | None = None) -> Person | GonePerson | None:
         """One review determination, applied to the record as it stands.

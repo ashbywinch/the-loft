@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from loft.live.errors import Conflict, NotFound, StaleVersion
+from loft.live.identity_map import BasisKinds, basis_after
 from loft.live.person_row import RowPosition
 from tools.records import Org, Place, Relationship
 from tools.theme import Theme
@@ -359,7 +360,7 @@ class Collection:
         current = self.require(entity_id)
         if self.status(current) != "proposed":
             raise Conflict(f"{self.kind.name[:-1]} {entity_id} is {self.status(current)}, not a proposal")
-        return self.save(self._with_status(current, "confirmed"), base=current.version)
+        return self.save(self._with_status(current, "confirmed", confirm_basis=True), base=current.version)
 
     def reject(self, entity_id: str) -> Any:
         """End a proposal: the row stays marked ``rejected`` (terminal)."""
@@ -387,9 +388,13 @@ class Collection:
         """The record's disposition — a missing status is an asserted record."""
         return str(record.to_dict().get("status", "confirmed"))
 
-    def _with_status(self, record: Any, status: str) -> Any:
+    def _with_status(self, record: Any, status: str, *, confirm_basis: bool = False) -> Any:
         raw = record.to_dict()
         raw["status"] = status
+        if confirm_basis and raw.get("basis"):
+            # a confirmed proposal is the reviewer's knowledge, never the
+            # migration's default recollection rendered as estimated
+            raw["basis"] = basis_after(raw["basis"], BasisKinds.KNOWN)
         return replace(self.kind.from_payload(raw), version=record.version)
 
     def _change(self) -> Any:

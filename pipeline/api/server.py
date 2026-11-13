@@ -36,7 +36,10 @@ from document.document import Document
 from document.row_adjustments import RowAdjustments
 from document.stages import PageStatus
 from loft.live.compat import CompatibilityExport, legacy_person
+from loft.live.compat_items import ItemCompatibility
 from loft.live.import_identity import sync_from_archive
+from loft.live.import_items import sync_items
+from loft.live.item_writes import ItemWrites
 from pipeline.api import auth
 from pipeline.api.approval import ApprovalContext, DocumentFacts, approve_page
 from pipeline.api.assess_request import AssessRequest
@@ -98,7 +101,7 @@ from tools.records import Item, Person, Place, ReviewContext, ReviewDecision, sp
 from tools.store import FileStore
 
 if TYPE_CHECKING:
-    from loft.live.protocols import IdentityStore
+    from loft.live.protocols import ItemStore
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +128,7 @@ class ServerConfig:
     work_dir: Path | None = None
     outbox: Outbox | None = None
     registry_dir: Path | None = None
-    live: IdentityStore | None = None
+    live: ItemStore | None = None
 
 
 # The route closures ARE the FastAPI registration idiom — DI'd deps are
@@ -146,6 +149,11 @@ def build_app(
     live = config.live
     if live is not None:
         archive.bind_identity_service(live.identities, CompatibilityExport(live, archive).write)
+        item_export = ItemCompatibility(live, archive)
+        archive.bind_item_service(ItemWrites(live), item_export.write)
+        # the flip's opening import, then any version a crash left unexported
+        sync_items(live, archive)
+        item_export.write_all()
     client = config.client
     data_dir = Path(config.data_dir)
     app_dir = Path(config.app_dir)
@@ -350,7 +358,7 @@ def build_app(
         # story text is primary content: it becomes a content file the
         # sidecar references, never a sidecar JSON field (archive-durability.md).
         split = split_content(built.story)
-        archive.save_item(split.sidecar, content=split.content)
+        archive.save_item(split.sidecar, content=split.content, actor=mine.person or "review")
         for person in built.new_people:
             archive.propose_person(person)
         for place in built.new_places:
@@ -374,7 +382,7 @@ def build_app(
             fields = DeleteRequest.from_dict(body)
         except ValueError as exc:
             return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)
-        archive.delete_item(fields.id, fields.reason)
+        archive.delete_item(fields.id, fields.reason, actor=mine.person or "review")
         _drop_from_projection(fields.id)
         return {"ok": True}
 
@@ -1030,7 +1038,8 @@ def build_app(
         """The backend receiver: validate, record (the agreed document becomes
         its archive item; the registry records the review), re-publish the
         projection. The frontend never writes the archive."""
-        if session_user(request) is None:
+        mine = narrator(request)
+        if mine is None:
             return JSONResponse(ErrorAnswer("sign in to send confirmations").to_dict(), status_code=401)
         try:
             confirmation = ConfirmationRequest.from_dict(payload)
@@ -1044,6 +1053,7 @@ def build_app(
                 date=confirmation.date,
                 date_precision=confirmation.date_precision,
                 registry_dir=registry_dir,
+                actor=mine.person or "review",
             )
         except (TypeError, ValueError, RegistryError, ArchiveError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)  # client errors are 4xx, never 500

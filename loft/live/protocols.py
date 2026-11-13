@@ -24,3 +24,12 @@ class IdentityStore(Protocol):
     identities: Any
 
     def change(self, *, actor: str, note: str = "", command_id: str | None = None) -> Any: ...
+
+
+class ItemStore(IdentityStore, Protocol):
+    """What an item write needs beyond the identity surface (B2)."""
+
+    items: Any
+    content: Any
+
+    def events_for(self, entity_id: str, *, entity_kind: str = "person") -> list[dict]: ...

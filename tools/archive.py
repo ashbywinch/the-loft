@@ -22,6 +22,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
+from loft.live.items import ContentInput, default_trust
 from pipeline.identification import Identification
 from tools.anchor import Anchor
 from tools.asset import Asset
@@ -51,6 +52,7 @@ from tools.store import FileStore
 
 if TYPE_CHECKING:
     from loft.live.identities import Identities
+    from loft.live.item_writes import ItemWrites
 
 
 def _valid_record_id(record_id: str) -> str:
@@ -165,6 +167,8 @@ class Archive:
         self.store: FileStore = store
         self.identities: Identities | None = None
         self._after_identity_write: Callable[[], Any] | None = None
+        self.item_writes: ItemWrites | None = None
+        self._after_item_write: Callable[[str], Any] | None = None
 
     def bind_identity_service(self, identities: Identities, after_write: Callable[[], Any]) -> None:
         """Flip the identity write path to the live store (B1).
@@ -177,10 +181,25 @@ class Archive:
         self.identities = identities
         self._after_identity_write = after_write
 
+    def bind_item_service(self, writes: ItemWrites, after_write: Callable[[str], Any]) -> None:
+        """Flip the item write path to the live store (B2).
+
+        `save_item`, `delete_item` and `agree_document` write one `Change`,
+        then call the item compatibility exporter for that item, so the old
+        readers see the versioned sidecar and content files they parse.
+        """
+        self.item_writes = writes
+        self._after_item_write = after_write
+
     def _identity_changed(self) -> None:
         """The compatibility export runs synchronously with the write."""
         if self._after_identity_write is not None:
             self._after_identity_write()
+
+    def _item_changed(self, item_id: str) -> None:
+        """The item compatibility export runs synchronously with the write."""
+        if self._after_item_write is not None:
+            self._after_item_write(item_id)
 
     # -- resolution --------------------------------------------------------
 
@@ -360,6 +379,7 @@ class Archive:
         text: str,
         item_id: str = "",
         status: str = "catalogued",
+        actor: str = "import",
     ) -> Item:
         """The reviewed document becomes an archive item: its sidecar (title,
         date, status) and the transcription as the item's own content file.
@@ -391,7 +411,7 @@ class Archive:
         sidecar.update({"title": title.strip(), "date": date, "date_precision": date_precision, "status": status})
         item = Item(sidecar)
         try:
-            self.save_item(item, content={"transcription": text})
+            self.save_item(item, content={"transcription": text}, actor=actor)
         except ValueError as e:  # Item.from_dict's vocabulary and date checks
             raise ArchiveError(f"the agreed document is not a valid item: {e}") from e
         return item
@@ -441,7 +461,7 @@ class Archive:
         sidecar["people"] = [ref.to_dict() for ref in _merged_refs(item.people_refs, identification.people_refs())]
         sidecar["places"] = [ref.to_dict() for ref in _merged_refs(item.place_refs, identification.place_refs())]
         sidecar["identified"] = True
-        self.save_item(Item(sidecar))
+        self.save_item(Item(sidecar), actor="import")
         return Item(sidecar)
 
     def decide_identification(
@@ -503,7 +523,7 @@ class Archive:
             decided = tuple(replace(ref, status=status) if ref.id == record_id else ref for ref in refs)
         sidecar = dict(item.to_dict())
         sidecar[refs_key] = [ref.to_dict() for ref in decided]
-        self.save_item(Item(sidecar))
+        self.save_item(Item(sidecar), actor=actor)
 
         if decision == "delete" and record.status == "proposed":
             # the mention may be the only evidence: drop a proposal nothing
@@ -599,7 +619,12 @@ class Archive:
 
     # -- writes ------------------------------------------------------------
 
-    def save_item(self, item: Item, content: dict[str, str] | None = None) -> int:
+    def item_sidecar_path(self, item_id: str, version: int) -> str:
+        """The public path of one sidecar version — the compatibility
+        exporter writes the same chain the old writer did."""
+        return self._sidecar_path(_valid_record_id(item_id), version)
+
+    def save_item(self, item: Item, content: dict[str, str] | None = None, *, actor: str = "import") -> int:
         """Create or supersede: writes the next version, never edits an
         existing file (the store refuses edits). The sidecar is validated
         against the Item record (tools/records.py) before writing — the
@@ -607,7 +632,12 @@ class Archive:
         *content* maps a content kind ("story", "transcription") to the
         primary text, written as a versioned content file the sidecar
         references — primary content is never a sidecar JSON field. Returns
-        the version written."""
+        the version written. When the live service is bound, the write is one
+        `Change` and the item compatibility exporter follows."""
+        if self.item_writes is not None:
+            saved = self._save_item_live(item, content, actor=actor)
+            self._item_changed(saved.id)
+            return saved.version
         item_id = _valid_record_id(item.id)
         try:
             payload = dict(Item.from_dict(item.to_dict()).to_dict())
@@ -617,34 +647,7 @@ class Archive:
         version = (versions[-1] if versions else 0) + 1
         if version > 1:
             payload["supersedes"] = self._sidecar_path(item_id, version - 1)
-        pending_content: list[tuple[str, str]] = []
-        if content is not None:
-            payload["assets"] = list(payload.get("assets") or [])
-            present_kinds = {k for k, v in content.items() if v}
-            # a content kind omitted from a re-save is a cleared field —
-            # its old entry would otherwise publish the previous text
-            # forever
-            payload["assets"] = [
-                asset
-                for asset in payload["assets"]
-                if asset.get("kind") not in Item.CONTENT_FILES or asset.get("kind") in present_kinds
-            ]
-            for kind, text in content.items():
-                if not text:
-                    continue
-                bare, caption = Item.CONTENT_FILES.get(kind), Item.CONTENT_CAPTIONS.get(kind, "")
-                if bare is None:
-                    raise ArchiveError(f"unknown content kind: {kind}")
-                filename = self._content_filename(bare, version)
-                pending_content.append((filename, text))
-                # match the existing entry by kind, not by the bare v1 name —
-                # a re-save that loaded the current sidecar carries the
-                # versioned file name, and appending would publish stale text
-                entry = next((a for a in payload["assets"] if a.get("kind") == kind), None)
-                if entry is not None:
-                    entry["file"] = filename
-                else:
-                    payload["assets"].append(Asset(kind=kind, file=filename, caption=caption).to_dict())
+        pending_content = self._with_content_assets(payload, content, version) if content is not None else []
         # the sidecar goes FIRST: a crash mid-save leaves the version advanced
         # (sidecar present, content missing), so the next save supersedes and
         # writes a fresh content file. Content-first leaves an orphan content
@@ -654,6 +657,81 @@ class Archive:
         for filename, text in pending_content:
             self.store.write_new(self.content_path(item_id, filename), text)
         return version
+
+    def _with_content_assets(
+        self, payload: dict[str, Any], content: dict[str, str], version: int
+    ) -> list[tuple[str, str]]:
+        """Fold the caller's primary content into the sidecar's assets —
+        versioned filenames, a cleared kind stripped, the bytes returned."""
+        payload["assets"] = list(payload.get("assets") or [])
+        present_kinds = {kind for kind, value in content.items() if value}
+        # a content kind omitted from a re-save is a cleared field — its old
+        # entry would otherwise publish the previous text forever
+        payload["assets"] = [
+            asset
+            for asset in payload["assets"]
+            if asset.get("kind") not in Item.CONTENT_FILES or asset.get("kind") in present_kinds
+        ]
+        pending: list[tuple[str, str]] = []
+        for kind, text in content.items():
+            if not text:
+                continue
+            bare = Item.CONTENT_FILES.get(kind)
+            if bare is None:
+                raise ArchiveError(f"unknown content kind: {kind}")
+            filename = self._content_filename(bare, version)
+            pending.append((filename, text))
+            entry = next((asset for asset in payload["assets"] if asset.get("kind") == kind), None)
+            if entry is not None:
+                entry["file"] = filename
+            else:
+                payload["assets"].append(
+                    Asset(kind=kind, file=filename, caption=Item.CONTENT_CAPTIONS.get(kind, "")).to_dict()
+                )
+        return pending
+
+    def _save_item_live(self, item: Item, content: dict[str, str] | None, *, actor: str) -> Item:
+        """The live save: canonical sidecar, content bytes and asset files for
+        one `Change`; the service computes the version under its lock."""
+        assert self.item_writes is not None  # the caller checked the binding
+        item_id = _valid_record_id(item.id)
+        try:
+            payload = dict(Item.from_dict(item.to_dict()).to_dict())
+        except ValueError as e:
+            raise ArchiveError(f"invalid item: {e}") from e
+        base = self.item_writes.version(item_id)
+        version = base + 1
+        if version > 1:
+            payload["supersedes"] = self._sidecar_path(item_id, version - 1)
+        split = split_content(Item(payload))
+        supplied = {**split.content, **(content or {})}
+        if content is not None or split.content:
+            payload = split.sidecar.to_dict()
+            self._with_content_assets(payload, supplied, version)
+        sidecar = Item(payload)
+        # a content kind the caller did not supply keeps its existing file and
+        # text: a re-save of the sidecar must never drop the transcription
+        texts: dict[str, str] = dict(supplied)
+        for asset in sidecar.assets:
+            if asset.kind in Item.CONTENT_FILES and asset.kind not in texts:
+                existing = self.read_content(item_id, asset.file)
+                if existing is not None:
+                    texts[asset.kind] = existing
+        files: dict[str, bytes] = {}
+        for asset in sidecar.assets:
+            if asset.kind in Item.CONTENT_FILES and texts.get(asset.kind) is not None:
+                files[asset.file] = texts[asset.kind].encode("utf-8")
+                continue
+            data = self.read_file_bytes(item_id, asset.file)
+            if data is None:
+                raise ArchiveError(f"item {item_id} references missing file: {asset.file}")
+            files[asset.file] = data
+        inputs = tuple(
+            ContentInput(kind=kind, data=text.encode("utf-8"), trust=default_trust(sidecar, kind))
+            for kind, text in texts.items()
+            if text
+        )
+        return self.item_writes.save(sidecar, content=inputs, files=files, base=base or None, actor=actor)
 
     @staticmethod
     def _content_filename(bare: str, version: int) -> str:
@@ -709,11 +787,11 @@ class Archive:
             self.store.write_new(self._identity_path(name, version), json.dumps(payload, indent=1, ensure_ascii=False))
             return version
 
-    def delete_item(self, item_id: str, reason: str) -> int:
+    def delete_item(self, item_id: str, reason: str, *, actor: str = "import") -> int:
         """Tombstone: supersede with a ``status: deleted`` marker — the old
         files stay forever. Returns the tombstone's version."""
         item_id = _valid_record_id(item_id)
-        return self.save_item(Item.tombstone(item_id, reason, self.get_item(item_id)))
+        return self.save_item(Item.tombstone(item_id, reason, self.get_item(item_id)), actor=actor)
 
     # -- proposed records --------------------------------------------------
     # The propose/confirm seam: a proposed person/place is the SAME record

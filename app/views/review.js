@@ -605,7 +605,7 @@ async function renderBatchList(main, state) {
     main.append(list);
   }
 
-  // Import sessions — identity extraction from documents (the Judith doc etc.)
+  // Import sessions — identity extraction from documents (a document, etc.)
   if (state) {
     const pending = pendingImports(state);
     if (pending.length) {

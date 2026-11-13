@@ -361,12 +361,12 @@ def synthetic_postcard() -> Fixture:
     ]
     message: list[tuple[str, list[float], int]] = [
         ("We are from", [150, 200, 220, 700], 90),
-        ("beauford & Mrs", [240, 200, 310, 700], 90),
-        ("Hampshire", [330, 200, 400, 700], 90),
+        ("Mallowfield & Mrs", [240, 200, 310, 700], 90),
+        ("Rivershire", [330, 200, 400, 700], 90),
     ]
     address: list[tuple[str, list[float], int]] = [
-        ("Paul Wink", [500, 800, 900, 840], 0),
-        ("47 Brighton Grove", [500, 850, 900, 890], 0),
+        ("Aria Barlow", [500, 800, 900, 840], 0),
+        ("1 Riverfield Road", [500, 850, 900, 890], 0),
     ]
     all_lines = printed + message + address
     truth = [
@@ -388,7 +388,7 @@ def duplicate_region_fixture() -> Fixture:
     width, height = 1000, 1500
     truth = [
         TruthLine("We are from", [150, 200, 220, 700], orientation=90, position=0),
-        TruthLine("beauford & Mrs", [240, 200, 310, 700], orientation=90, position=1),
+        TruthLine("Mallowfield & Mrs", [240, 200, 310, 700], orientation=90, position=1),
     ]
     detections = [Detection(box=list(t.box), text=t.text, score=0.95, words=[]) for t in truth]
     marker_boxes: dict[int, list[float]] = {0: [150.0, 200.0, 220.0, 700.0], 1: [150.0, 200.0, 220.0, 700.0]}

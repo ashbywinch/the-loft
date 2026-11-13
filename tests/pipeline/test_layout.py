@@ -516,7 +516,7 @@ def test_admission_gate_requires_real_text_at_the_orientation() -> None:
     confidence AND plausibility — never on box shape alone (VR15)."""
     from pipeline.layout import is_admissible as admission_gate
 
-    assert admission_gate("HERNSPETH HOUSE", 0.93)
+    assert admission_gate("BARLOW HOUSE", 0.93)
     assert not admission_gate("mo", 0.5)  # two letters but low confidence
     assert not admission_gate("m", 0.99)  # confident but a single letter
     assert not admission_gate("", 0.99)
@@ -547,14 +547,14 @@ def test_admit_and_remap_keeps_only_real_text() -> None:
     from pipeline.layout import admit_and_remap
 
     dets: list[Detection] = [
-        Detection(box=[40, 0, 60, 20], text="HERNSPETH HOUSE", score=0.93, words=[]),
+        Detection(box=[40, 0, 60, 20], text="BARLOW HOUSE", score=0.93, words=[]),
         Detection(box=[0, 0, 10, 10], text="mo", score=0.5, words=[]),
-        Detection(box=[5, 5, 15, 15], text="HERNSPETH HOUSE", score=0.5, words=[]),
+        Detection(box=[5, 5, 15, 15], text="BARLOW HOUSE", score=0.5, words=[]),
         Detection(box=[10, 10, 20, 20], text="m", score=0.99, words=[]),
     ]
     admission = admit_and_remap(dets, 90, PageSize(200, 100), PageSize(100, 200))
     assert len(admission.kept) == 1
-    assert admission.kept[0]["text"] == "HERNSPETH HOUSE"
+    assert admission.kept[0]["text"] == "BARLOW HOUSE"
     assert admission.kept[0]["box"][0] < 5  # remapped to the original frame (left edge — 2026-08-20 fix)
     assert len(admission.rejected) == 3
 
@@ -625,16 +625,16 @@ def test_multi_layout_orientation_comes_from_the_pass_not_the_report() -> None:
             ),
             DetectionPass(
                 degrees=270,
-                lines=[Detection(box=[501, 201, 899, 399], text="onorrow", score=0.9, words=[])],
+                lines=[Detection(box=[501, 201, 899, 399], text="mallowfie", score=0.9, words=[])],
             ),
         ],
         report_lines=[
             OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
             OrientationLine(index=1, box=[500, 200, 900, 400], degrees=90),  # the report says 90°
         ],
-        vlm_text="POST CARD\nWe are from beauford",
+        vlm_text="POST CARD\nWe are from Mallowfield",
     )
-    message = [ln for ln in layout.lines if "beauford" in ln.text]
+    message = [ln for ln in layout.lines if "Mallowfield" in ln.text]
     assert message, "the message line must be present"
     assert message[0].orientation == 270, (
         f"the orientation must be 270 (the pass that read it), was {message[0].orientation}"
@@ -654,7 +654,7 @@ def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
     report_lines = [
         OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0, text="POST CARD"),
         OrientationLine(index=1, box=[100, 110, 400, 140], degrees=0, text="Printed in Great Britain"),
-        OrientationLine(index=2, box=[500, 200, 900, 400], degrees=270, text="We are from beauford"),
+        OrientationLine(index=2, box=[500, 200, 900, 400], degrees=270, text="We are from Mallowfield"),
     ]
     passes = [
         DetectionPass(
@@ -663,22 +663,22 @@ def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
                 Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[]),
                 Detection(box=[101, 111, 399, 139], text="Printed in Great Britain", score=0.98, words=[]),
                 # the model missed this
-                Detection(box=[150, 500, 200, 900], text="HERNSPETH", score=0.95, words=[]),
+                Detection(box=[150, 500, 200, 900], text="BARLOW", score=0.95, words=[]),
             ],
         ),
         DetectionPass(
             degrees=270,
             # the rec's fragment of the message
-            lines=[Detection(box=[501, 201, 899, 399], text="onorrow", score=0.9, words=[])],
+            lines=[Detection(box=[501, 201, 899, 399], text="mallowfie", score=0.9, words=[])],
         ),
     ]
     layout = multi_layout("p1.jpg", 1000, 1000, passes, report_lines=report_lines)
     texts = [ln.text for ln in layout.lines]
     # physical reading order (2026-08-20): the reading-start corner sorts
     # top-to-bottom — POST CARD (y50), Printed (y110), the 270° message
-    # (start y400), then the extra HERNSPETH (y500). The fragment duplicate
+    # (start y400), then the extra BARLOW (y500). The fragment duplicate
     # of the anchored message line drops.
-    assert texts == ["POST CARD", "Printed in Great Britain", "We are from beauford", "HERNSPETH"]
+    assert texts == ["POST CARD", "Printed in Great Britain", "We are from Mallowfield", "BARLOW"]
     by_text = {ln.text: ln for ln in layout.lines}
     # every line has a box; the anchored lines carry the MODEL's box (scaled
     # from the normalized 0-1000 frame) — the box holds the words it claims
@@ -687,11 +687,11 @@ def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
     # the rec agreed on the header -> confident; the message -> the rec's
     # fragment did not agree -> flagged (the honest doubt)
     assert all(w.conf == 1.0 for w in _words(by_text["POST CARD"]))
-    assert all(w.conf == 0.0 for w in _words(by_text["We are from beauford"]))
-    assert by_text["We are from beauford"].orientation == 270
+    assert all(w.conf == 0.0 for w in _words(by_text["We are from Mallowfield"]))
+    assert by_text["We are from Mallowfield"].orientation == 270
     # the model-missed rec line stays, flagged, at its pass orientation
-    assert by_text["HERNSPETH"].orientation == 0
-    assert all(w.conf == 0.0 for w in _words(by_text["HERNSPETH"]))
+    assert by_text["BARLOW"].orientation == 0
+    assert all(w.conf == 0.0 for w in _words(by_text["BARLOW"]))
 
 
 def test_anchor_prefers_the_disjoint_positional_ink_when_the_rec_read_the_line() -> None:
@@ -804,7 +804,7 @@ def test_anchor_report_box_still_refines_an_agreeing_positional_box() -> None:
 
 def test_dedupe_drops_fragment_duplicates_by_content() -> None:
     """The fragment extras (2026-08-17 — the real postcard's 'HOUSE,' next
-    to 'HERNSPETH HOUSE,' and 'Printed' next to 'Printed in Great
+    to 'BARLOW HOUSE,' and 'Printed' next to 'Printed in Great
     Britain'): a short line whose tokens are a strict subset of another
     line's is the same text read as a fragment — dropped even when the
     mirror passes' remaps landed its box elsewhere (the box-overlap rule
@@ -827,7 +827,7 @@ def test_dedupe_drops_fragment_duplicates_by_content() -> None:
             DetectionPass(
                 degrees=270,
                 lines=[
-                    Detection(box=[100, 500, 200, 900], text="HERNSPETH HOUSE,", score=0.99, words=[]),
+                    Detection(box=[100, 500, 200, 900], text="BARLOW HOUSE,", score=0.99, words=[]),
                     Detection(box=[400, 500, 500, 900], text="HOUSE,", score=0.95, words=[]),  # the fragment
                 ],
             ),
@@ -837,7 +837,7 @@ def test_dedupe_drops_fragment_duplicates_by_content() -> None:
     assert "Printed" not in texts
     assert "HOUSE," not in texts
     assert "Printed in Great Britain" in texts
-    assert "HERNSPETH HOUSE," in texts
+    assert "BARLOW HOUSE," in texts
 
 
 def test_dedupe_never_drops_the_anchored_report_lines() -> None:
@@ -882,7 +882,7 @@ def test_multi_layout_uses_the_guess_text_located_by_the_report() -> None:
             ),
             DetectionPass(
                 degrees=270,
-                lines=[Detection(box=[501, 201, 899, 399], text="onorrow", score=0.9, words=[])],
+                lines=[Detection(box=[501, 201, 899, 399], text="mallowfie", score=0.9, words=[])],
             ),
         ],
         report_lines=[
@@ -890,17 +890,17 @@ def test_multi_layout_uses_the_guess_text_located_by_the_report() -> None:
             OrientationLine(index=1, box=[500, 200, 900, 400], degrees=270),
             OrientationLine(index=2, box=[0, 0, 0, 0], degrees=0),  # not located
         ],
-        vlm_text="POST CARD\nWe are from beauford\na line the report could not locate",
+        vlm_text="POST CARD\nWe are from Mallowfield\na line the report could not locate",
     )
     texts = [ln.text for ln in layout.lines]
     assert texts[0] == "POST CARD"
-    assert "We are from beauford" in texts
+    assert "We are from Mallowfield" in texts
     assert "a line the report could not locate" in texts  # the text survives a missing box
     by_text = {ln.text: ln for ln in layout.lines}
     assert by_text["POST CARD"].box == [100.0, 50.0, 300.0, 100.0]  # the report's located box
     assert by_text["POST CARD"].conf == 1.0  # the rec content-agreed
-    assert by_text["We are from beauford"].box == [500.0, 200.0, 900.0, 400.0]
-    assert all(w.conf == 0.0 for w in _words(by_text["We are from beauford"]))  # the rec didn't agree
+    assert by_text["We are from Mallowfield"].box == [500.0, 200.0, 900.0, 400.0]
+    assert all(w.conf == 0.0 for w in _words(by_text["We are from Mallowfield"]))  # the rec didn't agree
     assert by_text["a line the report could not locate"].box is None  # flagged, boxless
 
 
@@ -1068,7 +1068,7 @@ def test_ink_match_labels_keeps_the_overlap_when_it_is_not_degenerate() -> None:
 
 def test_ink_cluster_rows_splits_side_by_side_pieces() -> None:
     """The x-split: the rec's y-band clustering can merge
-    side-by-side pieces - the postcard's date and the HERNSPETH sharing
+    side-by-side pieces - the postcard's date and the BARLOW sharing
     a band - and the union would span the blank middle, tripping the
     text-extent gates. The split at wide x-gaps gives each side its own
     row with a tighter box."""
@@ -1180,15 +1180,15 @@ def test_multi_layout_orders_zero_first_then_each_next_direction() -> None:
         [
             DetectionPass(
                 degrees=270,
-                lines=[Detection(box=[10, 10, 20, 20], text="HARBOTTLE, MORPETH", score=0.9, words=[])],
+                lines=[Detection(box=[10, 10, 20, 20], text="BARLOW, MALLOWFIELD", score=0.9, words=[])],
             ),
             DetectionPass(
                 degrees=0,
-                lines=[Detection(box=[1, 1, 5, 5], text="We are from beauford", score=0.95, words=[])],
+                lines=[Detection(box=[1, 1, 5, 5], text="We are from Mallowfield", score=0.95, words=[])],
             ),
         ],
     )
-    assert [line.text for line in layout.lines] == ["We are from beauford", "HARBOTTLE, MORPETH"]
+    assert [line.text for line in layout.lines] == ["We are from Mallowfield", "BARLOW, MALLOWFIELD"]
     assert [line.orientation for line in layout.lines] == [0, 270]
     assert layout.unmatched == []
 
@@ -1196,7 +1196,7 @@ def test_multi_layout_orders_zero_first_then_each_next_direction() -> None:
 def test_multi_layout_keeps_only_the_best_reading_of_a_region() -> None:
     """The same physical strip read in several passes keeps only the
     richest reading — the postcard's vertical text read at 0°, 90° and
-    270° (MHOTH vs HARBOTTLE, MORPETH at IoU 0.97): the wrong-direction
+    270° (MHOTH vs BARLOW, MALLOWFIELD at IoU 0.97): the wrong-direction
     garbage must not survive next to the real text."""
     from pipeline.layout import multi_layout
 
@@ -1211,7 +1211,7 @@ def test_multi_layout_keeps_only_the_best_reading_of_a_region() -> None:
             ),
             DetectionPass(
                 degrees=270,
-                lines=[Detection(box=[10, 10, 20, 60], text="HARBOTTLE, MORPETH", score=0.9, words=[])],
+                lines=[Detection(box=[10, 10, 20, 60], text="BARLOW, MALLOWFIELD", score=0.9, words=[])],
             ),
             DetectionPass(
                 degrees=0,
@@ -1221,7 +1221,7 @@ def test_multi_layout_keeps_only_the_best_reading_of_a_region() -> None:
     )
     texts = [line.text for line in layout.lines]
     assert "MHOTH" not in texts
-    assert "HARBOTTLE, MORPETH" in texts
+    assert "BARLOW, MALLOWFIELD" in texts
     assert "With Greetings" in texts
     assert len(layout.lines) == 2
 
@@ -1755,7 +1755,7 @@ def test_multi_layout_report_box_anchors_over_a_positional_match() -> None:
         report_lines=[
             OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
             # the report located line 1 at the left margin; the positional
-            # match box is the unrelated HERNSPETH detection
+            # match box is the unrelated BARLOW detection
             OrientationLine(index=1, box=[50, 400, 100, 500], degrees=0),
         ],
         vlm_text="POST CARD\ncritic's view. To quote:",
@@ -1970,9 +1970,9 @@ def test_block_order_reads_each_block_whole() -> None:
         LayoutLine(index=0, text="POST CARD", box=[1575, 73, 2240, 222], orientation=0),
         LayoutLine(index=1, text="Printed in Great Britain", box=[1295, 246, 1995, 301], orientation=0),
         LayoutLine(index=2, text="We are from", box=[1277, 343, 1540, 975], orientation=90),
-        LayoutLine(index=3, text="beauford & Mrs", box=[1505, 235, 1662, 1108], orientation=90),
-        LayoutLine(index=4, text="Paul Wink", box=[1999, 988, 3339, 1316], orientation=0),
-        LayoutLine(index=5, text="47 Brighton Grove", box=[2142, 1376, 3479, 1692], orientation=0),
+        LayoutLine(index=3, text="Mallowfield & Mrs", box=[1505, 235, 1662, 1108], orientation=90),
+        LayoutLine(index=4, text="Aria Barlow", box=[1999, 988, 3339, 1316], orientation=0),
+        LayoutLine(index=5, text="1 Riverfield Road", box=[2142, 1376, 3479, 1692], orientation=0),
     ]
     ordered = order_lines_by_blocks(lines)
     texts = [ln.text for ln in ordered]
@@ -1982,9 +1982,9 @@ def test_block_order_reads_each_block_whole() -> None:
         "POST CARD",
         "Printed in Great Britain",
         "We are from",
-        "beauford & Mrs",
-        "Paul Wink",
-        "47 Brighton Grove",
+        "Mallowfield & Mrs",
+        "Aria Barlow",
+        "1 Riverfield Road",
     ], texts
 
 
@@ -2015,7 +2015,7 @@ def test_validate_layout_catches_duplicate_region_claims() -> None:
             "height": 2215,
             "lines": [
                 {"text": "We are from", "box": [1505, 235, 1662, 1108], "orientation": 90},
-                {"text": "beauford & Mrs", "box": [1505, 235, 1662, 1108], "orientation": 90},  # the same box
+                {"text": "Mallowfield & Mrs", "box": [1505, 235, 1662, 1108], "orientation": 90},  # the same box
             ],
         }
     )

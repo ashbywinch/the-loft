@@ -66,7 +66,7 @@ def test_the_gates_catch_the_failings_when_they_reach_the_layout() -> None:
             "height": 1500,
             "lines": [
                 {"text": "We are from", "box": [150, 200, 220, 700], "orientation": 90},
-                {"text": "beauford & Mrs", "box": [150, 200, 220, 700], "orientation": 90},  # the same box
+                {"text": "Mallowfield & Mrs", "box": [150, 200, 220, 700], "orientation": 90},  # the same box
             ],
         }
     )

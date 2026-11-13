@@ -8,19 +8,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any, Self
+from typing import Any, Self, cast
 
 from loft.live import item_row
+from loft.live.aliases import Alias, MemoryAliases
 from loft.live.batch_row import BatchState, ScanState
 from loft.live.batches import batch_from_payload, batch_payload
 from loft.live.document_row import DocumentPage, DocumentState
 from loft.live.documents import document_from_payload, document_payload
 from loft.live.errors import Conflict, NotFound, StaleVersion
 from loft.live.event import event_hash
-from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Kind, record_id
+from loft.live.identities import Identities
+from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Kind, record_id, relationship_id
+from loft.live.identity_map import BasisKinds, basis_after, renders_estimated
 from loft.live.item_row import AssetRecord, ItemAsset, ItemContent, ItemRef
 from loft.live.items import ContentInput, build_contents, item_payload, payload_assets, payload_contents
 from loft.live.page_row import AdjustmentState, PageRow, PageState, ReadingState, reading_blob, reading_rows
@@ -33,7 +37,8 @@ from loft.live.review_row import (
     session_from_payload,
     session_payload,
 )
-from tools.records import Item, Person, Session, split_content
+from tools.gone_person import GonePerson
+from tools.records import Item, Person, Relationship, Session, split_content
 
 
 class MemoryContentStore:
@@ -83,6 +88,8 @@ class MemoryLiveStore:
         self._content: dict[str, bytes] = {}
         self._events: list[dict[str, Any]] = []
         self._applied: set[str] = set()
+        self._aliases: dict[tuple[str, str], Alias] = {}
+        self.lock = threading.RLock()
         self.people = _MemoryPeople(self)
         self.items = _MemoryItems(self)
         self.reviews = _MemoryReviews(self)
@@ -94,10 +101,20 @@ class MemoryLiveStore:
         self.orgs = _MemoryCollection(self, ORG)
         self.themes = _MemoryCollection(self, THEME)
         self.relationships = _MemoryCollection(self, RELATIONSHIP)
+        self.aliases = MemoryAliases(self._aliases)
         self.content = MemoryContentStore(self._content)
+        self.identities = Identities(self)
 
     def change(self, *, actor: str, note: str = "", command_id: str | None = None) -> _MemoryChange:
-        return _MemoryChange(self, actor=actor, note=note, command_id=command_id)
+        return _MemoryChange(self, actor=actor, note=note, command_id=command_id, lock=self.lock)
+
+    def creation_order(self, entity_kind: str, entity_ids: Any) -> list[str]:
+        """The archive's own order for one collection: its create sequence."""
+        first: dict[str, int] = {}
+        for event in self._events:
+            if event["entity_kind"] == entity_kind and event["entity_id"] in entity_ids:
+                first.setdefault(event["entity_id"], int(event["seq"]))
+        return sorted(entity_ids, key=lambda entity_id: (first.get(entity_id, 0), entity_id))
 
     def events_for(self, entity_id: str, *, entity_kind: str = "person") -> list[dict]:
         return [e for e in self._events if e["entity_kind"] == entity_kind and e["entity_id"] == entity_id]
@@ -115,17 +132,28 @@ class MemoryLiveStore:
         return tuple(findings)
 
     def rebuild_people(self) -> None:
-        """Replay the person events into a fresh projection."""
+        """Replay the person events into a fresh projection (and aliases)."""
         rebuilt: dict[str, Person] = {}
+        self._aliases.clear()
         for event in self._events:
             if event["entity_kind"] != "person" or event["entity_version"] is None:
                 continue
             if event["event_type"] == "deleted":
                 rebuilt.pop(event["entity_id"], None)
                 continue
-            rebuilt[event["entity_id"]] = replace(
-                Person.from_dict(json.loads(event["payload"])), version=int(event["entity_version"])
-            )
+            payload = json.loads(event["payload"])
+            if event["event_type"] == "merged":
+                person = Person.from_dict(payload["person"])
+                self._aliases[("person", event["entity_id"])] = Alias(
+                    loser_kind="person",
+                    loser_id=event["entity_id"],
+                    survivor_kind="person",
+                    survivor_id=str(payload["merged_into"]),
+                    event_seq=int(event["seq"]),
+                )
+            else:
+                person = Person.from_dict(payload)
+            rebuilt[person.id] = replace(person, version=int(event["entity_version"]))
         self._people.clear()
         self._people.update(rebuilt)
 
@@ -137,6 +165,9 @@ class MemoryLiveStore:
             if event["entity_kind"] not in kinds or event["entity_version"] is None:
                 continue
             kind = kinds[event["entity_kind"]]
+            if event["event_type"] == "deleted":
+                rebuilt[kind.name].pop(event["entity_id"], None)
+                continue
             record = kind.from_payload(json.loads(event["payload"]))
             rebuilt[kind.name][record_id(kind, record)] = replace(record, version=int(event["entity_version"]))
         self._collections.clear()
@@ -262,7 +293,8 @@ class _MemoryPeople:
         return self.store._people.get(person_id)
 
     def all(self) -> tuple[Person, ...]:
-        return tuple(self.store._people[key] for key in sorted(self.store._people))
+        order = self.store.creation_order("person", self.store._people)
+        return tuple(self.store._people[key] for key in order)
 
     def require(self, person_id: str) -> Person:
         person = self.get(person_id)
@@ -297,6 +329,114 @@ class _MemoryPeople:
         saved = replace(person, version=version)
         self.store._people[person.id] = saved
         return saved
+
+    def confirm(self, person_id: str, relation: str | None = None) -> Person:
+        current = self.require(person_id)
+        if current.status != "proposed":
+            return current
+        updated = replace(current, status="confirmed")
+        if relation:
+            updated = replace(updated, relation=relation)
+        return self.save(updated, base=current.version)
+
+    def promote(self, person_id: str) -> Person:
+        current = self.require(person_id)
+        if current.status != "proposed":
+            raise Conflict(f"person {person_id} is {current.status}, not a proposal")
+        return self.save(replace(current, status="confirmed"), base=current.version)
+
+    def resolve(self, person_id: str, decision: str, basis: dict[str, str] | None = None) -> Person | GonePerson | None:
+        current = self.get(person_id)
+        if current is None:
+            return None
+        if decision == "pending":
+            return current
+        if decision == "delete":
+            self.delete(person_id)
+            return GonePerson(person_id)
+        if decision == "attested":
+            if current.status != "proposed" and not renders_estimated(current.basis):
+                return current
+            updated = replace(current, status="confirmed", basis=basis_after(current.basis, BasisKinds.KNOWN))
+        elif decision == "estimated":
+            if basis is None or not str(basis.get("text", "")).strip():
+                raise ValueError(f"estimated needs a basis: {person_id}")
+            updated = replace(
+                current, status="confirmed", basis=basis_after(current.basis, BasisKinds.RECOLLECTED, basis)
+            )
+        else:
+            raise ValueError(f"unknown decision: {decision!r}")
+        return current if updated == current else self.save(updated, base=current.version)
+
+    def reject(self, person_id: str) -> Person:
+        current = self.require(person_id)
+        if current.status != "proposed":
+            raise Conflict(f"person {person_id} is {current.status}, not a proposal")
+        rejected, _ = self._write_event(replace(current, status="rejected"), "rejected")
+        self._delete_edges(person_id)
+        return rejected
+
+    def delete(self, person_id: str) -> None:
+        current = self.require(person_id)
+        self._write_event(current, "deleted")
+        self.store._people.pop(person_id, None)
+        self._delete_edges(person_id)
+
+    def merge(self, loser_id: str, survivor_id: str, by: str) -> Person:
+        if loser_id == survivor_id:
+            raise Conflict("a record cannot merge into itself")
+        survivor = self.require(survivor_id)
+        loser = self.require(loser_id)
+        _, event = self._write_event(loser, "merged", extra={"merged_into": survivor_id, "by": by})
+        self.store._aliases[("person", loser_id)] = Alias(
+            loser_kind="person",
+            loser_id=loser_id,
+            survivor_kind="person",
+            survivor_id=survivor_id,
+            event_seq=int(event["seq"]),
+        )
+        self._move_edges(loser_id, survivor_id)
+        return survivor
+
+    def _move_edges(self, loser_id: str, survivor_id: str) -> None:
+        if self.change is None:
+            raise Conflict("people needs a change")
+        for edge in cast(tuple[Relationship, ...], tuple(self.change.relationships.all())):
+            if loser_id not in (edge.a, edge.b):
+                continue
+            moved = replace(
+                edge,
+                a=survivor_id if edge.a == loser_id else edge.a,
+                b=survivor_id if edge.b == loser_id else edge.b,
+            )
+            self.change.relationships.delete(relationship_id(edge))
+            self.change.relationships.save(moved)
+
+    def _write_event(
+        self, person: Person, event_type: str, extra: dict[str, Any] | None = None
+    ) -> tuple[Person, dict[str, Any]]:
+        if self.change is None:
+            raise Conflict("people needs a change")
+        version = person.version + 1
+        record = replace(person, version=version)
+        payload_record = {"person": record.to_dict(), **(extra or {})} if event_type == "merged" else record.to_dict()
+        event = self.change.append(
+            entity_kind="person",
+            entity_id=person.id,
+            event_type=event_type,
+            entity_version=version,
+            payload=json.dumps(payload_record, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+        )
+        if event_type != "deleted":
+            self.store._people[person.id] = record
+        return record, event
+
+    def _delete_edges(self, person_id: str) -> None:
+        if self.change is None:
+            raise Conflict("people needs a change")
+        for edge in cast(tuple[Relationship, ...], tuple(self.change.relationships.all())):
+            if person_id in (edge.a, edge.b):
+                self.change.relationships.delete(relationship_id(edge))
 
 
 class _MemoryItems:
@@ -694,11 +834,20 @@ class _MemoryDocuments:
 
 
 class _MemoryChange:
-    def __init__(self, store: MemoryLiveStore, *, actor: str, note: str, command_id: str | None) -> None:
+    def __init__(
+        self,
+        store: MemoryLiveStore,
+        *,
+        actor: str,
+        note: str,
+        command_id: str | None,
+        lock: threading.RLock | None = None,
+    ) -> None:
         self.store = store
         self.actor = actor
         self.note = note
         self.command_id = command_id
+        self.lock = lock if lock is not None else threading.RLock()
         self.change_id = uuid.uuid4().hex
         self.content = store.content
         self.items = _MemoryItems(store, change=self)
@@ -731,9 +880,11 @@ class _MemoryChange:
         self._content: dict[str, bytes] | None = None
         self._events: list[dict[str, Any]] | None = None
         self._applied: set[str] | None = None
+        self._aliases: dict[tuple[str, str], Alias] | None = None
         self._collections: dict[str, dict[str, object]] = {}
 
     def __enter__(self) -> Self:
+        self.lock.acquire()
         self._people = dict(self.store._people)
         self._items = dict(self.store._items)
         self._item_refs = dict(self.store._item_refs)
@@ -754,6 +905,7 @@ class _MemoryChange:
         self._content = dict(self.store._content)
         self._events = list(self.store._events)
         self._applied = set(self.store._applied)
+        self._aliases = dict(self.store._aliases)
         self._collections = {name: dict(records) for name, records in self.store._collections.items()}
         return self
 
@@ -808,18 +960,24 @@ class _MemoryChange:
         self.store._events[:] = self._events
         self.store._applied.clear()
         self.store._applied.update(self._applied)
+        assert self._aliases is not None
+        self.store._aliases.clear()
+        self.store._aliases.update(self._aliases)
         self.store._collections.clear()
         self.store._collections.update({name: dict(records) for name, records in self._collections.items()})
 
     def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: Any) -> None:
-        if exc_type is not None:
-            self._restore()
-            return
-        if self.command_id is not None:
-            if self.command_id in self.store._applied:
+        try:
+            if exc_type is not None:
                 self._restore()
-                raise Conflict(f"command {self.command_id} already applied")
-            self.store._applied.add(self.command_id)
+                return
+            if self.command_id is not None:
+                if self.command_id in self.store._applied:
+                    self._restore()
+                    raise Conflict(f"command {self.command_id} already applied")
+                self.store._applied.add(self.command_id)
+        finally:
+            self.lock.release()
 
     def append(
         self,
@@ -877,7 +1035,8 @@ class _MemoryCollection:
         return self.records.get(entity_id)
 
     def all(self) -> tuple[object, ...]:
-        return tuple(self.records[key] for key in sorted(self.records))
+        order = self.store.creation_order(self.kind.entity_kind, self.records)
+        return tuple(self.records[key] for key in order)
 
     def require(self, entity_id: str) -> object:
         record = self.get(entity_id)
@@ -913,3 +1072,37 @@ class _MemoryCollection:
         saved = replace(record, version=version)
         self.records[entity_id] = saved
         return saved
+
+    def promote(self, entity_id: str) -> Any:
+        current: Any = self.require(entity_id)
+        if self.status(current) != "proposed":
+            raise Conflict(f"{self.kind.name[:-1]} {entity_id} is {self.status(current)}, not a proposal")
+        return self.save(self._with_status(current, "confirmed"), base=current.version)
+
+    def reject(self, entity_id: str) -> Any:
+        current: Any = self.require(entity_id)
+        if self.status(current) != "proposed":
+            raise Conflict(f"{self.kind.name[:-1]} {entity_id} is {self.status(current)}, not a proposal")
+        return self.save(self._with_status(current, "rejected"), base=current.version)
+
+    def delete(self, entity_id: str) -> None:
+        current: Any = self.require(entity_id)
+        if self.change is None:
+            raise Conflict(f"{self.kind.name} needs a change")
+        self.change.append(
+            entity_kind=self.kind.entity_kind,
+            entity_id=entity_id,
+            event_type="deleted",
+            entity_version=current.version + 1,
+            payload=json.dumps(current.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+        )
+        self.records.pop(entity_id, None)
+
+    @staticmethod
+    def status(record: Any) -> str:
+        return str(record.to_dict().get("status", "confirmed"))
+
+    def _with_status(self, record: Any, status: str) -> Any:
+        raw = record.to_dict()
+        raw["status"] = status
+        return replace(self.kind.from_payload(raw), version=record.version)

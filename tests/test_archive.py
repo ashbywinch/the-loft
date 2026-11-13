@@ -10,6 +10,9 @@ from typing import override
 
 import pytest
 
+from loft.live.compat import CompatibilityExport
+from loft.live.import_identity import sync_from_archive
+from loft.live.memory import MemoryLiveStore
 from pipeline.identification import Identification
 from tools.archive import Archive, ArchiveError
 from tools.gone_place import GonePlace
@@ -1026,3 +1029,55 @@ def test_pending_changes_nothing() -> None:
 def test_deciding_an_unknown_entity_returns_none() -> None:
     archive, _ = _identified_archive()
     assert archive.decide_identification("doc-1971-05-01", "person", "p-ghost", "attested") is None
+
+
+# -- B1: the identity half writes through the live store ---------------------
+
+
+def _live_archive() -> tuple[Archive, MemoryStore, MemoryLiveStore]:
+    """The identified archive with its identity surface flipped to a live
+    store and the compatibility exporter bound (REWRITE-PLAN B1)."""
+    archive, store = _identified_archive()
+    live = MemoryLiveStore(app_version="test")
+    archive.bind_identity_service(live.identities, CompatibilityExport(live, archive).write)
+    sync_from_archive(live, archive)
+    return archive, store, live
+
+
+def test_a_live_identification_writes_the_proposals_through_the_service() -> None:
+    archive, _, live = _live_archive()
+    item = archive.record_identification(_proposal())
+    assert item.identified is True
+    seascale = live.places.require("pl-seascale")
+    assert isinstance(seascale, Place) and seascale.status == "proposed"
+    fern = live.people.require("p-fern")
+    assert fern.status == "confirmed"  # a standing record is never rewritten
+    table = archive.get_identity("places")
+    assert table is not None and table.record("pl-seascale") is not None  # the compat export ran
+    assert live.verify_chain() == ()
+
+
+def test_a_live_identification_decision_writes_the_record_and_the_compat_table() -> None:
+    archive, _, live = _live_archive()
+    _ = archive.record_identification(_proposal())
+    record = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "attested", actor="p-fern")
+    assert isinstance(record, Place) and record.status == "confirmed"
+    stored = live.places.require("pl-seascale")
+    assert isinstance(stored, Place) and stored.status == "confirmed"
+    table = archive.get_identity("places")
+    assert table is not None
+    exported = table.record("pl-seascale")
+    assert exported is not None and exported.status == "confirmed"
+    item = archive.get_item("doc-1971-05-01")
+    assert item is not None and item.place_refs[0].status == "confirmed"
+
+
+def test_a_live_identification_delete_ends_the_proposal_through_the_service() -> None:
+    archive, _, live = _live_archive()
+    _ = archive.record_identification(_proposal())
+    record = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "delete", actor="p-fern")
+    assert isinstance(record, GonePlace)
+    stored = live.places.require("pl-seascale")
+    assert isinstance(stored, Place) and stored.status == "rejected"  # the row stays in the log
+    table = archive.get_identity("places")
+    assert table is not None and table.record("pl-seascale") is None  # excluded from the old table

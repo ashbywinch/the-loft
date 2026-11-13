@@ -22,6 +22,13 @@ make test     # lint + typecheck gate, then pytest + vitest
 make coverage # tests with coverage report
 ```
 
+From the database rewrite's B1 the identity surface writes through the live
+database when one exists (`loft serve --db`, default `LOFT_DB_PATH` /
+`~/.local/share/the-loft/loft.db`): a review decision is one change, and the
+compatibility exporter rewrites `people.json`/`places.json`/`orgs.json`/
+`themes.json` so the old readers see the same tables. Without a database the
+server prints that identity writes stay on the file path (the rollback).
+
 CI runs exactly `make setup && make lint-github && make coverage` — the suites
 run once, inside `make coverage`; never ad-hoc tool commands (see `AGENTS.md`).
 

@@ -21,6 +21,18 @@ def test_capture_memory_keeps_its_full_argument_surface() -> None:
     assert args.who == "" and args.anchor == ""  # defaults intact
 
 
+def test_serve_can_bind_the_live_database() -> None:
+    """B1: `loft serve --db` is the identity write flip — the path parses and
+    defaults to the live database's home."""
+    from loft.live.paths import default_database_path
+
+    args = build_parser().parse_args(["serve"])
+    assert args.fn.__name__ == "cmd_serve"
+    assert args.db == str(default_database_path())
+    args = build_parser().parse_args(["serve", "--db", "/tmp/loft.db"])
+    assert args.db == "/tmp/loft.db"
+
+
 def test_gedcom_subcommands_are_wired() -> None:
     """The island commands parse into the gedcom action and its paths."""
     args = build_parser().parse_args(["gedcom", "import", "in.ged", "folder"])

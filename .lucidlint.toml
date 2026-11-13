@@ -128,8 +128,11 @@ ignore = ["unused"]
 ignore = ["unused"]
 [lucidlint."tools/attestation.py"]
 ignore = ["unused"]
+# long-param-list: the archive's public identification verb is pinned by the
+# old suite and the server route — its parameters ARE the determination
+# (item, kind, record, decision, basis, actor), not a group that needs a type.
 [lucidlint."tools/archive.py"]
-ignore = ["unused", "god-class", "partition"]
+ignore = ["unused", "god-class", "partition", "long-param-list"]
 [lucidlint."tools/memory.py"]
 ignore = ["unused", "data-clump"]
 [lucidlint."tools/records.py"]
@@ -172,3 +175,22 @@ ignore = ["feature-envy"]
 # store's API between two objects and break the "one facade" rule.
 [lucidlint."loft/live/store.py"]
 ignore = ["partition"]
+
+# latent-class: People is the person repository TECHSPEC/08 §19.4 names — the
+# read half (get/all/require) and the write half (save/confirm/resolve/…) are
+# one collection by design; the spec says the repository owns both halves so
+# the write half cannot be used outside a transaction.
+[lucidlint."loft/live/people.py"]
+ignore = ["partition"]
+
+# data-clump: the person row mapping's (connection, person_id) pair is the
+# row's key in every helper that reads or removes it; a wrapper type would be
+# unwrapped at each SQL call and adds nothing the function name does not say.
+[lucidlint."loft/live/person_row.py"]
+ignore = ["data-clump"]
+
+# fakefs: the exporter tests use a real SQLite file and a real archive tree on
+# tmp_path — the append-only store, sqlite semantics and the versioned file
+# chain are the subject, not incidental I/O (docs/testing-standards.md).
+[lucidlint."tests/live/**"]
+ignore = ["fakefs"]

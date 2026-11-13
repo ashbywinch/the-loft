@@ -9,19 +9,22 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import Self
 
 from loft.live import item_row, person_row
+from loft.live.aliases import Aliases
 from loft.live.batch_row import BatchBundle, BatchProjection
 from loft.live.batches import Batches, batch_from_payload
-from loft.live.change import Change
+from loft.live.change import Change, ChangeContext
 from loft.live.content import ContentStore
 from loft.live.database import LiveDatabase
 from loft.live.document_row import DocumentBundle, DocumentProjection
 from loft.live.documents import Documents, document_from_payload
 from loft.live.event import event_hash
+from loft.live.identities import Identities
 from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection, Kind
 from loft.live.item_row import RowPosition
 from loft.live.items import Items, payload_assets, payload_contents
@@ -41,6 +44,7 @@ class LiveStore:
     def __init__(self, database: LiveDatabase, app_version: str) -> None:
         self.database = database
         self.app_version = app_version
+        self.lock = threading.RLock()
         content = ContentStore(database.connection)
         self.people = People(database.connection)
         self.items = Items(database.connection, content)
@@ -52,6 +56,8 @@ class LiveStore:
         self.orgs = Collection(database.connection, ORG)
         self.themes = Collection(database.connection, THEME)
         self.relationships = Collection(database.connection, RELATIONSHIP)
+        self.aliases = Aliases(database.connection)
+        self.identities = Identities(self)
         self.content = content
 
     @classmethod
@@ -67,7 +73,13 @@ class LiveStore:
         return self.database.connection
 
     def change(self, *, actor: str, note: str = "", command_id: str | None = None) -> Change:
-        return Change(self.connection, actor=actor, app_version=self.app_version, note=note, command_id=command_id)
+        return Change(
+            ChangeContext(connection=self.connection, lock=self.lock),
+            actor=actor,
+            app_version=self.app_version,
+            note=note,
+            command_id=command_id,
+        )
 
     def events_for(self, entity_id: str, *, entity_kind: str = "person") -> list[dict]:
         rows = self.connection.execute(
@@ -91,17 +103,32 @@ class LiveStore:
         return tuple(findings)
 
     def rebuild_people(self) -> None:
-        """Drop the person projection and replay its events in seq order."""
+        """Drop the person projection (and the person aliases) and replay its events in seq order."""
         self.connection.execute("DELETE FROM person_residences")
         self.connection.execute("DELETE FROM people")
+        self.connection.execute("DELETE FROM aliases WHERE loser_kind = 'person'")
         for row in self.connection.execute("SELECT * FROM events WHERE entity_kind = 'person' ORDER BY seq").fetchall():
             event = dict(row)
             if event["entity_version"] is None:
                 continue
             if event["event_type"] == "deleted":
                 self.connection.execute("DELETE FROM people WHERE person_id = ?", (event["entity_id"],))
+                self.connection.execute("DELETE FROM person_residences WHERE person_id = ?", (event["entity_id"],))
                 continue
-            person = Person.from_dict(json.loads(event["payload"]))
+            payload = json.loads(event["payload"])
+            if event["event_type"] == "merged":
+                person = Person.from_dict(payload["person"])
+                self.connection.execute(
+                    """INSERT INTO aliases (loser_kind, loser_id, survivor_kind, survivor_id, event_seq)
+                       VALUES (?, ?, ?, ?, ?)
+                       ON CONFLICT (loser_kind, loser_id) DO UPDATE SET
+                         survivor_kind = excluded.survivor_kind,
+                         survivor_id = excluded.survivor_id,
+                         event_seq = excluded.event_seq""",
+                    ("person", event["entity_id"], "person", str(payload["merged_into"]), int(event["seq"])),
+                )
+            else:
+                person = Person.from_dict(payload)
             current = person_row.read_row(self.connection, person.id)
             person_row.write_row(
                 self.connection,
@@ -235,8 +262,13 @@ class LiveStore:
             if event["entity_version"] is None:
                 continue
             kind = kinds[event["entity_kind"]]
-            record = kind.from_payload(json.loads(event["payload"]))
             collection = getattr(self, kind.name)
+            if event["event_type"] == "deleted":
+                self.connection.execute(f"DELETE FROM {kind.table} WHERE {kind.id_column} = ?", (event["entity_id"],))
+                if kind is THEME:
+                    self.connection.execute("DELETE FROM theme_items WHERE theme_id = ?", (event["entity_id"],))
+                continue
+            record = kind.from_payload(json.loads(event["payload"]))
             collection.project(
                 record,
                 version=int(event["entity_version"]),

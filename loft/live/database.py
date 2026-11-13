@@ -19,7 +19,13 @@ from loft.live.schema import Schema, SchemaError
 
 
 class LiveDatabase:
-    """One open SQLite database with the canonical schema and pragmas."""
+    """One open SQLite database with the canonical schema and pragmas.
+
+    The connection is opened with ``check_same_thread=False`` because the
+    service hosts one store for every FastAPI request thread; `LiveStore`'s
+    change lock serializes the writes, so the one-connection rule still holds
+    as one writer at a time.
+    """
 
     _PRAGMAS = (
         "PRAGMA journal_mode = WAL",
@@ -47,7 +53,7 @@ class LiveDatabase:
         # verifies: a kill mid-init leaves no half-created `loft.db` to trick
         # the next run into "already exists — refusing to overwrite".
         temporary = path.with_name(f".{path.name}.{os.urandom(8).hex()}.init")
-        connection = sqlite3.connect(temporary, isolation_level=None)
+        connection = sqlite3.connect(temporary, isolation_level=None, check_same_thread=False)
         connection.row_factory = sqlite3.Row
         try:
             cls._apply_pragmas(connection)
@@ -71,7 +77,7 @@ class LiveDatabase:
     def open(cls, path: Path) -> Self:
         if not path.is_file():
             raise SchemaError(f"no database at {path}")
-        connection = sqlite3.connect(path, isolation_level=None)
+        connection = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         connection.row_factory = sqlite3.Row
         try:
             cls._apply_pragmas(connection)

@@ -16,6 +16,8 @@ from typing import Any, override
 import pytest
 from PIL import Image
 
+from loft.live.import_identity import sync_from_archive
+from loft.live.memory import MemoryLiveStore
 from pipeline.api.server import ServerConfig, create_server
 from pipeline.api.sync import Outbox
 from pipeline.registry import load_batch
@@ -72,8 +74,10 @@ class ServerFixture:
         client: Any | None = None,
         _reprocess: Any | None = None,
         registry_dir: Path | None = None,
+        live: MemoryLiveStore | None = None,
     ) -> None:
         self.store: MemoryStore = store
+        self.live = live
         self.data_dir: Path = data_dir
         self._reprocess: Any | None = _reprocess
         # the session secret before any app build — the server refuses to
@@ -126,6 +130,7 @@ class ServerFixture:
                 work_dir=self.work_dir,
                 outbox=self.outbox,
                 registry_dir=self.registry_dir,
+                live=live,
             ),
             host="127.0.0.1",
             port=0,
@@ -190,6 +195,18 @@ def server(tmp_path: Path) -> Iterator[ServerFixture]:
     fixture = ServerFixture(make_app_data(tmp_path), MemoryStore())
     yield fixture
     fixture.close()
+
+
+@pytest.fixture
+def live_server(tmp_path: Path) -> Iterator[ServerFixture]:
+    """B1's flipped host: the identity surface writes through the live store,
+    and the compatibility exporter keeps the archive's old tables current."""
+    live = MemoryLiveStore(app_version="test")
+    fixture = ServerFixture(make_app_data(tmp_path), MemoryStore(), live=live)
+    sync_from_archive(live, fixture.archive)
+    yield fixture
+    fixture.close()
+    live.close()
 
 
 def test_the_projection_is_served_from_the_servers_own_data_dir(server: ServerFixture) -> None:
@@ -802,6 +819,120 @@ def test_deciding_the_last_proposed_person_completes_the_session(server: ServerF
     imports = server.archive.get_identity("imports")
     assert imports is not None
     assert imports.imports[0].status == "reviewed"  # nothing left pending — the session is done
+
+
+# -- B1: the identity surface writes through the live store -----------------
+
+
+def test_a_live_decision_writes_one_change_and_the_compat_table(live_server: ServerFixture) -> None:
+    _seed_pending(live_server)
+    status, body = live_server.post(
+        "/api/review/decide", {"session_id": "import-documents", "person_id": "p-judith", "decision": "attested"}
+    )
+    assert status == 200
+    assert "status" not in body["person"]  # the old wire shape, not the DB disposition
+    assert body["pending"] == 0
+    live = live_server.live
+    assert live is not None
+    stored = live.people.require("p-judith")
+    assert stored.status == "confirmed"
+    assert stored.version == 2
+    events = live.events_for("p-judith")
+    assert [event["event_type"] for event in events] == ["created", "superseded"]
+    assert len({event["change_id"] for event in events[1:]}) == 1  # one change for the determination
+    assert live.verify_chain() == ()
+    table = live_server.archive.get_identity("people")
+    assert table is not None
+    exported = table.record("p-judith")
+    assert exported is not None and exported.status == "confirmed"
+
+
+def test_a_live_estimated_decision_exports_the_old_status_and_basis(live_server: ServerFixture) -> None:
+    _seed_pending(live_server)
+    basis = {"text": "Grandma used to say this was the case.", "by": "Alex", "when": "2026-08-09"}
+    status, body = live_server.post(
+        "/api/review/decide",
+        {"session_id": "import-documents", "person_id": "p-judith", "decision": "estimated", "basis": basis},
+    )
+    assert status == 200
+    assert body["person"]["status"] == "estimated"  # the rendering the old readers expect
+    assert body["person"]["basis"] == basis
+    live = live_server.live
+    assert live is not None
+    assert live.people.require("p-judith").basis == {"basis": "recollection", "confidence": "possible", **basis}
+    table = live_server.archive.get_identity("people")
+    assert table is not None
+    exported = table.record("p-judith")
+    assert exported is not None and exported.status == "estimated" and exported.basis == basis
+
+
+def test_a_live_delete_removes_the_person_and_their_edges(live_server: ServerFixture) -> None:
+    _seed_pending(live_server)
+    status, body = live_server.post(
+        "/api/review/decide", {"session_id": "import-documents", "person_id": "p-judith", "decision": "delete"}
+    )
+    assert status == 200
+    assert body["person"]["gone"] is True
+    live = live_server.live
+    assert live is not None
+    assert live.people.get("p-judith") is None
+    assert live.relationships.get("rel-p-robert-p-judith-spouse") is None
+    table = live_server.archive.get_identity("people")
+    assert table is not None
+    assert all(person.id != "p-judith" for person in table.people)
+    assert all(edge.a != "p-judith" and edge.b != "p-judith" for edge in table.relationships)
+
+
+def test_a_live_decision_needs_the_session(live_server: ServerFixture) -> None:
+    _seed_pending(live_server)
+    status, _ = live_server.post(
+        "/api/review/decide",
+        {"session_id": "import-documents", "person_id": "p-judith", "decision": "attested"},
+        cookie="",
+    )
+    assert status == 401
+    live = live_server.live
+    assert live is not None
+    assert live.people.get("p-judith") is None  # the refusal wrote nothing, not even the catch-up
+
+
+def test_a_live_decision_rejects_a_stale_session_before_any_mutation(live_server: ServerFixture) -> None:
+    _seed_pending(live_server)
+    status, _ = live_server.post(
+        "/api/review/decide", {"session_id": "import-nope", "person_id": "p-judith", "decision": "attested"}
+    )
+    assert status == 404
+    live = live_server.live
+    assert live is not None
+    assert live.people.get("p-judith") is None  # the refusal wrote nothing, not even the catch-up
+
+
+def test_a_live_decision_catches_up_a_proposal_the_old_path_wrote(live_server: ServerFixture) -> None:
+    _seed_pending(live_server)
+    live = live_server.live
+    assert live is not None
+    # the identify pass (still on the file path in B1) adds a proposal
+    live_server.archive.save_identity(
+        "people",
+        validate_identity(
+            "people",
+            {
+                "people": [
+                    {"id": "p-alex", "name": "Alex Hale"},
+                    {"id": "p-robert", "name": "Quentin Whitlock"},
+                    {"id": "p-judith", "name": "Pearl Whitlock", "status": "proposed"},
+                    {"id": "p-harriet", "name": "Harriet Wells", "status": "proposed"},
+                ],
+                "relationships": [{"a": "p-robert", "b": "p-judith", "kind": "spouse"}],
+            },
+        ),
+    )
+    assert live.people.get("p-harriet") is None
+    status, body = live_server.post(
+        "/api/review/decide", {"session_id": "import-documents", "person_id": "p-harriet", "decision": "attested"}
+    )
+    assert status == 200
+    assert live.people.require("p-harriet").status == "confirmed"
 
 
 def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -> None:

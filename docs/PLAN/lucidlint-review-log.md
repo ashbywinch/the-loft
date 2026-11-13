@@ -794,3 +794,28 @@ through functions, not knowledge re-derived independently. Proposed rules
    pairs only) as a warn, to surface near-copies like `_as_lines` vs
    `parse_transcription_response`.
    Filed: https://github.com/ashbywinch/lucidlint/issues/62
+
+## 2026-11-13 — B1's four scoped acknowledgements
+
+The identity flip (REWRITE-PLAN B1) added four scoped ignores, each judged
+against the coding standards rather than waved through:
+
+- **`loft/live/people.py` — `partition`.** The tool sees `People` as two
+  field-disjoint classes (the read half and the verb half). TECHSPEC/08
+  §19.4 names one collection that owns both halves on purpose: the write half
+  must be unreachable outside a `Change`, and splitting it would let a caller
+  hold the writer without the transaction. Same judgment as
+  `loft/live/store.py` (`partition`) and `tools/gedcom_document.py`.
+- **`loft/live/person_row.py` — `data-clump`.** `(connection, person_id)` is
+  the row's address in `read_row`, `delete_row` and `_residences`. A key type
+  would wrap a connection handle and be unwrapped at each SQL call; the
+  module *is* the row mapping, so the pair has one home already.
+- **`tools/archive.py` — `long-param-list`.** `decide_identification`'s six
+  parameters are the determination's own fields (`item, kind, record,
+  decision, basis, actor`); the signature is pinned by the old suite and the
+  server route, and grouping it would churn the oracle the port must not
+  move. The other four ignore families were already scoped there.
+- **`tests/live/**` — `fakefs`.** The exporter tests need a real SQLite file
+  and a real archive tree on `tmp_path`: append-only writes, sqlite
+  semantics and the versioned file chain are the subject, exactly the
+  `tests/**` exception the testing standards state.

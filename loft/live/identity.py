@@ -300,7 +300,17 @@ class Collection:
         return None if row is None else self.kind.from_row(row)
 
     def all(self) -> tuple[Any, ...]:
-        rows = self.connection.execute(f"SELECT * FROM {self.kind.table} ORDER BY {self.kind.id_column}").fetchall()
+        """Every record in the archive's own order — the create sequence, so a
+        supersede keeps its position (B1's compatibility export preserves the
+        curated order)."""
+        rows = self.connection.execute(
+            f"""SELECT t.* FROM {self.kind.table} t
+                LEFT JOIN (SELECT entity_id, MIN(seq) AS first_seq FROM events
+                           WHERE entity_kind = ? GROUP BY entity_id) e
+                  ON e.entity_id = t.{self.kind.id_column}
+                ORDER BY COALESCE(e.first_seq, 0), t.{self.kind.id_column}""",
+            (self.kind.entity_kind,),
+        ).fetchall()
         return tuple(self.kind.from_row(row) for row in rows)
 
     def require(self, entity_id: str) -> Any:
@@ -343,6 +353,49 @@ class Collection:
         entity_id = record_id(self.kind, record)
         current = self.get(entity_id)
         self._write(_with_version(record, version), position, current.version if current is not None else None)
+
+    def promote(self, entity_id: str) -> Any:
+        """A proposal the review confirmed: the record drops ``proposed``."""
+        current = self.require(entity_id)
+        if self.status(current) != "proposed":
+            raise Conflict(f"{self.kind.name[:-1]} {entity_id} is {self.status(current)}, not a proposal")
+        return self.save(self._with_status(current, "confirmed"), base=current.version)
+
+    def reject(self, entity_id: str) -> Any:
+        """End a proposal: the row stays marked ``rejected`` (terminal)."""
+        current = self.require(entity_id)
+        if self.status(current) != "proposed":
+            raise Conflict(f"{self.kind.name[:-1]} {entity_id} is {self.status(current)}, not a proposal")
+        return self.save(self._with_status(current, "rejected"), base=current.version)
+
+    def delete(self, entity_id: str) -> None:
+        """Remove the record from the projection; the log keeps the event."""
+        current = self.require(entity_id)
+        self._change().append(
+            entity_kind=self.kind.entity_kind,
+            entity_id=entity_id,
+            event_type="deleted",
+            entity_version=current.version + 1,
+            payload=json.dumps(current.to_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False),
+        )
+        self.connection.execute(f"DELETE FROM {self.kind.table} WHERE {self.kind.id_column} = ?", (entity_id,))
+        if self.kind is THEME:
+            self.connection.execute("DELETE FROM theme_items WHERE theme_id = ?", (entity_id,))
+
+    @staticmethod
+    def status(record: Any) -> str:
+        """The record's disposition — a missing status is an asserted record."""
+        return str(record.to_dict().get("status", "confirmed"))
+
+    def _with_status(self, record: Any, status: str) -> Any:
+        raw = record.to_dict()
+        raw["status"] = status
+        return replace(self.kind.from_payload(raw), version=record.version)
+
+    def _change(self) -> Any:
+        if self.change is None:
+            raise Conflict(f"{self.kind.name} needs a change")
+        return self.change
 
     def _write(self, record: Any, position: RowPosition, base: int | None) -> None:
         values = self.kind.to_values(record, position)

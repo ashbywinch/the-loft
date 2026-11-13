@@ -13,6 +13,9 @@ path exactly once, no sampling and no second tries.
 
 Usage:
     PYTHONPATH=. .venv/bin/python -m pipeline.evals.eval_band_size [--fixture DIR]
+
+The run writes its answers and renders to `work/eval-band-size/` — a generated
+directory (gitignored). Only the measurement's conclusion belongs in docs.
 """
 
 from __future__ import annotations

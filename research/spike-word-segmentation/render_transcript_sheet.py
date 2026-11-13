@@ -7,7 +7,8 @@ the row it reads. Every row's band is tinted and carries its number in the
 gutter, the same convention the review surface uses.
 
 Run: PYTHONPATH=. .venv/bin/python research/spike-word-segmentation/render_transcript_sheet.py
-Reads: work/eval-rows-transcript/page-01.answer.json (the eval's last answer)
+Reads: work/eval-rows-transcript/page-01.answer.json (the eval's last answer;
+       a generated, gitignored path — run the eval first)
 Writes: research/spike-word-segmentation/rows-transcript-sheet.jpg
 """
 

@@ -78,7 +78,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | UX spec — the PRD's UX answers + the journeys to usability-test | `docs/UX.md` |
 | Real content (people, relationships, items, story text) | the live DB; the export is `archive/` (the dated document tree + the scan image leg); the repo is data-free. `./scripts/loft publish` regenerates `app/data` for local serve |
 | Where an artefact lives (the archive's legs: identities, items, sessions) | `docs/TECHSPEC/07-exports.md` |
-| Demo content for fake instances | `tools/demo_data.py` — fictional only, never real names |
+| Fictional content for examples and fake instances | `tools/fiction.py` — the Barlow family (Aria, Jack, Meg, Harry, Nora, Lily, Pip; Mrs Rosa Quinn) and Mallowfield/Riverfield; never real names |
 
 Read the relevant doc before changing behavior. **Before any code change, read `docs/coding-standards.md` — it is the standing contract for how code is written here, not a reference to consult when in doubt.** **Before any documentation change, read `docs/writing-documentation.md`.** **Before writing or editing any prompt, read `skill://prompt-craft`** — a prompt is an instruction an agent acts on, and the prompt modules carry no history lessons (`docs/writing-documentation.md` § "No history lessons"). The PRD's §10 principles are
 product law: the app arranges evidence, never interprets it; no censorship by

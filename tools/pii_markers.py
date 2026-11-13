@@ -11,7 +11,7 @@ import json
 import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from tools.loft_paths import LoftPaths
 from tools.records import Person, Place
@@ -176,16 +176,33 @@ def family_markers() -> set[str]:
     return people | places
 
 
-def file_offenders(text: str, markers: set[str]) -> list[str]:
+class NonFamily:
+    """Markers that are NOT the family, with the file that legitimately
+    carries them: the GEDCOM 7 standard sample's names and the GEDCOM
+    library's copyright holder. The guard stays strict everywhere else — a
+    new entry here is a review finding, not a convenience."""
+
+    ALLOWED: ClassVar[dict[str, frozenset[str]]] = {
+        "docs/object-model.md": frozenset({"David"}),  # © David Straub, python-gedcom7
+        "tests/fixtures/maximal70.ged": frozenset({"David", "John"}),  # the GEDCOM 7 maximal sample
+        "tests/test_gedcom_document.py": frozenset({"Edward", "John"}),  # the sample and a synthetic name
+    }
+
+
+def file_offenders(text: str, markers: set[str], path: str | None = None) -> list[str]:
     """The markers present in *text* — the identity data that must not ship.
 
     One shared matcher (the guard and its fast path must agree).
     Emails compare case-insensitively against the lowercased text; names and
-    places match at word boundaries in the original case.
+    places match at word boundaries in the original case. `path` names the
+    file for the documented non-family collisions only.
     """
+    allowed = NonFamily.ALLOWED.get(path or "", frozenset())
     lowered = text.lower()
     found: list[str] = []
     for marker in markers:
+        if marker in allowed:
+            continue
         if "@" in marker:
             if marker.lower() in lowered:
                 found.append(marker)

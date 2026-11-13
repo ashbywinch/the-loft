@@ -614,10 +614,10 @@ def test_status_faithfulness(tmp_path) -> None:
             "1 HUSB @I1@",
             "1 WIFE @I2@",
             "0 @PL1@ PLAC",
-            "1 NAME Seascale",
+            "1 NAME Riverfield",
             "1 _LOFT_STATUS pending",
             "0 @PL2@ PLAC",
-            "1 NAME Dunmail",
+            "1 NAME Mallowfield",
             "0 TRLR",
         ]
     )
@@ -627,14 +627,14 @@ def test_status_faithfulness(tmp_path) -> None:
         {"a": "p-a", "b": "p-b", "kind": "spouse", "status": "pending"}
     ]
     assert [{"id": pl.id, "name": pl.name, "status": pl.status} for pl in shapes.places] == [
-        {"id": "dunmail", "name": "Dunmail", "status": None},
-        {"id": "seascale", "name": "Seascale", "status": "pending"},
+        {"id": "mallowfield", "name": "Mallowfield", "status": None},
+        {"id": "riverfield", "name": "Riverfield", "status": "pending"},
     ]
     # nothing pending leaves — people, edges, places; the confirmed
     # subset round-trips exactly
     out = GedcomDocument.from_text(text).to_text()
     assert "Beatrice" not in out and "_LOFT_STATUS" not in out
-    assert "Seascale" not in out and "Dunmail" in out  # the pending PLAC record stays out
+    assert "Riverfield" not in out and "Mallowfield" in out  # the pending PLAC record stays out
     reimported = GedcomDocument.from_text(out).wire_shapes()
     assert reimported.people == tuple(p for p in shapes.people if p.status != "pending")
     assert reimported.places == tuple(p for p in shapes.places if p.status != "pending")

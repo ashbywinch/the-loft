@@ -38,7 +38,7 @@ def _archive(root: Path, *, people: int = 5) -> Path:
         encoding="utf-8",
     )
     (root / "places.json").write_text(
-        json.dumps({"places": [{"id": "pl-london", "name": "London", "lat": 51.5, "lng": -0.18}]}),
+        json.dumps({"places": [{"id": "pl-mallowfield", "name": "Mallowfield", "lat": 51.5, "lng": -0.18}]}),
         encoding="utf-8",
     )
     (root / "orgs.json").write_text(
@@ -68,7 +68,7 @@ def test_the_identity_import_maps_statuses_and_counts(tmp_path: Path) -> None:
         dob = store.people.require("p-1").dob
         assert dob is not None
         assert dob.date == "1963-05-14"
-        assert store.places.require("pl-london").lat == 51.5
+        assert store.places.require("pl-mallowfield").lat == 51.5
         assert store.orgs.require("org-ministry").name == "Ministry of Supply"
         assert store.themes.require("t-boats").title == "The boats"
         assert store.relationships.require("rel-p-0-p-1-parent").kind == "parent"

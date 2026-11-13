@@ -155,7 +155,7 @@ def test_memory_flow_conditions(memory_outputs: dict[str, Assessment], flow: mem
 # knowledge holds, a stranger, a bare kinship term, and a place
 IDENTIFICATION_LETTER = (
     "My dear Fern,\n\n"
-    "We came down to Seascale again this summer — Owen Pryce drove us over. "
+    "We came down to Mallowfield again this summer — Jack Barlow drove us over. "
     "Mum was too tired to come, so it was just the three of us on the sands.\n\n"
     "Your loving sister,\nHarriet"
 )
@@ -191,7 +191,7 @@ def identification_output(client: AIClient) -> Identification:
 def test_identification_names_the_letters_people(identification_output: Identification) -> None:
     """The reader finds the letter's people, not just the salutation."""
     names = {person.name for person in identification_output.people}
-    assert {"Fern", "Owen Pryce"} <= names, f"people read: {sorted(names)}"
+    assert {"Fern", "Jack Barlow"} <= names, f"people read: {sorted(names)}"
 
 
 @pytest.mark.eval
@@ -206,7 +206,7 @@ def test_identification_links_a_known_name_and_never_mints_it_again(identificati
 def test_identification_proposes_a_stranger_with_the_documents_words(identification_output: Identification) -> None:
     """A stranger is proposed, never asserted, and the proposal carries the
     document's own words as its evidence."""
-    owen = next((person for person in identification_output.people if person.name == "Owen Pryce"), None)
+    owen = next((person for person in identification_output.people if person.name == "Jack Barlow"), None)
     assert owen is not None, [person.name for person in identification_output.people]
     assert owen.status == "proposed"
     assert owen.basis is not None and owen.basis["text"] in IDENTIFICATION_LETTER
@@ -214,7 +214,7 @@ def test_identification_proposes_a_stranger_with_the_documents_words(identificat
 
 @pytest.mark.eval
 def test_identification_finds_the_place(identification_output: Identification) -> None:
-    assert [place.name for place in identification_output.places] == ["Seascale"]
+    assert [place.name for place in identification_output.places] == ["Mallowfield"]
 
 
 @pytest.mark.eval

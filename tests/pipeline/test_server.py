@@ -2011,7 +2011,7 @@ class IdentifyChat:
         return json.dumps(
             {
                 "people": [{"name": "Fern", "match": "p-fern", "quote": "Dear Fern"}],
-                "places": [{"name": "Seascale", "match": None, "quote": "we swam at Seascale"}],
+                "places": [{"name": "Mallowfield", "match": None, "quote": "we swam at Mallowfield"}],
             }
         )
 
@@ -2032,7 +2032,7 @@ def _seed_document(server: ServerFixture) -> str:
         title="A letter from Fern",
         date="1971-05-01",
         date_precision="exact",
-        text="Dear Fern, we swam at Seascale.",
+        text="Dear Fern, we swam at Mallowfield.",
     )
     return item.id
 
@@ -2047,10 +2047,10 @@ def test_identify_reads_the_document_once_and_proposes_its_entities(server: Serv
         # the standing record is untouched (confirmed); the document's ref is
         # the proposal, and the new place is a proposed record
         assert [p["id"] for p in body["people"]] == ["p-fern"]
-        assert [(p["id"], p["status"]) for p in body["places"]] == [("pl-seascale", "proposed")]
+        assert [(p["id"], p["status"]) for p in body["places"]] == [("pl-mallowfield", "proposed")]
         assert [ref["id"] for ref in body["item"]["people"]] == ["p-fern"]
         assert [(ref["id"], ref["status"]) for ref in body["item"]["people"]] == [("p-fern", "proposed")]
-        assert [(ref["id"], ref["status"]) for ref in body["item"]["places"]] == [("pl-seascale", "proposed")]
+        assert [(ref["id"], ref["status"]) for ref in body["item"]["places"]] == [("pl-mallowfield", "proposed")]
         assert body["pending"] == 2
         # the document is read once: a second visit answers without a model call
         status, again = server2.post(f"/api/identify/document/{item_id}", {})
@@ -2069,15 +2069,15 @@ def test_identify_decide_lands_in_the_identity_table(server: ServerFixture) -> N
         _ = server2.post(f"/api/identify/document/{item_id}", {})
         status, body = server2.post(
             "/api/identify/decide",
-            {"item_id": item_id, "kind": "place", "entity_id": "pl-seascale", "decision": "attested"},
+            {"item_id": item_id, "kind": "place", "entity_id": "pl-mallowfield", "decision": "attested"},
         )
         assert status == 200, body
         assert "status" not in body["entity"]  # a confirmed record omits the status key
-        assert body["message"] == "Done — Seascale is recorded as a fact."
+        assert body["message"] == "Done — Mallowfield is recorded as a fact."
         assert body["pending"] == 1  # the person still waits
         places = server2.archive.get_identity("places")
         assert places is not None
-        confirmed = places.record("pl-seascale")
+        confirmed = places.record("pl-mallowfield")
         assert confirmed is not None and confirmed.status == "confirmed"
         item = server2.archive.get_item(item_id)
         assert item is not None and item.place_refs[0].status == "confirmed"
@@ -2094,7 +2094,13 @@ def test_identify_decide_carries_the_familys_words_for_a_guess(server: ServerFix
         basis = {"text": "we spent every summer there", "by": "Alex", "when": "2026-10-29"}
         status, body = server2.post(
             "/api/identify/decide",
-            {"item_id": item_id, "kind": "place", "entity_id": "pl-seascale", "decision": "estimated", "basis": basis},
+            {
+                "item_id": item_id,
+                "kind": "place",
+                "entity_id": "pl-mallowfield",
+                "decision": "estimated",
+                "basis": basis,
+            },
         )
         assert status == 200, body
         assert body["entity"]["status"] == "estimated"

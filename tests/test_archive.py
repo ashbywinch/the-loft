@@ -864,8 +864,8 @@ def _proposal() -> Identification:
         places=(
             Place.from_dict(
                 {
-                    "id": "pl-seascale",
-                    "name": "Seascale",
+                    "id": "pl-mallowfield",
+                    "name": "Mallowfield",
                     "status": "proposed",
                     "note": "Mentioned in A letter — location unknown.",
                 }
@@ -884,13 +884,13 @@ def test_identification_writes_proposed_refs_and_new_records() -> None:
     item = archive.record_identification(_proposal())
 
     assert [ref.to_dict() for ref in item.people_refs] == [{"id": "p-fern", "status": "proposed"}]
-    assert [ref.to_dict() for ref in item.place_refs] == [{"id": "pl-seascale", "status": "proposed"}]
+    assert [ref.to_dict() for ref in item.place_refs] == [{"id": "pl-mallowfield", "status": "proposed"}]
     assert item.identified is True
     stored = archive.get_item("doc-1971-05-01")
     assert stored is not None and stored.identified is True  # persisted, not just in the answer
     places = archive.get_identity("places")
     assert places is not None
-    proposed = places.record("pl-seascale")
+    proposed = places.record("pl-mallowfield")
     assert proposed is not None and proposed.status == "proposed"
     people = archive.get_identity("people")
     assert people is not None
@@ -914,21 +914,21 @@ def test_identification_keeps_an_existing_link_and_its_status() -> None:
 
     links = {ref.id: ref.status for ref in read.people_refs}
     assert links == {"p-fern": "confirmed"}  # the existing link wins
-    assert [ref.id for ref in read.place_refs] == ["pl-seascale"]  # the new one is added
+    assert [ref.id for ref in read.place_refs] == ["pl-mallowfield"]  # the new one is added
 
 
 def test_attested_confirms_the_record_and_the_documents_mention() -> None:
     archive, _ = _identified_archive()
     _ = archive.record_identification(_proposal())
 
-    record = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "attested")
+    record = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "attested")
 
     assert isinstance(record, Place) and record.status == "confirmed"
     item = archive.get_item("doc-1971-05-01")
     assert item is not None and item.place_refs[0].status == "confirmed"
     places = archive.get_identity("places")
     assert places is not None
-    confirmed = places.record("pl-seascale")
+    confirmed = places.record("pl-mallowfield")
     assert confirmed is not None and confirmed.status == "confirmed"
 
 
@@ -937,7 +937,7 @@ def test_an_estimated_mention_records_the_familys_words() -> None:
     _ = archive.record_identification(_proposal())
     basis = {"text": "we spent summers there", "by": "Alex", "when": "2026-10-29"}
 
-    record = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "estimated", basis)
+    record = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "estimated", basis)
 
     assert isinstance(record, Place) and record.status == "estimated"
     assert record.basis == basis
@@ -949,13 +949,13 @@ def test_deleting_a_mention_drops_an_unreferenced_proposal() -> None:
     archive, _ = _identified_archive()
     _ = archive.record_identification(_proposal())
 
-    gone = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "delete")
+    gone = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "delete")
 
-    assert isinstance(gone, GonePlace) and gone.id == "pl-seascale"
+    assert isinstance(gone, GonePlace) and gone.id == "pl-mallowfield"
     item = archive.get_item("doc-1971-05-01")
     assert item is not None and item.place_refs == ()
     places = archive.get_identity("places")
-    assert places is not None and places.record("pl-seascale") is None
+    assert places is not None and places.record("pl-mallowfield") is None
 
 
 def test_deleting_a_mention_never_deletes_a_confirmed_person() -> None:
@@ -1001,16 +1001,16 @@ def test_deleting_a_mention_keeps_a_proposal_another_item_still_names() -> None:
                 title="Another letter",
                 date="1972-01-01",
                 status="catalogued",
-                places=[{"id": "pl-seascale", "status": "proposed"}],
+                places=[{"id": "pl-mallowfield", "status": "proposed"}],
             )
         )
     )
 
-    kept = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "delete")
+    kept = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "delete")
 
     assert isinstance(kept, Place) and kept.status == "proposed"
     places = archive.get_identity("places")
-    assert places is not None and places.record("pl-seascale") is not None
+    assert places is not None and places.record("pl-mallowfield") is not None
     item = archive.get_item("doc-1971-05-01")
     assert item is not None and item.place_refs == ()
 
@@ -1020,7 +1020,7 @@ def test_pending_changes_nothing() -> None:
     _ = archive.record_identification(_proposal())
     before = store.read("assets/doc-1971-05-01/item-2.json")
 
-    record = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "pending")
+    record = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "pending")
 
     assert isinstance(record, Place) and record.status == "proposed"
     assert store.read("assets/doc-1971-05-01/item-2.json") == before  # no new version, nothing rewritten
@@ -1048,25 +1048,25 @@ def test_a_live_identification_writes_the_proposals_through_the_service() -> Non
     archive, _, live = _live_archive()
     item = archive.record_identification(_proposal())
     assert item.identified is True
-    seascale = live.places.require("pl-seascale")
+    seascale = live.places.require("pl-mallowfield")
     assert isinstance(seascale, Place) and seascale.status == "proposed"
     fern = live.people.require("p-fern")
     assert fern.status == "confirmed"  # a standing record is never rewritten
     table = archive.get_identity("places")
-    assert table is not None and table.record("pl-seascale") is not None  # the compat export ran
+    assert table is not None and table.record("pl-mallowfield") is not None  # the compat export ran
     assert live.verify_chain() == ()
 
 
 def test_a_live_identification_decision_writes_the_record_and_the_compat_table() -> None:
     archive, _, live = _live_archive()
     _ = archive.record_identification(_proposal())
-    record = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "attested", actor="p-fern")
+    record = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "attested", actor="p-fern")
     assert isinstance(record, Place) and record.status == "confirmed"
-    stored = live.places.require("pl-seascale")
+    stored = live.places.require("pl-mallowfield")
     assert isinstance(stored, Place) and stored.status == "confirmed"
     table = archive.get_identity("places")
     assert table is not None
-    exported = table.record("pl-seascale")
+    exported = table.record("pl-mallowfield")
     assert exported is not None and exported.status == "confirmed"
     item = archive.get_item("doc-1971-05-01")
     assert item is not None and item.place_refs[0].status == "confirmed"
@@ -1075,9 +1075,9 @@ def test_a_live_identification_decision_writes_the_record_and_the_compat_table()
 def test_a_live_identification_delete_ends_the_proposal_through_the_service() -> None:
     archive, _, live = _live_archive()
     _ = archive.record_identification(_proposal())
-    record = archive.decide_identification("doc-1971-05-01", "place", "pl-seascale", "delete", actor="p-fern")
+    record = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "delete", actor="p-fern")
     assert isinstance(record, GonePlace)
-    stored = live.places.require("pl-seascale")
+    stored = live.places.require("pl-mallowfield")
     assert isinstance(stored, Place) and stored.status == "rejected"  # the row stays in the log
     table = archive.get_identity("places")
-    assert table is not None and table.record("pl-seascale") is None  # excluded from the old table
+    assert table is not None and table.record("pl-mallowfield") is None  # excluded from the old table

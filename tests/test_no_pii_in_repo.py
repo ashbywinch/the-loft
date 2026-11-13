@@ -48,6 +48,6 @@ def test_no_family_pii_in_tracked_files() -> None:
         if not any_marker.search(text) and not any(e.lower() in lowered for e in emails):
             continue
         # an offending file: identify the markers (rare path, so per-marker is fine)
-        for marker in file_offenders(text, markers):
+        for marker in file_offenders(text, markers, name):
             offenders.append(f"{name}: {marker}")
     assert not offenders, "family PII in tracked files (the public repo would ship it):\n" + "\n".join(offenders[:40])

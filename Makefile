@@ -13,7 +13,7 @@
 SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
-.PHONY: help setup app-build serve lint lint-github typecheck typecheck-update-baseline test coverage format clean eval evals eval-changed verify scan-docs scan-photos adopt ingest confirm
+.PHONY: help setup app-build serve lint lint-github typecheck typecheck-update-baseline test coverage format clean eval evals eval-changed verify no-pii scan-docs scan-photos adopt ingest confirm
 
 PYTHON := .venv/bin/python
 RUFF := .venv/bin/ruff
@@ -157,6 +157,12 @@ eval: evals
 
 verify: setup
 	@$(PYTHON) -m pytest -m archive -q || [ $$? -eq 5 ]  # exit 5 = nothing selected (pre-B, the markers land later); real failures still fail
+
+# The no-PII guard alone — the pre-push hook and the CI step run this. The
+# marker source is the local archive, or the PII_MARKERS secret in CI (the
+# checkout has no archive). It scans text files only; seconds, not minutes.
+no-pii: setup
+	@$(PYTHON) -m pytest -m archive tests/test_no_pii_in_repo.py -q
 
 eval-changed: setup
 	@MARKERS=$$($(PYTHON) tools/affected_evals.py); \

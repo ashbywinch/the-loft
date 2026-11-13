@@ -1,5 +1,8 @@
 # Fast checks only — lint and typecheck, never the full test suite.
-# The same targets CI runs; hooks stay seconds-fast.
+# The same targets CI runs; hooks stay seconds-fast. The no-PII guard is the
+# one exception: it is a PRE-PUSH hook (it needs the local archive, and a
+# family name must never leave the laptop) and scans text files in seconds.
+default_install_hook_types: [pre-commit, pre-push]
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.16.1
@@ -21,6 +24,12 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+      - id: no-pii
+        name: no family PII in tracked files (pre-push)
+        entry: .venv/bin/python -m pytest -m archive tests/test_no_pii_in_repo.py -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
   - repo: https://github.com/gitleaks/gitleaks
     rev: v8.30.1
     hooks:

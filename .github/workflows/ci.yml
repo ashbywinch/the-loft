@@ -48,6 +48,20 @@ jobs:
       - run: make lint-github
       - run: make coverage # the gate: lint + typecheck + the suites ONCE, instrumented (2026-08-11: make test + make coverage used to run pytest and vitest twice)
       - run: make verify # the archive-quality data checks — the gate keeps them; they skip in CI (no archive in the checkout) and run locally
+      - name: No family PII in the repository
+        # The marker list is the PII_MARKERS secret (a JSON array or one per
+        # line): CI has no archive, so without it the guard could only skip.
+        # Dependabot runs get no secrets (GitHub strips them); main's own run
+        # gates the dependency bump, the same rule as the evals.
+        if: ${{ github.actor != 'dependabot[bot]' }}
+        env:
+          PII_MARKERS: ${{ secrets.PII_MARKERS }}
+        run: |
+          if [ -z "$PII_MARKERS" ]; then
+            echo "::error::PII_MARKERS secret is not set — the no-PII guard cannot run"
+            exit 1
+          fi
+          make no-pii
       - run: make lucidlint # the code-health gate, wired from its own repo (github.com/ashbywinch/lucidlint); no baseline — a finding fails the gate and must be fixed (2026-08-29)
       - name: Note the dependabot eval skip
         # Evals on dependabot runs are IMPOSSIBLE, not optional: GitHub strips

@@ -185,6 +185,16 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition: most eval
   check for the live product** — the deployed instance runs them against
   the real archive on a schedule (see the PRD's weekly integrity check);
   a failure there is family data needing a fix, never a test update.
+- **The no-PII guard is enforced, not merely available.** `make no-pii`
+  scans every tracked text file for the family's markers. A **pre-push**
+  hook runs it against the local archive, so a name cannot leave the
+  laptop; **CI** runs it against the `PII_MARKERS` secret (a JSON array or
+  one marker per line) because the checkout has no archive, and the step
+  **fails loudly** if the secret is missing. Without either source the
+  test skips with its reason stated — never a green lie. Binaries are
+  skipped: their bytes are not a text leak, and scanning a render as text
+  produces false positives; the images themselves are a content decision,
+  not this check's.
 - **Never let a derived artifact drift from a fresh run (the odd model,
   named).** This codebase's data is unusual: it is *committed* (real
   content in `archive/`) *and* *produced* (imports and the demo generator

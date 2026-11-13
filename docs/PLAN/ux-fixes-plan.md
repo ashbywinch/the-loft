@@ -332,9 +332,9 @@ projection re-published; registry untouched).
 - Discoverability is EXCELLENT — the "✓ Review — 30 documents + 1 import to review"
   card on the home page is impossible to miss; the hub separates transcriptions from
   import sessions in plain language.
-- The import session (family-tree confirmations) is fully doable alone: Elaine made
-  3 real decisions (Dinsley → estimated, Sanderson/Richardson → left for later),
-  understood the pattern, and verified the tree updated.
+- The import session (family-tree confirmations) is fully doable alone: the
+  walker made 3 real decisions (one estimated, two left for later), understood
+  the pattern, and verified the tree updated.
 - The transcription fix flow works when the page is readable (zoom, edit, count drops).
 
 **Findings (the walk's evidence, screenshots /tmp/ux-real2/)**:

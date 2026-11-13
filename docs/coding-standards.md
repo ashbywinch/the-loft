@@ -98,7 +98,11 @@ good.
   from the projection, and the relationships were lost in a merge. ✓
   `archive/people.json` (append-only, versioned) + the
   derivation engine; the committed projection must equal what publish
-  produces, enforced by test.
+  produces, enforced by test. Fictional examples use the **Barlow family** —
+  Aria, Jack, Meg, Harry, Nora, Lily and Pip Barlow, with Mrs Rosa Quinn,
+  Mallowfield and Riverfield (`tools/fiction.py`) — never a name lifted from
+  the archive; the same convention covers fixtures, prompts, eval
+  inputs and docs, and a named fiction is preferred to a redacted blank.
 - **Never generate testimony.** A story is a person's own words, verbatim —
   an AI-generated account is never attributed to a narrator (`told_by`),
   never framed as the narrator speaking ("Alex: …"), and never committed to

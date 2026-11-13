@@ -370,7 +370,7 @@ The UI's remaining blockers (the serve validation refuses):
   one wide row [208,147-1900,219]; its label ('13.11.63') is 8 chars
   vs the 1692px axis = 212 px/char. The rec's top-row merge, not the
   matching.
-- The letter's 'London ~S.W.7.~': 15 chars in a 1280px rec-union =
+- The letter's postcode line: 15 chars in a 1280px rec-union =
   85 px/char — 5 over the horizontal 80 ceiling. The rec-union's width
   includes the inter-word gaps; the line's real glyph extent is
   tighter.
@@ -392,8 +392,8 @@ The UI's two remaining rows were inspected (the user: carry on):
    each week." is one line). The gap size alone cannot distinguish a
    line boundary from word spacing.
 2. The letter's row 5's LABEL is wrong: the order-based proportional
-   assigned "London ~S.W.7.~" but the row's actual ink is "send
-   something of interest each week." — the rows' merges + the uneven
+   assigned the postcode label but the row's actual ink is a body line —
+   the rows' merges + the uneven
    spacing + the line-count mismatch (22 rows vs ~40 transcription
    lines) skew the fraction-based index.
 
@@ -469,7 +469,7 @@ birth certificates' collapse folded 26 rows into one 323-char line.
 
 Result: zero wrong-stuff responses in the ladder run (was ~14% of
 pages). Every page got a read. One page exhausted all three attempts
-honestly (1697895793138, the Leigh-on-Sea photo — its remaining refusal
+honestly (1697895793138, the seaside photo — its remaining refusal
 is a Gate B extent mismatch, not response quality).
 
 **The honest state**: 20 of 50 pages serve clean layouts (9 letters +

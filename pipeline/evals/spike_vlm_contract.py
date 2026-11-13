@@ -145,7 +145,7 @@ class Prompts:
         "",
         "Reply with JSON only:",
         '{"segments": [',
-        '  {"id": "seg-1", "type": "body", "transcript": "London Opera Centre", '
+        '  {"id": "seg-1", "type": "body", "transcript": "Mallowfield Opera Centre", '
         '"word_ids": [129, 130, 131, 135, 138]},',
         '  {"id": "seg-2", "type": "injection", "transcript": "my dear", '
         '"injection_point": {"after": 147}, "word_ids": [152, 153]},',

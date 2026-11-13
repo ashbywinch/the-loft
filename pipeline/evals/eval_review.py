@@ -41,7 +41,7 @@ class ReviewFixtures:
     PEOPLE: list[dict[str, Any]] = [
         {"id": "p-pearl", "name": "Pearl Whitlock"},
         {"id": "p-nora", "name": "Nora Whitlock"},
-        {"id": "p-walter", "name": "Walter Whitlock", "dod": {"date": "1916-09-15", "precision": "exact"}},
+        {"id": "p-walter", "name": "Walter Whitlock", "dod": {"date": "1917-04-02", "precision": "exact"}},
         # The second Walter — why a family memory can name the wrong man: a LIVING
         # relative one generation on carries the same name, so the war-dead man
         # reads as "the other brother". Without this second same-name person the
@@ -49,7 +49,7 @@ class ReviewFixtures:
         {
             "id": "p-walter-jr",
             "name": "Walter Ellery Whitlock",
-            "dob": {"date": "1922-06-11", "precision": "exact"},
+            "dob": {"date": "1921-08-17", "precision": "exact"},
         },
     ]
     RELATIONSHIPS: list[dict[str, Any]] = [
@@ -61,13 +61,13 @@ class ReviewFixtures:
             "id": "item-war-record",
             "title": "The war record",
             "type": "document",
-            "story": "Walter Whitlock died on 15 September 1916, aged 21 — the Commonwealth war record.",
+            "story": "Walter Whitlock died on 2 April 1917, aged 21 — the Commonwealth war record.",
         },
         {
             "id": "item-seascale",
-            "title": "The Seascale visit",
+            "title": "The Mallowfield visit",
             "type": "story",
-            "story": "We visited Walter in Seascale once when the children were young; he has died since.",
+            "story": "We visited Walter in Mallowfield once when the children were young; he has died since.",
         },
     ]
     PERSONA_JARGON = (
@@ -160,9 +160,9 @@ class PlaceLeadFlow(ReviewFlow):
     name = "the model follows a place lead and reports what the records show"
     text = (
         "I don't remember the relationship. But Mum did know a Walter — we visited him once "
-        "in Seascale when I was young, and he has died since."
+        "in Mallowfield when I was young, and he has died since."
     )
-    findings_mention = "Seascale"
+    findings_mention = "Mallowfield"
     has_question = True
 
 
@@ -179,7 +179,7 @@ class DigsToDeathFlow(ReviewFlow):
         "died in the war — I think it was Walter."
     )
     findings_mention = "Walter"
-    findings_quote = "died on 15 September 1916"
+    findings_quote = "died on 2 April 1917"
     has_question = True
 
 
@@ -409,19 +409,19 @@ ReviewFixtures.CONDITIONS = (
 
 
 class MultiTurnArcFlow:
-    """The Seascale stall (R3/R4, 2026-08-10): two turns — the assistant
+    """The Mallowfield stall (R3/R4, 2026-08-10): two turns — the assistant
     asks, the reviewer answers with a place lead. The response must name
     the lead; the assistant's own question must never be repeated. The
     single-message flows cannot catch this — the failure was a
     turn-transition, only reachable with history."""
 
-    name = "multi-turn arc (the Seascale stall)"
+    name = "multi-turn arc (the Mallowfield stall)"
     turn1 = "I think Mum said he was Pearl's brother."
     turn2 = (
-        "I'm not sure who it was — but we visited an older relative in Seascale once when "
+        "I'm not sure who it was — but we visited an older relative in Mallowfield once when "
         "I was young, and he's died since."
     )
-    lead = "Seascale"
+    lead = "Mallowfield"
 
 
 @dataclass(frozen=True)
@@ -459,14 +459,14 @@ def run_arc(client: AIClient) -> ArcRun:
 def condition_arc_lead(result: ArcRun) -> str | None:
     """The lead is FOLLOWED when the assistant's response names it — in the
     findings (the tool path) or in the question (the known-facts path):
-    "Is the Seascale visit you remember the same one recorded in the
+    "Is the Mallowfield visit you remember the same one recorded in the
     archive…?" is the genealogist's move, either way (R3: the tools — and
     the archive's facts — inform the conversation)."""
     t2 = result.t2
     response_text = " ".join([finding.text for finding in t2.findings] + [t2.question])
     if MultiTurnArcFlow.lead not in response_text:
         return (
-            "the reviewer answered with a PLACE lead (Seascale) and the model's response "
+            "the reviewer answered with a PLACE lead (Mallowfield) and the model's response "
             f"never names it — the lead went unanswered (R3): {response_text or '(empty)'}"
         )
     return None

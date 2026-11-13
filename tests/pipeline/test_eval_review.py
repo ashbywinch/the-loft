@@ -24,14 +24,14 @@ def _wrong_person_verdict() -> ReviewVerdict:
         relevant="true",
         contradiction=Contradiction(found="false", detail=""),
         confidence="think_so",
-        note="You recall a living Walter, but the war record says Walter died in 1916.",
+        note="You recall a living Walter, but the war record says Walter died in 1917.",
         findings=(
             Finding(
-                text="The war record says: 'Walter Whitlock died on 15 September 1916, aged 21.'",
+                text="The war record says: 'Walter Whitlock died on 2 April 1917, aged 21.'",
                 item_id="item-war-record",
             ),
         ),
-        question="Which Walter do you remember as alive — the one who died in 1916, or the younger Walter?",
+        question="Which Walter do you remember as alive — the one who died in 1917, or the younger Walter?",
     )
 
 

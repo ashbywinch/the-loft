@@ -22,7 +22,7 @@ from loft.live.store import LiveStore
 from loft.live.verify import Projections, tree_digest
 from tests.live.test_migrate import _fixture
 from tools.loft_paths import LoftPaths
-from tools.records import Item
+from tools.records import Item, Relationship
 
 
 def _migrated(tmp_path: Path) -> tuple[LiveStore, Path, Path, Path]:
@@ -124,6 +124,29 @@ def test_the_export_refuses_the_live_tree(tmp_path: Path) -> None:
             HumanArchive(store, LoftPaths.ARCHIVE_DIR).write()
         with pytest.raises(ExportError):
             HumanArchive(store, LoftPaths.WORKSPACE / "archive").write()
+    finally:
+        store.close()
+
+
+def test_asserted_and_estimated_edges_export_but_a_proposed_edge_does_not(tmp_path: Path) -> None:
+    store, _archive, _workspace, _marker = _migrated(tmp_path)
+    with store.change(actor="import") as change:
+        change.relationships.save(Relationship.from_dict({"a": "p-1", "b": "p-2", "kind": "parent"}))
+        change.relationships.save(
+            Relationship.from_dict({"a": "p-1", "b": "p-2", "kind": "sibling", "status": "estimated"})
+        )
+        change.relationships.save(
+            Relationship.from_dict({"a": "p-1", "b": "p-2", "kind": "spouse", "status": "proposed"})
+        )
+    try:
+        out = tmp_path / "human"
+        HumanArchive(store, out).write()
+        edges = json.loads((out / "relationships.json").read_text(encoding="utf-8"))["relationships"]
+        assert [(edge["kind"], edge.get("estimated")) for edge in edges] == [
+            ("parent", None),
+            ("sibling", True),
+        ]
+        assert HumanArchive(store, out).verify().ok
     finally:
         store.close()
 

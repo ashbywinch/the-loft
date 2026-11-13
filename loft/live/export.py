@@ -268,7 +268,11 @@ class HumanArchive:
         }
 
     def _confirmed_relationships(self) -> list[Relationship]:
-        return [edge for edge in self.store.relationships.all() if edge.status in (None, "", "confirmed")]
+        """The viewer-facing edges: an asserted edge has no status (the class's
+        documented "asserted with no review seam"), a confirmed edge says so,
+        and an old ``estimated`` edge is a confirmed recollection displayed as
+        estimated. A ``proposed`` edge waits in the DB, never here."""
+        return [edge for edge in self.store.relationships.all() if edge.status in (None, "", "confirmed", "estimated")]
 
     @staticmethod
     def _with_display(record: dict[str, Any], basis: dict[str, Any] | None) -> dict[str, Any]:
@@ -307,6 +311,8 @@ class HumanArchive:
     def _relationship(edge: Relationship) -> dict[str, Any]:
         record = edge.to_dict()
         record["status"] = "confirmed"
+        if edge.status == "estimated":
+            record["estimated"] = True
         return record
 
     def _write_views(self) -> None:
@@ -399,7 +405,8 @@ class HumanArchive:
         lines = ["# The archive", "", "The dated index; open a leaf to read the words.", ""]
         by_year: dict[str, list[Item]] = {}
         for item in self._items:
-            year = item.date[:4] if len(item.date) >= 4 else "Undated"
+            raw_date = item.date or ""
+            year = raw_date[:4] if len(raw_date) >= 4 else "Undated"
             by_year.setdefault(year, []).append(item)
         for year in sorted(by_year):
             lines.extend([f"## {year}", ""])

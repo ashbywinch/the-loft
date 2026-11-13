@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Self
 
@@ -25,6 +27,14 @@ from loft.live.people import People
 from loft.live.reviews import Reviews
 
 
+@dataclass(frozen=True)
+class ChangeContext:
+    """The one writer: the store's connection and the lock its threads share."""
+
+    connection: sqlite3.Connection
+    lock: threading.RLock
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -36,19 +46,21 @@ class Change:
 
     def __init__(
         self,
-        connection: sqlite3.Connection,
+        context: ChangeContext,
         *,
         actor: str,
         app_version: str,
         note: str = "",
         command_id: str | None = None,
     ) -> None:
-        self.connection = connection
+        self.connection = context.connection
+        self.lock = context.lock
         self.actor = actor
         self.app_version = app_version
         self.note = note
         self.command_id = command_id
         self.change_id = uuid.uuid4().hex
+        connection = context.connection
         self.content = ContentStore(connection)
         self.items = Items(connection, self.content, change=self)
         self.reviews = Reviews(connection, self.content, change=self)
@@ -65,27 +77,36 @@ class Change:
     def __enter__(self) -> Self:
         if self._entered:
             raise Conflict("a change cannot be nested")
-        self.connection.execute("BEGIN IMMEDIATE")
+        # one connection, one writer: the service's request threads queue here
+        self.lock.acquire()
+        try:
+            self.connection.execute("BEGIN IMMEDIATE")
+        except BaseException:
+            self.lock.release()
+            raise
         self._entered = True
         return self
 
     def __exit__(self, exc_type: type[BaseException] | None, exc: BaseException | None, tb: Any) -> None:
-        if exc_type is not None:
-            self.connection.execute("ROLLBACK")
-            return
-        if self.command_id is not None:
-            try:
-                self.append(
-                    entity_kind="command",
-                    entity_id=self.command_id,
-                    event_type="applied",
-                    entity_version=None,
-                    payload=json.dumps({"change_id": self.change_id}, sort_keys=True),
-                )
-            except sqlite3.IntegrityError as error:
+        try:
+            if exc_type is not None:
                 self.connection.execute("ROLLBACK")
-                raise Conflict(f"command {self.command_id} already applied") from error
-        self.connection.execute("COMMIT")
+                return
+            if self.command_id is not None:
+                try:
+                    self.append(
+                        entity_kind="command",
+                        entity_id=self.command_id,
+                        event_type="applied",
+                        entity_version=None,
+                        payload=json.dumps({"change_id": self.change_id}, sort_keys=True),
+                    )
+                except sqlite3.IntegrityError as error:
+                    self.connection.execute("ROLLBACK")
+                    raise Conflict(f"command {self.command_id} already applied") from error
+            self.connection.execute("COMMIT")
+        finally:
+            self.lock.release()
 
     def append(
         self,

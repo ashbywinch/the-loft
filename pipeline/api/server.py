@@ -25,7 +25,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -35,6 +35,8 @@ from fastapi.staticfiles import StaticFiles
 from document.document import Document
 from document.row_adjustments import RowAdjustments
 from document.stages import PageStatus
+from loft.live.compat import CompatibilityExport, legacy_person
+from loft.live.import_identity import sync_from_archive
 from pipeline.api import auth
 from pipeline.api.approval import ApprovalContext, DocumentFacts, approve_page
 from pipeline.api.assess_request import AssessRequest
@@ -95,6 +97,9 @@ from tools.memory import ElicitationError, Knowledge
 from tools.records import Item, Person, Place, ReviewContext, ReviewDecision, split_content
 from tools.store import FileStore
 
+if TYPE_CHECKING:
+    from loft.live.protocols import IdentityStore
+
 logger = logging.getLogger(__name__)
 
 
@@ -120,6 +125,7 @@ class ServerConfig:
     work_dir: Path | None = None
     outbox: Outbox | None = None
     registry_dir: Path | None = None
+    live: IdentityStore | None = None
 
 
 # The route closures ARE the FastAPI registration idiom — DI'd deps are
@@ -137,6 +143,9 @@ def build_app(
         # seam rides the session: refuse to start
         raise RuntimeError("THE_LOFT_SESSION_SECRET is not set — refusing to start with forgeable sessions")
     archive = Archive(config.store)
+    live = config.live
+    if live is not None:
+        archive.bind_identity_service(live.identities, CompatibilityExport(live, archive).write)
     client = config.client
     data_dir = Path(config.data_dir)
     app_dir = Path(config.app_dir)
@@ -443,14 +452,25 @@ def build_app(
         # earlier ones — there is no staleness to detect (2026-10-21, user). The
         # name is read before the mutation because a delete answers with the gone
         # marker, which carries no name.
-        people_table = archive.get_identity("people")
-        pre_person = people_table.record(person_id) if people_table else None
+        actor = mine.person or "review"
+        if live is not None:
+            # the flip's opening import: records the old path wrote since the
+            # last decision are caught up first, and a newer DB record is
+            # never regressed (REWRITE-PLAN B1)
+            sync_from_archive(live, archive)
+            pre_person = live.identities.person(person_id)
+        else:
+            people_table = archive.get_identity("people")
+            pre_person = people_table.record(person_id) if people_table else None
         person_name = pre_person.name if pre_person else person_id
         try:
-            record = archive.resolve_person(person_id, decision, basis)
+            record = archive.resolve_person(person_id, decision, basis, actor=actor)
         except ValueError as e:
             return JSONResponse(ErrorAnswer(str(e)).to_dict(), status_code=400)
-        person_payload = record.to_dict() if record is not None else None
+        if live is not None and isinstance(record, Person):
+            person_payload = legacy_person(record)
+        else:
+            person_payload = record.to_dict() if record is not None else None
         # the review record — the decision and the confirmation message the
         # family saw, both persisted (the transcript is the messages)
         when = datetime.now(UTC).date().isoformat()
@@ -1104,7 +1124,8 @@ def build_app(
         """One stage-8 determination: the mention on the document and the
         record in the identity table move together (the archive's seam), and
         the answer carries what remains."""
-        if session_user(request) is None:
+        mine = narrator(request)
+        if mine is None:
             return JSONResponse(ErrorAnswer("sign in to identify the documents").to_dict(), status_code=401)
         try:
             fields = IdentifyDecideRequest.from_dict(body)
@@ -1121,7 +1142,7 @@ def build_app(
         basis = DecisionBasis.from_dict(fields.basis).to_dict() if fields.basis else None
         try:
             record = archive.decide_identification(
-                fields.item_id, fields.kind, fields.entity_id, fields.decision, basis
+                fields.item_id, fields.kind, fields.entity_id, fields.decision, basis, actor=mine.person or "review"
             )
         except (KeyError, ValueError, ArchiveError) as exc:
             return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)

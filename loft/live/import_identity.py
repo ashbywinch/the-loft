@@ -17,6 +17,7 @@ from typing import Any, cast
 from loft.live.backup import check_marker
 from loft.live.identity import relationship_id
 from loft.live.identity_map import disposition_of
+from loft.live.protocols import IdentityStore
 from loft.live.store import LiveStore
 from tools.records import (
     Org,
@@ -92,9 +93,23 @@ def _read_tables(archive: Path) -> IdentityTables:
     )
 
 
-def _plan(store: LiveStore, archive: Path) -> tuple[list[tuple[str, Any]], dict[str, int]]:
+def tables_from_archive(archive: Any) -> IdentityTables:
+    """The four tables as the archive facade reads them — the flip's catch-up
+    works on the store the server already holds, not a second path."""
+
+    def table(name: str, empty: Any) -> Any:
+        return archive.get_identity(name) or empty
+
+    return IdentityTables(
+        people=table("people", PeopleTable(people=(), relationships=())),
+        places=table("places", PlacesTable(places=())),
+        orgs=table("orgs", OrgsTable(orgs=())),
+        themes=table("themes", ThemesTable(themes=())),
+    )
+
+
+def _plan(store: IdentityStore, tables: IdentityTables) -> tuple[list[tuple[str, Any]], dict[str, int]]:
     """The records to import (skipping what the store holds) and the skips."""
-    tables = _read_tables(archive)
     planned: list[tuple[str, Any]] = []
     skipped = {"people": 0, "relationships": 0, "places": 0, "orgs": 0, "themes": 0}
     for person in tables.people.people:
@@ -135,7 +150,7 @@ def _entity_id(kind: str, record: Any) -> str:
     return str(record.id)
 
 
-def _compare(store: LiveStore, planned: list[tuple[str, Any]]) -> tuple[str, ...]:
+def _compare(store: IdentityStore, planned: list[tuple[str, Any]]) -> tuple[str, ...]:
     mismatches: list[str] = []
     for kind, record in planned:
         stored = getattr(store, kind).require(_entity_id(kind, record))
@@ -153,16 +168,43 @@ def import_identities(
 ) -> IdentityReport:
     """Import people, relationships, places, orgs and themes from the archive."""
     check_marker(backup_marker)
-    planned, skipped = _plan(store, archive)
+    return _import(store, _read_tables(archive), dry_run=dry_run)
+
+
+def sync_identities(store: LiveStore, archive: Path) -> IdentityReport:
+    """Catch the DB up with the old tree — the flip's opening import (B1).
+
+    The backup marker guards the first full migration, not this catch-up: the
+    DB already exists and is backed up. Records the store holds are skipped,
+    so a newer DB record is never regressed.
+    """
+    return _import(store, _read_tables(archive))
+
+
+def sync_from_archive(store: IdentityStore, archive: Any) -> IdentityReport:
+    """The catch-up for a host that holds the archive facade, not its path."""
+    return _import(store, tables_from_archive(archive))
+
+
+def _import(store: IdentityStore, tables: IdentityTables, *, dry_run: bool = False) -> IdentityReport:
+    planned, skipped = _plan(store, tables)
     counts = {"people": 0, "relationships": 0, "places": 0, "orgs": 0, "themes": 0}
     for kind, _record in planned:
         counts[kind] += 1
-    operations = tuple(f"{kind[:-1]} {_entity_id(kind, record)}" for kind, record in planned)
+    singular = {
+        "people": "person",
+        "relationships": "relationship",
+        "places": "place",
+        "orgs": "org",
+        "themes": "theme",
+    }
+    operations = tuple(f"{singular[kind]} {_entity_id(kind, record)}" for kind, record in planned)
     if dry_run:
         return IdentityReport(counts=counts, skipped=skipped, operations=operations, dry_run=True)
-    with store.change(actor="import", note="identity tables") as change:
-        for kind, record in planned:
-            getattr(change, kind).save(record)
+    if planned:
+        with store.change(actor="import", note="identity tables") as change:
+            for kind, record in planned:
+                getattr(change, kind).save(record)
     return IdentityReport(
         counts=counts,
         skipped=skipped,

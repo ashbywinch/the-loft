@@ -104,17 +104,25 @@ def _require(raw: Mapping[str, Any], key: str) -> str:
 #   estimated — guessed by a HUMAN who wants it in the database as a guess
 #               (the owner's own recollection — GEDCOM's EST qualifier, low
 #               confidence). Never promoted to confirmed without a source.
+#               In the live store this is a RENDERING: a confirmed record whose
+#               basis is recollection/inference below certainty (TECHSPEC/05
+#               §18.2). The old wire status is still read and written for the
+#               archive's own tables.
+#   rejected  — a proposed record the review did not confirm. Terminal: the
+#               row stays in the log and the projection, excluded from browse
+#               and reference resolution (TECHSPEC/05 §18.2).
 # "estimated" is the only status a person may give their own guess; agents
 # must not mark their guesses estimated (they get proposed), and nothing
 # reaches confirmed without being confirmed (user).
-RECORD_STATUSES = frozenset({"confirmed", "proposed", "estimated"})
+RECORD_STATUSES = frozenset({"confirmed", "proposed", "estimated", "rejected"})
+RecordStatus = Literal["confirmed", "proposed", "estimated", "rejected"]
 
 
-def _status(raw: Mapping[str, Any]) -> Literal["confirmed", "proposed", "estimated"]:
+def _status(raw: Mapping[str, Any]) -> RecordStatus:
     status = str(raw.get("status", "confirmed"))
     if status not in RECORD_STATUSES:
         raise ValueError(f"bad record status: {status!r}")
-    return cast(Literal["confirmed", "proposed", "estimated"], status)
+    return cast(RecordStatus, status)
 
 
 def _basis(raw: Mapping[str, Any], key: str = "basis") -> dict[str, str] | None:
@@ -193,7 +201,7 @@ class Person:
     dod: DatedFact | None = None
     occupations: tuple[str, ...] = ()
     residence: tuple[dict[str, Any], ...] = ()
-    status: Literal["confirmed", "proposed", "estimated"] = "confirmed"
+    status: RecordStatus = "confirmed"
     # The estimated record's basis — {text, by, when}: the reviewer's own
     # words, the named person who recalled them, and the date. An estimate
     # without a basis isn't an estimate; the chip renders only what the
@@ -291,7 +299,7 @@ class Place:
     x: int | None = None
     y: int | None = None
     address: str = ""
-    status: Literal["confirmed", "proposed", "estimated"] = "confirmed"
+    status: RecordStatus = "confirmed"
     basis: dict[str, str] | None = None
     version: int = 0  # the live store's optimistic token; never serialised
 
@@ -356,7 +364,7 @@ class Relationship:
     label_a: str
     label_b: str
     date: DatedFact | None = None
-    status: Literal["confirmed", "proposed", "estimated"] | None = None
+    status: RecordStatus | None = None
     version: int = 0  # the live store's optimistic token; never serialised
 
     @classmethod
@@ -562,7 +570,7 @@ class Org:
     address: str = ""
     branch: str = ""
     note: str = ""
-    status: Literal["confirmed", "proposed", "estimated"] = "confirmed"
+    status: RecordStatus = "confirmed"
     version: int = 0  # the live store's optimistic token; never serialised
 
     @classmethod

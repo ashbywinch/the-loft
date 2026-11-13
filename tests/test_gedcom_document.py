@@ -10,6 +10,9 @@ from typing import Any
 
 import gedcom7
 
+from loft.live.compat import CompatibilityExport
+from loft.live.import_identity import sync_from_archive
+from loft.live.memory import MemoryLiveStore
 from tools.archive import Archive
 from tools.gedcom_date import GedcomDate
 from tools.gedcom_document import GedcomDocument
@@ -88,6 +91,22 @@ def test_export_parses_and_honours_the_policy() -> None:
     assert len(fams) == 1  # the proposed parent edge (mum -> stranger) is not exported
     mum = next(r for r in indis if any(c.tag == "NAME" and c.text == "Mum" for c in r.children))
     assert any(c.tag == "NOTE" and "family memory" in c.text for c in mum.children)
+
+
+def test_the_flipped_identity_tables_still_export_to_gedcom_7() -> None:
+    """B1's condition: the compatibility exporter's old-shape tables are the
+    GEDCOM export's input, so a person confirmed through the live service must
+    leave the archive in a standards-parseable GEDCOM 7 document."""
+    archive = make_archive()
+    live = MemoryLiveStore(app_version="test")
+    archive.bind_identity_service(live.identities, CompatibilityExport(live, archive).write)
+    sync_from_archive(live, archive)
+    archive.confirm_person("p-stranger", actor="p-editor")  # the flipped archive verb
+    records = _parse(GedcomDocument.from_archive(archive).to_text())
+    indis = [r for r in records if r.tag == "INDI"]
+    names = " ".join(child.text or "" for indi in indis for child in indi.children if child.tag == "NAME")
+    assert "Stranger" in names  # confirmed through the service, exported as the old shape
+    assert len(indis) == 4
 
 
 def test_export_is_deterministic() -> None:

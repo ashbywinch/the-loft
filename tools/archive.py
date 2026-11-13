@@ -20,7 +20,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Literal, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 from pipeline.identification import Identification
 from tools.anchor import Anchor
@@ -49,6 +49,9 @@ from tools.records import (
 from tools.ref import Ref
 from tools.store import FileStore
 
+if TYPE_CHECKING:
+    from loft.live.identities import Identities
+
 
 def _valid_record_id(record_id: str) -> str:
     """The record-id rule lives in tools.records (the classes own the wire
@@ -69,6 +72,28 @@ def _merged_refs(existing: tuple[Ref, ...], proposed: tuple[Ref, ...]) -> tuple[
     for ref in proposed:
         by_id.setdefault(ref.id, ref)
     return tuple(by_id.values())
+
+
+def _with_people(table: PeopleTable | None, people: tuple[Person, ...]) -> PeopleTable:
+    """The people table with the pass's proposed records appended."""
+    if table is None:
+        raise ArchiveError("archive has no people identity table")
+    updated = table
+    for person in people:
+        if person.status == "proposed":
+            updated = updated.with_record(person)
+    return updated
+
+
+def _with_places(table: PlacesTable | None, places: tuple[Place, ...]) -> PlacesTable:
+    """The places table with the pass's proposed records appended."""
+    if table is None:
+        raise ArchiveError("archive has no places identity table")
+    updated = table
+    for place in places:
+        if place.status == "proposed":
+            updated = updated.with_record(place)
+    return updated
 
 
 def _versioned_path(label: str, subject: str, base: str, version: int) -> str:
@@ -138,6 +163,24 @@ class Archive:
 
     def __init__(self, store: FileStore) -> None:
         self.store: FileStore = store
+        self.identities: Identities | None = None
+        self._after_identity_write: Callable[[], Any] | None = None
+
+    def bind_identity_service(self, identities: Identities, after_write: Callable[[], Any]) -> None:
+        """Flip the identity write path to the live store (B1).
+
+        When bound, the identity verbs write one `Change` and then call the
+        compatibility exporter, so the old readers see the old-shape tree.
+        Unbound, the archive keeps its file write path (the rollback and the
+        suite's oracle until E2).
+        """
+        self.identities = identities
+        self._after_identity_write = after_write
+
+    def _identity_changed(self) -> None:
+        """The compatibility export runs synchronously with the write."""
+        if self._after_identity_write is not None:
+            self._after_identity_write()
 
     # -- resolution --------------------------------------------------------
 
@@ -383,26 +426,16 @@ class Archive:
         if item is None:
             raise ArchiveError(f"no item {identification.item_id}")
 
-        def add_people(table: PeopleTable | None) -> PeopleTable:
-            if table is None:
-                raise ArchiveError("archive has no people identity table")
-            updated = table
-            for person in identification.people:
-                if person.status == "proposed":
-                    updated = updated.with_record(person)
-            return updated
-
-        def add_places(table: PlacesTable | None) -> PlacesTable:
-            if table is None:
-                raise ArchiveError("archive has no places identity table")
-            updated = table
-            for place in identification.places:
-                if place.status == "proposed":
-                    updated = updated.with_record(place)
-            return updated
-
-        self._mutate_identity("people", add_people)
-        self._mutate_identity("places", add_places)
+        if self.identities is not None:
+            self.identities.propose(
+                people=tuple(person for person in identification.people if person.status == "proposed"),
+                places=tuple(place for place in identification.places if place.status == "proposed"),
+                actor="import",
+            )
+            self._identity_changed()
+        else:
+            self._mutate_identity("people", lambda table: _with_people(table, identification.people))
+            self._mutate_identity("places", lambda table: _with_places(table, identification.places))
 
         sidecar = dict(item.to_dict())
         sidecar["people"] = [ref.to_dict() for ref in _merged_refs(item.people_refs, identification.people_refs())]
@@ -418,6 +451,8 @@ class Archive:
         record_id: str,
         decision: str,
         basis: dict[str, str] | None = None,
+        *,
+        actor: str = "import",
     ) -> Person | Place | GonePerson | GonePlace | None:
         """One stage-8 determination for one entity a document names: the
         item's ref and the identity table's record move together.
@@ -474,16 +509,22 @@ class Archive:
             # the mention may be the only evidence: drop a proposal nothing
             # else references, keep one another item still names
             if not self._referencing_catalogued(record_id, refs_key):
-                self._dismiss_proposal(kind, record_id)
+                self._dismiss_proposal(kind, record_id, actor=actor)
                 return GonePerson(record_id) if kind == "person" else GonePlace(record_id)
             return record
         if record.status == "confirmed":
             return record  # an attested record never becomes a guess
-        return self._resolve_proposal(kind, record_id, decision, basis)
+        return self._resolve_proposal(kind, record_id, decision, basis, actor=actor)
 
-    def _dismiss_proposal(self, kind: Literal["person", "place"], record_id: str) -> None:
-        """Remove one proposed record from its table — the delete
-        determination's table half."""
+    def _dismiss_proposal(self, kind: Literal["person", "place"], record_id: str, *, actor: str) -> None:
+        """End one proposed record — the delete determination's table half."""
+        if self.identities is not None:
+            if kind == "person":
+                self.identities.reject_person(record_id, actor=actor)
+            else:
+                self.identities.reject_place(record_id, actor=actor)
+            self._identity_changed()
+            return
         if kind == "person":
 
             def dismiss_people(table: PeopleTable | None) -> PeopleTable:
@@ -507,9 +548,19 @@ class Archive:
         record_id: str,
         decision: str,
         basis: dict[str, str] | None,
+        *,
+        actor: str,
     ) -> Person | Place | GonePerson | GonePlace | None:
         """Apply one determination to a proposed record and return it as it
-        now stands — the table's own rule, made atomic here."""
+        now stands — the live service's rule, or the table's own rule."""
+        if self.identities is not None:
+            record = (
+                self.identities.resolve_person(record_id, decision, basis, actor=actor)
+                if kind == "person"
+                else self.identities.resolve_place(record_id, decision, basis, actor=actor)
+            )
+            self._identity_changed()
+            return record
         if kind == "person":
             return self._resolve_person_proposal(record_id, decision, basis)
         return self._resolve_place_proposal(record_id, decision, basis)
@@ -692,13 +743,17 @@ class Archive:
         """Queue a place record for review — marked proposed."""
         self._propose("place", place, "places")
 
-    def confirm_person(self, person_id: str, relation: str | None = None) -> Person:
+    def confirm_person(self, person_id: str, relation: str | None = None, *, actor: str = "import") -> Person:
         """The import's pending people — confirm one (kept = confirmed).
         Supersedes the people table; a confirmed record omits the status
         key. ``relation`` pins the SPECIFIC kinship the review settled on
         ("first cousin once removed (Nora's cousin via Fern)") — never a
         bare "cousin" (user). Idempotent: confirming a
         confirmed person changes nothing."""
+        if self.identities is not None:
+            person = self.identities.confirm_person(person_id, relation, actor=actor)
+            self._identity_changed()
+            return person
         table = self.get_identity("people")
         assert table is not None, "archive has no people table"
         person = table.record(person_id)
@@ -713,7 +768,7 @@ class Archive:
         return confirmed
 
     def resolve_person(
-        self, person_id: str, decision: str, basis: dict[str, str] | None = None
+        self, person_id: str, decision: str, basis: dict[str, str] | None = None, *, actor: str = "import"
     ) -> Person | GonePerson | None:
         """The review's four determinations for a person (user): the decision
         vocabulary is NOT the status vocabulary — "confirm" is a status, never an
@@ -727,7 +782,12 @@ class Archive:
         and never tracked (2026-10-21, user). Returns the record as it now stands
         — None for an id the table does not hold. The determination itself is the
         table's own rule (PeopleTable.resolved); this seam only makes the
-        read-apply-write atomic."""
+        read-apply-write atomic. When the live service is bound, the
+        determination is one `Change` and the compatibility export follows."""
+        if self.identities is not None:
+            record = self.identities.resolve_person(person_id, decision, basis, actor=actor)
+            self._identity_changed()
+            return record
         ran = False
         record: Person | GonePerson | None = None
 

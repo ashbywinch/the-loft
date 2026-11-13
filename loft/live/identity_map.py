@@ -14,10 +14,28 @@ Basis = dict[str, str]
 
 
 class BasisKinds:
-    """The two basis/confidence pairs the migration assigns."""
+    """The two basis/confidence pairs the migration assigns, and the evidence
+    fields a reviewer's own words ride in."""
 
     KNOWN: Basis = {"basis": "knowledge", "confidence": "certain"}
     RECOLLECTED: Basis = {"basis": "recollection", "confidence": "possible"}
+    EVIDENCE: tuple[str, ...] = ("text", "by", "when", "note")
+
+
+def renders_estimated(basis: dict[str, str] | None) -> bool:
+    """Is this basis rendered as the old ``estimated`` status? A confirmed
+    record whose basis is recollection/inference below certainty is
+    (TECHSPEC/05 §18.2)."""
+    return bool(basis) and basis.get("basis") in ("recollection", "inference") and basis.get("confidence") != "certain"
+
+
+def basis_after(existing: dict[str, str] | None, disposition: Basis, stated: dict[str, str] | None = None) -> Basis:
+    """The basis after a determination: the disposition's basis/confidence,
+    with the reviewer's own words (or the record's evidence) alongside."""
+    fields = BasisKinds.EVIDENCE
+    evidence = {key: value for key, value in (existing or {}).items() if key in fields}
+    evidence.update({key: value for key, value in (stated or {}).items() if key in fields})
+    return {**disposition, **evidence}
 
 
 def disposition_of(status: str | None, basis: dict[str, str] | None = None) -> tuple[str, Basis]:

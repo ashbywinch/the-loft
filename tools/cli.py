@@ -85,6 +85,19 @@ def _command(
     return p
 
 
+def _live_store(path: str) -> LiveStore | None:
+    """The live database the identity surface writes through, or None.
+
+    From B1 the DB is the identity write source; without a database the
+    server keeps the file path (the rollback) and says so, never silently
+    serving a half-flipped surface."""
+    database = Path(path)
+    if not database.is_file():
+        print(f"serve: no live database at {database} — identity writes stay on the file path (run migrate to flip)")
+        return None
+    return LiveStore.open(database, app_version=app_version())
+
+
 def serve_app(_env: Mapping[str, str] | None = None) -> Any:
     """The uvicorn factory for --reload (make serve always auto-reloads
     the backend on source changes). The reloader re-imports
@@ -99,6 +112,7 @@ def serve_app(_env: Mapping[str, str] | None = None) -> Any:
             Path(env["LOFT_DATA"]),
             client,
             Path(env["LOFT_APP"]),
+            live=_live_store(env.get("LOFT_DB", str(default_database_path()))),
         ),
         _env=env,
     )
@@ -111,6 +125,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         os.environ["LOFT_ARCHIVE"] = str(args.archive)
         os.environ["LOFT_DATA"] = str(args.data)
         os.environ["LOFT_APP"] = str(args.app)
+        os.environ["LOFT_DB"] = str(args.db)
         if args.host == "0.0.0.0":
             for addr in lan_addresses():
                 print(f"Serving {args.app} at http://{addr}:{args.port} (no-cache, reload on)")
@@ -141,6 +156,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
             Path(args.data),
             client,
             Path(args.app),
+            live=_live_store(args.db),
         ),
         host=args.host,
         port=args.port,
@@ -530,6 +546,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--archive", default=str(LoftPaths.ARCHIVE_DIR))
     p.add_argument("--data", default="app/data")
     p.add_argument("--app", default=str(Repo.ROOT / "app"))
+    p.add_argument(
+        "--db",
+        default=str(default_database_path()),
+        help="the live database the identity surface writes through (B1)",
+    )
     p.add_argument("--reload", action="store_true", help="auto-reload the backend on source changes (make serve)")
 
     p = _command(

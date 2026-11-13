@@ -93,6 +93,12 @@ def read_row(connection: sqlite3.Connection, person_id: str) -> Person | None:
     return from_row(row, _residences(connection, person_id))
 
 
+def delete_row(connection: sqlite3.Connection, person_id: str) -> None:
+    """Remove the person and their residences — the delete determination."""
+    connection.execute("DELETE FROM person_residences WHERE person_id = ?", (person_id,))
+    connection.execute("DELETE FROM people WHERE person_id = ?", (person_id,))
+
+
 def _precision_of(text: str) -> str:
     return {4: "year", 7: "month", 10: "exact"}.get(len(text.strip()), "year")
 

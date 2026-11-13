@@ -18,6 +18,7 @@ from loft.live.backup import check_marker
 from loft.live.errors import LiveError
 from loft.live.identity_map import disposition_of
 from loft.live.items import ContentInput, default_trust
+from loft.live.protocols import ItemStore
 from loft.live.store import LiveStore
 from tools.archive import Archive
 from tools.records import Item, split_content
@@ -87,7 +88,6 @@ class SidecarVersion:
     """One sidecar to read — the archive, the item, the version and the policy."""
 
     archive: Archive
-    archive_root: Path
     item_id: str
     version: int
     allow_missing: bool
@@ -117,13 +117,13 @@ class SidecarVersion:
         """Read every file the sidecar lists; a missing live file fails loudly."""
         files: dict[str, bytes] = {}
         for asset in item.assets:
-            path = self.archive_root / self.archive.content_path(self.item_id, asset.file)
-            if not path.is_file():
+            data = self.archive.read_file_bytes(self.item_id, asset.file)
+            if data is None:
                 if not self.allow_missing:
                     raise ItemImportError(f"item {self.item_id} v{self.version} references missing file {asset.file}")
                 missing.append(f"{self.item_id} v{self.version}: {asset.file}")
                 continue
-            files[asset.file] = path.read_bytes()
+            files[asset.file] = data
         return files
 
     def _read_content(self, item: Item, split: dict[str, str], files: dict[str, bytes]) -> dict[str, ContentInput]:
@@ -155,9 +155,7 @@ class SidecarVersion:
         return Item.from_dict(raw)
 
 
-def _plan(
-    store: LiveStore, archive: Archive, archive_root: Path
-) -> tuple[list[PlannedVersion], dict[str, int], list[str]]:
+def _plan(store: ItemStore, archive: Archive) -> tuple[list[PlannedVersion], dict[str, int], list[str]]:
     plans: list[PlannedVersion] = []
     skipped = {"items": 0, "versions": 0}
     missing: list[str] = []
@@ -178,7 +176,6 @@ def _plan(
         for version in versions[stored_version:]:
             source = SidecarVersion(
                 archive=archive,
-                archive_root=archive_root,
                 item_id=item_id,
                 version=version,
                 allow_missing=allow_missing,
@@ -233,7 +230,7 @@ def _normal(item: Item) -> dict[str, Any]:
     return raw
 
 
-def _compare(store: LiveStore, plans: list[PlannedVersion]) -> tuple[str, ...]:
+def _compare(store: ItemStore, plans: list[PlannedVersion]) -> tuple[str, ...]:
     mismatches: list[str] = []
     last: dict[str, PlannedVersion] = {}
     for plan in plans:
@@ -266,8 +263,21 @@ def import_items(
 ) -> ItemReport:
     """Import every item sidecar version, its content, refs and assets."""
     check_marker(backup_marker)
-    archive = Archive(DiskStore(archive_root))
-    plans, skipped, missing = _plan(store, archive, archive_root)
+    return _import(store, Archive(DiskStore(archive_root)), dry_run=dry_run)
+
+
+def sync_items(store: ItemStore, archive: Archive) -> ItemReport:
+    """Catch the DB up with the old tree — the item flip's opening import (B2).
+
+    The backup marker guards the first full migration, not this catch-up: the
+    DB already exists and is backed up. Versions the store holds are skipped,
+    so a newer DB record is never regressed.
+    """
+    return _import(store, archive)
+
+
+def _import(store: ItemStore, archive: Archive, *, dry_run: bool = False) -> ItemReport:
+    plans, skipped, missing = _plan(store, archive)
     counts = _counts(plans)
     operations = tuple(f"item {plan.item.id} v{plan.version}" for plan in plans)
     if dry_run:

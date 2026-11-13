@@ -1,7 +1,7 @@
 # The rewrite plan — the database as the system of record
 
-**Status:** v0.3 — A0–A8 landed; B1 is in review. Change a row's State to
-its PR when it lands.
+**Status:** v0.4 — A0–A8 and B1 landed; B2 is in review. Change a row's State
+to its PR when it lands.
 **PR:** #89 carries A0/A1 and the boot-path fixes as one review unit (the
 user's call); the ladder's one-increment-per-PR rule applies to later
 increments.
@@ -130,7 +130,7 @@ the new tests; the old and the new pass together before the flip.
 | ID | Increment | Acceptance | Gate | State |
 |---|---|---|---|---|
 | B1 | Identities write through the service (`Change`): confirm, resolve, reject, promote, merge; the compatibility exporter writes `people.json` (its `relationships` included — the old readers' shape), `places.json`, `orgs.json`, `themes.json`. The standalone `relationships.json` is the target human archive's (A8), not the old tree's | one confirm = one change + its events + rows; the exported tables diff equal to the old format on a real sample; a re-import is a no-op; the walk | 19.10.1 | done (#100) |
-| B2 | Items, content and document agreement write through the service; the exporter writes `assets/<id>/item.json`, `transcription.txt`, `story.txt` | a save, delete and agreement each write one change; the exported sidecar equals the old shape; the item lens and the review surface work | 19.10.1 | todo |
+| B2 | Items, content and document agreement write through the service; the exporter writes `assets/<id>/item.json`, `transcription.txt`, `story.txt` | a save, delete and agreement each write one change; the exported sidecar equals the old shape; the item lens and the review surface work | 19.10.1 | in review (#PR) |
 | B3 | Review state writes through the service: sessions, messages, decisions, identify decisions, proposals; the exporter writes the old queues and tables | a review turn and an identify decision each persist; the imported `imports` state stays consistent; the chat and identify surfaces work | `08` §19.4 | todo |
 | B4 | Page work writes through the service: row adjustments, ticks, rotation, re-read requests; the exporter writes the work files the current readers parse | a drawn correction, a tick and a rotate each write one change; the exported work files diff equal; the row and review surfaces work | 18.12.21 | todo |
 | B5 | Story and memory capture writes through the service; the exporter writes `story.txt` | `#/add-memory` assess + save persists; the exported story is the confirmed text; the walk | `docs/PRD/MEMORIES.md` | todo |
@@ -141,13 +141,19 @@ the new tests; the old and the new pass together before the flip.
 | B7 | **Milestone C — read parity and the flip.** The service reads the DB behind a read flag; a parity command diffs every read route and the published JSON against the file implementation on the real archive; then flip | parity reports zero differences; the walk on the DB; the published JSON is semantically equal; rollback is the flag; `publish` reads the DB; the exporter writes the new human archive; the old-shape tree is frozen read-only as the rollback | 19.10.4–6 | todo |
 | B8 | The pipeline reads its stage state from the DB; the work tree becomes export-only; `loft work` resumes from rows | a killed pass resumes from the rows; no stage reads a work file; the reconciler's completion is the row; the pipeline run is unchanged from outside | 18.12.10; spike 31 | todo |
 
-B1's boundary: the identity **tables** are the flipped surface — the review
-determination, the identification pass's proposed records and its stage-8
-determinations all write through the service, and the compatibility exporter
-rewrites the old tables after each write. The item half of an identification
-and the `proposed/` queue files stay on the old path until B2/B3; the review
-route catches the DB up from the old tree before each decision, so a proposal
-the old path wrote is never lost and a newer DB record is never regressed.
+B1 flipped the identity **tables** — the review determination, the
+identification pass's proposed records and its stage-8 determinations write
+through the service, and the compatibility exporter rewrites the old tables
+after each write. The item half of an identification and the `proposed/`
+queue files stayed on the old path; the review route catches the DB up from
+the old tree before each decision, so a proposal the old path wrote is never
+lost and a newer DB record is never regressed.
+
+B2 closes the item half: the save, tombstone and document agreement are one
+`Change` each, and the item compatibility exporter replays every version's
+sidecar and content files into the old tree (a missing version is replayed
+from the event log, so a crash leaves no gap). The `proposed/` queue files
+stay on the old path until B3, and the page/work files until B4.
 
 After B7 the DB is the system of record. B8 removes the last reader of the
 work tree.

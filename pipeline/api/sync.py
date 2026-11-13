@@ -366,6 +366,7 @@ def record_confirmation(
     date: str = "",
     date_precision: str = "",
     registry_dir: Path = LoftPaths.REGISTRY_DIR,
+    actor: str = "import",
 ) -> str:
     """The backend's single write path for a reviewed document — shared by
     the CLI review gate and the sync receiver (TECHSPEC/04 §17.5).
@@ -399,6 +400,7 @@ def record_confirmation(
             date_precision=date_precision,
             text=text,
             item_id=document.item_id,
+            actor=actor,
         )
         item_id = item.id
         document.item_id = item.id

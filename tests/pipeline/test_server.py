@@ -907,6 +907,59 @@ def test_a_live_decision_rejects_a_stale_session_before_any_mutation(live_server
     assert live.people.get("p-judith") is None  # the refusal wrote nothing, not even the catch-up
 
 
+def test_a_live_save_writes_one_change_and_the_compat_sidecar(live_server: ServerFixture) -> None:
+    status, body = live_server.post(
+        "/api/save",
+        {
+            "anchor": {"kind": "item", "id": "letter-1963-05-14", "name": "A week in the flat"},
+            "who": "Alex",
+            "title": "The damp winter",
+            "account": "The flat was damp that winter, in 1963.",
+            "extractions": [
+                {"kind": "place", "name": "Marlock", "match": "pl-marlock", "bucket": "proposed", "reason": ""}
+            ],
+            "facts": [{"kind": "event_date", "text": "in 1963", "value": "1963", "precision": "year"}],
+            "status": "catalogued",
+        },
+    )
+    assert status == 200, body
+    story_id = body["id"]
+    live = live_server.live
+    assert live is not None
+    assert live.items.require(story_id).version == 1
+    assert [event["event_type"] for event in live.events_for(story_id, entity_kind="item")] == ["created"]
+    assert live.items.content(story_id, "story") is not None
+    sidecar = json.loads(live_server.store.read(f"assets/{story_id}/item.json"))
+    assert sidecar["status"] == "catalogued"
+    assert "story" not in sidecar  # the text is a content file, not a JSON field
+    assert {"kind": "story", "file": "story.txt", "caption": "The story, verbatim"} in sidecar["assets"]
+
+
+def test_a_live_delete_tombstones_through_the_service(live_server: ServerFixture) -> None:
+    status, body = live_server.post(
+        "/api/save",
+        {
+            "anchor": {"kind": "item", "id": "letter-1963-05-14", "name": "A week in the flat"},
+            "who": "Alex",
+            "title": "A half-told memory",
+            "account": "We went to Marlock.",
+            "extractions": [],
+            "facts": [{"kind": "event_date", "text": "in 1963", "value": "1963", "precision": "year"}],
+            "status": "draft",
+        },
+    )
+    assert status == 200, body
+    story_id = body["id"]
+    live = live_server.live
+    assert live is not None
+    status, deleted = live_server.post("/api/delete", {"id": story_id, "reason": "abandoned by the narrator"})
+    assert status == 200, deleted
+    assert live.items.require(story_id).status == "deleted"
+    assert live_server.archive.get_item(story_id) is None
+    tombstone = json.loads(live_server.store.read(f"assets/{story_id}/item-2.json"))
+    assert tombstone["status"] == "deleted" and tombstone["reason"] == "abandoned by the narrator"
+
+
 def test_a_live_decision_catches_up_a_proposal_the_old_path_wrote(live_server: ServerFixture) -> None:
     _seed_pending(live_server)
     live = live_server.live

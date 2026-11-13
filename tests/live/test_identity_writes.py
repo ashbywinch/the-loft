@@ -292,6 +292,23 @@ def test_merge_records_the_alias_and_one_merged_event(store: Any) -> None:
     assert store.verify_chain() == ()
 
 
+def test_merge_moves_the_losers_edges_to_the_survivor(store: Any) -> None:
+    _seed(
+        store, _person("p-robin", "Robin Hale"), _person("p-sam", "Sam Hale"), _person("p-alexander", "Alexander Hale")
+    )
+    with store.change(actor="import") as change:
+        change.relationships.save(_edge("p-sam", "p-alexander", "parent"))
+    store.identities.merge_people("p-alexander", "p-robin", by="p-editor", actor="p-editor")
+    assert store.relationships.get("rel-p-sam-p-alexander-parent") is None
+    moved = store.relationships.get("rel-p-sam-p-robin-parent")
+    assert moved is not None and (moved.a, moved.b) == ("p-sam", "p-robin")
+    store.rebuild_all()
+    assert store.relationships.get("rel-p-sam-p-alexander-parent") is None
+    assert store.relationships.get("rel-p-sam-p-robin-parent") is not None
+    assert store.aliases.get("person", "p-alexander") == "p-robin"
+    assert store.verify_chain() == ()
+
+
 def test_merge_refuses_a_loser_a_catalogued_item_still_names(store: Any) -> None:
     _seed(store, _person(), _person("p-alexander", "Alexander Hale"))
     with store.change(actor="import") as change:

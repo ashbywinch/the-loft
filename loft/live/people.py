@@ -126,8 +126,8 @@ class People:
         None (TECHSPEC/05 §18.2).
         """
         current = self.get(person_id)
-        if current is None:
-            return None
+        if current is None or current.status == "rejected":
+            return current  # a rejected proposal is terminal (TECHSPEC/05 §18.2)
         if decision == "pending":
             return current
         if decision == "delete":

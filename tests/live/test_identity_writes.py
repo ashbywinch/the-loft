@@ -223,6 +223,15 @@ def test_reject_a_proposal_keeps_the_row_and_marks_it_rejected(store: Any) -> No
     assert store.verify_chain() == ()
 
 
+def test_a_rejected_proposal_is_terminal(store: Any) -> None:
+    _seed(store, _person(status="proposed"))
+    store.identities.reject_person("p-alex", actor="p-editor")
+    events = store.events_for("p-alex")
+    resolved = store.identities.resolve_person("p-alex", "attested", actor="p-editor")
+    assert isinstance(resolved, Person) and resolved.status == "rejected"
+    assert store.events_for("p-alex") == events  # nothing revives a rejected record
+
+
 def test_reject_a_confirmed_person_is_refused(store: Any) -> None:
     _seed(store, _person())
     with pytest.raises(Conflict):

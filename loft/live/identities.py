@@ -53,8 +53,8 @@ class Identities:
     ) -> Place | GonePlace | None:
         with self.store.change(actor=actor, note=f"{decision} {place_id}") as change:
             current = change.places.get(place_id)
-            if current is None:
-                return None
+            if current is None or str(current.to_dict().get("status", "confirmed")) == "rejected":
+                return current  # a rejected proposal is terminal (TECHSPEC/05 §18.2)
             if decision == "pending":
                 return current
             if decision == "delete":

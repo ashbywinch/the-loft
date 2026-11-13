@@ -362,7 +362,7 @@ def synthetic_postcard() -> Fixture:
     message: list[tuple[str, list[float], int]] = [
         ("We are from", [150, 200, 220, 700], 90),
         ("Mallowfield & Mrs", [240, 200, 310, 700], 90),
-        ("Mallowfield", [330, 200, 400, 700], 90),
+        ("Rivershire", [330, 200, 400, 700], 90),
     ]
     address: list[tuple[str, list[float], int]] = [
         ("Aria Barlow", [500, 800, 900, 840], 0),

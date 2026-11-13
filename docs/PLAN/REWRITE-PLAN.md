@@ -1,6 +1,6 @@
 # The rewrite plan — the database as the system of record
 
-**Status:** v0.4 — A0–A8 and B1 landed; B2 is in review. Change a row's State
+**Status:** v0.5 — A0–A8, B1 and B2 landed; B3 is next. Change a row's State
 to its PR when it lands.
 **PR:** #89 carries A0/A1 and the boot-path fixes as one review unit (the
 user's call); the ladder's one-increment-per-PR rule applies to later
@@ -130,7 +130,7 @@ the new tests; the old and the new pass together before the flip.
 | ID | Increment | Acceptance | Gate | State |
 |---|---|---|---|---|
 | B1 | Identities write through the service (`Change`): confirm, resolve, reject, promote, merge; the compatibility exporter writes `people.json` (its `relationships` included — the old readers' shape), `places.json`, `orgs.json`, `themes.json`. The standalone `relationships.json` is the target human archive's (A8), not the old tree's | one confirm = one change + its events + rows; the exported tables diff equal to the old format on a real sample; a re-import is a no-op; the walk | 19.10.1 | done (#100) |
-| B2 | Items, content and document agreement write through the service; the exporter writes `assets/<id>/item.json`, `transcription.txt`, `story.txt` | a save, delete and agreement each write one change; the exported sidecar equals the old shape; the item lens and the review surface work | 19.10.1 | in review (#107) |
+| B2 | Items, content and document agreement write through the service; the exporter writes `assets/<id>/item.json`, `transcription.txt`, `story.txt` | a save, delete and agreement each write one change; the exported sidecar equals the old shape; the item lens and the review surface work | 19.10.1 | done (#107) |
 | B3 | Review state writes through the service: sessions, messages, decisions, identify decisions, proposals; the exporter writes the old queues and tables | a review turn and an identify decision each persist; the imported `imports` state stays consistent; the chat and identify surfaces work | `08` §19.4 | todo |
 | B4 | Page work writes through the service: row adjustments, ticks, rotation, re-read requests; the exporter writes the work files the current readers parse | a drawn correction, a tick and a rotate each write one change; the exported work files diff equal; the row and review surfaces work | 18.12.21 | todo |
 | B5 | Story and memory capture writes through the service; the exporter writes `story.txt` | `#/add-memory` assess + save persists; the exported story is the confirmed text; the walk | `docs/PRD/MEMORIES.md` | todo |

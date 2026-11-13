@@ -121,7 +121,7 @@ def test_a_batch_change_is_one_transaction_and_reads_its_writes(store: Any) -> N
 
 
 def test_the_identity_collections_round_trip(store: Any) -> None:
-    place = Place.from_dict({"id": "pl-london", "name": "London", "lat": 51.5, "lng": -0.18})
+    place = Place.from_dict({"id": "pl-mallowfield", "name": "Mallowfield", "lat": 51.5, "lng": -0.18})
     org = Org.from_dict({"id": "org-ministry", "name": "Ministry of Supply", "address": "Ivybridge House"})
     theme = Theme.from_dict({"id": "t-boats", "title": "The boats", "items": [{"id": "object-sunlight"}]})
     edge = Relationship.from_dict(
@@ -132,23 +132,25 @@ def test_the_identity_collections_round_trip(store: Any) -> None:
         change.orgs.save(org)
         change.themes.save(theme)
         change.relationships.save(edge)
-    assert store.places.require("pl-london").name == "London"
+    assert store.places.require("pl-mallowfield").name == "Mallowfield"
     assert store.orgs.require("org-ministry").address == "Ivybridge House"
     assert store.themes.require("t-boats").title == "The boats"
     assert store.relationships.require("rel-p-alex-p-nora-parent").a == "p-alex"
     assert store.verify_chain() == ()
-    assert {e["entity_kind"] for e in store.events_for("pl-london", entity_kind="place")} == {"place"}
+    assert {e["entity_kind"] for e in store.events_for("pl-mallowfield", entity_kind="place")} == {"place"}
 
 
 def test_a_place_supersede_is_versioned_and_stale_is_refused(store: Any) -> None:
     with store.change(actor="import") as change:
-        first = change.places.save(Place.from_dict({"id": "pl-london", "name": "London"}))
+        first = change.places.save(Place.from_dict({"id": "pl-mallowfield", "name": "Mallowfield"}))
     with store.change(actor="import") as change:
-        second = change.places.save(Place.from_dict({"id": "pl-london", "name": "London, England"}), base=first.version)
+        second = change.places.save(
+            Place.from_dict({"id": "pl-mallowfield", "name": "Mallowfield, England"}), base=first.version
+        )
     assert second.version == 2
-    assert store.places.require("pl-london").name == "London, England"
+    assert store.places.require("pl-mallowfield").name == "Mallowfield, England"
     with pytest.raises(StaleVersion), store.change(actor="import") as change:
-        change.places.save(Place.from_dict({"id": "pl-london", "name": "Stale"}), base=1)
+        change.places.save(Place.from_dict({"id": "pl-mallowfield", "name": "Stale"}), base=1)
 
 
 def test_the_event_hash_covers_a_frozen_column_list(store: Any) -> None:
@@ -434,7 +436,7 @@ def test_rebuild_replays_review_sessions(store: Any) -> None:
 
 
 def test_rebuild_replays_the_identity_collections(store: Any) -> None:
-    place = Place.from_dict({"id": "pl-london", "name": "London"})
+    place = Place.from_dict({"id": "pl-mallowfield", "name": "Mallowfield"})
     org = Org.from_dict({"id": "org-ministry", "name": "Ministry of Supply"})
     theme = Theme.from_dict({"id": "t-boats", "title": "The boats", "items": [{"id": "object-1"}]})
     edge = Relationship.from_dict({"a": "p-a", "b": "p-b", "kind": "parent"})
@@ -444,7 +446,7 @@ def test_rebuild_replays_the_identity_collections(store: Any) -> None:
         change.themes.save(theme)
         change.relationships.save(edge)
     store.rebuild_identities()
-    assert store.places.require("pl-london").name == "London"
+    assert store.places.require("pl-mallowfield").name == "Mallowfield"
     assert store.orgs.require("org-ministry").name == "Ministry of Supply"
     assert store.themes.require("t-boats").title == "The boats"
     assert store.relationships.require("rel-p-a-p-b-parent").kind == "parent"
@@ -456,7 +458,7 @@ def test_rebuild_replays_the_identity_collections(store: Any) -> None:
 def test_rebuild_all_replays_every_projection(store: Any) -> None:
     with store.change(actor="import") as change:
         change.people.save(_person())
-        change.places.save(Place.from_dict({"id": "pl-london", "name": "London"}))
+        change.places.save(Place.from_dict({"id": "pl-mallowfield", "name": "Mallowfield"}))
         change.items.save(_item(), content=_story(), files=_files())
         change.reviews.save(_session())
     with store.change(actor="import") as change:
@@ -465,7 +467,7 @@ def test_rebuild_all_replays_every_projection(store: Any) -> None:
         change.documents.save(_document(), ("batch-1/page-01.jpg",), text="Dear family")
     store.rebuild_all()
     assert store.people.require("p-alex").name == "Alex Hale"
-    assert store.places.require("pl-london").name == "London"
+    assert store.places.require("pl-mallowfield").name == "Mallowfield"
     assert store.items.require("story-1").title == "A story"
     assert store.items.content("story-1", "story") == b"The words.\\n"
     assert store.reviews.require("import-test").status == "pending"

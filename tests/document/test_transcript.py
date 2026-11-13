@@ -24,13 +24,13 @@ def test_the_rows_are_read_one_by_one() -> None:
     the writing's own rows — nothing that injects anywhere."""
     transcript = Transcript.from_answer(
         _answer(
-            {"rows": [1], "type": "body", "transcript": "London Opera Centre"},
+            {"rows": [1], "type": "body", "transcript": "Mallowfield Opera Centre"},
             {"rows": [2], "type": "body", "transcript": "my dear Jean"},
             {"rows": [3], "type": "marginalia", "transcript": "Send this first"},
         ),
         rows=3,
     )
-    assert transcript.text_of(1) == "London Opera Centre"
+    assert transcript.text_of(1) == "Mallowfield Opera Centre"
     assert transcript.kind_of(3) == "marginalia"
     assert [one.rows for one in transcript.row_transcripts] == [(1,), (2,), (3,)]
 

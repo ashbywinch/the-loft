@@ -9,12 +9,14 @@ from pipeline.mention import Mention
 
 
 def test_a_mention_round_trips_its_wire_record() -> None:
-    mention = Mention.from_dict({"kind": "place", "name": "Seascale", "match": "pl-seascale", "quote": "at Seascale"})
+    mention = Mention.from_dict(
+        {"kind": "place", "name": "Mallowfield", "match": "pl-mallowfield", "quote": "at Mallowfield"}
+    )
     assert mention.to_dict() == {
         "kind": "place",
-        "name": "Seascale",
-        "match": "pl-seascale",
-        "quote": "at Seascale",
+        "name": "Mallowfield",
+        "match": "pl-mallowfield",
+        "quote": "at Mallowfield",
     }
 
 

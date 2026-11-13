@@ -9,7 +9,7 @@ const STATE = {
       type: "document",
       title: "A letter from Fern",
       date: "1971-05-01",
-      transcription: "Dear Fern, we swam at Seascale.",
+      transcription: "Dear Fern, we swam at Mallowfield.",
       people: [],
       places: [],
     },
@@ -23,15 +23,15 @@ const IDENTIFIED_ITEM = {
   ...STATE.items[0],
   identified: true,
   people: [{ id: "p-fern", status: "proposed" }],
-  places: [{ id: "pl-seascale", status: "proposed" }],
+  places: [{ id: "pl-mallowfield", status: "proposed" }],
 };
 
 const SEASCALE = {
-  id: "pl-seascale",
-  name: "Seascale",
+  id: "pl-mallowfield",
+  name: "Mallowfield",
   status: "proposed",
   note: "Mentioned in A letter from Fern — location unknown.",
-  basis: { text: "we swam at Seascale", by: "the document", when: "1971-05-01" },
+  basis: { text: "we swam at Mallowfield", by: "the document", when: "1971-05-01" },
 };
 
 beforeEach(() => {
@@ -85,7 +85,7 @@ function stubFetch({ identified = IDENTIFIED_ITEM, places = [SEASCALE] } = {}) {
             ok: true,
             kind: body.kind,
             entity: { id: body.entity_id, gone: true },
-            message: "Done — Seascale is not recorded after all.",
+            message: "Done — Mallowfield is not recorded after all.",
             pending: 1,
           }),
         });
@@ -111,9 +111,9 @@ describe("the identification review — one document's people and places", () =>
     const identify = fetch.mock.calls.filter(([url]) => url.startsWith("/api/identify/document/"));
     expect(identify).toHaveLength(1);
     const rows = [...main.querySelectorAll(".identify-entity")];
-    expect(rows.map((row) => row.querySelector(".identify-name").textContent)).toEqual(["Fern", "Seascale"]);
-    expect(rows[1].textContent).toContain('It says: "we swam at Seascale"');
-    expect(main.querySelector(".identify-text pre").textContent).toBe("Dear Fern, we swam at Seascale.");
+    expect(rows.map((row) => row.querySelector(".identify-name").textContent)).toEqual(["Fern", "Mallowfield"]);
+    expect(rows[1].textContent).toContain('It says: "we swam at Mallowfield"');
+    expect(main.querySelector(".identify-text pre").textContent).toBe("Dear Fern, we swam at Mallowfield.");
     expect(buttons(main).map((node) => node.textContent)).toEqual([
       "Record as a fact",
       "Record as a guess",
@@ -174,11 +174,11 @@ describe("the identification review — one document's people and places", () =>
     await tick();
 
     const deleteButtons = buttons(main).filter((node) => node.textContent === "Delete");
-    deleteButtons[1].click(); // Seascale
+    deleteButtons[1].click(); // Mallowfield
     await tick();
 
     const body = JSON.parse(decideCall()[1].body);
-    expect(body).toMatchObject({ kind: "place", entity_id: "pl-seascale", decision: "delete" });
+    expect(body).toMatchObject({ kind: "place", entity_id: "pl-mallowfield", decision: "delete" });
     const names = [...main.querySelectorAll(".identify-name")].map((node) => node.textContent);
     expect(names).toEqual(["Fern"]); // the place's mention and record are gone
   });
@@ -235,7 +235,7 @@ describe("the identification queue (UR2)", () => {
         documentItem({
           identified: true,
           people: [{ id: "p-fern", status: "confirmed" }],
-          places: [{ id: "pl-seascale", status: "estimated" }],
+          places: [{ id: "pl-mallowfield", status: "estimated" }],
         }),
       ],
     });

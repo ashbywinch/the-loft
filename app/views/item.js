@@ -51,7 +51,7 @@ export function render(main, ctx, state) {
   // --- the viewer: artifact first, readability on demand ---
   let zoomed = false;
   let assetIndex = 0;
-  // a source document (the CWGC record, the London Gazette) is a PDF: the
+  // a source document (the CWGC record, the Mallowfield Gazette) is a PDF: the
   // lens shows page IMAGES and links the source, never an <img> of a PDF
   const assets = (item.assets ?? []).filter((entry) => isImageAsset(entry.file));
   const sources = (item.assets ?? []).filter((entry) => !isImageAsset(entry.file));

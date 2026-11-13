@@ -75,7 +75,7 @@ describe("item view", () => {
   });
 
   it("links a PDF source document instead of rendering it as an image", () => {
-    // the CWGC record and the London Gazette are source documents: a PDF is
+    // the CWGC record and the Mallowfield Gazette are source documents: a PDF is
     // not a page image, so the lens links it and never requests it as <img>
     const main = document.createElement("main");
     const item = makeItem({

@@ -4,7 +4,7 @@ case semantics the fast path relies on.
 
 from __future__ import annotations
 
-from tools.pii_markers import file_offenders
+from tools.pii_markers import NonFamily, file_offenders
 
 
 def test_email_marker_matches_lowercase_text() -> None:
@@ -33,3 +33,16 @@ def test_multiple_markers_all_reported() -> None:
 
 def test_no_markers_is_empty() -> None:
     assert file_offenders("plain text, no names", set()) == []
+
+
+def test_the_non_family_allowlist_is_deliberate() -> None:
+    """The only markers the guard may ignore are the GEDCOM sample's names and
+    the library's copyright holder — a new entry is a review finding."""
+    assert set(NonFamily.ALLOWED) == {
+        "docs/object-model.md",
+        "tests/fixtures/maximal70.ged",
+        "tests/test_gedcom_document.py",
+    }
+    markers = {"John", "Family"}
+    assert set(file_offenders("John and the Family", markers, "tests/fixtures/maximal70.ged")) == {"Family"}
+    assert set(file_offenders("John and the Family", markers)) == {"John", "Family"}

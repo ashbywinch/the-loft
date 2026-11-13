@@ -68,7 +68,7 @@ def test_an_unknown_name_becomes_a_proposed_record_with_the_documents_words() ->
     client = FakeChat(
         {
             "people": [{"name": "Owen", "match": None, "quote": "tell Owen I saw the boat"}],
-            "places": [{"name": "Seascale", "match": None, "quote": "we swam at Seascale"}],
+            "places": [{"name": "Mallowfield", "match": None, "quote": "we swam at Mallowfield"}],
         }
     )
     identification = identify(client, item=_item(), text="tell Owen I saw the boat", knowledge=_knowledge())
@@ -79,9 +79,9 @@ def test_an_unknown_name_becomes_a_proposed_record_with_the_documents_words() ->
         "by": "the document",
         "when": "1971-05-01",
     }
-    assert [(place.id, place.status) for place in identification.places] == [("pl-seascale", "proposed")]
+    assert [(place.id, place.status) for place in identification.places] == [("pl-mallowfield", "proposed")]
     assert identification.places[0].basis is not None
-    assert identification.places[0].basis["text"] == "we swam at Seascale"
+    assert identification.places[0].basis["text"] == "we swam at Mallowfield"
 
 
 def test_a_kinship_term_is_never_matched_to_a_record() -> None:
@@ -109,11 +109,11 @@ def test_a_match_the_archive_does_not_hold_falls_back_to_the_name() -> None:
 def test_two_documents_naming_one_place_share_the_proposed_record() -> None:
     """The standing knowledge the pass reads carries the proposals already
     made, so a second document reuses the same record — one place, one id."""
-    proposed = Place.from_dict({"id": "pl-seascale", "name": "Seascale", "status": "proposed"})
-    client = FakeChat({"places": [{"name": "Seascale", "match": None, "quote": "Seascale"}]})
-    identification = identify(client, item=_item(), text="Seascale", knowledge=_knowledge(places=(proposed,)))
+    proposed = Place.from_dict({"id": "pl-mallowfield", "name": "Mallowfield", "status": "proposed"})
+    client = FakeChat({"places": [{"name": "Mallowfield", "match": None, "quote": "Mallowfield"}]})
+    identification = identify(client, item=_item(), text="Mallowfield", knowledge=_knowledge(places=(proposed,)))
 
-    assert [place.id for place in identification.places] == ["pl-seascale"]
+    assert [place.id for place in identification.places] == ["pl-mallowfield"]
 
 
 def test_a_malformed_answer_fails_loudly() -> None:

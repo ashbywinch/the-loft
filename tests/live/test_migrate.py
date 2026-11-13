@@ -16,7 +16,10 @@ from loft.live.verify import Projections, tree_digest
 
 def _write(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value, indent=1), encoding="utf-8")
+    if isinstance(value, bytes):
+        path.write_bytes(value)
+    else:
+        path.write_text(json.dumps(value, indent=1), encoding="utf-8")
 
 
 def _fixture(root: Path) -> tuple[Path, Path, Path]:
@@ -62,12 +65,17 @@ def _fixture(root: Path) -> tuple[Path, Path, Path]:
             "date": "1960",
             "date_precision": "year",
             "status": "catalogued",
-            "assets": [],
+            "assets": [
+                {"kind": "transcription", "file": "transcription.txt", "caption": "The transcription"},
+                {"kind": "page", "file": "page-1.svg", "caption": "Page 1"},
+            ],
             "people": [{"id": "p-1", "status": "confirmed"}],
             "places": [],
             "themes": [],
         },
     )
+    _write(archive / "assets" / "item-1" / "transcription.txt", b"Dear friend,\n\nThe words.\n")
+    _write(archive / "assets" / "item-1" / "page-1.svg", b"<svg xmlns='http://www.w3.org/2000/svg'/>")
     _write(
         workspace / "registry" / "batch-1.json",
         {

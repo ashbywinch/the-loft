@@ -46,6 +46,10 @@ class Items:
     def get(self, item_id: str) -> Item | None:
         return self.projection.get(item_id)
 
+    def all(self) -> tuple[Item, ...]:
+        rows = self.projection.connection.execute("SELECT item_id FROM items ORDER BY item_id").fetchall()
+        return tuple(self.require(row["item_id"]) for row in rows)
+
     def require(self, item_id: str) -> Item:
         item = self.get(item_id)
         if item is None:

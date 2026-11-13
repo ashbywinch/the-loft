@@ -49,6 +49,9 @@ class Documents:
     def for_batch(self, batch_id: str) -> tuple[DocumentState, ...]:
         return self.projection.for_batch(batch_id)
 
+    def all(self) -> tuple[DocumentState, ...]:
+        return self.projection.all()
+
     # -- writes ------------------------------------------------------------
 
     def save(

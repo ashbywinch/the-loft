@@ -32,6 +32,10 @@ class Batches:
     def get(self, batch_id: str) -> BatchState | None:
         return self.projection.get(batch_id)
 
+    def all(self) -> tuple[BatchState, ...]:
+        rows = self.projection.connection.execute("SELECT batch_id FROM batches ORDER BY batch_id").fetchall()
+        return tuple(self.require(row["batch_id"]) for row in rows)
+
     def require(self, batch_id: str) -> BatchState:
         batch = self.get(batch_id)
         if batch is None:

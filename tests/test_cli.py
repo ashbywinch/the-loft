@@ -101,3 +101,37 @@ def test_the_migration_gate_runs_from_the_cli(tmp_path: Path, capsys: pytest.Cap
     assert "verify: ok" in output
     assert main(["rebuild", "--path", str(path)]) == 0
     assert "rebuild: ok" in capsys.readouterr().out
+
+
+def test_export_and_backup_are_wired() -> None:
+    args = build_parser().parse_args(["export", "--out", "human", "--path", "loft.db"])
+    assert args.fn.__name__ == "cmd_export"
+    assert (args.out, args.path, args.verify) == ("human", "loft.db", False)
+    args = build_parser().parse_args(["backup", "--out", "backup", "--verify"])
+    assert args.fn.__name__ == "cmd_backup" and args.verify is True
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["export"])  # the scratch path is required
+
+
+def test_export_and_backup_run_from_the_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    from tests.live.test_migrate import _fixture
+
+    archive, workspace, marker = _fixture(tmp_path)
+    path = tmp_path / "loft.db"
+    assert main(["db", "init", "--path", str(path)]) == 0
+    common = [
+        "--path",
+        str(path),
+        "--archive",
+        str(archive),
+        "--workspace",
+        str(workspace),
+        "--marker",
+        str(marker),
+    ]
+    assert main(["migrate", *common]) == 0
+    capsys.readouterr()
+    assert main(["export", "--out", str(tmp_path / "human"), "--path", str(path), "--verify"]) == 0
+    assert "export:" in capsys.readouterr().out
+    assert main(["backup", "--out", str(tmp_path / "backup"), "--path", str(path), "--verify"]) == 0
+    assert "verify: ok" in capsys.readouterr().out

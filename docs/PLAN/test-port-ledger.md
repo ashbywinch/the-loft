@@ -22,7 +22,7 @@ scenario has no new home. A suite is never deleted for being inconvenient.
 | The archive facade and the file store | `tests/test_archive.py`, `tests/test_store.py`, `tests/pipeline/test_store.py` | port | A1–A2, A4, B1–B3 | `tests/live/`, `tests/archive/` |
 | The live database | `tests/live/test_*.py` | keep (the new home; it grows into the contract suite) | A1–A2, A4–A7 | `tests/live/` |
 | The domain records | `tests/test_records.py` | keep | E1 move | same |
-| The CLI surface | `tests/test_cli.py` | port (the path moves in A0; the commands port with their surfaces) | A0, A7, then B1–B6 | `tests/cli/` |
+| The CLI surface | `tests/test_cli.py` | port (the path moves in A0; the commands port with their surfaces) | A0, A7–A8, then B1–B6 | `tests/cli/` |
 | The live service API | `tests/pipeline/test_server.py`, `tests/pipeline/test_sync.py`, `tests/test_sync.py`, `tests/test_review.py`, `tests/test_approval.py`, `tests/test_review_scoring.py` | port | B3, B4, B7 | `tests/app/api/` |
 | The projection and publish | `tests/test_publish.py` | port | B7 | `tests/archive/` |
 | The pipeline stages and the scanner | `tests/pipeline/test_adopt.py`, `tests/pipeline/test_classify.py`, `tests/pipeline/test_orient.py`, `tests/pipeline/test_chain.py`, `tests/pipeline/test_grouping.py`, `tests/pipeline/test_worker.py`, `tests/pipeline/test_reconcile_plan.py`, `tests/pipeline/test_identify.py`, `tests/pipeline/test_artefacts.py`, `tests/test_scan.py` | port | B6, B8, C2 | `tests/pipeline/` (same names, DB-backed fixtures) |

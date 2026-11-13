@@ -299,6 +299,10 @@ class Collection:
         ).fetchone()
         return None if row is None else self.kind.from_row(row)
 
+    def all(self) -> tuple[Any, ...]:
+        rows = self.connection.execute(f"SELECT * FROM {self.kind.table} ORDER BY {self.kind.id_column}").fetchall()
+        return tuple(self.kind.from_row(row) for row in rows)
+
     def require(self, entity_id: str) -> Any:
         record = self.get(entity_id)
         if record is None:

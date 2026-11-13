@@ -23,7 +23,9 @@ words per row, transcripts distinct — a model repeating one line down the page
 is a failure with no gold needed).
 
 The raw answer and the numbered renders are written beside the run, so a
-failure is diagnosed from the artifact rather than re-billed.
+failure is diagnosed from the artifact rather than re-billed — to
+`work/eval-rows-transcript/`, a generated directory (gitignored): they are
+outputs of a real page, never repo content.
 
 Usage: PYTHONPATH=. .venv/bin/python -m pipeline.transcribe.transcripts [page...]
 """

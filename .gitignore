@@ -73,3 +73,9 @@ docs/wireframes/
 # make target downloads from github.com/ashbywinch/lucidlint (2026-08-16).
 lucidlint-dist/
 .lucidlint-cache/
+
+# The eval runs' generated artifacts — model answers and page renders of a
+# real letter, written by `pipeline/evals/eval_band_size.py` and the
+# transcript eval. They are outputs, not fixtures: the public repo never
+# ships them (2026-11-13). The archive's real work tree is on the big disk.
+work/

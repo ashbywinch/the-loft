@@ -15,6 +15,7 @@ from pathlib import Path
 
 from loft.live.backup import check_marker
 from loft.live.errors import LiveError
+from loft.live.protocols import ItemStore
 from loft.live.review_row import ReviewRow, ReviewRows
 from loft.live.reviews import Reviews
 from loft.live.store import LiveStore
@@ -82,7 +83,7 @@ def _thinking_bytes(session: Session) -> dict[str, bytes]:
     return thinking
 
 
-def _plan(store: LiveStore, table: ImportsTable) -> tuple[list[PlannedReview], dict[str, int]]:
+def _plan(store: ItemStore, table: ImportsTable) -> tuple[list[PlannedReview], dict[str, int]]:
     plans: list[PlannedReview] = []
     skipped = {"sessions": 0}
     for session in table.imports:
@@ -157,6 +158,21 @@ def import_reviews(
     """Import the latest imports table's sessions, messages and decisions."""
     check_marker(backup_marker)
     plans, skipped = _plan(store, _latest(archive_root))
+    return _apply(store, plans, skipped, dry_run=dry_run)
+
+
+def sync_reviews(store: ItemStore, archive: Archive) -> ReviewReport:
+    """Catch the DB up with the old imports table — the review flip's opening
+    import (B3). A session the store holds is skipped, so a newer DB record
+    is never regressed; the backup marker guards the first migration only."""
+    table = archive.get_identity("imports")
+    plans, skipped = _plan(store, table if isinstance(table, ImportsTable) else ImportsTable(imports=()))
+    return _apply(store, plans, skipped)
+
+
+def _apply(
+    store: ItemStore, plans: list[PlannedReview], skipped: dict[str, int], *, dry_run: bool = False
+) -> ReviewReport:
     counts, per_session = _counts(plans)
     operations = tuple(f"review {plan.session.id}" for plan in plans)
     if dry_run:

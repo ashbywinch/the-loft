@@ -164,7 +164,10 @@ def test_a_change_appends_a_version_that_supersedes_the_last(tmp_path: Path) -> 
         store.close()
 
 
-def test_the_proposed_queue_files_are_not_written(tmp_path: Path) -> None:
+def test_the_proposed_queue_files_are_written_for_proposed_records(tmp_path: Path) -> None:
+    """B3b: a proposal is a row in the identity table, but the old readers
+    still list `proposed/people|places/` — the exporter writes one file per
+    proposed row, in the old record shape."""
     store = _store(tmp_path)
     store_files = MemoryStore()
     archive = Archive(store_files)
@@ -173,7 +176,63 @@ def test_the_proposed_queue_files_are_not_written(tmp_path: Path) -> None:
         _export(store, archive).write()
     finally:
         store.close()
-    assert store_files.list("proposed") == []
+    assert store_files.list("proposed") == ["proposed/people/p-judith.json", "proposed/places/pl-barges.json"]
+    proposed = json.loads(store_files.read("proposed/people/p-judith.json"))
+    assert proposed["status"] == "proposed"
+    assert proposed["name"] == "Pearl Whitlock"
+
+
+def test_the_queue_keeps_a_promoted_file_and_removes_a_rejected_one(tmp_path: Path) -> None:
+    """The old queue is append-only: a promoted record keeps the file it was
+    queued with. A rejected row, and a row the review deleted, lose theirs —
+    the one delete the old store performed."""
+    store = _store(tmp_path)
+    store_files = MemoryStore()
+    archive = Archive(store_files)
+    try:
+        _seed(store)
+        for record_id in ("p-alex", "p-nope", "p-gone"):
+            store_files.write_new(
+                f"proposed/people/{record_id}.json",
+                json.dumps({"id": record_id, "name": record_id, "status": "proposed"}),
+            )
+        _export(store, archive).write()
+    finally:
+        store.close()
+    assert store_files.exists("proposed/people/p-alex.json")  # confirmed: the file stays
+    assert store_files.exists("proposed/people/p-judith.json")  # proposed: written
+    assert not store_files.exists("proposed/people/p-nope.json")  # rejected: removed
+    assert not store_files.exists("proposed/people/p-gone.json")  # the row is gone: removed
+
+
+def test_the_queue_export_leaves_a_file_that_is_not_a_record_alone(tmp_path: Path) -> None:
+    """The sweep removes queue records only — a stray note a person left in
+    the directory is theirs, not the exporter's."""
+    store = _store(tmp_path)
+    store_files = MemoryStore()
+    archive = Archive(store_files)
+    try:
+        _seed(store)
+        store_files.write_new("proposed/people/README.txt", "notes")
+        _export(store, archive).write()
+    finally:
+        store.close()
+    assert store_files.read("proposed/people/README.txt") == "notes"
+
+
+def test_the_queue_export_is_idempotent_and_reports_what_it_touched(tmp_path: Path) -> None:
+    """A second pass writes nothing — the queue is append-only and the sweep
+    finds nothing to remove."""
+    store = _store(tmp_path)
+    store_files = MemoryStore()
+    archive = Archive(store_files)
+    try:
+        _seed(store)
+        queue = _export(store, archive).queue
+        assert queue.write() == ("proposed/people/p-judith.json", "proposed/places/pl-barges.json")
+        assert queue.write() == ()
+    finally:
+        store.close()
 
 
 def test_an_empty_store_writes_empty_tables(tmp_path: Path) -> None:

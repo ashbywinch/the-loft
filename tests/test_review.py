@@ -204,6 +204,29 @@ def test_contradiction_with_the_attested_facts_is_flagged() -> None:
     assert "Walter Whitlock" in result.contradiction.detail
 
 
+def test_a_hedge_about_their_memory_does_not_soften_the_wrong_person() -> None:
+    """2026-11-14: the eval's hedged statement ("I thought it was Nora…")
+    came back contradiction=false about half the runs — the prompt said the
+    wrong person contradicts but never that a hedge about their own memory is
+    not doubt about the record. The rule is pinned here; the eval is the
+    behaviour check."""
+    client = FakeClient(
+        [
+            '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
+            '"confidence": "think_so", "note": "the war death", "findings": [], "question": "Which Walter?"}'
+        ]
+    )
+    investigate(
+        client,
+        text="I thought it was Nora who died in the war — I remember there being a live Walter.",
+        person=_person(),
+        who="Alex",
+        facts=make_facts(),
+    )
+    _system, user = client.calls[0]
+    assert "Do not read a hedge about their own memory as doubt about the record" in user
+
+
 def test_a_typoed_question_key_fails_loudly_never_silently() -> None:
     """2026-09-23: a verdict with "quetion" instead of "question" read as
     an empty question and failed confusingly ("should ask a follow-up

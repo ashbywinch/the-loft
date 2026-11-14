@@ -2,22 +2,17 @@
 did not produce a review covering the head commit. The review may have
 failed silently; this check prevents merging unreviewed.
 
-Coverage, in order: a COMPLETED "PR Agent - Review" check run on the head
-SHA — the output artifact the bot publishes only with the review text in
-hand (github.publish_as_check_run; _publish_check_run) — then one comment
-form: the incremental skip ("Incremental Review Skipped"), and only when the
-review it links COMPLETED. The bot's own step conclusion is NEVER trusted:
-the action exits 0 whether or not the review happened, so a green step
-claims nothing about a review existing.
+The one coverage signal is a COMPLETED "PR Agent - Review" check run on the
+head SHA — the artifact the bot publishes only with the review text in hand
+(`github.publish_as_check_run`; `_publish_check_run`). The bot's own step
+conclusion is NEVER trusted: the action exits 0 whether or not the review
+happened, so a green step claims nothing about a review existing.
 
-A guide comment alone is NOT coverage. A cancelled run posts its guide
-before it dies, so the guide looks exactly like a completed review — 2026-11-14,
-PR #116: two runs were cancelled by the push, the third skipped as
-"incremental, no new files", and this gate accepted the skip. The B4a code
-was never reviewed. The skip is trusted only when the review it names left
-its own completed check run; the skip comment links that review as
-`#issuecomment-<id>`, and the head at that comment's time must carry the
-completed check run.
+A comment is not coverage. A run that dies after posting its guide leaves a
+comment that reads exactly like a finished review, and the guide carries no
+record of which head it reviewed. The live config therefore publishes the
+check run (persistent comment, a full review per push) and this gate reads
+it; a review that did not happen leaves the gate red.
 
 Why the bot's own step cannot fail: ``PRAgent.handle_request`` catches
 EVERY exception with a bare ``except`` — it logs "Failed to process the
@@ -37,8 +32,6 @@ import json
 import os
 import re
 import sys
-import time
-import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
@@ -186,23 +179,6 @@ class _ReviewSite:
         last = next((line for line in reversed(bot_lines) if line.strip()), "")
         return f"the bot's last output before going silent: {last.split(chr(9))[-1][:200]}"
 
-    def skip_links_a_completed_review(self, fetch, pr_number: str, comment: dict) -> bool:
-        """Does the skip's linked previous review exist AND complete? The skip
-        names it as ``#issuecomment-<id>``; the review that posted it must have
-        left its completed check run on the commit that was the head when the
-        comment landed. A cancelled run leaves the guide and no check run — the
-        skip must not vouch for it."""
-        match = re.search(r"#issuecomment-(\d+)", comment.get("body", ""))
-        if match is None:
-            return False
-        previous = fetch(f"https://api.github.com/repos/{self.repo}/issues/comments/{match.group(1)}", self.token)
-        if not previous.get("body", "").startswith(("## PR Reviewer Guide", "## Incremental PR Reviewer Guide")):
-            return False
-        commits = fetch(f"https://api.github.com/repos/{self.repo}/pulls/{pr_number}/commits?per_page=100", self.token)
-        posted_at = previous.get("created_at", "")
-        head = next((c["sha"] for c in reversed(commits) if c["commit"]["committer"]["date"] <= posted_at), None)
-        return head is not None and _completed_review_check_run(fetch, self.repo, head)
-
 
 def _completed_review_check_run(fetch, repo: str, sha: str) -> bool:
     """Is there a COMPLETED "PR Agent - Review" check run on the head
@@ -215,8 +191,8 @@ def _completed_review_check_run(fetch, repo: str, sha: str) -> bool:
     never happened. (User: "isn't this re-introducing our original bug
     where it just claims it's successful even when it's not?".) The
     conclusion is always "neutral"; completed-neutral means the review
-    text was published. Any query failure degrades to False — the comment
-    trail decides; a crashed gate is the worst outcome."""
+    text was published. Any query failure degrades to False: a crashed gate
+    would be the worst outcome, and a false negative fails loud."""
     try:
         runs = fetch(f"https://api.github.com/repos/{repo}/commits/{sha}/check-runs", "")
         return any(
@@ -254,91 +230,19 @@ def _error_marker_reason(bot_lines: list[str]) -> str | None:
     return None
 
 
-def _fetch_comments(fetch, url: str, api: _GitHub, attempts: int = 4, delay_s: float = 8.0) -> list:
-    """The comments list, polled: the bot posts its guide at the very end
-    of its step and GitHub's comments API lags a just-created comment by
-    seconds — a single immediate fetch raced the post and the gate failed
-    reviews that had succeeded (2026-09-06: PR 38's guide landed at
-    06:48:05Z while the gate's fetch at ~06:48:03 saw nothing). Poll until
-    the list is stable or the attempts are exhausted; the failure path
-    then reports the real absence, not the race.
-
-    The injected `fetch(url, token)` is the repo's DI seam (the tests never
-    touch the network); the client is the production default when the gate
-    runs without one injected."""
-    for attempt in range(attempts):
-        comments = fetch(url, api.token) if fetch is not None else api.get_json(url)
-        covered = any(c.get("body", "").startswith("Incremental Review Skipped") for c in comments)
-        if covered or attempt == attempts - 1:
-            return comments
-        time.sleep(delay_s)
-    return comments
-
-
-def run_review_gate(
-    fetch,
-    env,
-    failure_reason=None,
-    poll_attempts: int = 4,
-    poll_delay_s: float = 8.0,
-) -> int:
+def run_review_gate(fetch, env, failure_reason=None) -> int:
     """The gate as a pure function: ``fetch(url, token)`` -> parsed JSON,
-    ``env`` the CI environment mapping, ``failure_reason(repo, token)``
-    the bot's own words about a death. Testable by injection — the repo's
-    DI convention; never monkeypatch. The polling knobs let the tests
-    zero the delay — a test must never sleep on wall-clock time (docs/
-    testing-standards.md)."""
+    ``env`` the CI environment mapping, ``failure_reason(repo, token)`` the
+    bot's own words about a death. Testable by injection — the repo's DI
+    convention; never monkeypatch."""
     sha = env["SHA"]
     repo = env["GITHUB_REPOSITORY"]
-    pr_number = env["PR_NUMBER"]
     token = env["GITHUB_TOKEN"]
-    api = _GitHub(token)
-    site = _ReviewSite(repo, token)
-
-    # The authoritative coverage signal: a COMPLETED "PR Agent - Review"
-    # check run on the head commit — the artifact the bot publishes only
-    # with the review text in hand (2026-09-05, enabled via
-    # github.publish_as_check_run). The comment trail below remains the
-    # fallback for runs from before the check was enabled and for the
-    # incremental skip that posts a comment.
     if _completed_review_check_run(fetch, repo, sha):
         return 0
-
-    commit = fetch(f"https://api.github.com/repos/{repo}/commits/{sha}", token)
-    head_committed_at = commit["commit"]["committer"]["date"]
-
-    # the comments fetch must be server-filtered: the bot's own guide for
-    # THIS head commit posts at the end of its run, and a PR that has run
-    # the bot many times carries dozens of older comments — the default
-    # first-30 page pushed the guide onto a page the gate never fetched,
-    # failing reviews that had succeeded (2026-09-06: PR 31's guide at
-    # 19:59Z invisible among 30 older comments). `since` asks GitHub to
-    # filter server-side to the comments in the head commit's window.
-    comments = _fetch_comments(
-        fetch,
-        f"https://api.github.com/repos/{repo}/issues/{pr_number}/comments"
-        f"?since={urllib.parse.quote(head_committed_at)}&per_page=100",
-        api,
-        attempts=poll_attempts,
-        delay_s=poll_delay_s,
-    )
-    # The one comment form that can stand in for the artifact: the
-    # incremental skip ("Incremental Review Skipped / No files were changed",
-    # 2026-09-04, PRs 32/33 — the restacked-branch force-pushes). It is
-    # trusted only when the review it links actually COMPLETED: a cancelled
-    # run posts its guide and dies, and the next run's skip would then vouch
-    # for an unreviewed head (2026-11-14, PR #116).
-    covered = any(
-        c.get("body", "").startswith("Incremental Review Skipped")
-        and (sha in c.get("body", "") or c.get("created_at", "") >= head_committed_at)
-        and site.skip_links_a_completed_review(fetch, pr_number, c)
-        for c in comments
-    )
-    if not covered:
-        reason = (failure_reason or _bot_failure_reason)(repo, token)
-        print(f"::error::AI review did not post for commit {sha} — {reason}.")
-        return 1
-    return 0
+    reason = (failure_reason or _bot_failure_reason)(repo, token)
+    print(f"::error::AI review did not post for commit {sha} — {reason}.")
+    return 1
 
 
 def main() -> int:

@@ -1,11 +1,9 @@
 """The review-posted gate's contract: the head commit counts as reviewed
-ONLY when an output artifact exists — a completed "PR Agent - Review"
-check run, or the incremental skip when the review it links completed.
-Nothing else: the action exits 0 whether or not the review happened
-(PRAgent.handle_request swallows every exception), so a gate that trusts
-the bot's own word re-introduces the exact bug it exists to catch. A guide
-comment alone is not coverage — a cancelled run posts its guide and dies
-(2026-11-14, PR #116)."""
+ONLY when the bot's own output artifact exists — a completed "PR Agent -
+Review" check run on that SHA. Nothing else: the action exits 0 whether or
+not the review happened (PRAgent.handle_request swallows every exception),
+and a comment (a guide, a skip) carries no record of which head it reviewed,
+so a gate that trusts one re-introduces the exact bug it exists to catch."""
 
 import os
 import subprocess
@@ -15,19 +13,15 @@ from pathlib import Path
 from pipeline.evals import check_review_posted as gate
 
 _SHA = "abc123"
-_COMMIT = {"commit": {"committer": {"date": "2026-09-05T10:00:00Z"}}}
-_GUIDE = {"body": "## Incremental PR Reviewer Guide 🔍", "created_at": "2026-09-05T10:05:00Z"}
 
 
 def _gate(responses: dict, failure_reason=None, fetch_hook=None) -> int:
-    """fetch_hook validates the outgoing URL before delegating to the
-    scripted responses — the gate's URL construction is part of the
-    contract (2026-09-06: a placeholder repo in the check-run query 404'd
-    in production and every pr-review crashed)."""
     """The gate with an injected fetch and a stubbed failure-reason read —
     the repo's DI convention (fakes are objects/functions passed in, the
-    global environment never touched). The poll delay is zeroed: a test
-    never sleeps on wall-clock time (docs/testing-standards.md)."""
+    global environment never touched). The fetch_hook validates the outgoing
+    URL before delegating to the scripted responses: the gate's URL
+    construction is part of the contract (2026-09-06: a placeholder repo in
+    the check-run query 404'd in production and every pr-review crashed)."""
     env = {
         "SHA": _SHA,
         "GITHUB_REPOSITORY": "org/repo",
@@ -43,17 +37,16 @@ def _gate(responses: dict, failure_reason=None, fetch_hook=None) -> int:
                 return payload
         raise AssertionError(f"unexpected URL: {url}")
 
-    return gate.run_review_gate(fetch, env, failure_reason=failure_reason, poll_delay_s=0.0)
+    return gate.run_review_gate(fetch, env, failure_reason=failure_reason)
 
 
-def _review_check(status: str) -> dict:
-    return {"name": "PR Agent - Review", "status": status, "conclusion": "neutral"}
+def _review_check(status: str, name: str = "PR Agent - Review") -> dict:
+    return {"name": name, "status": status, "conclusion": "neutral"}
 
 
 def test_completed_review_check_run_covers_the_head() -> None:
-    """The artifact path: the bot published its review as a check —
-    covered even when the comment trail is empty. The query must target
-    the actual repo."""
+    """The artifact path: the bot published its review as a check — covered.
+    The query must target the actual repo."""
     seen: list[str] = []
 
     def hook(url: str) -> None:
@@ -81,157 +74,53 @@ def test_in_progress_check_run_is_not_coverage() -> None:
         return reasons[-1]
 
     code = _gate(
-        {
-            "/commits/abc123/check-runs": {"check_runs": [_review_check("in_progress")]},
-            "/commits/abc123": _COMMIT,
-            "/issues/7/comments": [],
-        },
+        {"/commits/abc123/check-runs": {"check_runs": [_review_check("in_progress")]}},
         failure_reason=reason,
     )
     assert code == 1
     assert reasons == ["the review died before publishing"]
 
 
-def test_a_guide_comment_without_a_check_run_is_not_coverage() -> None:
-    """The cancelled-run case (2026-11-14, PR #116): the bot posts its guide
-    and the run dies before publishing the check run. The guide looks like a
-    review; it is not one, and the gate must fail loud."""
+def test_a_completed_check_run_of_another_name_is_not_coverage() -> None:
+    """CI's own checks (build-and-test, verify) complete on every push; only
+    the bot's review check is the artifact."""
     assert (
         _gate(
             {
-                "/commits/abc123/check-runs": {"check_runs": []},
-                "/commits/abc123": _COMMIT,
-                "/issues/7/comments": [_GUIDE],
+                "/commits/abc123/check-runs": {
+                    "check_runs": [
+                        _review_check("completed", name="build-and-test"),
+                        _review_check("completed", name="verify"),
+                    ]
+                },
             },
+            failure_reason=lambda *a: "no review check run",
+        )
+        == 1
+    )
+
+
+def test_a_guide_comment_alone_does_not_cover_the_head() -> None:
+    """The cancelled-run case: a run posts its guide and dies. The comment
+    looks like a review, carries no reviewed SHA, and is not coverage — the
+    gate reads the check run only."""
+    assert (
+        _gate(
+            {"/commits/abc123/check-runs": {"check_runs": []}},
             failure_reason=lambda *a: "the run was cancelled",
         )
         == 1
     )
 
 
-def _skip(previous_comment_id: int) -> dict:
-    return {
-        "body": (
-            "Incremental Review Skipped\nNo files were changed since the "
-            f"[previous PR Review](https://github.com/org/repo/pull/7#issuecomment-{previous_comment_id})"
-        ),
-        "created_at": "2026-09-05T10:06:00Z",
-    }
-
-
-_PREVIOUS_GUIDE = {
-    "body": "## PR Reviewer Guide 🔍",
-    "created_at": "2026-09-05T10:05:00Z",
-}
-_PR_HEAD = {"sha": "prev1", "commit": {"committer": {"date": "2026-09-05T10:00:00Z"}}}
-
-
-def test_a_skip_is_coverage_when_the_review_it_links_completed() -> None:
-    """The incremental review's silent decision to skip — nothing new to
-    read — is coverage when the review it names actually completed (its own
-    check run on the head at that time)."""
-    assert (
-        _gate(
-            {
-                "/commits/abc123/check-runs": {"check_runs": []},
-                "/commits/prev1/check-runs": {"check_runs": [_review_check("completed")]},
-                "/commits/abc123": _COMMIT,
-                "/issues/7/comments": [_skip(555)],
-                "/issues/comments/555": _PREVIOUS_GUIDE,
-                "/pulls/7/commits": [_PR_HEAD],
-            }
-        )
-        == 0
-    )
-
-
-def test_a_skip_linking_a_cancelled_review_is_not_coverage() -> None:
-    """The review the skip names was cancelled — it posted its guide and no
-    check run. The skip would vouch for code no review ever covered; the
-    gate fails."""
-    assert (
-        _gate(
-            {
-                "/commits/abc123/check-runs": {"check_runs": []},
-                "/commits/prev1/check-runs": {"check_runs": []},
-                "/commits/abc123": _COMMIT,
-                "/issues/7/comments": [_skip(555)],
-                "/issues/comments/555": _PREVIOUS_GUIDE,
-                "/pulls/7/commits": [_PR_HEAD],
-            },
-            failure_reason=lambda *a: "the review it names was cancelled",
-        )
-        == 1
-    )
-
-
-def test_comments_fetch_filters_since_the_head_commit() -> None:
-    """The comments fetch carries the since filter and a wide page: the
-    guide for the head commit must be server-side visible regardless of
-    how many older comments the PR carries."""
-    seen: list[str] = []
-
-    def fetch(url: str, token: str):
-        seen.append(url)
-        if "check-runs" in url:
-            return {"check_runs": []}
-        if "/commits/" in url:
-            return {"commit": {"committer": {"date": "2026-09-06T06:45:58Z"}}}
-        if "comments" in url:
-            return []
-        raise AssertionError(url)
-
-    env = {"SHA": _SHA, "GITHUB_REPOSITORY": "org/repo", "PR_NUMBER": "7", "GITHUB_TOKEN": "t"}
-    gate.run_review_gate(fetch, env, failure_reason=lambda *a: "x", poll_attempts=1)
-    comments_calls = [u for u in seen if "comments" in u]
-    assert comments_calls, "the gate never fetched the comments"
-    assert "since=" in comments_calls[0] and "per_page=100" in comments_calls[0]
-
-
-def test_poll_catches_a_review_that_lands_moments_later() -> None:
-    """The gate races the bot's publish: the guide posts at the very end
-    of the bot step and the comments API lags it by seconds. The poll
-    must re-fetch — a review that lands during the window is coverage,
-    not a failure."""
-    state = {"calls": 0}
-
-    def fetch(url: str, token: str):
-        state["calls"] += 1
-        if url.endswith("/issues/7/comments?since=2026-09-05T10%3A00%3A00Z&per_page=100"):
-            if state["calls"] > 1:
-                return [_skip(555)]
-            return []
-        if "/commits/abc123/check-runs" in url:
-            return {"check_runs": []}
-        if "/commits/prev1/check-runs" in url:
-            return {"check_runs": [_review_check("completed")]}
-        if "/issues/comments/555" in url:
-            return _PREVIOUS_GUIDE
-        if "/pulls/7/commits" in url:
-            return [_PR_HEAD]
-        return _COMMIT
-
-    env = {"SHA": _SHA, "GITHUB_REPOSITORY": "org/repo", "PR_NUMBER": "7", "GITHUB_TOKEN": "t"}
-    code = gate.run_review_gate(fetch, env, failure_reason=lambda *a: "unused", poll_delay_s=0.0)
-    assert code == 0
-    assert state["calls"] >= 2
-
-
-def test_no_artifact_and_no_comment_fails_loud(capsys) -> None:
+def test_no_artifact_fails_loud(capsys) -> None:
     """The bot ran and produced nothing — the gate must fail, not pass on
     the action's word (the original bug: a green step claims nothing)."""
 
     def reason(repo: str, token: str) -> str:
         return "the bot's log could not be read from the checks API"
 
-    code = _gate(
-        {
-            "/commits/abc123/check-runs": {"check_runs": []},
-            "/commits/abc123": _COMMIT,
-            "/issues/7/comments": [],
-        },
-        failure_reason=reason,
-    )
+    code = _gate({"/commits/abc123/check-runs": {"check_runs": []}}, failure_reason=reason)
     assert code == 1
     assert "AI review did not post" in capsys.readouterr().out
 
@@ -273,5 +162,5 @@ def test_the_gate_imports_when_run_as_ci_runs_it() -> None:
         timeout=60,
         env=env,
     )
-    assert "ModuleNotFoundError" not in result.stderr, result.stderr
-    assert "KeyError" in result.stderr, result.stderr  # the gate's first line, reached
+    assert "KeyError" in result.stderr, result.stderr[-2000:]
+    assert "ModuleNotFoundError" not in result.stderr

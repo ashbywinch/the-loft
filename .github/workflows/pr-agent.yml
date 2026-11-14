@@ -4,12 +4,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
-# One review at a time per PR, QUEUED — never cancelled. A cancelled run has
-# already posted its guide comment before it dies, and the next run's
-# incremental anchor is that comment: the next run then skips ("no new files")
-# and the PR's code is never reviewed (2026-11-14, PR #116 — two runs
-# cancelled, the third skipped, the gate accepted the skip). A newer push waits
-# its turn instead.
+# One review at a time per PR, QUEUED — never cancelled. A cancelled run may
+# already have posted its guide comment before it dies, and a review that
+# finishes while a push lands leaves the next run's incremental anchor on that
+# guide — so the next run skips ("no new files") and the pushed commit is never
+# read. Queueing keeps a started review finishing; the gate's check-run test is
+# what proves the head itself was reviewed.
 concurrency:
   group: ai-review-${{ github.event.pull_request.number }}
   cancel-in-progress: false
@@ -69,6 +69,7 @@ jobs:
       pull-requests: read
       issues: read
       actions: read # read the bot's completed run log for the failure reason
+      checks: read # read the bot's "PR Agent - Review" check run on the head
     steps:
       # SECURITY: checkout the DEFAULT branch, not the PR head — the script
       # runs with GITHUB_TOKEN, and a PR could replace

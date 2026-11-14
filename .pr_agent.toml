@@ -33,13 +33,15 @@ repo_context_files = [
 
 
 [pr_reviewer]
-# A full review on every push, posted as a persistent comment: that path is
-# the only one that publishes the "PR Agent - Review" check run (pr_reviewer.run
-# reaches _publish_check_run only on the persistent, non-incremental branch),
-# and the check run is the gate's coverage artifact. Incremental reviews publish
-# no check run, and their anchor is the previous review comment's created_at —
-# a commit pushed while a review runs is then never read (it lands before the
-# next anchor, and the next run skips as "no new files").
+# A full review on every push: that path is the only one that publishes the
+# "PR Agent - Review" check run (pr_reviewer.run reaches _publish_check_run only
+# on the persistent, non-incremental branch), and the check run is the gate's
+# coverage artifact. With publish_as_check_run the review is published AS the
+# check run — the PR comment is not updated, so read the review under Checks.
+# Incremental reviews publish no check run, and their anchor is the previous
+# review comment's created_at — a commit pushed while a review runs is then
+# never read (it lands before the next anchor, and the next run skips as "no
+# new files").
 persistent_comment = true
 require_tests_review = true
 require_security_review = true
@@ -64,13 +66,14 @@ handle_push_trigger = true
 # would silently never review its pushes (the fail-loud verify job caught it:
 # "Skipping synchronize: bot commit detected"). Review every push.
 push_trigger_ignore_bot_commits = false
-# -i on /review is the ONLY incremental enabler in v0.41.1 (the
-# enable_incremental config key does not exist in this version) — without
-# it every push re-reviews the ENTIRE PR and the diff eventually blows the
-# 128k token cap (2026-08-11: 144757 tokens, the review died).
+# A full review on every push, no -i: the check run is only published on the
+# non-incremental path (see [pr_reviewer]), so an incremental review would
+# leave the gate red. A PR whose cumulative diff outgrows the 128k token cap
+# dies at pruning and fails the gate with the size reason — the cap is the
+# limit to fix, not the incremental flag.
 # /improve has NO incremental support in any pr-agent version (verified
 # v0.41.1 and main: pr_code_suggestions has no incremental machinery, and
-# -i on it is a no-op) — it is a full-PR pass by upstream design
+# -i on it is a no-op) — it is a full-PR pass by upstream design.
 push_commands = ["/review"]
 skip_commands = ["/skip"]
 
@@ -80,5 +83,6 @@ skip_commands = ["/skip"]
 # SHA — the gate's coverage signal (pipeline/evals/check_review_posted.py). The
 # check run exists only when the review text was in hand; without it the gate
 # can only read comments, and a cancelled run's guide reads exactly like a
-# completed review.
+# completed review. The review text caps at 65,535 characters; the tail is
+# dropped on a review that large.
 publish_as_check_run = true

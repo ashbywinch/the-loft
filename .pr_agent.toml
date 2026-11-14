@@ -77,11 +77,8 @@ skip_commands = ["/skip"]
 
 [github]
 # Publish the review as a completed "PR Agent - Review" check run on the head
-# SHA. This is the gate's authoritative coverage signal
-# (pipeline/evals/check_review_posted.py): the check run exists only when the
-# review text was in hand. Without it the gate can only read comments, and a
-# CANCELLED run's guide reads exactly like a completed review — 2026-11-14,
-# PR #116: two runs were cancelled mid-review, the third skipped as
-# "incremental, no new files", and the gate accepted the skip. The B4a code
-# was never reviewed.
+# SHA — the gate's coverage signal (pipeline/evals/check_review_posted.py). The
+# check run exists only when the review text was in hand; without it the gate
+# can only read comments, and a cancelled run's guide reads exactly like a
+# completed review.
 publish_as_check_run = true

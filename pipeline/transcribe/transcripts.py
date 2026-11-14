@@ -259,7 +259,11 @@ class Transcriber:
             if text is None:
                 for one in band_transcripts:
                     if row.number in one.rows:
-                        text, kind, after = one.text, one.kind, one.injection_after
+                        # a segment that spans rows is one sentence: it belongs
+                        # to the first row of its span, never copied onto every
+                        # row it covers (the page text joins the rows)
+                        text = one.text if min(one.rows) == row.number else ""
+                        kind, after = one.kind, one.injection_after
                         break
             transcripts.append(RowTranscript(rows=(row.number,), text=text or "", kind=kind, injection_after=after))
         return json.dumps({"segments": [transcript.to_dict() for transcript in transcripts]})
@@ -456,24 +460,29 @@ def _rows_needing_a_second_look(transcripts: list[RowTranscript], numbers: list[
     A band's image carries its rows' ink plus their neighbours', so a row in a
     tight stack comes back empty (the model read the line once) or doubled (it
     read the same line twice). Those are exactly the rows to show alone."""
-    unread = [number for number in numbers if not _text_of(transcripts, number).strip()]
+    # a row no segment names was not read at all; a row named by a segment that
+    # SPANS rows is covered — the sentence is one reading of the whole span
+    unread = [number for number in numbers if not _covered(transcripts, number)]
+    # doubling is the model reading ONE line twice: two single-row segments with
+    # the same words. A multi-row segment is a sentence across rows, by design
     seen: dict[str, int] = {}
     doubled: list[int] = []
-    for number in numbers:
-        text = " ".join(_text_of(transcripts, number).lower().split())
+    for one in transcripts:
+        if len(one.rows) != 1:
+            continue
+        text = " ".join(one.text.lower().split())
         if len(text.split()) < 4:
             continue
+        number = one.rows[0]
         if text in seen:
             doubled.append(number)
         seen[text] = number
     return sorted(set(unread) | set(doubled))
 
 
-def _text_of(transcripts: list[RowTranscript], number: int) -> str:
-    for one in transcripts:
-        if number in one.rows:
-            return one.text
-    return ""
+def _covered(transcripts: list[RowTranscript], number: int) -> bool:
+    """Does any segment name this row — alone or as part of a span?"""
+    return any(number in one.rows for one in transcripts)
 
 
 def _endpoint() -> str:

@@ -871,18 +871,29 @@ class Archive:
             person = self.identities.confirm_person(person_id, relation, actor=actor)
             self._identity_changed()
             return person
-        table = self.get_identity("people")
-        assert table is not None, "archive has no people table"
-        person = table.record(person_id)
-        if person is None:
-            raise KeyError(f"no person {person_id}")
-        if person.status != "proposed":
-            return person
-        confirmed = person.as_confirmed()
-        if relation:
-            confirmed = replace(confirmed, relation=relation)
-        self.save_identity("people", table.with_record(confirmed))
-        return confirmed
+        record: Person | None = None
+
+        def apply(table: PeopleTable | None) -> PeopleTable:
+            nonlocal record
+            if table is None:
+                raise ArchiveError("archive has no people identity table")
+            person = table.record(person_id)
+            if person is None:
+                raise KeyError(f"no person {person_id}")
+            if person.status != "proposed":
+                record = person
+                return table  # unchanged: no byte-identical version
+            confirmed = person.as_confirmed()
+            if relation:
+                confirmed = replace(confirmed, relation=relation)
+            record = confirmed
+            return table.with_record(confirmed)
+
+        # the atomic read-modify-write seam: a table read outside the lock
+        # would let two reviewers' confirmations overwrite each other
+        self._mutate_identity("people", apply)
+        assert record is not None, "the people table mutation never ran"
+        return record
 
     def resolve_person(
         self, person_id: str, decision: str, basis: dict[str, str] | None = None, *, actor: str = "import"
@@ -977,12 +988,15 @@ class Archive:
             self._identity_changed()
             return self._identity_version("people")
         record = self._proposed_record("people", person_id, Person.from_dict, "person")
-        table = self.get_identity("people")
-        if table is None:
-            raise ArchiveError("archive has no people identity table")
-        if table.has(record.id):
-            raise ArchiveError(f"{record.id} is already in the people table")
-        return self.save_identity("people", table.with_record(record.as_confirmed()))
+
+        def apply(table: PeopleTable | None) -> PeopleTable:
+            if table is None:
+                raise ArchiveError("archive has no people identity table")
+            if table.has(record.id):
+                raise ArchiveError(f"{record.id} is already in the people table")
+            return table.with_record(record.as_confirmed())
+
+        return self._mutate_identity("people", apply)
 
     def promote_place(self, place_id: str) -> int:
         """Confirm a proposed place: the row joins the table as confirmed
@@ -994,12 +1008,15 @@ class Archive:
             self._identity_changed()
             return self._identity_version("places")
         record = self._proposed_record("places", place_id, Place.from_dict, "place")
-        table = self.get_identity("places")
-        if table is None:
-            raise ArchiveError("archive has no places identity table")
-        if table.has(record.id):
-            raise ArchiveError(f"{record.id} is already in the places table")
-        return self.save_identity("places", table.with_record(record.as_confirmed()))
+
+        def apply(table: PlacesTable | None) -> PlacesTable:
+            if table is None:
+                raise ArchiveError("archive has no places identity table")
+            if table.has(record.id):
+                raise ArchiveError(f"{record.id} is already in the places table")
+            return table.with_record(record.as_confirmed())
+
+        return self._mutate_identity("places", apply)
 
     def _referencing_catalogued(self, record_id: str, ref_kind: str) -> list[str]:
         """Every catalogued item whose refs still point at *record_id* —

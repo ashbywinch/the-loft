@@ -4,12 +4,11 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
-# One review at a time per PR, QUEUED — never cancelled. A cancelled run may
-# already have posted its guide comment before it dies, and a review that
-# finishes while a push lands leaves the next run's incremental anchor on that
-# guide — so the next run skips ("no new files") and the pushed commit is never
-# read. Queueing keeps a started review finishing; the gate's check-run test is
-# what proves the head itself was reviewed.
+# One review at a time per PR. A running review is never cancelled: a
+# cancelled run leaves its head with no review check run, so the gate stays red
+# on code nobody read. GitHub still replaces a *pending* run when a newer push
+# arrives; the surviving run reviews the newer head, which is what the gate
+# reads.
 concurrency:
   group: ai-review-${{ github.event.pull_request.number }}
   cancel-in-progress: false
@@ -62,7 +61,14 @@ jobs:
     # serve a job's log until it finishes, so check_review_posted.py can only
     # read the bot's failure reason from here — inside the bot's own job the
     # log endpoint returns 409 and the reason is always the generic fallback.
+    #
+    # `always()`: a failed or cancelled bot job must still be judged. A skipped
+    # check counts as passing where a required one is concerned, so a gate that
+    # skipped with the bot would green exactly the runs it exists to catch.
+    # Dependabot PRs are the one exclusion: the bot job skips them by policy
+    # (they carry no review), so the gate must skip with it.
     needs: pr-review
+    if: always() && github.event.pull_request.user.login != 'dependabot[bot]' 
     runs-on: ubuntu-latest
     permissions:
       contents: read

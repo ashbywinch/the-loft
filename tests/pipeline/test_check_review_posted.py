@@ -113,6 +113,21 @@ def test_a_guide_comment_alone_does_not_cover_the_head() -> None:
     )
 
 
+def test_an_unreadable_check_runs_query_says_so(capsys) -> None:
+    """A 403, a 5xx or a rate limit is not "no review": the gate reports that
+    it could not read the check runs, never that the bot did not post — the
+    review may have posted and the gate cannot see it."""
+
+    def fetch(url: str, token: str):
+        raise OSError("403 Resource not accessible by integration")
+
+    env = {"SHA": _SHA, "GITHUB_REPOSITORY": "org/repo", "PR_NUMBER": "7", "GITHUB_TOKEN": "t"}
+    assert gate.run_review_gate(fetch, env, failure_reason=lambda *a: "unused") == 1
+    out = capsys.readouterr().out
+    assert "could not be read" in out
+    assert "did not post" not in out
+
+
 def test_no_artifact_fails_loud(capsys) -> None:
     """The bot ran and produced nothing — the gate must fail, not pass on
     the action's word (the original bug: a green step claims nothing)."""

@@ -180,7 +180,7 @@ class _ReviewSite:
         return f"the bot's last output before going silent: {last.split(chr(9))[-1][:200]}"
 
 
-def _completed_review_check_run(fetch, repo: str, sha: str) -> bool:
+def _completed_review_check_run(fetch, repo: str, sha: str) -> bool | None:
     """Is there a COMPLETED "PR Agent - Review" check run on the head
     commit? The bot creates it ONLY with the review output text in hand
     (github_provider._publish_check_run: called from
@@ -191,15 +191,16 @@ def _completed_review_check_run(fetch, repo: str, sha: str) -> bool:
     never happened. (User: "isn't this re-introducing our original bug
     where it just claims it's successful even when it's not?".) The
     conclusion is always "neutral"; completed-neutral means the review
-    text was published. Any query failure degrades to False: a crashed gate
-    would be the worst outcome, and a false negative fails loud."""
+    text was published. None means the query itself failed — the gate
+    cannot tell, and says so instead of blaming the bot."""
     try:
         runs = fetch(f"https://api.github.com/repos/{repo}/commits/{sha}/check-runs", "")
-        return any(
-            r.get("name") == "PR Agent - Review" and r.get("status") == "completed" for r in runs.get("check_runs", [])
-        )
-    except (KeyError, ValueError, AttributeError, OSError):
-        return False
+    except (KeyError, ValueError, AttributeError, OSError) as error:
+        print(f"::warning::the check-runs query for {sha} failed: {error}")
+        return None
+    return any(
+        r.get("name") == "PR Agent - Review" and r.get("status") == "completed" for r in runs.get("check_runs", [])
+    )
 
 
 def _bot_failure_reason(repo: str, token: str) -> str:
@@ -238,8 +239,12 @@ def run_review_gate(fetch, env, failure_reason=None) -> int:
     sha = env["SHA"]
     repo = env["GITHUB_REPOSITORY"]
     token = env["GITHUB_TOKEN"]
-    if _completed_review_check_run(fetch, repo, sha):
+    found = _completed_review_check_run(fetch, repo, sha)
+    if found:
         return 0
+    if found is None:
+        print(f"::error::AI review coverage for commit {sha} could not be read — the check-runs query failed.")
+        return 1
     reason = (failure_reason or _bot_failure_reason)(repo, token)
     print(f"::error::AI review did not post for commit {sha} — {reason}.")
     return 1

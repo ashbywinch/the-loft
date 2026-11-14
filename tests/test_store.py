@@ -82,6 +82,18 @@ def test_atomic_write_publishes_the_umask_derived_mode(tmp_path: Path) -> None:
     assert mode != 0o666  # and never world-writable
 
 
+def test_atomic_write_flushes_the_directory_entry(tmp_path: Path) -> None:
+    """The bytes are durable after the file fsync; the NAME is durable only
+    when its directory is fsynced — the rename's own flush. On a platform
+    that cannot open a directory this raises rather than publishing a file
+    whose durability it cannot promise."""
+    from tools.atomic import _fsync_directory, atomic_write
+
+    atomic_write(tmp_path / "a.json", "v1")
+    _fsync_directory(tmp_path)  # the call atomic_write makes after the rename
+    assert (tmp_path / "a.json").read_text(encoding="utf-8") == "v1"
+
+
 def _current_umask() -> int:
     import os
 

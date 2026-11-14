@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from document.row_adjustments import RowAdjustments
-from loft.live.compat_pages import PageCompatibility
+from loft.live.compat_pages import PageCompatibility, PageExportError
 from loft.live.errors import NotFound
 from loft.live.memory import MemoryLiveStore
 from loft.live.page_row import PageState
@@ -70,6 +70,8 @@ def _drawn() -> str:
 
 
 def _seed_page(store: Any) -> None:
+    """The page as the import writes it: the reading blob carries the words
+    the correction groups (the exporter derives the rows from them)."""
     with store.change(actor="import") as change:
         change.pages.save(
             PageState(
@@ -81,7 +83,7 @@ def _seed_page(store: Any) -> None:
                 category="writing",
                 status="rows_pending",
             ),
-            reading=_reading(),
+            reading={**_reading(), "words": _words()["words"]},
         )
 
 
@@ -112,26 +114,29 @@ def _registry(registry_dir: Path) -> None:
 
 
 def test_a_correction_is_one_change_and_keeps_the_reading(store: Any) -> None:
+    """The reading and its rows are untouched: the correction is the drawn
+    blob plus the page's revision, and the corrected rows derive from them."""
     _seed_page(store)
-    page = PageWrites(store).correct_rows(PAGE_ID, _drawn().encode("utf-8"), _reading(), actor="p-editor")
+    reading_before = store.pages.reading(PAGE_ID)
+    rows_before = store.pages.rows(PAGE_ID)
+    page = PageWrites(store).correct_rows(PAGE_ID, _drawn().encode("utf-8"), actor="p-editor")
     assert page.revision == 2
     assert [event["event_type"] for event in store.events_for(PAGE_ID, entity_kind="page")] == ["created", "superseded"]
     adjustment = store.pages.adjustment(PAGE_ID)
     assert adjustment is not None
     assert store.content.get(adjustment.sha256).decode("utf-8") == _drawn()
-    blob = store.pages.reading_blob(PAGE_ID)
-    assert blob is not None and [line["text"] for line in blob["lines"]] == ["one two"]  # never rebuilt
-    assert len(store.pages.rows(PAGE_ID)) == 1
+    assert store.pages.reading(PAGE_ID) == reading_before  # the reading blob is never rewritten
+    assert store.pages.rows(PAGE_ID) == rows_before  # nor its rows
 
 
 def test_a_second_correction_supersedes_the_first_and_keeps_its_blob(store: Any) -> None:
     _seed_page(store)
     writes = PageWrites(store)
-    writes.correct_rows(PAGE_ID, _drawn().encode("utf-8"), _reading(), actor="p-editor")
+    writes.correct_rows(PAGE_ID, _drawn().encode("utf-8"), actor="p-editor")
     first = store.pages.adjustment(PAGE_ID)
     assert first is not None
     other = json.dumps({"lines": [[[0.1, 0.6], [0.9, 0.6]]]}) + "\n"
-    page = writes.correct_rows(PAGE_ID, other.encode("utf-8"), _reading(), actor="p-editor")
+    page = writes.correct_rows(PAGE_ID, other.encode("utf-8"), actor="p-editor")
     assert page.revision == 3
     second = store.pages.adjustment(PAGE_ID)
     assert second is not None and second.sha256 != first.sha256
@@ -140,7 +145,7 @@ def test_a_second_correction_supersedes_the_first_and_keeps_its_blob(store: Any)
 
 def test_correcting_an_unknown_page_raises(store: Any) -> None:
     with pytest.raises(NotFound):
-        PageWrites(store).correct_rows(PAGE_ID, _drawn().encode("utf-8"), _reading(), actor="p-editor")
+        PageWrites(store).correct_rows(PAGE_ID, _drawn().encode("utf-8"), actor="p-editor")
 
 
 def test_the_exporter_writes_the_same_files_as_the_old_writer(store: Any, tmp_path: Path) -> None:
@@ -164,6 +169,27 @@ def test_the_exporter_writes_the_same_files_as_the_old_writer(store: Any, tmp_pa
     new = BatchReadings(new_dir, BATCH)
     assert new.adjustments_path(PAGE).read_bytes() == old.adjustments_path(PAGE).read_bytes()
     assert new.adjusted_rows_path(PAGE).read_bytes() == old.adjusted_rows_path(PAGE).read_bytes()
+
+
+def test_the_exporter_refuses_a_reading_without_words(store: Any, tmp_path: Path) -> None:
+    """A reading that carries no words cannot produce the corrected rows —
+    writing them anyway would silently drop every word. Fail loud."""
+    with store.change(actor="import") as change:
+        change.pages.save(
+            PageState(
+                page_id=PAGE_ID,
+                image_asset_id=PAGE_ID,
+                sha256="hash-1",
+                revision=1,
+                rotation=0,
+                category="writing",
+                status="rows_pending",
+            ),
+            reading=_reading(),
+        )
+    PageWrites(store).correct_rows(PAGE_ID, _drawn().encode("utf-8"), actor="p-editor")
+    with pytest.raises(PageExportError, match="no words"):
+        PageCompatibility(store, tmp_path).write(PAGE_ID)
 
 
 def test_the_exporter_writes_nothing_for_an_uncorrected_page(store: Any, tmp_path: Path) -> None:

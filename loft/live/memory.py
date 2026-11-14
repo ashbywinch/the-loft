@@ -775,6 +775,31 @@ class _MemoryPages:
             self.store._adjustments[page.page_id] = adjustment_state
         return saved
 
+    def correct(self, page_id: str, adjustments: bytes, *, adjustment_at: str) -> PageState:
+        """Record the reviewer's drawn lines as the page's current correction —
+        one change; the reading and its rows are untouched."""
+        change = self.change
+        if change is None:
+            raise Conflict("pages.correct needs a change")
+        current = self.require(page_id)
+        adjustment = AdjustmentState(
+            page_id,
+            change.content.put(adjustments, mime="application/json"),
+            adjustment_at,
+        )
+        version = current.revision + 1
+        change.append(
+            entity_kind="page",
+            entity_id=page_id,
+            event_type="superseded",
+            entity_version=version,
+            payload=page_payload(replace(current, revision=version), self.reading(page_id), adjustment),
+        )
+        saved = replace(current, revision=version)
+        self.store._pages[page_id] = saved
+        self.store._adjustments[page_id] = adjustment
+        return saved
+
 
 class _MemoryDocuments:
     """The document collection in memory, with the same rows and write rules."""

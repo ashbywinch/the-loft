@@ -515,12 +515,7 @@ def apply_row_adjustments(
     violations = tuple(builder.validate(traces))
     adjustments_json = json.dumps(adjustments.to_dict(), ensure_ascii=False, indent=1)
     if archive is not None and archive.page_writes is not None:
-        # the reading blob carries the words the correction groups (the
-        # import's shape), so the exporter can rebuild the rows without the tree
-        stored_reading = {**raw_reading, "words": list(raw_words.get("words") or [])}
-        archive.correct_page_rows(
-            page_id_of(batch_id, page), (adjustments_json + "\n").encode("utf-8"), stored_reading, actor=actor
-        )
+        archive.correct_page_rows(page_id_of(batch_id, page), (adjustments_json + "\n").encode("utf-8"), actor=actor)
     else:
         atomic_write(readings.adjustments_path(page), adjustments_json + "\n")
         atomic_write(

@@ -1839,10 +1839,25 @@ def test_a_live_row_adjustment_writes_one_change_and_the_work_files(live_server:
         "superseded",
     ]
     assert live.pages.adjustment("adopt-0001/p1.jpg") is not None
+    # the reading and its rows are untouched: the correction is the drawn blob
+    reading = live.pages.reading("adopt-0001/p1.jpg")
+    assert reading is not None and reading.rows == 1
     guess = live_server.work_dir / "adopt-0001" / "ocr-guess"
     drawn = _json.loads((guess / "p1.row-adjustments.json").read_text())
     assert drawn["lines"] == [[[0.05, 0.278], [0.55, 0.278]]]
     assert _json.loads((guess / "p1.rows-adjusted.json").read_text())["rows"] == body["rows"]
+
+
+def test_a_live_row_adjustment_on_a_page_outside_the_store_is_a_conflict(live_server: ServerFixture) -> None:
+    """A batch adopted after the import has work files but no page row: the
+    correction has nowhere to write, and the route says so — never a 500."""
+    _seed_row_page(live_server)  # the work tree only
+    status, body = live_server.post(
+        "/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments",
+        {"lines": [[[0.05, 0.278], [0.55, 0.278]]]},
+    )
+    assert status == 409, body
+    assert "page" in body["error"]
 
 
 def test_a_document_is_ready_for_transcription_only_after_its_row_check(server: ServerFixture) -> None:

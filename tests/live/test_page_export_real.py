@@ -60,7 +60,7 @@ def test_the_real_correction_exports_the_real_files(tmp_path: Path) -> None:
                     ),
                     reading=stored,
                 )
-            PageWrites(store).correct_rows(page_id, drawn, stored, actor="p-editor")
+            PageWrites(store).correct_rows(page_id, drawn, actor="p-editor")
             assert PageCompatibility(store, scratch).write(page_id)
             exported = scratch / BATCH / "ocr-guess"
             assert (exported / f"{page}.row-adjustments.json").read_bytes() == drawn

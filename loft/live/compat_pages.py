@@ -19,6 +19,7 @@ from document.page_size import PageSize
 from document.row_adjustments import RowAdjustments
 from document.traces import Traces
 from document.words import Words
+from loft.live.errors import LiveError
 from loft.live.protocols import PageStore
 from pipeline.api.sync import BatchReadings
 from pipeline.rows.rows import Row, Rows
@@ -26,9 +27,17 @@ from pipeline.rows_reading import RowsReading
 from tools.atomic import atomic_write
 
 
+class PageExportError(LiveError):
+    """The page's correction cannot be reproduced from the stored blobs."""
+
+
 def adjusted_rows(blob: dict[str, Any], drawn: str) -> list[Row]:
     """The correction's rows: the reading's lines regrouped by the drawn
-    lines, exactly as `Rows.adjust` builds them for the response."""
+    lines, exactly as `Rows.adjust` builds them for the response. A reading
+    with no words cannot produce them — the correction would silently drop
+    every word, so it fails loud instead."""
+    if not blob.get("words"):
+        raise PageExportError(f"page {blob.get('page', '')} has no words to derive its corrected rows from")
     reading = RowsReading.from_dict(blob)
     adjustments = RowAdjustments.from_dict(json.loads(drawn))
     traces = Traces(

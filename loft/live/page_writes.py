@@ -11,7 +11,6 @@ optimistic token the review's other writes check against.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
 
 from loft.live.page_row import PageState
 from loft.live.protocols import PageStore
@@ -23,14 +22,7 @@ class PageWrites:
     def __init__(self, store: PageStore) -> None:
         self.store = store
 
-    def correct_rows(self, page_id: str, adjustments: bytes, reading: dict[str, Any], *, actor: str) -> PageState:
+    def correct_rows(self, page_id: str, adjustments: bytes, *, actor: str) -> PageState:
         """Record the reviewer's drawn lines as the page's current correction."""
         with self.store.change(actor=actor, note=f"correct rows {page_id}") as change:
-            page = change.pages.require(page_id)
-            return change.pages.save(
-                page,
-                base=page.revision,
-                reading=reading,
-                adjustment=adjustments,
-                adjustment_at=datetime.now(UTC).isoformat(),
-            )
+            return change.pages.correct(page_id, adjustments, adjustment_at=datetime.now(UTC).isoformat())

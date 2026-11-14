@@ -238,14 +238,14 @@ class Archive:
         self.page_writes = writes
         self._after_page_write = after_write
 
-    def correct_page_rows(self, page_id: str, adjustments: bytes, reading: dict[str, Any], *, actor: str) -> None:
+    def correct_page_rows(self, page_id: str, adjustments: bytes, *, actor: str) -> None:
         """The reviewer's drawn row lines — one change, then the old work
         files (`<page>.row-adjustments.json`, `<page>.rows-adjusted.json`)
         follow from the stored blobs."""
         writes = self.page_writes
         if writes is None:
             raise ArchiveError("no page service bound")
-        writes.correct_rows(page_id, adjustments, reading, actor=actor)
+        writes.correct_rows(page_id, adjustments, actor=actor)
         if self._after_page_write is not None:
             self._after_page_write(page_id)
 

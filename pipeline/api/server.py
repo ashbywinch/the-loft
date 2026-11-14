@@ -39,6 +39,7 @@ from loft.live.compat import CompatibilityExport, legacy_person
 from loft.live.compat_items import ItemCompatibility
 from loft.live.compat_pages import PageCompatibility
 from loft.live.compat_reviews import ImportsCompatibility
+from loft.live.errors import LiveError
 from loft.live.import_identity import sync_from_archive
 from loft.live.import_items import sync_items
 from loft.live.import_reviews import sync_reviews
@@ -1015,6 +1016,10 @@ def build_app(
                 archive=archive,
                 actor=mine.person or "review",
             )
+        except LiveError as exc:
+            # the page is not in the live store (a batch adopted after the
+            # import): the correction has nowhere to write yet
+            return JSONResponse({"error": str(exc)}, status_code=409)
         except (RegistryError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)  # client errors are 4xx, never 500
         return RowAdjustmentsAnswer(

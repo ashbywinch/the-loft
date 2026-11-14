@@ -15,7 +15,7 @@ custom_model_max_tokens = 128000
 max_model_tokens = 128000
 ai_timeout = 1800
 fallback_models = []
-repo_context_from_default_branch = false
+repo_context_from_default_branch = true  # the standards come from main: a PR must not supply the rule it is judged by
 # The renderer caps rendered context at repo_context_max_lines (default 500) and
 # STOPS at the first file that overruns - every later file is dropped silently.
 # These files are ~2398 lines together. Raise this whenever the list grows.

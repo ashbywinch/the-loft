@@ -19,7 +19,7 @@ scenario has no new home. A suite is never deleted for being inconvenient.
 
 | Area | Existing suites | Disposition | Ports in | New home |
 |---|---|---|---|---|
-| The archive facade and the file store | `tests/test_archive.py`, `tests/test_store.py`, `tests/pipeline/test_store.py` | port | A1–A2, A4, B1–B3 (B1: the identity verbs and the live-bound identification, in `tests/live/test_identity_writes.py` and `tests/test_archive.py`; B2: the item save/delete/agreement and the item exporter, in `tests/live/test_item_writes.py`; B3a: the review sessions/transcript/decisions, in `tests/live/test_review_writes.py`; the old copies stay green) | `tests/live/`, `tests/archive/` |
+| The archive facade and the file store | `tests/test_archive.py`, `tests/test_store.py`, `tests/pipeline/test_store.py` | port | A1–A2, A4, B1–B3 (B1: the identity verbs and the live-bound identification, in `tests/live/test_identity_writes.py` and `tests/test_archive.py`; B2: the item save/delete/agreement and the item exporter, in `tests/live/test_item_writes.py`; B3a: the review sessions/transcript/decisions, in `tests/live/test_review_writes.py`; B3b: the proposed queue's propose/promote/reject and its exporter, in `tests/live/test_identity_writes.py`, `tests/live/test_compat_export.py` and `tests/test_archive.py`; the old copies stay green) | `tests/live/`, `tests/archive/` |
 | The live database | `tests/live/test_*.py` | keep (the new home; it grows into the contract suite) | A1–A2, A4–A7 | `tests/live/` |
 | The domain records | `tests/test_records.py` | keep | E1 move | same |
 | The CLI surface | `tests/test_cli.py` | port (the path moves in A0; the commands port with their surfaces) | A0, A7–A8, then B1–B6 (B1: `serve --db`) | `tests/cli/` |

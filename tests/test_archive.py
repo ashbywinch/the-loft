@@ -1081,3 +1081,171 @@ def test_a_live_identification_delete_ends_the_proposal_through_the_service() ->
     assert isinstance(stored, Place) and stored.status == "rejected"  # the row stays in the log
     table = archive.get_identity("places")
     assert table is not None and table.record("pl-mallowfield") is None  # excluded from the old table
+
+
+# -- B3b: the proposed queue writes through the live store -------------------
+
+
+def _live_queue_archive() -> tuple[Archive, MemoryStore, MemoryLiveStore]:
+    """Empty identity tables flipped to a live store — the proposed queue's
+    home (REWRITE-PLAN B3b). The tables' v1 is people.json/places.json; each
+    later export appends a version."""
+    archive, store = make_archive()
+    archive.save_identity("people", validate_identity("people", {"people": [], "relationships": []}))
+    archive.save_identity("places", validate_identity("places", {"places": []}))
+    live = MemoryLiveStore(app_version="test")
+    archive.bind_identity_service(live.identities, CompatibilityExport(live, archive).write)
+    sync_from_archive(live, archive)
+    return archive, store, live
+
+
+def test_a_live_proposal_is_one_change_and_one_queue_file() -> None:
+    """A proposal is a row in the identity table (one change) and, for the
+    old readers, one file in the old queue."""
+    archive, store, live = _live_queue_archive()
+
+    archive.propose_person(Person.from_dict({"id": "p-nova", "name": "Nova", "relation": "added from a story"}))
+    archive.propose_place(Place.from_dict({"id": "pl-dock", "name": "The dock"}))
+
+    stored = live.people.require("p-nova")
+    assert stored.status == "proposed"
+    assert [event["event_type"] for event in live.events_for("p-nova")] == ["created"]
+    queued = json.loads(store.read("proposed/people/p-nova.json"))
+    assert queued["name"] == "Nova" and queued["status"] == "proposed"
+    assert store.exists("proposed/places/pl-dock.json")
+    assert archive.proposed_ids() == {"p-nova", "pl-dock"}
+    table = archive.get_identity("people")
+    assert table is not None and table.record("p-nova") is not None  # the compat export ran
+
+
+def test_a_live_promote_confirms_the_record_and_keeps_the_queue_file() -> None:
+    """Promote joins the table as confirmed; the old queue is append-only, so
+    the file it was queued with stays (the projection skips the known id)."""
+    archive, store, live = _live_queue_archive()
+    archive.propose_person(Person.from_dict({"id": "p-nova", "name": "Nova", "relation": "added from a story"}))
+
+    version = archive.promote_person("p-nova")
+
+    assert version == 3  # v1 the empty table, v2 the proposal, v3 the promote
+    table = archive.get_identity("people")
+    assert table is not None
+    promoted = table.record("p-nova")
+    assert promoted is not None and promoted.status == "confirmed"
+    stored = live.people.require("p-nova")
+    assert isinstance(stored, Person) and stored.status == "confirmed"
+    assert store.exists("proposed/people/p-nova.json")
+
+
+def test_a_live_promote_refuses_an_unknown_or_confirmed_record() -> None:
+    archive, _, _ = _live_queue_archive()
+    with pytest.raises(ArchiveError, match="no proposed"):
+        archive.promote_person("p-ghost")
+    archive.propose_person(Person.from_dict({"id": "p-nova", "name": "Nova"}))
+    archive.promote_person("p-nova")
+    with pytest.raises(ArchiveError, match="already"):
+        archive.promote_person("p-nova")
+
+
+def test_a_live_reject_ends_the_proposal_and_removes_the_queue_file() -> None:
+    """A proposal the review rejects leaves the queue — the one delete the old
+    store performed. The row stays in the log, marked rejected."""
+    archive, store, live = _live_queue_archive()
+    archive.propose_place(Place.from_dict({"id": "pl-barges", "name": "the moored barges"}))
+    assert archive.proposed_ids() == {"pl-barges"}
+
+    archive.reject_proposed_place("pl-barges")
+
+    assert archive.proposed_ids() == set()
+    assert not store.exists("proposed/places/pl-barges.json")
+    stored = live.places.require("pl-barges")
+    assert isinstance(stored, Place) and stored.status == "rejected"
+    table = archive.get_identity("places")
+    assert table is not None and table.record("pl-barges") is None
+    with pytest.raises(ArchiveError, match="no proposed"):
+        archive.reject_proposed_place("pl-barges")  # rejecting twice fails loudly
+
+
+def test_a_live_reject_is_refused_while_a_catalogued_story_references_it() -> None:
+    """A proposal a catalogued story still names is refused: the story's refs
+    and a kept chat extraction are both links, and removing the record would
+    leave a dangling ref at publish."""
+    archive, store, live = _live_queue_archive()
+    archive.propose_person(Person.from_dict({"id": "p-grandma", "name": "Grandma"}))
+    archive.propose_place(Place.from_dict({"id": "pl-yard", "name": "The yard"}))
+    with live.change(actor="import") as change:
+        change.items.save(
+            _record(
+                id="story-x",
+                status="catalogued",
+                people=[{"id": "p-grandma", "status": "proposed"}],
+                places=[{"id": "pl-yard", "status": "proposed"}],
+            ),
+            files={},
+        )
+    with pytest.raises(ArchiveError, match="still reference"):
+        archive.reject_proposed_person("p-grandma")
+    with pytest.raises(ArchiveError, match="still reference"):
+        archive.reject_proposed_place("pl-yard")
+    assert store.exists("proposed/people/p-grandma.json")
+    assert store.exists("proposed/places/pl-yard.json")
+
+
+def test_a_live_reject_also_sees_extraction_matches() -> None:
+    """A catalogued story whose chat extraction (kept by the reviewer) matches
+    the proposed record references it too; an unticked extraction is excluded
+    content and does not block the reject."""
+    archive, _, live = _live_queue_archive()
+    archive.propose_person(Person.from_dict({"id": "p-grandma", "name": "Grandma"}))
+    with live.change(actor="import") as change:
+        change.items.save(
+            _record(
+                id="story-x",
+                status="catalogued",
+                chat={
+                    "extractions": [
+                        {"kind": "person", "name": "Grandma", "match": "p-grandma", "bucket": "proposed", "on": True}
+                    ]
+                },
+            ),
+            files={},
+        )
+    with pytest.raises(ArchiveError, match="still reference"):
+        archive.reject_proposed_person("p-grandma")
+
+    other, _, other_live = _live_queue_archive()
+    other.propose_person(Person.from_dict({"id": "p-grandma", "name": "Grandma"}))
+    with other_live.change(actor="import") as change:
+        change.items.save(
+            _record(
+                id="story-x",
+                status="catalogued",
+                chat={
+                    "extractions": [
+                        {"kind": "person", "name": "Grandma", "match": "p-grandma", "bucket": "proposed", "on": False}
+                    ]
+                },
+            ),
+            files={},
+        )
+    other.reject_proposed_person("p-grandma")  # no raise
+
+
+def test_the_live_proposed_operations_reject_path_traversal_ids() -> None:
+    """A crafted id must never reach a store path in the flipped queue either —
+    and never reach the live store."""
+    archive, store, _ = _live_queue_archive()
+    for bad in ("../people", "../../people", "p/evil", "p..evil"):
+        with pytest.raises(ArchiveError, match="id"):
+            archive.reject_proposed_person(bad)
+        with pytest.raises(ArchiveError, match="id"):
+            archive.reject_proposed_place(bad)
+        with pytest.raises(ArchiveError, match="id"):
+            archive.promote_person(bad)
+        with pytest.raises(ArchiveError, match="id"):
+            archive.promote_place(bad)
+        with pytest.raises(ArchiveError, match="id"):
+            archive.propose_person(Person(id=bad, name="Evil"))
+        with pytest.raises(ArchiveError, match="id"):
+            archive.propose_place(Place(id=bad, name="Evil"))
+    assert store.exists("people.json")
+    assert not store.exists("people-2.json")  # no proposal reached a write

@@ -123,12 +123,11 @@ class Identities:
 
     def _refuse_referenced(self, change: Any, record_id: str, kind: str) -> None:
         """A record a catalogued item still names is refused: relink the
-        stories first (the old reject seam's rule, kept for the new one)."""
-        attribute = {"person": "people_refs", "place": "place_refs"}[kind]
+        stories first (the old reject seam's rule, kept for the new one). A
+        link and a kept chat extraction are both references — the item's own
+        rule, never a second copy of it."""
         referrers = [
-            item.id
-            for item in change.items.all()
-            if item.status == "catalogued" and any(ref.id == record_id for ref in getattr(item, attribute, ()))
+            item.id for item in change.items.all() if item.status == "catalogued" and item.references(record_id, kind)
         ]
         if referrers:
             raise Conflict(

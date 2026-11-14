@@ -22,6 +22,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
+from loft.live.errors import Conflict
 from loft.live.items import ContentInput, default_trust
 from pipeline.identification import Identification
 from tools.anchor import Anchor
@@ -314,6 +315,11 @@ class Archive:
         versions <name>-N.json, at the archive root."""
         return _versioned_path("identity", name, name, version)
 
+    def _identity_version(self, name: str) -> int:
+        """The newest version of one identity table — 0 when it is absent."""
+        versions = self._identity_versions(name)
+        return versions[-1] if versions else 0
+
     @overload
     def get_identity(self, name: Literal["people"]) -> PeopleTable | None: ...
 
@@ -562,11 +568,7 @@ class Archive:
     def _dismiss_proposal(self, kind: Literal["person", "place"], record_id: str, *, actor: str) -> None:
         """End one proposed record — the delete determination's table half."""
         if self.identities is not None:
-            if kind == "person":
-                self.identities.reject_person(record_id, actor=actor)
-            else:
-                self.identities.reject_place(record_id, actor=actor)
-            self._identity_changed()
+            self._reject_live(self.identities, record_id, kind, actor=actor)
             return
         if kind == "person":
 
@@ -837,11 +839,25 @@ class Archive:
         )
 
     def propose_person(self, person: Person) -> None:
-        """Queue a person record for review — marked proposed."""
+        """Queue a person record for review — marked proposed. From B3b the
+        proposal is one `Change` (a row in the people table, marked proposed)
+        and the compatibility exporter writes the old
+        `proposed/people/<id>.json` file the old readers list."""
+        if self.identities is not None:
+            _valid_record_id(person.id)
+            self.identities.propose(people=(person,), actor="import")
+            self._identity_changed()
+            return
         self._propose("person", person, "people")
 
     def propose_place(self, place: Place) -> None:
-        """Queue a place record for review — marked proposed."""
+        """Queue a place record for review — marked proposed (the person
+        seam's place twin, B3b)."""
+        if self.identities is not None:
+            _valid_record_id(place.id)
+            self.identities.propose(places=(place,), actor="import")
+            self._identity_changed()
+            return
         self._propose("place", place, "places")
 
     def confirm_person(self, person_id: str, relation: str | None = None, *, actor: str = "import") -> Person:
@@ -951,8 +967,15 @@ class Archive:
         return record_type(json.loads(self.store.read(path)))
 
     def promote_person(self, person_id: str) -> int:
-        """Confirm a proposed person: supersede the people identity table
-        with the record appended (append-only). Returns the new version."""
+        """Confirm a proposed person: the row joins the table as confirmed
+        (append-only). Returns the new table version. From B3b the record is
+        the live row — a missing or rejected proposal fails loudly, and one
+        already in the table is a contradiction, never a silent no-op."""
+        if self.identities is not None:
+            self._require_proposed(self.identities, person_id, "person")
+            self.identities.promote_person(person_id, actor="import")
+            self._identity_changed()
+            return self._identity_version("people")
         record = self._proposed_record("people", person_id, Person.from_dict, "person")
         table = self.get_identity("people")
         if table is None:
@@ -962,8 +985,14 @@ class Archive:
         return self.save_identity("people", table.with_record(record.as_confirmed()))
 
     def promote_place(self, place_id: str) -> int:
-        """Confirm a proposed place: supersede the places identity table
-        with the record appended (append-only). Returns the new version."""
+        """Confirm a proposed place: the row joins the table as confirmed
+        (append-only). Returns the new table version — the person seam's
+        place twin (B3b)."""
+        if self.identities is not None:
+            self._require_proposed(self.identities, place_id, "place")
+            self.identities.promote_place(place_id, actor="import")
+            self._identity_changed()
+            return self._identity_version("places")
         record = self._proposed_record("places", place_id, Place.from_dict, "place")
         table = self.get_identity("places")
         if table is None:
@@ -978,21 +1007,13 @@ class Archive:
         dangling refs at publish. An extraction the
         reviewer kept is a link too; an unticked one (on: false) is excluded
         content and does not block the reject."""
-        extraction_kind = "person" if ref_kind == "people" else "place"
+        kind = "person" if ref_kind == "people" else "place"
         referrers: list[str] = []
         for item_id in self.item_ids():
             item = self.get_item(item_id)
             if item is None or item.status != "catalogued":
                 continue
-            refs = item.people_refs if ref_kind == "people" else item.place_refs
-            if any(ref.id == record_id for ref in refs):
-                referrers.append(item_id)
-                continue
-            if any(
-                ex.get("on") is not False and ex.get("match") == record_id
-                for ex in (item.raw.get("chat") or {}).get("extractions") or []
-                if ex.get("kind") == extraction_kind
-            ):
+            if item.references(record_id, kind):
                 referrers.append(item_id)
         return referrers
 
@@ -1013,7 +1034,12 @@ class Archive:
         mention with no attestation is not a cast member. The
         proposed queue is the one place the store deletes; a double reject
         fails loudly; a record that catalogued stories still reference is
-        refused — relink the stories first."""
+        refused — relink the stories first. From B3b the row ends marked
+        rejected and the queue exporter removes its file."""
+        if self.identities is not None:
+            self._require_proposed(self.identities, person_id, "person")
+            self._reject_live(self.identities, person_id, "person", actor="import")
+            return
         self._reject_proposed("people", person_id, "person")
 
     def reject_proposed_place(self, place_id: str) -> None:
@@ -1021,8 +1047,42 @@ class Archive:
         story mention with an unknown location is fiction, not a place
         entity. The proposed queue is the one place the store deletes; a
         double reject fails loudly; a record that catalogued stories still
-        reference is refused — relink the stories first."""
+        reference is refused — relink the stories first (the person seam's
+        place twin, B3b)."""
+        if self.identities is not None:
+            self._require_proposed(self.identities, place_id, "place")
+            self._reject_live(self.identities, place_id, "place", actor="import")
+            return
         self._reject_proposed("places", place_id, "place")
+
+    def _require_proposed(self, identities: Identities, record_id: str, kind: Literal["person", "place"]) -> None:
+        """The live queue's guard: a promotion or a reject needs a proposed
+        row. A crafted id never reaches the store; a missing or rejected
+        proposal fails as the old missing file did; a confirmed record is
+        already in the table, never a silent no-op."""
+        record_id = _valid_record_id(record_id)
+        record = identities.person(record_id) if kind == "person" else identities.place(record_id)
+        table = "people" if kind == "person" else "places"
+        if record is None or record.status == "rejected":
+            raise ArchiveError(f"no proposed {kind} record: {record_id}")
+        if record.status != "proposed":
+            raise ArchiveError(f"{record_id} is already in the {table} table")
+
+    def _reject_live(
+        self, identities: Identities, record_id: str, kind: Literal["person", "place"], *, actor: str
+    ) -> None:
+        """End a proposal through the live store and remove its queue file. A
+        refusal (a catalogued story still names it) surfaces as the archive's
+        own error, as the old queue verb did; the old readers' tree follows
+        the write."""
+        try:
+            if kind == "person":
+                identities.reject_person(record_id, actor=actor)
+            else:
+                identities.reject_place(record_id, actor=actor)
+        except Conflict as error:
+            raise ArchiveError(str(error)) from error
+        self._identity_changed()
 
     def _refuse_reject_while_referenced(self, record_id: str, ref_kind: str) -> None:
         referrers = self._referencing_catalogued(record_id, ref_kind)

@@ -7,6 +7,9 @@ identity write the service calls this exporter, which rewrites
 `themes.json` in the archive's append-only, versioned form. A table identical
 to the last file writes nothing — no byte-identical versions.
 
+The proposed queue is the same surface's second half (B3b): the queue files
+follow the rows, through `ProposedCompatibility`.
+
 The mapping is `identity_map`'s reverse: a confirmed record with a
 recollection/inference basis below certainty is the old `estimated` status,
 and the model's basis/confidence pair is not part of the old wire shape. A
@@ -17,6 +20,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from loft.live.compat_proposed import ProposedCompatibility
 from loft.live.identity_map import BasisKinds, renders_estimated
 from loft.live.protocols import IdentityStore
 from tools.archive import Archive
@@ -96,16 +100,21 @@ def legacy_relationship(edge: Relationship) -> dict[str, Any]:
 
 
 class CompatibilityExport:
-    """Rewrite the old-shape identity tables from the live store."""
+    """Rewrite the old-shape identity tables and proposed queue from the live store."""
 
     def __init__(self, store: IdentityStore, archive: Archive) -> None:
         self.store = store
         self.archive = archive
+        self.queue = ProposedCompatibility(store, archive)
 
     def write(self) -> tuple[str, ...]:
-        """Write every table whose content moved; return their names."""
+        """Write every table whose content moved and maintain the queue files;
+        return the tables written. Every table is built before the first write,
+        so a record the old reader cannot parse leaves the tree untouched."""
         tables = {"people": self._people(), "places": self._places(), "orgs": self._orgs(), "themes": self._themes()}
-        return tuple(name for name, table in tables.items() if self._write(name, table))
+        written = tuple(name for name, table in tables.items() if self._write(name, table))
+        self.queue.write()
+        return written
 
     def _people(self) -> PeopleTable:
         losers = self.store.aliases.losers("person")

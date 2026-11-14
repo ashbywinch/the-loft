@@ -14,6 +14,7 @@ when the stage is current. The runner is the stage's own code, called on the
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from collections.abc import Callable
@@ -88,9 +89,39 @@ class EngineView:
             for name in self.text_pages()
             if not self.artefacts.is_read(name, PageKinds.read_route(self.classify[name]))
         ]
-        if not unread:
-            return None
-        return f"read: {len(unread)} page(s) have no text, e.g. {unread[0]!r}"
+        if unread:
+            return f"read: {len(unread)} page(s) have no text, e.g. {unread[0]!r}"
+        stale = [name for name in self.row_pages() if self.correction_pending(name)]
+        if stale:
+            return f"read: {len(stale)} corrected page(s) await a re-read, e.g. {stale[0]!r}"
+        return None
+
+    def correction_pending(self, page: str) -> bool:
+        """Does the page's reading predate its drawn lines?
+
+        The read marker is the draft read's own receipt, so the marker rule
+        cannot see a correction: the reading names the drawn-lines sha it was
+        built from (`RowsReading.corrected`), and the read stage re-reads the
+        page when the file's sha differs. An empty correction ("rows are
+        right") is never a re-read; an unreadable one is the read stage's own
+        error to raise."""
+        adjustments = self.artefacts.adjustments(page)
+        if not adjustments.is_file():
+            return False
+        try:
+            lines = json.loads(adjustments.read_text(encoding="utf-8")).get("lines") or []
+        except (ValueError, AttributeError):
+            return True
+        if not lines:
+            return False
+        reading = self.artefacts.marker(page, "rows")
+        if not reading.is_file():
+            return True
+        try:
+            corrected = str(json.loads(reading.read_text(encoding="utf-8")).get("corrected") or "")
+        except (ValueError, AttributeError):
+            return True
+        return corrected != hashlib.sha256(adjustments.read_bytes()).hexdigest()
 
     def group_gap(self) -> str | None:
         """A photograph-only pile has no writing to group a document around."""

@@ -331,7 +331,14 @@ class _Claims:
         A stroke that replaces a row never takes another row's words: that is
         what keeps one drawn line from moving its neighbour's writing."""
         across = span.x_hi - span.x_lo
-        return {line for line, count in counts.items() if across * 2 >= widths[line] and count * 2 >= reach[line]}
+        return {
+            line
+            for line, count in counts.items()
+            # a line the stroke's reach never named (its words' centres lie
+            # outside it) is measured by the words the stroke did cover: the
+            # coverage is the evidence, and the denominator is not a missing key
+            if across * 2 >= widths[line] and count * 2 >= reach.get(line, count)
+        }
 
     def _apportion_unrowed(self, owner_of: list[int | None]) -> None:
         """The unclaimed words that no reading line's row can hold.

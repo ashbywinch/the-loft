@@ -352,6 +352,25 @@ def test_a_processing_pass_stamps_when_it_started(tmp_path: Path) -> None:
     assert saved["started_host"] == socket.gethostname()
 
 
+def test_a_finished_pass_clears_its_stamp(tmp_path: Path) -> None:
+    """The sweep reads a stamp as a live pass; a finished pass that keeps it
+    (with the worker's own pid) makes every batch the worker processed look
+    alive, and the reconciler skips it forever."""
+    registry = tmp_path / "registry"
+    registry.mkdir()
+    record = BatchRecord(batch_id="adopt-0001", path=tmp_path)
+    run = BatchRun("adopt-0001", registry_dir=registry, work_dir=tmp_path / "work", archive_dir=tmp_path / "archive")
+
+    run.update_status(record, BatchRecord.STATUS_PROCESSING)
+    run.update_status(record, BatchRecord.STATUS_REVIEW)
+
+    saved = json.loads((registry / "adopt-0001.json").read_text(encoding="utf-8"))
+    assert saved["status"] == "review"
+    assert saved["started_at"] == ""
+    assert saved["started_pid"] == 0
+    assert saved["started_host"] == ""
+
+
 def test_the_boundary_call_judges_documents_over_the_pages_readings() -> None:
     """Document grouping survives the guess stage's removal: the model judges
     boundaries over each page's READING (it does not re-read the text), and the

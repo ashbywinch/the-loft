@@ -146,12 +146,18 @@ lucidlint: install-lucidlint
 	# The tool scans its own baseline file and reports a noop on it — the
 	# filter drops that one self-finding (upstream: lucidlint must not scan
 	# its own data); everything else fails the gate.
-	@{ $(PYTHON) $(LUCIDLINT_BUNDLE) --repo . --baseline lucidlint.json --json 2>/dev/null || true; } | \
-		$(PYTHON) -c 'import json, sys; d = json.load(sys.stdin); bad = [a for a in d["actions"] if a["severity"] == "fail" and a["file"] != "lucidlint.json"]; print(f"== lucidlint: {len(bad)} new action(s)"); sys.exit(1 if bad else 0)'
-	# the tool exits 1 when findings exist; the FILTER above derives the
-	# verdict from the JSON — the tool's own exit is absorbed (pipefail) so
-	# the gate's verdict is the filter's, never the scanner's. (2026-09-22,
-	# .SHELLFLAGS -o pipefail)
+	@$(PYTHON) $(LUCIDLINT_BUNDLE) --repo . --baseline lucidlint.json --json > $(LUCIDLINT_DIST)/.last.json 2> $(LUCIDLINT_DIST)/.last.err; \
+		status=$$?; \
+		if [ $$status -gt 1 ]; then \
+			echo "lucidlint: the scanner failed (exit $$status) — the gate cannot decide:"; \
+			cat $(LUCIDLINT_DIST)/.last.err; \
+			exit 1; \
+		fi; \
+		$(PYTHON) -c 'import json, sys; d = json.load(open(sys.argv[1])); bad = [a for a in d["actions"] if a["severity"] == "fail" and a["file"] != "lucidlint.json"]; print(f"== lucidlint: {len(bad)} new action(s)"); sys.exit(1 if bad else 0)' $(LUCIDLINT_DIST)/.last.json
+	# the tool exits 1 when findings exist; 0 when it found none. Anything
+	# higher is the scanner failing (a crash, a bad flag) and must fail the
+	# gate loudly — a crash that emits an empty action list would otherwise
+	# read as "no findings".
 
 eval: evals
 

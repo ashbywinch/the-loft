@@ -4,23 +4,14 @@ on:
   workflow_dispatch:
 concurrency:
   group: ${{ github.ref }}
-  cancel-in-progress: true
+  # A push run is cancellable; main's is not. Two merges minutes apart would
+  # cancel the earlier main run — the run whose evals are the only gate for a
+  # change that landed without them.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 permissions:
   contents: read
-  pull-requests: write # the coverage comment step needs it
 jobs:
   build-and-test:
-    env:
-      # the eval key: the current convention (OPENAI_API_KEY = the Cloudflare
-      # gateway token, OPENAI_BASE_URL = the gateway endpoint) — the legacy
-      # LOFT_AI_KEY secret left the repo (2026-09-05), leaving the eval step's
-      # presence guard permanently false (evals silently never ran). model-env.sh
-      # reads the token under its own name (CLOUDFLARE_AIGATEWAY_TOKEN) and the
-      # URL from .env loaded last — both are provided here so a fresh CI
-      # checkout (setup's .env.example copy) cannot wipe them.
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      OPENAI_BASE_URL: https://gateway.ai.cloudflare.com/v1/e21a5be58ac1e8f7d5619539feb2dc3d/default/compat
-      CLOUDFLARE_AIGATEWAY_TOKEN: ${{ secrets.OPENAI_API_KEY }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -77,20 +68,24 @@ jobs:
         # (2026-08-14). Except: GitHub strips secrets from dependabot-triggered
         # runs, so the key is always absent there and the step can only fail —
         # skip evals for dependabot PRs only, never on main (2026-08-28).
+        #
+        # The key is scoped to THIS step: a job-level env hands the billable
+        # gateway token to checkout, setup-* and every third-party action.
         if: ${{ github.actor != 'dependabot[bot]' || github.ref == 'refs/heads/main' }}
+        env:
+          # model-env.sh reads the token under its own name and the URL from
+          # .env last, so both are provided here; a fresh checkout's blank
+          # .env.example must not wipe them.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: https://gateway.ai.cloudflare.com/v1/e21a5be58ac1e8f7d5619539feb2dc3d/default/compat
+          CLOUDFLARE_AIGATEWAY_TOKEN: ${{ secrets.OPENAI_API_KEY }}
         run: make evals
       - name: Coverage summary (Python tools)
-        uses: irongut/CodeCoverageSummary@v1.3.0
+        uses: irongut/CodeCoverageSummary@51cc3a756ddcd398d447c044c02cb6aa83fdae95 # v1.3.0
         with:
           filename: coverage.xml
           badge: true
           fail_below_min: true
           thresholds: '65 90' # floor below the measured 73.11% (2026-09-22) — raise as coverage lands; tracks the 90% goal
           format: markdown
-          output: both
-      - name: Post coverage comment
-        uses: marocchino/sticky-pull-request-comment@v3
-        if: github.event_name == 'pull_request'
-        with:
-          recreate: true
-          path: code-coverage-results.md
+          output: console

@@ -7,6 +7,7 @@ the reconciler would run, and why. No model, no images.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -65,6 +66,63 @@ def test_a_missing_classification_is_the_first_gap(tmp_path: Path) -> None:
     plan = plan_for(record, work)
     assert plan.stages[0] == "classify"
     assert "2 page(s) have no category" in plan.reasons[0]
+
+
+def _read_page(work: Path, batch: str, corrected: str = "") -> None:
+    """A read row page: classification, orientation, the text, the reading and
+    its grouping — the state a correction arrives on top of."""
+    _artefact(
+        work,
+        batch,
+        "classify.json",
+        json.dumps({"p1.jpg": {"kind": "handwriting", "confidences": {"handwriting": 0.9}}}),
+    )
+    _artefact(work, batch, "oriented/p1.jpg", "upright")
+    _artefact(work, batch, "ocr-guess/p1.txt", "text")
+    _artefact(
+        work,
+        batch,
+        "ocr-guess/p1.rows.json",
+        json.dumps({"page": "p1.jpg", "width": 10, "height": 10, "revision": 1, "corrected": corrected, "lines": []}),
+    )
+    _artefact(work, batch, "ocr-guess/boundaries.json", "[]")
+
+
+def _drawn(work: Path, batch: str, lines: list) -> None:
+    _artefact(work, batch, "ocr-guess/p1.row-adjustments.json", json.dumps({"lines": lines}))
+
+
+def test_a_corrected_page_awaits_a_re_read(tmp_path: Path) -> None:
+    """The drawn lines outdate the reading, and the read marker is the draft
+    read's own receipt — so the plan must compare the reading's correction sha
+    with the file's, or a correction is never read back."""
+    work = tmp_path / "work"
+    record = _record(work)
+    _read_page(work, record.batch_id)
+    _drawn(work, record.batch_id, [[[0.1, 0.1], [0.9, 0.1]]])
+    plan = plan_for(record, work)
+    assert plan.stages == ("read",)
+    assert "re-read" in plan.reasons[0]
+
+
+def test_a_reading_that_carries_the_drawn_lines_is_current(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    record = _record(work)
+    _read_page(work, record.batch_id)
+    _drawn(work, record.batch_id, [[[0.1, 0.1], [0.9, 0.1]]])
+    drawn = work / record.batch_id / "ocr-guess" / "p1.row-adjustments.json"
+    drawn_sha = hashlib.sha256(drawn.read_bytes()).hexdigest()
+    _read_page(work, record.batch_id, corrected=drawn_sha)
+    assert plan_for(record, work).stages == ()
+
+
+def test_an_empty_correction_is_not_a_re_read(tmp_path: Path) -> None:
+    """ "Rows are right" records the check with nothing to read again."""
+    work = tmp_path / "work"
+    record = _record(work)
+    _read_page(work, record.batch_id)
+    _drawn(work, record.batch_id, [])
+    assert plan_for(record, work).stages == ()
 
 
 def test_a_printed_page_needs_no_row_read(tmp_path: Path) -> None:

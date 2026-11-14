@@ -3,9 +3,13 @@ name: Dependabot auto-merge
 # pull_request_target, not pull_request: dependabot-triggered runs get a
 # read-only token and NO secrets, so `gh pr merge` can never work there. The
 # target trigger runs in the base-repo context (workflow file from main, real
-# permissions) while github.actor still identifies the PR author. The job
-# never checks out PR code, so the trigger is safe — only PR metadata is read
-# and the merge is armed, not performed, here.
+# permissions). The job never checks out PR code, so the trigger is safe —
+# only PR metadata is read and the merge is armed, not performed, here.
+#
+# The gate is the PR's AUTHOR, not the event's actor: a dependabot PR whose
+# branch was updated by the "Update branch" button (or by another bot) is
+# still a dependabot bump, and keying on the actor left exactly those PRs
+# un-armed — stale, green, and waiting for a click.
 on: pull_request_target
 
 permissions:
@@ -14,7 +18,7 @@ permissions:
 jobs:
   dependabot:
     runs-on: ubuntu-latest
-    if: github.actor == 'dependabot[bot]'
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
     steps:
       - name: Fetch dependabot metadata
         id: metadata

@@ -1,8 +1,7 @@
 # The rewrite plan — the database as the system of record
 
-**Status:** v0.7 — A0–A8, B1, B2 and B3a landed; B3b is in review (#113);
-B4 is next. Change a row's
-State to its PR when it lands.
+**Status:** v0.7 — A0–A8, B1, B2 and B3a landed; B3b is in review (#113),
+B4 next. Change a row's State to its PR when it lands.
 **PR:** #89 carries A0/A1 and the boot-path fixes as one review unit (the
 user's call); the ladder's one-increment-per-PR rule applies to later
 increments.

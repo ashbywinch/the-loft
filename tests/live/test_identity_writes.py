@@ -279,6 +279,31 @@ def test_reject_refuses_a_proposal_a_catalogued_item_still_names(store: Any) -> 
     assert store.people.require("p-alex").status == "proposed"
 
 
+# -- propose: the identification pass's new records --------------------------
+
+
+def test_propose_writes_every_new_record_in_one_change(store: Any) -> None:
+    written = store.identities.propose(
+        people=(_person("p-alex", status="confirmed"),),
+        places=(_place("pl-marlow", "Marlow", status="proposed"),),
+        actor="import",
+    )
+    assert written == 2
+    assert store.people.require("p-alex").status == "proposed"  # a proposal is proposed, whatever the caller said
+    assert store.places.require("pl-marlow").status == "proposed"
+    assert [event["event_type"] for event in store.events_for("p-alex")] == ["created"]
+
+
+def test_propose_never_rewrites_a_record_the_store_holds(store: Any) -> None:
+    """The pass's proposal for an id the table already carries is a no-op —
+    a standing record is never downgraded to a proposal."""
+    _seed(store, _person())
+    events = store.events_for("p-alex")
+    assert store.identities.propose(people=(_person("p-alex", status="proposed"),), actor="import") == 0
+    assert store.people.require("p-alex").status == "confirmed"
+    assert store.events_for("p-alex") == events
+
+
 # -- promote: a queued proposal joins the table as confirmed ----------------
 
 

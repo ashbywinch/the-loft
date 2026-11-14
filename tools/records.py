@@ -1031,6 +1031,20 @@ class Item:
     def theme_refs(self) -> tuple[Ref, ...]:
         return _refs(self.raw, "themes")
 
+    def references(self, record_id: str, kind: str) -> bool:
+        """Does this item name the record — as a link, or as a kept chat
+        extraction? An unticked extraction (``on: false``) is excluded
+        content and does not count. Either form would leave a dangling link
+        at publish if the record were deleted."""
+        refs = self.people_refs if kind == "person" else self.place_refs
+        if any(ref.id == record_id for ref in refs):
+            return True
+        return any(
+            extraction.get("on") is not False and extraction.get("match") == record_id
+            for extraction in (self.raw.get("chat") or {}).get("extractions") or []
+            if extraction.get("kind") == kind
+        )
+
     @property
     def date_mentions(self) -> tuple[DateMention, ...]:
         return tuple(DateMention.from_dict(m) for m in self.raw.get("date_mentions") or [])

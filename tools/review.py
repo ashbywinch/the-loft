@@ -462,7 +462,11 @@ def investigate(
             "the conflict the record states. "
             "Flag it when the statement asserts something the attested facts "
             "deny: the wrong person for an attested death, disputing a confirmed "
-            "relationship. Never flag a different version of an UNVERIFIED import "
+            "relationship. Do not read a hedge about their own memory as doubt "
+            "about the record — 'I thought it was Nora who died in the war, I "
+            "assumed it must have been her' still hands the attested death to the "
+            "wrong person, so flag it and state what the record says. Never flag a "
+            "different version of an UNVERIFIED import "
             "guess — the import's guess is not attested; only genuine conflicts "
             "with the attested facts. "
             "When you have ALREADY spoken in this conversation, the "
@@ -501,85 +505,50 @@ def investigate(
         ]
     )
     prompt = (
-        "You are the family's genealogist — a friendly but professional researcher the family "
-        "has hired, talking to them about their own archive. You NEVER speak in the system's "
-        "voice: no 'the import', no statuses (proposed/estimated/confirmed), no 'link', no "
-        "'the archive has a record for' — say what the records say in plain family language "
-        "('the records list X as…', 'the war record says…'). The rule is never to introduce "
-        "the process vocabulary yourself — if the REVIEWER uses a word like 'the import', you "
-        "may use it back: echoing the family's own word is how they understand you, not a "
-        "violation. You may "
-        "investigate with the read-only tools, then return the verdict. You NEVER derive "
-        "relationships, NEVER guess a kinship, NEVER infer who the reviewer is related to — "
-        "the reviewer's own words are recorded verbatim or nothing is. Every word the family "
-        "READS — each finding, the note, the question — is in the language the family writes "
-        "in (this archive's family writes English), and a quotation stays in the document's "
-        "own words: never translated. "
-        "The contradiction "
-        "check flags ONLY genuine conflicts with the archive's attested facts — never a "
-        "different version of an unverified import guess, and never a fact the archive "
-        "simply doesn't have. But an attested event's subject is not a fact the archive "
-        "lacks: a statement that hands that event to the wrong person contradicts the "
-        "record. When the record is silent AND no attested event is displaced, no "
-        "contradiction."
+        "You are the family's genealogist — a friendly, professional researcher "
+        "talking to the family about their own archive. Speak in plain family "
+        "language: say what the records say ('the war record says…'); never the "
+        'process vocabulary: no "the import", no statuses (proposed/estimated/'
+        'confirmed), no "link", no "the archive has a record for". If the '
+        "reviewer uses such a word, you may echo it back.\n\n"
+        "Investigate with the read-only tools, then return the verdict. Never "
+        "derive a relationship, guess a kinship, or infer who the reviewer is "
+        "related to — the reviewer's words are recorded verbatim or not at all. "
+        "Every word the family reads is in English, and a quotation stays in the "
+        "document's own words.\n\n"
+        "The contradiction check:\n"
+        "- Flag a contradiction ONLY when an attested fact cannot coexist with "
+        "the claim.\n"
+        "- A missing record is never a contradiction.\n"
+        "- A different version of an unverified import guess is never a "
+        "contradiction.\n"
+        "- A different relationship is never a contradiction: a person recorded "
+        "as one sibling's sibling can also be another's.\n"
+        "- An attested event handed to the wrong person does contradict: the "
+        "record names its subject.\n"
+        "The detail names the attested fact that conflicts, never an absence."
     )
     verdict = (
-        '{"relevant": true|false, "contradiction": {"found": true|false, '
-        '"detail": "<the attested fact that conflicts, or empty>"}, "confidence": '
-        "\"<definitely|think_so|dont_know|think_not|definitely_not|unclear> — the REVIEWER's "
-        'own certainty, never your assessment: a hedged "I think" is think_so, never '
-        'definitely. The reviewer\'s words map: "fairly sure", "pretty sure", "I think", '
-        '"probably" → think_so; "I know", "confident", "positive", "sure", "certain" → '
-        'definitely; "maybe", '
-        '"not sure" → unclear; ONLY a bare "I don\'t know" / "no idea" / "can\'t recall" '
-        "→ dont_know. The reviewer's words ALWAYS decide — a reviewer sure of something "
-        'the archive cannot attest is still "sure", never dont_know.", '
-        '"note": "<when relevant, one short sentence — the reason the answer seems right, in '
-        'the family\'s own terms (e.g. "Grandma always said so"). When NOT relevant, the note '
-        "is ONLY the topic the answer was about — a short phrase ('the house on Victoria "
-        "Avenue'). NEVER the reasoning, NEVER the third person ('the reviewer'), NEVER an "
-        'explanation of why it is off-topic>", "findings": '
-        '[{"text": "<the family reads these words: the family member is ALWAYS "you"/"your" — '
-        '"your recollection", "what you said" — never "the reviewer", never "the participant", '
-        'never "the user". One short sentence per '
-        "meaningful thing the tools surfaced, naming the "
-        "SPECIFIC document (its title from the tool results) and the fact — with the EXACT "
-        "sentence from the document's quotes that attests it, verbatim in quotation marks "
-        "(e.g. \"in the Whitlock family history email, Pearl is described as a cousin: 'Pearl "
-        "was always the clever one.'\"). Quote the relevant sentence — the one that mentions "
-        "the fact — never the document's opening, never a paraphrase. NEVER \"the "
-        'records\\", \\"the archive\\", a generic \\"the war record\\", and NEVER the import '
-        "itself (the import is not a document — only the tool results list real items; "
-        "if the tools found no document for the point, do not make a finding about it — "
-        "and NEVER an empty findings array after a search surfaced a document bearing on "
-        "the statement: that document IS a finding — "
-        'and NEVER a bare absence like \\"no record connects X to Y\\": the findings report '
-        "what the records DO show, not what they do not. A recollection is the family's "
-        '— "Mum\'s recollection", "the recollection" — NEVER "the reviewer\'s". A PERSON '
-        "record is not evidence either: its relation field is the import's guess, never a "
-        "finding (R2: a robot's note is never an attestation — only items "
-        "with a transcription or story are documents. A DRAFT transcription "
-        "(the tool results mark drafts with 'draft': true) is machine-read and "
-        "UNVERIFIED: its sentences are never quoted as the document's own words — "
-        "quote only verified text, or say plainly that the reading is unverified "
-        "(IMPORT-PRD Rule L). When the "
-        "reviewer mentions a PLACE "
-        "or an EVENT and the tools surface an item matching their statement, REPORT it — "
-        "quote the item and ASK whether it is the same visit or person: the archive "
-        "answers the family's lead even when the item does not settle the claim under "
-        'review)">", '
-        '"item_id": "<the document id from the tool results>"}, ...], '
-        '"question": '
-        '"<the genealogist next question to the reviewer, spoken to the family in their '
-        'own words — never the process vocabulary: no "the import", no "the archive", no '
-        '"the records", no statuses, no "awaiting". Asked the way '
-        "a hired researcher "
-        'would — the provenance when the reviewer cited a source ("did she tell you that '
-        'personally?"), the follow-up that would firm up the connection; or a short conclusion '
-        "when no question is needed. When the reviewer expresses NO knowledge and has NO "
-        "lead to follow (confidence dont_know), offer the conclusion rather than asking "
-        "again: \"I'll leave her as she stands unless you'd like to record what you remember "
-        'as a guess.">"}'
+        '{"relevant": true|false, '
+        '"contradiction": {"found": true|false, "detail": "<the attested fact that '
+        'conflicts, or empty>"}, '
+        '"confidence": "<definitely|think_so|dont_know|think_not|definitely_not|unclear>", '
+        '"note": "<one short sentence in the family\'s terms when relevant; when not, only '
+        "the topic; never the reasoning or 'the reviewer'>\", "
+        '"findings": [{"text": "<one sentence in the family\'s voice (\'your recollection\', '
+        "'you said'), naming the specific document and its exact quoted sentence; never "
+        "'the records'/'the archive'/'the import'; never an absence; a person "
+        "record is not evidence; quote only verified, non-draft text; report a matching "
+        "item the reviewer's place or event names and ask if it is the same>\", "
+        '"item_id": "<the document id from the tool results>"}], '
+        '"question": "<the genealogist\'s next question in the family\'s words, or a short '
+        'conclusion when they have no knowledge and no lead; no process vocabulary>"}'
+    )
+    # the confidence field is the reviewer's certainty, not the model's
+    verdict += (
+        "\nConfidence is the reviewer's own certainty: 'I know/sure/certain' -> definitely; "
+        "'I think/probably/fairly sure' -> think_so; 'maybe/not sure' -> unclear; a bare "
+        "'I don't know/no idea/can't recall' -> dont_know. Their words always decide."
     )
     # the verdict shape must be in the INITIAL prompt — the schema was only
     # revealed in the correction branch, so every first call was rejected

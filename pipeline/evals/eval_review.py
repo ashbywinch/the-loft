@@ -28,7 +28,13 @@ from tools.records import Message, Person, ReviewContext
 from tools.review import assistant_message, investigate
 from tools.review_verdict import ReviewVerdict
 
-PERSON: Person = Person.from_dict({"id": "p-walter", "name": "Walter Whitlock", "relation": "sibling of Nora Whitlock"})
+# The review's subject is the import's PROPOSED person: its relation field is
+# the unverified guess under review. Without the status, the fixture hands the
+# model a confirmed record and the guess reads as an attested fact (the
+# never-an-unverified-import-guess flow).
+PERSON: Person = Person.from_dict(
+    {"id": "p-walter", "name": "Walter Whitlock", "relation": "sibling of Nora Whitlock", "status": "proposed"}
+)
 
 
 class ReviewFixtures:

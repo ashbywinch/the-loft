@@ -37,9 +37,12 @@ from document.row_adjustments import RowAdjustments
 from document.stages import PageStatus
 from loft.live.compat import CompatibilityExport, legacy_person
 from loft.live.compat_items import ItemCompatibility
+from loft.live.compat_reviews import ImportsCompatibility
 from loft.live.import_identity import sync_from_archive
 from loft.live.import_items import sync_items
+from loft.live.import_reviews import sync_reviews
 from loft.live.item_writes import ItemWrites
+from loft.live.review_writes import ReviewWrites
 from pipeline.api import auth
 from pipeline.api.approval import ApprovalContext, DocumentFacts, approve_page
 from pipeline.api.assess_request import AssessRequest
@@ -151,9 +154,13 @@ def build_app(
         archive.bind_identity_service(live.identities, CompatibilityExport(live, archive).write)
         item_export = ItemCompatibility(live, archive)
         archive.bind_item_service(ItemWrites(live), item_export.write)
-        # the flip's opening import, then any version a crash left unexported
+        review_export = ImportsCompatibility(live, archive)
+        archive.bind_review_service(ReviewWrites(live), review_export.write)
+        # each flip's opening import, then any record a crash left unexported
         sync_items(live, archive)
         item_export.write_all()
+        sync_reviews(live, archive)
+        review_export.write()
     client = config.client
     data_dir = Path(config.data_dir)
     app_dir = Path(config.app_dir)
@@ -400,6 +407,8 @@ def build_app(
         except ValueError as exc:
             return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)
         session_id = fields.session_id
+        if live is not None:
+            sync_reviews(live, archive)  # a session the old path wrote since startup
         try:
             archive.start_review_attempt(session_id)
         except ArchiveError as e:
@@ -424,6 +433,8 @@ def build_app(
             fields = ReviewMessageRequest.from_dict(body)
         except ValueError as exc:
             return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)
+        if live is not None:
+            sync_reviews(live, archive)
         try:
             archive.record_review_message(
                 fields.session_id, fields.role, fields.text, datetime.now(UTC).date().isoformat()
@@ -451,6 +462,8 @@ def build_app(
         person_id = fields.person_id
         decision = fields.decision
         basis = fields.basis
+        if live is not None:
+            sync_reviews(live, archive)
         # the session must exist BEFORE anything mutates — a stale session id
         # must not change the archive and then fail
         if archive.get_review_session(session_id) is None:
@@ -519,6 +532,8 @@ def build_app(
         session_id = fields.session_id
         person_id = fields.person_id
         text = fields.text
+        if live is not None:
+            sync_reviews(live, archive)
         # the session must exist BEFORE the costly model call — a stale id
         # must not run the investigation and then 500 in the recording
         if archive.get_review_session(session_id) is None:

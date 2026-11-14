@@ -907,6 +907,24 @@ def test_a_live_decision_rejects_a_stale_session_before_any_mutation(live_server
     assert live.people.get("p-judith") is None  # the refusal wrote nothing, not even the catch-up
 
 
+def test_a_live_review_turn_persists_in_the_service(live_server: ServerFixture) -> None:
+    _seed_pending(live_server)
+    status, _ = live_server.post("/api/review/start", {"session_id": "import-documents"})
+    assert status == 200
+    status, _ = live_server.post(
+        "/api/review/message", {"session_id": "import-documents", "role": "user", "text": "I think so."}
+    )
+    assert status == 200
+    live = live_server.live
+    assert live is not None
+    session = live.reviews.session("import-documents")
+    assert session is not None
+    assert session.attempts[0].messages[0].text == "I think so."
+    table = live_server.archive.get_identity("imports")
+    assert table is not None
+    assert table.imports[0].attempts[0].messages[0].text == "I think so."
+
+
 def test_a_live_save_writes_one_change_and_the_compat_sidecar(live_server: ServerFixture) -> None:
     status, body = live_server.post(
         "/api/save",
@@ -933,6 +951,35 @@ def test_a_live_save_writes_one_change_and_the_compat_sidecar(live_server: Serve
     assert sidecar["status"] == "catalogued"
     assert "story" not in sidecar  # the text is a content file, not a JSON field
     assert {"kind": "story", "file": "story.txt", "caption": "The story, verbatim"} in sidecar["assets"]
+
+
+def test_a_live_save_queues_a_new_person_through_the_service(live_server: ServerFixture) -> None:
+    """B3b: the capture surface's new person is one `Change` (a `proposed` row)
+    and the old queue file the projection and the old readers list."""
+    status, body = live_server.post(
+        "/api/save",
+        {
+            "anchor": {"kind": "item", "id": "letter-1963-05-14", "name": "A week in the flat"},
+            "who": "Alex",
+            "title": "The damp winter",
+            "account": "Grandma came that winter, in 1963.",
+            "extractions": [{"kind": "person", "name": "Grandma", "match": None, "bucket": "proposed", "reason": ""}],
+            "facts": [{"kind": "event_date", "text": "in 1963", "value": "1963", "precision": "year"}],
+            "status": "catalogued",
+        },
+    )
+    assert status == 200, body
+    live = live_server.live
+    assert live is not None
+    minted = [person for person in body["people"] if person["name"] == "Grandma"]
+    assert minted, body
+    person_id = minted[0]["id"]
+    stored = live.people.require(person_id)
+    assert stored.status == "proposed"
+    queued = json.loads(live_server.store.read(f"proposed/people/{person_id}.json"))
+    assert queued["name"] == "Grandma" and queued["status"] == "proposed"
+    table = live_server.archive.get_identity("people")
+    assert table is not None and table.record(person_id) is not None
 
 
 def test_a_live_delete_tombstones_through_the_service(live_server: ServerFixture) -> None:

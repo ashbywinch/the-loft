@@ -26,9 +26,9 @@ From the database rewrite's B1/B2 the identity and item surfaces write through
 the live database when one exists (`loft serve --db`, default `LOFT_DB_PATH` /
 `~/.local/share/the-loft/loft.db`): a review decision, a save, a tombstone and
 a document agreement are one change each, and the compatibility exporter
-rewrites `people.json`/`places.json`/`orgs.json`/`themes.json` and the
-versioned `assets/<id>/` sidecar/content chain so the old readers see the same
-tree. Without a database the server prints that writes stay on the file path
+rewrites `people.json`/`places.json`/`orgs.json`/`themes.json`, the versioned
+`assets/<id>/` sidecar/content chain and the review `imports.json` so the old
+readers see the same tree. Without a database the server prints that writes stay on the file path
 (the rollback).
 
 CI runs exactly `make setup && make lint-github && make coverage` — the suites

@@ -1,0 +1,43 @@
+# The house PR auto-merge: the reusable omp-config workflow mints a
+# repo-scoped GitHub App token, arms auto-merge on PR events, refreshes a
+# branch behind main before arming, and checks approved or armed PRs hourly.
+# It never approves or merges directly; the `protect-main` ruleset's one
+# approving review and required checks are the gate.
+#
+# The App token is the point: a push made with GITHUB_TOKEN triggers no
+# workflow, so a GITHUB_TOKEN branch update would leave the new head with no
+# required check and an armed merge waiting forever. The App's push re-runs
+# CI, so a PR that falls BEHIND main still lands on its own.
+#
+# Dependabot PRs are skipped here: their runs get no repository secrets, so
+# the App token cannot be minted. They keep their own policy workflow
+# (dependabot-automerge.yml, pull_request_target, patch/minor only).
+name: PR auto-merge
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+  pull_request_review:
+    types: [submitted]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+jobs:
+  automerge:
+    # A fork PR's run gets no repository secrets, so the reusable workflow
+    # could not mint the App token — skip it here (the reusable workflow also
+    # refuses to arm a fork, but the token step comes first). `fork` is absent
+    # on push/schedule events, where `null != true` keeps the sweep running.
+    if: >-
+      github.event.pull_request.head.repo.fork != true &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    permissions:
+      contents: read
+    uses: ashbywinch/omp-config/.github/workflows/pr-automerge.yml@v0.2.7
+    with:
+      app_id: ${{ vars.OMP_APP_ID }}
+    secrets:
+      app_private_key: ${{ secrets.OMP_APP_PRIVATE_KEY }}

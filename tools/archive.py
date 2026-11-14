@@ -22,6 +22,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
+from loft.live.errors import Conflict
 from loft.live.items import ContentInput, default_trust
 from pipeline.identification import Identification
 from tools.anchor import Anchor
@@ -53,6 +54,7 @@ from tools.store import FileStore
 if TYPE_CHECKING:
     from loft.live.identities import Identities
     from loft.live.item_writes import ItemWrites
+    from loft.live.review_writes import ReviewWrites
 
 
 def _valid_record_id(record_id: str) -> str:
@@ -108,10 +110,9 @@ def _versioned_path(label: str, subject: str, base: str, version: int) -> str:
     return f"{base}.json" if version == 1 else f"{base}-{version}.json"
 
 
-def _import_session_apply(table: ImportsTable | None) -> ImportsTable:
-    """The import-session mutation: write the pending document-import
-    session once — a no-op when it is already present."""
-    session = Session(
+def _import_session() -> Session:
+    """The default pending document-import session."""
+    return Session(
         id="import-documents",
         kind="import-review",
         title="The document import",
@@ -124,6 +125,12 @@ def _import_session_apply(table: ImportsTable | None) -> ImportsTable:
         current=None,
         attempts=(),
     )
+
+
+def _import_session_apply(table: ImportsTable | None) -> ImportsTable:
+    """The import-session mutation: write the pending document-import
+    session once — a no-op when it is already present."""
+    session = _import_session()
     # a missing table is an error to raise, never a silent stand-in
     if table is None:
         return ImportsTable(imports=(session,))
@@ -169,6 +176,8 @@ class Archive:
         self._after_identity_write: Callable[[], Any] | None = None
         self.item_writes: ItemWrites | None = None
         self._after_item_write: Callable[[str], Any] | None = None
+        self.reviews: ReviewWrites | None = None
+        self._after_review_write: Callable[[], Any] | None = None
 
     def bind_identity_service(self, identities: Identities, after_write: Callable[[], Any]) -> None:
         """Flip the identity write path to the live store (B1).
@@ -196,10 +205,25 @@ class Archive:
         if self._after_identity_write is not None:
             self._after_identity_write()
 
+    def bind_review_service(self, writes: ReviewWrites, after_write: Callable[[], Any]) -> None:
+        """Flip the review-state write path to the live store (B3).
+
+        The session verbs write one `Change` each and the imports-table
+        exporter follows, so the projection and the archive's session reads
+        see the old table.
+        """
+        self.reviews = writes
+        self._after_review_write = after_write
+
     def _item_changed(self, item_id: str) -> None:
         """The item compatibility export runs synchronously with the write."""
         if self._after_item_write is not None:
             self._after_item_write(item_id)
+
+    def _imports_changed(self) -> None:
+        """The imports-table compatibility export runs with the write."""
+        if self._after_review_write is not None:
+            self._after_review_write()
 
     # -- resolution --------------------------------------------------------
 
@@ -290,6 +314,11 @@ class Archive:
         """One identity table's versioned file — v1 is <name>.json, later
         versions <name>-N.json, at the archive root."""
         return _versioned_path("identity", name, name, version)
+
+    def _identity_version(self, name: str) -> int:
+        """The newest version of one identity table — 0 when it is absent."""
+        versions = self._identity_versions(name)
+        return versions[-1] if versions else 0
 
     @overload
     def get_identity(self, name: Literal["people"]) -> PeopleTable | None: ...
@@ -539,11 +568,7 @@ class Archive:
     def _dismiss_proposal(self, kind: Literal["person", "place"], record_id: str, *, actor: str) -> None:
         """End one proposed record — the delete determination's table half."""
         if self.identities is not None:
-            if kind == "person":
-                self.identities.reject_person(record_id, actor=actor)
-            else:
-                self.identities.reject_place(record_id, actor=actor)
-            self._identity_changed()
+            self._reject_live(self.identities, record_id, kind, actor=actor)
             return
         if kind == "person":
 
@@ -814,11 +839,25 @@ class Archive:
         )
 
     def propose_person(self, person: Person) -> None:
-        """Queue a person record for review — marked proposed."""
+        """Queue a person record for review — marked proposed. From B3b the
+        proposal is one `Change` (a row in the people table, marked proposed)
+        and the compatibility exporter writes the old
+        `proposed/people/<id>.json` file the old readers list."""
+        if self.identities is not None:
+            _valid_record_id(person.id)
+            self.identities.propose(people=(person,), actor="import")
+            self._identity_changed()
+            return
         self._propose("person", person, "people")
 
     def propose_place(self, place: Place) -> None:
-        """Queue a place record for review — marked proposed."""
+        """Queue a place record for review — marked proposed (the person
+        seam's place twin, B3b)."""
+        if self.identities is not None:
+            _valid_record_id(place.id)
+            self.identities.propose(places=(place,), actor="import")
+            self._identity_changed()
+            return
         self._propose("place", place, "places")
 
     def confirm_person(self, person_id: str, relation: str | None = None, *, actor: str = "import") -> Person:
@@ -928,8 +967,15 @@ class Archive:
         return record_type(json.loads(self.store.read(path)))
 
     def promote_person(self, person_id: str) -> int:
-        """Confirm a proposed person: supersede the people identity table
-        with the record appended (append-only). Returns the new version."""
+        """Confirm a proposed person: the row joins the table as confirmed
+        (append-only). Returns the new table version. From B3b the record is
+        the live row — a missing or rejected proposal fails loudly, and one
+        already in the table is a contradiction, never a silent no-op."""
+        if self.identities is not None:
+            self._require_proposed(self.identities, person_id, "person")
+            self.identities.promote_person(person_id, actor="import")
+            self._identity_changed()
+            return self._identity_version("people")
         record = self._proposed_record("people", person_id, Person.from_dict, "person")
         table = self.get_identity("people")
         if table is None:
@@ -939,8 +985,14 @@ class Archive:
         return self.save_identity("people", table.with_record(record.as_confirmed()))
 
     def promote_place(self, place_id: str) -> int:
-        """Confirm a proposed place: supersede the places identity table
-        with the record appended (append-only). Returns the new version."""
+        """Confirm a proposed place: the row joins the table as confirmed
+        (append-only). Returns the new table version — the person seam's
+        place twin (B3b)."""
+        if self.identities is not None:
+            self._require_proposed(self.identities, place_id, "place")
+            self.identities.promote_place(place_id, actor="import")
+            self._identity_changed()
+            return self._identity_version("places")
         record = self._proposed_record("places", place_id, Place.from_dict, "place")
         table = self.get_identity("places")
         if table is None:
@@ -955,21 +1007,13 @@ class Archive:
         dangling refs at publish. An extraction the
         reviewer kept is a link too; an unticked one (on: false) is excluded
         content and does not block the reject."""
-        extraction_kind = "person" if ref_kind == "people" else "place"
+        kind = "person" if ref_kind == "people" else "place"
         referrers: list[str] = []
         for item_id in self.item_ids():
             item = self.get_item(item_id)
             if item is None or item.status != "catalogued":
                 continue
-            refs = item.people_refs if ref_kind == "people" else item.place_refs
-            if any(ref.id == record_id for ref in refs):
-                referrers.append(item_id)
-                continue
-            if any(
-                ex.get("on") is not False and ex.get("match") == record_id
-                for ex in (item.raw.get("chat") or {}).get("extractions") or []
-                if ex.get("kind") == extraction_kind
-            ):
+            if item.references(record_id, kind):
                 referrers.append(item_id)
         return referrers
 
@@ -990,7 +1034,12 @@ class Archive:
         mention with no attestation is not a cast member. The
         proposed queue is the one place the store deletes; a double reject
         fails loudly; a record that catalogued stories still reference is
-        refused — relink the stories first."""
+        refused — relink the stories first. From B3b the row ends marked
+        rejected and the queue exporter removes its file."""
+        if self.identities is not None:
+            self._require_proposed(self.identities, person_id, "person")
+            self._reject_live(self.identities, person_id, "person", actor="import")
+            return
         self._reject_proposed("people", person_id, "person")
 
     def reject_proposed_place(self, place_id: str) -> None:
@@ -998,8 +1047,42 @@ class Archive:
         story mention with an unknown location is fiction, not a place
         entity. The proposed queue is the one place the store deletes; a
         double reject fails loudly; a record that catalogued stories still
-        reference is refused — relink the stories first."""
+        reference is refused — relink the stories first (the person seam's
+        place twin, B3b)."""
+        if self.identities is not None:
+            self._require_proposed(self.identities, place_id, "place")
+            self._reject_live(self.identities, place_id, "place", actor="import")
+            return
         self._reject_proposed("places", place_id, "place")
+
+    def _require_proposed(self, identities: Identities, record_id: str, kind: Literal["person", "place"]) -> None:
+        """The live queue's guard: a promotion or a reject needs a proposed
+        row. A crafted id never reaches the store; a missing or rejected
+        proposal fails as the old missing file did; a confirmed record is
+        already in the table, never a silent no-op."""
+        record_id = _valid_record_id(record_id)
+        record = identities.person(record_id) if kind == "person" else identities.place(record_id)
+        table = "people" if kind == "person" else "places"
+        if record is None or record.status == "rejected":
+            raise ArchiveError(f"no proposed {kind} record: {record_id}")
+        if record.status != "proposed":
+            raise ArchiveError(f"{record_id} is already in the {table} table")
+
+    def _reject_live(
+        self, identities: Identities, record_id: str, kind: Literal["person", "place"], *, actor: str
+    ) -> None:
+        """End a proposal through the live store and remove its queue file. A
+        refusal (a catalogued story still names it) surfaces as the archive's
+        own error, as the old queue verb did; the old readers' tree follows
+        the write."""
+        try:
+            if kind == "person":
+                identities.reject_person(record_id, actor=actor)
+            else:
+                identities.reject_place(record_id, actor=actor)
+        except Conflict as error:
+            raise ArchiveError(str(error)) from error
+        self._identity_changed()
 
     def _refuse_reject_while_referenced(self, record_id: str, ref_kind: str) -> None:
         referrers = self._referencing_catalogued(record_id, ref_kind)
@@ -1021,12 +1104,20 @@ class Archive:
         read-check-write is atomic under the archive's lock, so two
         concurrent cold starts cannot both compute the same next version
         and kill the walk."""
+        if self.reviews is not None:
+            self.reviews.ensure(_import_session(), actor="import")
+            self._imports_changed()
+            return
         self._mutate_identity("imports", _import_session_apply)
 
     def refresh_import_status(self) -> None:
         """Complete pending import sessions when nothing is left to review:
         the import's proposals (proposed people) are all confirmed or
         dismissed, so the session is done (user)."""
+        if self.reviews is not None:
+            self.reviews.refresh(actor="import")
+            self._imports_changed()
+            return
         people = self.get_identity("people")
         pending_people = any(p.status == "proposed" for p in people.people) if people else False
         if pending_people:
@@ -1066,6 +1157,8 @@ class Archive:
         attempts) — or None when the session doesn't exist. Typed: the
         Session class is the model (coding-standards: domain concepts are
         classes)."""
+        if self.reviews is not None:
+            return self.reviews.session(session_id)
         imports = self.get_identity("imports")
         if imports is None:
             return None
@@ -1076,6 +1169,11 @@ class Archive:
         happens inside the archive's lock, after any concurrent writer's
         change. ``mutate`` runs on the session found in the
         imports table; a missing table or session is an error to raise."""
+
+        if self.reviews is not None:
+            self.reviews.update(session_id, mutate, actor="import")
+            self._imports_changed()
+            return
 
         def apply(table: ImportsTable | None) -> ImportsTable:
             if table is None:
@@ -1092,6 +1190,10 @@ class Archive:
         the last is empty or finished (Session.start_attempt), so a
         mid-walk re-render continues the same attempt. Returns the current
         attempt's index. Atomic."""
+        if self.reviews is not None:
+            session = self.reviews.start(session_id, actor="import")
+            self._imports_changed()
+            return len(session.attempts) - 1
         result: dict[str, int] = {}
 
         def mutate(session: Session) -> Session:

@@ -31,5 +31,6 @@ class ItemStore(IdentityStore, Protocol):
 
     items: Any
     content: Any
+    reviews: Any
 
     def events_for(self, entity_id: str, *, entity_kind: str = "person") -> list[dict]: ...

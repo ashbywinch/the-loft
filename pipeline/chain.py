@@ -176,6 +176,12 @@ class Batch:
             record.started_at = datetime.now(UTC).isoformat(timespec="seconds")
             record.started_pid = os.getpid()
             record.started_host = socket.gethostname()
+        else:
+            # the pass is over: a stale stamp reads as a live pass to the
+            # sweep, and the worker's own pid is always alive
+            record.started_at = ""
+            record.started_pid = 0
+            record.started_host = ""
         store = PipelineStore(self.registry_dir)
         store.write(f"{self.batch_id}.json", json.dumps(record.to_dict(), indent=1, ensure_ascii=False) + "\n")
 

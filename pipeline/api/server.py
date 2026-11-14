@@ -37,11 +37,13 @@ from document.row_adjustments import RowAdjustments
 from document.stages import PageStatus
 from loft.live.compat import CompatibilityExport, legacy_person
 from loft.live.compat_items import ItemCompatibility
+from loft.live.compat_pages import PageCompatibility
 from loft.live.compat_reviews import ImportsCompatibility
 from loft.live.import_identity import sync_from_archive
 from loft.live.import_items import sync_items
 from loft.live.import_reviews import sync_reviews
 from loft.live.item_writes import ItemWrites
+from loft.live.page_writes import PageWrites
 from loft.live.review_writes import ReviewWrites
 from pipeline.api import auth
 from pipeline.api.approval import ApprovalContext, DocumentFacts, approve_page
@@ -104,7 +106,7 @@ from tools.records import Item, Person, Place, ReviewContext, ReviewDecision, sp
 from tools.store import FileStore
 
 if TYPE_CHECKING:
-    from loft.live.protocols import ItemStore
+    from loft.live.protocols import PageStore
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +133,7 @@ class ServerConfig:
     work_dir: Path | None = None
     outbox: Outbox | None = None
     registry_dir: Path | None = None
-    live: ItemStore | None = None
+    live: PageStore | None = None
 
 
 # The route closures ARE the FastAPI registration idiom — DI'd deps are
@@ -150,6 +152,11 @@ def build_app(
         raise RuntimeError("THE_LOFT_SESSION_SECRET is not set — refusing to start with forgeable sessions")
     archive = Archive(config.store)
     live = config.live
+    data_dir = Path(config.data_dir)
+    app_dir = Path(config.app_dir)
+    work_dir = Path(config.work_dir) if config.work_dir else LoftPaths.WORK_DIR
+    registry_dir = Path(config.registry_dir) if config.registry_dir else LoftPaths.REGISTRY_DIR
+    outbox = config.outbox if config.outbox is not None else Outbox(LoftPaths.WORK_DIR.parent / "sync-outbox")
     if live is not None:
         archive.bind_identity_service(live.identities, CompatibilityExport(live, archive).write)
         item_export = ItemCompatibility(live, archive)
@@ -161,12 +168,8 @@ def build_app(
         item_export.write_all()
         sync_reviews(live, archive)
         review_export.write()
+        archive.bind_page_service(PageWrites(live), PageCompatibility(live, work_dir).write)
     client = config.client
-    data_dir = Path(config.data_dir)
-    app_dir = Path(config.app_dir)
-    work_dir = Path(config.work_dir) if config.work_dir else LoftPaths.WORK_DIR
-    registry_dir = Path(config.registry_dir) if config.registry_dir else LoftPaths.REGISTRY_DIR
-    outbox = config.outbox if config.outbox is not None else Outbox(LoftPaths.WORK_DIR.parent / "sync-outbox")
 
     app = FastAPI(title="The Loft", docs_url=None, redoc_url=None)
     # The phone pays for every byte of the projection, the module graph and
@@ -996,13 +999,22 @@ def build_app(
         drew and what it produced. A page without persisted words (read
         before the read stage wrote them) is refused with the remedy —
         never a silent empty build."""
-        if session_user(request) is None:
+        mine = narrator(request)
+        if mine is None:
             return JSONResponse(ErrorAnswer("sign in to correct rows").to_dict(), status_code=401)
         if not BATCH_ID.match(batch_id) or not safe_page_name(page):
             return JSONResponse({"error": "invalid batch or page name"}, status_code=400)
         try:
             adjustments = RowAdjustments.from_dict(dict(body) if body else {})
-            correction = apply_row_adjustments(batch_id, page, adjustments, work_dir, registry_dir=registry_dir)
+            correction = apply_row_adjustments(
+                batch_id,
+                page,
+                adjustments,
+                work_dir,
+                registry_dir=registry_dir,
+                archive=archive,
+                actor=mine.person or "review",
+            )
         except (RegistryError, ValueError) as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)  # client errors are 4xx, never 500
         return RowAdjustmentsAnswer(

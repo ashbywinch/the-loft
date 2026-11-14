@@ -1,6 +1,6 @@
 # The rewrite plan — the database as the system of record
 
-**Status:** v0.7 — A0–A8, B1, B2, B3a and B3b landed; B4a is in review (#N),
+**Status:** v0.7 — A0–A8, B1, B2, B3a and B3b landed; B4a is in review (#116),
 B4b next. Change a row's State to its PR when it lands.
 **PR:** #89 carries A0/A1 and the boot-path fixes as one review unit (the
 user's call); the ladder's one-increment-per-PR rule applies to later
@@ -133,7 +133,7 @@ the new tests; the old and the new pass together before the flip.
 | B2 | Items, content and document agreement write through the service; the exporter writes `assets/<id>/item.json`, `transcription.txt`, `story.txt` | a save, delete and agreement each write one change; the exported sidecar equals the old shape; the item lens and the review surface work | 19.10.1 | done (#107) |
 | B3a | Review sessions write through the service: ensure, start a walk, messages, decisions, the completion rule; the exporter writes `imports.json` | a review turn persists; the transcript (with the thinking) and decisions read back; the imported `imports` state stays consistent; the chat surface works | `08` §19.4 | done (#109) |
 | B3b | The proposed queue writes through the service: propose, promote, reject; the exporter writes/removes `proposed/people|places/<id>.json` | an identify or story-capture proposal persists; promote/reject updates the old queue; the identify and capture surfaces work | `08` §19.4 | done (#113) |
-| B4a | The page's drawn row correction and row check write through the service: the correction blob (`row_adjustments`) and the page's revision; the exporter writes `row-adjustments.json` and `rows-adjusted.json` | a drawn correction and a no-lines check each write one change; the exported files equal the old writer's on a real page; the row screen works | `08` §19.4 | in review (#N) |
+| B4a | The page's drawn row correction and row check write through the service: the correction blob (`row_adjustments`) and the page's revision; the exporter writes `row-adjustments.json` and `rows-adjusted.json` | a drawn correction and a no-lines check each write one change; the exported files equal the old writer's on a real page; the row screen works | `08` §19.4 | in review (#116) |
 | B4b | Rotation and re-read requests write through the service: `pages.rotation` and the page's job state; the exporter writes the work files the current readers parse | a rotate and a re-read each write one change; the exported work files diff equal; the review surface works | `08` §19.4 | todo |
 | B5 | Story and memory capture writes through the service; the exporter writes `story.txt` | `#/add-memory` assess + save persists; the exported story is the confirmed text; the walk | `docs/PRD/MEMORIES.md` | todo |
 | B6a | Classify and orient write through the service; the exporter writes the work files the next stage reads | a scan runs classify + orient; the DB rows and the work files agree; the review hub sees the page | `04` §17.8.1 | todo |

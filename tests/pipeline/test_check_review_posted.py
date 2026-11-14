@@ -1,9 +1,11 @@
 """The review-posted gate's contract: the head commit counts as reviewed
 ONLY when an output artifact exists — a completed "PR Agent - Review"
-check run, or a guide/skip comment covering the commit. Nothing else:
-the action exits 0 whether or not the review happened (PRAgent.
-handle_request swallows every exception), so a gate that trusts the
-bot's own word re-introduces the exact bug it exists to catch."""
+check run, or the incremental skip when the review it links completed.
+Nothing else: the action exits 0 whether or not the review happened
+(PRAgent.handle_request swallows every exception), so a gate that trusts
+the bot's own word re-introduces the exact bug it exists to catch. A guide
+comment alone is not coverage — a cancelled run posts its guide and dies
+(2026-11-14, PR #116)."""
 
 import os
 import subprocess
@@ -90,39 +92,76 @@ def test_in_progress_check_run_is_not_coverage() -> None:
     assert reasons == ["the review died before publishing"]
 
 
-def test_comment_covering_the_head_is_coverage() -> None:
-    """The fallback path: no check run (the configs before
-    publish_as_check_run), but a guide comment posted after the head
-    commit landed."""
+def test_a_guide_comment_without_a_check_run_is_not_coverage() -> None:
+    """The cancelled-run case (2026-11-14, PR #116): the bot posts its guide
+    and the run dies before publishing the check run. The guide looks like a
+    review; it is not one, and the gate must fail loud."""
     assert (
         _gate(
             {
                 "/commits/abc123/check-runs": {"check_runs": []},
                 "/commits/abc123": _COMMIT,
                 "/issues/7/comments": [_GUIDE],
+            },
+            failure_reason=lambda *a: "the run was cancelled",
+        )
+        == 1
+    )
+
+
+def _skip(previous_comment_id: int) -> dict:
+    return {
+        "body": (
+            "Incremental Review Skipped\nNo files were changed since the "
+            f"[previous PR Review](https://github.com/org/repo/pull/7#issuecomment-{previous_comment_id})"
+        ),
+        "created_at": "2026-09-05T10:06:00Z",
+    }
+
+
+_PREVIOUS_GUIDE = {
+    "body": "## PR Reviewer Guide 🔍",
+    "created_at": "2026-09-05T10:05:00Z",
+}
+_PR_HEAD = {"sha": "prev1", "commit": {"committer": {"date": "2026-09-05T10:00:00Z"}}}
+
+
+def test_a_skip_is_coverage_when_the_review_it_links_completed() -> None:
+    """The incremental review's silent decision to skip — nothing new to
+    read — is coverage when the review it names actually completed (its own
+    check run on the head at that time)."""
+    assert (
+        _gate(
+            {
+                "/commits/abc123/check-runs": {"check_runs": []},
+                "/commits/prev1/check-runs": {"check_runs": [_review_check("completed")]},
+                "/commits/abc123": _COMMIT,
+                "/issues/7/comments": [_skip(555)],
+                "/issues/comments/555": _PREVIOUS_GUIDE,
+                "/pulls/7/commits": [_PR_HEAD],
             }
         )
         == 0
     )
 
 
-def test_silent_skip_is_still_coverage_via_the_comment() -> None:
-    """The incremental review's silent decision to skip — nothing new to
-    read — is coverage when it says so: the bot assessed the head and
-    concluded the existing review holds."""
-    skip = {
-        "body": "Incremental Review Skipped\nNo files were changed since the previous review",
-        "created_at": "2026-09-05T10:06:00Z",
-    }
+def test_a_skip_linking_a_cancelled_review_is_not_coverage() -> None:
+    """The review the skip names was cancelled — it posted its guide and no
+    check run. The skip would vouch for code no review ever covered; the
+    gate fails."""
     assert (
         _gate(
             {
                 "/commits/abc123/check-runs": {"check_runs": []},
+                "/commits/prev1/check-runs": {"check_runs": []},
                 "/commits/abc123": _COMMIT,
-                "/issues/7/comments": [skip],
-            }
+                "/issues/7/comments": [_skip(555)],
+                "/issues/comments/555": _PREVIOUS_GUIDE,
+                "/pulls/7/commits": [_PR_HEAD],
+            },
+            failure_reason=lambda *a: "the review it names was cancelled",
         )
-        == 0
+        == 1
     )
 
 
@@ -158,12 +197,18 @@ def test_poll_catches_a_review_that_lands_moments_later() -> None:
 
     def fetch(url: str, token: str):
         state["calls"] += 1
-        if "comments" in url:
+        if url.endswith("/issues/7/comments?since=2026-09-05T10%3A00%3A00Z&per_page=100"):
             if state["calls"] > 1:
-                return [_GUIDE]
+                return [_skip(555)]
             return []
-        if "check-runs" in url:
+        if "/commits/abc123/check-runs" in url:
             return {"check_runs": []}
+        if "/commits/prev1/check-runs" in url:
+            return {"check_runs": [_review_check("completed")]}
+        if "/issues/comments/555" in url:
+            return _PREVIOUS_GUIDE
+        if "/pulls/7/commits" in url:
+            return [_PR_HEAD]
         return _COMMIT
 
     env = {"SHA": _SHA, "GITHUB_REPOSITORY": "org/repo", "PR_NUMBER": "7", "GITHUB_TOKEN": "t"}

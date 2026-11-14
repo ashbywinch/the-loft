@@ -4,11 +4,15 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
-# One review at a time per PR; a newer push cancels the stale run rather than
-# queueing behind it (dependabot bumps and rapid fix pushes never stack).
+# One review at a time per PR, QUEUED — never cancelled. A cancelled run has
+# already posted its guide comment before it dies, and the next run's
+# incremental anchor is that comment: the next run then skips ("no new files")
+# and the PR's code is never reviewed (2026-11-14, PR #116 — two runs
+# cancelled, the third skipped, the gate accepted the skip). A newer push waits
+# its turn instead.
 concurrency:
   group: ai-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   pr-review:

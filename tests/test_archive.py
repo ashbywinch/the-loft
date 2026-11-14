@@ -737,6 +737,38 @@ def test_a_later_determination_supersedes_an_earlier_one() -> None:
     assert len(archive._identity_versions("people")) == 3
 
 
+def test_item_saves_serialize_concurrent_writers() -> None:
+    """Two saves of one item — a capture and a review agreement, the server's
+    threads — both read version N without the lock and both write N+1; the
+    store's exists() check races the rename, so the later save wins silently
+    and the earlier version is gone from the append-only chain."""
+    import threading
+
+    store = MemoryStore()
+    archive = Archive(store)
+    versions: list[int] = []
+    errors: list[Exception] = []
+    barrier = threading.Barrier(2)
+
+    def writer(title: str) -> None:
+        try:
+            barrier.wait()
+            item = _record(id="story-x", title=title)
+            versions.append(archive.save_item(item))
+        except Exception as e:  # noqa: BLE001 — the test reports every failure
+            errors.append(e)
+
+    threads = [threading.Thread(target=writer, args=(title,)) for title in ("one", "two")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert not errors
+    assert sorted(versions) == [1, 2]
+    assert store.exists("assets/story-x/item.json")
+    assert store.exists("assets/story-x/item-2.json")
+
+
 def test_concurrent_message_recording_loses_nothing() -> None:
     """record_review_message must read the imports table under the lock —
     the lock covers the read, not just the version computation: two

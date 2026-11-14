@@ -68,7 +68,7 @@ jobs:
     # Dependabot PRs are the one exclusion: the bot job skips them by policy
     # (they carry no review), so the gate must skip with it.
     needs: pr-review
-    if: always() && github.event.pull_request.user.login != 'dependabot[bot]' 
+    if: always() && github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read

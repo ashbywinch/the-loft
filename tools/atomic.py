@@ -14,6 +14,15 @@ import os
 from pathlib import Path
 
 
+def _fsync_directory(directory: Path) -> None:
+    """Flush a directory's own entries — the rename's durability."""
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def atomic_write(path: Path, content: str | bytes) -> None:
     """Write ``content`` to ``path`` atomically (temp sibling + fsync + rename)."""
     # Temp-sibling naming: retry a few times with fresh entropy — a collision
@@ -48,6 +57,10 @@ def atomic_write(path: Path, content: str | bytes) -> None:
             fh.flush()
             os.fsync(fh.fileno())
         os.replace(tmp, path)
+        # the bytes are durable once the file is fsynced; the NAME is durable
+        # only when its directory entry is — a crash can otherwise leave the
+        # old name (or no name) after the caller was told the file was written
+        _fsync_directory(path.parent)
     # then re-raises
     # lucidlint: ignore broad-except BaseException guarantees temp cleanup on EVERY exit path (incl. KeyboardInterrupt),
     except BaseException:

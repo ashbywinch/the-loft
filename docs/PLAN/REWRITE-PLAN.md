@@ -1,6 +1,6 @@
 # The rewrite plan — the database as the system of record
 
-**Status:** v0.6 — A0–A8, B1 and B2 landed; B3a is in review. Change a row's
+**Status:** v0.7 — A0–A8, B1, B2 and B3a landed; B3b is next. Change a row's
 State to its PR when it lands.
 **PR:** #89 carries A0/A1 and the boot-path fixes as one review unit (the
 user's call); the ladder's one-increment-per-PR rule applies to later
@@ -131,7 +131,7 @@ the new tests; the old and the new pass together before the flip.
 |---|---|---|---|---|
 | B1 | Identities write through the service (`Change`): confirm, resolve, reject, promote, merge; the compatibility exporter writes `people.json` (its `relationships` included — the old readers' shape), `places.json`, `orgs.json`, `themes.json`. The standalone `relationships.json` is the target human archive's (A8), not the old tree's | one confirm = one change + its events + rows; the exported tables diff equal to the old format on a real sample; a re-import is a no-op; the walk | 19.10.1 | done (#100) |
 | B2 | Items, content and document agreement write through the service; the exporter writes `assets/<id>/item.json`, `transcription.txt`, `story.txt` | a save, delete and agreement each write one change; the exported sidecar equals the old shape; the item lens and the review surface work | 19.10.1 | done (#107) |
-| B3a | Review sessions write through the service: ensure, start a walk, messages, decisions, the completion rule; the exporter writes `imports.json` | a review turn persists; the transcript (with the thinking) and decisions read back; the imported `imports` state stays consistent; the chat surface works | `08` §19.4 | in review (#109) |
+| B3a | Review sessions write through the service: ensure, start a walk, messages, decisions, the completion rule; the exporter writes `imports.json` | a review turn persists; the transcript (with the thinking) and decisions read back; the imported `imports` state stays consistent; the chat surface works | `08` §19.4 | done (#109) |
 | B3b | The proposed queue writes through the service: propose, promote, reject; the exporter writes/removes `proposed/people|places/<id>.json` | an identify or story-capture proposal persists; promote/reject updates the old queue; the identify and capture surfaces work | `08` §19.4 | todo |
 | B4 | Page work writes through the service: row adjustments, ticks, rotation, re-read requests; the exporter writes the work files the current readers parse | a drawn correction, a tick and a rotate each write one change; the exported work files diff equal; the row and review surfaces work | 18.12.21 | todo |
 | B5 | Story and memory capture writes through the service; the exporter writes `story.txt` | `#/add-memory` assess + save persists; the exported story is the confirmed text; the walk | `docs/PRD/MEMORIES.md` | todo |

@@ -66,6 +66,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The work remaining on the current subset (pipeline, ingest review, layout seams) | `docs/PLAN/WORK-PLAN.md` — the detailed designs are linked per item |
 | The DB rewrite's order, phases and per-increment gates | `docs/PLAN/REWRITE-PLAN.md` |
 | The plans folder's map (plan vs record) | `docs/PLAN/README.md` |
+| The open findings from the whole-repo review | `docs/PLAN/review-backlog.md` |
 | Code conventions | `docs/coding-standards.md` |
 | Code organisation, layers and the persistence boundary (`LiveStore`, `Change`, repositories, import rules) | `docs/TECHSPEC/08-code-organisation.md` §19 |
 | The one-time migration from the file archive to the database | `docs/TECHSPEC/11-migration.md` |

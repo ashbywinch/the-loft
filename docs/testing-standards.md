@@ -159,7 +159,7 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition: most eval
 - **Archive-quality tests are part of the gate (split to
   `make verify` at the user's request: "make test should take a couple of seconds")** —
   the archive itself is under test, not just the code: the projection drift
-  guard (committed `app/data` ≡ publish of committed archive), the
+  guard (`app/data` ≡ publish of the workspace archive), the
   description check (letters/documents are specific and correspondence-
   distinct), the place-note check (no process jargon in notes), the story-date
   check (no catalogued story dated by its told day without the narrator's

@@ -14,7 +14,7 @@ Working title: **The Loft** (approved by the user; revisitable before launch).
 
 - **Sequencing:** `docs/PLAN/PLAN.md` — thin slices, feature inventory, urgency knobs.
 
-- **Status:** Draft v0.10
+- **Status:** Draft v0.11
 - **Storage amendment (2026-11-04):** the database is the system of record; the
   plain-text archive is the viewer-facing export; the operational backup
   carries the full event log and content. Where this document says the file

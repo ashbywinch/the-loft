@@ -20,8 +20,8 @@ def _gate(responses: dict, failure_reason=None, fetch_hook=None) -> int:
     the repo's DI convention (fakes are objects/functions passed in, the
     global environment never touched). The fetch_hook validates the outgoing
     URL before delegating to the scripted responses: the gate's URL
-    construction is part of the contract (2026-09-06: a placeholder repo in
-    the check-run query 404'd in production and every pr-review crashed)."""
+    construction is part of the contract — a placeholder repo in the
+    check-run query 404s and crashes the gate."""
     env = {
         "SHA": _SHA,
         "GITHUB_REPOSITORY": "org/repo",

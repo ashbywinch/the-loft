@@ -146,9 +146,8 @@ class _ReviewSite:
                 # (the generic message), never a crash
                 try:
                     # the signed blob host's WAF rejects urllib's default UA
-                    # (the same rule that hit the gateway) — send the house's
-                    # known-good UA or the log read degrades to the generic
-                    # message
+                    # — send the house's known-good UA or the log read
+                    # degrades to the generic message
                     req2 = urllib.request.Request(
                         e.headers["Location"],
                         headers={"User-Agent": "opencode/1.14.20"},

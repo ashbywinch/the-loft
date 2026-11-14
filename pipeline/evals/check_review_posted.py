@@ -110,10 +110,10 @@ _GitHub._TRACEBACK_TAIL = 12  # lines after a traceback/marker worth reporting
 
 
 class _ReviewSite:
-    """The bot's artifacts for one repository: its run log, the failure
-    reason drawn from it, and the anchor a skip vouches for. The repo and the
-    token travel together (one site, one credential) — a free function taking
-    the pair for each read would repeat the clump."""
+    """The bot's artifacts for one repository: its run log and the failure
+    reason drawn from it. The repo and the token travel together (one site,
+    one credential) — a free function taking the pair for each read would
+    repeat the clump."""
 
     def __init__(self, repo: str, token: str) -> None:
         self.repo = repo

@@ -98,9 +98,10 @@ default. Real content never lives in code (`docs/coding-standards.md`).
 ## Git workflow
 
 - NEVER commit to main. Branch off main, PR required, protected main.
-- Auto-merge is armed by `.github/workflows/automerge.yml` on every PR and
-  re-armed on every review — never run `gh pr merge --auto` by hand. The
-  human approval and the required checks still gate the merge.
+- Auto-merge is armed by `.github/workflows/pr-automerge.yml` (the
+  omp-config reusable workflow, App token) on every PR and re-armed on every
+  review — never run `gh pr merge --auto` by hand. The human approval and the
+  required checks still gate the merge.
 - NEVER commit with `--no-verify`. If a pre-commit hook blocks a commit (a
   formatter modified files), re-stage the modified files, verify the staged
   diff matches your intent, and re-commit with the hook.

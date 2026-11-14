@@ -5,7 +5,7 @@ letters, photographs, documents, heirlooms. Vanilla HTML/CSS/JS web app with
 Python tools; no framework, no runtime backend; a dev-only esbuild boot bundle
 (`docs/TECHSPEC.md`).
 
-**Status:** product docs complete (PRD v0.9), architecture reviewed, repo
+**Status:** product docs complete (PRD v0.11), architecture reviewed, repo
 scaffolded, **prototype shipped**, and the **letter-import experiment
 landed** — the real 1949–2001 correspondence, the family record, the cast
 and places imported through the process designed by interviewing the user
@@ -31,8 +31,9 @@ rewrites `people.json`/`places.json`/`orgs.json`/`themes.json`, the versioned
 readers see the same tree. Without a database the server prints that writes stay on the file path
 (the rollback).
 
-CI runs exactly `make setup && make lint-github && make coverage` — the suites
-run once, inside `make coverage`; never ad-hoc tool commands (see `AGENTS.md`).
+CI runs the gate defined in `.github/workflows/ci.yml` (setup, lint-github,
+coverage, verify, the no-PII guard, lucidlint and the evals) — the suites run
+once, inside `make coverage`; never ad-hoc tool commands (see `AGENTS.md`).
 
 ### Supervised dev server (survives daemon restarts)
 
@@ -84,7 +85,7 @@ the server above): **name:** `loft-worker` · **application:** `./scripts/loft` 
 
 | Doc | What it is |
 |---|---|
-| `docs/PRD/PRD.md` | Product requirements — the "why" and the "what" (v0.9) |
+| `docs/PRD/PRD.md` | Product requirements — the "why" and the "what" (v0.11) |
 | `docs/PLAN/PLAN.md` | Project plan — thin slices, time to value |
 | `docs/TECHSPEC.md` | Architecture — the index; the components are in `docs/TECHSPEC/` |
 | `docs/PRD/MEMORIES.md` | Story-capture flow spec — "Add your memory" |
@@ -111,11 +112,12 @@ the server above): **name:** `loft-worker` · **application:** `./scripts/loft` 
   (`export_gedcom`, `import_gedcom`), the LAN dev server (`serve`),
   `fake_data` (demo, fictional only)
 - `tests/` — Python tests · `app/tests/` — JS tests (vitest)
-- `archive/` — the append-only store: items, identity tables, transcripts,
-  scans (see `archive/README.md`)
+- `archive/` — gitignored and absent from the checkout: the append-only store
+  (items, identity tables, transcripts, scans) lives on the workspace volume
 - The private interview records and worked-example review stay out of the public tree (real family content)
 - `docs/` — the specs and standards (routing table above)
 
-The archive (scans, sidecars, JSON) is committed to the repo during dev; on
-prod it is not committed but regularly backed up (user, 2026-08-03) — see
-`docs/TECHSPEC/02-archive-and-capture.md` §3–5 for where it lives.
+The archive (scans, sidecars, JSON) never enters the repository — `archive/`
+is gitignored and data-free in the checkout; the real content lives on the
+workspace volume and is regularly backed up (`docs/archive-durability.md`;
+`docs/TECHSPEC/07-exports.md` §18.8 for where each artefact lives).

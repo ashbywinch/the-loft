@@ -8,6 +8,7 @@ projection writes the session row and replaces its ordinal rows.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import replace
 from typing import TYPE_CHECKING
@@ -21,7 +22,9 @@ from loft.live.review_row import (
     ReviewProjection,
     ReviewRow,
     ReviewSessionRow,
+    session_from_payload,
     session_payload,
+    session_with_thinking,
 )
 from tools.records import Session
 
@@ -33,6 +36,7 @@ class Reviews:
     """The review-session collection: read through the store, write through a change."""
 
     def __init__(self, connection: sqlite3.Connection, content: ContentStore, change: Change | None = None) -> None:
+        self.connection = connection
         self.content_store = content
         self.projection = ReviewProjection(connection)
         self.change = change
@@ -57,6 +61,31 @@ class Reviews:
     def thinking(self, session_id: str, ordinal: int) -> bytes | None:
         sha = self.projection.thinking_sha(session_id, ordinal)
         return None if sha is None else self.content_store.get(sha)
+
+    def session(self, session_id: str) -> Session | None:
+        """The archive's Session — the latest event's state, thinking text
+        restored from the content store."""
+        row = self.connection.execute(
+            """SELECT payload FROM events
+               WHERE entity_kind = 'review_session' AND entity_id = ?
+               ORDER BY seq DESC LIMIT 1""",
+            (session_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        session, thinking = session_from_payload(json.loads(row["payload"]))
+        return session_with_thinking(session, thinking, self.content_store)
+
+    def session_ids(self) -> tuple[str, ...]:
+        """Every session id in its create order — the imports table's order."""
+        rows = self.connection.execute(
+            """SELECT t.session_id FROM review_sessions t
+               LEFT JOIN (SELECT entity_id, MIN(seq) AS first_seq FROM events
+                          WHERE entity_kind = 'review_session' GROUP BY entity_id) e
+                 ON e.entity_id = t.session_id
+               ORDER BY COALESCE(e.first_seq, 0), t.session_id"""
+        ).fetchall()
+        return tuple(str(row["session_id"]) for row in rows)
 
     # -- writes ------------------------------------------------------------
 

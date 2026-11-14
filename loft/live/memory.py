@@ -36,6 +36,7 @@ from loft.live.review_row import (
     ReviewSessionRow,
     session_from_payload,
     session_payload,
+    session_with_thinking,
 )
 from tools.gone_person import GonePerson
 from tools.records import Item, Person, Relationship, Session, split_content
@@ -572,6 +573,20 @@ class _MemoryReviews:
             if message.ordinal == ordinal and message.thinking_sha is not None:
                 return self.store.content.get(message.thinking_sha)
         return None
+
+    def session(self, session_id: str) -> Session | None:
+        events = [
+            event
+            for event in self.store._events
+            if event["entity_kind"] == "review_session" and event["entity_id"] == session_id
+        ]
+        if not events:
+            return None
+        session, thinking = session_from_payload(json.loads(events[-1]["payload"]))
+        return session_with_thinking(session, thinking, self.store.content)
+
+    def session_ids(self) -> tuple[str, ...]:
+        return tuple(self.store.creation_order("review_session", self.store._review_sessions))
 
     def save(self, session: Session, *, base: int | None = None) -> Session:
         change = self.change

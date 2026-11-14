@@ -53,6 +53,7 @@ from tools.store import FileStore
 if TYPE_CHECKING:
     from loft.live.identities import Identities
     from loft.live.item_writes import ItemWrites
+    from loft.live.review_writes import ReviewWrites
 
 
 def _valid_record_id(record_id: str) -> str:
@@ -108,10 +109,9 @@ def _versioned_path(label: str, subject: str, base: str, version: int) -> str:
     return f"{base}.json" if version == 1 else f"{base}-{version}.json"
 
 
-def _import_session_apply(table: ImportsTable | None) -> ImportsTable:
-    """The import-session mutation: write the pending document-import
-    session once — a no-op when it is already present."""
-    session = Session(
+def _import_session() -> Session:
+    """The default pending document-import session."""
+    return Session(
         id="import-documents",
         kind="import-review",
         title="The document import",
@@ -124,6 +124,12 @@ def _import_session_apply(table: ImportsTable | None) -> ImportsTable:
         current=None,
         attempts=(),
     )
+
+
+def _import_session_apply(table: ImportsTable | None) -> ImportsTable:
+    """The import-session mutation: write the pending document-import
+    session once — a no-op when it is already present."""
+    session = _import_session()
     # a missing table is an error to raise, never a silent stand-in
     if table is None:
         return ImportsTable(imports=(session,))
@@ -169,6 +175,8 @@ class Archive:
         self._after_identity_write: Callable[[], Any] | None = None
         self.item_writes: ItemWrites | None = None
         self._after_item_write: Callable[[str], Any] | None = None
+        self.reviews: ReviewWrites | None = None
+        self._after_review_write: Callable[[], Any] | None = None
 
     def bind_identity_service(self, identities: Identities, after_write: Callable[[], Any]) -> None:
         """Flip the identity write path to the live store (B1).
@@ -196,10 +204,25 @@ class Archive:
         if self._after_identity_write is not None:
             self._after_identity_write()
 
+    def bind_review_service(self, writes: ReviewWrites, after_write: Callable[[], Any]) -> None:
+        """Flip the review-state write path to the live store (B3).
+
+        The session verbs write one `Change` each and the imports-table
+        exporter follows, so the projection and the archive's session reads
+        see the old table.
+        """
+        self.reviews = writes
+        self._after_review_write = after_write
+
     def _item_changed(self, item_id: str) -> None:
         """The item compatibility export runs synchronously with the write."""
         if self._after_item_write is not None:
             self._after_item_write(item_id)
+
+    def _imports_changed(self) -> None:
+        """The imports-table compatibility export runs with the write."""
+        if self._after_review_write is not None:
+            self._after_review_write()
 
     # -- resolution --------------------------------------------------------
 
@@ -1021,12 +1044,20 @@ class Archive:
         read-check-write is atomic under the archive's lock, so two
         concurrent cold starts cannot both compute the same next version
         and kill the walk."""
+        if self.reviews is not None:
+            self.reviews.ensure(_import_session(), actor="import")
+            self._imports_changed()
+            return
         self._mutate_identity("imports", _import_session_apply)
 
     def refresh_import_status(self) -> None:
         """Complete pending import sessions when nothing is left to review:
         the import's proposals (proposed people) are all confirmed or
         dismissed, so the session is done (user)."""
+        if self.reviews is not None:
+            self.reviews.refresh(actor="import")
+            self._imports_changed()
+            return
         people = self.get_identity("people")
         pending_people = any(p.status == "proposed" for p in people.people) if people else False
         if pending_people:
@@ -1066,6 +1097,8 @@ class Archive:
         attempts) — or None when the session doesn't exist. Typed: the
         Session class is the model (coding-standards: domain concepts are
         classes)."""
+        if self.reviews is not None:
+            return self.reviews.session(session_id)
         imports = self.get_identity("imports")
         if imports is None:
             return None
@@ -1076,6 +1109,11 @@ class Archive:
         happens inside the archive's lock, after any concurrent writer's
         change. ``mutate`` runs on the session found in the
         imports table; a missing table or session is an error to raise."""
+
+        if self.reviews is not None:
+            self.reviews.update(session_id, mutate, actor="import")
+            self._imports_changed()
+            return
 
         def apply(table: ImportsTable | None) -> ImportsTable:
             if table is None:
@@ -1092,6 +1130,10 @@ class Archive:
         the last is empty or finished (Session.start_attempt), so a
         mid-walk re-render continues the same attempt. Returns the current
         attempt's index. Atomic."""
+        if self.reviews is not None:
+            session = self.reviews.start(session_id, actor="import")
+            self._imports_changed()
+            return len(session.attempts) - 1
         result: dict[str, int] = {}
 
         def mutate(session: Session) -> Session:

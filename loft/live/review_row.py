@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, ClassVar
 
 from loft.live.errors import StaleVersion
@@ -335,3 +335,19 @@ def session_from_payload(payload: dict[str, Any]) -> tuple[Session, dict[str, st
     return Session.from_dict(payload["session"]), {
         str(key): str(value) for key, value in (payload.get("thinking") or {}).items()
     }
+
+
+def session_with_thinking(session: Session, thinking: dict[str, str], content: Any) -> Session:
+    """The session as the archive's API returns it: the message's thinking
+    text restored from its content sha (the payload carries only the shas)."""
+    attempts = []
+    for attempt_index, attempt in enumerate(session.attempts):
+        messages = []
+        for message_index, message in enumerate(attempt.messages):
+            sha = thinking.get(ReviewRow.thinking_key(attempt_index, message_index))
+            if sha is None:
+                messages.append(message)
+            else:
+                messages.append(replace(message, thinking=content.get(sha).decode("utf-8")))
+        attempts.append(replace(attempt, messages=tuple(messages)))
+    return replace(session, attempts=tuple(attempts))

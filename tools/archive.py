@@ -668,19 +668,26 @@ class Archive:
             payload = dict(Item.from_dict(item.to_dict()).to_dict())
         except ValueError as e:
             raise ArchiveError(f"invalid item: {e}") from e
-        versions = self._sidecar_versions(item_id)
-        version = (versions[-1] if versions else 0) + 1
-        if version > 1:
-            payload["supersedes"] = self._sidecar_path(item_id, version - 1)
-        pending_content = self._with_content_assets(payload, content, version) if content is not None else []
-        # the sidecar goes FIRST: a crash mid-save leaves the version advanced
-        # (sidecar present, content missing), so the next save supersedes and
-        # writes a fresh content file. Content-first leaves an orphan content
-        # file with no sidecar — the next save collides with the same filename
-        # and is permanently blocked.
-        self.store.write_new(self._sidecar_path(item_id, version), json.dumps(payload, indent=1, ensure_ascii=False))
-        for filename, text in pending_content:
-            self.store.write_new(self.content_path(item_id, filename), text)
+        # the read-compute-write must be atomic between the server's threads:
+        # two saves of one item that both read version N both write N+1, and
+        # the store's exists() check races the rename — the later save wins
+        # silently and the earlier version is gone from the append-only chain
+        with self._save_lock:
+            versions = self._sidecar_versions(item_id)
+            version = (versions[-1] if versions else 0) + 1
+            if version > 1:
+                payload["supersedes"] = self._sidecar_path(item_id, version - 1)
+            pending_content = self._with_content_assets(payload, content, version) if content is not None else []
+            # the sidecar goes FIRST: a crash mid-save leaves the version
+            # advanced (sidecar present, content missing), so the next save
+            # supersedes and writes a fresh content file. Content-first leaves
+            # an orphan content file with no sidecar — the next save collides
+            # with the same filename and is permanently blocked.
+            self.store.write_new(
+                self._sidecar_path(item_id, version), json.dumps(payload, indent=1, ensure_ascii=False)
+            )
+            for filename, text in pending_content:
+                self.store.write_new(self.content_path(item_id, filename), text)
         return version
 
     def _with_content_assets(

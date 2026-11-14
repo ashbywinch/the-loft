@@ -1054,6 +1054,8 @@ def test_a_live_identification_writes_the_proposals_through_the_service() -> Non
     assert fern.status == "confirmed"  # a standing record is never rewritten
     table = archive.get_identity("places")
     assert table is not None and table.record("pl-mallowfield") is not None  # the compat export ran
+    # B3b: the pass's table-origin proposal also gets the old queue file
+    assert archive.store.exists("proposed/places/pl-mallowfield.json")
     assert live.verify_chain() == ()
 
 

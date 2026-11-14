@@ -27,7 +27,13 @@ on:
 
 jobs:
   automerge:
-    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    # A fork PR's run gets no repository secrets, so the reusable workflow
+    # could not mint the App token — skip it here (the reusable workflow also
+    # refuses to arm a fork, but the token step comes first). `fork` is absent
+    # on push/schedule events, where `null != true` keeps the sweep running.
+    if: >-
+      github.event.pull_request.head.repo.fork != true &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
     permissions:
       contents: read
     uses: ashbywinch/omp-config/.github/workflows/pr-automerge.yml@v0.2.7

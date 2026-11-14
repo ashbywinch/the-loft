@@ -54,6 +54,7 @@ from tools.store import FileStore
 if TYPE_CHECKING:
     from loft.live.identities import Identities
     from loft.live.item_writes import ItemWrites
+    from loft.live.page_writes import PageWrites
     from loft.live.review_writes import ReviewWrites
 
 
@@ -178,6 +179,8 @@ class Archive:
         self._after_item_write: Callable[[str], Any] | None = None
         self.reviews: ReviewWrites | None = None
         self._after_review_write: Callable[[], Any] | None = None
+        self.page_writes: PageWrites | None = None
+        self._after_page_write: Callable[[str], Any] | None = None
 
     def bind_identity_service(self, identities: Identities, after_write: Callable[[], Any]) -> None:
         """Flip the identity write path to the live store (B1).
@@ -224,6 +227,27 @@ class Archive:
         """The imports-table compatibility export runs with the write."""
         if self._after_review_write is not None:
             self._after_review_write()
+
+    def bind_page_service(self, writes: PageWrites, after_write: Callable[[str], Any]) -> None:
+        """Flip the page-work write path to the live store (B4a).
+
+        The review's row correction writes one `Change` and the page
+        compatibility exporter follows, so the review surface and the worker
+        still read the work files they parse.
+        """
+        self.page_writes = writes
+        self._after_page_write = after_write
+
+    def correct_page_rows(self, page_id: str, adjustments: bytes, *, actor: str) -> None:
+        """The reviewer's drawn row lines — one change, then the old work
+        files (`<page>.row-adjustments.json`, `<page>.rows-adjusted.json`)
+        follow from the stored blobs."""
+        writes = self.page_writes
+        if writes is None:
+            raise ArchiveError("no page service bound")
+        writes.correct_rows(page_id, adjustments, actor=actor)
+        if self._after_page_write is not None:
+            self._after_page_write(page_id)
 
     # -- resolution --------------------------------------------------------
 

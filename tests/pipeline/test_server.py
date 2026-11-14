@@ -1753,6 +1753,22 @@ def test_sync_reread_retries_a_failed_re_read_without_reorienting(tmp_path: Path
     assert layout.get("rotation", 0) == 0
 
 
+_ROW_PAGE_READING: dict[str, Any] = {
+    "page": "p1.jpg",
+    "width": 600,
+    "height": 1600,
+    "rotation": 0,
+    "revision": 1,
+    "lines": [{"index": 0, "text": "one two", "box": [50, 400, 550, 500], "words": []}],
+}
+_ROW_PAGE_WORDS: dict[str, Any] = {
+    "words": [
+        {"x0": 60, "y0": 420, "x1": 160, "y1": 470, "line": 0, "baseline": 470, "waistline": 420},
+        {"x0": 200, "y0": 420, "x1": 300, "y1": 470, "line": 0, "baseline": 470, "waistline": 420},
+    ]
+}
+
+
 def _seed_row_page(fixture: ServerFixture, batch_id: str = "adopt-0001", status: str = "review") -> None:
     """A registered batch with one page's reading and words, ready to be
     corrected: the rows reading (dims + one line) and the words the build
@@ -1776,30 +1792,72 @@ def _seed_row_page(fixture: ServerFixture, batch_id: str = "adopt-0001", status:
 
     guess = fixture.work_dir / batch_id / "ocr-guess"
     guess.mkdir(parents=True, exist_ok=True)
-    (guess / "p1.rows.json").write_text(
-        _json.dumps(
-            {
-                "page": "p1.jpg",
-                "width": 600,
-                "height": 1600,
-                "rotation": 0,
-                "revision": 1,
-                "lines": [{"index": 0, "text": "one two", "box": [50, 400, 550, 500], "words": []}],
-            }
-        ),
-        encoding="utf-8",
+    (guess / "p1.rows.json").write_text(_json.dumps(_ROW_PAGE_READING), encoding="utf-8")
+    (guess / "p1.words.json").write_text(_json.dumps(_ROW_PAGE_WORDS), encoding="utf-8")
+
+
+def _seed_live_row_page(fixture: ServerFixture) -> None:
+    """The row page in the work tree AND the live store — B4a's flipped host."""
+    from loft.live.page_row import PageState
+
+    _seed_row_page(fixture)
+    live = fixture.live
+    assert live is not None
+    with live.change(actor="import") as change:
+        change.pages.save(
+            PageState(
+                page_id="adopt-0001/p1.jpg",
+                image_asset_id="adopt-0001/p1.jpg",
+                sha256="hash-1",
+                revision=1,
+                rotation=0,
+                category="writing",
+                status="rows_pending",
+            ),
+            reading={**_ROW_PAGE_READING, "words": _ROW_PAGE_WORDS["words"]},
+        )
+
+
+def test_a_live_row_adjustment_writes_one_change_and_the_work_files(live_server: ServerFixture) -> None:
+    """B4a: the drawn line is one `Change` (the correction blob, the page's
+    revision moved), and the compatibility exporter writes the two work files
+    the surface and the worker read — the answer's rows are the file's."""
+    import json as _json
+
+    _seed_live_row_page(live_server)
+    status, body = live_server.post(
+        "/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments",
+        {"lines": [[[0.05, 0.278], [0.55, 0.278]]]},
     )
-    (guess / "p1.words.json").write_text(
-        _json.dumps(
-            {
-                "words": [
-                    {"x0": 60, "y0": 420, "x1": 160, "y1": 470, "line": 0, "baseline": 470, "waistline": 420},
-                    {"x0": 200, "y0": 420, "x1": 300, "y1": 470, "line": 0, "baseline": 470, "waistline": 420},
-                ]
-            }
-        ),
-        encoding="utf-8",
+    assert status == 200, body
+    live = live_server.live
+    assert live is not None
+    page = live.pages.get("adopt-0001/p1.jpg")
+    assert page is not None and page.revision == 2
+    assert [event["event_type"] for event in live.events_for("adopt-0001/p1.jpg", entity_kind="page")] == [
+        "created",
+        "superseded",
+    ]
+    assert live.pages.adjustment("adopt-0001/p1.jpg") is not None
+    # the reading and its rows are untouched: the correction is the drawn blob
+    reading = live.pages.reading("adopt-0001/p1.jpg")
+    assert reading is not None and reading.rows == 1
+    guess = live_server.work_dir / "adopt-0001" / "ocr-guess"
+    drawn = _json.loads((guess / "p1.row-adjustments.json").read_text())
+    assert drawn["lines"] == [[[0.05, 0.278], [0.55, 0.278]]]
+    assert _json.loads((guess / "p1.rows-adjusted.json").read_text())["rows"] == body["rows"]
+
+
+def test_a_live_row_adjustment_on_a_page_outside_the_store_is_a_conflict(live_server: ServerFixture) -> None:
+    """A batch adopted after the import has work files but no page row: the
+    correction has nowhere to write, and the route says so — never a 500."""
+    _seed_row_page(live_server)  # the work tree only
+    status, body = live_server.post(
+        "/api/sync/batch/adopt-0001/page/p1.jpg/row-adjustments",
+        {"lines": [[[0.05, 0.278], [0.55, 0.278]]]},
     )
+    assert status == 409, body
+    assert "page" in body["error"]
 
 
 def test_a_document_is_ready_for_transcription_only_after_its_row_check(server: ServerFixture) -> None:

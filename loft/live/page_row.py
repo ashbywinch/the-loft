@@ -232,17 +232,20 @@ class PageProjection:
         self, page: PageState, adjustment: AdjustmentState, position: RowPosition, *, base: int
     ) -> None:
         """Record one correction: the page's revision moves and the drawn-lines
-        row is replaced; the reading and its rows are left exactly as they are
-        (the rows derive from the reading plus this blob)."""
+        row is upserted; the reading and its rows are left exactly as they are
+        (the rows derive from the reading plus this blob). The upsert is one
+        statement, so the projection never holds a page without its
+        correction — whatever the caller's transaction boundary."""
         cursor = self.connection.execute(
             "UPDATE pages SET revision = ?, event_seq = ? WHERE page_id = ? AND revision IS ?",
             (position.version, position.event_seq, page.page_id, base),
         )
         if cursor.rowcount == 0:
             raise StaleVersion(current=self.get(page.page_id), base=base)
-        self.connection.execute("DELETE FROM row_adjustments WHERE page_id = ?", (page.page_id,))
         self.connection.execute(
-            "INSERT INTO row_adjustments (page_id, sha256, updated_at, event_seq) VALUES (?, ?, ?, ?)",
+            """INSERT INTO row_adjustments (page_id, sha256, updated_at, event_seq) VALUES (?, ?, ?, ?)
+               ON CONFLICT (page_id) DO UPDATE SET
+                 sha256 = excluded.sha256, updated_at = excluded.updated_at, event_seq = excluded.event_seq""",
             (adjustment.page_id, adjustment.sha256, adjustment.updated_at, position.event_seq),
         )
 

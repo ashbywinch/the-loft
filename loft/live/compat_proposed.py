@@ -13,7 +13,6 @@ skips an id the table already holds.
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from loft.live.protocols import IdentityStore
 from tools.archive import Archive
@@ -21,9 +20,6 @@ from tools.archive import Archive
 
 class ProposedCompatibility:
     """Maintain the old proposed-queue files from the live rows."""
-
-    # each kind's name in the store and in the old tree are the same word
-    QUEUES: tuple[str, ...] = ("people", "places")
 
     def __init__(self, store: IdentityStore, archive: Archive) -> None:
         self.store = store
@@ -33,8 +29,7 @@ class ProposedCompatibility:
         """Write a file for every proposed row, remove one whose row is
         rejected or gone; return the queue paths touched, in write order."""
         touched: list[str] = []
-        for directory in self.QUEUES:
-            collection: Any = getattr(self.store, directory)
+        for directory, collection in (("people", self.store.people), ("places", self.store.places)):
             for record in collection.all():
                 path = self._path(directory, record.id)
                 if record.status == "proposed" and not self.archive.store.exists(path):

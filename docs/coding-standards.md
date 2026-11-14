@@ -81,7 +81,7 @@ good.
   table hand-edited into `app/data/people.json` — it was the only copy, a
   merge dropped it, nothing noticed. ✓ `loft publish` is the
   sole writer and `tests/test_publish.py` fails if the committed projection
-  diverges from publish of the committed archive. A derived cache is never
+  diverges from publish of the workspace archive. A derived cache is never
   a migration source either: bootstrap scripts read the archive or the
   committed projection, never a regenerable file that a previous run may
   have polluted, and a half-run migration is fully cleaned (tracked and
@@ -339,7 +339,7 @@ good.
   to be replaced without pain.
 - **Boring over clever.** The stack is vanilla by decision; prefer the
   obvious implementation a future keeper can read in any editor.
-- **The gate provisions its own environment; CI runs the same targets, nothing more.** Anything the gate needs — a system tool like tesseract or ImageMagick included — is installed *by a make target*, into the project (a sibling of `.venv`), never assumed preinstalled, never a step in `ci.yml`. CI is exactly `make setup && make lint-github && make coverage && make verify`, and **no other step**. ✗ an "install OCR tooling" step in `ci.yml`, or a `check-tools` target that fails with "run `apt-get install`", both broke this: CI diverged from the developer's machine the moment their package sets differed, and a developer installing by hand got a subtly different tool than CI. The Makefile's `install-tools` target installs tesseract + ImageMagick into `.conda-tools` via micromamba/conda-forge (no `sudo`, no system mutation, same binary versions on every machine). A machine that genuinely cannot install them fails loudly at that step, not in the middle of the suite.
+- **The gate provisions its own environment; CI runs the same targets, nothing more.** Anything the gate needs — a system tool like tesseract or ImageMagick included — is installed *by a make target*, into the project (a sibling of `.venv`), never assumed preinstalled, never a step in `ci.yml`. CI runs `make setup && make lint-github && make coverage && make verify`, then the no-PII guard, `make lucidlint` and `make evals` (`.github/workflows/ci.yml`), and **no other step**. ✗ an "install OCR tooling" step in `ci.yml`, or a `check-tools` target that fails with "run `apt-get install`", both broke this: CI diverged from the developer's machine the moment their package sets differed, and a developer installing by hand got a subtly different tool than CI. The Makefile's `install-tools` target installs tesseract + ImageMagick into `.conda-tools` via micromamba/conda-forge (no `sudo`, no system mutation, same binary versions on every machine). A machine that genuinely cannot install them fails loudly at that step, not in the middle of the suite.
 
 ## Python (`tools/`, `tests/`)
 

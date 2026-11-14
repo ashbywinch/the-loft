@@ -11,8 +11,9 @@ Instructions for AI agents working in this repo. Humans can read this too.
 ## Testing Rules
 
 - ALWAYS use `make` targets; NEVER construct ad-hoc test commands.
-- CI runs exactly: `make setup && make lint-github && make coverage && make verify` — the
-  suites run ONCE, inside `make coverage`.
+- CI runs the gate in `.github/workflows/ci.yml`: `make setup && make lint-github
+  && make coverage && make verify`, then the no-PII guard, `make lucidlint` and
+  `make evals` — the suites run ONCE, inside `make coverage`.
 - `make test` and `make coverage` both depend on `make lint` and
   `make typecheck` — lint gates test.
 - Three pytest selections, never mixed: `make test` = the fast unit gate

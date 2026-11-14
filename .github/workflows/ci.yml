@@ -37,7 +37,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
       - run: make setup
       - run: make lint-github
-      - run: make coverage # the gate: lint + typecheck + the suites ONCE, instrumented (2026-08-11: make test + make coverage used to run pytest and vitest twice)
+      - name: Coverage (the gate)
+        # the unit suite builds the model client for the classify/orient seams,
+        # so the key is needed here too — scoped to this step and the evals,
+        # never the job (checkout and the third-party actions used to inherit it)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: https://gateway.ai.cloudflare.com/v1/e21a5be58ac1e8f7d5619539feb2dc3d/default/compat
+          CLOUDFLARE_AIGATEWAY_TOKEN: ${{ secrets.OPENAI_API_KEY }}
+        run: make coverage # the gate: lint + typecheck + the suites ONCE, instrumented (2026-08-11: make test + make coverage used to run pytest and vitest twice)
       - run: make verify # the archive-quality data checks — the gate keeps them; they skip in CI (no archive in the checkout) and run locally
       - name: No family PII in the repository
         # The marker list is the PII_MARKERS secret (a JSON array or one per

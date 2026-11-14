@@ -30,6 +30,7 @@ from document.row_adjustments import RowAdjustments
 from document.stages import PageStatus
 from document.traces import Traces
 from document.words import Words
+from loft.live.batch_row import page_id_of
 from pipeline.api.row_correction import RowCorrection
 from pipeline.artefacts import BatchArtefacts
 from pipeline.batch_record import BatchRecord
@@ -462,6 +463,8 @@ def apply_row_adjustments(
     work_dir: Path,
     *,
     registry_dir: Path = LoftPaths.REGISTRY_DIR,
+    archive: Archive | None = None,
+    actor: str = "review",
 ) -> RowCorrection:
     """The reviewer's drawn row lines -> the page's rows
     (`rows.adjust` over the words the read stage persisted, each with
@@ -483,7 +486,12 @@ def apply_row_adjustments(
 
     A page whose words were never persisted (read before the read stage
     wrote them) cannot be corrected — ValueError, never a silent empty
-    build."""
+    build.
+
+    From B4a a bound archive records the drawn lines as one `Change` and the
+    compatibility exporter writes the two files from the stored blobs; the
+    build above stays the answer's source, so the response and the file agree.
+    """
     if not BATCH_ID.match(batch_id) or not safe_page_name(page):
         raise ValueError("invalid batch or page name")
     readings = BatchReadings(work_dir, batch_id)
@@ -493,8 +501,10 @@ def apply_row_adjustments(
         raise ValueError(f"no reading for {page} — the read stage must run first")
     if not words_path.is_file():
         raise ValueError(f"no words for {page} — re-read the page, then draw its rows")
-    words = Words.from_dict(json.loads(words_path.read_text(encoding="utf-8")))
-    reading = RowsReading.from_dict(json.loads(rows_path.read_text(encoding="utf-8")))
+    raw_words = json.loads(words_path.read_text(encoding="utf-8"))
+    words = Words.from_dict(raw_words)
+    raw_reading = json.loads(rows_path.read_text(encoding="utf-8"))
+    reading = RowsReading.from_dict(raw_reading)
     traces = Traces(
         words=tuple(words),
         adjustments=adjustments,
@@ -504,8 +514,13 @@ def apply_row_adjustments(
     rows = builder.adjust(adjustments)
     violations = tuple(builder.validate(traces))
     adjustments_json = json.dumps(adjustments.to_dict(), ensure_ascii=False, indent=1)
-    atomic_write(readings.adjustments_path(page), adjustments_json + "\n")
-    atomic_write(readings.adjusted_rows_path(page), json.dumps(Rows.to_dict(rows), ensure_ascii=False, indent=1) + "\n")
+    if archive is not None and archive.page_writes is not None:
+        archive.correct_page_rows(page_id_of(batch_id, page), (adjustments_json + "\n").encode("utf-8"), actor=actor)
+    else:
+        atomic_write(readings.adjustments_path(page), adjustments_json + "\n")
+        atomic_write(
+            readings.adjusted_rows_path(page), json.dumps(Rows.to_dict(rows), ensure_ascii=False, indent=1) + "\n"
+        )
     if adjustments.lines:
         _ = set_status(batch_id, BatchRecord.STATUS_PENDING, registry_dir)
     return RowCorrection(rows=rows, violations=violations, tints=row_tints(rows))

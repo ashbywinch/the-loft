@@ -143,6 +143,43 @@ class Pages:
         )
         return saved
 
+    def correct(self, page_id: str, adjustments: bytes, *, adjustment_at: str) -> PageState:
+        """Record the reviewer's drawn lines as the page's current correction —
+        one change. The revision advances; the reading and its rows are not
+        rewritten, because the corrected rows derive from the reading plus this
+        blob (a re-read's newer rows are never replaced by an older correction)."""
+        change = self.change
+        if change is None:
+            raise Conflict("pages.correct needs a change")
+        current = self.require(page_id)
+        adjustment = AdjustmentState(
+            page_id=page_id,
+            sha256=change.content.put(adjustments, mime="application/json"),
+            updated_at=adjustment_at,
+        )
+        version = current.revision + 1
+        payload = page_payload(replace(current, revision=version), self.reading(page_id), adjustment)
+        event = change.append(
+            entity_kind="page",
+            entity_id=page_id,
+            event_type="superseded",
+            entity_version=version,
+            payload=payload,
+        )
+        saved = replace(current, revision=version, event_seq=event["seq"])
+        self.projection.write_correction(
+            saved,
+            adjustment,
+            RowPosition(
+                version=version,
+                event_no=event["event_no"],
+                event_seq=event["seq"],
+                updated_at=event["recorded_at"],
+            ),
+            base=current.revision,
+        )
+        return saved
+
 
 def _bytes(value: dict[str, Any]) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")

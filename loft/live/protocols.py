@@ -34,3 +34,9 @@ class ItemStore(IdentityStore, Protocol):
     reviews: Any
 
     def events_for(self, entity_id: str, *, entity_kind: str = "person") -> list[dict]: ...
+
+
+class PageStore(ItemStore, Protocol):
+    """What a page work write needs beyond the item surface (B4)."""
+
+    pages: Any

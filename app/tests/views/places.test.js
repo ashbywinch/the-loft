@@ -49,7 +49,7 @@ describe("places fallback map", () => {
     // the map once joined three place ids written into the view; the archive
     // does not hold them, so the line never drew. Geography is archive
     // content: the dots are the places the projection handed over.
-    const svg = buildFallbackMap([{ id: "pl-iron-wharf", name: "Iron Wharf", x: 55, y: 58 }], new Map([["pl-iron-wharf", 2]]));
+    const svg = buildFallbackMap([{ id: "pl-mallowfield", name: "Mallowfield", x: 55, y: 58 }], new Map([["pl-mallowfield", 2]]));
     expect(svg.querySelector("path")).toBeNull();
     expect([...svg.querySelectorAll("circle.map-pin")]).toHaveLength(1);
   });

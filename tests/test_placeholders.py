@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from tools.placeholders import asset_svg
+import pytest
+
+from tools.placeholders import asset_svg, svg_photo
 from tools.records import Item
 
 
@@ -70,3 +72,10 @@ def test_letter_asset_not_named_page_falls_back_to_page_one() -> None:
         _item(id="letter-a", type="letter", assets=[{"kind": "page", "file": "envelope.jpg"}]), "envelope.jpg"
     )
     assert "1 / 1" in svg
+
+
+def test_an_unknown_hue_fails_loudly_with_the_palette() -> None:
+    """A hue outside the placeholder palette is a data error: the default would
+    hide a bad record, and a bare KeyError names nothing."""
+    with pytest.raises(ValueError, match="unknown placeholder hue: 'teal'"):
+        svg_photo("Aria", "teal")

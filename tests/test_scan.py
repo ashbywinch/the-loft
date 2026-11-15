@@ -53,6 +53,17 @@ def test_pick_device_rejects_no_scanner() -> None:
         _ = pick_device([])
 
 
+def test_the_sane_config_dir_is_passed_under_its_own_name(tmp_path: Path) -> None:
+    """scanimage reads SANE_CONFIG_DIR, not the class attribute's dotted name:
+    the static airscan device entry lives in the user config, so a misnamed
+    variable left the scanner invisible."""
+    from tools.scan import _sane_env
+
+    (tmp_path / "dll.conf").write_text("airscan\n", encoding="utf-8")
+    assert _sane_env(tmp_path)["SANE_CONFIG_DIR"] == str(tmp_path)
+    assert "ScanJob.SANE_CONFIG_DIR" not in _sane_env(tmp_path)
+
+
 def test_ensure_job_dir_creates_inbox_and_returns_job_path(tmp_path: Path) -> None:
     inbox = tmp_path / "inbox"
     job_dir = ensure_job_dir(inbox, "Box-1-Letters-1977")

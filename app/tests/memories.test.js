@@ -387,6 +387,36 @@ describe("the capture chat", () => {
     ]);
   });
 
+  it("an abandoned session's draft carries the review's edits and redactions", async () => {
+    // the review stage invites redaction; a closed tab must not re-post the
+    // words the narrator removed
+    const fetchMock = flowFetch();
+    vi.stubGlobal("fetch", fetchMock);
+    const state = { ...STATE };
+    const sheet = await openSheetVia(state);
+    setInput("We went to Marlock.");
+    sendBtn().click();
+    await tick();
+    action("That's everything").click();
+    await tick();
+    await tick();
+    setInput("the summer of 1970");
+    sendBtn().click();
+    await tick();
+    await tick();
+    action("I'd rather not say").click();
+    await tick();
+    await tick();
+    const review = sheet.querySelector(".sheet-form textarea.field-textarea");
+    review.value = "We went to Marlock."; // the narrator redacted the rest
+    review.dispatchEvent(new Event("input"));
+    [...sheet.querySelectorAll(".btn")].find((b) => b.getAttribute("aria-label") === "Close").click();
+    await tick();
+    await tick();
+    const draft = fetchMock.mock.calls.find(([u]) => u === "/api/save");
+    expect(JSON.parse(draft[1].body).account).toBe("We went to Marlock.");
+  });
+
   it("saves an abandoned session as a draft — nothing told is lost", async () => {
     const fetchMock = vi.fn((url) => {
       if (url === "/api/health") return Promise.resolve(okJson({ ok: true }));

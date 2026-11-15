@@ -47,6 +47,7 @@ from pipeline.api.device_token_request import DeviceTokenRequest
 from pipeline.api.grant_answer import GrantAnswer
 from pipeline.api.login_answer import LoginAnswer
 from pipeline.api.me_answer import MeAnswer
+from pipeline.api.members import family_members
 from pipeline.api.minted_session import MintedSession
 from pipeline.api.oauth_client import OAuthClient
 from pipeline.api.oauth_request import OAuthRequest
@@ -109,20 +110,10 @@ def web_client_secret() -> str:
     return os.environ.get("THE_LOFT_GOOGLE_WEB_CLIENT_SECRET", "").strip()
 
 
-def family_members(_env: Mapping[str, str] | None = None) -> frozenset[str]:
-    """The household's allowlist: who may read the archive, from
-    ``THE_LOFT_FAMILY_MEMBERS`` (a comma-separated list of the family's Google
-    accounts), casefolded like the archive matches people. Unset is NOBODY:
-    an empty list is the safe reading of "not configured", so the private
-    layer never opens because an operator forgot a variable."""
-    env = os.environ if _env is None else _env
-    listed = env.get("THE_LOFT_FAMILY_MEMBERS", "").split(",")
-    return frozenset(email.strip().casefold() for email in listed if email.strip())
-
-
 def is_member(user: SessionUser | None) -> bool:
-    """Whether the signed-in account is family. No session is never a member —
-    the routes answer their own 401 for that, with the message they each own."""
+    """Whether the signed-in account is family — one of the people Houses
+    knows (``pipeline.api.members``). No session is never a member: the routes
+    answer their own 401 for that, with the message they each own."""
     return user is not None and user.email in family_members()
 
 

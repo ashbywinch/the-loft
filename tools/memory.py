@@ -540,10 +540,9 @@ class Assessor:
     _QUESTION_RULES = (
         f"Question rules. Ask only what is missing and matters, at most {Question.MAX_QUESTIONS}; "
         "every question is skippable and nothing is required. "
-        # dates get their own rule because they have their own logic — a stated
-        # date is a fact, a missing one is a question, and a computable one is
-        # neither. As a clause in the list below it was one of seven things to
-        # remember in one sentence, and a run that skipped it skipped it.
+        # dates carry their own logic — a stated date is a fact, a missing one
+        # is a question, a computable one is neither — so they are decided here
+        # and the list below keeps only the non-date asks
         "Dates, in this order: a date the account states is asserted as a fact, never asked "
         "for; when the events have a time but no date, ask for the event date; when the account "
         "gives an age and no date of birth is known or stated, ask for the date of birth, "

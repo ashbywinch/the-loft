@@ -175,3 +175,26 @@ def test_minted_session_grace_window(monkeypatch: pytest.MonkeyPatch) -> None:
     _expire_the_grace(started.state)
     assert auth.minted_session(started.state) is None
     assert auth.minted_session("no-such-state") is None
+
+
+def test_the_family_list_is_the_allowlist() -> None:
+    """Who may read the archive: the accounts named in
+    THE_LOFT_FAMILY_MEMBERS, casefolded (the archive matches people that way)."""
+    assert auth.family_members({"THE_LOFT_FAMILY_MEMBERS": "Member@Example.com, other@example.com ,,"}) == frozenset(
+        {"member@example.com", "other@example.com"}
+    )
+
+
+def test_no_list_means_nobody() -> None:
+    """Unset is nobody, never everybody: the private layer must not open
+    because an operator forgot a variable."""
+    assert auth.family_members({}) == frozenset()
+    assert auth.is_member(SessionUser("member@example.com")) is False
+
+
+def test_a_session_is_a_member_only_when_its_email_is_listed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # lucidlint: ignore monkeypatch the allowlist config seam — the gate reads it per request
+    monkeypatch.setenv("THE_LOFT_FAMILY_MEMBERS", "member@example.com")
+    assert auth.is_member(SessionUser("MEMBER@example.com")) is True
+    assert auth.is_member(SessionUser("stranger@example.com")) is False
+    assert auth.is_member(None) is False

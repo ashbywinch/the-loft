@@ -45,6 +45,9 @@ export async function loadBootstrap() {
   const res = await fetch("/api/bootstrap", { headers: { Accept: "application/json" } });
   if (res.status === 404 || res.status === 410) return { noApi: true };
   if (res.status === 401) return { signedIn: false };
+  // signed in, but not on the family list: the app says so plainly instead of
+  // reporting a failed load (the private layer is the household's)
+  if (res.status === 403) return { notAMember: true };
   if (!res.ok) {
     // Surface the operator's remedy, not an internal status code.
     let detail = "";

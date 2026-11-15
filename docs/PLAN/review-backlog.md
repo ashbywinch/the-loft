@@ -10,17 +10,6 @@ later reader can tell a closed finding from an unexamined one.
 A row names the defect, its trigger and where it lives. Fix related rows in
 one bundle — the gate is slow, so a bundle per theme, not a PR per line.
 
-## Open — the live store
-
-| Where | Defect and trigger |
-|---|---|
-| `loft/live/page_row.py:186` | `PageProjection.write` deletes `readings`, `page_rows` and `row_adjustments` unconditionally, so a status-only `Pages.save(page)` erases a page's reading and the reviewer's correction. |
-| `loft/live/store.py:107` | `rebuild` runs in autocommit with no lock: a kill mid-replay leaves the projections empty and a concurrent reader sees an empty archive. |
-| `loft/live/operational.py:176` | the backup reads the dump, content, events and `exported_through` at different moments — a write landing mid-backup yields a torn set with a manifest claiming more. |
-| `loft/live/batches.py:50` | `save(batch, scans=())` deletes the scans and writes an empty list: a status-only supersede erases the batch's pages from the manifest's image leg. |
-| `loft/live/export.py:478` | the manifest's page entry is `scan.page_id.partition("/")[2]` on a two-segment id — every page records `""`. |
-| `loft/live/change.py:83` | SQLite errors escape: `BEGIN IMMEDIATE` under a second writer raises a raw `database is locked`, and a nested change gives `cannot start a transaction within a transaction`; `errors.Busy` is declared and never raised. |
-
 ## Open — the pipeline and the API
 
 | Where | Defect and trigger |
@@ -39,6 +28,8 @@ one bundle — the gate is slow, so a bundle per theme, not a PR per line.
 | `app/views/identify.js:113` | `mergeAnswer` replaces the item in `state.items` but not in `state.byId`, so the item page shows pre-identify mentions until a reload. |
 | `app/data.js:138` | `documentsToReview` counts `documents_ready` only while the hub adds `documents_partial`: a half row-checked batch contributes 0 to the front door. |
 | `app/views/item.js:192` | provenance source URLs go into `href` with no scheme check — an ingested `javascript:` URL runs on click. |
+
+Dismissed: `export.py`'s manifest page field — `f"{batch}/{page}".partition("/")[2]` is the page name; the id has two segments and the reviewer misread it.
 
 ## Open — policy and test design
 
@@ -59,3 +50,4 @@ one bundle — the gate is slow, so a bundle per theme, not a PR per line.
 | a page mid re-read could be approved; the review stage's redactions were lost on close; the SANE config env var was misnamed; an unknown placeholder hue raised a bare `KeyError` | #124 |
 | the review prompt read a hedge as doubt about the record (the confidence eval) | #122 |
 | README's committed-archive claim and the three "CI runs exactly" lists; the PRD version | #121 |
+| the live store: a status-only page save no longer erases the reading/rows; a status-only batch save no longer erases the scans; `rebuild_all` and the backup are one transaction under the lock; a locked database is `Busy`, a nested change `Conflict`; the orient call gets room to think | #126 |

@@ -138,11 +138,12 @@ export function pagesToCheck(batches) {
 export function documentsToReview(batches) {
   // the transcription review is the stage AFTER the row check: a batch's
   // `documents_ready` lists the documents whose pages are all checked, and
-  // only those are reviewable words (docs/PLAN/row-correction-rule.md; a
-  // strip-era batch has none — its pages were never read as rows)
+  // `documents_partial` the ones part-checked — their checked pages are
+  // already reviewable, so both are review work (docs/PLAN/row-correction-rule.md;
+  // a strip-era batch has none — its pages were never read as rows)
   return (batches ?? [])
     .filter((batch) => batch.status !== "confirmed")
-    .reduce((count, batch) => count + (batch.documents_ready ?? []).length, 0);
+    .reduce((count, batch) => count + (batch.documents_ready ?? []).length + (batch.documents_partial ?? []).length, 0);
 }
 
 /** The documents whose people and places still wait on the family (stage 8):

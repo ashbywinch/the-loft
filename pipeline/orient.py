@@ -37,7 +37,13 @@ class PageOrientation:
     )
 
     @staticmethod
-    def rotation(image: Path, *, model: str = ModelConfig.VISION_MODEL, urlopen: Any = None) -> int:
+    def rotation(
+        image: Path,
+        *,
+        model: str = ModelConfig.VISION_MODEL,
+        api_key: str | None = None,
+        urlopen: Any = None,
+    ) -> int:
         """The clockwise rotation (0/90/180/270) that makes the page's text upright."""
         answer = transcribe_image_vlm(
             image,
@@ -45,6 +51,7 @@ class PageOrientation:
             system="You orient scanned document pages.",
             user_text=PageOrientation._PROMPT,
             max_tokens=500,
+            api_key=api_key,
             urlopen=urlopen,
         )
         data = extract_json(answer.answer)

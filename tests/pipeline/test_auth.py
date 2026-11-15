@@ -28,7 +28,7 @@ def _expire_the_grace(state: str) -> None:
 
 
 def test_session_cookie_round_trips() -> None:
-    cookie = auth._make_session_cookie(SessionUser("alex@example.com", "Alex Hale", "pic"))
+    cookie = auth.session_cookie(SessionUser("alex@example.com", "Alex Hale", "pic"))
     session = auth.session_user_from_cookie(f"session={cookie}; other=1")
     assert session == SessionUser("alex@example.com", "Alex Hale", "pic")
 
@@ -40,7 +40,7 @@ def test_session_identity_casefolds_the_email() -> None:
 
 
 def test_session_cookie_rejects_tampering() -> None:
-    cookie = auth._make_session_cookie(SessionUser("alex@example.com", "Alex Hale", ""))
+    cookie = auth.session_cookie(SessionUser("alex@example.com", "Alex Hale", ""))
     tampered = cookie[:-4] + ("AAAA" if cookie[-4:] != "AAAA" else "BBBB")
     assert auth.session_user_from_cookie(tampered) is None
     assert auth.session_user_from_cookie(None) is None
@@ -83,7 +83,7 @@ def test_me_payload_uses_the_archive_person(monkeypatch: pytest.MonkeyPatch) -> 
             {"people": [{"id": "p-alex", "name": "Alex Hale", "email": "alex@example.com"}], "relationships": []},
         ),
     )
-    cookie = f"{auth.GoogleOAuth.COOKIE_NAME}={auth._make_session_cookie(SessionUser('alex@example.com', 'A', ''))}"
+    cookie = f"{auth.GoogleOAuth.COOKIE_NAME}={auth.session_cookie(SessionUser('alex@example.com', 'A', ''))}"
     session = auth.session_user_from_cookie(cookie)
     assert session is not None
     answer = auth.me_payload(archive, session)

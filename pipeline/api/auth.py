@@ -47,7 +47,7 @@ from pipeline.api.device_token_request import DeviceTokenRequest
 from pipeline.api.grant_answer import GrantAnswer
 from pipeline.api.login_answer import LoginAnswer
 from pipeline.api.me_answer import MeAnswer
-from pipeline.api.members import family_members
+from pipeline.api.members import is_member
 from pipeline.api.minted_session import MintedSession
 from pipeline.api.oauth_client import OAuthClient
 from pipeline.api.oauth_request import OAuthRequest
@@ -108,13 +108,6 @@ def web_client_id() -> str:
 
 def web_client_secret() -> str:
     return os.environ.get("THE_LOFT_GOOGLE_WEB_CLIENT_SECRET", "").strip()
-
-
-def is_member(user: SessionUser | None) -> bool:
-    """Whether the signed-in account is family — one of the people Houses
-    knows (``pipeline.api.members``). No session is never a member: the routes
-    answer their own 401 for that, with the message they each own."""
-    return user is not None and user.email in family_members()
 
 
 def session_secret(_env: Mapping[str, str] | None = None) -> str:

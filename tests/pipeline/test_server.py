@@ -18,7 +18,9 @@ from PIL import Image
 
 from loft.live.import_identity import sync_from_archive
 from loft.live.memory import MemoryLiveStore
+from pipeline.api import auth
 from pipeline.api.server import ServerConfig, create_server
+from pipeline.api.session_user import SessionUser
 from pipeline.api.sync import Outbox
 from pipeline.registry import load_batch
 from tools.archive import Archive
@@ -552,9 +554,6 @@ def test_write_apis_reject_a_foreign_origin(server: ServerFixture) -> None:
 def _stranger_cookie() -> str:
     """A signed-in session for an account that is NOT on the family list — a
     Google account anyone can have."""
-    from pipeline.api import auth
-    from pipeline.api.session_user import SessionUser
-
     return f"{auth.GoogleOAuth.COOKIE_NAME}={auth._make_session_cookie(SessionUser('stranger@example.com', '', ''))}"
 
 

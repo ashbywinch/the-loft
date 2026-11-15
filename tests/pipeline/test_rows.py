@@ -382,3 +382,14 @@ def test_a_right_to_left_stroke_is_the_same_row() -> None:
     builder = Rows.from_traces(traces)
     _ = builder.adjust(traces.adjustments)
     assert not [v for v in builder.validate(traces) if "runs at" in v]
+
+
+def test_a_line_short_of_a_wide_words_centre_does_not_crash() -> None:
+    """A stroke that runs across a line (at least half its width) and covers
+    its word but stops short of the word's centre: the line is replaced, and
+    the replacement test must not look up a line the stroke's reach never
+    named (a KeyError 500'd the correction route and lost the drawing)."""
+    words = _words((400, 100, 700, 160), line=1)
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(250, 500, 130)))
+    assert len(rows) == 1
+    assert [b.x0 for b in rows[0].word_boxes] == [400]

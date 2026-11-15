@@ -267,8 +267,12 @@ class _Claims:
                 if (
                     word.line is not None
                     and word.line in replacing[index]
+                    # the centre test is the ONE claim rule for a word lying
+                    # along the line: a word with no reading line used to be
+                    # claimed on box-touch alone — the halo rule for that
+                    # subset (review, 2026-11-14)
                     or i in covered[index]
-                    and (word.line is None or span.distance_to_point(word.cx, word.cy) <= self.unit / 2)
+                    and span.distance_to_point(word.cx, word.cy) <= self.unit / 2
                 ):
                     candidates.append((span.distance_to(word.rect), index))
             if candidates:
@@ -399,17 +403,30 @@ class _Claims:
 
         A word need not have been claimed to be a mark: the asterisk the
         reader attached to a line is often too far from the stroke to claim,
-        and it is still not a row of its own. So every word the stroke passes
-        near is tested, against the stroke nearest it."""
+        and it is still not a row of its own. So the row is decided by the
+        stroke that DRAWS the mark's own reading line — not by how near the
+        mark sits: measured by distance alone, an asterisk in the leading kept
+        the row of the line it was attached to (review, 2026-11-14). A word
+        with no reading line has no such stroke, so it keeps the distance
+        test."""
         words = self.words
+        # the strokes that draw each reading line: a line is drawn when the
+        # reviewer's stroke claimed one of its words
+        drawn: dict[int, set[int]] = {}
+        for j, owner in enumerate(owner_of):
+            line = words[j].line
+            if owner is not None and line is not None:
+                drawn.setdefault(line, set()).add(owner)
         for i, word in enumerate(words):
             if self._is_rule(word) or word.height > self.unit:
                 continue
-            near = [(span.distance_to(word.rect), index) for index, span in enumerate(self.spans)]
-            near = [candidate for candidate in near if candidate[0] <= self.touch]
+            if word.line is None:
+                near = [index for index, span in enumerate(self.spans) if span.distance_to(word.rect) <= self.touch]
+            else:
+                near = [index for index in drawn.get(word.line, ()) if self._annotation_reach(index, word)]
             if not near:
                 continue
-            stroke = min(near)[1]
+            stroke = min(near, key=lambda index: self.spans[index].distance_to(word.rect))
             span = self.spans[stroke]
             over = any(
                 words[j].line == word.line and min(word.x1, words[j].x1) > max(word.x0, words[j].x0)
@@ -419,6 +436,12 @@ class _Claims:
             if over and (word.y1 <= span.y_lo or word.y0 >= span.y_hi):
                 owner_of[i] = None
                 self.discounted.add(i)
+
+    def _annotation_reach(self, index: int, word: Word) -> bool:
+        """Is the mark within the drawn row's leading — between its own row and
+        the next one? A box further off belongs to another row's writing, and
+        a drawn line must not unclaim it."""
+        return self.spans[index].distance_to(word.rect) <= self.spacing
 
     def violations(self) -> list[str]:
         """The row invariants this page's traces break — one line each.

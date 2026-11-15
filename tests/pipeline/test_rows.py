@@ -348,9 +348,12 @@ def test_a_line_that_merges_two_reading_lines_is_named() -> None:
 
 def test_a_line_off_the_writing_slope_is_named() -> None:
     """A stroke swiped diagonally across the page is not a row line (A5: the
-    writing runs within a few degrees)."""
+    writing runs within a few degrees). The stroke runs through the word's
+    centre, which is how any word is claimed — the diagonal this test used
+    before claimed it on box-touch alone, the halo rule for a word with no
+    reading line."""
     words = _words((100, 100, 200, 130))
-    steep = [(0.1, 0.1), (0.9, 0.9)]
+    steep = [(0.05, 0.015), (0.25, 0.215)]  # through the word's centre, 45°
     traces = Traces(words=tuple(words), adjustments=_drawn(steep), page_size=PAGE_SIZE)
     violations = Rows.from_traces(traces).validate(traces)
     assert any(v.startswith("line 1 runs at") for v in violations), violations
@@ -382,3 +385,25 @@ def test_a_line_short_of_a_wide_words_centre_does_not_crash() -> None:
     rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(250, 500, 130)))
     assert len(rows) == 1
     assert [b.x0 for b in rows[0].word_boxes] == [400]
+
+
+def test_an_annotation_in_the_leading_does_not_keep_its_reading_line() -> None:
+    """The asterisk the reader ATTACHED to a line (it carries that reading
+    line) sits in the leading, too far above the stroke to be within the
+    touch. Rule 4 still makes it a mark, not a row's word — the stroke that
+    draws its row is what decides, not the distance to it."""
+    asterisk = Word(200, 60, 230, 90, line=1)
+    words = _words((100, 100, 220, 130), (300, 100, 420, 130), line=1) + [asterisk]
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(100, 420, 115)))
+    placed = [box for row in rows for box in row.word_boxes]
+    assert (200, 60, 230, 90) not in [(b.x0, b.y0, b.x1, b.y1) for b in placed], "the asterisk kept a row"
+
+
+def test_a_word_with_no_reading_line_is_claimed_by_its_centre() -> None:
+    """A word the reader gave no reading line is claimed by the same rule as
+    every other word — its centre within half a writing height of the stroke —
+    never by box-touch alone (the halo rule this page was corrected away
+    from). Its box clips the stroke; its centre is a writing height away."""
+    words = _words((100, 100, 200, 130), (300, 80, 340, 110))  # the second clips the stroke
+    rows = Rows.from_words(words, PAGE_SIZE).adjust(_drawn(_line(100, 400, 115)))
+    assert [b.x0 for row in rows for b in row.word_boxes] == [100]

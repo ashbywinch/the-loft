@@ -707,14 +707,6 @@ summary:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.map-route {
-  stroke: var(--accent);
-  stroke-width: 0.6;
-  stroke-dasharray: 1.6 1.2;
-  fill: none;
-  opacity: 0.7;
-}
-
 .map-pin {
   fill: var(--accent);
   transition:

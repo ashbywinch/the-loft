@@ -20,9 +20,11 @@ def test_the_family_list_is_the_configured_accounts() -> None:
 
 def test_no_list_means_nobody() -> None:
     """Unset is nobody, never everybody: the private layer must not open
-    because an operator forgot a variable."""
+    because an operator forgot a variable. The empty list is injected, not
+    read from the environment — a test that read it would pass or fail on
+    whatever another suite left behind."""
     assert family_members({}) == frozenset()
-    assert is_member(SessionUser("aria@example.com")) is False
+    assert is_member(SessionUser("aria@example.com"), frozenset()) is False
 
 
 def test_a_session_is_family_only_when_the_list_names_it() -> None:

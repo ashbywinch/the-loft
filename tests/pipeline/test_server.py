@@ -2381,3 +2381,12 @@ def test_sync_approvals_take_one_page_then_catalogue_the_document(server: Server
     item = archive.get_item(item_id)
     assert item is not None and item.status == "catalogued"
     assert _item_text(archive, item_id) == "PAGE ONE\n\nPAGE TWO"
+
+
+def test_sync_page_for_an_unknown_batch_is_a_404(server: ServerFixture) -> None:
+    """The page image route reads the batch to find a photo page's source; an
+    unknown batch id raised RegistryError uncaught, so a mistyped id answered
+    500 while every sibling route answers 4xx."""
+    status, raw = server.get("/api/sync/batch/no-such-batch/page/p1.jpg", cookie=server.cookie)
+    assert status == 404
+    assert b"no such batch" in raw

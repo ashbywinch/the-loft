@@ -90,9 +90,12 @@ def approve_page(
     one the document already became, or a fresh one on its first approval."""
     facts = facts or DocumentFacts()
     record = load_batch(batch_id, context.registry_dir)
-    document = _document_of(record, page)
-    if document is None:
+    # the page must be one of the batch's pages: an unknown name used to become
+    # its own fabricated document, writing an agreement marker, minting an
+    # archive item and appending a boundary to the registry (review, 2026-11-14)
+    if page not in record.pages:
         raise ValueError(f"page {page!r} is not in batch {batch_id!r}")
+    document = _document_of(record, page)
     artefacts = BatchArtefacts(context.work_dir, batch_id)
     marker = artefacts.agreed(page)
     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -190,9 +193,9 @@ class _DocumentPages:
         return "\n\n".join(part for part in parts if part)
 
 
-def _document_of(record: BatchRecord, page: str) -> Boundary | None:
-    """The document a page belongs to (a page outside every boundary is its
-    own document: a page is never un-approvable)."""
+def _document_of(record: BatchRecord, page: str) -> Boundary:
+    """The document a page belongs to (a page of the batch that no boundary
+    covers is its own document: a page is never un-approvable)."""
     for boundary in record.boundaries or []:
         if page in boundary.pages:
             return boundary

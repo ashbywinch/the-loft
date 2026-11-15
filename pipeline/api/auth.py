@@ -137,8 +137,9 @@ def _client_config() -> OAuthClient | None:
     )
 
 
-def _make_session_cookie(user: SessionUser) -> str:
-    """The signed session cookie carrying the verified identity."""
+def session_cookie(user: SessionUser) -> str:
+    """The signed session cookie carrying the verified identity — the one way a
+    session is minted (the OAuth callback, the device flow, the tests)."""
     return _serializer().dumps(user.to_dict())
 
 

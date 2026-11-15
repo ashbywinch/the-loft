@@ -307,7 +307,7 @@ def build_app(
         return response
 
     def _set_session_cookie(response: JSONResponse | RedirectResponse, user: SessionUser) -> None:
-        cookie = auth._make_session_cookie(user)
+        cookie = auth.session_cookie(user)
         response.set_cookie(
             auth.GoogleOAuth.COOKIE_NAME,
             cookie,

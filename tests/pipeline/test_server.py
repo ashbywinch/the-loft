@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
@@ -84,8 +85,6 @@ class ServerFixture:
         self._reprocess: Any | None = _reprocess
         # the session secret before any app build — the server refuses to
         # start without it (forgeable sessions otherwise)
-        import os
-
         os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
         # the household's allowlist (the private layer is family-only): the
         # fixture names the narrator's account and the second one it holds
@@ -123,8 +122,6 @@ class ServerFixture:
         # the server refuses to start without a session secret (forgeable
         # sessions) — the test secret must be set BEFORE create_server, not
         # after (the dev shell exports the secret; CI has none)
-        import os
-
         os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
         # the household's allowlist (the private layer is family-only): the
         # fixture names the narrator's account and the second one it holds
@@ -162,7 +159,7 @@ class ServerFixture:
         from pipeline.api.session_user import SessionUser
 
         user = SessionUser("alex@example.com", "Alex Hale", "")
-        self.cookie = f"{auth.GoogleOAuth.COOKIE_NAME}={auth._make_session_cookie(user)}"
+        self.cookie = f"{auth.GoogleOAuth.COOKIE_NAME}={auth.session_cookie(user)}"
 
     def post(self, path: str, body: dict[str, Any], cookie: str | None = None) -> tuple[int, dict[str, Any]]:
         headers = {"Content-Type": "application/json"}
@@ -554,7 +551,7 @@ def test_write_apis_reject_a_foreign_origin(server: ServerFixture) -> None:
 def _stranger_cookie() -> str:
     """A signed-in session for an account that is NOT on the family list — a
     Google account anyone can have."""
-    return f"{auth.GoogleOAuth.COOKIE_NAME}={auth._make_session_cookie(SessionUser('stranger@example.com', '', ''))}"
+    return f"{auth.GoogleOAuth.COOKIE_NAME}={auth.session_cookie(SessionUser('stranger@example.com', '', ''))}"
 
 
 def test_a_signed_in_stranger_reads_nothing(server: ServerFixture) -> None:

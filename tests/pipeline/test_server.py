@@ -27,28 +27,6 @@ from tools.records import Item, validate_identity
 from tools.store import ImmutableStoreError, MemoryStore
 
 
-def _houses_db(path: Path, emails: list[str]) -> Path:
-    """A Houses database holding the household — the archive's family list
-    lives there (its `persons` answer, zlib-compressed)."""
-    import sqlite3
-    import zlib
-
-    conn = sqlite3.connect(path)
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS node_results (id INTEGER PRIMARY KEY, node_id TEXT, result_json BLOB, "
-        "created_at TEXT NOT NULL, status TEXT)"
-    )
-    people = [{"name": email.split("@")[0], "email": email} for email in emails]
-    answer = json.dumps({"status": "succeeded", "value": people, "source_label": "user"}).encode("utf-8")
-    conn.execute(
-        "INSERT INTO node_results (node_id, result_json, created_at, status) VALUES (?, ?, ?, ?)",
-        ("persons", zlib.compress(answer), "2026-09-18T11:39:58+00:00", "succeeded"),
-    )
-    conn.commit()
-    conn.close()
-    return path
-
-
 def make_app_data(tmp_path: Path) -> Path:
     # the served app shell (public) + its data/ (gated) — the real app's shape
     _ = (tmp_path / "index.html").write_text("<!DOCTYPE html><html><body>the loft</body></html>", encoding="utf-8")
@@ -107,11 +85,9 @@ class ServerFixture:
         import os
 
         os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
-        # the family list is the Houses database's people (the private layer is
-        # family-only): the fixture writes one holding the narrator's account
-        # and the second one it knows
-        self.houses_db = _houses_db(data_dir.parent / "houses.db", ["alex@example.com", "other@example.com"])
-        os.environ["THE_LOFT_HOUSES_DB"] = str(self.houses_db)
+        # the household's allowlist (the private layer is family-only): the
+        # fixture names the narrator's account and the second one it holds
+        os.environ.setdefault("THE_LOFT_FAMILY_MEMBERS", "alex@example.com,other@example.com")
         # the sync surfaces are bound to tmp dirs, never the real workspace
         # (the endpoints must not touch the home disk in tests)
         self.work_dir: Path = data_dir.parent / "work"
@@ -148,11 +124,9 @@ class ServerFixture:
         import os
 
         os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
-        # the family list is the Houses database's people (the private layer is
-        # family-only): the fixture writes one holding the narrator's account
-        # and the second one it knows
-        self.houses_db = _houses_db(data_dir.parent / "houses.db", ["alex@example.com", "other@example.com"])
-        os.environ["THE_LOFT_HOUSES_DB"] = str(self.houses_db)
+        # the household's allowlist (the private layer is family-only): the
+        # fixture names the narrator's account and the second one it holds
+        os.environ.setdefault("THE_LOFT_FAMILY_MEMBERS", "alex@example.com,other@example.com")
         self.server = create_server(
             ServerConfig(
                 store,

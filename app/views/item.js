@@ -9,6 +9,23 @@ import { clarificationsFor, evidenceFor, referencedBy } from "../connections.js"
 import { dateLabel, sortByDate, yearOf } from "../date.js";
 import { canGoBackInApp } from "../router.js";
 
+/** A source's URL when it is a web address. A source arrives with the ingest
+ *  — from outside the archive — and an href of "javascript:…" (or "data:")
+ *  runs on click, so anything else is shown as text, never as a link. */
+function webAddress(url) {
+  try {
+    const { protocol } = new URL(String(url ?? ""), window.location.href);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false; // not a URL at all
+  }
+}
+
+/** The source's label: its title, else the address without its scheme. */
+function sourceLabel(source) {
+  return source.title || String(source.url ?? "").replace(/^https?:\/\//, "");
+}
+
 export function render(main, ctx, state) {
   const item = state.byId.get(ctx.arg);
   if (!item) {
@@ -189,7 +206,9 @@ export function render(main, ctx, state) {
               { class: "sources" },
               item.sources.map((s) =>
                 el("li", {}, [
-                  el("a", { href: s.url, rel: "noreferrer" }, s.title || s.url.replace(/^https?:\/\//, "")),
+                  webAddress(s.url)
+                    ? el("a", { href: s.url, rel: "noreferrer" }, sourceLabel(s))
+                    : el("span", {}, sourceLabel(s)),
                   el("span", { class: "card-meta" }, ` · accessed ${s.accessed}`),
                 ]),
               ),

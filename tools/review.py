@@ -416,36 +416,38 @@ def investigate(
             f"The claim under review: {claim}.",
             "Known family (the archive's attested facts):\n" + _known_facts(facts),
             "Decide these four things, in this order, once each. Then answer.\n"
-            "1. LEADS. Name what the statement names: a person, a place, an event, "
-            "a death, a marriage, a kinship claim. A vague memory names nothing.\n"
+            "1. LEADS. What the statement names: a person, a place, an event, a "
+            "death, a marriage, a kinship claim. A vague memory names nothing.\n"
             "2. SEARCH. Search every lead before judging anything: search_items "
-            "for places and events, person/relationships/attested for people. "
-            "Answer every lead you find in your question or a finding, even when "
+            "for places and events, person/relationships/attested for people. A "
+            "lead is answered in a finding — the document's own words — even when "
             "the answer is that it is not the one they mean.\n"
-            "3. RELEVANCE. Mark the statement relevant when it bears on the claim: "
-            "its person, any family member, or an attested family event — including "
-            "disagreement, uncertainty and 'I don't know'. Mark it irrelevant only "
-            "when it is about something else entirely. Judge what the statement "
-            "names, never what a search can match: a place alone is not enough — it "
-            "joins the claim only through a person or event the statement also "
-            "names.\n"
-            "4. CONTRADICTION. Flag a contradiction only when the statement denies "
-            "an attested fact: it gives an attested event to the wrong person, or "
-            "disputes a confirmed relationship. The record names its subject — "
-            "'it was Nora who died in the war' contradicts a record that Walter "
-            "died, though the archive holds no death record for Nora. If a second "
-            "person shares the name, ask which one they mean and still flag the "
-            "conflict. A missing record is not a contradiction. A different "
-            "version of an unverified import guess is not a contradiction. A "
-            "different relationship is not a contradiction: one person can be a "
-            "sibling of several. A hedge about their own memory ('I thought it "
-            "was Nora') does not soften the flag; it decides the confidence.",
-            "When the reviewer has already said they cannot recall, do not ask "
-            "again. State what you will do with the claim — keep the guess as it "
-            "stands, or record what they remember — and end. The conclusion is a "
-            "statement, not a question, and nothing follows it.",
-            "When they have already spoken, treat their latest line as a new "
-            "statement: follow its leads and never repeat an earlier question, in "
+            "3. RELEVANCE. The statement bears on the claim when the two meet at a "
+            "person or an event that the statement itself names: the claim's "
+            "person, any family member, an attested family event — a disagreement, "
+            "an uncertainty, an 'I don't know' included. A place, or a thing the "
+            "statement points at ('that house', 'the garden'), is not such a "
+            "meeting place, however well a search matches it: where that is the "
+            "only bridge, the statement is about something else.\n"
+            "4. CONTRADICTION. Ask whether the two can both be true, and flag it "
+            "only when they cannot: the statement puts an attested event on the "
+            "wrong person ('it was Nora who died' against a record that Walter "
+            "died), or gives a confirmed relationship a rival that excludes it. "
+            "Whatever can hold at once is no contradiction — another sibling, how "
+            "often or how long or who else was there, a guess the archive never "
+            "attested — and a detail worth keeping goes in a finding instead. A "
+            "missing record is not a contradiction. If two people share the name, "
+            "ask which one they mean and still flag the conflict. A hedge about "
+            "their own memory ('I thought it was Nora') does not soften the flag; "
+            "it decides the confidence.",
+            "Your question asks for what only the reviewer can supply: one thing, "
+            "about what you still need. Once they have said they cannot recall, "
+            "nothing they can supply remains — state what you will do with the "
+            "claim, keep it as it stands or record what they remember, and end. A "
+            "lead you noticed then is a finding, never a new question. The "
+            "conclusion is a statement, not a question, and nothing follows it.",
+            "When the reviewer has already spoken, treat their latest line as a new "
+            "statement: follow its leads, and never repeat an earlier question in "
             "substance or in words.",
             Investigation.TOOLS_DESC,
             # the conversation — the growing part — sits LAST so the
@@ -489,12 +491,18 @@ def investigate(
         '"question": "<the genealogist\'s next question in the family\'s words, or a short '
         'conclusion when they have no knowledge and no lead; no process vocabulary>"}'
     )
-    # the confidence field is the reviewer's certainty, not the model's
+    # the confidence field is the reviewer's certainty, not the model's — every
+    # value the schema offers is named here, or the model has to invent a mapping
     verdict += (
-        "\nConfidence is the reviewer's own certainty: 'I know/sure/certain' -> definitely; "
-        "'I think/probably/fairly sure' -> think_so (a statement hedged with their own "
-        "doubt is think_so, never unclear); 'maybe/not sure' -> unclear; a bare "
-        "'I don't know/no idea/can't recall' -> dont_know. Their words always decide."
+        "\nConfidence is the reviewer's own certainty, read from their words:\n"
+        "- they assert it -> definitely; they hedge it -> think_so;\n"
+        "- they deny it -> definitely_not; they hedge the denial -> think_not;\n"
+        "- they offer a guess they do not commit to -> unclear;\n"
+        "- they have nothing to go on -> dont_know ('I don't know', 'no idea', "
+        "'can't recall', 'I never knew'), and a reason for knowing nothing ('I "
+        "never met him', 'it was before my time') leaves it dont_know: a reason "
+        "is not a guess.\n"
+        "Their words always decide."
     )
     # the verdict shape must be in the INITIAL prompt — the schema was only
     # revealed in the correction branch, so every first call was rejected

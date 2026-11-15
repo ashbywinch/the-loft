@@ -423,11 +423,12 @@ def investigate(
             "Answer every lead you find in your question or a finding, even when "
             "the answer is that it is not the one they mean.\n"
             "3. RELEVANCE. Mark the statement relevant when it bears on the claim: "
-            "the claim's person, the family, or an attested family event. Mark it "
-            "irrelevant only when it is about something else entirely. Judge what "
-            "the statement names, never what a search can match: a place alone is "
-            "not enough — it joins the claim only through a person or event the "
-            "statement also names.\n"
+            "its person, any family member, or an attested family event — including "
+            "disagreement, uncertainty and 'I don't know'. Mark it irrelevant only "
+            "when it is about something else entirely. Judge what the statement "
+            "names, never what a search can match: a place alone is not enough — it "
+            "joins the claim only through a person or event the statement also "
+            "names.\n"
             "4. CONTRADICTION. Flag a contradiction only when the statement denies "
             "an attested fact: it gives an attested event to the wrong person, or "
             "disputes a confirmed relationship. The record names its subject — "
@@ -469,8 +470,8 @@ def investigate(
         "derive a relationship, guess a kinship, or infer who the reviewer is "
         "related to — the reviewer's words are recorded verbatim or not at all. "
         "Write every word in English; quote a document in its own words.\n\n"
-        "Return only the verdict JSON. Do not reword a decided sentence, list "
-        "alternative questions, or re-read your own draft."
+        "Do not reword a decided sentence, list alternative questions, or "
+        "re-read your own draft."
     )
     verdict = (
         '{"relevant": true|false, '

@@ -758,12 +758,26 @@ def build_app(
     @app.middleware("http")
     async def gate_data(request: Request, call_next: Any) -> Any:
         # the archive's data is the private layer — a session is required
-        # to read it (user: content gated behind sign-in). The
-        # app shell stays public so the gate can load.
-        if request.url.path.startswith("/data/"):
+        # to read it (user: content gated behind sign-in), and the session
+        # must be a FAMILY member's: a Google account that signs in is not
+        # family (user: the household's allowlist). The app shell stays
+        # public so the gate can load, and so does sign-in itself.
+        path = request.url.path
+        # first match is public: the sign-in flow and the health probe. Every
+        # other /api path and every /data path is the archive.
+        if path.startswith(("/data/", "/api/")) and not path.startswith(("/api/auth/", "/api/health")):
             session = auth.session_user_from_cookie(request.cookies.get(auth.GoogleOAuth.COOKIE_NAME))
             if session is None:
-                return JSONResponse({"ok": False, "error": "sign in to read the archive"}, status_code=401)
+                # the projection files have no route of their own to answer a
+                # 401 (a static mount serves them), so the guard answers here;
+                # the API routes each answer their own 401 with their own words
+                if path.startswith("/data/"):
+                    return JSONResponse({"ok": False, "error": "sign in to read the archive"}, status_code=401)
+            elif not auth.is_member(session):
+                return JSONResponse(
+                    {"ok": False, "error": f"{session.email} is not on this archive's family list"},
+                    status_code=403,
+                )
         return await call_next(request)
 
     # -- sync (TECHSPEC/04 §17.5: the backend owns the write seam; the

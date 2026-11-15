@@ -19,6 +19,7 @@ class MeAnswer:
 
     user: SessionUser | None = None
     person: str | None = None
+    member: bool = False
 
     @property
     def authenticated(self) -> bool:
@@ -31,13 +32,14 @@ class MeAnswer:
         return cls()
 
     @classmethod
-    def signed_in(cls, user: SessionUser, person: str | None) -> MeAnswer:
-        """A session — the identity and the archive person it maps to."""
-        return cls(user, person)
+    def signed_in(cls, user: SessionUser, person: str | None, member: bool) -> MeAnswer:
+        """A session — the identity the archive person it maps to, and whether
+        the account is on the family list (a signed-in stranger is not)."""
+        return cls(user, person, member)
 
     def to_dict(self) -> dict[str, Any]:
         """The answer as its wire record."""
         user = self.user
         if user is None:
             return {"authenticated": False}
-        return {"authenticated": True, **user.to_dict(), "person": self.person}
+        return {"authenticated": True, **user.to_dict(), "person": self.person, "member": self.member}

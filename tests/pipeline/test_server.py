@@ -85,6 +85,9 @@ class ServerFixture:
         import os
 
         os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
+        # the household's allowlist (the private layer is family-only): the
+        # fixture's narrator and the second account it holds
+        os.environ.setdefault("THE_LOFT_FAMILY_MEMBERS", "alex@example.com,other@example.com")
         # the sync surfaces are bound to tmp dirs, never the real workspace
         # (the endpoints must not touch the home disk in tests)
         self.work_dir: Path = data_dir.parent / "work"
@@ -121,6 +124,9 @@ class ServerFixture:
         import os
 
         os.environ.setdefault("THE_LOFT_SESSION_SECRET", "test-secret")
+        # the household's allowlist (the private layer is family-only): the
+        # fixture's narrator and the second account it holds
+        os.environ.setdefault("THE_LOFT_FAMILY_MEMBERS", "alex@example.com,other@example.com")
         self.server = create_server(
             ServerConfig(
                 store,
@@ -541,6 +547,46 @@ def test_write_apis_reject_a_foreign_origin(server: ServerFixture) -> None:
         },
     )
     assert status == 200, body
+
+
+def _stranger_cookie() -> str:
+    """A signed-in session for an account that is NOT on the family list — a
+    Google account anyone can have."""
+    from pipeline.api import auth
+    from pipeline.api.session_user import SessionUser
+
+    return f"{auth.GoogleOAuth.COOKIE_NAME}={auth._make_session_cookie(SessionUser('stranger@example.com', '', ''))}"
+
+
+def test_a_signed_in_stranger_reads_nothing(server: ServerFixture) -> None:
+    """Signing in is not being family (user: the household's allowlist). The
+    private layer used to open for any Google account that could sign in."""
+    stranger = _stranger_cookie()
+    for path in ("/data/people.json", "/api/bootstrap", "/api/sync/batches", "/api/auth/me"):
+        status, body = server.get(path, cookie=stranger)
+        if path == "/api/auth/me":
+            # the identity route still answers — the app must be able to say
+            # who is signed in, and that they are not family
+            assert status == 200, path
+            assert b'"member": false' in body.replace(b'"member":false', b'"member": false'), body
+            continue
+        assert status == 403, f"{path} answered {status}"
+        assert b"not on this archive's family list" in body, body
+    # the same routes answer the family
+    status, _ = server.get("/api/sync/batches", cookie=server.cookie)
+    assert status == 200
+    status, _ = server.get("/data/people.json", cookie=server.cookie)
+    assert status == 200
+
+
+def test_me_names_the_member_state(server: ServerFixture) -> None:
+    """The app decides between the archive and the "not family" screen from
+    this one answer, so it states it."""
+    import json as _json
+
+    status, raw = server.get("/api/auth/me", cookie=server.cookie)
+    assert status == 200
+    assert _json.loads(raw)["member"] is True
 
 
 def test_data_files_require_a_session(server: ServerFixture) -> None:

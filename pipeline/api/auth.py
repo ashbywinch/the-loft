@@ -109,6 +109,23 @@ def web_client_secret() -> str:
     return os.environ.get("THE_LOFT_GOOGLE_WEB_CLIENT_SECRET", "").strip()
 
 
+def family_members(_env: Mapping[str, str] | None = None) -> frozenset[str]:
+    """The household's allowlist: who may read the archive, from
+    ``THE_LOFT_FAMILY_MEMBERS`` (a comma-separated list of the family's Google
+    accounts), casefolded like the archive matches people. Unset is NOBODY:
+    an empty list is the safe reading of "not configured", so the private
+    layer never opens because an operator forgot a variable."""
+    env = os.environ if _env is None else _env
+    listed = env.get("THE_LOFT_FAMILY_MEMBERS", "").split(",")
+    return frozenset(email.strip().casefold() for email in listed if email.strip())
+
+
+def is_member(user: SessionUser | None) -> bool:
+    """Whether the signed-in account is family. No session is never a member —
+    the routes answer their own 401 for that, with the message they each own."""
+    return user is not None and user.email in family_members()
+
+
 def session_secret(_env: Mapping[str, str] | None = None) -> str:
     env = os.environ if _env is None else _env
     return env.get("THE_LOFT_SESSION_SECRET", "").strip()
@@ -230,7 +247,7 @@ def me_payload(archive: Archive, session: SessionUser | None) -> MeAnswer:
     person the email maps to (null when the account isn't in the archive)."""
     if session is None:
         return MeAnswer.anonymous()
-    return MeAnswer.signed_in(session, person_for_email(archive, session.email))
+    return MeAnswer.signed_in(session, person_for_email(archive, session.email), is_member(session))
 
 
 def callback_error_url(error: str) -> str:

@@ -94,4 +94,13 @@ describe("the boot gate", () => {
     expect(main.textContent).toContain("sign in");
     expect(main.querySelector("button").textContent).toBe("Sign in with Google");
   });
+
+  it("says who to ask when the account is signed in but not family", () => {
+    // the private layer answers 403 for a signed-in stranger; the screen must
+    // name the remedy, not report a failed load
+    const main = gateScreen({ notAMember: true });
+    expect(main.textContent).toContain("isn't on its list");
+    expect(main.textContent).toContain("Ask the family to add this address");
+    expect(main.querySelector("button").textContent).toBe("Sign in as someone else");
+  });
 });

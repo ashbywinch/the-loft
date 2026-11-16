@@ -50,7 +50,10 @@ class PageOrientation:
             model=model,
             system="You orient scanned document pages.",
             user_text=PageOrientation._PROMPT,
-            max_tokens=500,
+            # the answer is one number; the budget is for the model's reasoning
+            # — a reasoning model spends a small budget on thinking and answers
+            # nothing (VlmError: reasoning only, no content)
+            max_tokens=4000,
             api_key=api_key,
             urlopen=urlopen,
         )

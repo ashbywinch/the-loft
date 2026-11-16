@@ -55,7 +55,10 @@ class GroupingScorer:
     # postcard (0.63-0.70) vs A4 (0.71) vs letter (0.77) stay separable
     # while the two sides of one sheet match.
     PAPER_TOLERANCE = 0.12
-    _LIGHT_KINDS = ("photo", "drawing")
+    # the light sides, in the classifier's own vocabulary: a picture page and
+    # the picture side of a postcard (whatever its printed caption), plus the
+    # legacy spelling an older record on disk carries
+    _LIGHT_KINDS = ("photograph", "photo", "postcard_face", "drawing")
 
     @staticmethod
     def paper_aspect(width: int, height: int) -> float:

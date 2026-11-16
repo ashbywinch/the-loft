@@ -44,7 +44,9 @@ from tools.review_verdict import ReviewVerdict
 @pytest.fixture(scope="session")
 def client() -> AIClient:
     try:
-        return AIClient(max_tokens=Assessor.ASSESS_MAX_TOKENS)
+        # fresh: the gateway caches a completion by request body, so a cached
+        # eval answers the previous run's question and measures nothing
+        return AIClient(max_tokens=Assessor.ASSESS_MAX_TOKENS, fresh=True)
     except AIClientError as e:
         # fail loudly, never a silent skip: an eval that cannot run must say
         # so — a skip would green a suite that never ran

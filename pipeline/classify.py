@@ -61,10 +61,12 @@ class PageKinds:
         '"photograph": a picture of people, places or things — a snapshot, however it was scanned; '
         '"printed": writing made by type, print or typescript — a typed letter, a newspaper, a caption; '
         '"handwriting": writing made by hand — pen or pencil, however neat; '
-        '"postcard_face": the picture side of a postcard, with or without a printed caption or a handwritten message; '
+        '"postcard_face": the PICTURE side of a postcard — a photograph or '
+        "illustration, with or without a printed caption or a handwritten note. "
+        'Its reverse (the message and the address) is "handwriting", never "postcard_face"; '
         '"form": a form — printed labels and the entries filled against them; '
         '"drawing": an illustration or sketch, not a photograph. '
-        'For "postcard_face" and "form", "medium" names the writing on the page: '
+        'For "postcard_face" and "form", "medium" names the writing ON THE PICTURE SIDE: '
         '"printed" for type or print, "handwritten" for pen or pencil, null when it carries none. '
         "It is null for every other kind. "
         'Judge the page\'s content, never its paper: a scanned printed letter is "printed" '

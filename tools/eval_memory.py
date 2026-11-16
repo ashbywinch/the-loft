@@ -169,6 +169,8 @@ class MemoryFlow:
         "in what year",
         "in which year",
         "date of birth",
+        "birth date",
+        "birthday",
         "born",
         "how old",
         "your age",

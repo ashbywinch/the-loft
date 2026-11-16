@@ -373,6 +373,17 @@ def test_a_discounted_annotation_is_not_a_violation() -> None:
     assert Rows.from_traces(traces).validate(traces) == []
 
 
+def test_a_right_to_left_stroke_is_the_same_row() -> None:
+    """A reviewer who drags from a row's end to its start draws the same row:
+    the slope is measured left to right, so the stroke is not a 180° line and
+    draws no violation."""
+    words = _words((100, 100, 200, 130), (300, 100, 400, 130), line=1)
+    traces = Traces(words=tuple(words), adjustments=_drawn(_line(400, 100, 115)), page_size=PAGE_SIZE)
+    builder = Rows.from_traces(traces)
+    _ = builder.adjust(traces.adjustments)
+    assert not [v for v in builder.validate(traces) if "runs at" in v]
+
+
 def test_a_line_short_of_a_wide_words_centre_does_not_crash() -> None:
     """A stroke that runs across a line (at least half its width) and covers
     its word but stops short of the word's centre: the line is replaced, and

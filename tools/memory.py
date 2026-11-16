@@ -539,17 +539,23 @@ class Assessor:
 
     _QUESTION_RULES = (
         f"Question rules. Ask only what is missing and matters, at most {Question.MAX_QUESTIONS}; "
-        "every question is skippable and nothing is required. A date the account states "
-        "is asserted as a fact instead, and a year computable from an asserted date of "
-        "birth and age is not asked for. Ask for: the event date; the date of birth when the "
-        "account gives an age and no date of birth is known or stated — asked politely, never "
-        "required; who was actually present; the identity of unnamed people; place precision "
-        '("the old ford" — which one?); the connection of a narrator not in the standing '
-        "knowledge — ask this whenever the contributor is absent from the standing knowledge, "
-        "unless the story itself states the relation; and a specific artifact the story names "
-        "that is not in the catalog — a particular boat, object or document — since that is how "
-        "its archive page gets built. A boat is no more worthy than a letter, a photograph or a "
-        "tool; the same goes for a named person or place that matters to the story. A question "
+        "every question is skippable and nothing is required. "
+        # dates carry their own logic — a stated date is a fact, a missing one
+        # is a question, a computable one is neither — so they are decided here
+        # and the list below keeps only the non-date asks
+        "Dates, in this order: a date the account states is asserted as a fact, never asked "
+        "for; when the events have a time but no date, ask for the event date; when the account "
+        "gives an age and no date of birth is known or stated, ask for the date of birth, "
+        "politely and never as a requirement; when the year is computable from a known date of "
+        "birth and the age, ask for nothing. "
+        "Otherwise ask for: who was actually present; the identity of unnamed people; place "
+        'precision ("the old ford" — which one?); the connection of a narrator not in the '
+        "standing knowledge — ask this whenever the contributor is absent from the standing "
+        "knowledge, unless the story itself states the relation; and a specific artifact the "
+        "story names that is not in the catalog — a particular boat, object or document — since "
+        "that is how its archive page gets built. A boat is no more worthy than a letter, a "
+        "photograph or a tool; the same goes for a named person or place that matters to the "
+        "story. A question "
         'whose answer is one or more people carries "type": "people" — the narrator picks names '
         'from the cast, any number — so its "suggestions" are the likely people; a question '
         'needing a date carries "type": "date" and "date_kind": "dob" when asking for a date of '

@@ -70,6 +70,13 @@ class AIClient:
         # gave a 135-token deliberation and a normal verdict), so it
         # stays as an opt-in for gateways that handle it.
         reasoning_budget: int | None = None,
+        # A measurement must not be served from the gateway's cache: an
+        # identical body gets the identical cached answer, which makes a
+        # second "independent" run a replay of the first (measured: one run
+        # re-used every response id of the previous). Evals build the client
+        # with fresh=True; production keeps the cache, where an identical
+        # question deserves its identical answer.
+        fresh: bool = False,
     ) -> None:
         self.model: str = model or AIClient.DEFAULT_MODEL
         self.base_url: str = (base_url or AIClient.DEFAULT_BASE_URL).rstrip("/")
@@ -83,6 +90,7 @@ class AIClient:
         self.timeout: float = timeout
         self.max_retries: int = max_retries
         self.reasoning_budget: int | None = reasoning_budget
+        self._fresh: bool = fresh
         # the last response's reasoning — captured so a failed judgment is
         # diagnosable from its trace (user: "we should be able
         # to read the model's thought process to understand why it got it
@@ -143,25 +151,37 @@ class AIClient:
 
     def _post(self, payload: ChatRequest) -> str:
         """Send one chat-completions request with the retry/backoff loop."""
-        body = json.dumps(payload.to_dict()).encode("utf-8")
-        request = urllib.request.Request(
-            f"{self.base_url}/chat/completions",
-            data=body,
-            headers=HttpHeaders(
-                content_type="application/json",
-                authorization=f"Bearer {self.api_key}",
-                user_agent=HttpHeaders.USER_AGENT,
-            ).to_dict(),
-            method="POST",
-        )
         backoff = Backoff(delay=2.0, attempt=0)
         content = ""  # the completion content — set per attempt, used by the empty-path check
+        cache_status = "n/a"  # the gateway's cache verdict for this attempt
         finish_reason = ""  # the response's finish_reason — set per attempt, used by the empty-path log
         burn_retried = False  # the fresh-sample rescue fires ONCE — a second burn is a persistent stall
         while True:
+            # Built per attempt, because a RETRY MUST BE A NEW SAMPLE. The
+            # gateway caches a completion by request body: re-sending the
+            # identical body replays the answer that just failed. Measured on
+            # an empty completion — three attempts, one response id,
+            # cf-aig-cache-status: HIT, byte-identical reasoning each time — so
+            # the retry could never rescue it. The VLM path skips the cache
+            # outright (a cached measurement is not a measurement); here the
+            # first attempt may cache, and only a retry must not.
+            request = urllib.request.Request(
+                f"{self.base_url}/chat/completions",
+                data=json.dumps(payload.to_dict()).encode("utf-8"),
+                headers=HttpHeaders(
+                    content_type="application/json",
+                    authorization=f"Bearer {self.api_key}",
+                    user_agent=HttpHeaders.USER_AGENT,
+                    skip_gateway_cache=self._fresh or backoff.attempt > 0,
+                ).to_dict(),
+                method="POST",
+            )
             try:
                 with self._urlopen(request, timeout=self.timeout) as response:
                     data = json.loads(response.read().decode("utf-8"))
+                    # the gateway says whether this answer came from its cache;
+                    # a HIT on a retry means the retry replayed, not re-sampled
+                    cache_status = response.headers.get("cf-aig-cache-status", "n/a")
                 try:
                     choice = data["choices"][0]
                     message = choice.get("message") if isinstance(choice, dict) else None
@@ -199,7 +219,6 @@ class AIClient:
                     # thinking param must not leave the retry running at the
                     # thinking 0.3 — it is a non-thinking call at 0.0
                     payload = replace(payload, temperature=0.0)
-                    request.data = json.dumps(payload.to_dict()).encode("utf-8")
                     continue
                 # any other status is a HARD client error — a bad model name,
                 # an expired key, a wrong endpoint. Report it with the body,
@@ -268,10 +287,12 @@ class AIClient:
             # is observable, then retry with the same backoff as a 5xx;
             # exhaust the budget before failing.
             logger.warning(
-                "chat: empty completion (finish_reason=%s, content_len=%d, reasoning_len=%d) — retrying",
+                "chat: empty completion (finish_reason=%s, content_len=%d, reasoning_len=%d, "
+                "gateway_cache=%s) — retrying",
                 finish_reason or "n/a",
                 len(content),
                 len(self.last_reasoning),
+                cache_status,
             )
             if backoff.attempt >= self.max_retries:
                 raise AIClientError(f"empty response from API (finish_reason={finish_reason or 'n/a'})")

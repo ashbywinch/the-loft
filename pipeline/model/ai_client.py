@@ -70,6 +70,13 @@ class AIClient:
         # gave a 135-token deliberation and a normal verdict), so it
         # stays as an opt-in for gateways that handle it.
         reasoning_budget: int | None = None,
+        # A measurement must not be served from the gateway's cache: an
+        # identical body gets the identical cached answer, which makes a
+        # second "independent" run a replay of the first (measured: one run
+        # re-used every response id of the previous). Evals build the client
+        # with fresh=True; production keeps the cache, where an identical
+        # question deserves its identical answer.
+        fresh: bool = False,
     ) -> None:
         self.model: str = model or AIClient.DEFAULT_MODEL
         self.base_url: str = (base_url or AIClient.DEFAULT_BASE_URL).rstrip("/")
@@ -83,6 +90,7 @@ class AIClient:
         self.timeout: float = timeout
         self.max_retries: int = max_retries
         self.reasoning_budget: int | None = reasoning_budget
+        self._fresh: bool = fresh
         # the last response's reasoning — captured so a failed judgment is
         # diagnosable from its trace (user: "we should be able
         # to read the model's thought process to understand why it got it
@@ -164,7 +172,7 @@ class AIClient:
                     content_type="application/json",
                     authorization=f"Bearer {self.api_key}",
                     user_agent=HttpHeaders.USER_AGENT,
-                    skip_gateway_cache=backoff.attempt > 0,
+                    skip_gateway_cache=self._fresh or backoff.attempt > 0,
                 ).to_dict(),
                 method="POST",
             )

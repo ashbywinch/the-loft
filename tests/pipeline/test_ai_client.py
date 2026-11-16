@@ -428,3 +428,14 @@ def test_a_cached_empty_completion_is_named_in_the_retry_log(caplog: pytest.LogC
     with caplog.at_level(logging.WARNING, logger="pipeline.model.ai_client"):
         client.chat("s", "u")
     assert "gateway_cache=HIT" in caplog.text
+
+
+def test_a_measurement_client_never_reads_the_gateway_cache() -> None:
+    """`fresh=True` is the eval's client: every attempt skips the cache, so a
+    second run samples the model instead of replaying the first run's answer
+    (measured: an identical repeat came back with the previous run's response
+    id and `cf-aig-cache-status: HIT`, so "run it twice" was one run twice)."""
+    good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    urlopen, calls = make_fake_urlopen([FakeResponse(good)])
+    AIClient(api_key="k", urlopen=urlopen, fresh=True).chat("s", "u")
+    assert calls[0]["headers"]["Cf-aig-skip-cache"] == "true", "a measurement was served from the cache"

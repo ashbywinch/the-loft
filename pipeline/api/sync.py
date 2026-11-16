@@ -874,6 +874,12 @@ def rotate_page(batch_id: str, page: str, quarters: int, work_dir: Path) -> bool
             atomic_write(words_path, json.dumps(words.to_dict(), ensure_ascii=False, indent=1) + "\n")
     else:
         reading.write_store(PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
+    # the reviewer's drawn lines (and the rows they made) describe boxes in the
+    # PRE-turn frame: after a rotation they no longer sit on the writing, so
+    # the turn drops them and the fresh read proposes the rows again
+    artefacts = BatchArtefacts(work_dir, batch_id)
+    artefacts.adjustments(page).unlink(missing_ok=True)
+    artefacts.adjusted_rows(page).unlink(missing_ok=True)
     journal_path.unlink(missing_ok=True)
     return True
 
@@ -991,10 +997,10 @@ def _reread_page(
 ) -> None:
     """Delete the page's read receipts and run the batch's own read for it.
 
-    For handwriting this re-runs ROW DETECTION on the image as it is now: the
-    reviewer's drawn lines (and the rows they made) are deleted with the
-    receipts, because lines drawn on the previous orientation describe boxes
-    that no longer exist — the fresh reading must propose the rows again."""
+    The page's image has not moved (a rotation drops the drawn lines itself),
+    so the reviewer's correction stays: the read stage re-applies it
+    (`_pending_correction`), and the re-read is of the corrected rows — a retry
+    after a model failure must not throw the reviewer's work away."""
     rows_path = artefacts.marker(page, "rows")
     rotation = 0
     if rows_path.is_file():
@@ -1009,10 +1015,6 @@ def _reread_page(
     elif route == "structured":
         run.structured_pages([page], _transcribe=transcribe or structured_transcript, provisional_boundary=False)
     elif route == "rows":
-        # the row detection is the re-read: its lines come from the image as it
-        # is now, never from the correction drawn against the old orientation
-        artefacts.adjustments(page).unlink(missing_ok=True)
-        artefacts.adjusted_rows(page).unlink(missing_ok=True)
         # the cycle breaker, again: the row read's default reader lives in chain
         # lucidlint: ignore inline-import the cycle breaker: chain imports sync for BatchReadings
         from pipeline.chain import reading_for_page, row_transcripts

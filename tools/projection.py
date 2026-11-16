@@ -15,6 +15,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from tools.atomic import atomic_write
 from tools.item_assets import ItemAssets
 from tools.placeholders import asset_svg, initials_of, svg_avatar
 from tools.projection_index import ProjectionIndex
@@ -363,12 +364,6 @@ def projection_json(archive: Archive) -> dict[str, str]:
     return files
 
 
-def _atomic_write(path: Path, content: str) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    tmp.replace(path)
-
-
 def _remove_dir(path: Path) -> None:
     """A re-publish replaces the previous output wholesale — drop *path*
     when an earlier copy is already there."""
@@ -428,4 +423,4 @@ class Projection:
         staged.rename(assets_dir)
 
         for filename, content in files.items():
-            _atomic_write(out / filename, content)
+            atomic_write(out / filename, content)

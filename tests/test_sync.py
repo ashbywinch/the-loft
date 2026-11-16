@@ -409,6 +409,28 @@ def test_rotate_page_remaps_the_words(tmp_path: Path) -> None:
     assert (words[0]["waistline"], words[0]["baseline"]) == (60, 200)  # the rotated box's own edges
 
 
+def test_rotate_page_drops_the_drawn_lines(tmp_path: Path) -> None:
+    """The correction describes boxes in the pre-turn frame; after the turn it
+    no longer sits on the writing, so the rotate drops it with the rows it
+    made (the fresh read proposes the rows again)."""
+    batch = tmp_path / "adopt-0002"
+    (batch / "oriented").mkdir(parents=True)
+    (batch / "ocr-guess").mkdir(parents=True)
+    Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
+    (batch / "ocr-guess" / "p1.rows.json").write_text(
+        json.dumps({"page": "p1.jpg", "width": 600, "height": 1600, "rotation": 0, "revision": 1, "lines": []}),
+        encoding="utf-8",
+    )
+    drawn = batch / "ocr-guess" / "p1.row-adjustments.json"
+    drawn.write_text(json.dumps({"lines": [[[0.1, 0.1], [0.9, 0.1]]]}), encoding="utf-8")
+    (batch / "ocr-guess" / "p1.rows-adjusted.json").write_text(json.dumps({"rows": []}), encoding="utf-8")
+
+    assert rotate_page("adopt-0002", "p1.jpg", 1, tmp_path) is True
+
+    assert not drawn.exists()
+    assert not (batch / "ocr-guess" / "p1.rows-adjusted.json").exists()
+
+
 def test_rotate_page_fixes_the_orientation(tmp_path: Path) -> None:
     """The reviewer's orientation fix (2026-08-16): rotate the page by
     quarter-turns CW and re-anchor the layout in place — the transcription
@@ -767,9 +789,10 @@ def test_drafts_carry_the_persisted_row_correction(tmp_path: Path) -> None:
 def test_a_handwriting_re_read_redetects_the_rows(tmp_path: Path) -> None:
     """Handwriting: the re-read re-runs ROW DETECTION on the image as it is now.
 
-    The reviewer's drawn lines belong to the previous orientation, so they go
-    with the old reading; the fresh reading proposes the rows again and the
-    page's text is the rows' new reading."""
+    The page's image has not moved (a rotation drops the drawn lines itself),
+    so the reviewer's check stays on disk: an empty check ("rows are right")
+    leaves the fresh reading to propose the rows again, and the page's text is
+    the rows' new reading."""
     batch = tmp_path / "adopt-0001"
     (batch / "oriented").mkdir(parents=True)
     (batch / "ocr-guess").mkdir(parents=True)
@@ -780,8 +803,8 @@ def test_a_handwriting_re_read_redetects_the_rows(tmp_path: Path) -> None:
     (batch / "ocr-guess" / "p1.txt").write_text("OLD TEXT\n")
     (batch / "ocr-guess" / "p1.rows.json").write_text("{}")
     (batch / "ocr-guess" / "p1.words.json").write_text("{}")
-    (batch / "ocr-guess" / "p1.row-adjustments.json").write_text("{}")
-    (batch / "ocr-guess" / "p1.rows-adjusted.json").write_text("{}")
+    (batch / "ocr-guess" / "p1.row-adjustments.json").write_text(json.dumps({"lines": []}))
+    (batch / "ocr-guess" / "p1.rows-adjusted.json").write_text(json.dumps({"rows": []}))
     registry = _registry(tmp_path)
     fresh_reading = Reading(
         lines=[{"box": [0.0, 0.0, 40.0, 20.0], "text": "", "box_source": "reader", "words": [0]}],
@@ -805,5 +828,5 @@ def test_a_handwriting_re_read_redetects_the_rows(tmp_path: Path) -> None:
     rows = json.loads((guess / "p1.rows.json").read_text())
     assert rows["lines"][0]["text"] == "FRESH ROW"
     assert (guess / "p1.words.json").is_file()
-    assert not (guess / "p1.row-adjustments.json").exists()  # drawn on the old orientation
-    assert not (guess / "p1.rows-adjusted.json").exists()
+    assert (guess / "p1.row-adjustments.json").is_file()  # the check survives a re-read
+    assert (guess / "p1.rows-adjusted.json").is_file()

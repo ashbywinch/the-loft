@@ -17,7 +17,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import os
 import socket
 import subprocess
 import threading
@@ -100,6 +99,7 @@ from pipeline.registry import RegistryError, list_batches, load_batch
 from pipeline.rows.rows import Rows
 from tools import memory, review
 from tools.archive import Archive, ArchiveError
+from tools.atomic import atomic_write
 from tools.decision_basis import DecisionBasis
 from tools.loft_paths import LoftPaths
 from tools.memory import ElicitationError, Knowledge
@@ -110,14 +110,6 @@ if TYPE_CHECKING:
     from loft.live.protocols import PageStore
 
 logger = logging.getLogger(__name__)
-
-
-def _atomic_write(path: Path, data: Any) -> None:
-    """Replace a derived file atomically (temp + rename) — never half-written.
-    The projection's write path; a reader in 2060 must not meet a torn file."""
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=1, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
 
 
 @dataclass(frozen=True)
@@ -686,7 +678,7 @@ def build_app(
         before = len(index.get("items", []))
         index["items"] = [it for it in index.get("items", []) if it["id"] != item_id]
         if len(index["items"]) != before:
-            _atomic_write(index_path, index)
+            atomic_write(index_path, json.dumps(index, indent=1, ensure_ascii=False))
 
     def _refresh_projection(
         story: Item,
@@ -702,7 +694,7 @@ def build_app(
             items.append(story.to_dict())
             items.sort(key=lambda it: it["date"])
             index["items"] = items
-            _atomic_write(index_path, index)
+            atomic_write(index_path, json.dumps(index, indent=1, ensure_ascii=False))
         _merge_records(filename="people.json", key="people", records=new_people)
         _merge_records(filename="places.json", key="places", records=new_places)
 
@@ -713,7 +705,7 @@ def build_app(
         data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {key: []}
         known = {r["id"] for r in data.get(key, [])}
         data[key] = data.get(key, []) + [r.to_dict() for r in records if r.id not in known]
-        _atomic_write(path, data)
+        atomic_write(path, json.dumps(data, indent=1, ensure_ascii=False))
 
     # -- the static app + the data gate ------------------------------------
 

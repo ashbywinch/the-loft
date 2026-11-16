@@ -611,7 +611,9 @@ def _line_spans(adjustments: RowAdjustments, page_size: PageSize) -> list[_Span]
         points = tuple((point[0] * page_size.width, point[1] * page_size.height) for point in line)
         if not points:
             continue
-        first, last = points[0], points[-1]
+        # the slope is the line's own, measured left to right: a stroke drawn
+        # from the row's end to its start is the same row, not a 180° line
+        first, last = sorted((points[0], points[-1]))
         spans.append(_Span(points=points, slope=math.degrees(math.atan2(last[1] - first[1], last[0] - first[0]))))
     return spans
 

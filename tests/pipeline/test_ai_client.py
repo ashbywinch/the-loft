@@ -20,8 +20,10 @@ from pipeline.model.ai_client import AIClient, AIClientError, find_api_key, json
 
 
 class FakeResponse:
-    def __init__(self, payload: dict[str, object] | str) -> None:
+    def __init__(self, payload: object, headers: dict[str, str] | None = None) -> None:
         self._payload: str = payload if isinstance(payload, str) else json.dumps(payload)
+        # a real response carries headers (`cf-aig-cache-status` among them)
+        self.headers: dict[str, str] = headers or {}
 
     def read(self) -> bytes:
         return self._payload.encode("utf-8")
@@ -47,7 +49,14 @@ def make_fake_urlopen(responses: list[object]) -> tuple[Urlopen, list[dict[str, 
             text = bytes(raw).decode("utf-8")
         else:
             text = str(raw)
-        calls.append({"url": request.full_url, "body": json.loads(text), "timeout": timeout})
+        calls.append(
+            {
+                "url": request.full_url,
+                "body": json.loads(text),
+                "timeout": timeout,
+                "headers": dict(request.headers),
+            }
+        )
         response = responses.pop(0)
         if isinstance(response, urllib.error.HTTPError):
             raise response
@@ -389,3 +398,44 @@ def test_chat_null_message_is_a_clean_error() -> None:
     client = AIClient(api_key="k", urlopen=urlopen)
     with pytest.raises(AIClientError):
         client.chat("s", "u")
+
+
+def test_a_retry_is_a_new_sample_never_a_cached_replay() -> None:
+    """The gateway caches a completion by request body, so re-sending the same
+    body after an empty answer replays that answer (measured on the real
+    gateway: three attempts, one response id, `cf-aig-cache-status: HIT`,
+    identical reasoning bytes). A retry must therefore skip the cache — the
+    first attempt may be served from it, later ones must not."""
+    empty: dict[str, object] = {"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]}
+    good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    urlopen, calls = make_fake_urlopen([FakeResponse(empty), FakeResponse(good)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda _s: None, max_retries=2)
+    assert client.chat("s", "u") == '{"ok": true}'
+
+    assert "Cf-aig-skip-cache" not in calls[0]["headers"], "the first attempt should be cacheable"
+    assert calls[1]["headers"]["Cf-aig-skip-cache"] == "true", "the retry replayed from the cache"
+
+
+def test_a_cached_empty_completion_is_named_in_the_retry_log(caplog: pytest.LogCaptureFixture) -> None:
+    """When the retry does come back from the cache, the log says so — the
+    difference between "the provider is failing" and "we are replaying"."""
+    empty = {"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]}
+    good = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    urlopen, _ = make_fake_urlopen(
+        [FakeResponse(empty, {"cf-aig-cache-status": "HIT"}), FakeResponse(good, {"cf-aig-cache-status": "MISS"})]
+    )
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda _s: None)
+    with caplog.at_level(logging.WARNING, logger="pipeline.model.ai_client"):
+        client.chat("s", "u")
+    assert "gateway_cache=HIT" in caplog.text
+
+
+def test_a_measurement_client_never_reads_the_gateway_cache() -> None:
+    """`fresh=True` is the eval's client: every attempt skips the cache, so a
+    second run samples the model instead of replaying the first run's answer
+    (measured: an identical repeat came back with the previous run's response
+    id and `cf-aig-cache-status: HIT`, so "run it twice" was one run twice)."""
+    good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    urlopen, calls = make_fake_urlopen([FakeResponse(good)])
+    AIClient(api_key="k", urlopen=urlopen, fresh=True).chat("s", "u")
+    assert calls[0]["headers"]["Cf-aig-skip-cache"] == "true", "a measurement was served from the cache"

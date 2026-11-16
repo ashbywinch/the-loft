@@ -118,6 +118,41 @@ def test_the_engine_reads_a_page_of_rows(tmp_path: Path) -> None:
     assert report.rows == 2, f"the fixture's two lines should make two rows, got {report.rows}"
 
 
+def test_a_segment_spanning_two_rows_is_written_once(tmp_path: Path) -> None:
+    """The model may answer one sentence across several rows (a letter's
+    sentence runs on). The sentence belongs to the first row of its span: the
+    page text joins the rows, so copying it onto every row repeats it in the
+    transcript and in the published document."""
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    (fixture / "words.json").write_text(
+        json.dumps(
+            {
+                "words": [
+                    {"x0": 250, "y0": 200, "x1": 320, "y1": 250, "line": 0, "baseline": 250, "waistline": 200},
+                    {"x0": 250, "y0": 500, "x1": 320, "y1": 550, "line": 1, "baseline": 550, "waistline": 500},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (fixture / "user-row-adjustments.json").write_text(
+        json.dumps({"lines": [[[0.3, 0.16], [0.6, 0.16]], [[0.3, 0.38], [0.6, 0.38]]]}),
+        encoding="utf-8",
+    )
+    page_path = tmp_path / "p1.jpg"
+    Image.new("RGB", (900, 1400), PAPER).save(page_path)
+
+    def stub_call(paths: list[Path], *, options: VlmOptions) -> VlmAnswer:
+        numbers = sorted({int(n) for n in re.findall(r"row (\d+)", options.user_text or "")})
+        segments = [{"rows": numbers, "type": "body", "transcript": "one sentence across both rows"}]
+        return VlmAnswer(json.dumps({"segments": segments}), TokenUsage(total_tokens=1, reasoning=""))
+
+    report = transcribe(page_path, fixture=fixture, call=stub_call, out_dir=tmp_path)
+
+    assert report.transcripts == {"1": "one sentence across both rows", "2": ""}
+
+
 def test_a_page_whose_reading_answers_nothing_reads_nothing(tmp_path: Path) -> None:
     """An empty page must come back empty, not invented: the stage leaves the
     page's marker unwritten on an empty mapping."""

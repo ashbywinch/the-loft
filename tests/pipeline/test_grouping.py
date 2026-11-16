@@ -44,6 +44,24 @@ def test_duplex_pairs_a_photo_with_its_text_side() -> None:
     assert docs[0].pages == ["p1.jpg", "p2.jpg"]
 
 
+def test_duplex_pairs_the_current_picture_kinds_with_their_text_side() -> None:
+    """The classifier writes the CURRENT vocabulary — "photograph", and
+    "postcard_face" for a picture side with a printed caption. The duplex cue
+    must read both, or no postcard's sides ever pair and each side becomes its
+    own document (the light-kind tuple knew only the legacy "photo")."""
+    pages = ["back.jpg", "front.jpg"]
+    for front in ("photograph", "postcard_face"):
+        docs = score_boundaries(
+            pages,
+            _kinds(("back.jpg", "handwriting"), ("front.jpg", front)),
+            _dims(("back.jpg", 1163, 789), ("front.jpg", 1165, 780)),
+            {"back.jpg": "POST CARD", "front.jpg": None},
+            {},
+        )
+        assert len(docs) == 1, f"{front} did not pair"
+        assert docs[0].pages == ["front.jpg", "back.jpg"]
+
+
 def test_duplex_reorders_a_text_side_scanned_first() -> None:
     """The postcard batch scans sides in mixed order — the text side at
     …038221 comes BEFORE the picture side at …077468. The picture side is

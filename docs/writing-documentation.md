@@ -206,6 +206,50 @@ fact and decision.
   the task-card shape: goal (one verb), scope (exact paths), constraints
   (must / never), acceptance (verifiable command).
 
+## Clarity rules
+
+Write each sentence as one of two kinds: facts about the software, or
+commands about what the reader does. Do not mix a fact and a command in
+one sentence.
+
+Why: readers use a doc right before acting. A sentence they must re-read
+costs time and can cause the wrong action.
+
+Give each kind its own sentence. Write "`cache.py` reads `cache.toml`
+at startup" as the fact. Write "edit that file, then run `cache gc`" as
+the command.
+
+Write each section by these rules:
+
+- **State the rule, not the steps.** Write "every block carries its task ID",
+  not "add the task ID when you create the block" — the steps belong in the
+  skill.
+- **Put the main point first.** Write the fact or the instruction in the
+  first sentence. Write the reasons after it.
+- **Name the heading after what the section gives the reader.** Do not use
+  "Overview", "Details", or "Misc": they do not say what the section holds.
+- **Write one idea per sentence.** Write each idea in its own sentence.
+- **Write in the active voice.** Write "`backup.py` writes `data.db`",
+  not "`data.db` is written by `backup.py`".
+- **Make every noun knowable.** Write each noun so the reader can tell,
+  with the context they already have, which thing it refers to. Name the
+  thing when the reader knows it. When they cannot know it, define or
+  describe it, or link to where it is defined.
+- **Define terms at first use.** Explain each term in plain words where it
+  first appears, house jargon included, or link to the external documentation
+  that defines it — a product page, an API reference, a standard. A reader who
+  has not met the word must be able to act on it. Use one name for one thing
+  throughout.
+- **Use concrete words.** Write "the `data.db` lock blocks the write",
+  not "write protection is enabled".
+- **Use the simplest word.** Write "start" not "initiate"; write "end" not
+  "terminate".
+- **Cut words that add no information.** Write "to" not "in order to";
+  write "now" not "at this point in time".
+- Keep sentences under 30 words.
+- Do not start a sentence with "There is" or "There are".
+- Do not use weasel words: enable, leverage, robust, seamless, transparent.
+
 ## The documentation-quality checklist
 
 - [ ] Single, clearly stated audience

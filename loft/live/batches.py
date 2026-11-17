@@ -47,8 +47,12 @@ class Batches:
 
     # -- writes ------------------------------------------------------------
 
-    def save(self, batch: BatchState, scans: tuple[ScanState, ...] = (), *, base: int | None = None) -> BatchState:
-        """Write a create (base None) or a supersede, version-checked."""
+    def save(
+        self, batch: BatchState, scans: tuple[ScanState, ...] | None = None, *, base: int | None = None
+    ) -> BatchState:
+        """Write a create (base None) or a supersede, version-checked. A save
+        that passes no scans keeps the batch's own: a status-only supersede
+        never erases the pages the manifest's image leg reads."""
         change = self.change
         if change is None:
             raise Conflict("batches.save needs a change")
@@ -65,6 +69,8 @@ class Batches:
                 raise StaleVersion(current=current, base=base)
             event_type = "superseded"
             version = base + 1
+        if scans is None:
+            scans = self.scans(batch.batch_id) if current is not None else ()
         payload = batch_payload(batch, scans)
         event = change.append(
             entity_kind="batch",

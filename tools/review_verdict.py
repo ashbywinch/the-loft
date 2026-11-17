@@ -15,7 +15,9 @@ never dropped.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal, get_args
+
+from pydantic import BaseModel, Field
 
 from tools.contradiction import Contradiction
 from tools.finding import Finding
@@ -24,10 +26,65 @@ from tools.trace_step import TraceStep
 # The model's boolean as the wire spells it — "true"/"false" as words.
 BOOLEAN_VALUES = frozenset({"true", "false"})
 
-# The reviewer's own certainty, never the model's assessment: a hedged "I
-# think" is think_so, never definitely; ONLY a bare "I don't know" is
-# dont_know (2026-08-15, 2026-10-08).
-CONFIDENCE_VALUES = frozenset({"definitely", "think_so", "dont_know", "think_not", "definitely_not", "unclear"})
+
+class ContradictionWire(BaseModel):
+    """The contradiction member of the verdict the model returns."""
+
+    found: Literal["true", "false"] = Field(
+        description="whether the statement cannot both be true with an attested fact"
+    )
+    detail: str = Field(description="the attested fact that conflicts, or empty")
+
+
+class FindingWire(BaseModel):
+    """One finding: the document and the sentence it quotes."""
+
+    text: str = Field(
+        description=(
+            "one sentence in the family's voice ('your recollection', 'you said'), naming "
+            "the specific document and its exact quoted sentence; never 'the records', "
+            "'the archive' or 'the import'; never an absence; a person record is not "
+            "evidence; quote only verified, non-draft text; report a matching item the "
+            "reviewer's place or event names and ask if it is the same"
+        )
+    )
+    item_id: str = Field(description="the document id from the tool results")
+
+
+class VerdictWire(BaseModel):
+    """The verdict the model returns: the schema's members, each with its own
+    description, rendered into the prompt and validated on the way back (the
+    chat-workflow convention: annotate the member, generate the schema)."""
+
+    relevant: Literal["true", "false"] = Field(description="whether the statement bears on the claim under review")
+    contradiction: ContradictionWire = Field(description="whether the statement denies an attested fact")
+    confidence: Literal["definitely", "think_so", "definitely_not", "think_not", "unclear", "dont_know"] = Field(
+        description=(
+            "the reviewer's own certainty, read from their words: definitely (they assert "
+            "it), think_so (they hedge it), definitely_not (they deny it), think_not (they "
+            "hedge the denial), unclear (a guess they do not commit to), dont_know (nothing "
+            "to go on: 'I don't know', 'no idea', 'can't recall' — a reason for knowing "
+            "nothing is not a guess). Their words always decide."
+        )
+    )
+    note: str = Field(
+        description=(
+            "one short sentence in the family's terms when relevant; when not, only the "
+            "topic; never the reasoning or 'the reviewer'"
+        )
+    )
+    findings: list[FindingWire] = Field(description="the documents the statement led to")
+    question: str = Field(
+        description=(
+            "the genealogist's next question in the family's words, or a short conclusion "
+            "when they have no knowledge and no lead; no process vocabulary"
+        )
+    )
+
+
+# The reviewer's own certainty, never the model's assessment — the values are
+# the schema's own, so the prompt and the validation cannot disagree.
+CONFIDENCE_VALUES = frozenset(get_args(VerdictWire.model_fields["confidence"].annotation))
 
 # The keys the verdict's wire carries — every other key of a model turn is
 # unmodeled and rides in ``extra``.

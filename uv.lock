@@ -917,6 +917,7 @@ source = { editable = "." }
 dependencies = [
     { name = "dateparser" },
     { name = "numpy" },
+    { name = "pydantic" },
     { name = "python-dateutil" },
     { name = "uncertainties" },
 ]
@@ -944,6 +945,7 @@ dev = [
 requires-dist = [
     { name = "dateparser", specifier = ">=1.2.0" },
     { name = "numpy", specifier = ">=2.0" },
+    { name = "pydantic", specifier = ">=2.13" },
     { name = "python-dateutil", specifier = ">=2.9.0" },
     { name = "uncertainties", specifier = ">=3.2.3" },
 ]

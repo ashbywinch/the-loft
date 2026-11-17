@@ -16,7 +16,7 @@ import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Any, Protocol
+from typing import Any, Protocol, get_args
 
 from pipeline.model.ai_client import AIClientError, json_object
 from tools.decision_basis import DecisionBasis
@@ -26,7 +26,7 @@ from tools.person_hit import PersonHit
 from tools.person_id_args import PersonIdArgs
 from tools.person_summary import PersonSummary
 from tools.records import Message, Person, ReviewContext
-from tools.review_verdict import ReviewVerdict
+from tools.review_verdict import ReviewVerdict, VerdictWire
 from tools.search_query_args import SearchQueryArgs
 from tools.tool_error import ToolError
 from tools.tool_note import ToolNote
@@ -422,14 +422,15 @@ def investigate(
             "for places and events, person/relationships/attested for people. A "
             "lead is answered in a finding — the document's own words — even when "
             "the answer is that it is not the one they mean.\n"
-            "3. RELEVANCE. The claim is about people and what befell them, so a "
-            "statement bears on it when it names a person — the claim's person, any "
-            "family member — or an event, a death, a marriage, a kinship, or an "
-            "uncertainty about any of them. A place is only ever where something "
-            "happened: on its own it settles nothing about who anyone was, so a "
-            "statement that names nothing but a place, or a thing ('that house', "
-            "'the garden'), is about something else, however well a search matches "
-            "it.\n"
+            "3. RELEVANCE. Judge what the statement is about, not what it tells "
+            "you. The claim is about people and what befell them. The statement is "
+            "about it when it names a person the claim shares — the claim's person, "
+            "any family member — or an event, a death, a marriage, a kinship. 'I "
+            "don't know', a disagreement and an uncertainty count: they answer the "
+            "claim with what the family has. A place is only ever where something "
+            "happened. With a place, or a thing ('that house', 'the garden'), as "
+            "the only link, the statement is about something else, however well a "
+            "search matches it.\n"
             "4. CONTRADICTION. Ask whether the records could make the statement "
             "true of someone they hold — another person of that name, another "
             "sibling, a date their own evidence allows. If they could, it is not a "
@@ -475,11 +476,16 @@ def investigate(
         "Do not reword a decided sentence, list alternative questions, or "
         "re-read your own draft."
     )
+    # The confidence member is the schema's: its allowed values and their
+    # meanings come from `VerdictWire`, so the prompt cannot describe a set the
+    # validator does not accept (the failure that left two values undefined).
+    confidence = VerdictWire.model_fields["confidence"]
+    values = "|".join(get_args(confidence.annotation))
     verdict = (
         '{"relevant": true|false, '
         '"contradiction": {"found": true|false, "detail": "<the attested fact that '
         'conflicts, or empty>"}, '
-        '"confidence": "<definitely|think_so|dont_know|think_not|definitely_not|unclear>", '
+        f'"confidence": "<{values}>", '
         '"note": "<one short sentence in the family\'s terms when relevant; when not, only '
         "the topic; never the reasoning or 'the reviewer'>\", "
         '"findings": [{"text": "<one sentence in the family\'s voice (\'your recollection\', '
@@ -491,27 +497,16 @@ def investigate(
         '"question": "<the genealogist\'s next question in the family\'s words, or a short '
         'conclusion when they have no knowledge and no lead; no process vocabulary>"}'
     )
-    # the confidence field is the reviewer's certainty, not the model's — every
-    # value the schema offers is named here, or the model has to invent a mapping
-    verdict += (
-        "\nConfidence is the reviewer's own certainty, read from their words:\n"
-        "- they assert it -> definitely; they hedge it -> think_so;\n"
-        "- they deny it -> definitely_not; they hedge the denial -> think_not;\n"
-        "- they offer a guess they do not commit to -> unclear;\n"
-        "- they have nothing to go on -> dont_know ('I don't know', 'no idea', "
-        "'can't recall', 'I never knew'), and a reason for knowing nothing ('I "
-        "never met him', 'it was before my time') leaves it dont_know: a reason "
-        "is not a guess.\n"
-        "Their words always decide."
-    )
+    verdict += "\nConfidence is the reviewer's own certainty, read from their words:\n" + str(confidence.description)
+    keys = ", ".join(VerdictWire.model_fields)
     # the verdict shape must be in the INITIAL prompt — the schema was only
     # revealed in the correction branch, so every first call was rejected
     # once before the shape appeared, doubling the cost of every exchange
     prompt = prompt + "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + verdict
     prompt += (
-        "\n\nThe verdict MUST contain ALL of these keys, spelled exactly as written — "
-        "relevant, contradiction, confidence, note, findings, question — no others, "
-        "no misspellings, no missing keys (a misspelled key is a failed verdict)."
+        f"\n\nThe verdict MUST contain ALL of these keys, spelled exactly as written — "
+        f"{keys} — no others, no misspellings, no missing keys (a misspelled key is "
+        "a failed verdict)."
     )
     tool_calls = 0
     trace: list[TraceStep] = []

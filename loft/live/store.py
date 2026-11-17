@@ -141,7 +141,6 @@ class LiveStore:
                 ),
                 base=current.version if current is not None else None,
             )
-        self.connection.commit()
 
     def rebuild_items(self) -> None:
         """Drop the item projections (and the asset catalog) and replay their events."""
@@ -171,7 +170,6 @@ class LiveStore:
                 ),
                 base=projection.current_version(item.id),
             )
-        self.connection.commit()
 
     def rebuild_reviews(self) -> None:
         """Drop the review projections and replay the session events."""
@@ -196,7 +194,6 @@ class LiveStore:
                 ),
                 base=projection.current_version(session.id),
             )
-        self.connection.commit()
 
     def rebuild_pipeline(self) -> None:
         """Drop the pipeline projections and replay the batch/page/document events."""
@@ -247,7 +244,6 @@ class LiveStore:
                     position,
                     base=documents.current_version(document.document_id),
                 )
-        self.connection.commit()
 
     def rebuild_identities(self) -> None:
         """Drop places/orgs/themes/relationships (and theme items) and replay them."""
@@ -279,15 +275,25 @@ class LiveStore:
                     updated_at=event["recorded_at"],
                 ),
             )
-        self.connection.commit()
 
     def rebuild_all(self) -> None:
-        """Replay every projection from the event log — the rebuild gate."""
-        self.rebuild_identities()
-        self.rebuild_people()
-        self.rebuild_items()
-        self.rebuild_reviews()
-        self.rebuild_pipeline()
+        """Replay every projection from the event log — the rebuild gate.
+
+        One transaction and the writer's lock: a replay that dies part-way
+        must leave the projections as they were, never half-emptied, and no
+        reader may see the emptied tables mid-replay."""
+        with self.lock:
+            self.connection.execute("BEGIN IMMEDIATE")
+            try:
+                self.rebuild_identities()
+                self.rebuild_people()
+                self.rebuild_items()
+                self.rebuild_reviews()
+                self.rebuild_pipeline()
+                self.connection.execute("COMMIT")
+            except BaseException:
+                self.connection.execute("ROLLBACK")
+                raise
 
     def close(self) -> None:
         self.database.close()

@@ -107,9 +107,24 @@ class OperationalBackup:
         self.out = out
 
     def write(self) -> BackupReport:
-        """Write the operational backup to the scratch path."""
+        """Write the operational backup to the scratch path.
+
+        The reads share one transaction under the writer's lock: the dump, the
+        content, the events and the manifest's `exported_through` are one
+        consistent snapshot — a write landing mid-backup must not tear it."""
         self._check_out()
         self.out.mkdir(parents=True, exist_ok=True)
+        with self.store.lock:
+            self.store.connection.execute("BEGIN")
+            try:
+                report = self._write_snapshot()
+                self.store.connection.execute("COMMIT")
+            except BaseException:
+                self.store.connection.execute("ROLLBACK")
+                raise
+        return report
+
+    def _write_snapshot(self) -> BackupReport:
         self._write_dump()
         self._write_content()
         self._write_events()

@@ -688,3 +688,52 @@ def test_rebuild_replays_the_pipeline(store: Any) -> None:
     assert store.documents.require("batch-1/doc-1").text_sha is not None
     assert len(store.documents.pages("batch-1/doc-1")) == 1
     assert store.verify_chain() == ()
+
+
+def test_a_status_only_page_save_keeps_its_reading_and_rows(store: Any) -> None:
+    """A save that carries no reading is a status change, not an erasure: the
+    page's reading, its rows and the reviewer's correction stay."""
+    with store.change(actor="import") as change:
+        change.pages.save(_page(), reading=_reading())
+    before = store.pages.reading("batch-1/page-01.jpg")
+    rows = store.pages.rows("batch-1/page-01.jpg")
+    with store.change(actor="import") as change:
+        change.pages.save(
+            PageState(
+                page_id="batch-1/page-01.jpg",
+                image_asset_id="batch-1/page-01.jpg",
+                sha256="sha-1",
+                revision=2,
+                rotation=180,
+                category="text",
+                status="review",
+            ),
+            base=1,
+        )
+    assert store.pages.reading("batch-1/page-01.jpg") == before
+    assert store.pages.rows("batch-1/page-01.jpg") == rows
+    assert rows  # the fixture made rows
+
+
+def test_a_status_only_batch_save_keeps_its_scans(store: Any) -> None:
+    """A status supersede that names no scans keeps the batch's own: the
+    manifest's image leg reads them."""
+    with store.change(actor="import") as change:
+        batch = change.batches.save(_batch(), _scans())
+    with store.change(actor="worker") as change:
+        change.batches.save(_batch(status="confirmed"), base=batch.version)
+    assert [scan.page_id for scan in store.batches.scans("batch-1")] == [
+        "batch-1/page-01.jpg",
+        "batch-1/page-02.jpg",
+    ]
+
+
+def test_a_nested_memory_change_is_refused() -> None:
+    """A change cannot nest, on either store: a nested block would commit half
+    a change."""
+    store = MemoryLiveStore(app_version="test")
+    try:
+        with store.change(actor="import"), pytest.raises(Conflict, match="nested"), store.change(actor="import"):
+            pass
+    finally:
+        store.close()

@@ -2718,12 +2718,28 @@ function rejectDoc(session) {
   }
 }
 
+/** The document's pages a backend re-read is still working on. Their text is
+ *  not settled: approving one archives the pre-re-read draft and takes the
+ *  document out of the queue, so the approval waits for them. */
+export function pagesAwaitingReRead(doc, processing) {
+  return (doc?.pages || []).filter((page) => (processing || {})[page] === "transcribing");
+}
+
 async function confirmNext(session) {
   const { batch, docIndex } = session;
   const doc = batch.documents[docIndex];
   const page = doc.pages[session.pageIndex];
   const pageState = (batch.processing || {})[page];
   if (pageState === "transcribing" || (session.rotation ?? 0) !== 0) return;
+  const reworking = pagesAwaitingReRead(doc, batch.processing);
+  if (reworking.length) {
+    // the reviewer may have advanced past a page being re-read: approving the
+    // document now would archive that page's stale text
+    session.root.querySelector(".rv-txa")?.replaceChildren(
+      el("div", { class: "rv-note" }, `Page ${reworking.join(", ")} is being re-read — approve it when it comes back.`),
+    );
+    return;
+  }
   acceptEdit(session);
   await queueRotation(session);
   if (session.pageIndex < doc.pages.length - 1) {

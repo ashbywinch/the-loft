@@ -10,6 +10,7 @@ dependencies = [
     "uncertainties>=3.2.3",
     "numpy>=2.0",  # the ink reader's measurement arithmetic (was riding on torch)
     "pydantic>=2.13",  # the verdict schema: annotated members, generated prompt text
+    "chat-workflow",
 ]
 [dependency-groups]
 dev = [
@@ -68,4 +69,7 @@ markers = [
 
 [tool.coverage.run]
 omit = ["*/__main__.py"]
+
+[tool.uv.sources]
+chat-workflow = { git = "https://github.com/ashbywinch/chat-workflow.git", rev = "569e65ce190529ee393f92f8aa43517d6af7957b" }
 

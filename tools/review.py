@@ -18,6 +18,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Protocol
 
+from chat_workflow.schema_prompt import schema_section
+
 from pipeline.model.ai_client import AIClientError, json_object
 from tools.decision_basis import DecisionBasis
 from tools.item_hit import ItemHit
@@ -488,7 +490,7 @@ def investigate(
     # rendered as its JSON schema — the framework's convention, and the whole
     # instruction: a value the model may return is described beside the member
     # that takes it.
-    verdict = json.dumps(Verdict.model_json_schema(), indent=2)
+    verdict = schema_section(Verdict)
     # the verdict shape must be in the INITIAL prompt — the schema was only
     # revealed in the correction branch, so every first call was rejected
     # once before the shape appeared, doubling the cost of every exchange

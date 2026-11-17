@@ -33,6 +33,10 @@ def svg_paper(page_no: int, n_pages: int) -> str:
 
 
 def svg_photo(label: str, hue: str) -> str:
+    if hue not in PlaceholderPhoto.FILLS:
+        # a hue outside the palette is a data error: the palette is the
+        # placeholder's own, and a silent default would hide a bad record
+        raise ValueError(f"unknown placeholder hue: {hue!r} (one of {', '.join(PlaceholderPhoto.FILLS)})")
     return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">
   <rect width="400" height="300" rx="8" fill="{PlaceholderPhoto.FILLS[hue]}"/>
   <rect x="14" y="14" width="372" height="272" rx="6" fill="none" stroke="rgba(90,70,50,.35)"/>

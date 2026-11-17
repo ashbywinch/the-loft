@@ -16,7 +16,7 @@ import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Any, Protocol, get_args
+from typing import Any, Protocol
 
 from pipeline.model.ai_client import AIClientError, json_object
 from tools.decision_basis import DecisionBasis
@@ -55,7 +55,15 @@ def _relevant_sentences(text: str, needles: tuple[str, ...], limit: int = 3) -> 
 class _Chat(Protocol):
     # instance method using self
 
-    def chat(self, system: str, user: str, *, thinking: bool = False) -> str: ...
+    def chat(
+        self,
+        system: str,
+        user: str,
+        *,
+        thinking: bool = False,
+        schema: dict[str, Any] | None = None,
+        schema_name: str = "response",
+    ) -> str: ...
 
 
 def _known_facts(facts: ReviewContext) -> str:
@@ -476,37 +484,19 @@ def investigate(
         "Do not reword a decided sentence, list alternative questions, or "
         "re-read your own draft."
     )
-    # The confidence member is the schema's: its allowed values and their
-    # meanings come from `VerdictWire`, so the prompt cannot describe a set the
-    # validator does not accept (the failure that left two values undefined).
-    confidence = VerdictWire.model_fields["confidence"]
-    values = "|".join(get_args(confidence.annotation))
-    verdict = (
-        '{"relevant": true|false, '
-        '"contradiction": {"found": true|false, "detail": "<the attested fact that '
-        'conflicts, or empty>"}, '
-        f'"confidence": "<{values}>", '
-        '"note": "<one short sentence in the family\'s terms when relevant; when not, only '
-        "the topic; never the reasoning or 'the reviewer'>\", "
-        '"findings": [{"text": "<one sentence in the family\'s voice (\'your recollection\', '
-        "'you said'), naming the specific document and its exact quoted sentence; never "
-        "'the records'/'the archive'/'the import'; never an absence; a person "
-        "record is not evidence; quote only verified, non-draft text; report a matching "
-        "item the reviewer's place or event names and ask if it is the same>\", "
-        '"item_id": "<the document id from the tool results>"}], '
-        '"question": "<the genealogist\'s next question in the family\'s words, or a short '
-        'conclusion when they have no knowledge and no lead; no process vocabulary>"}'
-    )
-    verdict += "\nConfidence is the reviewer's own certainty, read from their words:\n" + str(confidence.description)
-    keys = ", ".join(VerdictWire.model_fields)
+    # The verdict's shape and its value meanings are the annotated model's,
+    # rendered as its JSON schema — the framework's convention, and the whole
+    # instruction: a value the model may return is described beside the member
+    # that takes it.
+    verdict = json.dumps(VerdictWire.model_json_schema(), indent=2)
     # the verdict shape must be in the INITIAL prompt — the schema was only
     # revealed in the correction branch, so every first call was rejected
     # once before the shape appeared, doubling the cost of every exchange
     prompt = prompt + "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + verdict
     prompt += (
         f"\n\nThe verdict MUST contain ALL of these keys, spelled exactly as written — "
-        f"{keys} — no others, no misspellings, no missing keys (a misspelled key is "
-        "a failed verdict)."
+        f"{', '.join(VerdictWire.model_fields)} — no others, no misspellings, no "
+        "missing keys (a misspelled key is a failed verdict)."
     )
     tool_calls = 0
     trace: list[TraceStep] = []
@@ -519,7 +509,12 @@ def investigate(
         Investigation.MAX_STEPS + Investigation.VERDICT_AND_CORRECTION_TURNS
     ):  # the digs, plus the verdict and a correction
         try:
-            raw = client.chat(prompt, user, thinking=True)
+            # the verdict's own schema travels with the request: the provider
+            # then constrains the answer to it (the values included), so the
+            # prompt describes the shape once and nothing can drift from it
+            raw = client.chat(
+                prompt, user, thinking=True, schema=VerdictWire.model_json_schema(), schema_name="verdict"
+            )
             parsed = json_object(raw)
         except AIClientError as e:
             raise ElicitationError(f"investigation failed: {e}") from e

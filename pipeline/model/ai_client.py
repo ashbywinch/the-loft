@@ -100,7 +100,15 @@ class AIClient:
         self._urlopen: Callable[..., Any] = urlopen or urllib.request.urlopen
         self._sleep: Callable[[float], None] = _sleep or time.sleep
 
-    def chat(self, system: str, user: str, *, thinking: bool = False) -> str:
+    def chat(
+        self,
+        system: str,
+        user: str,
+        *,
+        thinking: bool = False,
+        schema: dict[str, Any] | None = None,
+        schema_name: str = "response",
+    ) -> str:
         """One text chat completion call; returns the assistant text.
 
         *thinking* enables the model's reasoning: the review judgments
@@ -138,8 +146,10 @@ class AIClient:
             # docstring); a model that rejects the param falls back below
             # (the 400/422 retry)
             thinking=thinking,
-            # structured output: the API guarantees a syntactically valid JSON
-            # response, eliminating truncated/bare-object responses
+            # structured output: the answer's own schema, when the caller has
+            # one — the provider then constrains the values, not just the JSON
+            response_schema=schema,
+            response_name=schema_name,
             json_response=True,
             # the thinking-token cap — only when explicitly configured: the
             # CI gateway ignores the cap and reshapes the response (the JSON

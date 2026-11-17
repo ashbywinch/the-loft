@@ -72,7 +72,15 @@ class FakeClient:
         self.responses = responses
         self.calls: list[tuple[str, str]] = []
 
-    def chat(self, system: str, user: str, *, thinking: bool = False) -> str:
+    def chat(
+        self,
+        system: str,
+        user: str,
+        *,
+        thinking: bool = False,
+        schema: dict[str, Any] | None = None,
+        schema_name: str = "response",
+    ) -> str:
         self.calls.append((system, user))
         return self.responses.pop(0)
 

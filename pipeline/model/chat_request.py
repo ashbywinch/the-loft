@@ -27,6 +27,11 @@ class ChatRequest:
     max_tokens: int
     thinking: bool | None = None
     json_response: bool = False
+    # A JSON Schema for the answer. The provider then constrains the output to
+    # it — the enum values cannot come back as anything else — where
+    # ``json_response`` only guarantees syntactically valid JSON.
+    response_schema: dict[str, Any] | None = None
+    response_name: str = "response"
     reasoning_budget: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -37,7 +42,12 @@ class ChatRequest:
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
-        if self.json_response:
+        if self.response_schema is not None:
+            out["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": self.response_name, "schema": self.response_schema, "strict": True},
+            }
+        elif self.json_response:
             out["response_format"] = {"type": "json_object"}
         if self.thinking is not None:
             out["thinking"] = {"type": "enabled" if self.thinking else "disabled"}

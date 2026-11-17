@@ -439,3 +439,19 @@ def test_a_measurement_client_never_reads_the_gateway_cache() -> None:
     urlopen, calls = make_fake_urlopen([FakeResponse(good)])
     AIClient(api_key="k", urlopen=urlopen, fresh=True).chat("s", "u")
     assert calls[0]["headers"]["Cf-aig-skip-cache"] == "true", "a measurement was served from the cache"
+
+
+def test_a_response_schema_constrains_the_answer() -> None:
+    """With a schema, the request asks the provider for that schema — the
+    answer's values are constrained, not merely valid JSON (measured on the
+    gateway: `json_object` returned a value outside the enum; `json_schema`
+    returned one of its members)."""
+    urlopen, calls = make_fake_urlopen([FakeResponse({"choices": [{"message": {"content": "{}"}}]})])
+    client = AIClient(api_key="k", urlopen=urlopen)
+    schema = {"type": "object", "properties": {"confidence": {"type": "string", "enum": ["yes", "no"]}}}
+    client.chat("s", "u", schema=schema, schema_name="verdict")
+    sent = calls[0]["body"]["response_format"]
+    assert sent["type"] == "json_schema"
+    assert sent["json_schema"]["name"] == "verdict"
+    assert sent["json_schema"]["schema"] == schema
+    assert sent["json_schema"]["strict"] is True

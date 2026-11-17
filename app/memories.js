@@ -527,7 +527,14 @@ function openSheet(state, anchor, resume = null) {
       value: session.title || `A story about ${anchor.name ?? "the archive"}`,
     });
     const text = el("textarea", { class: "field field-textarea" }, []);
-    text.value = assemble(session.entries);
+    // the review's text is the narrator's OWN words after their edits and
+    // redactions — the draft save must carry it, or a closed tab re-posts the
+    // words they removed
+    text.value = session.reviewText ?? assemble(session.entries);
+    text.addEventListener("input", () => {
+      session.reviewText = text.value;
+      touch();
+    });
 
     // each proposed link is a labelled checkbox — the state is obvious
     const toggles = el("div", { class: "link-toggles" });
@@ -747,7 +754,7 @@ async function saveDraft(session, state) {
           id: session.draftId ?? undefined, // the first save mints; the rest supersede
           who: session.who || "Guest",
           title: session.title || "A story (unfinished)",
-          account: assemble(session.entries),
+          account: session.reviewText ?? assemble(session.entries),
           extractions: (session.extractions ?? []).filter((ex) => ex.on !== false),
           facts: session.facts ?? [],
           chat: chatPayload(session),

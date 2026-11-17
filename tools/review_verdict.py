@@ -27,37 +27,34 @@ from tools.trace_step import TraceStep
 BOOLEAN_VALUES = frozenset({"true", "false"})
 
 
-class ContradictionWire(BaseModel):
-    """The contradiction member of the verdict the model returns."""
+class Verdict(BaseModel):
+    """The verdict the model returns: the answer's members, each with its own
+    description, rendered into the prompt and enforced in the request."""
 
-    found: Literal["true", "false"] = Field(
-        description="whether the statement cannot both be true with an attested fact"
-    )
-    detail: str = Field(description="the attested fact that conflicts, or empty")
+    class Contradiction(BaseModel):
+        """Whether the statement cannot both be true with an attested fact."""
 
-
-class FindingWire(BaseModel):
-    """One finding: the document and the sentence it quotes."""
-
-    text: str = Field(
-        description=(
-            "one sentence in the family's voice ('your recollection', 'you said'), naming "
-            "the specific document and its exact quoted sentence; never 'the records', "
-            "'the archive' or 'the import'; never an absence; a person record is not "
-            "evidence; quote only verified, non-draft text; report a matching item the "
-            "reviewer's place or event names and ask if it is the same"
+        found: Literal["true", "false"] = Field(
+            description="whether the statement cannot both be true with an attested fact"
         )
-    )
-    item_id: str = Field(description="the document id from the tool results")
+        detail: str = Field(description="the attested fact that conflicts, or empty")
 
+    class Finding(BaseModel):
+        """One finding: the document and the sentence it quotes."""
 
-class VerdictWire(BaseModel):
-    """The verdict the model returns: the schema's members, each with its own
-    description, rendered into the prompt and validated on the way back (the
-    chat-workflow convention: annotate the member, generate the schema)."""
+        text: str = Field(
+            description=(
+                "one sentence in the family's voice ('your recollection', 'you said'), naming "
+                "the specific document and its exact quoted sentence; never 'the records', "
+                "'the archive' or 'the import'; never an absence; a person record is not "
+                "evidence; quote only verified, non-draft text; report a matching item the "
+                "reviewer's place or event names and ask if it is the same"
+            )
+        )
+        item_id: str = Field(description="the document id from the tool results")
 
     relevant: Literal["true", "false"] = Field(description="whether the statement bears on the claim under review")
-    contradiction: ContradictionWire = Field(description="whether the statement denies an attested fact")
+    contradiction: Contradiction = Field(description="whether the statement denies an attested fact")
     confidence: Literal["definitely", "think_so", "definitely_not", "think_not", "unclear", "dont_know"] = Field(
         description=(
             "the reviewer's own certainty, read from their words: definitely (they assert "
@@ -73,7 +70,7 @@ class VerdictWire(BaseModel):
             "topic; never the reasoning or 'the reviewer'"
         )
     )
-    findings: list[FindingWire] = Field(description="the documents the statement led to")
+    findings: list[Finding] = Field(description="the documents the statement led to")
     question: str = Field(
         description=(
             "the genealogist's next question in the family's words, or a short conclusion "
@@ -84,7 +81,7 @@ class VerdictWire(BaseModel):
 
 # The reviewer's own certainty, never the model's assessment — the values are
 # the schema's own, so the prompt and the validation cannot disagree.
-CONFIDENCE_VALUES = frozenset(get_args(VerdictWire.model_fields["confidence"].annotation))
+CONFIDENCE_VALUES = frozenset(get_args(Verdict.model_fields["confidence"].annotation))
 
 # The keys the verdict's wire carries — every other key of a model turn is
 # unmodeled and rides in ``extra``.

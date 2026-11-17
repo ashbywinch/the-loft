@@ -26,7 +26,7 @@ from tools.person_hit import PersonHit
 from tools.person_id_args import PersonIdArgs
 from tools.person_summary import PersonSummary
 from tools.records import Message, Person, ReviewContext
-from tools.review_verdict import ReviewVerdict, VerdictWire
+from tools.review_verdict import ReviewVerdict, Verdict
 from tools.search_query_args import SearchQueryArgs
 from tools.tool_error import ToolError
 from tools.tool_note import ToolNote
@@ -488,14 +488,14 @@ def investigate(
     # rendered as its JSON schema — the framework's convention, and the whole
     # instruction: a value the model may return is described beside the member
     # that takes it.
-    verdict = json.dumps(VerdictWire.model_json_schema(), indent=2)
+    verdict = json.dumps(Verdict.model_json_schema(), indent=2)
     # the verdict shape must be in the INITIAL prompt — the schema was only
     # revealed in the correction branch, so every first call was rejected
     # once before the shape appeared, doubling the cost of every exchange
     prompt = prompt + "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + verdict
     prompt += (
         f"\n\nThe verdict MUST contain ALL of these keys, spelled exactly as written — "
-        f"{', '.join(VerdictWire.model_fields)} — no others, no misspellings, no "
+        f"{', '.join(Verdict.model_fields)} — no others, no misspellings, no "
         "missing keys (a misspelled key is a failed verdict)."
     )
     tool_calls = 0
@@ -512,9 +512,7 @@ def investigate(
             # the verdict's own schema travels with the request: the provider
             # then constrains the answer to it (the values included), so the
             # prompt describes the shape once and nothing can drift from it
-            raw = client.chat(
-                prompt, user, thinking=True, schema=VerdictWire.model_json_schema(), schema_name="verdict"
-            )
+            raw = client.chat(prompt, user, thinking=True, schema=Verdict.model_json_schema(), schema_name="verdict")
             parsed = json_object(raw)
         except AIClientError as e:
             raise ElicitationError(f"investigation failed: {e}") from e

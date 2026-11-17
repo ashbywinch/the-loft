@@ -9,6 +9,7 @@ auth.json (docs/coding-standards.md — secrets are shell-env only).
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import os
@@ -237,6 +238,18 @@ class AIClient:
                 # (finish_reason=n/a)" and retried it as if transient: the real
                 # failure stayed invisible for a whole session (2026-10-19).
                 raise AIClientError(f"model API error {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from e
+            # AFTER HTTPError: HTTPError IS a URLError (an OSError), so catching
+            # the transport first would turn a 401 into a retry.
+            except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as e:
+                # A reset, a dropped socket or a timeout is the transport's
+                # 5xx: retry it on the same budget, re-sampling (the retry
+                # skips the gateway cache). Without this the socket error left
+                # the retry loop entirely and failed the call on one reset.
+                logger.warning("chat: transport failure (%s) — retrying", e)
+                if backoff.attempt >= self.max_retries:
+                    raise AIClientError(f"model API transport failure: {e}") from e
+                backoff = backoff.advance(self._sleep)
+                continue
             if content and content.strip():
                 return content
             thinking_enabled = payload.thinking is True

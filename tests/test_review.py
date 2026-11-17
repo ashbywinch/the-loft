@@ -17,7 +17,7 @@ from tools.memory import ElicitationError
 from tools.person_id_args import PersonIdArgs
 from tools.records import Person, ReviewContext
 from tools.review import ToolResult, investigate, run_tool, steer_message
-from tools.review_verdict import CONFIDENCE_VALUES, ReviewVerdict, VerdictWire
+from tools.review_verdict import CONFIDENCE_VALUES, ReviewVerdict, Verdict
 from tools.trace_step import TraceStep
 
 PEOPLE: list[dict[str, Any]] = [
@@ -629,10 +629,10 @@ def test_persona_guard_error_carries_the_full_text() -> None:
 
 
 def test_the_verdict_schema_defines_every_value_it_accepts() -> None:
-    """The prompt's verdict schema is generated from `VerdictWire`, so a value
+    """The prompt's verdict schema is generated from `Verdict`, so a value
     the validator accepts is a value the prompt defines. Retyping the values
     into the prompt is how two of the six confidence values came to be accepted
     and never described."""
-    schema = json.dumps(VerdictWire.model_json_schema(), indent=1)
+    schema = json.dumps(Verdict.model_json_schema(), indent=1)
     undefined = [value for value in CONFIDENCE_VALUES if f'"{value}"' not in schema]
     assert not undefined, f"accepted but never described: {undefined}"

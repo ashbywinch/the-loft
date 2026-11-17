@@ -58,8 +58,8 @@ def make_fake_urlopen(responses: list[object]) -> tuple[Urlopen, list[dict[str, 
             }
         )
         response = responses.pop(0)
-        if isinstance(response, urllib.error.HTTPError):
-            raise response
+        if isinstance(response, BaseException):
+            raise response  # urlopen raises: an HTTPError, or a socket error
         return response
 
     return urlopen, calls
@@ -455,3 +455,26 @@ def test_a_response_schema_constrains_the_answer() -> None:
     assert sent["json_schema"]["name"] == "verdict"
     assert sent["json_schema"]["schema"] == schema
     assert sent["json_schema"]["strict"] is True
+
+
+def test_a_connection_reset_is_retried_like_a_5xx() -> None:
+    """A dropped socket is the transport's version of a 5xx. It used to leave
+    the retry loop entirely — the loop caught HTTPError only — so one reset
+    failed an eval run after 15 minutes of work (measured: 20 eval errors from
+    `ConnectionResetError`, with the provider answering fine either side)."""
+    good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    responses: list[object] = [ConnectionResetError(104, "Connection reset by peer"), FakeResponse(good)]
+    urlopen, calls = make_fake_urlopen(responses)
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda _s: None, max_retries=2)
+    assert client.chat("s", "u") == '{"ok": true}'
+    assert len(calls) == 2, "the reset was not retried"
+    # the retry is a new sample, not a replay of the connection that failed
+    assert calls[1]["headers"]["Cf-aig-skip-cache"] == "true"
+
+
+def test_persistent_transport_failure_is_a_client_error() -> None:
+    urlopen, calls = make_fake_urlopen([ConnectionResetError(104, "reset") for _ in range(3)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda _s: None, max_retries=2)
+    with pytest.raises(AIClientError, match="transport failure"):
+        client.chat("s", "u")
+    assert len(calls) == 3, "the retry budget was not spent"

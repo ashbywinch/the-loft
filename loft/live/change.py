@@ -18,7 +18,7 @@ from typing import Any, Self
 from loft.live.batches import Batches
 from loft.live.content import ContentStore
 from loft.live.documents import Documents
-from loft.live.errors import Conflict
+from loft.live.errors import Busy, Conflict
 from loft.live.event import event_hash
 from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection
 from loft.live.items import Items
@@ -81,6 +81,11 @@ class Change:
         self.lock.acquire()
         try:
             self.connection.execute("BEGIN IMMEDIATE")
+        except sqlite3.OperationalError as error:
+            self.lock.release()
+            if "within a transaction" in str(error):
+                raise Conflict("a change cannot be nested") from error
+            raise Busy(f"another writer holds the database lock: {error}") from error
         except BaseException:
             self.lock.release()
             raise

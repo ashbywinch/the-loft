@@ -183,8 +183,11 @@ class PageProjection:
         )
         if cursor.rowcount == 0:
             raise StaleVersion(current=self.get(bundle.page.page_id), base=base)
-        self.connection.execute("DELETE FROM readings WHERE page_id = ?", (bundle.page.page_id,))
         if bundle.reading is not None:
+            # a save that carries no reading (a status-only supersede) keeps
+            # the page's reading and rows: the delete is the replacement's,
+            # never the absence's
+            self.connection.execute("DELETE FROM readings WHERE page_id = ?", (bundle.page.page_id,))
             self.connection.execute(
                 """INSERT INTO readings (page_id, reading_sha, corrected_sha, rows, words, event_seq)
                    VALUES (?, ?, ?, ?, ?, ?)""",
@@ -197,7 +200,8 @@ class PageProjection:
                     position.event_seq,
                 ),
             )
-        self.connection.execute("DELETE FROM page_rows WHERE page_id = ?", (bundle.page.page_id,))
+        if bundle.reading is not None:
+            self.connection.execute("DELETE FROM page_rows WHERE page_id = ?", (bundle.page.page_id,))
         for row in bundle.rows:
             self.connection.execute(
                 """INSERT INTO page_rows (page_id, ordinal, source, trust, text, box, kind,

@@ -27,6 +27,7 @@ import {
   deliverOwed,
   isOrientationCovered,
   orientationState,
+  pagesAwaitingReRead,
   render,
   saveEdits,
   saveOrientation,
@@ -34,6 +35,16 @@ import {
   viewRotation,
   zoomView,
 } from "../../views/review.js";
+
+describe("pagesAwaitingReRead", () => {
+  it("names the pages a backend re-read is still working on", () => {
+    const doc = { pages: ["p1.jpg", "p2.jpg"] };
+    expect(pagesAwaitingReRead(doc, { "p2.jpg": "transcribing" })).toEqual(["p2.jpg"]);
+    expect(pagesAwaitingReRead(doc, { "p2.jpg": "failed" })).toEqual([]);
+    expect(pagesAwaitingReRead(doc, {})).toEqual([]);
+    expect(pagesAwaitingReRead(null, {})).toEqual([]);
+  });
+});
 
 /** One reviewable document: two pages, page 1 with a layout (two lines,
  *  three flagged words), page 2 with a layout (no flags). */

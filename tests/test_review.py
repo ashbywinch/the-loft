@@ -636,3 +636,36 @@ def test_the_verdict_schema_defines_every_value_it_accepts() -> None:
     schema = json.dumps(Verdict.model_json_schema(), indent=1)
     undefined = [value for value in CONFIDENCE_VALUES if f'"{value}"' not in schema]
     assert not undefined, f"accepted but never described: {undefined}"
+
+
+def test_the_review_call_carries_the_verdict_schema() -> None:
+    """The schema is not only described in the prompt: it is the request's
+    response_format, so the provider enforces the values the model declares.
+    Without this test the prompt could describe one model and the call send
+    another."""
+    seen: dict[str, Any] = {}
+
+    class _Client:
+        def chat(
+            self, system: str, user: str, *, thinking: bool = False, schema: Any = None, schema_name: str = "response"
+        ) -> str:
+            seen["schema"] = schema
+            return json.dumps(
+                {
+                    "relevant": "true",
+                    "contradiction": {"found": "false", "detail": ""},
+                    "confidence": "think_so",
+                    "note": "",
+                    "findings": [],
+                    "question": "",
+                }
+            )
+
+    investigate(
+        _Client(),
+        text="Grandma said Walter was Pearl's brother.",
+        person=Person.from_dict({"id": "p-walter", "name": "Walter Whitlock", "relation": "sibling of Nora"}),
+        who="Aria",
+        facts=ReviewContext(people=(), items=(), relationships=()),
+    )
+    assert seen["schema"] == Verdict.model_json_schema()

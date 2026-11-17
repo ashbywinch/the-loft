@@ -32,6 +32,9 @@ class ChatRequest:
     # ``json_response`` only guarantees syntactically valid JSON.
     response_schema: dict[str, Any] | None = None
     response_name: str = "response"
+    # a provider may reject a strict schema; the retry drops strictness first,
+    # then the schema, before it gives up
+    response_strict: bool = True
     reasoning_budget: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,7 +48,11 @@ class ChatRequest:
         if self.response_schema is not None:
             out["response_format"] = {
                 "type": "json_schema",
-                "json_schema": {"name": self.response_name, "schema": self.response_schema, "strict": True},
+                "json_schema": {
+                    "name": self.response_name,
+                    "schema": self.response_schema,
+                    "strict": self.response_strict,
+                },
             }
         elif self.json_response:
             out["response_format"] = {"type": "json_object"}

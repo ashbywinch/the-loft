@@ -23,8 +23,9 @@ from tools.contradiction import Contradiction
 from tools.finding import Finding
 from tools.trace_step import TraceStep
 
-# The model's boolean as the wire spells it — "true"/"false" as words.
-BOOLEAN_VALUES = frozenset({"true", "false"})
+# The model's boolean as the wire spells it — "true"/"false" as words, taken
+# from the schema's own Literal so the sets cannot drift apart.
+BOOLEAN_VALUES: frozenset[str] = frozenset()  # assigned after Verdict is defined
 
 
 class Verdict(BaseModel):
@@ -82,6 +83,7 @@ class Verdict(BaseModel):
 # The reviewer's own certainty, never the model's assessment — the values are
 # the schema's own, so the prompt and the validation cannot disagree.
 CONFIDENCE_VALUES = frozenset(get_args(Verdict.model_fields["confidence"].annotation))
+BOOLEAN_VALUES = frozenset(get_args(Verdict.model_fields["relevant"].annotation))
 
 # The keys the verdict's wire carries — every other key of a model turn is
 # unmodeled and rides in ``extra``.

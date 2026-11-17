@@ -216,6 +216,17 @@ class AIClient:
                         ) from e
                     backoff = backoff.advance(self._sleep)
                     continue
+                if e.code in (400, 422) and payload.response_schema is not None:
+                    # the endpoint does not take this schema as given: drop
+                    # strictness first, then the schema, before failing —
+                    # a provider rejection must not lose the whole call
+                    logger.warning("model %s rejected the response schema (HTTP %d); relaxing it", self.model, e.code)
+                    payload = (
+                        replace(payload, response_strict=False)
+                        if payload.response_strict
+                        else replace(payload, response_schema=None)
+                    )
+                    continue
                 if e.code in (400, 422) and (payload.thinking is not None or payload.reasoning_budget is not None):
                     # model/endpoint doesn't understand the reasoning params —
                     # retry without them; the fallback must NOT consume the

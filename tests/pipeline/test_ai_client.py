@@ -478,3 +478,23 @@ def test_persistent_transport_failure_is_a_client_error() -> None:
     with pytest.raises(AIClientError, match="transport failure"):
         client.chat("s", "u")
     assert len(calls) == 3, "the retry budget was not spent"
+
+
+def test_a_provider_that_rejects_the_schema_still_answers() -> None:
+    """`strict: true` is not every provider's contract. A rejection drops
+    strictness first, then the schema — the call must not be lost to a
+    capability the endpoint lacks."""
+    good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    scheme: dict[str, object] = {"type": "object", "properties": {}}
+    urlopen, calls = make_fake_urlopen(
+        [
+            http_error(400, b"strict is not supported"),
+            http_error(400, b"response_format unsupported"),
+            FakeResponse(good),
+        ]
+    )
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda _s: None, max_retries=2)
+    assert client.chat("s", "u", schema=scheme) == '{"ok": true}'
+    assert calls[0]["body"]["response_format"]["json_schema"]["strict"] is True
+    assert calls[1]["body"]["response_format"]["json_schema"]["strict"] is False
+    assert calls[2]["body"]["response_format"] == {"type": "json_object"}

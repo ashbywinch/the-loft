@@ -497,7 +497,7 @@ def investigate(
     prompt = prompt + "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + verdict
     prompt += (
         f"\n\nThe verdict MUST contain ALL of these keys, spelled exactly as written — "
-        f"{', '.join(Verdict.model_fields)} — no others, no misspellings, no "
+        f"{', '.join(Verdict.model_json_schema()['properties'])} — no others, no misspellings, no "
         "missing keys (a misspelled key is a failed verdict)."
     )
     tool_calls = 0

@@ -638,17 +638,19 @@ def test_the_verdict_schema_defines_every_value_it_accepts() -> None:
     assert not undefined, f"accepted but never described: {undefined}"
 
 
-def test_the_review_call_carries_the_verdict_schema() -> None:
-    """The schema is not only described in the prompt: it is the request's
-    response_format, so the provider enforces the values the model declares.
-    Without this test the prompt could describe one model and the call send
-    another."""
+def test_the_prompt_states_every_confidence_value() -> None:
+    """The value rules are instructions the model must read, and they come from
+    the same `Verdict` model the parse uses — so the prompt cannot describe a
+    set the validator rejects. The request carries no response schema: the
+    loop's turns are a tool call or the verdict, and a verdict schema forbids
+    the tool call."""
     seen: dict[str, Any] = {}
 
     class _Client:
         def chat(
             self, system: str, user: str, *, thinking: bool = False, schema: Any = None, schema_name: str = "response"
         ) -> str:
+            seen["prompt"] = system
             seen["schema"] = schema
             return json.dumps(
                 {
@@ -668,4 +670,6 @@ def test_the_review_call_carries_the_verdict_schema() -> None:
         who="Aria",
         facts=ReviewContext(people=(), items=(), relationships=()),
     )
-    assert seen["schema"] == Verdict.model_json_schema()
+    assert seen["schema"] is None, "a response schema forbids the tool call this loop needs"
+    missing = [value for value in CONFIDENCE_VALUES if value not in seen["prompt"]]
+    assert not missing, f"values the parse accepts but the prompt never states: {missing}"

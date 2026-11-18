@@ -519,10 +519,11 @@ def investigate(
         Investigation.MAX_STEPS + Investigation.VERDICT_AND_CORRECTION_TURNS
     ):  # the digs, plus the verdict and a correction
         try:
-            # the verdict's own schema travels with the request: the provider
-            # then constrains the answer to it (the values included), so the
-            # prompt describes the shape once and nothing can drift from it
-            raw = client.chat(prompt, user, thinking=True, schema=Verdict.model_json_schema(), schema_name="verdict")
+            # No response schema here: the loop's turns are JSON either way —
+            # a tool call or the verdict — and a schema pinned to the verdict
+            # forbids the tool call, which stops the investigation dead. The
+            # prompt carries the value rules; the parse enforces them.
+            raw = client.chat(prompt, user, thinking=True)
             parsed = json_object(raw)
         except AIClientError as e:
             raise ElicitationError(f"investigation failed: {e}") from e

@@ -502,6 +502,12 @@ def investigate(
     # the verdict shape must be in the INITIAL prompt — the schema was only
     # revealed in the correction branch, so every first call was rejected
     # once before the shape appeared, doubling the cost of every exchange
+    # The shape is generated from the model, never retyped: until the loop's
+    # tools are native, the prompt is the only place the model can learn it
+    # (a response schema would forbid the tool call — see the call below).
+    prompt += "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + json.dumps(
+        Verdict.model_json_schema(), indent=1
+    )
     prompt += verdict_rules
     prompt += (
         "\n\nReturn ONLY the verdict JSON. It MUST contain ALL of these keys, spelled exactly "

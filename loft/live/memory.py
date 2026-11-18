@@ -69,6 +69,7 @@ class MemoryLiveStore:
 
     def __init__(self, *, app_version: str = "test") -> None:
         self.app_version = app_version
+        self._active_change = False
         self._people: dict[str, Person] = {}
         self._items: dict[str, Item] = {}
         self._item_refs: dict[str, tuple[ItemRef, ...]] = {}
@@ -649,7 +650,10 @@ class _MemoryBatches:
     def scans(self, batch_id: str) -> tuple[ScanState, ...]:
         return self.store._scans.get(batch_id, ())
 
-    def save(self, batch: BatchState, scans: tuple[ScanState, ...] = (), *, base: int | None = None) -> BatchState:
+    def save(
+        self, batch: BatchState, scans: tuple[ScanState, ...] | None = None, *, base: int | None = None
+    ) -> BatchState:
+        """A save that names no scans keeps the batch's own."""
         change = self.change
         if change is None:
             raise Conflict("batches.save needs a change")
@@ -666,6 +670,8 @@ class _MemoryBatches:
                 raise StaleVersion(current=current, base=base)
             event_type = "superseded"
             version = base + 1
+        if scans is None:
+            scans = self.scans(batch.batch_id) if current is not None else ()
         change.append(
             entity_kind="batch",
             entity_id=batch.batch_id,
@@ -770,7 +776,7 @@ class _MemoryPages:
         self.store._pages[page.page_id] = saved
         if reading_state is not None:
             self.store._readings[page.page_id] = reading_state
-        self.store._page_rows[page.page_id] = rows
+            self.store._page_rows[page.page_id] = rows
         if adjustment_state is not None:
             self.store._adjustments[page.page_id] = adjustment_state
         return saved
@@ -927,6 +933,9 @@ class _MemoryChange:
         self._collections: dict[str, dict[str, object]] = {}
 
     def __enter__(self) -> Self:
+        if getattr(self.store, "_active_change", False):
+            raise Conflict("a change cannot be nested")
+        self.store._active_change = True
         self.lock.acquire()
         self._people = dict(self.store._people)
         self._items = dict(self.store._items)
@@ -1020,6 +1029,7 @@ class _MemoryChange:
                     raise Conflict(f"command {self.command_id} already applied")
                 self.store._applied.add(self.command_id)
         finally:
+            self.store._active_change = False
             self.lock.release()
 
     def append(

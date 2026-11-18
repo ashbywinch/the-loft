@@ -59,15 +59,16 @@ class ScanError(RuntimeError):
     """A scan run failed; the message is the plain-language line."""
 
 
-def _sane_env() -> dict[str, str]:
-    """ScanJob.SANE_CONFIG_DIR pointing at the user config when it exists.
+def _sane_env(config_dir: Path | None = None) -> dict[str, str]:
+    """SANE_CONFIG_DIR pointing at the user config when it exists.
 
     The static airscan device entry lives in the user config dir, so
     scanimage must read its config from there, not /etc/sane.d alone.
     """
     env = dict(os.environ)
-    if ScanJob.SANE_CONFIG_DIR.is_dir():
-        env["ScanJob.SANE_CONFIG_DIR"] = str(ScanJob.SANE_CONFIG_DIR)
+    directory = ScanJob.SANE_CONFIG_DIR if config_dir is None else config_dir
+    if directory.is_dir():
+        env["SANE_CONFIG_DIR"] = str(directory)
     return env
 
 

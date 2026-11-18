@@ -18,8 +18,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any, Protocol
 
-from chat_workflow.schema_prompt import schema_section
-
 from pipeline.model.ai_client import AIClientError, json_object
 from tools.decision_basis import DecisionBasis
 from tools.item_hit import ItemHit
@@ -490,16 +488,14 @@ def investigate(
     # rendered as its JSON schema — the framework's convention, and the whole
     # instruction: a value the model may return is described beside the member
     # that takes it.
-    verdict = schema_section(Verdict)
+    # The schema is the request's `response_format` (AIClient sends
+    # `Verdict.model_json_schema()`), so the prompt does not restate it: one
+    # declaration, one place it is enforced.
+
     # the verdict shape must be in the INITIAL prompt — the schema was only
     # revealed in the correction branch, so every first call was rejected
     # once before the shape appeared, doubling the cost of every exchange
-    prompt = prompt + "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + verdict
-    prompt += (
-        f"\n\nThe verdict MUST contain ALL of these keys, spelled exactly as written — "
-        f"{', '.join(Verdict.model_json_schema()['properties'])} — no others, no misspellings, no "
-        "missing keys (a misspelled key is a failed verdict)."
-    )
+    prompt += "\n\nReturn ONLY the verdict JSON."
     tool_calls = 0
     trace: list[TraceStep] = []
     # the stable prompt — the static plus the conversation before the
@@ -557,7 +553,7 @@ def investigate(
             "\n\n[your previous answer] "
             + raw
             + "\n\nThat was neither a tool call nor the complete verdict. Keep the reasoning "
-            "above and return the complete verdict JSON now: " + verdict
+            "above and return the complete verdict JSON now."
         )
     # pragma: no cover  # defensive: the bounded loop must conclude
     raise ElicitationError("investigation did not conclude")

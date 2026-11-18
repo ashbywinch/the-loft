@@ -318,7 +318,7 @@ wheels = [
 [[package]]
 name = "chat-workflow"
 version = "0.1.0"
-source = { git = "https://github.com/ashbywinch/chat-workflow.git?rev=569e65ce190529ee393f92f8aa43517d6af7957b#569e65ce190529ee393f92f8aa43517d6af7957b" }
+source = { git = "https://github.com/ashbywinch/chat-workflow.git?rev=fc4d385#fc4d385a8c078b763f1491638897a2d3813f8c38" }
 dependencies = [
     { name = "instructor" },
     { name = "litellm", version = "1.108.10", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.15'" },
@@ -1998,7 +1998,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "chat-workflow", git = "https://github.com/ashbywinch/chat-workflow.git?rev=569e65ce190529ee393f92f8aa43517d6af7957b" },
+    { name = "chat-workflow", git = "https://github.com/ashbywinch/chat-workflow.git?rev=fc4d385" },
     { name = "dateparser", specifier = ">=1.2.0" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "pydantic", specifier = ">=2.13" },

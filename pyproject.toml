@@ -71,5 +71,5 @@ markers = [
 omit = ["*/__main__.py"]
 
 [tool.uv.sources]
-chat-workflow = { git = "https://github.com/ashbywinch/chat-workflow.git", rev = "569e65ce190529ee393f92f8aa43517d6af7957b" }
+chat-workflow = { git = "https://github.com/ashbywinch/chat-workflow.git", rev = "fc4d385" }
 

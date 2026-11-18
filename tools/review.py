@@ -488,14 +488,26 @@ def investigate(
     # rendered as its JSON schema — the framework's convention, and the whole
     # instruction: a value the model may return is described beside the member
     # that takes it.
-    # The schema is the request's `response_format` (AIClient sends
-    # `Verdict.model_json_schema()`), so the prompt does not restate it: one
-    # declaration, one place it is enforced.
+    # The SHAPE is the request's `response_format` (AIClient sends
+    # `Verdict.model_json_schema()`), so the prompt does not draw it again. The
+    # RULES are not the shape: each value's meaning and the closed key set are
+    # instructions the model must read, and both come from the same model, so
+    # the prompt cannot describe a set the validator rejects.
+    confidence = Verdict.model_fields["confidence"]
+    verdict_rules = "\nConfidence is the reviewer's own certainty, read from their words: " + str(
+        confidence.description
+    )
+    keys = ", ".join(Verdict.model_json_schema()["properties"])
 
     # the verdict shape must be in the INITIAL prompt — the schema was only
     # revealed in the correction branch, so every first call was rejected
     # once before the shape appeared, doubling the cost of every exchange
-    prompt += "\n\nReturn ONLY the verdict JSON."
+    prompt += verdict_rules
+    prompt += (
+        "\n\nReturn ONLY the verdict JSON. It MUST contain ALL of these keys, spelled exactly "
+        f"as written — {keys} — no others, no misspellings, no missing keys (a misspelled key is "
+        "a failed verdict)."
+    )
     tool_calls = 0
     trace: list[TraceStep] = []
     # the stable prompt — the static plus the conversation before the

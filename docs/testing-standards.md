@@ -146,7 +146,9 @@ The marker's name is `eval`, not `e2e`, so "e2e" keeps its definition: most eval
 
 ## When a real-model eval fails
 
-A red eval means the prompt is ambiguous. Fix the prompt, not the eval.
+A red eval on a sound run means the prompt is ambiguous. Fix the prompt, not
+the eval; a run that never reached the model — a transport failure, a cache
+hit — is not a verdict.
 
 - **Never append an example for a single failing case.** Fix the rule so the
   case is covered. Reshape the examples only when the prompt as a whole calls
@@ -179,8 +181,9 @@ cannot produce both answers. More samples only choose which error ships.
 docs-only change cannot move a judgement.
 
 **Never retry through a response cache.** A cached completion replays the
-failure. Send the gateway's cache-bypass header (`cf-aig-skip-cache: true`) on
-every retry.
+failure. The model client sends the gateway's cache-bypass header on a retry
+and on a measurement (`AIClient(fresh=True)`, `pipeline/model/http_headers.py`);
+a run whose log shows a cache hit is not a measurement.
 
 ## Gates
 

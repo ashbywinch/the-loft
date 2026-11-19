@@ -53,6 +53,7 @@ extra_instructions = "Check the PR against each file in repo_context_files. Befo
 
 
 [pr_code_suggestions]
+commitable_code_suggestions = true
 # DISABLED for the auto run (2026-11-12). The suggestions generator uses the
 # global [config] model chain and, on this PR's 150k-token numbered diff, the
 # model returns empty content (finish_reason: length) after ~30 minutes; the

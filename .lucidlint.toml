@@ -112,6 +112,16 @@ ignore = ["unused"]
 ignore = ["unused"]
 [lucidlint."pipeline/rows/rows.py"]
 ignore = ["unused"]
+# long-param-list: four STOPPED findings, not waived. `Layout.single`,
+# `build_layout` and `multi_layout` are called with their page frame, text
+# and detections positionally plus `selfreport=`/`vlm_boxes=`/the report
+# keywords (tests/pipeline/test_layout.py, tests/test_sync.py,
+# tests/pipeline/test_server.py), and `Anchor.__init__` with `width=`/
+# `height=` (test_layout.py:709/746/779). Any <=5-parameter form renames an
+# argument the suite passes, so the def and its call sites must move
+# together — the records it needs already exist: PageGeometry (page, width,
+# height) and MultiInputs (the whole multi tail). The follow-up table is in
+# docs/PLAN/lucidlint-review-log.md, 2026-11-20 — names and signatures.
 [lucidlint."pipeline/layout.py"]
 ignore = ["unused", "long-param-list"]
 [lucidlint."pipeline/model/vlm.py"]
@@ -138,9 +148,12 @@ ignore = ["unused"]
 ignore = ["unused"]
 [lucidlint."tools/attestation.py"]
 ignore = ["unused"]
-# long-param-list: the archive's public identification verb is pinned by the
-# old suite and the server route — its parameters ARE the determination
-# (item, kind, record, decision, basis, actor), not a group that needs a type.
+# long-param-list: STOPPED (re-checked 2026-11-20, one finding). The archive's
+# public identification verb takes the determination's own fields (item, kind,
+# record, decision, basis, actor). `Determination` exists for the dispositions,
+# but the signature is pinned by tests/test_archive.py (five positional
+# arguments plus `actor=`) and the server route: a <=5-parameter form renames
+# an argument the suite passes, so the def and its call sites move together.
 # partition: STOPPED, not waived. The rule's field partition on Archive is the
 # migration's own seam: the live verbs (identities, reviews, items — the four
 # bind_*_service flips) and the file path they fall back to until E2
@@ -165,18 +178,20 @@ ignore = ["unused"]
 [lucidlint."pipeline/evals/eval_scoring.py"]
 ignore = ["unused"]
 
-# long-param-list: the sync seams are signature-bound (the server and the
-# tests pin them); the per-site whys were the same policy, stated once.
+# long-param-list: two STOPPED findings. `record_confirmation` (10) and
+# `reprocess_page_transcription` (13) are called with their opening
+# arguments positionally plus named seams (archive=, title=/date=,
+# registry_dir=, transcribe=/rows_text=) in tests/test_sync.py and
+# tests/pipeline/test_adopt.py: a <=5-parameter form renames an argument the
+# suite passes, so the def and its call sites move together. The seams DO
+# travel as records now: `_PageRead`/`_PageSidecars` (the private helpers
+# take them) and `BatchReadings` (the crash recovery). The follow-up table is
+# in docs/PLAN/lucidlint-review-log.md, 2026-11-20 — names and signatures.
 [lucidlint."pipeline/api/sync.py"]
 ignore = ["long-param-list"]
 
-# long-param-list: the crop-grid run's inputs are the page's state — no
-# class for one call site (two sites, one why).
-[lucidlint."pipeline/evals/eval_crop_grid.py"]
-ignore = ["long-param-list"]
-
 [lucidlint."tools/gedcom_document.py"]
-ignore = ["god-class", "long-param-list"]
+ignore = ["god-class"]
 
 # latent-class: the band-size sweep's locals carry the run's state — no class for one call site (recorded 2026-10-08, held not split)
 [lucidlint."pipeline/evals/eval_band_size.py"]

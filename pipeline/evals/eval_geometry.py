@@ -19,7 +19,7 @@ from typing import Any
 
 from pipeline.detection import Detection
 from pipeline.detection_pass import DetectionPass
-from pipeline.layout import Layout
+from pipeline.layout import Layout, MultiInputs, PageGeometry
 from pipeline.layout_line import LayoutLine
 from pipeline.model.orientation_line import OrientationLine
 from tools.box import overlap
@@ -147,13 +147,13 @@ class Fixture:
         ]
         passes = [DetectionPass(degrees=0, lines=self.detections)]
         return Layout.multi(
-            "p1.jpg",
-            self.width,
-            self.height,
-            passes,
-            report_lines=report_lines,
-            vlm_text=self._vlm_text(),
-            trust_report_degrees=True,
+            MultiInputs(
+                PageGeometry("p1.jpg", self.width, self.height),
+                passes,
+                report_lines,
+                self._vlm_text(),
+                trust_report_degrees=True,
+            )
         )
 
     def crop_grid(self) -> Layout:
@@ -495,13 +495,13 @@ class ClipLocation:
         vlm_text = "\n".join(t.text for t in fixture.truth)
         passes = [DetectionPass(degrees=0, lines=fixture.detections)]
         return Layout.multi(
-            "p1.jpg",
-            fixture.width,
-            fixture.height,
-            passes,
-            report_lines=report_lines or None,
-            vlm_text=vlm_text,
-            trust_report_degrees=True,
+            MultiInputs(
+                PageGeometry("p1.jpg", fixture.width, fixture.height),
+                passes,
+                report_lines or None,
+                vlm_text,
+                trust_report_degrees=True,
+            )
         )
 
 

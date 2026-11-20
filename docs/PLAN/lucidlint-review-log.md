@@ -873,3 +873,64 @@ suppress them. Three families, one commit each.
     undo. The entry stays, with the reason written at it.
   - `loft/live/store.py` — the entry was **stale** (the rule reports nothing
     on `LiveStore`): deleted.
+
+## 2026-11-20 — the names and signatures (vague-name, long-param-list)
+
+The second pass of the same rule: fix the findings, never baseline, never
+suppress — except a name the house itself sanctions.
+
+**`vague-name` — kept, and narrowed.** The rule's list includes "Store",
+which `docs/coding-standards.md` sanctions ("plus Store, Records, Projection,
+AiClient"). With the global entry deleted the rule reports six findings, all
+six a store class (`LiveStore`, `MemoryLiveStore`, `PipelineStore`,
+`FileStore`, `DiskStore`, `MemoryStore`). Renaming any of them would leave the
+house vocabulary, so the entry moved from the global list to the four modules
+that hold them: the rule is ON for every other class, and a new vague name
+still fails the gate (§2.4).
+
+**`long-param-list` — 13 acknowledged, 12 reported, 5 fixed, 7 stopped.**
+
+The five fixed (the record was already in the domain for three of them):
+
+- `Layout.multi` (9) → takes `MultiInputs`, the record the assembly was
+  already built from (`PageGeometry`, the passes, the report evidence, the
+  guess text, the `ClipSeam`). `MultiAssembly.layout()` now owns the whole
+  completion — build, dedupe, order, re-index — so `multi_layout` and
+  `Layout.multi` are the same pass with the record as the seam.
+- `_recover_crashed_layout` (7) → `(journal_path, readings, layout, page)`.
+  `BatchReadings` is the (work_dir, batch_id) pair it threaded, and the
+  page's layout and image paths derive from it exactly as the caller had
+  computed them.
+- `_reread_page` (6) → `(run, artefacts, page, read)`, where `_PageRead` is
+  the three injectable readers (transcribe, rows_text, reading).
+- `_write_page_sidecars` (6) → `(artefacts, image, sidecars)`, where
+  `_PageSidecars` is the two generators and the standing knowledge their
+  prompts cite.
+- `pipeline/evals/eval_crop_grid.run` (6) → `(artefacts, page, cols, rows,
+  options)`. `BatchArtefacts` is the batch target every path in the run was
+  rebuilt from; the scope's entry is deleted (stale).
+
+The seven stopped, each for the same cause — **the suite pins the call
+shape**, and this change keeps the tests untouched:
+
+| finding | params | the pin |
+|---|---|---|
+| `Layout.single` | 7 | `test_layout.py:358` — five positional; `:228` `selfreport=` |
+| `build_layout` | 7 | `test_layout.py`/`test_sync.py`/`test_server.py` — five positional + `selfreport=`/`vlm_boxes=` |
+| `Anchor.__init__` | 6 | `test_layout.py:709/746/779` — `width=`/`height=` |
+| `multi_layout` | 9 | `test_layout.py` — page/width/height/passes positional + keywords |
+| `record_confirmation` | 10 | `test_sync.py`/`test_adopt.py` — four positional + `archive=`/`title=`/`date=`/`registry_dir=` |
+| `reprocess_page_transcription` | 13 | `test_sync.py` — three positional + `transcribe=`/`rows_text=`/`registry_dir=` |
+| `decide_identification` | 6 | `test_archive.py` — five positional + `actor=` |
+
+Every one of them has its record already named in the code
+(`PageGeometry`, `MultiInputs`, `Determination`, `_PageRead`/`_PageSidecars`),
+so the fix is mechanical: change the def and each call site together. It is
+not done here because that means editing the tests, which this change keeps
+out of scope. The entries stay, scoped to the modules that hold the stopped
+findings, with the reason at each (`.lucidlint.toml`), and this table is the
+follow-up list.
+
+`tools/gedcom_document.py`'s `long-param-list` entry was stale (the rule
+reports nothing there) and is deleted; the module keeps its `god-class`
+entry, which still applies.

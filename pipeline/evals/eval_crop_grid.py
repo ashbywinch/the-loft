@@ -249,19 +249,19 @@ class CropGridReport:
 
 
 def run(
-    batch_id: str,
+    artefacts: BatchArtefacts,
     page: str,
-    work_dir: Path,
     cols: int = 2,
     rows: int = 3,
     options: VlmOptions | None = None,
 ) -> CropGridReport:
     """Read the page's crops, stitch, and report — the geometry
-    experiment's ledger for one page."""
+    experiment's ledger for one page. The batch's artefacts name every path
+    the run reads and writes, so the target travels as the one record."""
     read_options = options or VlmOptions()
-    image_path = BatchArtefacts(work_dir, batch_id).oriented(f"{page}.jpg")
-    store = PipelineStore(work_dir)
-    layout = load_layout_store(store, f"{batch_id}/ocr-guess/{page}.layout.json")
+    image_path = artefacts.oriented(f"{page}.jpg")
+    store = PipelineStore(artefacts.work_dir)
+    layout = load_layout_store(store, f"{artefacts.batch_id}/ocr-guess/{page}.layout.json")
     with Image.open(image_path) as im:
         width, height = im.size
     bounds = _content_bounds(layout)
@@ -302,9 +302,9 @@ def run(
     # the model-scoped saves — the trial runs several models on the same
     # page; each keeps its own assembled layout + report
     slug = read_options.model.replace("/", "-").replace("@", "")
-    out = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-{slug}.json"
+    out = artefacts.guess_dir / f"{page}.cropgrid-{slug}.json"
     out.write_text(json.dumps(assembled.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
-    report_path = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-report-{slug}.json"
+    report_path = artefacts.guess_dir / f"{page}.cropgrid-report-{slug}.json"
     report_path.write_text(json.dumps(report.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
     return report
 
@@ -330,7 +330,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     if args.base_url:
         options = replace(options, base_url=args.base_url)
-    report = run(args.batch_id, args.page, args.work_dir, args.cols, args.rows, options)
+    report = run(
+        BatchArtefacts(args.work_dir, args.batch_id),
+        args.page,
+        args.cols,
+        args.rows,
+        options,
+    )
     print(json.dumps(report.to_dict(), indent=1))
     return 0
 

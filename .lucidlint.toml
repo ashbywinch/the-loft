@@ -134,7 +134,7 @@ ignore = ["unused"]
 [lucidlint."tools/archive.py"]
 ignore = ["unused", "god-class", "partition", "long-param-list"]
 [lucidlint."tools/memory.py"]
-ignore = ["unused", "data-clump"]
+ignore = ["unused"]
 [lucidlint."tools/records.py"]
 ignore = ["unused", "data-clump", "assembly-class"]
 

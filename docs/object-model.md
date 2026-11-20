@@ -221,8 +221,8 @@ its contract — what it takes in and what it hands back.
 
 | Chat | Home | The interface |
 |---|---|---|
-| `ChatClient` | `loft/` root (`ai_client`) | The LLM client: `chat(system, user, *, thinking) -> str` — one call, the caller owns the conversation (messages in, the reply out) |
-| `ReviewChat` | `loft/review/` (the review machinery) | The review conversation over a source — a `Memory` or a `Document`: takes the source and the facts context (the standing collections, through `ReviewContext`), runs the read-only tool harness and the verdict loop (the digs + correction turns; the model-call-is-a-conversation rule; depth is the only per-source difference), hands back the `ReviewDecision` responses (attested / pending / delete per entity, with basis and confidence; `estimated` is a display) and the `Message` log |
+| `ChatClient` | `loft/` root (`ai_client`) | The LLM client: `chat(system, user, *, thinking, schema=None, schema_name="verdict") -> str` — one call, the caller owns the conversation (messages in, the reply out) |
+| `ReviewChat` | `loft/review/` (the review machinery) | The review conversation over a source — a `Memory` or a `Document`: takes the source and the facts context (the standing collections, through `ReviewContext`), runs the read-only tool harness and the verdict loop (the digs + correction turns; the model-call-is-a-conversation rule; depth is the only per-source difference), hands back the `EntityReviewDecision` responses (attested / pending / delete per entity, with basis and confidence; `estimated` is a display) and the `Message` log |
 ## The export's document tree
 
 The human archive's document leg is the date-partitioned tree: `All Time`,

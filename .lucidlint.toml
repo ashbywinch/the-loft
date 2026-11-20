@@ -136,7 +136,7 @@ ignore = ["unused", "god-class", "partition", "long-param-list"]
 [lucidlint."tools/memory.py"]
 ignore = ["unused"]
 [lucidlint."tools/records.py"]
-ignore = ["unused", "assembly-class"]
+ignore = ["unused"]
 
 [lucidlint."pipeline/chain.py"]
 ignore = ["unused"]

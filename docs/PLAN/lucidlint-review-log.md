@@ -934,3 +934,53 @@ follow-up list.
 `tools/gedcom_document.py`'s `long-param-list` entry was stale (the rule
 reports nothing there) and is deleted; the module keeps its `god-class`
 entry, which still applies.
+
+## 2026-11-20 — the last seven signatures, with their call sites
+
+The follow-up the previous pass stopped on: the seven `long-param-list`
+findings whose fix is a signature change, and therefore an edit to every
+call site the suite pins. This time the tests move with the definitions —
+constructing the record is the only thing that changes in them; no
+assertion, case or expectation is touched. One commit per coherent group.
+
+The `.lucidlint.toml` entries that acknowledged the seven are deleted, not
+narrowed: the rule is on for these modules again, and the gate is green
+with it on.
+
+**`pipeline/layout.py` — the four entry points (one group).**
+
+| finding | was | now |
+|---|---|---|
+| `Layout.single` | 7 | `single(inputs: SingleInputs)` |
+| `build_layout` | 7 | `build_layout(inputs: SingleInputs)` |
+| `Anchor.__init__` | 6 | `Anchor(geometry: PageGeometry, report_line, match, text, *, trust_report_degrees=False)` |
+| `multi_layout` | 9 | `multi_layout(inputs: MultiInputs)` |
+
+`PageGeometry` (page, width, height) is the record the layout passes
+thread; `Anchor` now takes it whole instead of the width/height pair, and
+`anchor_guess_lines` passes its geometry straight through.
+`multi_layout`'s nine heterogeneous arguments are `MultiInputs` — the record
+`Layout.multi` already took — and `ClipSeam` is built at the call site
+instead of from an `(image, recognize)` pair inside the function.
+
+`build_layout`/`Layout.single` exposed a second finding the moment the
+geometry went in: taking `PageGeometry` first made them the third free
+function doing so, and `strewing` asked for a `PageGeometry` class holding
+`build_layout`, `_anchored_lines` and `anchor_guess_lines` as methods. That
+class is wrong — a frozen value record does not own the layout pass — but
+the group is real: the single path's inputs are one page's read, exactly as
+the multi path's are. They travel as `SingleInputs` (the geometry, the
+guess text, the detections, the self-report, the marker boxes) — the
+parameter object the rule asked for in the first place, and the twin of
+`MultiInputs`. The two remaining functions that take `PageGeometry` first
+(`anchor_guess_lines`, `_anchored_lines`) are the shared line-anchoring
+passes both paths call; the rule is silent on two.
+
+Test call sites updated: `tests/pipeline/test_layout.py` (17 `build_layout`,
+1 `Layout.single`, 18 `multi_layout`, 3 `Anchor`), `tests/test_sync.py` (6
+`build_layout`), `tests/pipeline/test_server.py` (2 `build_layout`), and the
+evals' fixture `pipeline/evals/eval_geometry.py` (2 `Layout.single`). The
+`Anchor` sites keep `report_line=`/`match=`/`text=` and gain the geometry as
+the first argument; every `multi_layout` site gains `MultiInputs` around
+arguments it already passed, and the one clip-seam site passes
+`ClipSeam(image, recognize)` where it used to pass the pair.

@@ -25,7 +25,7 @@ from pipeline.api.sync import (
 from pipeline.boundary import Boundary
 from pipeline.detect.reader import Reading
 from pipeline.detection import Detection
-from pipeline.layout import Layout, build_layout
+from pipeline.layout import Layout, PageGeometry, SingleInputs, build_layout
 from pipeline.model.token_usage import TokenUsage
 from pipeline.model.vlm_answer import VlmAnswer
 from pipeline.registry import RegistryError
@@ -445,14 +445,14 @@ def test_rotate_page_fixes_the_orientation(tmp_path: Path) -> None:
             image.putpixel((x, y), (255, 0, 0))  # a red block at the top-left
     image.save(batch / "oriented" / "p1.jpg")
     layout = build_layout(
-        "p1.jpg",
-        600,
-        1600,
-        "line one\nline two",
-        [
-            Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[]),
-            Detection(box=[50, 1000, 550, 1500], text="noise", score=0.5, words=[]),
-        ],
+        SingleInputs(
+            PageGeometry("p1.jpg", 600, 1600),
+            "line one\nline two",
+            [
+                Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[]),
+                Detection(box=[50, 1000, 550, 1500], text="noise", score=0.5, words=[]),
+            ],
+        )
     )
     layout.write(batch / "ocr-guess" / "p1.layout.json")
     (batch / "ocr-guess" / "p1.selfreport.json").write_text(json.dumps([{"line": 1, "word": "one"}]), encoding="utf-8")
@@ -533,11 +533,11 @@ def test_rotate_page_is_idempotent_and_cumulative(tmp_path: Path) -> None:
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
     (batch / "classify.json").write_text('{"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}')
     build_layout(
-        "p1.jpg",
-        600,
-        1600,
-        "line one",
-        [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
+        SingleInputs(
+            PageGeometry("p1.jpg", 600, 1600),
+            "line one",
+            [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
+        )
     ).write(batch / "ocr-guess" / "p1.layout.json")
 
     rotate_page("adopt-0001", "p1.jpg", 2, tmp_path)  # the reviewer pressed twice
@@ -573,11 +573,11 @@ def test_reprocess_failure_marks_the_page(tmp_path: Path) -> None:
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
     (batch / "classify.json").write_text('{"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}')
     build_layout(
-        "p1.jpg",
-        600,
-        1600,
-        "old text",
-        [Detection(box=[50, 400, 550, 900], text="noise", score=0.4, words=[])],
+        SingleInputs(
+            PageGeometry("p1.jpg", 600, 1600),
+            "old text",
+            [Detection(box=[50, 400, 550, 900], text="noise", score=0.4, words=[])],
+        )
     ).write(batch / "ocr-guess" / "p1.layout.json")
     set_page_job("adopt-0001", "p1.jpg", "transcribing", tmp_path)
 
@@ -672,11 +672,11 @@ def test_rotate_page_accepts_desired_zero_rotate_back(tmp_path: Path) -> None:
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
     (batch / "classify.json").write_text('{"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}')
     build_layout(
-        "p1.jpg",
-        600,
-        1600,
-        "line one",
-        [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
+        SingleInputs(
+            PageGeometry("p1.jpg", 600, 1600),
+            "line one",
+            [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
+        )
     ).write(batch / "ocr-guess" / "p1.layout.json")
     assert rotate_page("adopt-0001", "p1.jpg", 1, tmp_path) is True  # rotated 90
     assert rotate_page("adopt-0001", "p1.jpg", 0, tmp_path) is True  # back to the original
@@ -698,11 +698,11 @@ def test_rotate_page_recovers_a_half_rotated_crash(tmp_path: Path) -> None:
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
     (batch / "classify.json").write_text('{"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}')
     build_layout(
-        "p1.jpg",
-        600,
-        1600,
-        "line one",
-        [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
+        SingleInputs(
+            PageGeometry("p1.jpg", 600, 1600),
+            "line one",
+            [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
+        )
     ).write(batch / "ocr-guess" / "p1.layout.json")
     assert rotate_page("adopt-0001", "p1.jpg", 1, tmp_path) is True  # 90
     # simulate the crash: the image is swapped (rotated), the layout is
@@ -737,11 +737,11 @@ def test_rotate_page_discards_a_premature_journal(tmp_path: Path) -> None:
     Image.new("RGB", (600, 1600), "white").save(batch / "oriented" / "p1.jpg")
     (batch / "classify.json").write_text('{"p1.jpg": {"kind": "printed", "confidences": {"printed": 0.9}}}')
     build_layout(
-        "p1.jpg",
-        600,
-        1600,
-        "line one",
-        [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
+        SingleInputs(
+            PageGeometry("p1.jpg", 600, 1600),
+            "line one",
+            [Detection(box=[50, 400, 550, 900], text="line one", score=0.9, words=[])],
+        )
     ).write(batch / "ocr-guess" / "p1.layout.json")
     # the premature journal: the intent never reached the image
     atomic_write(batch / "oriented" / "p1.rotate.json", '{"from": 0, "rotation": 90}\n')

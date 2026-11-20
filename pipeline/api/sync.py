@@ -40,6 +40,8 @@ from pipeline.identification import Identification
 from pipeline.identify import identify
 from pipeline.layout import (
     Layout,
+    PageGeometry,
+    SingleInputs,
     build_layout,
     load_layout_store,
     rotate_detections,
@@ -203,12 +205,12 @@ class BatchReadings:
         )
         vlm_text = "\n".join(line.text for line in layout.lines)
         rebuilt = build_layout(
-            layout.page or page,
-            rotated.width,
-            rotated.height,
-            vlm_text,
-            detections,
-            selfreport=selfreport,
+            SingleInputs(
+                PageGeometry(layout.page or page, rotated.width, rotated.height),
+                vlm_text,
+                detections,
+                selfreport=selfreport,
+            )
         )
         rebuilt.lines.sort(key=lambda line: line.index)
         return rebuilt
@@ -717,12 +719,12 @@ def _recover_crashed_layout(
                         else None
                     )
                     layout = build_layout(
-                        layout.page or page,
-                        image.width,
-                        image.height,
-                        vlm_text,
-                        detections,
-                        selfreport=selfreport,
+                        SingleInputs(
+                            PageGeometry(layout.page or page, image.width, image.height),
+                            vlm_text,
+                            detections,
+                            selfreport=selfreport,
+                        )
                     )
                     layout.extra["rotation"] = intended
                     layout.write_store(

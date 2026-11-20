@@ -112,18 +112,8 @@ ignore = ["unused"]
 ignore = ["unused"]
 [lucidlint."pipeline/rows/rows.py"]
 ignore = ["unused"]
-# long-param-list: four STOPPED findings, not waived. `Layout.single`,
-# `build_layout` and `multi_layout` are called with their page frame, text
-# and detections positionally plus `selfreport=`/`vlm_boxes=`/the report
-# keywords (tests/pipeline/test_layout.py, tests/test_sync.py,
-# tests/pipeline/test_server.py), and `Anchor.__init__` with `width=`/
-# `height=` (test_layout.py:709/746/779). Any <=5-parameter form renames an
-# argument the suite passes, so the def and its call sites must move
-# together — the records it needs already exist: PageGeometry (page, width,
-# height) and MultiInputs (the whole multi tail). The follow-up table is in
-# docs/PLAN/lucidlint-review-log.md, 2026-11-20 — names and signatures.
 [lucidlint."pipeline/layout.py"]
-ignore = ["unused", "long-param-list"]
+ignore = ["unused"]
 [lucidlint."pipeline/model/vlm.py"]
 ignore = ["unused"]
 [lucidlint."pipeline/model/vlm_cache.py"]

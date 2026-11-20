@@ -13,14 +13,14 @@ from __future__ import annotations
 from pipeline.evals.eval_review import ExhaustedUncertaintyFlow, ReviewRun, WrongPersonContradictionFlow
 from tools.contradiction import Contradiction
 from tools.finding import Finding
-from tools.review_verdict import VerdictRecord
+from tools.review_assessment import ReviewTurn
 
 
-def _wrong_person_verdict() -> VerdictRecord:
+def _wrong_person_verdict() -> ReviewTurn:
     """The verdict one CI draw actually produced for the wrong-person flow:
     the archive queried, the war record found, and the contradiction still
     not flagged — the case this message has to explain."""
-    return VerdictRecord(
+    return ReviewTurn(
         relevant="true",
         contradiction=Contradiction(found="false", detail=""),
         confidence="think_so",
@@ -46,14 +46,14 @@ def test_a_failed_contradiction_carries_the_whole_verdict() -> None:
 
 
 def test_a_failed_relevance_and_confidence_carry_it_too() -> None:
-    off_topic = VerdictRecord(relevant="false", confidence="definitely")
+    off_topic = ReviewTurn(relevant="false", confidence="definitely")
     relevance_error = ReviewRun(WrongPersonContradictionFlow(), off_topic).relevant()
     assert relevance_error is not None
     assert "relevant='false'" in relevance_error  # the verdict, not just the field
     assert "confidence='definitely'" in relevance_error
 
     # the exhausted-uncertainty flow accepts dont_know only; this reads the reviewer as sure
-    wrong_certainty = VerdictRecord(relevant="true", confidence="definitely")
+    wrong_certainty = ReviewTurn(relevant="true", confidence="definitely")
     certainty_error = ReviewRun(ExhaustedUncertaintyFlow(), wrong_certainty).confidence()
     assert certainty_error is not None
     assert "confidence: expected one of ('dont_know',)" in certainty_error

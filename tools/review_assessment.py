@@ -32,14 +32,14 @@ BOOLEAN_VALUES = frozenset(get_args(Boolean))
 CONFIDENCE_VALUES = frozenset(get_args(Confidence))
 
 
-class Verdict(BaseModel):
+class StatementAssessment(BaseModel):
     """The verdict the model returns: the answer's members, each with its own
     description, rendered into the prompt.
 
     The prompt is the only carrier: the review loop's call cannot take a
     response schema without forbidding the tool call, so the six members are
     stated in the prompt and the closed vocabularies are enforced at parse
-    (`VerdictRecord.complete`). Nothing in this request enforces the member
+    (`ReviewTurn.complete`). Nothing in this request enforces the member
     set; do not describe it as if something does.
     """
 
@@ -108,10 +108,10 @@ VERDICT_KEYS = frozenset(
 
 
 @dataclass(frozen=True)
-class VerdictRecord:
+class ReviewTurn:
     """The record of one review turn.
 
-    `Verdict` above is the model's answer: its JSON schema *is* the request,
+    `StatementAssessment` above is the model's answer: its JSON schema *is* the request,
     so it holds only what the model states. This holds that answer plus
     everything the turn produced around it — the raw output, the tool trace,
     both prompt texts, and any key the wire carried that the model does not
@@ -144,7 +144,7 @@ class VerdictRecord:
         )
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> VerdictRecord:
+    def from_dict(cls, raw: dict[str, Any]) -> ReviewTurn:
         """The verdict a wire record states — the known keys normalized (the
         vocabularies are lowercase, the prose trimmed), a finding with no
         text dropped, and every unmodeled key kept in ``extra``."""

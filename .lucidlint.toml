@@ -93,7 +93,7 @@ ignore = ["fakefs"]
 # standards name the convention; the eval-module exclusion extends to the
 # modules whose public faces exist for the tests to drive (2026-10-08).
 [lucidlint."pipeline/detect/reader.py"]
-ignore = ["unused", "god-class", "partition"]
+ignore = ["unused", "god-class"]
 [lucidlint."pipeline/detect/ink.py"]
 ignore = ["unused"]
 [lucidlint."pipeline/detect/mark.py"]
@@ -131,6 +131,17 @@ ignore = ["unused"]
 # long-param-list: the archive's public identification verb is pinned by the
 # old suite and the server route — its parameters ARE the determination
 # (item, kind, record, decision, basis, actor), not a group that needs a type.
+# partition: STOPPED, not waived. The rule's field partition on Archive is the
+# migration's own seam: the live verbs (identities, reviews, items — the four
+# bind_*_service flips) and the file path they fall back to until E2
+# (REWRITE-PLAN) touch disjoint collaborators, so the class reads as the two
+# halves it is mid-way between. Every candidate split reproduces that two-hub
+# structure, and the facade's public verbs (get_item, save_item, get_identity,
+# publish, ...) are pinned by the suite and the server: splitting them off the
+# facade would either move the API between objects or turn the verbs into
+# one-line delegators — a second facade the migration would have to undo. The
+# page path's own partition (bind_page_service + correct_page_rows) WAS fixed
+# in code: `PageWork` owns the bound service and its export (2026-11-20).
 [lucidlint."tools/archive.py"]
 ignore = ["unused", "god-class", "partition", "long-param-list"]
 [lucidlint."tools/memory.py"]
@@ -154,27 +165,12 @@ ignore = ["long-param-list"]
 [lucidlint."pipeline/evals/eval_crop_grid.py"]
 ignore = ["long-param-list"]
 
-# latent-class: the GEDCOM serializer: one concern, one state; its methods are the export's steps, no field-disjoint partition (recorded 2026-10-08, held not split)
 [lucidlint."tools/gedcom_document.py"]
-ignore = ["god-class", "long-param-list", "partition"]
+ignore = ["god-class", "long-param-list"]
 
 # latent-class: the band-size sweep's locals carry the run's state — no class for one call site (recorded 2026-10-08, held not split)
 [lucidlint."pipeline/evals/eval_band_size.py"]
 ignore = ["god-class"]
-
-# latent-class: LiveStore is the one public facade TECHSPEC/08 §19.3 names —
-# the read half (events_for, verify_chain, rebuild_*) and the write half
-# (change, connection) are one seam by design; splitting it would move the
-# store's API between two objects and break the "one facade" rule.
-[lucidlint."loft/live/store.py"]
-ignore = ["partition"]
-
-# latent-class: People is the person repository TECHSPEC/08 §19.4 names — the
-# read half (get/all/require) and the write half (save/confirm/resolve/…) are
-# one collection by design; the spec says the repository owns both halves so
-# the write half cannot be used outside a transaction.
-[lucidlint."loft/live/people.py"]
-ignore = ["partition"]
 
 # fakefs: the exporter tests use a real SQLite file and a real archive tree on
 # tmp_path — the append-only store, sqlite semantics and the versioned file

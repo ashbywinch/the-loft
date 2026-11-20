@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
 from loft.live.errors import Conflict
 from loft.live.items import ContentInput, default_trust
+from loft.live.page_writes import PageWork
 from pipeline.identification import Identification
 from tools.anchor import Anchor
 from tools.asset import Asset
@@ -179,8 +180,7 @@ class Archive:
         self._after_item_write: Callable[[str], Any] | None = None
         self.reviews: ReviewWrites | None = None
         self._after_review_write: Callable[[], Any] | None = None
-        self.page_writes: PageWrites | None = None
-        self._after_page_write: Callable[[str], Any] | None = None
+        self.page_work: PageWork | None = None
 
     def bind_identity_service(self, identities: Identities, after_write: Callable[[], Any]) -> None:
         """Flip the identity write path to the live store (B1).
@@ -233,21 +233,19 @@ class Archive:
 
         The review's row correction writes one `Change` and the page
         compatibility exporter follows, so the review surface and the worker
-        still read the work files they parse.
+        still read the work files they parse. The two are one path:
+        `PageWork`.
         """
-        self.page_writes = writes
-        self._after_page_write = after_write
+        self.page_work = PageWork(writes, after_write)
 
     def correct_page_rows(self, page_id: str, adjustments: bytes, *, actor: str) -> None:
         """The reviewer's drawn row lines — one change, then the old work
         files (`<page>.row-adjustments.json`, `<page>.rows-adjusted.json`)
         follow from the stored blobs."""
-        writes = self.page_writes
-        if writes is None:
+        work = self.page_work
+        if work is None:
             raise ArchiveError("no page service bound")
-        writes.correct_rows(page_id, adjustments, actor=actor)
-        if self._after_page_write is not None:
-            self._after_page_write(page_id)
+        work.correct(page_id, adjustments, actor=actor)
 
     # -- resolution --------------------------------------------------------
 

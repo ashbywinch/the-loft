@@ -819,3 +819,49 @@ against the coding standards rather than waved through:
   and a real archive tree on `tmp_path`: append-only writes, sqlite
   semantics and the versioned file chain are the subject, exactly the
   `tests/**` exception the testing standards state.
+
+## 2026-11-20 — three families fixed rather than ignored
+
+The user's rule for this pass: fix the findings, never baseline them, never
+suppress them. Three families, one commit each.
+
+- **`feature-envy` — `loft/live/pages.py` (`Pages.save`).** The save read
+  `change` ten times against its own state six: the blob puts, the one page
+  event and the projection row were the page's write living inside the
+  collection. It is `PageCommit` now (`loft/live/page_commit.py`): the page,
+  the base it checks and the version it becomes are its own state, the change
+  is the transaction it commits through, and the event's wire form
+  (`page_payload`/`page_from_payload`) moved with it. Both suppressions — the
+  config scope and the inline comment — said the same thing and are gone.
+- **`assembly-class` — `tools/records.py`.** Stale: the raw-record refactor
+  (965de0b, `RecordField`) dissolved the two latent classes the entry covered
+  (`_dated` at 77, `from_dict` at 1057 when the rule is run against the
+  parent commit). Nothing to fix; the entry is deleted rather than left as
+  invisible debt.
+- **`partition` — four findings.** Each named a cohesive group of methods
+  that touched none of their class's fields, and each became the type the
+  group was named for:
+  - `loft/live/people.py` — the review's four dispositions are
+    `Determination` (`loft/live/determination.py`), one implementation for
+    every identity collection; `People.resolve` and the memory twin read
+    through it, and `Identities.resolve_place` no longer carries its own copy
+    of the ladder. `People.save` also reads a supersede through `require`
+    (the same read every verb starts with) instead of re-testing `get`.
+  - `pipeline/detect/reader.py` — `Writing`'s cut is `WordCut`
+    (`word_cut.py`) and the rows-against-lines reading is `RowFit`
+    (`row_fit.py`); `Writing` keeps the measurement. The 2026-09-18 decision
+    row is reversed on the owner, not the insight (see design-decisions).
+  - `tools/gedcom_document.py` — the reading half is `GedcomRecords`: a
+    parsed file's records, as the island's wire shapes. `GedcomDocument` holds
+    the shapes and renders them.
+  - `tools/archive.py` — **the page path was fixed** (`PageWork` in
+    `page_writes.py`: the bound service and the compatibility export are one
+    operation) and the **remaining split is a stop, named**: the live verbs
+    and the file path they fall back to until E2 touch disjoint
+    collaborators, so `Archive` reads as the two halves of its own migration.
+    The facade's public verbs are pinned by the suite and the server, so
+    splitting them off would either move the API between objects or turn the
+    verbs into one-line delegators — a second facade the migration would
+    undo. The entry stays, with the reason written at it.
+  - `loft/live/store.py` — the entry was **stale** (the rule reports nothing
+    on `LiveStore`): deleted.

@@ -27,8 +27,8 @@ from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Kind, record_id,
 from loft.live.identity_map import BasisKinds, basis_after, renders_estimated
 from loft.live.item_row import AssetRecord, ItemAsset, ItemContent, ItemRef
 from loft.live.items import ContentInput, build_contents, item_payload, payload_assets, payload_contents
+from loft.live.page_commit import page_from_payload, page_payload
 from loft.live.page_row import AdjustmentState, PageRow, PageState, ReadingState, reading_blob, reading_rows
-from loft.live.pages import page_from_payload, page_payload
 from loft.live.review_row import (
     ReviewDecisionRow,
     ReviewMessageRow,

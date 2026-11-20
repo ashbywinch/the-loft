@@ -28,8 +28,9 @@ from loft.live.identities import Identities
 from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection, Kind
 from loft.live.item_row import RowPosition
 from loft.live.items import Items, payload_assets, payload_contents
+from loft.live.page_commit import page_from_payload
 from loft.live.page_row import PageProjection
-from loft.live.pages import Pages, page_from_payload
+from loft.live.pages import Pages
 from loft.live.people import People
 from loft.live.review_row import ReviewProjection, ReviewRow, session_from_payload
 from loft.live.reviews import Reviews

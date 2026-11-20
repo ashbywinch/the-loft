@@ -37,6 +37,7 @@ from loft.live.compat import CompatibilityExport, legacy_person
 from loft.live.compat_items import ItemCompatibility
 from loft.live.compat_pages import PageCompatibility
 from loft.live.compat_reviews import ImportsCompatibility
+from loft.live.determination import Determination
 from loft.live.errors import LiveError
 from loft.live.import_identity import sync_from_archive
 from loft.live.import_items import sync_items
@@ -1168,7 +1169,11 @@ def build_app(
         basis = DecisionBasis.from_dict(fields.basis).to_dict() if fields.basis else None
         try:
             record = archive.decide_identification(
-                fields.item_id, fields.kind, fields.entity_id, fields.decision, basis, actor=mine.person or "review"
+                fields.item_id,
+                fields.kind,
+                fields.entity_id,
+                Determination(fields.decision, basis),
+                actor=mine.person or "review",
             )
         except (KeyError, ValueError, ArchiveError) as exc:
             return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)

@@ -22,6 +22,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 
+from loft.live.determination import Determination
 from loft.live.errors import Conflict
 from loft.live.items import ContentInput, default_trust
 from loft.live.page_writes import PageWork
@@ -520,15 +521,15 @@ class Archive:
         item_id: str,
         kind: Literal["person", "place"],
         record_id: str,
-        decision: str,
-        basis: dict[str, str] | None = None,
+        determination: Determination,
         *,
         actor: str = "import",
     ) -> Person | Place | GonePerson | GonePlace | None:
         """One stage-8 determination for one entity a document names: the
         item's ref and the identity table's record move together.
 
-        The determinations are PeopleTable.resolved's vocabulary. A record
+        The determination is the reviewer's disposition and its basis — the
+        four verbs PeopleTable.resolved's vocabulary shares. A record
         the archive already holds as confirmed is never deleted by a
         mention's delete — only the mention goes; a proposed record is
         dismissed once no other item references it, so deleting one
@@ -537,6 +538,7 @@ class Archive:
         an id the table does not hold."""
         item_id = _valid_record_id(item_id)
         record_id = _valid_record_id(record_id)
+        decision, basis = determination.decision, determination.basis
         if decision not in ("attested", "estimated", "pending", "delete"):
             raise ValueError(f"unknown decision: {decision!r}")
         if kind not in ("person", "place"):

@@ -138,12 +138,6 @@ ignore = ["unused"]
 ignore = ["unused"]
 [lucidlint."tools/attestation.py"]
 ignore = ["unused"]
-# long-param-list: STOPPED (re-checked 2026-11-20, one finding). The archive's
-# public identification verb takes the determination's own fields (item, kind,
-# record, decision, basis, actor). `Determination` exists for the dispositions,
-# but the signature is pinned by tests/test_archive.py (five positional
-# arguments plus `actor=`) and the server route: a <=5-parameter form renames
-# an argument the suite passes, so the def and its call sites move together.
 # partition: STOPPED, not waived. The rule's field partition on Archive is the
 # migration's own seam: the live verbs (identities, reviews, items — the four
 # bind_*_service flips) and the file path they fall back to until E2
@@ -156,7 +150,7 @@ ignore = ["unused"]
 # page path's own partition (bind_page_service + correct_page_rows) WAS fixed
 # in code: `PageWork` owns the bound service and its export (2026-11-20).
 [lucidlint."tools/archive.py"]
-ignore = ["unused", "god-class", "partition", "long-param-list"]
+ignore = ["unused", "god-class", "partition"]
 [lucidlint."tools/memory.py"]
 ignore = ["unused"]
 [lucidlint."tools/records.py"]

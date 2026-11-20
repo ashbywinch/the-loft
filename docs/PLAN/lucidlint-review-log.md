@@ -1017,3 +1017,26 @@ lookup goes with it. Nothing observable changes: no test passed it, and
 Test call sites updated: `tests/test_sync.py` (5 `record_confirmation`, 3
 `reprocess_page_transcription`), `tests/pipeline/test_adopt.py` (1
 `record_confirmation`).
+
+**`tools/archive.py` — the identification decision.**
+
+`decide_identification` (6) → `decide_identification(item_id, kind,
+record_id, determination: Determination, *, actor="import")`. The four
+dispositions and the basis were already a record in the live layer —
+`loft.live.determination.Determination` (decision + basis), the four verbs
+the identity tables resolve — and the archive's verb took the same two
+values apart. It now takes the record; `actor` stays beside it because who
+made the call is not part of the determination. The decision guard (an
+unknown verb raises) is unchanged.
+
+Test call sites updated: `tests/test_archive.py` (10). The server's
+decide route builds `Determination(fields.decision, basis)` where it used
+to pass the two values.
+
+---
+
+With the three commits the rule is clean repo-wide: no `long-param-list`
+entry remains in `.lucidlint.toml` — the last seven findings are fixed in
+the code and the rule is on everywhere. `make lucidlint` reports 0 new
+actions with every entry for the rule deleted, `make typecheck` is clean and
+`make test` is green (1190 pytest, 2 skipped; 420 vitest) after each commit.

@@ -11,7 +11,10 @@ extra_headers = '{"cf-aig-request-timeout": "1800000", "cf-aig-max-attempts": "0
 
 [config]
 model = "openai/dynamic/fallback2"  # the handler strips the "openai/" prefix and sends "dynamic/fallback2" to api_base — the gateway's fallback2 DYNAMIC ROUTE (OpenCode primary → DeepSeek fallback). A raw provider model id (deepseek/deepseek-v4-flash, until 2026-10-17) bypasses the route: no failover, and the provider's "Insufficient Balance" killed every review (2026-10-17). The 2026-09-23 401 came from the missing [openai] custom_llm_provider, not the prefix.
-custom_model_max_tokens = 128000
+# The route answers deepseek-v4-flash, whose output ceiling is far below 128k;
+# claiming 128k made pr-agent ask for a review longer than the model can emit
+# and the answer was truncated (measured: #134, run 44736435686).
+custom_model_max_tokens = 8192
 max_model_tokens = 128000
 ai_timeout = 1800
 fallback_models = []
@@ -45,7 +48,7 @@ repo_context_files = [
 persistent_comment = true
 require_tests_review = true
 require_security_review = true
-num_max_findings = 50
+num_max_findings = 12
 # Publish each finding as a verified inline review comment (the pinned action
 # implements get_persistent_comment_bodies/get_recent_inline_comment_bodies).
 inline_key_issues = true

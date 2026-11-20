@@ -34,7 +34,6 @@
 ignore = [
     "record-shape",
     "class-module",
-    "vague-name",
     "magic-number",
     "duplicate-module",
 ]
@@ -47,9 +46,20 @@ ignore = [
 # holds the noun's exception or helper class (htr.py/HtrError, sync.py/
 # Outbox, review.py/_Chat) — one reason to change, the standards' stated
 # exception to "each class in its own module".
-# vague-name: "Store" is a sanctioned domain noun in coding-standards.md
-# ("plus Store, Records, Projection, AiClient") — the tool's vague-name
-# list collides with the house vocabulary.
+# vague-name: the tool's list includes "Store", which coding-standards.md
+# sanctions as a domain noun ("plus Store, Records, Projection, AiClient").
+# Every finding the rule still reports is one of the four modules' store
+# classes — LiveStore, MemoryLiveStore, PipelineStore, FileStore, DiskStore,
+# MemoryStore — so the rule stays ON for the rest of the tree: a vague name
+# in any other class fails the gate (re-checked 2026-11-20, six findings).
+[lucidlint."loft/live/memory.py"]
+ignore = ["vague-name"]
+[lucidlint."loft/live/store.py"]
+ignore = ["vague-name"]
+[lucidlint."pipeline/store.py"]
+ignore = ["vague-name"]
+[lucidlint."tools/store.py"]
+ignore = ["vague-name"]
 
 # fakefs: the repo's testing standards permit deterministic real-FS tests
 # (tmp_path) — the archive/store tests need real os.replace/subprocess/

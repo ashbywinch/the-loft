@@ -200,11 +200,19 @@ noun's exception or helper class — the standards' own stated exception to
 "each class in its own module" (closely related, one reason to change).
 Renaming would destroy the domain naming.
 
-### 2.4 `vague-name` (3 findings) — config-ignored for `tools/**`
+### 2.4 `vague-name` (6 findings) — the four store modules, scoped
 
 The tool's vague-name list includes "Store". The repo standard sanctions
 `Store` as a domain noun ("plus Store, Records, Projection, AiClient").
 The tool's list collides with the house vocabulary.
+
+Re-checked 2026-11-20 with the global entry deleted: the rule reports six
+findings, every one a store class — `LiveStore`, `MemoryLiveStore`
+(`loft/live/`), `PipelineStore` (`pipeline/store.py`), `FileStore`,
+`DiskStore`, `MemoryStore` (`tools/store.py`). The sanction is the whole
+answer, so the entry moved from the global list to the four modules: the
+rule is ON for every other class in the tree, and a new vague name fails
+the gate.
 
 ### 2.5 `latent-class` (5 findings) — per-site suppression
 

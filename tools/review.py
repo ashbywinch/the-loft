@@ -497,7 +497,6 @@ def investigate(
         confidence.description
     )
     verdict_schema = Verdict.model_json_schema()
-    keys = ", ".join(verdict_schema["properties"])
 
     # the verdict shape must be in the INITIAL prompt — the schema was only
     # revealed in the correction branch, so every first call was rejected
@@ -508,9 +507,9 @@ def investigate(
     prompt += "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + json.dumps(verdict_schema, indent=1)
     prompt += verdict_rules
     prompt += (
-        "\n\nReturn ONLY the verdict JSON. It MUST contain ALL of these keys, spelled exactly "
-        f"as written — {keys} — no others, no misspellings, no missing keys (a misspelled key is "
-        "a failed verdict)."
+        "\n\nReturn ONLY the verdict JSON, containing every key the schema above shows, "
+        "spelled exactly as it spells them — no others, no misspellings, no missing keys "
+        "(a misspelled key is a failed verdict)."
     )
     tool_calls = 0
     trace: list[TraceStep] = []

@@ -11,9 +11,13 @@ import pytest
 from PIL import Image
 
 from document.word import Word
+from pipeline.api.confirmation_request import ConfirmationRequest
 from pipeline.api.sync import (
     ConfirmationPayload,
     Outbox,
+    PageRead,
+    PageReread,
+    PageSidecars,
     demote_stale_jobs,
     draft_payloads,
     page_job_state,
@@ -267,18 +271,22 @@ def test_record_confirmation_mints_the_item_and_updates_the_registry(tmp_path: P
     document = Boundary(pages=["p1.jpg"])
 
     item_id = record_confirmation(
-        "adopt-0001",
-        1,
-        document,
-        "Chère Maman.",
+        ConfirmationRequest(
+            "adopt-0001",
+            1,
+            document,
+            "Chère Maman.",
+            title="A letter to Maman",
+            date="1963-05-14",
+            date_precision="exact",
+        ),
         archive=_archive(tmp_path),
-        title="A letter to Maman",
-        date="1963-05-14",
-        date_precision="exact",
         registry_dir=registry,
     )
     rejection = record_confirmation(
-        "adopt-0001", 2, Boundary(pages=["p2.jpg"]), None, archive=_archive(tmp_path), registry_dir=registry
+        ConfirmationRequest("adopt-0001", 2, Boundary(pages=["p2.jpg"]), None),
+        archive=_archive(tmp_path),
+        registry_dir=registry,
     )
 
     assert (item_id, rejection) == ("doc-1963-05-14", "")
@@ -304,25 +312,13 @@ def test_record_confirmation_replaces_by_pages(tmp_path: Path) -> None:
     archive = _archive(tmp_path)
     first = Boundary(pages=["p1.jpg"])
     record_confirmation(
-        "adopt-0001",
-        1,
-        first,
-        "v1",
+        ConfirmationRequest("adopt-0001", 1, first, "v1", title="A letter", date="1963-05-14", date_precision="exact"),
         archive=archive,
-        title="A letter",
-        date="1963-05-14",
-        date_precision="exact",
         registry_dir=registry,
     )
     record_confirmation(
-        "adopt-0001",
-        1,
-        first,
-        "v2",
+        ConfirmationRequest("adopt-0001", 1, first, "v2", title="A letter", date="1963-05-14", date_precision="exact"),
         archive=archive,
-        title="A letter",
-        date="1963-05-14",
-        date_precision="exact",
         registry_dir=registry,
     )
     record = json.loads((registry / "adopt-0001.json").read_text(encoding="utf-8"))
@@ -336,14 +332,16 @@ def test_record_confirmation_rejects_unknown_batch_without_writing(tmp_path: Pat
     registry.mkdir()
     with pytest.raises(RegistryError):
         record_confirmation(
-            "adopt-9999",
-            1,
-            Boundary(pages=["p1.jpg"]),
-            "text",
+            ConfirmationRequest(
+                "adopt-9999",
+                1,
+                Boundary(pages=["p1.jpg"]),
+                "text",
+                title="A letter",
+                date="1963-05-14",
+                date_precision="exact",
+            ),
             archive=_archive(tmp_path),
-            title="A letter",
-            date="1963-05-14",
-            date_precision="exact",
             registry_dir=registry,
         )
     assert not (tmp_path / "archive").exists()  # nothing minted for the unknown batch
@@ -587,7 +585,12 @@ def test_reprocess_failure_marks_the_page(tmp_path: Path) -> None:
         raise RuntimeError("vision model unreachable")
 
     with pytest.raises(RuntimeError, match="unreachable"):
-        reprocess_page_transcription("adopt-0001", "p1.jpg", tmp_path, registry_dir=registry, transcribe=boom)
+        reprocess_page_transcription(
+            "adopt-0001",
+            "p1.jpg",
+            tmp_path,
+            reread=PageReread(registry_dir=registry, read=PageRead(transcribe=boom)),
+        )
     assert page_job_state("adopt-0001", tmp_path) == {"p1.jpg": "failed"}
 
 
@@ -615,10 +618,14 @@ def test_a_re_read_reads_the_page_again_through_the_pipeline(tmp_path: Path) -> 
         "adopt-0001",
         "p1.jpg",
         tmp_path,
-        registry_dir=registry,
-        transcribe=fresh,
-        selfreport=lambda *_a, **_k: [],
-        orientation_report_fn=lambda _image, _text: {},
+        reread=PageReread(
+            registry_dir=registry,
+            read=PageRead(transcribe=fresh),
+            sidecars=PageSidecars(
+                selfreport=lambda *_a, **_k: [],
+                orientation_report_fn=lambda _image, _text: {},
+            ),
+        ),
     )
     assert calls == [batch / "oriented" / "p1.jpg"]
     assert (batch / "ocr-guess" / "p1.txt").read_text() == "NEW TEXT\n"
@@ -817,11 +824,14 @@ def test_a_handwriting_re_read_redetects_the_rows(tmp_path: Path) -> None:
         "adopt-0001",
         "p1.jpg",
         tmp_path,
-        registry_dir=registry,
-        reading=lambda _image: fresh_reading,
-        rows_text=lambda _image, _out: {1: "FRESH ROW"},
-        selfreport=lambda *_a, **_k: [],
-        orientation_report_fn=lambda _image, _text: {},
+        reread=PageReread(
+            registry_dir=registry,
+            read=PageRead(reading=lambda _image: fresh_reading, rows_text=lambda _image, _out: {1: "FRESH ROW"}),
+            sidecars=PageSidecars(
+                selfreport=lambda *_a, **_k: [],
+                orientation_report_fn=lambda _image, _text: {},
+            ),
+        ),
     )
     guess = batch / "ocr-guess"
     assert (guess / "p1.txt").read_text() == "FRESH ROW\n"

@@ -984,3 +984,36 @@ evals' fixture `pipeline/evals/eval_geometry.py` (2 `Layout.single`). The
 the first argument; every `multi_layout` site gains `MultiInputs` around
 arguments it already passed, and the one clip-seam site passes
 `ClipSeam(image, recognize)` where it used to pass the pair.
+
+**`pipeline/api/sync.py` — the review's two writers.**
+
+- `record_confirmation` (10) → `record_confirmation(confirmation:
+  ConfirmationRequest, *, archive, registry_dir=…, actor="import")`. The
+  reviewed document already had its record — the request the sync receiver
+  parses (`ConfirmationRequest`: the batch, the document's index and
+  boundary, the corrected text, and the title/date/date_precision that mint
+  the item). The write adds only what the request cannot know: the archive
+  it mints into, the registry directory, and who made the call. The server
+  already held the record and unpacked it into six positional arguments —
+  it now passes it. The type is imported under `TYPE_CHECKING`: the request
+  module reads this one's payload guard (`ConfirmationPayload`), so the
+  runtime import goes one way and the annotation is the only other use.
+- `reprocess_page_transcription` (13) → `reprocess_page_transcription(
+  batch_id, page, work_dir, *, reread: PageReread | None = None)`. The
+  readers and the sidecar generators were already records (`PageRead`,
+  `PageSidecars` — now public, because the server and the suite construct
+  them); what was still strewn across the signature is the batch's trees
+  and the two records together, so `PageReread` holds them: registry and
+  archive dirs, the readers, the sidecar generators. Absent members take the
+  batch's own defaults, exactly as the absent keyword arguments did.
+
+`label` is gone: it was accepted and never read (the server looked the
+batch's label up and passed it in; nothing in the function or its callees
+used it). Deleting the dead parameter is what the signature's dissolution
+made visible — it stays dead state in a record otherwise — and the server's
+lookup goes with it. Nothing observable changes: no test passed it, and
+`make test` is the proof.
+
+Test call sites updated: `tests/test_sync.py` (5 `record_confirmation`, 3
+`reprocess_page_transcription`), `tests/pipeline/test_adopt.py` (1
+`record_confirmation`).

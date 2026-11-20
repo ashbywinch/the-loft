@@ -16,10 +16,10 @@ import json
 import logging
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from PIL import Image, ImageOps
 
@@ -62,6 +62,11 @@ from tools.loft_paths import LoftPaths
 from tools.memory import ChatClient, Knowledge
 from tools.records import Item
 from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
+
+if TYPE_CHECKING:
+    # the reviewed document's record lives with the request it arrives as, and
+    # that module reads this one's payload guard — the import is for the type only
+    from pipeline.api.confirmation_request import ConfirmationRequest
 
 
 def pages_pending(readings: BatchReadings, pages: list[str]) -> list[str]:
@@ -355,17 +360,11 @@ class Outbox:
             (self.directory / f"{item_id}.json").unlink(missing_ok=True)
 
 
-# The sync write seam's identity + optional dirs — a single call site,
+# the reviewed document IS the request record; the write adds its target and who made the call
 def record_confirmation(
-    batch_id: str,
-    doc_index: int,
-    document: Boundary,
-    text: str | None,
+    confirmation: ConfirmationRequest,
     *,
     archive: Archive,
-    title: str = "",
-    date: str = "",
-    date_precision: str = "",
     registry_dir: Path = LoftPaths.REGISTRY_DIR,
     actor: str = "import",
 ) -> str:
@@ -374,13 +373,14 @@ def record_confirmation(
 
     An agreed document becomes an archive item: the review's facts (title,
     date) mint it, or supersede the item the document already became
-    (``document.item_id``), with the corrected text as the item's
+    (``boundary.item_id``), with the corrected text as the item's
     transcription. The registry's boundary records the item and the review's
     state (replace-by-pages, append) — the archive holds the agreed text, the
     registry holds which page set it came from. ``text=None`` records a
     rejection: nothing is minted and nothing is silently dropped. Returns the
     item id (empty for a rejection). The batch id is validated FIRST: it
     becomes a path segment, and no write precedes the guard."""
+    batch_id, document, text = confirmation.batch_id, confirmation.boundary, confirmation.text
     if not BATCH_ID.match(batch_id):
         raise ValueError(f"invalid batch id: {batch_id!r}")
     # load (and so validate the batch was adopted) BEFORE any write — an
@@ -396,9 +396,9 @@ def record_confirmation(
     item_id = ""
     if text is not None:
         item = archive.agree_document(
-            title=title,
-            date=date,
-            date_precision=date_precision,
+            title=confirmation.title,
+            date=confirmation.date,
+            date_precision=confirmation.date_precision,
             text=text,
             item_id=document.item_id,
             actor=actor,
@@ -994,7 +994,7 @@ def _reread_page(
     run: Any,
     artefacts: BatchArtefacts,
     page: str,
-    read: _PageRead,
+    read: PageRead,
 ) -> None:
     """Delete the page's read receipts and run the batch's own read for it.
 
@@ -1037,7 +1037,7 @@ class _PageImage:
 
 
 @dataclass(frozen=True)
-class _PageRead:
+class PageRead:
     """A re-read's injectable seams — the text recognisers and the row
     reader. Absent members take the batch's own default, the same read the
     first pass ran."""
@@ -1048,7 +1048,7 @@ class _PageRead:
 
 
 @dataclass(frozen=True)
-class _PageSidecars:
+class PageSidecars:
     """A re-read's sidecar seams: the self-report and orientation generators,
     and the standing knowledge their prompts cite."""
 
@@ -1058,10 +1058,22 @@ class _PageSidecars:
     places: list[str] | None = None
 
 
+@dataclass(frozen=True)
+class PageReread:
+    """Everything a page's re-read is given beside the page and its batch:
+    the trees the run writes through, the readers it runs, and the sidecar
+    generators (with the standing knowledge their prompts cite)."""
+
+    registry_dir: Path | None = None
+    archive_dir: Path | None = None
+    read: PageRead = field(default_factory=PageRead)
+    sidecars: PageSidecars = field(default_factory=PageSidecars)
+
+
 def _write_page_sidecars(
     artefacts: BatchArtefacts,
     image: _PageImage,
-    sidecars: _PageSidecars,
+    sidecars: PageSidecars,
 ) -> None:
     """The review surface's per-page sidecars, from the new text."""
     new_text = artefacts.text(image.page).read_text(encoding="utf-8")
@@ -1083,16 +1095,7 @@ def reprocess_page_transcription(
     page: str,
     work_dir: Path,
     *,
-    registry_dir: Path | None = None,
-    archive_dir: Path | None = None,
-    transcribe: Any = None,
-    rows_text: Callable[[Path, Path], dict[int, str]] | None = None,
-    reading: Callable[[Any], Any] | None = None,
-    selfreport: Callable[..., list[UnsureWord]] | None = None,
-    orientation_report_fn: Callable[[Path, str], dict[str, Any]] | None = None,
-    people: list[str] | None = None,
-    places: list[str] | None = None,
-    label: str | None = None,
+    reread: PageReread | None = None,
 ) -> None:
     """Re-read one page from its CORRECTED image after a rotation.
 
@@ -1104,33 +1107,21 @@ def reprocess_page_transcription(
     recorded rotation is carried onto the fresh row reading.
 
     Runs as the backend's async job; the page's job state marks it while it
-    runs. ``transcribe``/``rows_text``/``selfreport``/``orientation_report_fn``
-    are the injectable seams. On failure the page is marked "failed" — the
-    stale text stays visible with the warning, never a silent wrong answer."""
+    runs. ``reread`` is the whole seam — the batch's trees, the readers and
+    the sidecar generators; its absent members take the batch's own defaults.
+    On failure the page is marked "failed" — the stale text stays visible with
+    the warning, never a silent wrong answer."""
     if not BATCH_ID.match(batch_id) or not safe_page_name(page):
         raise ValueError("invalid batch or page name")
+    reread = reread or PageReread()
     artefacts = BatchArtefacts(work_dir, batch_id)
     image_path = artefacts.oriented(page)
     if not image_path.is_file():
         raise ValueError(f"no such page: {page}")
     try:
-        run = _batch_run(batch_id, work_dir, registry_dir=registry_dir, archive_dir=archive_dir)
-        _reread_page(
-            run,
-            artefacts,
-            page,
-            _PageRead(transcribe=transcribe, rows_text=rows_text, reading=reading),
-        )
-        _write_page_sidecars(
-            artefacts,
-            _PageImage(page, image_path),
-            _PageSidecars(
-                selfreport=selfreport,
-                orientation_report_fn=orientation_report_fn,
-                people=people,
-                places=places,
-            ),
-        )
+        run = _batch_run(batch_id, work_dir, registry_dir=reread.registry_dir, archive_dir=reread.archive_dir)
+        _reread_page(run, artefacts, page, reread.read)
+        _write_page_sidecars(artefacts, _PageImage(page, image_path), reread.sidecars)
         set_page_job(batch_id, page, None, work_dir)
     # lucidlint: ignore broad-except the stage's terminal boundary — mark failed on ANY error, then re-raise
     except Exception:

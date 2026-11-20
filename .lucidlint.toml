@@ -168,18 +168,6 @@ ignore = ["unused"]
 [lucidlint."pipeline/evals/eval_scoring.py"]
 ignore = ["unused"]
 
-# long-param-list: two STOPPED findings. `record_confirmation` (10) and
-# `reprocess_page_transcription` (13) are called with their opening
-# arguments positionally plus named seams (archive=, title=/date=,
-# registry_dir=, transcribe=/rows_text=) in tests/test_sync.py and
-# tests/pipeline/test_adopt.py: a <=5-parameter form renames an argument the
-# suite passes, so the def and its call sites move together. The seams DO
-# travel as records now: `_PageRead`/`_PageSidecars` (the private helpers
-# take them) and `BatchReadings` (the crash recovery). The follow-up table is
-# in docs/PLAN/lucidlint-review-log.md, 2026-11-20 — names and signatures.
-[lucidlint."pipeline/api/sync.py"]
-ignore = ["long-param-list"]
-
 [lucidlint."tools/gedcom_document.py"]
 ignore = ["god-class"]
 

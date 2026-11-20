@@ -490,8 +490,7 @@ def investigate(
     # that takes it.
     # The loop's call carries NO response schema — a schema pinned to the
     # verdict forbids the tool call — so the prompt carries the shape. It is
-    # generated from the model, never retyped: one schema object serves the
-    # key list and the block below, so they cannot disagree.
+    # generated from the model once per call, never retyped.
     confidence = Verdict.model_fields["confidence"]
     verdict_rules = "\nConfidence is the reviewer's own certainty, read from their words: " + str(
         confidence.description
@@ -504,13 +503,12 @@ def investigate(
     # The shape is generated from the model, never retyped: until the loop's
     # tools are native, the prompt is the only place the model can learn it
     # (a response schema would forbid the tool call — see the call below).
-    prompt += "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + json.dumps(verdict_schema, indent=1)
-    prompt += verdict_rules
     prompt += (
-        "\n\nReturn ONLY the verdict JSON, containing every key the schema above shows, "
-        "spelled exactly as it spells them — no others, no misspellings, no missing keys "
-        "(a misspelled key is a failed verdict)."
+        "\n\nReturn ONLY the verdict JSON, in exactly this shape, with every key the "
+        "schema spells, spelled the same way — no others, no misspellings, no missing "
+        "keys (a misspelled key is a failed verdict):\n" + json.dumps(verdict_schema, indent=1)
     )
+    prompt += verdict_rules
     tool_calls = 0
     trace: list[TraceStep] = []
     # the stable prompt — the static plus the conversation before the

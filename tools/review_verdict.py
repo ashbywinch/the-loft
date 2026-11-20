@@ -34,7 +34,14 @@ CONFIDENCE_VALUES = frozenset(get_args(Confidence))
 
 class Verdict(BaseModel):
     """The verdict the model returns: the answer's members, each with its own
-    description, rendered into the prompt and enforced in the request."""
+    description, rendered into the prompt.
+
+    The prompt is the only carrier: the review loop's call cannot take a
+    response schema without forbidding the tool call, so the six members are
+    stated in the prompt and the closed vocabularies are enforced at parse
+    (`VerdictRecord.complete`). Nothing in this request enforces the member
+    set; do not describe it as if something does.
+    """
 
     class ContradictionWire(BaseModel):
         """Whether the statement cannot both be true with an attested fact."""

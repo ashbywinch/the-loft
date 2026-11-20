@@ -4,7 +4,7 @@ One class per file, named after the class: the page and its chain of
 collections (`Ink`, `Marks`, `Ruler`, `Words`, `Rows`), the geometry record
 (`Rectangle`), the row record (`Row`) with its trust stages, the reviewer's
 drawn row lines (`RowAdjustments`), the boxes and page size the detector
-composes (`Boxes`, `PageSize`), the correction's measurement (`DrawnStrokeMeasurement`), the
+composes (`Boxes`, `PageSize`), the
 page's `Transcript` with its per-row record (`RowTranscript` — the model's
 answer segment, which owns that answer's wire), the transcription that reads
 a page, and the `Document` artefact with its line record (`DocumentLine`).

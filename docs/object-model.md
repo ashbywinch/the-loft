@@ -6,7 +6,7 @@ named after the class; methods that operate on a class's objects are
 members of that class, its collection classes owning their factories
 (`Words.from_marks`, `Rows.from_words`); a module named after anything
 that is not a domain concept does not survive — the word/row types are
-`Word`, `Page`, `Row`, `Verdict`, `Rectangle`, whatever module they
+`Word`, `Page`, `Row`, `Rectangle`, whatever module they
 currently sit in (today `tools/boxrows.py`, a code name, not a
 concept).
 
@@ -155,12 +155,12 @@ confirmed rows are the document's words. The web app's box reads the
 files directly (the archive location both boxes reach); there is no
 in-memory or service handoff between the two.
 
-**`Rectangle`** is the geometry record of the model. **`Verdict`** is the
-drawn-line correction's measurement: when a reviewer draws a line over
-the page, the grouping measures how the stroke agrees with it —
-`right`/`split`/`unboxed`, the row indices the stroke covers, the words
-it passed over — before `rows.adjust(lines)` re-derives the rows from
-the drawn lines. Rows carry no verdicts.
+**`Rectangle`** is the geometry record of the model. The drawn-line
+correction's measurement is not a type: when a reviewer draws a line over
+the page, `_Claims` in `pipeline/rows/rows.py` measures how the stroke
+agrees with the grouping — which rows it covers, which words it passes —
+and `rows.adjust(lines)` re-derives the rows from the drawn lines. Rows
+carry no verdicts.
 
 ## The scan, the page and the document
 
@@ -245,13 +245,13 @@ Keep list (true nouns, no change): `Colour`, `CropWindow`, `SplitCase`,
 ## Settled — the word/row model: one implementation
 
 One implementation: the `document/` package's `Page`, `Word`, `Row`,
-`Verdict` and `Rectangle`, one class per file. `tools/boxrows.py` is
+`Rectangle` is one class in one file. `tools/boxrows.py` is
 retired. The local-smallness step (`_split_by_size`) stays.
 
 ## Settled — the word/row model's home: a `Document` package
 
 The document-side model is the `document/` package, one class per file:
-`Page`, `Word`, `Row`, `Verdict`, `Rectangle`, and `Document`. The
+`Page`, `Word`, `Row`, `Rectangle`, and `Document`. The
 `Document` class owns the grouping (a page opens a document at a
 greeting, closes it at a sign-off); the review confirms it.
 
@@ -304,7 +304,6 @@ classDiagram
         class Words { from_marks(marks, scale); wire formats }
         class Rows { from_words(words, page); adjust(lines); text + stage per row }
         class Rectangle
-        class Verdict
         class Vlm { transcribe, orientation, kinds, selfreport }
         class VlmOptions
     }

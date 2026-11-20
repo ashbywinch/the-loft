@@ -1095,7 +1095,7 @@ three words (nested-pair test: 33 offenders at baseline).
   the page with a 239-row continuous run — plus the two crossed-out rows (runs 202–278px).
   The rule is form ink and is stripped first (`Writing._strip_vertical_rules`); the two
   crossed-out rows then become their own boxes (gap cut at y2732).
-- **The gap rule** (`Writing._gap_row`): a row whose longest run is ≤¼ of both flanks,
+- **The gap rule** (`RowFit.gap`): a row whose longest run is ≤¼ of both flanks,
   with substantial flanks, and whose two sides sit on DIFFERENT fitted lines, is a cut —
   47 at 0.22, the crossed-out rows at 0.03. A tie at exactly 0.25 (the single "A"
   letter's internal gap) is refused (strict comparison).
@@ -1104,11 +1104,11 @@ three words (nested-pair test: 33 offenders at baseline).
   thinner than the width bar; a crossed-out row is flatter than the aspect bar; but a gap
   cannot make an 8px sliver or two ascenders into a word — `is_word_shaped(waive_band,
   waive_width)`).
-- **334's continuation** (`Writing._continuation`): word 2's top (y4538–4544, 4px of ink)
+- **334's continuation** (`WordCut._continuation`): word 2's top (y4538–4544, 4px of ink)
   continues in the mark whose ink starts exactly at the shape's bottom edge, sits on the
   boundary's own line, and is NOT a word alone (342: x1424–1440, w9). Result: word 1
   (1416,4492,1520,4536) + word 2 (1424,4538,1496,4570); 342 absorbed.
-- **The y3640 underline** (`Writing._band_cut` + the `classify_line` stroke rule):
+- **The y3640 underline** (`RowFit._band_cut` + the `classify_line` stroke rule):
   an underline welded under its words has rows running ≥60% of the mark's width (the fit
   never flips there); the band is cut into its own segment, the bridge test no longer
   vetoes a stroke-built piece ≥70px long, and the strip removes it. Nested pairs 33 → 1;
@@ -1118,9 +1118,11 @@ three words (nested-pair test: 33 offenders at baseline).
 
 - Reader suite 31 passed / 1 failed (baseline 29/3 with 47 red); the 4 pre-existing
   spike-gold failures unchanged (their saved snapshots need regeneration — separate work).
-- The cut logic lives as `Writing` methods — (marks, lines, unit) travelled together
-  because they ARE the writing's fields. `word_measures` → `WordShape` (one measurement
-  for both word tests). Filed as lucidlint issue ashbywinch/lucidlint#22.
+- The cut logic lives as one object — `WordCut` (marks, lines, scale) — and the
+  rows-against-lines reading as `RowFit`; `Writing` keeps the measurement (2026-11-20,
+  the split lucidlint kept reporting: the three still travel together, now as the cut's
+  own fields, not the writing's). `word_measures` → `WordShape` (one measurement for
+  both word tests). Filed as lucidlint issue ashbywinch/lucidlint#22.
 - `boxdet.py` / `boxsimple.py` / `boxscale.py` deleted (the dead predecessor pipeline;
   "boxdet's machinery dies" per boxsimple's own thesis; nothing imported them).
 - User ruling: **9690** (998,3220,1076,3282) is two words — but the pipeline

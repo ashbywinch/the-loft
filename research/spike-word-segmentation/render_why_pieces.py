@@ -21,7 +21,9 @@ from PIL import Image
 from document.colour import Colour
 from document.point import Point
 from pipeline.detect.mark import Components, Ink, Mark
-from pipeline.detect.reader import Writing, artifacts, ink_mask, is_waist, piece_between
+from pipeline.detect.reader import Writing, artifacts, ink_mask
+from pipeline.detect.row_fit import RowFit, is_waist
+from pipeline.detect.word_cut import piece_between
 from pipeline.rows.page_visuals import CaptionSheet, Crop, PagePainter, halo_text, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
@@ -90,7 +92,7 @@ def _main() -> int:
         )
         per_row = mark.rows()
         runs = Ink(np.asarray(mark.pix[0]), np.asarray(mark.pix[1])).longest_runs()
-        segments = writing._candidate_segments(mark)
+        segments = RowFit(writing.lines).segments(mark)
         pieces = [piece_between(mark, segment) for segment in segments]
 
         crop = scaled_crop(page, Crop(x0, y0, x1, y1, zoom))

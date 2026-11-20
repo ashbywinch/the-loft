@@ -15,7 +15,9 @@ model = "openai/dynamic/fallback2"  # the handler strips the "openai/" prefix an
 # claiming 128k made pr-agent ask for a review longer than the model can emit
 # and the answer was truncated (measured: #134, run 44736435686).
 custom_model_max_tokens = 8192
-max_model_tokens = 128000
+# The input cap is what leaves room for the answer: with the full diff the
+# route spent its output budget and pr-agent rejected the truncated review.
+max_model_tokens = 32000
 ai_timeout = 1800
 fallback_models = []
 repo_context_from_default_branch = true  # the standards come from main: a PR must not supply the rule it is judged by

@@ -23,9 +23,13 @@ from tools.contradiction import Contradiction
 from tools.finding import Finding
 from tools.trace_step import TraceStep
 
-# The model's boolean as the wire spells it — "true"/"false" as words, taken
-# from the schema's own Literal so the sets cannot drift apart.
-BOOLEAN_VALUES: frozenset[str] = frozenset()  # assigned after Verdict is defined
+# The values the wire admits, declared once. The model uses these aliases and
+# the validation sets below are derived from them, so the prompt, the schema and
+# the validator cannot disagree.
+Boolean = Literal["true", "false"]
+Confidence = Literal["definitely", "think_so", "definitely_not", "think_not", "unclear", "dont_know"]
+BOOLEAN_VALUES = frozenset(get_args(Boolean))
+CONFIDENCE_VALUES = frozenset(get_args(Confidence))
 
 
 class Verdict(BaseModel):
@@ -35,9 +39,7 @@ class Verdict(BaseModel):
     class ContradictionWire(BaseModel):
         """Whether the statement cannot both be true with an attested fact."""
 
-        found: Literal["true", "false"] = Field(
-            description="whether the statement cannot both be true with an attested fact"
-        )
+        found: Boolean = Field(description="whether the statement cannot both be true with an attested fact")
         detail: str = Field(description="the attested fact that conflicts, or empty")
 
     class FindingWire(BaseModel):
@@ -54,9 +56,9 @@ class Verdict(BaseModel):
         )
         item_id: str = Field(description="the document id from the tool results")
 
-    relevant: Literal["true", "false"] = Field(description="whether the statement bears on the claim under review")
+    relevant: Boolean = Field(description="whether the statement bears on the claim under review")
     contradiction: ContradictionWire = Field(description="whether the statement denies an attested fact")
-    confidence: Literal["definitely", "think_so", "definitely_not", "think_not", "unclear", "dont_know"] = Field(
+    confidence: Confidence = Field(
         description=(
             "the reviewer's own certainty, read from their words: definitely (they assert "
             "it), think_so (they hedge it), definitely_not (they deny it), think_not (they "
@@ -79,11 +81,6 @@ class Verdict(BaseModel):
         )
     )
 
-
-# The reviewer's own certainty, never the model's assessment — the values are
-# the schema's own, so the prompt and the validation cannot disagree.
-CONFIDENCE_VALUES = frozenset(get_args(Verdict.model_fields["confidence"].annotation))
-BOOLEAN_VALUES = frozenset(get_args(Verdict.model_fields["relevant"].annotation))
 
 # The keys the verdict's wire carries — every other key of a model turn is
 # unmodeled and rides in ``extra``.

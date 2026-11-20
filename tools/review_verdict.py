@@ -32,7 +32,7 @@ class Verdict(BaseModel):
     """The verdict the model returns: the answer's members, each with its own
     description, rendered into the prompt and enforced in the request."""
 
-    class Contradiction(BaseModel):
+    class ContradictionWire(BaseModel):
         """Whether the statement cannot both be true with an attested fact."""
 
         found: Literal["true", "false"] = Field(
@@ -40,7 +40,7 @@ class Verdict(BaseModel):
         )
         detail: str = Field(description="the attested fact that conflicts, or empty")
 
-    class Finding(BaseModel):
+    class FindingWire(BaseModel):
         """One finding: the document and the sentence it quotes."""
 
         text: str = Field(
@@ -55,7 +55,7 @@ class Verdict(BaseModel):
         item_id: str = Field(description="the document id from the tool results")
 
     relevant: Literal["true", "false"] = Field(description="whether the statement bears on the claim under review")
-    contradiction: Contradiction = Field(description="whether the statement denies an attested fact")
+    contradiction: ContradictionWire = Field(description="whether the statement denies an attested fact")
     confidence: Literal["definitely", "think_so", "definitely_not", "think_not", "unclear", "dont_know"] = Field(
         description=(
             "the reviewer's own certainty, read from their words: definitely (they assert "
@@ -71,7 +71,7 @@ class Verdict(BaseModel):
             "topic; never the reasoning or 'the reviewer'"
         )
     )
-    findings: list[Finding] = Field(description="the documents the statement led to")
+    findings: list[FindingWire] = Field(description="the documents the statement led to")
     question: str = Field(
         description=(
             "the genealogist's next question in the family's words, or a short conclusion "

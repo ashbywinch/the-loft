@@ -488,16 +488,16 @@ def investigate(
     # rendered as its JSON schema — the framework's convention, and the whole
     # instruction: a value the model may return is described beside the member
     # that takes it.
-    # The SHAPE is the request's `response_format` (AIClient sends
-    # `Verdict.model_json_schema()`), so the prompt does not draw it again. The
-    # RULES are not the shape: each value's meaning and the closed key set are
-    # instructions the model must read, and both come from the same model, so
-    # the prompt cannot describe a set the validator rejects.
+    # The loop's call carries NO response schema — a schema pinned to the
+    # verdict forbids the tool call — so the prompt carries the shape. It is
+    # generated from the model, never retyped: one schema object serves the
+    # key list and the block below, so they cannot disagree.
     confidence = Verdict.model_fields["confidence"]
     verdict_rules = "\nConfidence is the reviewer's own certainty, read from their words: " + str(
         confidence.description
     )
-    keys = ", ".join(Verdict.model_json_schema()["properties"])
+    verdict_schema = Verdict.model_json_schema()
+    keys = ", ".join(verdict_schema["properties"])
 
     # the verdict shape must be in the INITIAL prompt — the schema was only
     # revealed in the correction branch, so every first call was rejected
@@ -505,9 +505,7 @@ def investigate(
     # The shape is generated from the model, never retyped: until the loop's
     # tools are native, the prompt is the only place the model can learn it
     # (a response schema would forbid the tool call — see the call below).
-    prompt += "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + json.dumps(
-        Verdict.model_json_schema(), indent=1
-    )
+    prompt += "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + json.dumps(verdict_schema, indent=1)
     prompt += verdict_rules
     prompt += (
         "\n\nReturn ONLY the verdict JSON. It MUST contain ALL of these keys, spelled exactly "

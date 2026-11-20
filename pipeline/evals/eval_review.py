@@ -26,7 +26,7 @@ from typing import Any, ClassVar
 from pipeline.model.ai_client import AIClient
 from tools.records import Message, Person, ReviewContext
 from tools.review import assistant_message, investigate
-from tools.review_verdict import ReviewVerdict
+from tools.review_verdict import VerdictRecord
 
 # The review's subject is the import's PROPOSED person: its relation field is
 # the unverified guess under review. Without the status, the fixture hands the
@@ -229,7 +229,7 @@ def _facts() -> ReviewContext:
     # family jargon they do not understand; "link" is not that jargon (user).
 
 
-def persona_errors(result: ReviewVerdict, reviewer_text: str = "") -> list[str]:
+def persona_errors(result: VerdictRecord, reviewer_text: str = "") -> list[str]:
     """The genealogist's voice guard: the assistant's words (the question,
     the findings — and the note, which flows into the steer ONLY when the
     answer is off-topic) never contain the process vocabulary, the
@@ -254,7 +254,7 @@ def persona_errors(result: ReviewVerdict, reviewer_text: str = "") -> list[str]:
     ]
 
 
-def run_flow(client: AIClient, flow: ReviewFlow) -> ReviewVerdict:
+def run_flow(client: AIClient, flow: ReviewFlow) -> VerdictRecord:
     """Run the flow ONCE — the reviewer's statement through investigate.
     The condition tests evaluate the single output; the run is never
     repeated for a condition (2026-08-10, user: one run, many
@@ -274,7 +274,7 @@ class ReviewRun:
     when the run satisfied it (the condition tests are independent and
     unaware they share the run; each checks one condition)."""
 
-    def __init__(self, flow: ReviewFlow, result: ReviewVerdict) -> None:
+    def __init__(self, flow: ReviewFlow, result: VerdictRecord) -> None:
         self.flow = flow
         self.result = result
 
@@ -435,8 +435,8 @@ class ArcRun:
     """The two-turn arc's one run — both turns' verdicts, the pair the
     arc's condition tests verify."""
 
-    t1: ReviewVerdict
-    t2: ReviewVerdict
+    t1: VerdictRecord
+    t2: VerdictRecord
 
 
 def run_arc(client: AIClient) -> ArcRun:

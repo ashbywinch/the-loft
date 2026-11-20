@@ -26,7 +26,7 @@ from tools.person_hit import PersonHit
 from tools.person_id_args import PersonIdArgs
 from tools.person_summary import PersonSummary
 from tools.records import Message, Person, ReviewContext
-from tools.review_verdict import ReviewVerdict, Verdict
+from tools.review_verdict import Verdict, VerdictRecord
 from tools.search_query_args import SearchQueryArgs
 from tools.tool_error import ToolError
 from tools.tool_note import ToolNote
@@ -272,7 +272,7 @@ def run_tool(tool: str, args: ToolArgs | None, facts: ReviewContext) -> ToolResu
     return _ReviewTools(facts).run(tool, args)
 
 
-def assistant_message(verdict: ReviewVerdict, person: Person) -> str:
+def assistant_message(verdict: VerdictRecord, person: Person) -> str:
     """The assistant's rendered words for one investigation response — what
     the family sees, verbatim. The server builds the words;
     the app shows them unmodified; the record stores them. The model's
@@ -378,11 +378,11 @@ def investigate(
     who: str,
     facts: ReviewContext,
     history: tuple[Message, ...] = (),
-) -> ReviewVerdict:
+) -> VerdictRecord:
     """The tool-using review of a free-text answer (user): the
     model can call the archive's read-only lookups to dig into the
     reviewer's statement — follow the leads and surface what the archive
-    already attests — then return the ReviewVerdict: the check's answers,
+    already attests — then return the VerdictRecord: the check's answers,
     the findings the tools surfaced, and the genealogist's question. *history* is the
     conversation so far (the messages, including the model's own previous
     reasoning), rendered verbatim into the prompt — the model always sees
@@ -560,7 +560,7 @@ def investigate(
             )
             continue
         trace.append(TraceStep(model=raw, reasoning=reasoning))
-        turn = ReviewVerdict.from_dict(parsed_dict)
+        turn = VerdictRecord.from_dict(parsed_dict)
         if turn.complete:
             return replace(turn, raw=raw, trace=tuple(trace), prompt=base_prompt, final_prompt=user)
         user += (

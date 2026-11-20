@@ -101,9 +101,15 @@ VERDICT_KEYS = frozenset(
 
 
 @dataclass(frozen=True)
-class ReviewVerdict:
-    """One review turn's verdict — the check's answers, the findings the
-    tools surfaced, and the genealogist's question to the family."""
+class VerdictRecord:
+    """The record of one review turn.
+
+    `Verdict` above is the model's answer: its JSON schema *is* the request,
+    so it holds only what the model states. This holds that answer plus
+    everything the turn produced around it — the raw output, the tool trace,
+    both prompt texts, and any key the wire carried that the model does not
+    declare. The fields are flattened for callers that read one answer.
+    """
 
     relevant: str = ""
     contradiction: Contradiction = field(default_factory=Contradiction)
@@ -131,7 +137,7 @@ class ReviewVerdict:
         )
 
     @classmethod
-    def from_dict(cls, raw: dict[str, Any]) -> ReviewVerdict:
+    def from_dict(cls, raw: dict[str, Any]) -> VerdictRecord:
         """The verdict a wire record states — the known keys normalized (the
         vocabularies are lowercase, the prose trimmed), a finding with no
         text dropped, and every unmodeled key kept in ``extra``."""

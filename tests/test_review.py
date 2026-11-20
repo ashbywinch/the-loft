@@ -17,7 +17,7 @@ from tools.memory import ElicitationError
 from tools.person_id_args import PersonIdArgs
 from tools.records import Person, ReviewContext
 from tools.review import ToolResult, investigate, run_tool, steer_message
-from tools.review_verdict import CONFIDENCE_VALUES, ReviewVerdict, Verdict
+from tools.review_verdict import CONFIDENCE_VALUES, Verdict, VerdictRecord
 from tools.trace_step import TraceStep
 
 PEOPLE: list[dict[str, Any]] = [
@@ -222,7 +222,7 @@ def test_a_typoed_question_key_fails_loudly_never_silently() -> None:
     from pipeline.evals.eval_review import PlaceLeadFlow, ReviewRun
 
     raw = '{"relevant": true, "findings": [], "quetion": "Did you ever meet him?"}'
-    error = ReviewRun(PlaceLeadFlow(), ReviewVerdict.from_dict({"question": "", "raw": raw})).question()
+    error = ReviewRun(PlaceLeadFlow(), VerdictRecord.from_dict({"question": "", "raw": raw})).question()
     assert error is not None
     assert "lacks the 'question' key" in error
     assert raw in error, "the guard must carry the FULL output (2026-09-23)"
@@ -604,7 +604,7 @@ def test_persona_guard_allows_reviewer_introduced_vocabulary() -> None:
     # (user; PRD R1)
     from pipeline.evals.eval_review import persona_errors
 
-    result = ReviewVerdict.from_dict(
+    result = VerdictRecord.from_dict(
         {"relevant": "true", "question": "Where did the import get that idea — did Pearl ever mention a brother?"}
     )
     assert persona_errors(result, reviewer_text="I'm fairly sure the import has it right") == []
@@ -624,7 +624,7 @@ def test_persona_guard_error_carries_the_full_text() -> None:
         "need closer inspection, because the exact wording is awaiting confirmation."
     )
     assert len(question) > 80, "the fixture must exceed the old truncation bound"
-    errors = persona_errors(ReviewVerdict.from_dict({"relevant": "true", "question": question}))
+    errors = persona_errors(VerdictRecord.from_dict({"relevant": "true", "question": question}))
     assert errors == [f"question echoes the system ('awaiting'): {question}"]
 
 

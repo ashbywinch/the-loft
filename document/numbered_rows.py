@@ -43,8 +43,8 @@ class NumberedRows:
     _PILL_RADIUS = 12  # px: the pill's corner (`.rv-rownum`'s 10px at page scale)
     _PILL_PAD_X = 12  # px: air either side of the number
     _PILL_PAD_Y = 8  # px: air above and below it
-    # px of lane beyond a one-digit pill: the column starts clear of a pill
-    # carrying a second digit, so no lane 0 box has to be stepped outward
+    # px of margin beyond a one-digit pill's own width: room so a two-digit
+    # pill sits in the column rather than being stepped a lane outward
     _MARGIN_ALLOWANCE = 12
     PILL_INSET = 6  # px: how far the pill's right edge sits left of the band
     _PAPER = Colour(red=255, green=255, blue=255)
@@ -85,9 +85,9 @@ class NumberedRows:
     # the wash and introduces no colour of its own.
     _DIGIT_SATURATION = 0.75
     _DIGIT_VALUE = 0.42
-    # A background sample darker than this sums to is no background: a cropped
-    # canvas can carry the page's dark edge where the margin should be, and a
-    # hue washed into it would be a dark blob. Three channels, 150 average.
+    # A background sample whose three channels sum below this is no background:
+    # a cropped canvas can carry the page's dark edge where the margin should
+    # be, and a hue washed into it would be a dark blob (150 per channel).
     _MIN_BACKGROUND_SUM = 450
     # the pointer's back edge covers the pill's middle half: it starts this
     # fraction of the pill's height in from the top and from the bottom

@@ -68,7 +68,7 @@ def test_the_read_only_derived_layers_never_write_the_identity_tables() -> None:
 def test_the_archive_is_the_domain_api_over_the_store() -> None:
     archive = _source("archive.py")
     # the domain owns the store and the identity-table write seam
-    assert "from tools.store import" in archive
+    assert "from tools.file_store import" in archive
     assert "save_identity" in archive
     # and it never reaches up into the HTTP layer
     assert "fastapi" not in archive.lower()
@@ -103,11 +103,14 @@ def test_the_pipeline_layer_routes_data_through_the_store() -> None:
     for name in pipeline_tools:
         source = _source(name)
         assert (
-            "from tools.store import" in source
+            "from tools.file_store import" in source
+            or "from tools.disk_store import" in source
+            or "from tools.memory_store import" in source
             or "from pipeline.store import" in source
             or "from tools.archive import" in source
         ), (
-            f"{name} must import from the store layer (tools.store or tools.archive) "
+            f"{name} must import from the store layer (tools.file_store, tools.disk_store, "
+            f"tools.memory_store or tools.archive) "
             f"to route data persistence through the append-only archive API"
         )
 
@@ -119,7 +122,7 @@ def test_the_pipeline_layer_routes_data_through_the_store() -> None:
 
 
 def test_the_stage_layout_is_spelled_in_one_module() -> None:
-    """The artefact layout lives in `pipeline/artefacts.py` and nowhere else.
+    """The artefact layout lives in `pipeline/batch_artefacts.py` and nowhere else.
 
     The pipeline and the API used to each spell `ocr-guess/...` and
     `oriented/...` themselves, and the spellings disagreed about what "read"
@@ -127,11 +130,11 @@ def test_the_stage_layout_is_spelled_in_one_module() -> None:
     (2026-11-02). One module owns the layout; every other file asks it."""
     offenders: list[str] = []
     for path in (*(PIPELINE.rglob("*.py")), *(TOOLS.rglob("*.py"))):
-        if path.name == "artefacts.py" or "test" in path.parts:
+        if path.name == "batch_artefacts.py" or "test" in path.parts:
             continue
         text = path.read_text(encoding="utf-8")
         spellings = ('"ocr-guess"', "'ocr-guess'", '"oriented"', "'oriented'", '"boundaries.json"', "'boundaries.json'")
         for spelling in spellings:
             if spelling in text:
                 offenders.append(f"{path.relative_to(ROOT)}: {spelling}")
-    assert offenders == [], f"the stage layout is spelled outside pipeline/artefacts.py: {offenders}"
+    assert offenders == [], f"the stage layout is spelled outside pipeline/batch_artefacts.py: {offenders}"

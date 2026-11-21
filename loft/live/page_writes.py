@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from loft.live.page_row import PageState
-from loft.live.protocols import PageStore
+from loft.live.page_store import PageStore
 
 
 class PageWrites:

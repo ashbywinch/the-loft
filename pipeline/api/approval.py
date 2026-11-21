@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from document.document import Document
-from pipeline.artefacts import BatchArtefacts
+from pipeline.batch_artefacts import BatchArtefacts
 from pipeline.batch_record import BatchRecord
 from pipeline.boundary import Boundary
 from pipeline.classify import PageKinds
@@ -29,8 +29,8 @@ from pipeline.registry import load_batch, record_path
 from pipeline.stage_table import classification_of
 from pipeline.store import PipelineStore
 from tools.archive import Archive
+from tools.disk_store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 from tools.loft_paths import LoftPaths
-from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 
 @dataclass(frozen=True)

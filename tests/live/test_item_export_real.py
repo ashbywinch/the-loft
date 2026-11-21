@@ -20,13 +20,13 @@ from pathlib import Path
 
 import pytest
 
-from loft.live.compat_items import ItemCompatibility
 from loft.live.import_items import _normal, import_items, sync_items
-from loft.live.store import LiveStore
+from loft.live.item_compatibility import ItemCompatibility
+from loft.live.live_store import LiveStore
 from tools.archive import Archive
+from tools.disk_store import DiskStore
 from tools.loft_paths import LoftPaths
 from tools.records import Item
-from tools.store import DiskStore
 
 ARCHIVE = LoftPaths.ARCHIVE_DIR
 

@@ -13,7 +13,7 @@ import pytest
 
 from loft.live.errors import LiveError
 from loft.live.import_pipeline import import_pipeline
-from loft.live.store import LiveStore
+from loft.live.live_store import LiveStore
 from tools.records import Item
 
 

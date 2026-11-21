@@ -17,8 +17,8 @@ from typing import Any, cast
 from loft.live.backup import check_marker
 from loft.live.identity import relationship_id
 from loft.live.identity_map import disposition_of
-from loft.live.protocols import IdentityStore
-from loft.live.store import LiveStore
+from loft.live.identity_store import IdentityStore
+from loft.live.live_store import LiveStore
 from tools.records import (
     Org,
     OrgsTable,

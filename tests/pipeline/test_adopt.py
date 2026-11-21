@@ -117,7 +117,7 @@ def test_register_adopted_preserves_confirmed_content_on_change(tmp_path: Path) 
     from pipeline.api.sync import record_confirmation
     from pipeline.boundary import Boundary
     from tools.archive import Archive
-    from tools.store import DiskStore
+    from tools.disk_store import DiskStore
 
     folder = _pile(tmp_path)
     registry = tmp_path / "registry"

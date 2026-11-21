@@ -54,11 +54,15 @@ ignore = [
 # in any other class fails the gate (re-checked 2026-11-20, six findings).
 [lucidlint."loft/live/memory.py"]
 ignore = ["vague-name"]
-[lucidlint."loft/live/store.py"]
+[lucidlint."loft/live/live_store.py"]
 ignore = ["vague-name"]
 [lucidlint."pipeline/store.py"]
 ignore = ["vague-name"]
-[lucidlint."tools/store.py"]
+[lucidlint."tools/file_store.py"]
+ignore = ["vague-name"]
+[lucidlint."tools/disk_store.py"]
+ignore = ["vague-name"]
+[lucidlint."tools/memory_store.py"]
 ignore = ["vague-name"]
 
 # fakefs: the repo's testing standards permit deterministic real-FS tests
@@ -124,7 +128,7 @@ ignore = ["unused"]  # family_markers/file_offenders: tests/test_no_pii_in_repo.
 # the house fiction: a documented data source (AGENTS.md, coding-standards,
 # writing-documentation) whose names ARE the content; tests/test_fiction.py
 # and the docs are its readers.
-[lucidlint."tools/fiction.py"]
+[lucidlint."tools/house_fiction.py"]
 ignore = ["unused"]  # HouseFiction: tests/test_fiction.py
 
 # partition: STOPPED, not waived. The rule's field partition on Archive is the

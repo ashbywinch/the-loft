@@ -47,8 +47,8 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The row review's phone surface (the purpose, the two colour layers, the draw→redraw loop; PROPOSED) | `docs/PLAN/row-review-ux.md` |
 | The page categories (photograph, writing printed/handwritten, postcard face, form, drawing) and what each implies for the read | `docs/PLAN/page-categories.md` |
 | What a batch still needs, and the stage that completes it (the reconciler, the watch, the resync, `loft work --plan/--batch`) | `pipeline/stage_table.py` (the stage order and each stage's gap check), `pipeline/reconcile.py` (`Reconciler: plan + run`), `pipeline/worker.py` (`Worker.watch`); `docs/TECHSPEC/03-import-and-pipeline.md` §16.14.2 |
-| The derivative path layout — the oriented and view images | `pipeline/artefacts.py` (`BatchArtefacts`); the guard test is `tests/test_architecture.py` |
-| Which model is used where, and the Cloudflare AI Gateway endpoint | `pipeline/model/config.py` (`VISION_MODEL`, `CHAT_MODEL`, `BOUNDARY_MODEL`) |
+| The derivative path layout — the oriented and view images | `pipeline/batch_artefacts.py` (`BatchArtefacts`); the guard test is `tests/test_architecture.py` |
+| Which model is used where, and the Cloudflare AI Gateway endpoint | `pipeline/model/model_config.py` (`VISION_MODEL`, `CHAT_MODEL`, `BOUNDARY_MODEL`) |
 | How a drawn row line corrects a page (replace a covered row; claim only the words the line runs along; leave the rest) | `docs/PLAN/row-correction-rule.md`; `pipeline/rows/rows.py` (`_Claims`) |
 |Interview/observation instruments|`docs/DISCOVERY.md`, private session records|
 | The story-capture flow spec ("Add your memory") | `docs/PRD/MEMORIES.md` |
@@ -79,7 +79,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | UX spec — the PRD's UX answers + the journeys to usability-test | `docs/UX.md` |
 | Real content (people, relationships, items, story text) | the live DB; the export is `archive/` (the dated document tree + the scan image leg); the repo is data-free. `./scripts/loft publish` regenerates `app/data` for local serve |
 | Where an artefact lives (the archive's legs: identities, items, sessions) | `docs/TECHSPEC/07-exports.md` |
-| Fictional content for examples and fake instances | `tools/fiction.py` — the Barlow family (Aria, Jack, Meg, Harry, Nora, Lily, Pip; Mrs Rosa Quinn) and Mallowfield/Riverfield; never real names |
+| Fictional content for examples and fake instances | `tools/house_fiction.py` — the Barlow family (Aria, Jack, Meg, Harry, Nora, Lily, Pip; Mrs Rosa Quinn) and Mallowfield/Riverfield; never real names |
 
 Read the relevant doc before changing behavior. **Before any code change, read `docs/coding-standards.md` — it is the standing contract for how code is written here, not a reference to consult when in doubt.** **Before any documentation change, read `docs/writing-documentation.md`.** **Before writing or editing any prompt, read `skill://prompt-craft`** — a prompt is an instruction an agent acts on, and the prompt modules carry no history lessons (`docs/writing-documentation.md` § "No history lessons"). The PRD's §10 principles are
 product law: the app arranges evidence, never interprets it; no censorship by

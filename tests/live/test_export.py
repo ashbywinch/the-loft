@@ -16,9 +16,9 @@ import pytest
 from loft.live.export import DateTree, ExportError, HumanArchive, date_text
 from loft.live.identity_map import date_value
 from loft.live.items import ContentInput
+from loft.live.live_store import LiveStore
 from loft.live.migrate import migrate
 from loft.live.operational import BackupError, OperationalBackup
-from loft.live.store import LiveStore
 from loft.live.verify import Projections, tree_digest
 from tests.live.test_migrate import _fixture
 from tools.loft_paths import LoftPaths

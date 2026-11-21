@@ -13,7 +13,7 @@ import sqlite3
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from loft.live.content import ContentStore
+from loft.live.content_store import ContentStore
 from loft.live.errors import Conflict, NotFound, StaleVersion
 from loft.live.person_row import RowPosition
 from loft.live.review_row import (

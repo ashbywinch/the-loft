@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pipeline.model.config import ModelConfig
+from pipeline.model.model_config import ModelConfig
 from pipeline.model.transcription import Transcription
 from pipeline.model.vlm import VlmPrompts, transcribe_image_vlm
 from pipeline.model.vlm_answer import VlmAnswer

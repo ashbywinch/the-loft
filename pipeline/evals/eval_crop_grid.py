@@ -24,11 +24,11 @@ from typing import Any
 from PIL import Image
 
 from document.rectangle import Rectangle
-from pipeline.artefacts import BatchArtefacts
+from pipeline.batch_artefacts import BatchArtefacts
 from pipeline.evals.eval_geometry import CropLine, CropReading, PageSize, assemble_crop_grid, grid_crops
 from pipeline.layout import Layout, load_layout_store
 from pipeline.layout_line import LayoutLine
-from pipeline.model.config import ModelConfig
+from pipeline.model.model_config import ModelConfig
 from pipeline.model.transcription import Transcription
 from pipeline.model.vlm import (
     VlmError,

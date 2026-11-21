@@ -16,9 +16,9 @@ from pathlib import Path
 import pytest
 
 from loft.live.export import HumanArchive
+from loft.live.live_store import LiveStore
 from loft.live.migrate import migrate
 from loft.live.operational import OperationalBackup
-from loft.live.store import LiveStore
 from loft.live.verify import Projections, tree_digest
 from tools.loft_paths import LoftPaths
 

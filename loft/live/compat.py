@@ -20,9 +20,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from loft.live.compat_proposed import ProposedCompatibility
 from loft.live.identity_map import BasisKinds, renders_estimated
-from loft.live.protocols import IdentityStore
+from loft.live.identity_store import IdentityStore
+from loft.live.proposed_compatibility import ProposedCompatibility
 from tools.archive import Archive
 from tools.records import Org, OrgsTable, PeopleTable, Person, Place, PlacesTable, Relationship, ThemesTable
 from tools.theme import Theme

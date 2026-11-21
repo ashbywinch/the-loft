@@ -23,7 +23,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from pipeline.artefacts import BatchArtefacts
+from pipeline.batch_artefacts import BatchArtefacts
 from pipeline.evals.eval_crop_grid import read_crop
 from pipeline.evals.eval_geometry import CropReading
 from pipeline.layout import Layout

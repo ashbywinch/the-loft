@@ -22,7 +22,8 @@ import re
 from pathlib import Path
 
 from pipeline.path_suffix import PathSuffix
-from tools.store import DiskStore, FileStore, StoreError
+from tools.disk_store import DiskStore
+from tools.file_store import FileStore, StoreError
 
 # The version suffix pattern: "base-42.json" captures 42.
 VERSION_SUFFIX = re.compile(r"-(\d+)\.json$")

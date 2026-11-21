@@ -13,7 +13,7 @@ import pytest
 
 from loft.live.errors import LiveError
 from loft.live.import_reviews import import_reviews
-from loft.live.store import LiveStore
+from loft.live.live_store import LiveStore
 
 
 def _write(path: Path, value: Any) -> None:

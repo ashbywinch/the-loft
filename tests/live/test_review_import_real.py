@@ -16,12 +16,12 @@ import pytest
 
 from loft.live.import_identity import import_identities
 from loft.live.import_reviews import import_reviews
+from loft.live.live_store import LiveStore
 from loft.live.review_map import decision_disposition
-from loft.live.store import LiveStore
 from tools.archive import Archive
+from tools.disk_store import DiskStore
 from tools.loft_paths import LoftPaths
 from tools.records import ImportsTable, Session
-from tools.store import DiskStore
 
 ARCHIVE = LoftPaths.ARCHIVE_DIR
 

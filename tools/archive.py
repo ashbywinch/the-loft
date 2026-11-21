@@ -2,7 +2,7 @@
 
 Every read and write of the archive goes through this module
 (docs/CONTRIBUTIONS.md): it enforces the append-only rule (delegating the
-write check to tools/store.py), resolves sidecar versions (item.json,
+write check to tools/file_store.py), resolves sidecar versions (item.json,
 item-2.json, … — the highest wins), marks deletions with tombstones instead
 of removing files, and manages the proposed person/place records. The capture
 server, the tools, and the import flow use this — never raw paths.
@@ -29,6 +29,7 @@ from loft.live.page_writes import PageWork
 from pipeline.identification import Identification
 from tools.anchor import Anchor
 from tools.asset import Asset
+from tools.file_store import FileStore
 from tools.gone_person import GonePerson
 from tools.gone_place import GonePlace
 from tools.memory import Knowledge, Memory, StoryRequest
@@ -51,7 +52,6 @@ from tools.records import (
     validate_identity,
 )
 from tools.ref import Ref
-from tools.store import FileStore
 
 if TYPE_CHECKING:
     from loft.live.identities import Identities

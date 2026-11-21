@@ -35,7 +35,7 @@ from pipeline.model.vlm_answer import VlmAnswer
 from pipeline.registry import RegistryError
 from tools.archive import Archive
 from tools.atomic import atomic_write
-from tools.store import DiskStore
+from tools.disk_store import DiskStore
 
 
 def _confirmation(**overrides: object) -> dict[str, object]:

@@ -16,10 +16,11 @@ import pytest
 
 from loft.live.compat import CompatibilityExport
 from loft.live.import_identity import sync_from_archive
-from loft.live.store import LiveStore
+from loft.live.live_store import LiveStore
 from tools.archive import Archive
+from tools.disk_store import DiskStore
+from tools.memory_store import MemoryStore
 from tools.records import Org, OrgsTable, PeopleTable, Person, Place, PlacesTable, Relationship, ThemesTable
-from tools.store import DiskStore, MemoryStore
 from tools.theme import Theme
 
 

@@ -32,7 +32,7 @@ from document.traces import Traces
 from document.words import Words
 from loft.live.batch_row import page_id_of
 from pipeline.api.row_correction import RowCorrection
-from pipeline.artefacts import BatchArtefacts
+from pipeline.batch_artefacts import BatchArtefacts
 from pipeline.batch_record import BatchRecord
 from pipeline.boundary import Boundary
 from pipeline.classify import PageKinds
@@ -58,10 +58,10 @@ from pipeline.transcribe.printed import printed_transcript, structured_transcrip
 from tools.archive import Archive, ArchiveError
 from tools.atomic import atomic_write
 from tools.dated_fact import PRECISIONS
+from tools.disk_store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 from tools.loft_paths import LoftPaths
 from tools.memory import ChatClient, Knowledge
 from tools.records import Item
-from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 if TYPE_CHECKING:
     # the reviewed document's record lives with the request it arrives as, and

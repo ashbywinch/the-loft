@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 
-from loft.live.protocols import IdentityStore
+from loft.live.identity_store import IdentityStore
 from tools.archive import Archive
 
 

@@ -16,7 +16,7 @@ from loft.live.errors import NotFound
 from tools.records import Session
 
 if TYPE_CHECKING:
-    from loft.live.protocols import ItemStore
+    from loft.live.item_store import ItemStore
 
 
 class ReviewWrites:

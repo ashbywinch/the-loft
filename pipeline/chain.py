@@ -39,16 +39,16 @@ from document.row_adjustments import RowAdjustments
 from document.words import Words
 from pipeline.api.confirmation_request import ConfirmationRequest
 from pipeline.api.sync import BatchReadings, record_confirmation
-from pipeline.artefacts import BatchArtefacts
+from pipeline.batch_artefacts import BatchArtefacts
 from pipeline.batch_record import BatchRecord
 from pipeline.boundary import Boundary
 from pipeline.classify import PageKinds, run_classify
 from pipeline.detect.reader import Reading, reading_for_page
 from pipeline.grouping import score_boundaries
 from pipeline.model.ai_client import AIClient, AIClientError
-from pipeline.model.config import ModelConfig
-from pipeline.orient import PageOrientation
+from pipeline.model.model_config import ModelConfig
 from pipeline.page_flag import PageFlag
+from pipeline.page_orientation import PageOrientation
 from pipeline.page_text import PageText
 from pipeline.registry import RegistryError as PipelineError
 from pipeline.registry import load_batch, record_path
@@ -61,8 +61,9 @@ from pipeline.transcribe.printed import printed_transcript, structured_transcrip
 from pipeline.transcribe.transcripts import Transcriber, row_transcripts
 from tools.archive import Archive
 from tools.atomic import atomic_write
+from tools.disk_store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
+from tools.file_store import StoreError  # noqa: F401 — the architecture test's store-layer marker
 from tools.loft_paths import LoftPaths
-from tools.store import DiskStore, StoreError  # noqa: F401 — the architecture test's store-layer marker
 
 
 def _standing_names(records: list[dict[str, Any]], with_aliases: bool = False) -> list[str]:
@@ -267,7 +268,7 @@ class BatchRun(Batch):
 
     def orient_pages(self, text_pages: list[str], folder: Path) -> None:
         """Turn the text pages' writing upright into ``oriented/`` — the vision
-        model names each page's rotation (pipeline/orient.py). Nothing else is
+        model names each page's rotation (pipeline/page_orientation.py). Nothing else is
         measured here: the reader is the VLM's."""
         if all((self.artefacts.oriented_dir / name).is_file() for name in text_pages):
             print("orientation already present — reusing")

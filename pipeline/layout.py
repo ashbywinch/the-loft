@@ -59,9 +59,9 @@ from pipeline.model.unsure_word import UnsureWord
 from pipeline.unmatched_line import UnmatchedLine
 from tools.atomic import atomic_write
 from tools.box import aspect_consistent, overlap
+from tools.disk_store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 from tools.gates import text_extent_violation, validate_layout
 from tools.reading import order_lines
-from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 from tools.text import is_struck, jaccard, normalize, vlm_line_words, words
 
 

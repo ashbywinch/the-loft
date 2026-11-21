@@ -52,7 +52,7 @@ from document.transcript import Transcript, TranscriptError
 from document.word import Word
 from document.words import Words
 from pipeline.detect.reader import reading_for_page
-from pipeline.model.config import ModelConfig
+from pipeline.model.model_config import ModelConfig
 from pipeline.model.token_usage import TokenUsage
 from pipeline.model.vlm import VlmOptions, transcribe_images_vlm
 from pipeline.model.vlm_answer import VlmAnswer

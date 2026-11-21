@@ -23,8 +23,8 @@ from typing import Any, final
 from pipeline.model.backoff import Backoff
 from pipeline.model.chat_message import ChatMessage
 from pipeline.model.chat_request import ChatRequest
-from pipeline.model.config import ModelConfig
 from pipeline.model.http_headers import HttpHeaders
+from pipeline.model.model_config import ModelConfig
 
 logger = logging.getLogger(__name__)
 

@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from loft.live.errors import LiveError
+from loft.live.live_store import LiveStore
 from loft.live.schema import Schema
-from loft.live.store import LiveStore
 from loft.live.verify import Projections
 from tools.dated_fact import PRECISIONS
 from tools.loft_paths import LoftPaths

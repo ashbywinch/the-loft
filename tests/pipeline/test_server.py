@@ -22,9 +22,10 @@ from pipeline.api.server import ServerConfig, create_server
 from pipeline.api.sync import Outbox
 from pipeline.registry import load_batch
 from tools.archive import Archive
+from tools.file_store import ImmutableStoreError
 from tools.memory import ElicitationError
+from tools.memory_store import MemoryStore
 from tools.records import Item, validate_identity
-from tools.store import ImmutableStoreError, MemoryStore
 
 
 def make_app_data(tmp_path: Path) -> Path:

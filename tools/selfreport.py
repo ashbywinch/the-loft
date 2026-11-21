@@ -20,7 +20,7 @@ import json
 import sys
 from pathlib import Path
 
-from pipeline.artefacts import BatchArtefacts
+from pipeline.batch_artefacts import BatchArtefacts
 from pipeline.model.vlm import selfreport_words
 from tools.atomic import atomic_write
 from tools.selfreport_driver import run_cli

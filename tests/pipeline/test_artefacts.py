@@ -8,7 +8,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from pipeline.artefacts import BatchArtefacts
+from pipeline.batch_artefacts import BatchArtefacts
 
 
 def _source(tmp_path: Path, colour: tuple[int, int, int] = (200, 180, 150)) -> Path:

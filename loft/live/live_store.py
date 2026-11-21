@@ -19,8 +19,7 @@ from loft.live.aliases import Aliases
 from loft.live.batch_row import BatchBundle, BatchProjection
 from loft.live.batches import Batches, batch_from_payload
 from loft.live.change import Change, ChangeContext
-from loft.live.content import ContentStore
-from loft.live.database import LiveDatabase
+from loft.live.content_store import ContentStore
 from loft.live.document_row import DocumentBundle, DocumentProjection
 from loft.live.documents import Documents, document_from_payload
 from loft.live.event import event_hash
@@ -28,6 +27,7 @@ from loft.live.identities import Identities
 from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection, Kind
 from loft.live.item_row import RowPosition
 from loft.live.items import Items, payload_assets, payload_contents
+from loft.live.live_database import LiveDatabase
 from loft.live.page_commit import page_from_payload
 from loft.live.page_row import PageProjection
 from loft.live.pages import Pages

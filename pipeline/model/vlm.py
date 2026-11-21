@@ -29,9 +29,9 @@ from pipeline.model.ai_client import AIClient, find_api_key
 from pipeline.model.chat_message import ChatMessage
 from pipeline.model.chat_request import ChatRequest
 from pipeline.model.chat_response import ChatResponse
-from pipeline.model.config import ModelConfig
 from pipeline.model.http_headers import HttpHeaders
 from pipeline.model.image_content import ImageContent
+from pipeline.model.model_config import ModelConfig
 from pipeline.model.orientation_report import OrientationReport
 from pipeline.model.text_content import TextContent
 from pipeline.model.token_usage import TokenUsage

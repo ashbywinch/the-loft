@@ -15,7 +15,7 @@ from loft.live.items import ContentInput
 from tools.records import Item
 
 if TYPE_CHECKING:
-    from loft.live.protocols import ItemStore
+    from loft.live.item_store import ItemStore
 
 
 class ItemWrites:

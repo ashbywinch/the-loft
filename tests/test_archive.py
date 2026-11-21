@@ -17,9 +17,10 @@ from loft.live.import_identity import sync_from_archive
 from loft.live.memory import MemoryLiveStore
 from pipeline.identification import Identification
 from tools.archive import Archive, ArchiveError
+from tools.file_store import ImmutableStoreError, StoreError
 from tools.gone_place import GonePlace
+from tools.memory_store import MemoryStore
 from tools.records import ImportsTable, Item, Person, Place, Session, validate_identity
-from tools.store import ImmutableStoreError, MemoryStore, StoreError
 
 
 def make_archive() -> tuple[Archive, MemoryStore]:
@@ -267,7 +268,7 @@ def test_store_delete_removes_a_file_and_fails_on_missing() -> None:
     the ONE delete on the store — primary content (items, identity tables,
     content files) never uses it: those supersede or tombstone.
     """
-    from tools.store import MemoryStore
+    from tools.memory_store import MemoryStore
 
     store = MemoryStore()
     store.write_new("proposed/places/pl-x.json", "{}")
@@ -596,7 +597,7 @@ def test_review_attempts_are_walk_separated() -> None:
     the last is empty or finished — a mid-walk re-render continues the same
     walk, so the diagnosis never mixes attempts."""
     from tools.archive import Archive
-    from tools.store import MemoryStore
+    from tools.memory_store import MemoryStore
 
     archive = Archive(MemoryStore())
     from tools.records import ReviewDecision

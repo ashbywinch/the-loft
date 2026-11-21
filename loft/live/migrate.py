@@ -15,7 +15,7 @@ from loft.live.import_identity import IdentityReport, import_identities
 from loft.live.import_items import ItemReport, import_items
 from loft.live.import_pipeline import PipelineReport, import_pipeline
 from loft.live.import_reviews import ReviewReport, import_reviews
-from loft.live.store import LiveStore
+from loft.live.live_store import LiveStore
 from loft.live.verify import Verification, VerificationReport, tree_digest
 
 

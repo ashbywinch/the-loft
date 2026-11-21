@@ -13,14 +13,14 @@ import json
 import sys
 from pathlib import Path
 
-from pipeline.artefacts import BatchArtefacts
+from pipeline.batch_artefacts import BatchArtefacts
 from pipeline.layout import Layout, is_struck, normalize
 from pipeline.model.unsure_word import UnsureWord
 from pipeline.store import PipelineStore
+from tools.disk_store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 from tools.loft_paths import LoftPaths
 from tools.selfreport import SelfReport
 from tools.selfreport_driver import run_cli
-from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 
 def _word_flag(word: str, *, selfreport_line: set[str] | None) -> float:

@@ -100,7 +100,7 @@ good.
   derivation engine; the committed projection must equal what publish
   produces, enforced by test. Fictional examples use the **Barlow family** —
   Aria, Jack, Meg, Harry, Nora, Lily and Pip Barlow, with Mrs Rosa Quinn,
-  Mallowfield and Riverfield (`tools/fiction.py`) — never a name lifted from
+  Mallowfield and Riverfield (`tools/house_fiction.py`) — never a name lifted from
   the archive; the same convention covers fixtures, prompts, eval
   inputs and docs, and a named fiction is preferred to a redacted blank.
 - **Never generate testimony.** A story is a person's own words, verbatim —

@@ -14,7 +14,7 @@ from typing import Any
 
 from loft.live.determination import Determination
 from loft.live.errors import Conflict
-from loft.live.protocols import IdentityStore
+from loft.live.identity_store import IdentityStore
 from tools.gone_person import GonePerson
 from tools.gone_place import GonePlace
 from tools.records import Person, Place

@@ -329,7 +329,7 @@ is the ink reader's (§16.17).
 
 **Orientation (Rule J, mechanism).** The `orient` stage asks the vision model
 which clockwise rotation makes each page's writing upright
-(`pipeline/orient.py`), records it in `pages.rotation`, and writes the
+(`pipeline/page_orientation.py`), records it in `pages.rotation`, and writes the
 oriented derivative. One small call per
 page, thinking off. That is the page's **initial** rotation; the reading runs
 on the oriented image. The reviewer's ↻ is authoritative (§16.16): it sets the
@@ -477,9 +477,9 @@ command or a drawn-line correction marks the batch `pending`; the next
 resync picks it up — the correction's latency is the resync interval, not a
 person. `loft work` is one resync, `loft work --plan` prints each batch's gap
 and runs nothing, `loft work --batch <id>` reconciles one.
-`pipeline/artefacts.py` is the one place the derivative path layout is
+`pipeline/batch_artefacts.py` is the one place the derivative path layout is
 written (guarded by `tests/test_architecture.py`), and
-`pipeline/model/config.py` names every model and the Cloudflare AI Gateway
+`pipeline/model/model_config.py` names every model and the Cloudflare AI Gateway
 endpoint.
 
 A page's status is the projection of its rows (`pages.status`); it is

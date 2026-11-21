@@ -34,14 +34,14 @@ from document.document import Document
 from document.row_adjustments import RowAdjustments
 from document.stages import PageStatus
 from loft.live.compat import CompatibilityExport, legacy_person
-from loft.live.compat_items import ItemCompatibility
 from loft.live.compat_pages import PageCompatibility
-from loft.live.compat_reviews import ImportsCompatibility
 from loft.live.determination import Determination
 from loft.live.errors import LiveError
 from loft.live.import_identity import sync_from_archive
 from loft.live.import_items import sync_items
 from loft.live.import_reviews import sync_reviews
+from loft.live.imports_compatibility import ImportsCompatibility
+from loft.live.item_compatibility import ItemCompatibility
 from loft.live.item_writes import ItemWrites
 from loft.live.page_writes import PageWrites
 from loft.live.review_writes import ReviewWrites
@@ -93,8 +93,8 @@ from pipeline.api.sync import (
     safe_page_name,
     set_page_job,
 )
-from pipeline.api.text_gzip import TextGZipMiddleware
-from pipeline.artefacts import BatchArtefacts
+from pipeline.api.text_gzip_middleware import TextGZipMiddleware
+from pipeline.batch_artefacts import BatchArtefacts
 from pipeline.identify import IdentificationError
 from pipeline.model.ai_client import AIClient
 from pipeline.registry import RegistryError, list_batches, load_batch
@@ -103,13 +103,13 @@ from tools import memory, review
 from tools.archive import Archive, ArchiveError
 from tools.atomic import atomic_write
 from tools.decision_basis import DecisionBasis
+from tools.file_store import FileStore
 from tools.loft_paths import LoftPaths
 from tools.memory import ElicitationError, Knowledge
 from tools.records import Item, Person, Place, ReviewContext, ReviewDecision, split_content
-from tools.store import FileStore
 
 if TYPE_CHECKING:
-    from loft.live.protocols import PageStore
+    from loft.live.page_store import PageStore
 
 logger = logging.getLogger(__name__)
 

@@ -567,3 +567,23 @@ describe("response-with-items-ref renders once", () => {
     expect(responses.textContent).toContain("The response that also refs");
   });
 });
+
+describe("provenance sources — a source link is a web address", () => {
+  it("never renders an ingested javascript: URL as a link the browser runs", () => {
+    // the source arrives with the ingest, i.e. from outside; an href of
+    // "javascript:..." executes on click, so only http(s) is a link
+    const item = makeItem({
+      sources: [
+        { url: "javascript:alert(1)", title: "A source", accessed: "2026-08-01" },
+        { url: "https://example.org/record", title: "The record", accessed: "2026-08-02" },
+      ],
+    });
+    const main = document.createElement("main");
+    render(main, { arg: item.id }, state([item]));
+
+    const links = [...main.querySelectorAll(".sources a")];
+    expect(links.map((a) => a.getAttribute("href"))).toEqual(["https://example.org/record"]);
+    // the source is still shown — it is evidence, just not a link
+    expect(main.querySelector(".sources").textContent).toContain("A source");
+  });
+});

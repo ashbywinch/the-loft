@@ -37,6 +37,8 @@ class PipelineStore:
     version.
     """
 
+    MAX_VERSIONS = 100  # the version scan's ceiling: the first missing version stops it long before
+
     def __init__(self, root: str | Path) -> None:
         self._store: FileStore = DiskStore(Path(root))
 
@@ -99,7 +101,7 @@ class PipelineStore:
         result: list[int] = []
         if self._store.exists(path):
             result.append(1)
-        for v in range(2, 100):
+        for v in range(2, PipelineStore.MAX_VERSIONS):
             vpath = _versioned_path(path, v)
             if self._store.exists(vpath):
                 result.append(v)

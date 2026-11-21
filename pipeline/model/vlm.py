@@ -375,17 +375,18 @@ def _content_and_usage(response: ChatResponse) -> VlmAnswer:
     model's thinking is always captured — a failed call is diagnosable
     from its trace. Mirrors AIClient.last_reasoning."""
     reasoning = response.usage.reasoning or ""
+    tail_chars = 300  # chars of the reasoning quoted: enough to diagnose, not a transcript
     if response.finish_reason == "length" and not response.answer.strip():
         raise VlmError(
             "vision model produced only reasoning tokens, no content — "
             f"the max_tokens limit was hit. reasoning={len(reasoning)} chars, "
-            f"tokens={response.usage.completion_tokens}. tail: …{reasoning[-300:]}"
+            f"tokens={response.usage.completion_tokens}. tail: …{reasoning[-tail_chars:]}"
         )
     if not response.answer.strip():
         raise VlmError(
             f"vision model returned empty content (finish_reason={response.finish_reason}); "
             f"reasoning={len(reasoning)} chars, tokens={response.usage.completion_tokens}. "
-            f"tail: …{reasoning[-300:]}"
+            f"tail: …{reasoning[-tail_chars:]}"
         )
     return VlmAnswer(response.answer, response.usage)
 

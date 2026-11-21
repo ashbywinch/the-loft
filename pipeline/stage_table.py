@@ -233,10 +233,11 @@ def run_plan(
         spec, reason = gaps[0]
         if on_stage is not None:
             on_stage(spec.name, reason)
+        millis_per_second = 1000  # the on_done seam reports the stage's duration in milliseconds
         started = time.monotonic()
         spec.run(StageContext(batch, view, inputs))
         if on_done is not None:
-            on_done(spec.name, int((time.monotonic() - started) * 1000))
+            on_done(spec.name, int((time.monotonic() - started) * millis_per_second))
         ran.append(spec.name)
         view = view.fresh(record)
 

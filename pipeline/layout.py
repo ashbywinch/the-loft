@@ -60,7 +60,7 @@ from pipeline.unmatched_line import UnmatchedLine
 from tools.atomic import atomic_write
 from tools.box import aspect_consistent, overlap
 from tools.disk_store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
-from tools.gates import text_extent_violation, validate_layout
+from tools.gates import RegionGate, text_extent_violation, validate_layout
 from tools.reading import order_lines
 from tools.text import is_struck, jaccard, normalize, vlm_line_words, words
 
@@ -234,7 +234,7 @@ def drop_conflicting_boxes(lines: list[LayoutLine]) -> int:
         for b in boxed[i + 1 :]:
             if a.box is None or b.box is None:
                 continue
-            if overlap(a.box, b.box) >= 0.5 and normalize(a.text) != normalize(b.text):
+            if overlap(a.box, b.box) >= RegionGate.REGION_OVERLAP_SHARE and normalize(a.text) != normalize(b.text):
                 if (a.conf or 0.0) < (b.conf or 0.0):
                     a.box = None
                 else:
@@ -261,7 +261,11 @@ class Layout:
     NORMALIZED_BOX_SCALE = 1000
     # Float tolerance for division-underflow protection.
     _MIN_AREA_EPSILON = 1e-9
-    QUARTERS_PER_FULL_TURN = 4  # a full rotation is four quarter-turns (90° each)
+    QUARTERS_PER_FULL_TURN = 4  # a full rotation is four quarter-turns
+    QUARTER_TURN_DEG = 90  # degrees: a clockwise quarter turn — the text reads down the page
+    HALF_TURN_DEG = 180  # degrees: the flip — the text reads upside down
+    THREE_QUARTER_TURN_DEG = 270  # degrees: a counter-clockwise quarter turn — the text reads up the page
+    FULL_TURN_DEG = 360  # degrees: a full rotation, where an orientation wraps
     # The multi-orientation admission (PRD VR15): a detected line is
     # admitted only when the recognizer read REAL text at that orientation
     # — confidence + plausibility — never on box shape alone, so an
@@ -604,11 +608,11 @@ def remap_box(
     xs: list[float] = []
     ys: list[float] = []
     for x, y in ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])):
-        if degrees == 90:
+        if degrees == Layout.QUARTER_TURN_DEG:
             nx, ny = y, oh - 1 - x
-        elif degrees == 180:
+        elif degrees == Layout.HALF_TURN_DEG:
             nx, ny = ow - 1 - x, oh - 1 - y
-        elif degrees == 270:
+        elif degrees == Layout.THREE_QUARTER_TURN_DEG:
             nx, ny = ow - 1 - y, x
         else:
             nx, ny = x, y  # 0 — identity
@@ -1260,8 +1264,9 @@ def orientation_passes(degrees: list[int]) -> list[int]:
     the block upside-down — the recognition admission then rejects it
     and the text is silently missed. The mirror pass costs one detection
     run (no model call) and admits nothing garbage."""
+    quarter, three_quarters = Layout.QUARTER_TURN_DEG, Layout.THREE_QUARTER_TURN_DEG
     out = {d for d in degrees}
-    out.update({270 if d == 90 else 90 for d in degrees if d in (90, 270)})
+    out.update({three_quarters if d == quarter else quarter for d in degrees if d in (quarter, three_quarters)})
     return sorted(out)
 
 
@@ -1292,7 +1297,8 @@ def rotate_detections(detections: list[Detection], quarters: int, w: int, h: int
                 text=det["text"],
                 score=det["score"],
                 words=det.get("words", []),
-                orientation=(det.get("orientation", 0) + (360 // Layout.QUARTERS_PER_FULL_TURN) * q) % 360,
+                orientation=(det.get("orientation", 0) + (Layout.FULL_TURN_DEG // Layout.QUARTERS_PER_FULL_TURN) * q)
+                % Layout.FULL_TURN_DEG,
             )
         )
     return rotated

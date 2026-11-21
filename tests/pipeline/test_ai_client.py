@@ -58,8 +58,8 @@ def make_fake_urlopen(responses: list[object]) -> tuple[Urlopen, list[dict[str, 
             }
         )
         response = responses.pop(0)
-        if isinstance(response, urllib.error.HTTPError):
-            raise response
+        if isinstance(response, BaseException):
+            raise response  # urlopen raises: an HTTPError, or a socket error
         return response
 
     return urlopen, calls
@@ -439,3 +439,62 @@ def test_a_measurement_client_never_reads_the_gateway_cache() -> None:
     urlopen, calls = make_fake_urlopen([FakeResponse(good)])
     AIClient(api_key="k", urlopen=urlopen, fresh=True).chat("s", "u")
     assert calls[0]["headers"]["Cf-aig-skip-cache"] == "true", "a measurement was served from the cache"
+
+
+def test_a_response_schema_constrains_the_answer() -> None:
+    """With a schema, the request asks the provider for that schema — the
+    answer's values are constrained, not merely valid JSON (measured on the
+    gateway: `json_object` returned a value outside the enum; `json_schema`
+    returned one of its members)."""
+    urlopen, calls = make_fake_urlopen([FakeResponse({"choices": [{"message": {"content": "{}"}}]})])
+    client = AIClient(api_key="k", urlopen=urlopen)
+    schema = {"type": "object", "properties": {"confidence": {"type": "string", "enum": ["yes", "no"]}}}
+    client.chat("s", "u", schema=schema, schema_name="verdict")
+    sent = calls[0]["body"]["response_format"]
+    assert sent["type"] == "json_schema"
+    assert sent["json_schema"]["name"] == "verdict"
+    assert sent["json_schema"]["schema"] == schema
+    assert sent["json_schema"]["strict"] is True
+
+
+def test_a_connection_reset_is_retried_like_a_5xx() -> None:
+    """A dropped socket is the transport's version of a 5xx. It used to leave
+    the retry loop entirely — the loop caught HTTPError only — so one reset
+    failed an eval run after 15 minutes of work (measured: 20 eval errors from
+    `ConnectionResetError`, with the provider answering fine either side)."""
+    good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    responses: list[object] = [ConnectionResetError(104, "Connection reset by peer"), FakeResponse(good)]
+    urlopen, calls = make_fake_urlopen(responses)
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda _s: None, max_retries=2)
+    assert client.chat("s", "u") == '{"ok": true}'
+    assert len(calls) == 2, "the reset was not retried"
+    # the retry is a new sample, not a replay of the connection that failed
+    assert calls[1]["headers"]["Cf-aig-skip-cache"] == "true"
+
+
+def test_persistent_transport_failure_is_a_client_error() -> None:
+    urlopen, calls = make_fake_urlopen([ConnectionResetError(104, "reset") for _ in range(3)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda _s: None, max_retries=2)
+    with pytest.raises(AIClientError, match="transport failure"):
+        client.chat("s", "u")
+    assert len(calls) == 3, "the retry budget was not spent"
+
+
+def test_a_provider_that_rejects_the_schema_still_answers() -> None:
+    """`strict: true` is not every provider's contract. A rejection drops
+    strictness first, then the schema — the call must not be lost to a
+    capability the endpoint lacks."""
+    good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
+    scheme: dict[str, object] = {"type": "object", "properties": {}}
+    urlopen, calls = make_fake_urlopen(
+        [
+            http_error(400, b"strict is not supported"),
+            http_error(400, b"response_format unsupported"),
+            FakeResponse(good),
+        ]
+    )
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda _s: None, max_retries=2)
+    assert client.chat("s", "u", schema=scheme) == '{"ok": true}'
+    assert calls[0]["body"]["response_format"]["json_schema"]["strict"] is True
+    assert calls[1]["body"]["response_format"]["json_schema"]["strict"] is False
+    assert calls[2]["body"]["response_format"] == {"type": "json_object"}

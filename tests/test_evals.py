@@ -38,7 +38,7 @@ from pipeline.model.ai_client import AIClient, AIClientError
 from tools.assessment import Assessment
 from tools.memory import Assessor, Knowledge
 from tools.records import Item, Person
-from tools.review_verdict import ReviewVerdict
+from tools.review_assessment import ReviewTurn
 
 
 @pytest.fixture(scope="session")
@@ -62,7 +62,7 @@ def default_knowledge() -> Knowledge:
 
 
 @pytest.fixture(scope="session")
-def review_outputs(client: AIClient) -> dict[str, ReviewVerdict]:
+def review_outputs(client: AIClient) -> dict[str, ReviewTurn]:
     """Run every review flow ONCE and cache the outputs — the condition
     tests are independent and unaware they share the runs."""
     return {f.name: review_evals.run_flow(client, f) for f in review_evals.ReviewFixtures.FLOWS}
@@ -73,7 +73,7 @@ def review_outputs(client: AIClient) -> dict[str, ReviewVerdict]:
 @pytest.mark.parametrize("flow", review_evals.ReviewFixtures.FLOWS, ids=lambda f: f.name)
 @pytest.mark.parametrize("condition", review_evals.ReviewFixtures.CONDITIONS, ids=lambda c: c[0])
 def test_review_condition(
-    review_outputs: dict[str, ReviewVerdict],
+    review_outputs: dict[str, ReviewTurn],
     flow: review_evals.ReviewFlow,
     condition: tuple[str, Any],
 ) -> None:

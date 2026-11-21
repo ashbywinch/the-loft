@@ -9,6 +9,7 @@ auth.json (docs/coding-standards.md — secrets are shell-env only).
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import os
@@ -100,7 +101,15 @@ class AIClient:
         self._urlopen: Callable[..., Any] = urlopen or urllib.request.urlopen
         self._sleep: Callable[[float], None] = _sleep or time.sleep
 
-    def chat(self, system: str, user: str, *, thinking: bool = False) -> str:
+    def chat(
+        self,
+        system: str,
+        user: str,
+        *,
+        thinking: bool = False,
+        schema: dict[str, Any] | None = None,
+        schema_name: str = "response",
+    ) -> str:
         """One text chat completion call; returns the assistant text.
 
         *thinking* enables the model's reasoning: the review judgments
@@ -138,8 +147,10 @@ class AIClient:
             # docstring); a model that rejects the param falls back below
             # (the 400/422 retry)
             thinking=thinking,
-            # structured output: the API guarantees a syntactically valid JSON
-            # response, eliminating truncated/bare-object responses
+            # structured output: the answer's own schema, when the caller has
+            # one — the provider then constrains the values, not just the JSON
+            response_schema=schema,
+            response_name=schema_name,
             json_response=True,
             # the thinking-token cap — only when explicitly configured: the
             # CI gateway ignores the cap and reshapes the response (the JSON
@@ -205,6 +216,17 @@ class AIClient:
                         ) from e
                     backoff = backoff.advance(self._sleep)
                     continue
+                if e.code in (400, 422) and payload.response_schema is not None:
+                    # the endpoint does not take this schema as given: drop
+                    # strictness first, then the schema, before failing —
+                    # a provider rejection must not lose the whole call
+                    logger.warning("model %s rejected the response schema (HTTP %d); relaxing it", self.model, e.code)
+                    payload = (
+                        replace(payload, response_strict=False)
+                        if payload.response_strict
+                        else replace(payload, response_schema=None)
+                    )
+                    continue
                 if e.code in (400, 422) and (payload.thinking is not None or payload.reasoning_budget is not None):
                     # model/endpoint doesn't understand the reasoning params —
                     # retry without them; the fallback must NOT consume the
@@ -227,6 +249,18 @@ class AIClient:
                 # (finish_reason=n/a)" and retried it as if transient: the real
                 # failure stayed invisible for a whole session (2026-10-19).
                 raise AIClientError(f"model API error {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from e
+            # AFTER HTTPError: HTTPError IS a URLError (an OSError), so catching
+            # the transport first would turn a 401 into a retry.
+            except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as e:
+                # A reset, a dropped socket or a timeout is the transport's
+                # 5xx: retry it on the same budget, re-sampling (the retry
+                # skips the gateway cache). Without this the socket error left
+                # the retry loop entirely and failed the call on one reset.
+                logger.warning("chat: transport failure (%s) — retrying", e)
+                if backoff.attempt >= self.max_retries:
+                    raise AIClientError(f"model API transport failure: {e}") from e
+                backoff = backoff.advance(self._sleep)
+                continue
             if content and content.strip():
                 return content
             thinking_enabled = payload.thinking is True

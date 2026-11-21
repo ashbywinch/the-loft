@@ -9,6 +9,7 @@ dependencies = [
     "dateparser>=1.2.0",
     "uncertainties>=3.2.3",
     "numpy>=2.0",  # the ink reader's measurement arithmetic (was riding on torch)
+    "pydantic>=2.13",  # the verdict schema: annotated members, generated prompt text
 ]
 [dependency-groups]
 dev = [
@@ -67,4 +68,6 @@ markers = [
 
 [tool.coverage.run]
 omit = ["*/__main__.py"]
+
+[tool.uv.sources]
 

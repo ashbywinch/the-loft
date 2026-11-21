@@ -406,7 +406,7 @@ def _vision_post(
     urlopen: Callable[..., Any] | None,
 ) -> ChatResponse:
     """POST one chat-completions payload. On a 400/422 that the model
-    blames on the ``thinking`` param, retry once without it; every other
+    blames on the ``reasoning`` param, retry once without it; every other
     failure surfaces as VlmError (the module's contract)."""
     do_open = urlopen or urllib.request.urlopen
     while True:
@@ -440,11 +440,11 @@ def _vision_post(
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")[:300]
             if e.code in (400, 422) and payload.thinking is not None:
-                # model doesn't understand the thinking param — retry once
+                # model doesn't understand the reasoning param — retry once
                 # without it (mirrors AIClient._post)
                 payload = replace(payload, thinking=None)
                 logger.info(
-                    "model %s rejected the thinking param (HTTP %d); retrying without it",
+                    "model %s rejected the reasoning param (HTTP %d); retrying without it",
                     payload.model,
                     e.code,
                 )

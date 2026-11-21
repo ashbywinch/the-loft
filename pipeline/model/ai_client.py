@@ -1,7 +1,7 @@
 """Thin OpenAI-compatible client for the elicitation model.
 
 Adapted from books_to_anki/src/book_to_flashcards/opencode_translator.py (the
-house pattern): urllib-only, retry/backoff on 429/5xx, thinking-disable
+house pattern): urllib-only, retry/backoff on 429/5xx, reasoning-param
 fallback, injectable urlopen for tests. The key comes from the environment,
 never from code — `OPENAI_API_KEY` (the Cloudflare gateway token), else
 auth.json (docs/coding-standards.md — secrets are shell-env only).
@@ -196,7 +196,30 @@ class AIClient:
                     finish_reason = str(choice.get("finish_reason") or "") if isinstance(choice, dict) else ""
                 except (KeyError, IndexError, TypeError) as e:
                     raise AIClientError(f"unexpected API response: {json.dumps(data)[:300]}") from e
-                self.last_reasoning = str(message.get("reasoning_content") or message.get("reasoning") or "")
+                # the response's reasoning, in either channel a provider uses
+                # (the gateway sends `reasoning`; some providers
+                # `reasoning_content`)
+                reasoning_field = message.get("reasoning")
+                if reasoning_field is None:
+                    reasoning_field = message.get("reasoning_content")
+                self.last_reasoning = str(reasoning_field or "")
+                if payload.thinking is True and not self.last_reasoning:
+                    # a thinking request that comes back with no reasoning is
+                    # a SILENT degradation: the gateway accepted the request
+                    # and answered without deliberating, and weeks of evals
+                    # measured the disable path without anyone noticing. Name
+                    # the model and the response's own reasoning field (plus
+                    # the usage's reasoning token count when the API sends
+                    # one) so the degradation is visible in the log.
+                    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+                    logger.warning(
+                        "model %s served no reasoning for a thinking request "
+                        "(response reasoning=%r, reasoning_tokens=%s) — "
+                        "deliberation was requested but not served",
+                        self.model,
+                        reasoning_field,
+                        usage.get("reasoning_tokens", "absent"),
+                    )
             except urllib.error.HTTPError as e:
                 if e.code in (429, 500, 502, 503, 529):
                     if backoff.attempt >= self.max_retries:

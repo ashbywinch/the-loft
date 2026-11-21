@@ -84,14 +84,87 @@ def test_chat_sends_no_reasoning_budget_by_default() -> None:
     cap AND reshapes the response (the JSON answer lands in the reasoning
     channel with empty content — the stop-empty cascade), so a thinking
     call must not carry it unless explicitly configured. The opt-in path
-    still sends it (the local litellm gateway honors it)."""
+    still sends it (the local litellm gateway honors it).
+
+    The switch itself is always on the wire — and it is the field the
+    gateway honours (``reasoning.enabled``), never the old
+    ``thinking: {"type": …}`` object, which the gateway silently ignored."""
     urlopen, calls = make_fake_urlopen([FakeResponse({"choices": [{"message": {"content": "ok"}}]}) for _ in range(2)])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
     client.chat("s", "u", thinking=True)
-    assert "reasoning" not in calls[0]["body"]
+    assert calls[0]["body"]["reasoning"] == {"enabled": True}
+    assert "max_tokens" not in calls[0]["body"]["reasoning"]
     opted = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0, reasoning_budget=6000)
     opted.chat("s", "u", thinking=True)
-    assert calls[1]["body"]["reasoning"] == {"max_tokens": 6000}
+    assert calls[1]["body"]["reasoning"] == {"enabled": True, "max_tokens": 6000}
+
+
+def gateway_response(content: str, *, reasoning: str | None, reasoning_tokens: int) -> dict[str, object]:
+    """A reply shaped like the Cloudflare AI Gateway's: the reasoning in the
+    message's ``reasoning`` field (null when the model did not deliberate)
+    and the token count in the usage record."""
+    return {
+        "id": "gen-fixture-0001",
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": content, "reasoning": reasoning},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": 1200,
+            "completion_tokens": 40,
+            "total_tokens": 1240,
+            "reasoning_tokens": reasoning_tokens,
+        },
+    }
+
+
+def test_a_thinking_request_asks_for_reasoning_on_the_wire() -> None:
+    """The gateway honours ``reasoning: {"enabled": true}``. The
+    Anthropic-style ``thinking: {"type": "enabled"}`` object it used to
+    send was silently ignored — every thinking turn came back
+    ``reasoning: null``, ``reasoning_tokens: 0``, while the same prompt
+    with the ``reasoning`` object returned thousands of reasoning
+    characters (the arc-stall probe's measurement). The request must carry
+    the field the endpoint reads, and not the dead one."""
+    urlopen, calls = make_fake_urlopen(
+        [FakeResponse(gateway_response("ok", reasoning="I weighed the lead.", reasoning_tokens=12))]
+    )
+    AIClient(api_key="k", urlopen=urlopen).chat("s", "u", thinking=True)
+    body = calls[0]["body"]
+    assert body["reasoning"] == {"enabled": True}
+    assert "thinking" not in body, "the gateway ignores the Anthropic-style thinking object"
+
+
+def test_a_thinking_reply_carries_its_reasoning_and_no_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """The deliberation path that already exists (``last_reasoning``) is
+    kept: a reply that DID reason captures it, and no degradation warning
+    fires."""
+    urlopen, _ = make_fake_urlopen(
+        [FakeResponse(gateway_response('{"ok": true}', reasoning="I weighed the lead.", reasoning_tokens=12))]
+    )
+    client = AIClient(model="deepseek/deepseek-v4-flash", api_key="k", urlopen=urlopen)
+    with caplog.at_level(logging.WARNING, logger="pipeline.model.ai_client"):
+        assert client.chat("s", "u", thinking=True) == '{"ok": true}'
+    assert client.last_reasoning == "I weighed the lead."
+    assert "no reasoning" not in caplog.text
+
+
+def test_a_thinking_reply_with_no_reasoning_is_reported(caplog: pytest.LogCaptureFixture) -> None:
+    """The failure this fixes was SILENT: a thinking request came back with
+    ``reasoning: null`` and ``reasoning_tokens: 0`` on every turn and
+    nothing said so. A reply that carries no reasoning must now be reported,
+    naming the model and the response's own reasoning field (and the usage's
+    token count) — the flag an operator can read."""
+    urlopen, _ = make_fake_urlopen([FakeResponse(gateway_response('{"ok": true}', reasoning=None, reasoning_tokens=0))])
+    client = AIClient(model="deepseek/deepseek-v4-flash", api_key="k", urlopen=urlopen)
+    with caplog.at_level(logging.WARNING, logger="pipeline.model.ai_client"):
+        assert client.chat("s", "u", thinking=True) == '{"ok": true}'
+    assert client.last_reasoning == ""
+    assert "deepseek/deepseek-v4-flash" in caplog.text
+    assert "reasoning=None" in caplog.text
+    assert "reasoning_tokens=0" in caplog.text
 
 
 def test_chat_retries_transient_errors_with_backoff() -> None:
@@ -220,10 +293,10 @@ def test_thinking_burn_retries_on_a_fresh_sample() -> None:
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
     assert client.chat("s", "u", thinking=True) == '{"ok": true}'
     assert len(calls) == 2
-    assert calls[0]["body"]["thinking"] == {"type": "enabled"}
+    assert calls[0]["body"]["reasoning"] == {"enabled": True}
     retry = calls[1]["body"]
-    assert retry["thinking"] == {"type": "enabled"}  # reasoning stays on
-    assert "reasoning" not in retry  # no budget param by default — the CI gateway reshapes the response with it
+    assert retry["reasoning"] == {"enabled": True}  # reasoning stays on
+    assert "max_tokens" not in retry["reasoning"]  # no budget by default — the CI gateway reshapes the response with it
     assert retry["temperature"] == 0.5  # a genuinely different sample
     assert retry["messages"] == calls[0]["body"]["messages"]  # the prompt is never rewritten
 

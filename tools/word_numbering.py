@@ -63,7 +63,7 @@ def chip_extent(text: str, font_size: float) -> ChipExtent:
     """The chip's extent for a number: the text's bounding box at that
     font, plus the ring pad, capped at NumberedWords.MAX_CHIP — the chip's bbox matches
     the font size, never larger than the cap."""
-    font = _font_at(max(7, round(font_size)))
+    font = _font_at(max(NumberedWords.FONT_FLOOR, round(font_size)))
     tb = _text_bbox(text, font)
     width = float(tb[2] - tb[0] + 2 * NumberedWords.CHIP_PAD)
     height = float(tb[3] - tb[1] + 2 * NumberedWords.CHIP_PAD)
@@ -75,7 +75,7 @@ def chip_extent(text: str, font_size: float) -> ChipExtent:
     target = NumberedWords.MAX_CHIP - 2 * NumberedWords.CHIP_PAD
     text_width = width - 2 * NumberedWords.CHIP_PAD
     text_height = height - 2 * NumberedWords.CHIP_PAD
-    font = _font_at(max(7, round(font_size * target / max(text_width, text_height))))
+    font = _font_at(max(NumberedWords.FONT_FLOOR, round(font_size * target / max(text_width, text_height))))
     tb = _text_bbox(text, font)
     return ChipExtent(
         min(float(tb[2] - tb[0] + 2 * NumberedWords.CHIP_PAD), NumberedWords.MAX_CHIP),
@@ -124,9 +124,13 @@ class NumberedWords:
     EDGE_PAD = 1.0  # section px: a chip may not come this close to another box
     FONT_FRACTION = 0.55  # x the word's height: the number's font size
     MIN_FONT = 8.0  # section px: below this the number is unreadable
+    FONT_FLOOR = 7  # px: the smallest size the font loader gets, so a chip always has a font
     MAX_FONT = 20.0  # section px: a number never needs to be bigger
     MAX_CHIP = 40.0  # section px: a chip's side never exceeds this
     CHIP_SHRINK_STEPS = (1.0, 0.7, 0.5, 0.35)  # x the font size, tried in order
+    PERIMETER_THIRDS = 3  # the second ring's positions sit a third and two thirds along each side
+    # ITU-R BT.601 luma weights: the share of each channel a greyscale downscale keeps
+    LUMA_WEIGHTS = (0.299, 0.587, 0.114)
     UNPLACED = "unplaced"  # the placement verdict when every position is taken
 
 
@@ -137,7 +141,10 @@ def numbered_order(words: list[Box]) -> list[int]:
     right. Ties (identical boxes) keep their input order, so the mapping is
     stable and reversible.
     """
-    return sorted(range(len(words)), key=lambda i: (words[i][1] + words[i][3]) / 2 + words[i][0] / 1e6)
+    # x is folded in a millionth of its own size: the centre-y orders, and the
+    # left edge only breaks a tie between words on one line
+    tiebreak = 1e6
+    return sorted(range(len(words)), key=lambda i: (words[i][1] + words[i][3]) / 2 + words[i][0] / tiebreak)
 
 
 def candidates(box: Box, width: float, height: float) -> list[NumberingCandidate]:
@@ -148,7 +155,8 @@ def candidates(box: Box, width: float, height: float) -> list[NumberingCandidate
     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
     gap = NumberedWords.CHIP_GAP
     w, h = width, height
-    box_w, box_h = x1 - x0, y1 - y0
+    # the second ring's marks along each side: a third and two thirds in
+    third_w, third_h = (x1 - x0) / NumberedWords.PERIMETER_THIRDS, (y1 - y0) / NumberedWords.PERIMETER_THIRDS
     return [
         NumberingCandidate("corner", (x0 - gap - w, y0 - gap - h, x0 - gap, y0 - gap)),
         NumberingCandidate("above", (cx - w / 2, y0 - gap - h, cx + w / 2, y0 - gap)),
@@ -158,21 +166,15 @@ def candidates(box: Box, width: float, height: float) -> list[NumberingCandidate
         NumberingCandidate("top-right", (x1 + gap, y0 - gap - h, x1 + gap + w, y0 - gap)),
         NumberingCandidate("bottom-left", (x0 - gap - w, y1 + gap, x0 - gap, y1 + gap + h)),
         NumberingCandidate("bottom-right", (x1 + gap, y1 + gap, x1 + gap + w, y1 + gap + h)),
-        NumberingCandidate("above-left", (x0 + box_w / 3 - w / 2, y0 - gap - h, x0 + box_w / 3 + w / 2, y0 - gap)),
+        NumberingCandidate("above-left", (x0 + third_w - w / 2, y0 - gap - h, x0 + third_w + w / 2, y0 - gap)),
+        NumberingCandidate("above-right", (x0 + 2 * third_w - w / 2, y0 - gap - h, x0 + 2 * third_w + w / 2, y0 - gap)),
+        NumberingCandidate("below-left", (x0 + third_w - w / 2, y1 + gap, x0 + third_w + w / 2, y1 + gap + h)),
+        NumberingCandidate("below-right", (x0 + 2 * third_w - w / 2, y1 + gap, x0 + 2 * third_w + w / 2, y1 + gap + h)),
+        NumberingCandidate("left-top", (x0 - gap - w, y0 + third_h - h / 2, x0 - gap, y0 + third_h + h / 2)),
+        NumberingCandidate("left-bottom", (x0 - gap - w, y0 + 2 * third_h - h / 2, x0 - gap, y0 + 2 * third_h + h / 2)),
+        NumberingCandidate("right-top", (x1 + gap, y0 + third_h - h / 2, x1 + gap + w, y0 + third_h + h / 2)),
         NumberingCandidate(
-            "above-right", (x0 + 2 * box_w / 3 - w / 2, y0 - gap - h, x0 + 2 * box_w / 3 + w / 2, y0 - gap)
-        ),
-        NumberingCandidate("below-left", (x0 + box_w / 3 - w / 2, y1 + gap, x0 + box_w / 3 + w / 2, y1 + gap + h)),
-        NumberingCandidate(
-            "below-right", (x0 + 2 * box_w / 3 - w / 2, y1 + gap, x0 + 2 * box_w / 3 + w / 2, y1 + gap + h)
-        ),
-        NumberingCandidate("left-top", (x0 - gap - w, y0 + box_h / 3 - h / 2, x0 - gap, y0 + box_h / 3 + h / 2)),
-        NumberingCandidate(
-            "left-bottom", (x0 - gap - w, y0 + 2 * box_h / 3 - h / 2, x0 - gap, y0 + 2 * box_h / 3 + h / 2)
-        ),
-        NumberingCandidate("right-top", (x1 + gap, y0 + box_h / 3 - h / 2, x1 + gap + w, y0 + box_h / 3 + h / 2)),
-        NumberingCandidate(
-            "right-bottom", (x1 + gap, y0 + 2 * box_h / 3 - h / 2, x1 + gap + w, y0 + 2 * box_h / 3 + h / 2)
+            "right-bottom", (x1 + gap, y0 + 2 * third_h - h / 2, x1 + gap + w, y0 + 2 * third_h + h / 2)
         ),
     ]
 
@@ -331,4 +333,9 @@ def unplaced(chips: list[Chip]) -> list[int]:
 # lucidlint: ignore unused a test seam: the numbering tests check the palette directly (DI convention)
 def palette_luminances() -> np.ndarray:
     """The palette's grayscale values — distinct under the model's downscale."""
-    return np.asarray([0.299 * r + 0.587 * g + 0.114 * b for r, g, b in NumberedWords.PALETTE])
+    return np.asarray(
+        [
+            sum(weight * channel for weight, channel in zip(NumberedWords.LUMA_WEIGHTS, (r, g, b), strict=True))
+            for r, g, b in NumberedWords.PALETTE
+        ]
+    )

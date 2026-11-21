@@ -11,11 +11,25 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar, override
 
 from pipeline.layout_line import LayoutLine
-from tools.box import aspect_consistent, overlap, reading_axis
+from tools.box import aspect_consistent, is_vertical, overlap, reading_axis
 from tools.text import normalize
 
 if TYPE_CHECKING:
     from pipeline.layout import Layout
+
+
+class _Advance:
+    """A text's advance per glyph against the box that holds it — the
+    calibration both extent rules read. The perpendicular extent is the
+    glyph height, so the bounds are glyph-relative; the absolute ends are
+    where no honest reading lands whatever the box measures."""
+
+    SHORT_TEXT_GLYPHS = 8  # fewer glyphs than this: the short text's false-match ceiling applies
+    SHORT_CEILING = 1.7  # x the glyph height: handwriting's loosest honest advance
+    DENSE_CEILING = 2.6  # x the glyph height: a letterspaced typewriter measures ~2.0
+    MIN_PX = 2.0  # px/char: below this no box holds its text
+    CEILING_FLOOR_PX = 30.0  # px/char: the smallest ceiling a box's own height may set
+    GLYPH_FLOOR = 0.12  # x the glyph height: audited-correct rows sit >= 0.17
 
 
 class Gate:
@@ -101,7 +115,7 @@ def text_extent_violation(text: str, box: list[float], orientation: float | None
         # association candidates include roomy boxes where a sparse
         # advance is fine — the strict glyph-relative pair lives in
         # glyph_extent_violation for measured ink unions only.
-        vertical = orientation is not None and orientation % 180 != 0
+        vertical = is_vertical(orientation)
         perpendicular = (box[2] - box[0]) if vertical else (box[3] - box[1])
         # Two calibrated ceilings. Handwriting's 1.7 stays for SHORT
         # texts (< 8 glyphs): a 2-glyph text matching a 1341px band is
@@ -110,9 +124,9 @@ def text_extent_violation(text: str, box: list[float], orientation: float | None
         # measures ~2.0 advances per glyph height (the Music College
         # letter, 46 px/char on 23 px glyphs). The nonsense catches
         # survive either way: a 2 px axis, 50 characters in a sliver.
-        multiplier = 2.6 if glyphs >= 8 else 1.7
-        ceiling = max(30.0, perpendicular * multiplier)
-        if px_per_char < 2 or px_per_char > ceiling:
+        multiplier = _Advance.DENSE_CEILING if glyphs >= _Advance.SHORT_TEXT_GLYPHS else _Advance.SHORT_CEILING
+        ceiling = max(_Advance.CEILING_FLOOR_PX, perpendicular * multiplier)
+        if px_per_char < _Advance.MIN_PX or px_per_char > ceiling:
             return (
                 f"{text[:20]!r}: text length {len(text.strip())} wildly out of "
                 f"sync with a {int(axis)}px reading axis ({px_per_char:.0f} px/char)"
@@ -129,14 +143,14 @@ def glyph_extent_violation(text: str, box: list[float], orientation: float | Non
     column at 0.10). Association candidates must not use this — their
     boxes are roomier than their ink."""
     axis = reading_axis(box, orientation)
-    vertical = orientation is not None and orientation % 180 != 0
+    vertical = is_vertical(orientation)
     perpendicular = (box[2] - box[0]) if vertical else (box[3] - box[1])
     if not text.strip():
         return None  # emptiness is text_extent_violation's business
     glyphs = len(text.strip().replace(" ", ""))
     px_per_char = axis / max(1, glyphs)
-    floor = max(2.0, perpendicular * 0.12)
-    ceiling = max(30.0, perpendicular * 1.7)
+    floor = max(_Advance.MIN_PX, perpendicular * _Advance.GLYPH_FLOOR)
+    ceiling = max(_Advance.CEILING_FLOOR_PX, perpendicular * _Advance.SHORT_CEILING)
     if px_per_char < floor or px_per_char > ceiling:
         return (
             f"{text[:20]!r}: text length {len(text.strip())} wildly out of "
@@ -175,6 +189,8 @@ class RegionGate(Gate):
     must see. The anchored lines' loose boxes may legitimately overlap
     slightly, so the bar is half the smaller box."""
 
+    REGION_OVERLAP_SHARE = 0.5  # of the smaller box: this much shared region is one region
+
     @override
     def violations(self, layout: Layout, tolerance: float = 4.0) -> list[str]:
         boxed = [(line, box) for line in layout.lines if (box := _boxed(line)) is not None]
@@ -182,7 +198,7 @@ class RegionGate(Gate):
             f"{a.text[:20]!r} and {b.text[:20]!r}: same region claimed by different text"
             for i, (a, ab) in enumerate(boxed)
             for b, bb in boxed[i + 1 :]
-            if overlap(ab, bb) >= 0.5 and normalize(a.text) != normalize(b.text)
+            if overlap(ab, bb) >= RegionGate.REGION_OVERLAP_SHARE and normalize(a.text) != normalize(b.text)
         ]
 
 

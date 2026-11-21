@@ -26,7 +26,7 @@ from tools.person_hit import PersonHit
 from tools.person_id_args import PersonIdArgs
 from tools.person_summary import PersonSummary
 from tools.records import Message, Person, ReviewContext
-from tools.review_verdict import ReviewVerdict
+from tools.review_assessment import ReviewTurn, StatementAssessment
 from tools.search_query_args import SearchQueryArgs
 from tools.tool_error import ToolError
 from tools.tool_note import ToolNote
@@ -55,7 +55,15 @@ def _relevant_sentences(text: str, needles: tuple[str, ...], limit: int = 3) -> 
 class _Chat(Protocol):
     # instance method using self
 
-    def chat(self, system: str, user: str, *, thinking: bool = False) -> str: ...
+    def chat(
+        self,
+        system: str,
+        user: str,
+        *,
+        thinking: bool = False,
+        schema: dict[str, Any] | None = None,
+        schema_name: str = "response",
+    ) -> str: ...
 
 
 def _known_facts(facts: ReviewContext) -> str:
@@ -264,7 +272,7 @@ def run_tool(tool: str, args: ToolArgs | None, facts: ReviewContext) -> ToolResu
     return _ReviewTools(facts).run(tool, args)
 
 
-def assistant_message(verdict: ReviewVerdict, person: Person) -> str:
+def assistant_message(verdict: ReviewTurn, person: Person) -> str:
     """The assistant's rendered words for one investigation response — what
     the family sees, verbatim. The server builds the words;
     the app shows them unmodified; the record stores them. The model's
@@ -360,52 +368,35 @@ and never restate the reviewer's statement back to yourself. If you
 catch yourself repeating a step, stop and emit the verdict."""
 
 
-# the reviewer identity, the facts context, the history — a parameter object would add ceremony at the DI boundary
-# lucidlint: ignore long-param-list the investigation's inputs — the client seam, the answer, the person under review,
-def investigate(
-    client: _Chat,
-    *,
-    text: str,
-    person: Person,
-    who: str,
-    facts: ReviewContext,
-    history: tuple[Message, ...] = (),
-) -> ReviewVerdict:
-    """The tool-using review of a free-text answer (user): the
-    model can call the archive's read-only lookups to dig into the
-    reviewer's statement — follow the leads and surface what the archive
-    already attests — then return the ReviewVerdict: the check's answers,
-    the findings the tools surfaced, and the genealogist's question. *history* is the
-    conversation so far (the messages, including the model's own previous
-    reasoning), rendered verbatim into the prompt — the model always sees
-    its own history, so a message that re-answers an earlier question is
-    recognised as such. The findings are the digging's results — shown to
-    the reviewer. The tools are read-only: the decisions stay in the app's
-    flow. The never-derive rule holds — the model reports what it finds,
-    it never invents a kinship. ``raw`` is the model's final raw output,
-    stored verbatim as the turn's thinking."""
-    text = str(text or "").strip()
-    if not text:
-        raise ElicitationError("no answer given")
-    # The claim is the APP's question about the document the family uploaded:
-    # the app has read it and is checking what it says. "The family is
-    # checking" would read as the family asking, and a statement about the
-    # document's own subject — a death in the war — would look like a
-    # different question entirely.
-    claim = f"whether {person.name} was related to the family"
-    if person.relation:
-        # family language, never the system's — the model echoes the claim's
-        # own words, and the persona rule forbids 'the import'/'proposes'/
-        # 'link' (the prompt must not model the jargon it forbids)
-        claim += f" — the record under review says: {person.relation}"
-    # the conversation renders uniformly and sits LAST in the prompt — the
-    # static (the reviewer, the claim, the facts, the instructions) comes
-    # before it, so the previous prompt's exact text is the current prompt's
-    # prefix and the model's prompt-cache reuses the whole thing
-    # (user: 'the exact same text goes back… cheaper if so,
-    # because of caching'). The latest line is part of the same render, so
-    # a message that re-answers an earlier question is seen in context.
-    conversation = render_history(history + (Message(role="user", text=text, when=""),))
+def _correction(raw: str) -> str:
+    """The user turn that asks for the verdict again after a reply that was
+    neither a tool call nor the complete verdict.
+
+    It states no shape. The shape lives in the system text, and every call
+    sends that text again, so a copy here would be a second rendering that can
+    drift from the model. The turn keeps the model's own reasoning and points
+    it back at the answer it already has the instructions for.
+    """
+    return (
+        "\n\n[your previous answer] "
+        + raw
+        + "\n\nThat was neither a tool call nor the complete verdict. Keep the reasoning "
+        "above and return the complete verdict JSON now."
+    )
+
+
+def _investigation_prompt(claim: str, who: str, facts: ReviewContext, conversation: str) -> tuple[str, str]:
+    """The two prompts of one investigation: the system text, and the opening
+    user text the loop then grows with the tool results.
+
+    The loop's model call carries NO response schema. A schema pinned to the
+    verdict forbids the tool call the investigation is made of, so the prompt
+    is the only carrier of the verdict's shape: rendered from
+    ``StatementAssessment``'s JSON schema, with each member's description
+    beside it, and ``ReviewTurn.complete`` enforces the closed vocabularies at
+    the parse. No field of the request enforces the member set — do not read
+    the call in the loop as if one does.
+    """
     user = "\n\n".join(
         [
             f"Reviewer: {who or 'unknown'}",
@@ -422,14 +413,15 @@ def investigate(
             "for places and events, person/relationships/attested for people. A "
             "lead is answered in a finding — the document's own words — even when "
             "the answer is that it is not the one they mean.\n"
-            "3. RELEVANCE. The claim is about people and what befell them, so a "
-            "statement bears on it when it names a person — the claim's person, any "
-            "family member — or an event, a death, a marriage, a kinship, or an "
-            "uncertainty about any of them. A place is only ever where something "
-            "happened: on its own it settles nothing about who anyone was, so a "
-            "statement that names nothing but a place, or a thing ('that house', "
-            "'the garden'), is about something else, however well a search matches "
-            "it.\n"
+            "3. RELEVANCE. Judge what the statement is about, not what it tells "
+            "you. The claim is about people and what befell them. The statement is "
+            "about it when it names a person the claim shares — the claim's person, "
+            "any family member — or an event, a death, a marriage, a kinship. 'I "
+            "don't know', a disagreement and an uncertainty count: they answer the "
+            "claim with what the family has. A place is only ever where something "
+            "happened. With a place, or a thing ('that house', 'the garden'), as "
+            "the only link, the statement is about something else, however well a "
+            "search matches it.\n"
             "4. CONTRADICTION. Ask whether the records could make the statement "
             "true of someone they hold — another person of that name, another "
             "sibling, a date their own evidence allows. If they could, it is not a "
@@ -475,44 +467,72 @@ def investigate(
         "Do not reword a decided sentence, list alternative questions, or "
         "re-read your own draft."
     )
-    verdict = (
-        '{"relevant": true|false, '
-        '"contradiction": {"found": true|false, "detail": "<the attested fact that '
-        'conflicts, or empty>"}, '
-        '"confidence": "<definitely|think_so|dont_know|think_not|definitely_not|unclear>", '
-        '"note": "<one short sentence in the family\'s terms when relevant; when not, only '
-        "the topic; never the reasoning or 'the reviewer'>\", "
-        '"findings": [{"text": "<one sentence in the family\'s voice (\'your recollection\', '
-        "'you said'), naming the specific document and its exact quoted sentence; never "
-        "'the records'/'the archive'/'the import'; never an absence; a person "
-        "record is not evidence; quote only verified, non-draft text; report a matching "
-        "item the reviewer's place or event names and ask if it is the same>\", "
-        '"item_id": "<the document id from the tool results>"}], '
-        '"question": "<the genealogist\'s next question in the family\'s words, or a short '
-        'conclusion when they have no knowledge and no lead; no process vocabulary>"}'
+    # The verdict's shape and each member's meaning are the annotated model's,
+    # rendered once: the schema below states the shape, and the confidence
+    # member's own description states the value rules. A member or a value the
+    # parse does not know cannot be described here.
+    confidence = StatementAssessment.model_fields["confidence"]
+    verdict_rules = "\nConfidence is the reviewer's own certainty, read from their words: " + str(
+        confidence.description
     )
-    # the confidence field is the reviewer's certainty, not the model's — every
-    # value the schema offers is named here, or the model has to invent a mapping
-    verdict += (
-        "\nConfidence is the reviewer's own certainty, read from their words:\n"
-        "- they assert it -> definitely; they hedge it -> think_so;\n"
-        "- they deny it -> definitely_not; they hedge the denial -> think_not;\n"
-        "- they offer a guess they do not commit to -> unclear;\n"
-        "- they have nothing to go on -> dont_know ('I don't know', 'no idea', "
-        "'can't recall', 'I never knew'), and a reason for knowing nothing ('I "
-        "never met him', 'it was before my time') leaves it dont_know: a reason "
-        "is not a guess.\n"
-        "Their words always decide."
-    )
-    # the verdict shape must be in the INITIAL prompt — the schema was only
-    # revealed in the correction branch, so every first call was rejected
-    # once before the shape appeared, doubling the cost of every exchange
-    prompt = prompt + "\n\nReturn ONLY the verdict JSON, in exactly this shape:\n" + verdict
+    verdict_schema = StatementAssessment.model_json_schema()
+
     prompt += (
-        "\n\nThe verdict MUST contain ALL of these keys, spelled exactly as written — "
-        "relevant, contradiction, confidence, note, findings, question — no others, "
-        "no misspellings, no missing keys (a misspelled key is a failed verdict)."
+        "\n\nReturn ONLY the verdict JSON, in exactly this shape, with every key the "
+        "schema spells, spelled the same way — no others, no misspellings, no missing "
+        "keys (a misspelled key is a failed verdict):\n" + json.dumps(verdict_schema, indent=1)
     )
+    prompt += verdict_rules
+    return prompt, user
+
+
+# the reviewer identity, the facts context, the history — a parameter object would add ceremony at the DI boundary
+# lucidlint: ignore long-param-list the investigation's inputs — the client seam, the answer, the person under review,
+def investigate(
+    client: _Chat,
+    *,
+    text: str,
+    person: Person,
+    who: str,
+    facts: ReviewContext,
+    history: tuple[Message, ...] = (),
+) -> ReviewTurn:
+    """The tool-using review of a free-text answer (user): the
+    model can call the archive's read-only lookups to dig into the
+    reviewer's statement — follow the leads and surface what the archive
+    already attests — then return the ReviewTurn: the check's answers,
+    the findings the tools surfaced, and the genealogist's question. *history* is the
+    conversation so far (the messages, including the model's own previous
+    reasoning), rendered verbatim into the prompt — the model always sees
+    its own history, so a message that re-answers an earlier question is
+    recognised as such. The findings are the digging's results — shown to
+    the reviewer. The tools are read-only: the decisions stay in the app's
+    flow. The never-derive rule holds — the model reports what it finds,
+    it never invents a kinship. ``raw`` is the model's final raw output,
+    stored verbatim as the turn's thinking."""
+    text = str(text or "").strip()
+    if not text:
+        raise ElicitationError("no answer given")
+    # The claim is the APP's question about the document the family uploaded:
+    # the app has read it and is checking what it says. "The family is
+    # checking" would read as the family asking, and a statement about the
+    # document's own subject — a death in the war — would look like a
+    # different question entirely.
+    claim = f"whether {person.name} was related to the family"
+    if person.relation:
+        # family language, never the system's — the model echoes the claim's
+        # own words, and the persona rule forbids 'the import'/'proposes'/
+        # 'link' (the prompt must not model the jargon it forbids)
+        claim += f" — the record under review says: {person.relation}"
+    # the conversation renders uniformly and sits LAST in the prompt — the
+    # static (the reviewer, the claim, the facts, the instructions) comes
+    # before it, so the previous prompt's exact text is the current prompt's
+    # prefix and the model's prompt-cache reuses the whole thing
+    # (user: 'the exact same text goes back… cheaper if so,
+    # because of caching'). The latest line is part of the same render, so
+    # a message that re-answers an earlier question is seen in context.
+    conversation = render_history(history + (Message(role="user", text=text, when=""),))
+    prompt, user = _investigation_prompt(claim, who, facts, conversation)
     tool_calls = 0
     trace: list[TraceStep] = []
     # the stable prompt — the static plus the conversation before the
@@ -560,14 +580,9 @@ def investigate(
             )
             continue
         trace.append(TraceStep(model=raw, reasoning=reasoning))
-        turn = ReviewVerdict.from_dict(parsed_dict)
+        turn = ReviewTurn.from_dict(parsed_dict)
         if turn.complete:
             return replace(turn, raw=raw, trace=tuple(trace), prompt=base_prompt, final_prompt=user)
-        user += (
-            "\n\n[your previous answer] "
-            + raw
-            + "\n\nThat was neither a tool call nor the complete verdict. Keep the reasoning "
-            "above and return the complete verdict JSON now: " + verdict
-        )
+        user += _correction(raw)
     # pragma: no cover  # defensive: the bounded loop must conclude
     raise ElicitationError("investigation did not conclude")

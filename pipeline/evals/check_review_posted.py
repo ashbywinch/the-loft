@@ -175,8 +175,10 @@ class _ReviewSite:
         if reason:
             return reason
         # no markers — say where the bot's output stopped
+        tail_chars = 200  # chars of the bot's last output quoted: enough to recognise the step
+        field_separator = "\t"  # the tab the log line's markers are separated by
         last = next((line for line in reversed(bot_lines) if line.strip()), "")
-        return f"the bot's last output before going silent: {last.split(chr(9))[-1][:200]}"
+        return f"the bot's last output before going silent: {last.split(field_separator)[-1][:tail_chars]}"
 
 
 def _completed_review_check_run(fetch, repo: str, sha: str) -> bool | None:

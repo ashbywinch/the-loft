@@ -37,7 +37,9 @@ def annotate_page(image_path: Path, layout: Layout, out_path: Path) -> int:
                 continue
             x0, y0, x1, y1 = (v * scale for v in line.box)
             draw.rectangle([x0, y0, x1, y1], outline=(255, 0, 0), width=3)
-            draw.text((x0 + 4, y0 + 2), str(line.index), fill=(255, 0, 0))
+            # the index label sits just inside the box's top-left corner
+            label_inset = (4, 2)
+            draw.text((x0 + label_inset[0], y0 + label_inset[1]), str(line.index), fill=(255, 0, 0))
             n += 1
         out_path.parent.mkdir(parents=True, exist_ok=True)
         im.save(out_path)

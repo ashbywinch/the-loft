@@ -122,7 +122,7 @@ def read_crop(
     if _vertical_boxes(boxes):
         rotated = tmp / f"crop-{index}-rot.png"
         with Image.open(crop_path) as im:
-            im.rotate(90, expand=True).save(rotated)
+            im.rotate(Layout.QUARTER_TURN_DEG, expand=True).save(rotated)
         # the answer and its parse travel as one pair: a failed re-read leaves
         # NOTHING behind, so the upright read's answer is never paired with a
         # parse that did not happen (the fallback is the upright read)
@@ -163,9 +163,10 @@ def _vertical_boxes(boxes: dict[int, list[float]]) -> bool:
     (the postcard's message); the crop needs the +90° rotation."""
     if not boxes:
         return False
+    taller_ratio = 1.2  # the median box this much taller than wide and the text is vertical
     hs = sorted(b[3] - b[1] for b in boxes.values())
     ws = sorted(b[2] - b[0] for b in boxes.values())
-    return hs[len(hs) // 2] > ws[len(ws) // 2] * 1.2
+    return hs[len(hs) // 2] > ws[len(ws) // 2] * taller_ratio
 
 
 def remap_rotated(box: list[float], rot_w: int, rot_h: int) -> list[float]:
@@ -175,11 +176,12 @@ def remap_rotated(box: list[float], rot_w: int, rot_h: int) -> list[float]:
     must scale to the rotated frame's pixels FIRST. The x-order flips
     too (the panel's x increases as the rotated frame's y decreases)."""
     x0n, y0n, x1n, y1n = box
+    unit = Layout.NORMALIZED_BOX_SCALE  # the model's box frame: fractions of the side, times 1000
     return [
-        rot_h - (y1n / 1000) * rot_h,
-        (x0n / 1000) * rot_w,
-        rot_h - (y0n / 1000) * rot_h,
-        (x1n / 1000) * rot_w,
+        rot_h - (y1n / unit) * rot_h,
+        (x0n / unit) * rot_w,
+        rot_h - (y0n / unit) * rot_h,
+        (x1n / unit) * rot_w,
     ]
 
 
@@ -194,7 +196,8 @@ class AnchorAgreement:
     @property
     def mean_iou(self) -> float | None:
         """The mean IoU over the matched lines — None when none matched."""
-        return round(sum(self.ious) / len(self.ious), 3) if self.ious else None
+        report_decimals = 3  # decimal places the report shows
+        return round(sum(self.ious) / len(self.ious), report_decimals) if self.ious else None
 
 
 def _anchor_agreement(assembled: Layout, layout: Layout) -> AnchorAgreement:

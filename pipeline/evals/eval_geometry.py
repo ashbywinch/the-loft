@@ -76,11 +76,12 @@ def stitch_crop_box(crop: CropReading, local_box: list[float]) -> list[float]:
     """The crop-local box (normalized 0-1000 in the crop's frame) -> the
     page frame: the crop's origin adds, the crop's size scales. The
     crop-grid's load-bearing seam (2026-08-22) — the page box, exactly."""
+    unit = Layout.NORMALIZED_BOX_SCALE  # the crop-local box's frame: fractions of the side, times 1000
     return [
-        crop.x + local_box[0] / 1000 * crop.w,
-        crop.y + local_box[1] / 1000 * crop.h,
-        crop.x + local_box[2] / 1000 * crop.w,
-        crop.y + local_box[3] / 1000 * crop.h,
+        crop.x + local_box[0] / unit * crop.w,
+        crop.y + local_box[1] / unit * crop.h,
+        crop.x + local_box[2] / unit * crop.w,
+        crop.y + local_box[3] / unit * crop.h,
     ]
 
 
@@ -228,11 +229,13 @@ def synthetic_letter() -> Fixture:
     # sit ~200px above the real text (well-proportioned, in the blank).
     # The marker boxes are the NORMALIZED 0-1000 frame (the layout's
     # vlm_boxes contract).
+    injected_shift = 200  # px: how far above the real text the failing boxes sit
+    unit = Layout.NORMALIZED_BOX_SCALE  # the vlm_boxes contract: fractions of the page, times 1000
     misplaced = {}
     for i, (text, box) in enumerate(body + margin + address):
         if text.startswith(("P.S.", "theory", "my first", "Postmark", "Queen")):
-            box = [box[0], box[1] - 200, box[2], box[3] - 200]
-        misplaced[i] = [box[0] / width * 1000, box[1] / height * 1000, box[2] / width * 1000, box[3] / height * 1000]
+            box = [box[0], box[1] - injected_shift, box[2], box[3] - injected_shift]
+        misplaced[i] = [box[0] / width * unit, box[1] / height * unit, box[2] / width * unit, box[3] / height * unit]
     crops = _crop_readings(truth_lines)
     return Fixture("synthetic-letter", width, height, detections, misplaced, truth_lines, crops)
 

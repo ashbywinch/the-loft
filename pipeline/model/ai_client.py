@@ -34,6 +34,29 @@ class AIClientError(RuntimeError):
     """Raised when the configured model endpoint cannot be used."""
 
 
+def _relaxed(payload: ChatRequest, error: urllib.error.HTTPError) -> ChatRequest | None:
+    """The request one rung lower for a provider that rejected the response
+    schema, or None when no rung applies.
+
+    The ladder has exactly two rungs, in this order: keep the schema and drop
+    ``strict``, then drop the schema. A 400/422 that is not a schema rejection
+    — or a schema already at its last rung — returns None, so the caller takes
+    the hard-error path with the provider's own body. Two rungs is the whole
+    ladder: the third rejection fails the call, so it cannot loop.
+
+    A relaxation is a new sample by construction: the body changes, so the
+    gateway's body-keyed cache cannot replay an answer. The caller's
+    unchanged-body retries advance the backoff, which is what sets the
+    cache-bypass header — a re-sent body would otherwise replay the answer
+    that just failed.
+    """
+    if error.code not in (400, 422) or payload.response_schema is None:
+        return None
+    if payload.response_strict:
+        return replace(payload, response_strict=False)
+    return replace(payload, response_schema=None)
+
+
 @final
 class AIClient:
     # The endpoint and the model aliases live in ModelConfig — the one file
@@ -208,7 +231,21 @@ class AIClient:
                 except (KeyError, IndexError, TypeError) as e:
                     raise AIClientError(f"unexpected API response: {json.dumps(data)[:300]}") from e
                 self.last_reasoning = str(message.get("reasoning_content") or message.get("reasoning") or "")
-            except urllib.error.HTTPError as e:
+            except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as e:
+                # HTTPError IS a URLError (an OSError), so one clause and a type
+                # test IS the order: no reordering of except clauses can turn a
+                # 401 into a retry.
+                if not isinstance(e, urllib.error.HTTPError):
+                    # A reset, a dropped socket or a timeout is the transport's
+                    # 5xx: retry it on the same budget, re-sampling (the retry
+                    # skips the gateway cache). Without this the socket error
+                    # left the retry loop entirely and failed the call on one
+                    # reset.
+                    logger.warning("chat: transport failure (%s) — retrying", e)
+                    if backoff.attempt >= self.max_retries:
+                        raise AIClientError(f"model API transport failure: {e}") from e
+                    backoff = backoff.advance(self._sleep)
+                    continue
                 if e.code in (429, 500, 502, 503, 529):
                     if backoff.attempt >= self.max_retries:
                         raise AIClientError(
@@ -216,16 +253,10 @@ class AIClient:
                         ) from e
                     backoff = backoff.advance(self._sleep)
                     continue
-                if e.code in (400, 422) and payload.response_schema is not None:
-                    # the endpoint does not take this schema as given: drop
-                    # strictness first, then the schema, before failing —
-                    # a provider rejection must not lose the whole call
+                relaxed = _relaxed(payload, e)
+                if relaxed is not None:
                     logger.warning("model %s rejected the response schema (HTTP %d); relaxing it", self.model, e.code)
-                    payload = (
-                        replace(payload, response_strict=False)
-                        if payload.response_strict
-                        else replace(payload, response_schema=None)
-                    )
+                    payload = relaxed
                     continue
                 if e.code in (400, 422) and (payload.thinking is not None or payload.reasoning_budget is not None):
                     # model/endpoint doesn't understand the reasoning params —
@@ -249,18 +280,6 @@ class AIClient:
                 # (finish_reason=n/a)" and retried it as if transient: the real
                 # failure stayed invisible for a whole session (2026-10-19).
                 raise AIClientError(f"model API error {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from e
-            # AFTER HTTPError: HTTPError IS a URLError (an OSError), so catching
-            # the transport first would turn a 401 into a retry.
-            except (urllib.error.URLError, TimeoutError, OSError, http.client.HTTPException) as e:
-                # A reset, a dropped socket or a timeout is the transport's
-                # 5xx: retry it on the same budget, re-sampling (the retry
-                # skips the gateway cache). Without this the socket error left
-                # the retry loop entirely and failed the call on one reset.
-                logger.warning("chat: transport failure (%s) — retrying", e)
-                if backoff.attempt >= self.max_retries:
-                    raise AIClientError(f"model API transport failure: {e}") from e
-                backoff = backoff.advance(self._sleep)
-                continue
             if content and content.strip():
                 return content
             thinking_enabled = payload.thinking is True

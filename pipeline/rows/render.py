@@ -36,11 +36,21 @@ class RenderStyle:
 
     tint: int = 55  # 0-255: the row colour's alpha over the paper
 
+    # The row palette's recipe: a hue per row, nothing else varying.
+    HUE_STEP = 0.618  # of the wheel: the golden-ratio conjugate, so neighbouring hues never meet
+    SATURATION = 0.62  # strong enough to name a row, pale enough to read the ink through
+    VALUE = 0.95  # bright, so the tint over paper stays a wash
+
     def colour(self, index: int) -> Colour:
         """A distinct hue per row, spaced by the golden ratio so neighbours
         never share one - alpha included."""
-        r, g, b = colorsys.hsv_to_rgb((index * 0.618) % 1.0, 0.62, 0.95)
-        return Colour(int(r * 255), int(g * 255), int(b * 255), self.tint)
+        r, g, b = colorsys.hsv_to_rgb((index * RenderStyle.HUE_STEP) % 1.0, RenderStyle.SATURATION, RenderStyle.VALUE)
+        return Colour(
+            int(r * Colour.MAX_CHANNEL),
+            int(g * Colour.MAX_CHANNEL),
+            int(b * Colour.MAX_CHANNEL),
+            self.tint,
+        )
 
 
 DEFAULT_STYLE = RenderStyle()
@@ -104,5 +114,9 @@ def render_rows(
                 band = min(py for _, py in points), max(py for _, py in points)
                 mid = (band[0] + band[1]) / 2
                 draw.ellipse([left - 96, mid - 36, left - 10, mid + 36], fill=(255, 255, 255))
-                draw.text((left - 88, mid - 27), f"{number:02d}", fill=(0, 0, 0), font=font)
+                # the number's own corner inside the disc, measured from the
+                # stroke's first point (the disc's right edge is 10px left of it)
+                number_left = 88  # px
+                number_top = 27  # px above the band's centre
+                draw.text((left - number_left, mid - number_top), f"{number:02d}", fill=(0, 0, 0), font=font)
     return canvas.convert("RGB")

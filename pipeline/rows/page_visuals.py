@@ -141,6 +141,16 @@ class PagePainter:
     REVIEW_WIDTH = 900  # sheet px: a review copy fits a phone screen at full width
     REVIEW_QUALITY = 68  # JPEG quality: ink edges stay crisp, paper noise drops out
 
+    INK_LEVEL = 170  # grey: a pixel darker than this is ink, lighter is paper
+    WORD_MARGIN = 4  # px: how far outside a strip's region a word still belongs to it
+    # The reviewer's drawn strokes are numbered in their own column left of the
+    # writing, each number in a black chip so it reads over the ink.
+    STROKE_LABEL_GAP = 46  # px left of the writing: where the column starts
+    STROKE_LABEL_MIN_LEFT = 4  # px: and never closer than this to the page's edge
+    STROKE_LABEL_INSET = 3  # px: the number's inset inside its chip, on each side
+    STROKE_LABEL_HALF_HEIGHT = 8  # px: half the chip's height, centred on the stroke
+    STROKE_LABEL_TEXT_TOP = 6  # px above the stroke: the number's top edge
+
     @staticmethod
     def review_image(sheet: Image.Image, width: int = REVIEW_WIDTH, quality: int = REVIEW_QUALITY) -> bytes:
         """The sheet as a review-size JPEG: downscaled to `width` (never up),
@@ -186,14 +196,29 @@ class PagePainter:
             known = [str(index + 1) for index, _ in enumerate(self._strokes)]
             label_w = max(font.getbbox(label)[2] for label in known) if known else 8
             content_left = min((b[0] for b in boxes), default=0.0)
-            column = max(4.0, content_left - label_w - 46)
+            column = max(
+                float(PagePainter.STROKE_LABEL_MIN_LEFT),
+                content_left - label_w - PagePainter.STROKE_LABEL_GAP,
+            )
             for index, stroke in enumerate(self._strokes):
                 band = sum(py for _, py in stroke) / len(stroke)
                 layer.line(stroke, fill=STROKE, width=3, joint="curve")
                 if numbered:
                     label = str(index + 1)
-                    layer.rectangle([column, band - 8, column + label_w + 6, band + 8], fill=(0, 0, 0, 150))
-                    layer.text((column + 3, band - 6), label, fill=(255, 255, 255, 255), font=font)
+                    half_height = PagePainter.STROKE_LABEL_HALF_HEIGHT
+                    chip = [
+                        column,
+                        band - half_height,
+                        column + label_w + 2 * PagePainter.STROKE_LABEL_INSET,
+                        band + half_height,
+                    ]
+                    layer.rectangle(chip, fill=(0, 0, 0, 150))
+                    layer.text(
+                        (column + PagePainter.STROKE_LABEL_INSET, band - PagePainter.STROKE_LABEL_TEXT_TOP),
+                        label,
+                        fill=(255, 255, 255, 255),
+                        font=font,
+                    )
         return Image.alpha_composite(page, overlay).convert("RGB")
 
     def render_geometry(
@@ -203,7 +228,7 @@ class PagePainter:
         overrides: dict[int, WordGeometry | None] | None = None,
     ) -> Image.Image:
         """Measure, resolve, draw: the whole page with its words' lines."""
-        ink = np.asarray(self._page.convert("L")) < 170
+        ink = np.asarray(self._page.convert("L")) < PagePainter.INK_LEVEL
         geometry = drawn_geometry(boxes, measure_words(ink, boxes), overrides)
         return self.draw_page(boxes, geometry, draw_boxes=draw_boxes)
 
@@ -222,11 +247,16 @@ class PagePainter:
         relevant = [
             (i, w)
             for i, w in enumerate(strip.words)
-            if w["x1"] >= x0 - 4 and w["x0"] <= x1 + 4 and w["y1"] >= y0 - 4 and w["y0"] <= y1 + 4
+            if (
+                w["x1"] >= x0 - PagePainter.WORD_MARGIN
+                and w["x0"] <= x1 + PagePainter.WORD_MARGIN
+                and w["y1"] >= y0 - PagePainter.WORD_MARGIN
+                and w["y0"] <= y1 + PagePainter.WORD_MARGIN
+            )
         ]
         boxes = [Rectangle(w["x0"], w["y0"], w["x1"], w["y1"]) for _i, w in relevant]
         indices = [i for i, _w in relevant]
-        ink = np.asarray(self._page.convert("L")) < 170
+        ink = np.asarray(self._page.convert("L")) < PagePainter.INK_LEVEL
         geometry = drawn_geometry(boxes, measure_words(ink, boxes), strip.overrides, indices=indices)
         full = self.draw_page(boxes, geometry)
 
@@ -250,10 +280,11 @@ def _line_spans(arr: np.ndarray, colour: Colour) -> dict[int, Span]:
     extent, from its leftmost column to its rightmost. A word's line spans its
     box's width, so the span identifies its owner where boxes sit cheek by
     jowl."""
+    tolerance = 60  # grey levels: how far a drawn pixel may stray from its line colour and still be it
     mask = (
-        (abs(arr[:, :, 0] - colour.red) <= 60)
-        & (abs(arr[:, :, 1] - colour.green) <= 60)
-        & (abs(arr[:, :, 2] - colour.blue) <= 60)
+        (abs(arr[:, :, 0] - colour.red) <= tolerance)
+        & (abs(arr[:, :, 1] - colour.green) <= tolerance)
+        & (abs(arr[:, :, 2] - colour.blue) <= tolerance)
     )
     ys, xs = np.nonzero(mask)
     spans: dict[int, list[int]] = {
@@ -264,6 +295,13 @@ def _line_spans(arr: np.ndarray, colour: Colour) -> dict[int, Span]:
 
 # a full-page image needs no offset: its top-left IS the page's own origin
 PAGE_ORIGIN = Point(x=0.0, y=0.0)
+
+
+def kilobytes(size: int) -> int:
+    """A rendered artefact's size in KiB — the unit the experiment logs print,
+    so a sheet's weight is read as one number rather than converted by hand."""
+    bytes_per_kib = 1024  # a kibibyte: 2^10 bytes
+    return size // bytes_per_kib
 
 
 # lucidlint: ignore unused a test seam: the drawing tests drive the audit directly (DI convention)
@@ -340,6 +378,8 @@ class CaptionSheet:
 
     CAPTION_LINE_H = 26  # sheet px per caption line
     CAPTION_PAD = 12  # sheet px around the caption block
+    TEXT_INSET = 10  # sheet px: the caption's left inset
+    TEXT_TOP = 6  # sheet px: the first line's top offset inside the bar
 
     @staticmethod
     def captioned_sheet(crop: Image.Image, caption: Sequence[str], size: int = 22) -> CaptionSheet:
@@ -350,7 +390,12 @@ class CaptionSheet:
         draw = ImageDraw.Draw(sheet, "RGBA")
         font = ImageFont.load_default(size=size)
         for i, line in enumerate(caption):
-            draw.text((10, 6 + CaptionSheet.CAPTION_LINE_H * i), line, fill=(20, 20, 20), font=font)
+            draw.text(
+                (CaptionSheet.TEXT_INSET, CaptionSheet.TEXT_TOP + CaptionSheet.CAPTION_LINE_H * i),
+                line,
+                fill=(20, 20, 20),
+                font=font,
+            )
         return CaptionSheet(sheet, draw, bar_h)
 
     sheet: Image.Image
@@ -425,7 +470,8 @@ def labeled_box(draw: ImageDraw.ImageDraw, spec: LabeledBox) -> None:
     detected piece reads on a sheet. Both diagnose zooms and splitter case
     sheets label boxes this way."""
     draw.rectangle(spec.box, outline=spec.outline, width=spec.width)
-    halo_text(draw, Point(x=spec.box.x0 + 3, y=spec.box.y0 + 2), spec.label, size=spec.size)
+    inset = Point(x=3, y=2)  # px: the label's offset inside the box's top-left corner
+    halo_text(draw, Point(x=spec.box.x0 + inset.x, y=spec.box.y0 + inset.y), spec.label, size=spec.size)
 
 
 def stack_sheets(sheets: Sequence[Image.Image], gap: int = 24, max_width: int = 1000) -> Image.Image:
@@ -492,6 +538,9 @@ def split_sheet(case: SplitCase) -> Image.Image:
     def py(v: float) -> float:
         return (v - y0) * scale + bar_h
 
+    cut_label_left = 150  # px left of the cut's right end: where the cut's label sits
+    cut_label_above = 28  # px above the cut row
+    drop_label_inset = 4  # px inside the crop's left edge: where a dropped band's label sits
     style = RenderStyle() if case.colours is None else None
     draw.rectangle(
         [px(case.raw_box.x0), py(case.raw_box.y0), px(case.raw_box.x1), py(case.raw_box.y1)],
@@ -512,7 +561,10 @@ def split_sheet(case: SplitCase) -> Image.Image:
             left, right = px(max(x0, case.raw_box.x0)), px(min(x1, case.raw_box.x1))
             dashed_hline(draw, DashRule(left, right, py(cy)))
             halo_text(
-                draw, Point(x=right - 150, y=py(cy) - 28), f"cut y{cy:.0f}", fill=Colour(red=200, green=0, blue=0)
+                draw,
+                Point(x=right - cut_label_left, y=py(cy) - cut_label_above),
+                f"cut y{cy:.0f}",
+                fill=Colour(red=200, green=0, blue=0),
             )
     for lo, hi in case.drops:
         draw.rectangle([px(case.raw_box.x0), py(lo), px(case.raw_box.x1), py(hi)], fill=SplitCase.DROP_FILL)
@@ -521,7 +573,7 @@ def split_sheet(case: SplitCase) -> Image.Image:
         label_y = max(biggest[1], max(box.y1 for box, _label in case.pieces) + 2)
         halo_text(
             draw,
-            Point(x=px(case.raw_box.x0) + 4, y=py(label_y) + 2),
+            Point(x=px(case.raw_box.x0) + drop_label_inset, y=py(label_y) + 2),
             case.drop_label,
             fill=Colour(red=200, green=0, blue=0),
         )

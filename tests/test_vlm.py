@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 
 import pipeline.model.vlm as vlm
+from pipeline.model.ai_client import AIClient
+from pipeline.model.config import ModelConfig
 from pipeline.model.token_usage import TokenUsage
 from pipeline.model.unsure_word import UnsureWord
 from pipeline.model.vlm import (
@@ -255,6 +257,26 @@ class TestPlainTranscriptionFormat:
         # every existing caller keeps today's behaviour
         assert '"lines"' in VlmPrompts.SYSTEM
         assert '"lines"' in VlmPrompts.transcription_system_with_context()
+
+
+class TestVlmOptions:
+    """The bare options are the crop read's defaults (the eval's ``run``
+    takes them when it is given none), and an unnamed base URL is the
+    gateway's — never an empty endpoint."""
+
+    def test_bare_options_are_the_crop_reads_defaults(self) -> None:
+        options = VlmOptions()
+        assert options.model == ModelConfig.VISION_MODEL
+        assert options.endpoint == AIClient.DEFAULT_BASE_URL
+        assert options.api_key is None
+
+    def test_a_stated_base_url_is_the_endpoint(self) -> None:
+        assert VlmOptions(base_url="https://openrouter.ai/api/v1").endpoint == "https://openrouter.ai/api/v1"
+
+    def test_an_empty_base_url_falls_back_to_the_gateway(self) -> None:
+        # "" means no endpoint named, exactly as None does (the client's own
+        # rule) — a caller that resolves an absent flag to "" still reaches it
+        assert VlmOptions(base_url="").endpoint == AIClient.DEFAULT_BASE_URL
 
 
 class TestTranscribeWithFallbacks:

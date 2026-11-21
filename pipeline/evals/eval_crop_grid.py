@@ -257,7 +257,9 @@ def run(
     options: VlmOptions | None = None,
 ) -> CropGridReport:
     """Read the page's crops, stitch, and report — the geometry
-    experiment's ledger for one page."""
+    experiment's ledger for one page. ``options`` is the read's config; None
+    is the crop read's own — the vision model at the gateway's default
+    endpoint and key (``VlmOptions()``, the client's defaults)."""
     read_options = options or VlmOptions()
     image_path = BatchArtefacts(work_dir, batch_id).oriented(f"{page}.jpg")
     store = PipelineStore(work_dir)
@@ -326,10 +328,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     options = VlmOptions(
         model=args.model,
+        base_url=args.base_url,
         api_key=args.api_key or os.environ.get("OPENROUTER_API_KEY"),
     )
-    if args.base_url:
-        options = replace(options, base_url=args.base_url)
     report = run(args.batch_id, args.page, args.work_dir, args.cols, args.rows, options)
     print(json.dumps(report.to_dict(), indent=1))
     return 0

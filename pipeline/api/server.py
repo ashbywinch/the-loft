@@ -14,7 +14,6 @@ narrator from it — never from a client-claimed name.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import socket
@@ -38,6 +37,7 @@ from loft.live.compat import CompatibilityExport, legacy_person
 from loft.live.compat_items import ItemCompatibility
 from loft.live.compat_pages import PageCompatibility
 from loft.live.compat_reviews import ImportsCompatibility
+from loft.live.determination import Determination
 from loft.live.errors import LiveError
 from loft.live.import_identity import sync_from_archive
 from loft.live.import_items import sync_items
@@ -78,6 +78,8 @@ from pipeline.api.sync import (
     BATCH_ID,
     BatchReadings,
     Outbox,
+    PageReread,
+    PageSidecars,
     apply_row_adjustments,
     demote_stale_jobs,
     document_readiness,
@@ -923,17 +925,14 @@ def build_app(
                 places = [
                     str(p["name"]) for p in _read_projection(filename="places.json", key="places") if p.get("name")
                 ]
-                label = None
-                with contextlib.suppress(RegistryError):
-                    label = load_batch(batch_id, registry_dir).label
                 reprocess_page_transcription(
                     batch_id,
                     page,
                     work_dir,
-                    registry_dir=registry_dir,
-                    people=people,
-                    places=places,
-                    label=label,
+                    reread=PageReread(
+                        registry_dir=registry_dir,
+                        sidecars=PageSidecars(people=people, places=places),
+                    ),
                 )
             # The background thread's terminal handler — logger.exception
             # lucidlint: ignore swallow is the observable surface; the thread ends
@@ -1068,14 +1067,8 @@ def build_app(
         try:
             confirmation = ConfirmationRequest.from_dict(payload)
             item_id = record_confirmation(
-                confirmation.batch_id,
-                confirmation.doc_index,
-                confirmation.boundary,
-                confirmation.text,
+                confirmation,
                 archive=archive,
-                title=confirmation.title,
-                date=confirmation.date,
-                date_precision=confirmation.date_precision,
                 registry_dir=registry_dir,
                 actor=mine.person or "review",
             )
@@ -1176,7 +1169,11 @@ def build_app(
         basis = DecisionBasis.from_dict(fields.basis).to_dict() if fields.basis else None
         try:
             record = archive.decide_identification(
-                fields.item_id, fields.kind, fields.entity_id, fields.decision, basis, actor=mine.person or "review"
+                fields.item_id,
+                fields.kind,
+                fields.entity_id,
+                Determination(fields.decision, basis),
+                actor=mine.person or "review",
             )
         except (KeyError, ValueError, ArchiveError) as exc:
             return JSONResponse(ErrorAnswer(str(exc)).to_dict(), status_code=400)

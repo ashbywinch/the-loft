@@ -171,16 +171,6 @@ def import_identities(
     return _import(store, _read_tables(archive), dry_run=dry_run)
 
 
-def sync_identities(store: LiveStore, archive: Path) -> IdentityReport:
-    """Catch the DB up with the old tree — the flip's opening import (B1).
-
-    The backup marker guards the first full migration, not this catch-up: the
-    DB already exists and is backed up. Records the store holds are skipped,
-    so a newer DB record is never regressed.
-    """
-    return _import(store, _read_tables(archive))
-
-
 def sync_from_archive(store: IdentityStore, archive: Any) -> IdentityReport:
     """The catch-up for a host that holds the archive facade, not its path."""
     return _import(store, tables_from_archive(archive))

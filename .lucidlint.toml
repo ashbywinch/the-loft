@@ -34,7 +34,6 @@
 ignore = [
     "record-shape",
     "class-module",
-    "vague-name",
     "magic-number",
     "duplicate-module",
 ]
@@ -47,9 +46,20 @@ ignore = [
 # holds the noun's exception or helper class (htr.py/HtrError, sync.py/
 # Outbox, review.py/_Chat) — one reason to change, the standards' stated
 # exception to "each class in its own module".
-# vague-name: "Store" is a sanctioned domain noun in coding-standards.md
-# ("plus Store, Records, Projection, AiClient") — the tool's vague-name
-# list collides with the house vocabulary.
+# vague-name: the tool's list includes "Store", which coding-standards.md
+# sanctions as a domain noun ("plus Store, Records, Projection, AiClient").
+# Every finding the rule still reports is one of the four modules' store
+# classes — LiveStore, MemoryLiveStore, PipelineStore, FileStore, DiskStore,
+# MemoryStore — so the rule stays ON for the rest of the tree: a vague name
+# in any other class fails the gate (re-checked 2026-11-20, six findings).
+[lucidlint."loft/live/memory.py"]
+ignore = ["vague-name"]
+[lucidlint."loft/live/store.py"]
+ignore = ["vague-name"]
+[lucidlint."pipeline/store.py"]
+ignore = ["vague-name"]
+[lucidlint."tools/store.py"]
+ignore = ["vague-name"]
 
 # fakefs: the repo's testing standards permit deterministic real-FS tests
 # (tmp_path) — the archive/store tests need real os.replace/subprocess/
@@ -57,16 +67,83 @@ ignore = [
 # dataset checks must read the real repo tree. Suppressed at the tests
 # scope with the standards' citation.
 
-# unused in the eval modules: their entry points (run_flow, condition_*,
-# load_projection) exist to be driven by tests/test_evals.py — the module
-# IS the eval harness, so cross-file-reference counting is structurally
-# inapplicable. (Tool bug: a per-function `ignore unused` comment counts as
-# a reference, so the finding stops firing AND the suppression is reported
-# stale — see docs/PLAN/lucidlint-review-log.md §1.5.)
+# unused: the tool counts PRODUCTION references only — it does not see the
+# test suite, so a module whose public faces exist for the tests to drive
+# reads as dead. That is the repo's seam convention (the DI wrappers, the
+# eval harnesses, the detection and layout helpers); each module below names
+# the test that drives it. Re-judged 2026-11-20: the entry that named a
+# module the tests no longer drive was deleted, and every finding with no
+# caller at all was deleted with its code (cache_file.py, attestation.py,
+# the geometry eval's clip-location apparatus, file_sha256/text_sha256,
+# orientation_from_aspect, PlaceholderObject/PlaceholderAvatar,
+# line_orientation_degrees, sync_identities) — a stale suppression is debt,
+# and a per-function `ignore unused` comment still counts as a reference on
+# this build, so the scoped form is the only one that works (see
+# docs/PLAN/lucidlint-review-log.md §1.5, §5.1).
+
+# the eval harnesses: the module IS the harness — its entry points are run
+# by the eval-marker suite and the spike's pinning tests.
+[lucidlint."pipeline/evals/eval_geometry.py"]
+ignore = ["unused"]  # synthetic_letter/synthetic_postcard: tests/pipeline/test_eval_geometry.py
+[lucidlint."pipeline/evals/eval_review.py"]
+ignore = ["unused"]  # run_flow/run_arc/condition_*/run_caching: tests/test_evals.py
+[lucidlint."pipeline/evals/eval_scoring.py"]
+ignore = ["unused"]  # score_page: tests/test_eval_scoring.py, tests/test_review_scoring.py
+[lucidlint."pipeline/evals/spike_vlm_contract.py"]
+ignore = ["unused"]  # parse_answer/user_prompt: tests/pipeline/test_spike_vlm_contract.py
 [lucidlint."tools/eval_memory.py"]
-ignore = ["unused", "duplicate"]
-[lucidlint."tools/eval_review.py"]
-ignore = ["unused"]
+ignore = ["unused", "duplicate"]  # load_projection/run_flow/condition_contract: tests/test_evals.py
+
+# the layout and detection seams: the builders and measures the layout tests
+# drive directly (the module's entry points; nothing ships calls them
+# because the tests are the caller).
+[lucidlint."pipeline/detect/ink.py"]
+ignore = ["unused"]  # cluster_rows/match_labels/transcription_line_count_plausible: tests/pipeline/test_layout.py
+# the reader's public faces (Rows.validate's seam, the ink measures) are what
+# the detection tests drive; its god-class debt is stopped, not waived.
+[lucidlint."pipeline/detect/reader.py"]
+ignore = ["god-class"]
+[lucidlint."pipeline/layout.py"]
+ignore = ["unused", "long-param-list"]  # multi_layout/admit_and_remap/drop_conflicting_boxes/load_orientation_hint/orientation_passes: tests/pipeline/test_layout.py
+[lucidlint."pipeline/model/vlm.py"]
+ignore = ["unused"]  # transcribe_with_fallbacks: tests/test_vlm.py
+[lucidlint."pipeline/api/approval.py"]
+ignore = ["unused"]  # agreement_for: the approval marker's read verb, tests/test_approval.py
+[lucidlint."tools/text.py"]
+ignore = ["unused"]  # flag_line_words/selfreport_words_by_line/selfreport_by_line: tests/pipeline/test_layout.py
+[lucidlint."tools/box.py"]
+ignore = ["unused"]  # has_ink/text_line_count: tests/pipeline/test_layout.py, tests/test_review_serve_walk.py
+[lucidlint."tools/gates.py"]
+ignore = ["unused"]  # glyph_extent_violation: tests/pipeline/test_layout.py
+
+# the guard's own API: `make no-pii` runs the test, so the test IS the
+# command and the module's entry points are driven by the suite by design.
+[lucidlint."tools/pii_markers.py"]
+ignore = ["unused"]  # family_markers/file_offenders: tests/test_no_pii_in_repo.py, tests/test_fiction.py
+
+# the house fiction: a documented data source (AGENTS.md, coding-standards,
+# writing-documentation) whose names ARE the content; tests/test_fiction.py
+# and the docs are its readers.
+[lucidlint."tools/fiction.py"]
+ignore = ["unused"]  # HouseFiction: tests/test_fiction.py
+
+# partition: STOPPED, not waived. The rule's field partition on Archive is the
+# migration's own seam: the live verbs (identities, reviews, items — the four
+# bind_*_service flips) and the file path they fall back to until E2
+# (REWRITE-PLAN) touch disjoint collaborators, so the class reads as the two
+# halves it is mid-way between. Every candidate split reproduces that two-hub
+# structure, and the facade's public verbs (get_item, save_item, get_identity,
+# publish, ...) are pinned by the suite and the server: splitting them off the
+# facade would either move the API between objects or turn the verbs into
+# one-line delegators — a second facade the migration would have to undo. The
+# page path's own partition (bind_page_service + correct_page_rows) WAS fixed
+# in code: `PageWork` owns the bound service and its export (2026-11-20).
+[lucidlint."tools/archive.py"]
+ignore = ["god-class", "partition", "long-param-list"]
+[lucidlint."tools/memory.py"]
+ignore = ["data-clump"]
+[lucidlint."tools/records.py"]
+ignore = ["data-clump", "assembly-class"]
 
 # lucidlint-dist: the vendored release bundle the make target downloads
 # (gitignored — the repo's own code never lives there). Its findings are
@@ -86,108 +163,12 @@ ignore = ["fakefs"]
 [lucidlint."tests/document/**"]
 ignore = ["fakefs"]
 
-# unused: the repo's tests drive the modules' entry points directly (the DI
-# convention — run_review_gate(fetch, …), the seam wrappers, the eval harnesses,
-# the detecursor helpers) — a PRODUCTION-only reference count cannot see the
-# test suite, so the family misfires on every deliberate seam. The coding
-# standards name the convention; the eval-module exclusion extends to the
-# modules whose public faces exist for the tests to drive (2026-10-08).
-[lucidlint."pipeline/detect/reader.py"]
-ignore = ["unused", "god-class", "partition"]
-[lucidlint."pipeline/detect/ink.py"]
-ignore = ["unused"]
-[lucidlint."pipeline/detect/mark.py"]
-ignore = ["unused"]
-[lucidlint."pipeline/detect/box.py"]
-ignore = ["unused"]
-[lucidlint."pipeline/rows/rows.py"]
-ignore = ["unused"]
-[lucidlint."pipeline/layout.py"]
-ignore = ["unused", "long-param-list"]
-[lucidlint."pipeline/model/vlm.py"]
-ignore = ["unused"]
-[lucidlint."pipeline/model/vlm_cache.py"]
-ignore = ["unused"]
-[lucidlint."pipeline/transcribe/transcripts.py"]
-ignore = ["unused"]
-[lucidlint."pipeline/evals/eval_geometry.py"]
-ignore = ["unused"]
-[lucidlint."pipeline/evals/eval_review.py"]
-ignore = ["unused"]
-[lucidlint."pipeline/evals/spike_vlm_contract.py"]
-ignore = ["unused"]
-[lucidlint."pipeline/evals/walk_review.py"]
-ignore = ["unused"]
-[lucidlint."tools/text.py"]
-ignore = ["unused"]
-[lucidlint."tools/box.py"]
-ignore = ["unused"]
-[lucidlint."tools/gates.py"]
-ignore = ["unused"]
-[lucidlint."tools/pii_markers.py"]
-ignore = ["unused"]
-[lucidlint."tools/attestation.py"]
-ignore = ["unused"]
-# long-param-list: the archive's public identification verb is pinned by the
-# old suite and the server route — its parameters ARE the determination
-# (item, kind, record, decision, basis, actor), not a group that needs a type.
-[lucidlint."tools/archive.py"]
-ignore = ["unused", "god-class", "partition", "long-param-list"]
-[lucidlint."tools/memory.py"]
-ignore = ["unused", "data-clump"]
-[lucidlint."tools/records.py"]
-ignore = ["unused", "data-clump", "assembly-class"]
-
-[lucidlint."pipeline/chain.py"]
-ignore = ["unused"]
-
-[lucidlint."pipeline/evals/eval_scoring.py"]
-ignore = ["unused"]
-
-# long-param-list: the sync seams are signature-bound (the server and the
-# tests pin them); the per-site whys were the same policy, stated once.
-[lucidlint."pipeline/api/sync.py"]
-ignore = ["long-param-list"]
-
-# long-param-list: the crop-grid run's inputs are the page's state — no
-# class for one call site (two sites, one why).
-[lucidlint."pipeline/evals/eval_crop_grid.py"]
-ignore = ["long-param-list", "data-clump"]
-
-# latent-class: the GEDCOM serializer: one concern, one state; its methods are the export's steps, no field-disjoint partition (recorded 2026-10-08, held not split)
 [lucidlint."tools/gedcom_document.py"]
-ignore = ["god-class", "long-param-list", "partition"]
+ignore = ["god-class"]
 
 # latent-class: the band-size sweep's locals carry the run's state — no class for one call site (recorded 2026-10-08, held not split)
 [lucidlint."pipeline/evals/eval_band_size.py"]
 ignore = ["god-class"]
-
-# feature-envy: the page save is the page transaction's own step — it puts the
-# reading blob, appends the one page event and writes the projection through
-# the change, and the change is that write seam, not a second owner. Moving the
-# step onto Change would put the page's row mapping in the transaction object.
-[lucidlint."loft/live/pages.py"]
-ignore = ["feature-envy"]
-
-# latent-class: LiveStore is the one public facade TECHSPEC/08 §19.3 names —
-# the read half (events_for, verify_chain, rebuild_*) and the write half
-# (change, connection) are one seam by design; splitting it would move the
-# store's API between two objects and break the "one facade" rule.
-[lucidlint."loft/live/store.py"]
-ignore = ["partition"]
-
-# latent-class: People is the person repository TECHSPEC/08 §19.4 names — the
-# read half (get/all/require) and the write half (save/confirm/resolve/…) are
-# one collection by design; the spec says the repository owns both halves so
-# the write half cannot be used outside a transaction.
-[lucidlint."loft/live/people.py"]
-ignore = ["partition"]
-
-# data-clump: the person row mapping's (connection, person_id) pair is the
-# row's key in every helper that reads or removes it; a wrapper type would be
-# unwrapped at each SQL call and adds nothing the function name does not say.
-[lucidlint."loft/live/person_row.py"]
-ignore = ["data-clump"]
 
 # fakefs: the exporter tests use a real SQLite file and a real archive tree on
 # tmp_path — the append-only store, sqlite semantics and the versioned file

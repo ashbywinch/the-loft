@@ -18,17 +18,18 @@ from loft.live import item_row
 from loft.live.aliases import Alias, MemoryAliases
 from loft.live.batch_row import BatchState, ScanState
 from loft.live.batches import batch_from_payload, batch_payload
+from loft.live.determination import Determination
 from loft.live.document_row import DocumentPage, DocumentState
 from loft.live.documents import document_from_payload, document_payload
 from loft.live.errors import Conflict, NotFound, StaleVersion
 from loft.live.event import event_hash
 from loft.live.identities import Identities
 from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Kind, record_id, relationship_id
-from loft.live.identity_map import BasisKinds, basis_after, renders_estimated
+from loft.live.identity_map import BasisKinds, basis_after
 from loft.live.item_row import AssetRecord, ItemAsset, ItemContent, ItemRef
 from loft.live.items import ContentInput, build_contents, item_payload, payload_assets, payload_contents
+from loft.live.page_commit import page_from_payload, page_payload
 from loft.live.page_row import AdjustmentState, PageRow, PageState, ReadingState, reading_blob, reading_rows
-from loft.live.pages import page_from_payload, page_payload
 from loft.live.review_row import (
     ReviewDecisionRow,
     ReviewMessageRow,
@@ -351,27 +352,7 @@ class _MemoryPeople:
         )
 
     def resolve(self, person_id: str, decision: str, basis: dict[str, str] | None = None) -> Person | GonePerson | None:
-        current = self.get(person_id)
-        if current is None or current.status == "rejected":
-            return current  # a rejected proposal is terminal (TECHSPEC/05 §18.2)
-        if decision == "pending":
-            return current
-        if decision == "delete":
-            self.delete(person_id)
-            return GonePerson(person_id)
-        if decision == "attested":
-            if current.status != "proposed" and not renders_estimated(current.basis):
-                return current
-            updated = replace(current, status="confirmed", basis=basis_after(current.basis, BasisKinds.KNOWN))
-        elif decision == "estimated":
-            if basis is None or not str(basis.get("text", "")).strip():
-                raise ValueError(f"estimated needs a basis: {person_id}")
-            updated = replace(
-                current, status="confirmed", basis=basis_after(current.basis, BasisKinds.RECOLLECTED, basis)
-            )
-        else:
-            raise ValueError(f"unknown decision: {decision!r}")
-        return current if updated == current else self.save(updated, base=current.version)
+        return Determination(decision, basis).apply(self, person_id, gone=GonePerson)
 
     def reject(self, person_id: str) -> Person:
         current = self.require(person_id)

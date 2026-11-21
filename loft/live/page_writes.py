@@ -10,7 +10,9 @@ optimistic token the review's other writes check against.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 
 from loft.live.page_row import PageState
 from loft.live.protocols import PageStore
@@ -26,3 +28,21 @@ class PageWrites:
         """Record the reviewer's drawn lines as the page's current correction."""
         with self.store.change(actor=actor, note=f"correct rows {page_id}") as change:
             return change.pages.correct(page_id, adjustments, adjustment_at=datetime.now(UTC).isoformat())
+
+
+class PageWork:
+    """The page work write path: the live store's page writes, and the
+    compatibility export that follows each correction.
+
+    The two are one operation — a correction the review surface writes must
+    leave the work files the reviewer reads in the same step — so the bound
+    pair travels as one value (TECHSPEC/08 §19.4, B4a)."""
+
+    def __init__(self, writes: PageWrites, follow: Callable[[str], Any]) -> None:
+        self.writes = writes
+        self.follow = follow
+
+    def correct(self, page_id: str, adjustments: bytes, *, actor: str) -> None:
+        """The reviewer's drawn row lines: one change, then the export."""
+        self.writes.correct_rows(page_id, adjustments, actor=actor)
+        self.follow(page_id)

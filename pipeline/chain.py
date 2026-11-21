@@ -37,6 +37,7 @@ from document.page_size import PageSize
 from document.row import Row
 from document.row_adjustments import RowAdjustments
 from document.words import Words
+from pipeline.api.confirmation_request import ConfirmationRequest
 from pipeline.api.sync import BatchReadings, record_confirmation
 from pipeline.artefacts import BatchArtefacts
 from pipeline.batch_record import BatchRecord
@@ -814,10 +815,7 @@ class ReviewGate(Batch):
             answer = line("accept (Enter) / edit (e) / reject (r): ").strip().lower()
             if answer == "r":
                 record_confirmation(
-                    self.batch_id,
-                    index,
-                    document,
-                    None,
+                    ConfirmationRequest(self.batch_id, index, document, None),
                     archive=archive,
                     registry_dir=self.registry_dir,
                 )
@@ -834,14 +832,16 @@ class ReviewGate(Batch):
             title = line("title for this document: ").strip() or document.greeting or f"Document {index}"
             date = line("date (YYYY-MM-DD): ").strip()
             item_id = record_confirmation(
-                self.batch_id,
-                index,
-                document,
-                text,
+                ConfirmationRequest(
+                    self.batch_id,
+                    index,
+                    document,
+                    text,
+                    title=title,
+                    date=date,
+                    date_precision="exact" if len(date) == 10 else "year",
+                ),
                 archive=archive,
-                title=title,
-                date=date,
-                date_precision="exact" if len(date) == 10 else "year",
                 registry_dir=self.registry_dir,
             )
             write_line(f"document {index} confirmed -> archive item {item_id}")

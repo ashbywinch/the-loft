@@ -1,1 +1,17 @@
-[]
+{
+  "actions": [],
+  "config_ignored": {
+    "class-module": 22,
+    "magic-number": 204,
+    "record-shape": 273,
+    "duplicate-module": 41,
+    "vague-name": 6,
+    "feature-envy": 1,
+    "partition": 4,
+    "data-clump": 3,
+    "long-param-list": 13,
+    "unused": 37,
+    "fakefs": 287,
+    "assembly-class": 1
+  }
+}

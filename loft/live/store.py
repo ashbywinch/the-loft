@@ -107,13 +107,13 @@ class LiveStore:
         self.connection.execute("DELETE FROM person_residences")
         self.connection.execute("DELETE FROM people")
         self.connection.execute("DELETE FROM aliases WHERE loser_kind = 'person'")
+        projection = person_row.PersonProjection(self.connection)
         for row in self.connection.execute("SELECT * FROM events WHERE entity_kind = 'person' ORDER BY seq").fetchall():
             event = dict(row)
             if event["entity_version"] is None:
                 continue
             if event["event_type"] == "deleted":
-                self.connection.execute("DELETE FROM people WHERE person_id = ?", (event["entity_id"],))
-                self.connection.execute("DELETE FROM person_residences WHERE person_id = ?", (event["entity_id"],))
+                projection.delete(event["entity_id"])
                 continue
             payload = json.loads(event["payload"])
             if event["event_type"] == "merged":
@@ -129,9 +129,8 @@ class LiveStore:
                 )
             else:
                 person = Person.from_dict(payload)
-            current = person_row.read_row(self.connection, person.id)
-            person_row.write_row(
-                self.connection,
+            current = projection.get(person.id)
+            projection.write(
                 person,
                 person_row.RowPosition(
                     version=int(event["entity_version"]),

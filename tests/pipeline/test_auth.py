@@ -11,8 +11,8 @@ from pipeline.api.grant_answer import GrantAnswer
 from pipeline.api.minted_session import MintedSession
 from pipeline.api.session_user import SessionUser
 from tools.archive import Archive
+from tools.memory_store import MemoryStore
 from tools.records import validate_identity
-from tools.store import MemoryStore
 
 
 @pytest.fixture(autouse=True)

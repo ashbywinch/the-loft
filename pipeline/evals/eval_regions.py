@@ -23,11 +23,12 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-from pipeline.artefacts import BatchArtefacts
+from pipeline.batch_artefacts import BatchArtefacts
 from pipeline.evals.eval_crop_grid import read_crop
 from pipeline.evals.eval_geometry import CropReading
 from pipeline.layout import Layout
 from pipeline.layout_line import LayoutLine
+from pipeline.model.vlm import VlmOptions
 from tools.loft_paths import LoftPaths
 
 
@@ -40,16 +41,24 @@ class ColumnRegion:
     x1: int
 
 
+def _dark_pixels(image: Path) -> np.ndarray:
+    """The page's ink as a boolean mask: on these scans a grey level this
+    dark is writing, everything lighter is paper."""
+    ink_level = 140  # grey: below this is ink
+    with Image.open(image) as im:
+        return np.array(im.convert("L")) < ink_level
+
+
 def column_regions(image: Path, min_ink: int = 5) -> list[ColumnRegion]:
     """The ink's column clusters: the x-projection's valleys split the
     content into regions (the postcard's message column vs the address
     column)."""
-    with Image.open(image) as im:
-        arr = np.array(im.convert("L"))
-    dark = (arr < 140).sum(axis=0)
+    dark = _dark_pixels(image).sum(axis=0)
     threshold = max(dark.max() * 0.05, min_ink)
     ink = dark > threshold
     regions: list[ColumnRegion] = []
+    min_gap = 100  # columns: a blank run this wide ends a region (the message/address split)
+    min_width = 100  # columns: a narrower region is the projection's noise
     start: int | None = None
     gap = 0
     for x, has in enumerate(ink):
@@ -60,13 +69,13 @@ def column_regions(image: Path, min_ink: int = 5) -> list[ColumnRegion]:
         elif start is not None:
             gap += 1
             # a gap this wide ends the region (the message/address split)
-            if gap > 100:
+            if gap > min_gap:
                 regions.append(ColumnRegion(start, x - gap))
                 start = None
     if start is not None:
         regions.append(ColumnRegion(start, len(ink) - 1))
     # drop the near-empty regions (the projection noise)
-    return [region for region in regions if region.x1 - region.x0 > 100]
+    return [region for region in regions if region.x1 - region.x0 > min_width]
 
 
 @dataclass(frozen=True)
@@ -79,10 +88,9 @@ class InkRows:
 
 def ink_y_range(image: Path) -> InkRows:
     """The ink's row extent — the regions' vertical span."""
-    with Image.open(image) as im:
-        arr = np.array(im.convert("L"))
-    dark = (arr < 140).sum(axis=1)
-    rows = np.where(dark > 3)[0]
+    ink_rows = 3  # ink pixels a row needs before it counts as writing
+    dark = _dark_pixels(image).sum(axis=1)
+    rows = np.where(dark > ink_rows)[0]
     if len(rows) == 0:
         return InkRows(0, 0)
     return InkRows(int(rows.min()), int(rows.max()))
@@ -144,7 +152,13 @@ def run(
                 float(ink.bottom - ink.top),
                 [],
             )
-            read = read_crop(crop, image_path, Path(tmp), i, model, base_url or "", api_key)
+            read = read_crop(
+                crop,
+                image_path,
+                Path(tmp),
+                i,
+                VlmOptions(model=model, base_url=base_url or "", api_key=api_key),
+            )
             if read is None:
                 failed += 1
                 continue

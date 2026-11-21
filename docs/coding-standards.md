@@ -100,7 +100,7 @@ good.
   derivation engine; the committed projection must equal what publish
   produces, enforced by test. Fictional examples use the **Barlow family** —
   Aria, Jack, Meg, Harry, Nora, Lily and Pip Barlow, with Mrs Rosa Quinn,
-  Mallowfield and Riverfield (`tools/fiction.py`) — never a name lifted from
+  Mallowfield and Riverfield (`tools/house_fiction.py`) — never a name lifted from
   the archive; the same convention covers fixtures, prompts, eval
   inputs and docs, and a named fiction is preferred to a redacted blank.
 - **Never generate testimony.** A story is a person's own words, verbatim —
@@ -384,8 +384,8 @@ good.
   `capture_document()`, `capture_memory()`), `Memory` (the narrator's
   capture flow), `GedcomDocument` (the interchange format:
   `from_text()`/`to_text()` — `import` is a keyword), `Server` (`serve()`),
-  `Placeholder` (the stand-in family: `PlaceholderPaper`, `PlaceholderPhoto`,
-  `PlaceholderObject`, `PlaceholderAvatar`), plus `Store`, `Records`,
+  `Placeholder` (the stand-in family: `PlaceholderPaper`, `PlaceholderPhoto`),
+  plus `Store`, `Records`,
   `Projection` (the derived `app/data`), `AiClient`. Never name a module
   after a verb ("publish", "derive", "import"), a transport medium
   ("email"), or out-of-domain jargon ("elicitation" — the UI's word is

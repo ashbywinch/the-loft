@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from loft.live.import_identity import _latest, import_identities
-from loft.live.store import LiveStore
+from loft.live.live_store import LiveStore
 from tools.loft_paths import LoftPaths
 from tools.records import OrgsTable, PeopleTable, PlacesTable, ThemesTable
 

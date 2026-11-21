@@ -19,12 +19,12 @@ import pytest
 from loft.live.identity_map import disposition_of
 from loft.live.import_identity import import_identities
 from loft.live.import_items import import_items
-from loft.live.store import LiveStore
+from loft.live.live_store import LiveStore
 from tools.archive import Archive
+from tools.disk_store import DiskStore
 from tools.loft_paths import LoftPaths
 from tools.records import Item, split_content
 from tools.ref import Ref
-from tools.store import DiskStore
 
 ARCHIVE = LoftPaths.ARCHIVE_DIR
 

@@ -28,8 +28,8 @@ from pipeline.batch_record import BatchRecord
 from pipeline.pile_candidate import PileCandidate
 from pipeline.registry_entry import RegistryEntry
 from pipeline.store import PipelineStore
+from tools.file_store import StoreError
 from tools.loft_paths import LoftPaths
-from tools.store import StoreError
 
 _BATCH_ID = re.compile(r"^[A-Za-z0-9-]+$")
 

@@ -15,13 +15,13 @@ from typing import Any
 
 import pytest
 
-from loft.live.compat_reviews import ImportsCompatibility
+from loft.live.imports_compatibility import ImportsCompatibility
+from loft.live.live_store import LiveStore
 from loft.live.memory import MemoryLiveStore
 from loft.live.review_writes import ReviewWrites
-from loft.live.store import LiveStore
 from tools.archive import Archive
+from tools.memory_store import MemoryStore
 from tools.records import Person, ReviewDecision, Session
-from tools.store import MemoryStore
 
 
 @pytest.fixture(params=["sqlite", "memory"])

@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from pipeline.artefacts import BatchArtefacts
+from pipeline.batch_artefacts import BatchArtefacts
 from pipeline.batch_record import BatchRecord
 from pipeline.classify import PageKinds
 from pipeline.registry import load_batch
@@ -233,10 +233,11 @@ def run_plan(
         spec, reason = gaps[0]
         if on_stage is not None:
             on_stage(spec.name, reason)
+        millis_per_second = 1000  # the on_done seam reports the stage's duration in milliseconds
         started = time.monotonic()
         spec.run(StageContext(batch, view, inputs))
         if on_done is not None:
-            on_done(spec.name, int((time.monotonic() - started) * 1000))
+            on_done(spec.name, int((time.monotonic() - started) * millis_per_second))
         ran.append(spec.name)
         view = view.fresh(record)
 

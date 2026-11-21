@@ -37,6 +37,11 @@ class Line:
 
     _CAP = 0.8  # × pitch: a box never exceeds this above/below its baseline
 
+    # The ink percentiles a box's edge is drawn at: the box hugs the writing
+    # without a stray speck stretching it the whole way across.
+    _INK_LOW_PERCENTILE = 2
+    _INK_HIGH_PERCENTILE = 98
+
     shapes: list[Mark] = field(default_factory=list)
     a: float = 0.0
     b: float = 0.0
@@ -87,11 +92,13 @@ class Line:
         xs_there = [s.cx for s in other.shapes]
         low = max(min(xs_here), min(xs_there))
         high = min(max(xs_here), max(xs_there))
-        samples = (
-            [low, (low + high) / 2, high]
-            if high > low
-            else [(min(xs_here) + max(xs_here) + min(xs_there) + max(xs_there)) / 4]
-        )
+        if high > low:
+            samples = [low, (low + high) / 2, high]
+        else:
+            # the fits share no x at all: compare their own centres
+            here_centre = (min(xs_here) + max(xs_here)) / 2
+            there_centre = (min(xs_there) + max(xs_there)) / 2
+            samples = [(here_centre + there_centre) / 2]
         return max(abs(self.y_at(x) - other.y_at(x)) for x in samples) < pitch / divisor
 
     def frame(self, shapes: list[Mark]) -> Frame:
@@ -163,8 +170,8 @@ class Line:
                     run,
                     float(along.min()),
                     float(along.max()),
-                    max(float(np.percentile(across, 2)), -Line._CAP * pitch / Components.SCALE),
-                    min(float(np.percentile(across, 98)), Line._CAP * pitch / Components.SCALE),
+                    max(float(np.percentile(across, Line._INK_LOW_PERCENTILE)), -Line._CAP * pitch / Components.SCALE),
+                    min(float(np.percentile(across, Line._INK_HIGH_PERCENTILE)), Line._CAP * pitch / Components.SCALE),
                 )
             )
         return out

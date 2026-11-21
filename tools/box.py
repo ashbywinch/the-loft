@@ -2,6 +2,9 @@
 image's pixels (the JSON contract), and these functions are the pure math
 over that shape: the area, the region overlap, the reading-axis extent,
 and the aspect-consistency rule the orientation gates share.
+
+Each rule's own measures are named inside it: a pure helper with one reader
+keeps its measure local (docs/coding-standards.md), and these ARE the rule.
 """
 
 from __future__ import annotations
@@ -29,8 +32,22 @@ def reading_axis(box: list[float], orientation: float | None) -> float:
     """The box extent along the text's reading direction: the width for
     horizontal text (axis near 0/180), the height for vertical (axis near
     90/270) — the length the recognized text must fit."""
-    axis = (orientation or 0) % 180
-    return box[2] - box[0] if (axis <= 45 or axis >= 135) else box[3] - box[1]
+    half_turn = 180  # degrees: an axis reads the same in both directions
+    # within a right angle's half of horizontal still reads along the width
+    slack = 45
+    axis = (orientation or 0) % half_turn
+    horizontal = axis <= slack or axis >= half_turn - slack
+    return box[2] - box[0] if horizontal else box[3] - box[1]
+
+
+def is_vertical(orientation: float | None) -> bool:
+    """Does the line read down the page — a quarter turn off horizontal?
+
+    The axis repeats every half turn, so anything not upright or upside down
+    is vertical (the extent rules judge the box's perpendicular extent from
+    this)."""
+    half_turn = 180  # degrees: an axis reads the same in both directions
+    return orientation is not None and orientation % half_turn != 0
 
 
 def aspect_consistent(orientation: float, box: list[float] | None) -> bool:
@@ -42,29 +59,20 @@ def aspect_consistent(orientation: float, box: list[float] | None) -> bool:
     diagonal). A ``None`` box (no geometry) is always consistent."""
     if not box:
         return True
+    half_turn = 180  # degrees: an axis reads the same in both directions
+    vertical_axis = 90  # degrees: the vertical reading direction
+    # how far off an axis a box may read and still agree with its shape
+    slack = 30
     box_w = box[2] - box[0]
     box_h = box[3] - box[1]
     if box_w <= 2 * box_h and box_h <= 2 * box_w:
         return True  # near-square — no aspect constraint
-    axis = orientation % 180
-    vertical = 60 <= axis <= 120
-    horizontal = axis <= 30 or axis >= 150
+    axis = orientation % half_turn
+    vertical = vertical_axis - slack <= axis <= vertical_axis + slack
+    horizontal = axis <= slack or axis >= half_turn - slack
     if box_w > 2 * box_h:
         return not vertical  # clearly wide: horizontal text only
     return not horizontal  # clearly tall: vertical text only
-
-
-def orientation_from_aspect(box: list[float] | None) -> int:
-    """The reading direction the box's shape implies — aspect_consistent's
-    inverse, used when labelling ink-measured rows: a clearly-tall union
-    is vertical text (90°), everything else defaults horizontal.
-    Near-square boxes are lenient under Gate A, so the horizontal default
-    is always safe there."""
-    if not box:
-        return 0
-    box_w = box[2] - box[0]
-    box_h = box[3] - box[1]
-    return 90 if box_h > box_w * 1.5 else 0
 
 
 # A line clip must carry >= 0.1% dark pixels — a blank clip has nothing
@@ -88,12 +96,13 @@ def has_ink(box: Sequence[float], image: Any) -> bool:
     median = total / 2
     level = 0
     acc = 0
-    for value in range(256):
-        acc += hist[value]
+    for value, count in enumerate(hist):
+        acc += count
         if acc >= median:
             level = value
             break
-    ink_level = max(1, level - 35)
+    ink_delta = 35  # grey levels below the crop's median paper level: darker is ink
+    ink_level = max(1, level - ink_delta)
     ink_min = 0.001
     return sum(hist[:ink_level]) >= ink_min * total
 

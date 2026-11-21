@@ -55,7 +55,8 @@ def _split_tall_row(row: PieceRow, factor: float = 2.5) -> list[PieceRow]:
     slant); past that the row splits at its widest center-gap,
     recursively. All thresholds are the row's OWN scale — invariant to
     scan resolution."""
-    cap = factor * _median([piece.height for piece in row.pieces], 50.0)
+    fallback_height = 50.0  # px: the row's own scale when it holds no measurable piece
+    cap = factor * _median([piece.height for piece in row.pieces], fallback_height)
     out: list[PieceRow] = []
     stack = [PieceRow(sorted(row.pieces, key=lambda piece: piece.cy))]
     while stack:
@@ -125,10 +126,11 @@ def split_by_bands(box: Rectangle, image: Any) -> list[Rectangle]:
     if x1 <= x0 or y1 <= y0:
         return [box]
     gray = image.crop((x0, y0, x1, y1)).convert("L")
-    norm_h = 100
+    norm_h = 100  # rows the crop is normalised to: the thresholds below are scale-invariant
     norm = gray.resize((max(1, round(gray.width * norm_h / max(1, gray.height))), norm_h))
     scale = ProjectionScale(gray.width / norm.width, gray.height / norm_h)
-    ink = norm.point(lambda p: 255 - p)
+    grey_ceiling = 255  # an 8-bit greyscale channel's ceiling: inverting dark ink to a bright projection
+    ink = norm.point(lambda p: grey_ceiling - p)
     rows = ink.getprojection()[1]
     runs: list[RowBand] = []
     start: int | None = None
@@ -140,8 +142,10 @@ def split_by_bands(box: Rectangle, image: Any) -> list[Rectangle]:
             start = None
     if start is not None:
         runs.append(RowBand(start, len(rows) - 1))
-    merged = _merge_gap_runs(runs, 3)
-    bands = [band for band in merged if band.length >= 3]
+    merge_gap = 3  # normalised rows: a thinner separation is one band
+    min_band = 3  # normalised rows: a thinner run is noise, not a line of writing
+    merged = _merge_gap_runs(runs, merge_gap)
+    bands = [band for band in merged if band.length >= min_band]
     if len(bands) < 2:
         return [box]
     parts = _band_parts(bands, ink, box, scale)
@@ -167,8 +171,12 @@ def cluster_rows(boxes: list[Rectangle], gap: float | None = None, x_gap: float 
         return []
     heights = [box.height for box in boxes]
     widths = [box.width for box in boxes]
-    y_gap = gap if gap is not None else _median(heights, 50.0) * 0.65
-    x_split = x_gap if x_gap is not None else _median(widths, 200.0) * 1.5
+    fallback_height = 50.0  # px: the median piece height when the boxes measure none
+    fallback_width = 200.0  # px: and the median piece width
+    y_gap_share = 0.65  # x the median piece height: between within-line jitter and the next line's top
+    x_gap_share = 1.5  # x the median piece width: word gaps stay, column gaps split
+    y_gap = gap if gap is not None else _median(heights, fallback_height) * y_gap_share
+    x_split = x_gap if x_gap is not None else _median(widths, fallback_width) * x_gap_share
     ordered = sorted(boxes, key=lambda box: box.cy)
     grouped: list[list[Rectangle]] = []
     for box in ordered:
@@ -189,9 +197,12 @@ def transcription_line_count_plausible(line_count: int, row_count: int) -> bool:
     rec over-splits; the model merges some). Conservative: pages with
     fewer than 10 measured rows are photo-caption territory where the
     rec's row count is unreliable — any count is accepted."""
-    if row_count < 10:
+    min_rows = 10  # below this the rec's row count is photo-caption territory: any count passes
+    rows_per_line = 5  # a plausible read names one line for every five measured rows...
+    lines_per_group = 2  # ... and never fewer than two in that five
+    if row_count < min_rows:
         return True
-    return line_count * 5 >= row_count * 2
+    return line_count * rows_per_line >= row_count * lines_per_group
 
 
 def match_labels(
@@ -220,7 +231,8 @@ def match_labels(
         return proportional
     overlap_idx = _overlap_assignments(row_unions, model_bands)
     assigned = [i for i in overlap_idx if i >= 0]
-    if assigned and len(set(assigned)) / len(overlap_idx) < 0.6:
+    trusted_share = 0.6  # of the rows: fewer distinct bands than this and the boxes are schematic
+    if assigned and len(set(assigned)) / len(overlap_idx) < trusted_share:
         return proportional  # the model's boxes are schematic — fall back
     return [transcription_lines[i] if i >= 0 else "" for i in overlap_idx]
 

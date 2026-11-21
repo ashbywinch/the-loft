@@ -236,7 +236,8 @@ the text; the page images stay in the scan area, linked by sha256 and phash.
 
 Keep list (true nouns, no change): `Colour`, `CropWindow`, `SplitCase`,
 `_Sheet`, `_Jig`, `ExportSet`, `StoryRefs`, `StoryFacts`, `PageFlags`,
-`LineFrame`, `_UnionFind`, `PageGeometry`, `ClipSeam`, `AnchoredSource`,
+`LineFrame`, `_UnionFind`, `PageGeometry`, `ClipSeam`, `MultiInputs`,
+`AnchoredSource`,
 
 `_TextBounds`, `HalfRegion`, `WordBox`, `MapView`, `ContentBounds`,
 `CropExtent`, `PageRef`, `ToolHarness`, `PageClassification`,

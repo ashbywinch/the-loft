@@ -3,7 +3,7 @@ the tricky pages' lines, and A/B the enhancement candidates against a
 KNOWN ground truth.
 
 The fixtures are SYNTHETIC: a generated letter with margin blocks and
-injected failings (misplaced transcription boxes, loose boxes) whose
+injected failings (misplaced transcription boxes) whose
 true geometry is known BY CONSTRUCTION. The metrics: the per-line anchor
 IoU, the orientation accuracy, and the reading-order accuracy. Each
 candidate is a layout-source configuration; the harness builds the
@@ -14,16 +14,14 @@ pipeline's enhancement decisions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil
 from typing import Any
 
 from pipeline.detection import Detection
 from pipeline.detection_pass import DetectionPass
-from pipeline.layout import Layout
+from pipeline.layout import Layout, MultiInputs, PageGeometry, SingleInputs
 from pipeline.layout_line import LayoutLine
 from pipeline.model.orientation_line import OrientationLine
 from tools.box import overlap
-from tools.gates import validate_layout
 from tools.text import normalize
 
 
@@ -78,11 +76,12 @@ def stitch_crop_box(crop: CropReading, local_box: list[float]) -> list[float]:
     """The crop-local box (normalized 0-1000 in the crop's frame) -> the
     page frame: the crop's origin adds, the crop's size scales. The
     crop-grid's load-bearing seam (2026-08-22) — the page box, exactly."""
+    unit = Layout.NORMALIZED_BOX_SCALE  # the crop-local box's frame: fractions of the side, times 1000
     return [
-        crop.x + local_box[0] / 1000 * crop.w,
-        crop.y + local_box[1] / 1000 * crop.h,
-        crop.x + local_box[2] / 1000 * crop.w,
-        crop.y + local_box[3] / 1000 * crop.h,
+        crop.x + local_box[0] / unit * crop.w,
+        crop.y + local_box[1] / unit * crop.h,
+        crop.x + local_box[2] / unit * crop.w,
+        crop.y + local_box[3] / unit * crop.h,
     ]
 
 
@@ -108,12 +107,12 @@ class Fixture:
         """The current pipeline: the transcription's own boxes (the marker
         geometry) anchor the single-orientation layout."""
         return Layout.single(
-            "p1.jpg",
-            self.width,
-            self.height,
-            self._vlm_text(),
-            self.detections,
-            vlm_boxes=self.marker_boxes,
+            SingleInputs(
+                PageGeometry("p1.jpg", self.width, self.height),
+                self._vlm_text(),
+                self.detections,
+                vlm_boxes=self.marker_boxes,
+            )
         )
 
     def rec_only(self) -> Layout:
@@ -121,12 +120,12 @@ class Fixture:
         the marker geometry (no vlm_boxes) — the misplaced-marker
         failing's proposed fix."""
         return Layout.single(
-            "p1.jpg",
-            self.width,
-            self.height,
-            self._vlm_text(),
-            self.detections,
-            vlm_boxes=None,
+            SingleInputs(
+                PageGeometry("p1.jpg", self.width, self.height),
+                self._vlm_text(),
+                self.detections,
+                vlm_boxes=None,
+            )
         )
 
     def multi(self) -> Layout:
@@ -147,13 +146,13 @@ class Fixture:
         ]
         passes = [DetectionPass(degrees=0, lines=self.detections)]
         return Layout.multi(
-            "p1.jpg",
-            self.width,
-            self.height,
-            passes,
-            report_lines=report_lines,
-            vlm_text=self._vlm_text(),
-            trust_report_degrees=True,
+            MultiInputs(
+                PageGeometry("p1.jpg", self.width, self.height),
+                passes,
+                report_lines,
+                self._vlm_text(),
+                trust_report_degrees=True,
+            )
         )
 
     def crop_grid(self) -> Layout:
@@ -230,11 +229,13 @@ def synthetic_letter() -> Fixture:
     # sit ~200px above the real text (well-proportioned, in the blank).
     # The marker boxes are the NORMALIZED 0-1000 frame (the layout's
     # vlm_boxes contract).
+    injected_shift = 200  # px: how far above the real text the failing boxes sit
+    unit = Layout.NORMALIZED_BOX_SCALE  # the vlm_boxes contract: fractions of the page, times 1000
     misplaced = {}
     for i, (text, box) in enumerate(body + margin + address):
         if text.startswith(("P.S.", "theory", "my first", "Postmark", "Queen")):
-            box = [box[0], box[1] - 200, box[2], box[3] - 200]
-        misplaced[i] = [box[0] / width * 1000, box[1] / height * 1000, box[2] / width * 1000, box[3] / height * 1000]
+            box = [box[0], box[1] - injected_shift, box[2], box[3] - injected_shift]
+        misplaced[i] = [box[0] / width * unit, box[1] / height * unit, box[2] / width * unit, box[3] / height * unit]
     crops = _crop_readings(truth_lines)
     return Fixture("synthetic-letter", width, height, detections, misplaced, truth_lines, crops)
 
@@ -378,146 +379,3 @@ def synthetic_postcard() -> Fixture:
         for i, (_, box, _) in enumerate(all_lines)
     }
     return Fixture("synthetic-postcard", width, height, detections, marker_boxes, truth)
-
-
-def duplicate_region_fixture() -> Fixture:
-    """The injected duplicate-region failing (the postcard's location
-    report gave two message lines the SAME box): the truth has the lines
-    at distinct positions; the report's boxes claim the same region. The
-    RegionGate must fire — the experiment's detection axis."""
-    width, height = 1000, 1500
-    truth = [
-        TruthLine("We are from", [150, 200, 220, 700], orientation=90, position=0),
-        TruthLine("Mallowfield & Mrs", [240, 200, 310, 700], orientation=90, position=1),
-    ]
-    detections = [Detection(box=list(t.box), text=t.text, score=0.95, words=[]) for t in truth]
-    marker_boxes: dict[int, list[float]] = {0: [150.0, 200.0, 220.0, 700.0], 1: [150.0, 200.0, 220.0, 700.0]}
-    return Fixture("duplicate-region", width, height, detections, marker_boxes, truth)
-
-
-def loose_box_fixture() -> Fixture:
-    """The injected loose-box failing (the postcard's stamp lines): the
-    location report's box is ~8x the text's true extent (well-placed but
-    wildly loose), so Gate B fires and the anchor arbitration must drop
-    the box — the line stays flagged, never anchoring a box that refuses
-    the page."""
-    width, height = 1000, 1500
-    truth = [TruthLine("POSTAGE", [820, 300, 880, 320], orientation=0, position=0)]
-    detections = [Detection(box=[820, 300, 880, 320], text="POSTAGE", score=0.95, words=[])]
-    # the report's box: the same region but ~11x the width (the loose
-    # estimate — 'POSTAGE' in a 680px box is 97 px/char, over Gate B's 80)
-    marker_boxes = {0: [820 / width * 1000, 300 / height * 1000, 1500 / width * 1000, 320 / height * 1000]}
-    return Fixture("loose-box", width, height, detections, marker_boxes, truth)
-
-
-def detection_report(fixtures: list[Fixture], label: str) -> str:
-    """The detection axis: for the injected-failing fixtures, how many
-    gates fire (the failing is seen) and whether the layout refuses."""
-    rows = []
-    for fixture in fixtures:
-        layout = fixture.baseline()
-        findings = validate_layout(layout)
-        rows.append(f"  {fixture.name:<20} gate findings {len(findings):>2}  refuses: {bool(findings)}")
-    return f"{label}:\n" + "\n".join(rows)
-
-
-@dataclass
-class LocationCost:
-    _OVERHEAD_TOKENS = 800
-    _CLIP_TOKENS = 300
-
-    """The clip-location candidate's cost for one fixture: the number of
-    model calls and the estimated tokens. The model's per-call overhead
-    (the system prompt + the image tokens) dominates small batches — the
-    cost-effectiveness question the batch-size sweep answers."""
-
-    calls: int
-    tokens: int
-
-    def tokens_per_line(self, n_lines: int) -> float:
-        return self.tokens / n_lines if n_lines else 0.0
-
-
-# The model call's fixed overhead: the system prompt + one image's tokens.
-# A line clip at the marker-box resolution is ~a few hundred tokens; the
-# overhead is the dominant term at batch size 1.
-def clip_location_cost(n_lines: int, batch_size: int) -> LocationCost:
-    """The cost of locating ``n_lines`` in batches of ``batch_size``:
-    each call carries the overhead + the batch's clips. The larger
-    batches amortize the overhead — the sweep's point."""
-    calls = ceil(n_lines / batch_size) if n_lines else 0
-    tokens = calls * LocationCost._OVERHEAD_TOKENS + n_lines * LocationCost._CLIP_TOKENS
-    return LocationCost(calls, tokens)
-
-
-class ClipLocation:
-    """The clip-location candidate: clip each line's marker
-    box, ask the model to LOCATE the batch's lines (the exact box within
-    the clip + the angle), map the crop boxes back to the page. The
-    batch size is the experimental variable — one call per batch, not
-    one per line. The SIMULATED locator is perfect WITHIN the clip but
-    inherits the crop quality: a marker box that misses the line's ink
-    (page-03's misplaced boxes) yields a blank clip no model can locate —
-    the line falls back to the rec's match. The real model calls are the
-    eval's."""
-
-    def __init__(self, batch_size: int) -> None:
-        self.batch_size = batch_size
-
-    @staticmethod
-    def __call__(fixture: Fixture) -> Layout:
-        report_lines = []
-        for i, t in enumerate(fixture.truth):
-            marker = fixture.marker_boxes.get(i) if fixture.marker_boxes else None
-            if marker:
-                scaled = [
-                    marker[0] / 1000 * fixture.width,
-                    marker[1] / 1000 * fixture.height,
-                    marker[2] / 1000 * fixture.width,
-                    marker[3] / 1000 * fixture.height,
-                ]
-                locatable = overlap(scaled, t.box) > 0
-            else:
-                locatable = False
-            if locatable:
-                report_lines.append(
-                    OrientationLine(
-                        index=i,
-                        box=[
-                            t.box[0] / fixture.width * 1000,
-                            t.box[1] / fixture.height * 1000,
-                            t.box[2] / fixture.width * 1000,
-                            t.box[3] / fixture.height * 1000,
-                        ],
-                        degrees=t.orientation,
-                    )
-                )
-        vlm_text = "\n".join(t.text for t in fixture.truth)
-        passes = [DetectionPass(degrees=0, lines=fixture.detections)]
-        return Layout.multi(
-            "p1.jpg",
-            fixture.width,
-            fixture.height,
-            passes,
-            report_lines=report_lines or None,
-            vlm_text=vlm_text,
-            trust_report_degrees=True,
-        )
-
-
-def batch_sweep(fixtures: list[Fixture], batch_sizes: list[int]) -> str:
-    """The clip-location sweep: the accuracy at each batch size (the
-    simulated perfect model — the ceiling) + the cost model's tokens per
-    line. The question: does the accuracy hold as the batches grow, and
-    how much does the per-line cost drop?"""
-    rows = ["  batch  calls  tokens/line  accuracy"]
-    for fixture in fixtures:
-        n = len(fixture.truth)
-        for size in batch_sizes:
-            metrics = measure(ClipLocation(size)(fixture), fixture)
-            cost = clip_location_cost(n, size)
-            rows.append(
-                f"  {size:>5}  {cost.calls:>5}  {cost.tokens_per_line(n):>10.0f}  "
-                f"IoU {metrics.anchor_iou:.2f} ori {metrics.orientation_accuracy:.2f}"
-            )
-    return "\n".join(rows)

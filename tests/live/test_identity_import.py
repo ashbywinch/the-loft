@@ -13,7 +13,7 @@ import pytest
 from loft.live.backup import BackupMarkerError
 from loft.live.errors import LiveError
 from loft.live.import_identity import import_identities
-from loft.live.store import LiveStore
+from loft.live.live_store import LiveStore
 
 
 def _archive(root: Path, *, people: int = 5) -> Path:

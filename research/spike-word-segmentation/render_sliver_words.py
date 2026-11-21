@@ -19,7 +19,7 @@ from PIL import Image
 
 from document.colour import Colour
 from document.point import Point
-from pipeline.rows.page_visuals import CaptionSheet, Crop, PagePainter, halo_text, scaled_crop
+from pipeline.rows.page_visuals import CaptionSheet, Crop, PagePainter, halo_text, kilobytes, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 WORDS = Path("/tmp/reparse-sept14/words.json")
@@ -27,6 +27,9 @@ WORDS = Path("/tmp/reparse-sept14/words.json")
 
 class Config:
     """This script's fixed inputs and outputs."""
+
+    LABEL_LEFT = 130  # px left of the sliver's corner: the label's left edge
+    LABEL_BELOW = 10  # px below it: the label's top edge
 
     OUT = Path(__file__).resolve().parent / "evidence" / "sliver-words.jpg"
     # the slivers (page px, from the splitter)
@@ -65,12 +68,12 @@ def _main() -> int:
         draw.rectangle([px(sx0), py(sy0), px(sx1), py(sy1)], outline=(200, 0, 0, 255), width=2)
     halo_text(
         draw,
-        Point(x=px(Config.SLIVERS[0][0]) - 130, y=py(Config.SLIVERS[0][1]) + 10),
+        Point(x=px(Config.SLIVERS[0][0]) - Config.LABEL_LEFT, y=py(Config.SLIVERS[0][1]) + Config.LABEL_BELOW),
         "the slivers",
         fill=Colour(red=200, green=0, blue=0),
     )
     Config.OUT.write_bytes(PagePainter.review_image(sheet))
-    print(f"sliver words -> {Config.OUT} ({Config.OUT.stat().st_size // 1024}KB)")
+    print(f"sliver words -> {Config.OUT} ({kilobytes(Config.OUT.stat().st_size)}KB)")
     return 0
 
 

@@ -14,7 +14,7 @@ import json
 from typing import Any
 
 from loft.live.errors import LiveError
-from loft.live.protocols import ItemStore
+from loft.live.item_store import ItemStore
 from tools.archive import Archive
 from tools.records import Item
 
@@ -102,7 +102,9 @@ class ItemCompatibility:
                 bare = Item.CONTENT_FILES.get(kind)
                 if bare is None:
                     raise ItemExportError(f"item {item.id} has unknown content kind {kind!r}")
-                filename = bare if version == 1 else f"{bare[:-4]}-{version}.txt"
+                # content versions with its sidecar: story.txt at v1, story-2.txt at v2
+                stem, suffix = bare.rsplit(".", 1)
+                filename = bare if version == 1 else f"{stem}-{version}.{suffix}"
             else:
                 filename = asset.file
             out.append((filename, str(entry["sha256"])))

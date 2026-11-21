@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from tools.store import DiskStore, ImmutableStoreError, MemoryStore, StoreError
+from tools.disk_store import DiskStore
+from tools.file_store import ImmutableStoreError, StoreError
+from tools.memory_store import MemoryStore
 
 
 def test_memory_store_writes_new_files() -> None:

@@ -19,13 +19,13 @@ import pytest
 from document.row_adjustments import RowAdjustments
 from loft.live.compat_pages import PageCompatibility, PageExportError
 from loft.live.errors import NotFound
+from loft.live.live_store import LiveStore
 from loft.live.memory import MemoryLiveStore
 from loft.live.page_row import PageState
 from loft.live.page_writes import PageWrites
-from loft.live.store import LiveStore
 from pipeline.api.sync import BatchReadings, apply_row_adjustments
 from tools.archive import Archive
-from tools.store import MemoryStore
+from tools.memory_store import MemoryStore
 
 BATCH = "adopt-0001"
 PAGE = "p1.jpg"

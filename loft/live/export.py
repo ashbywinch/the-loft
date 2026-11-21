@@ -18,7 +18,7 @@ from typing import Any, ClassVar
 
 from loft.live.errors import LiveError
 from loft.live.identity_map import date_value
-from loft.live.store import LiveStore
+from loft.live.live_store import LiveStore
 from tools.loft_paths import LoftPaths
 from tools.records import Item, Org, Person, Place, Relationship
 from tools.theme import Theme

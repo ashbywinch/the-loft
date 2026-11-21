@@ -12,9 +12,9 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any
 
+from loft.live.determination import Determination
 from loft.live.errors import Conflict
-from loft.live.identity_map import BasisKinds, basis_after, renders_estimated
-from loft.live.protocols import IdentityStore
+from loft.live.identity_store import IdentityStore
 from tools.gone_person import GonePerson
 from tools.gone_place import GonePlace
 from tools.records import Person, Place
@@ -52,27 +52,7 @@ class Identities:
         self, place_id: str, decision: str, basis: dict[str, str] | None = None, *, actor: str
     ) -> Place | GonePlace | None:
         with self.store.change(actor=actor, note=f"{decision} {place_id}") as change:
-            current = change.places.get(place_id)
-            if current is None or str(current.to_dict().get("status", "confirmed")) == "rejected":
-                return current  # a rejected proposal is terminal (TECHSPEC/05 §18.2)
-            if decision == "pending":
-                return current
-            if decision == "delete":
-                change.places.delete(place_id)
-                return GonePlace(place_id)
-            if decision == "attested":
-                if current.status != "proposed" and not renders_estimated(current.basis):
-                    return current
-                updated = replace(current, status="confirmed", basis=basis_after(current.basis, BasisKinds.KNOWN))
-            elif decision == "estimated":
-                if basis is None or not str(basis.get("text", "")).strip():
-                    raise ValueError(f"estimated needs a basis: {place_id}")
-                updated = replace(
-                    current, status="confirmed", basis=basis_after(current.basis, BasisKinds.RECOLLECTED, basis)
-                )
-            else:
-                raise ValueError(f"unknown decision: {decision!r}")
-            return current if updated == current else change.places.save(updated, base=current.version)
+            return Determination(decision, basis).apply(change.places, place_id, gone=GonePlace)
 
     def reject_person(self, person_id: str, *, actor: str) -> Person:
         with self.store.change(actor=actor, note=f"reject {person_id}") as change:

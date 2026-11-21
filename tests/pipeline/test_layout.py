@@ -18,7 +18,11 @@ from pipeline.detection import Detection
 from pipeline.detection_pass import DetectionPass
 from pipeline.detection_word import DetectionWord
 from pipeline.layout import (
+    ClipSeam,
     Layout,
+    MultiInputs,
+    PageGeometry,
+    SingleInputs,
     associate_lines,
     build_layout,
     load_layout,
@@ -187,7 +191,7 @@ class TestBuildLayout:
             _det([0, 50, 100, 70], "Chere Maman,"),
             _det([300, 400, 400, 420], "orphan detection line"),
         ]
-        layout = build_layout("page-03.jpg", 1000, 500, vlm, dets)
+        layout = build_layout(SingleInputs(PageGeometry("page-03.jpg", 1000, 500), vlm, dets))
         assert layout.page == "page-03.jpg"
         assert layout.width == 1000
         assert layout.height == 500
@@ -204,7 +208,7 @@ class TestBuildLayout:
     def test_unmatched_vlm_line_has_no_box(self) -> None:
         vlm = "line one\nline two that no detector line claims"
         dets = [_det([0, 0, 10, 10], "line one")]
-        layout = build_layout("p.jpg", 100, 100, vlm, dets)
+        layout = build_layout(SingleInputs(PageGeometry("p.jpg", 100, 100), vlm, dets))
         assert layout.lines[1].box is None
         assert layout.lines[1].conf == 0.0
         assert all(w.conf == 1.0 for w in _words(layout.lines[1]))  # no self-report: no flags
@@ -212,7 +216,7 @@ class TestBuildLayout:
     def test_blank_lines_skipped(self) -> None:
         vlm = "\nline one\n\nline two\n"
         dets = [_det([0, 0, 10, 10], "line one"), _det([0, 20, 10, 30], "line two")]
-        layout = build_layout("p.jpg", 100, 100, vlm, dets)
+        layout = build_layout(SingleInputs(PageGeometry("p.jpg", 100, 100), vlm, dets))
         assert len(layout.lines) == 2
 
 
@@ -225,7 +229,7 @@ class TestSelfReportFlags:
     def test_selfreport_drives_the_flags(self) -> None:
         dets = [_det([0, 0, 10, 10], "line one here"), _det([0, 20, 10, 30], "second line with a doubtful word")]
         report = [UnsureWord(line=1, word="one"), UnsureWord(line=2, word="doubtful")]
-        layout = build_layout("p.jpg", 100, 100, self.VLM, dets, selfreport=report)
+        layout = build_layout(SingleInputs(PageGeometry("p.jpg", 100, 100), self.VLM, dets, selfreport=report))
         confs = [w.conf for line in layout.lines for w in _words(line)]
         # "one" and "doubtful" flag; the rest are the model's confident words
         assert _words(layout.lines[0])[1] == LayoutWord(word="one", box=None, conf=0.0)
@@ -235,7 +239,7 @@ class TestSelfReportFlags:
     def test_struck_words_always_flag(self) -> None:
         vlm = "a ~~reading~~ lamp"
         dets = [_det([0, 0, 10, 10], "a reading lamp")]
-        layout = build_layout("p.jpg", 100, 100, vlm, dets, selfreport=[])
+        layout = build_layout(SingleInputs(PageGeometry("p.jpg", 100, 100), vlm, dets, selfreport=[]))
         struck = next(w for w in _words(layout.lines[0]) if "reading" in w.word)
         assert struck.conf == 0.0
         # a clear word does not flag under an empty self-report
@@ -248,7 +252,7 @@ class TestSelfReportFlags:
         # longer exists. A struck word still flags.
         vlm = "the quick brown ~~fiist~~ theory"
         dets = [_det([0, 0, 10, 10], "the quick brown first theory")]
-        layout = build_layout("p.jpg", 100, 100, vlm, dets)
+        layout = build_layout(SingleInputs(PageGeometry("p.jpg", 100, 100), vlm, dets))
         confs = [w.conf for w in _words(layout.lines[0])]
         assert confs == [1.0, 1.0, 1.0, 0.0, 1.0]  # only the struck word flags
 
@@ -256,7 +260,7 @@ class TestSelfReportFlags:
         # the model cites 1-based lines; the layout lines are 0-based
         dets = [_det([0, 0, 10, 10], "line one here"), _det([0, 20, 10, 30], "second line")]
         report = [UnsureWord(line=2, word="second")]
-        layout = build_layout("p.jpg", 100, 100, self.VLM, dets, selfreport=report)
+        layout = build_layout(SingleInputs(PageGeometry("p.jpg", 100, 100), self.VLM, dets, selfreport=report))
         assert _words(layout.lines[1])[0].conf == 0.0
         assert _words(layout.lines[0])[0].conf == 1.0
 
@@ -267,7 +271,7 @@ class TestSelfReportFlags:
             UnsureWord(line=0, word="y"),
             UnsureWord(line=1, word="no-line"),
         ]
-        layout = build_layout("p.jpg", 100, 100, "line one here", dets, selfreport=report)
+        layout = build_layout(SingleInputs(PageGeometry("p.jpg", 100, 100), "line one here", dets, selfreport=report))
         assert all(w.conf == 1.0 for w in _words(layout.lines[0]))
         # a junk self-report record never becomes an UnsureWord — the parse seam refuses it
         with pytest.raises(ValueError, match="invalid literal"):
@@ -278,7 +282,9 @@ class TestSelfReportFlags:
 
 class TestWriteLoadLayout:
     def test_atomic_round_trip(self, tmp_path) -> None:
-        layout = build_layout("p.jpg", 100, 100, "one line", [_det([0, 0, 100, 20], "one line")])
+        layout = build_layout(
+            SingleInputs(PageGeometry("p.jpg", 100, 100), "one line", [_det([0, 0, 100, 20], "one line")])
+        )
         path = tmp_path / "p.layout.json"
         layout.write(path)
         assert json.loads(path.read_text(encoding="utf-8")) == layout.to_dict()
@@ -355,7 +361,7 @@ def test_layout_payload_declares_the_box_frame() -> None:
     can check, never assume: a box in the wrong frame looks valid (right
     size, right proportions, gates pass)."""
 
-    layout = Layout.single("p.jpg", 100, 200, "", [])
+    layout = Layout.single(SingleInputs(PageGeometry("p.jpg", 100, 200), "", []))
     assert layout.to_dict()["box_space"] == "original-image"
 
 
@@ -439,11 +445,11 @@ class TestRotateDetections:
 class TestDetections:
     def test_reconstruction_round_trip(self) -> None:
         layout = build_layout(
-            "p.jpg",
-            100,
-            100,
-            "line one\nline two",
-            [_det([0, 0, 100, 20], "line one"), _det([0, 50, 120, 70], "noise")],
+            SingleInputs(
+                PageGeometry("p.jpg", 100, 100),
+                "line one\nline two",
+                [_det([0, 0, 100, 20], "line one"), _det([0, 50, 120, 70], "noise")],
+            )
         )
         dets = layout.detections()
         assert len(dets) == 2
@@ -451,7 +457,7 @@ class TestDetections:
         assert by_box[(0, 0, 100, 20)]["text"] == "line one"
         assert by_box[(0, 50, 120, 70)]["text"] == "noise"
         # re-running the association on the reconstruction reproduces the layout
-        rebuilt = build_layout("p.jpg", 100, 100, "line one\nline two", dets)
+        rebuilt = build_layout(SingleInputs(PageGeometry("p.jpg", 100, 100), "line one\nline two", dets))
         assert rebuilt.lines[0].box == layout.lines[0].box
         assert rebuilt.lines[0].box_source == layout.lines[0].box_source
 
@@ -471,12 +477,12 @@ def test_build_layout_uses_the_vlm_boxes_when_present(tmp_path: Path) -> None:
 
     vlm_text = "piano-practising facilities. At the\nmoment it looks awfully complicated,"
     layout = build_layout(
-        "p1.jpg",
-        1000,
-        2000,
-        vlm_text,
-        [],  # no detections at all — the VLM geometry stands alone
-        vlm_boxes={0: [219, 496, 760, 526], 1: [234, 513, 733, 543]},
+        SingleInputs(
+            PageGeometry("p1.jpg", 1000, 2000),
+            vlm_text,
+            [],  # no detections at all — the VLM geometry stands alone
+            vlm_boxes={0: [219, 496, 760, 526], 1: [234, 513, 733, 543]},
+        )
     )
     assert layout.lines[0].box == [219.0, 992.0, 760.0, 1052.0]  # x*1000/1000, y*2000/1000
     assert layout.lines[0].box_source == "report"
@@ -489,7 +495,7 @@ def test_build_layout_without_vlm_boxes_keeps_the_association(tmp_path: Path) ->
     from pipeline.layout import build_layout
 
     vlm_text = "line one\nline two"
-    layout = build_layout("p1.jpg", 100, 200, vlm_text, [])
+    layout = build_layout(SingleInputs(PageGeometry("p1.jpg", 100, 200), vlm_text, []))
     assert layout.lines[0].box is None  # no detections, no geometry — boxless
     assert layout.lines[0].box_source is None  # no anchor, no source label
 
@@ -499,12 +505,12 @@ def test_detections_keeps_the_vlm_text_as_the_anchor(tmp_path: Path) -> None:
     their OWN text is the content anchor (no rec text exists for them)."""
 
     layout = build_layout(
-        "p1.jpg",
-        1000,
-        2000,
-        "line one\nline two",
-        [],
-        vlm_boxes={0: [0, 0, 100, 100]},
+        SingleInputs(
+            PageGeometry("p1.jpg", 1000, 2000),
+            "line one\nline two",
+            [],
+            vlm_boxes={0: [0, 0, 100, 100]},
+        )
     )
     dets = layout.detections()
     assert dets[0]["text"] == "line one"
@@ -569,33 +575,33 @@ def test_multi_layout_words_carry_text_and_flag_weak_lines() -> None:
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        200,
-        100,
-        [
-            DetectionPass(
-                degrees=0,
-                lines=[
-                    Detection(
-                        box=[1, 1, 5, 5],
-                        text="weak line",
-                        score=0.9,
-                        words=[DetectionWord(box=[1, 1, 2, 2]), DetectionWord(box=[3, 1, 5, 2])],
-                    )
-                ],
-            ),
-            DetectionPass(
-                degrees=270,
-                lines=[
-                    Detection(
-                        box=[10, 10, 20, 20],
-                        text="clean",
-                        score=1.0,
-                        words=[DetectionWord(box=[10, 10, 20, 20])],
-                    )
-                ],
-            ),
-        ],
+        MultiInputs(
+            PageGeometry("p1.jpg", 200, 100),
+            [
+                DetectionPass(
+                    degrees=0,
+                    lines=[
+                        Detection(
+                            box=[1, 1, 5, 5],
+                            text="weak line",
+                            score=0.9,
+                            words=[DetectionWord(box=[1, 1, 2, 2]), DetectionWord(box=[3, 1, 5, 2])],
+                        )
+                    ],
+                ),
+                DetectionPass(
+                    degrees=270,
+                    lines=[
+                        Detection(
+                            box=[10, 10, 20, 20],
+                            text="clean",
+                            score=1.0,
+                            words=[DetectionWord(box=[10, 10, 20, 20])],
+                        )
+                    ],
+                ),
+            ],
+        )
     )
     weak = layout.lines[0]
     assert [w.word for w in _words(weak)] == ["weak", "line"]
@@ -615,24 +621,24 @@ def test_multi_layout_orientation_comes_from_the_pass_not_the_report() -> None:
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        [
-            DetectionPass(
-                degrees=0,
-                lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
-            ),
-            DetectionPass(
-                degrees=270,
-                lines=[Detection(box=[501, 201, 899, 399], text="mallowfie", score=0.9, words=[])],
-            ),
-        ],
-        report_lines=[
-            OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
-            OrientationLine(index=1, box=[500, 200, 900, 400], degrees=90),  # the report says 90°
-        ],
-        vlm_text="POST CARD\nWe are from Mallowfield",
+        MultiInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            [
+                DetectionPass(
+                    degrees=0,
+                    lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
+                ),
+                DetectionPass(
+                    degrees=270,
+                    lines=[Detection(box=[501, 201, 899, 399], text="mallowfie", score=0.9, words=[])],
+                ),
+            ],
+            report_lines=[
+                OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
+                OrientationLine(index=1, box=[500, 200, 900, 400], degrees=90),  # the report says 90°
+            ],
+            vlm_text="POST CARD\nWe are from Mallowfield",
+        )
     )
     message = [ln for ln in layout.lines if "Mallowfield" in ln.text]
     assert message, "the message line must be present"
@@ -672,7 +678,7 @@ def test_multi_layout_anchors_the_vlm_text_to_its_own_boxes() -> None:
             lines=[Detection(box=[501, 201, 899, 399], text="mallowfie", score=0.9, words=[])],
         ),
     ]
-    layout = multi_layout("p1.jpg", 1000, 1000, passes, report_lines=report_lines)
+    layout = multi_layout(MultiInputs(PageGeometry("p1.jpg", 1000, 1000), passes, report_lines=report_lines))
     texts = [ln.text for ln in layout.lines]
     # physical reading order (2026-08-20): the reading-start corner sorts
     # top-to-bottom — POST CARD (y50), Printed (y110), the 270° message
@@ -707,6 +713,7 @@ def test_anchor_prefers_the_disjoint_positional_ink_when_the_rec_read_the_line()
     from pipeline.layout import Anchor
 
     anchor = Anchor(
+        PageGeometry("p1.jpg", 2544, 4642),
         report_line=OrientationLine(
             index=10,
             box=[220, 481, 790, 494],
@@ -725,8 +732,6 @@ def test_anchor_prefers_the_disjoint_positional_ink_when_the_rec_read_the_line()
             orientation=0,
         ),
         text="Last term I was called upon to play in the Orchestra",
-        width=2544,
-        height=4642,
     )
     assert anchor.box == [560, 2600, 2010, 2660]
     assert anchor.box_source == "positional"
@@ -744,6 +749,7 @@ def test_anchor_disjoint_positional_with_unrelated_reading_keeps_the_report_box(
     from pipeline.layout import Anchor
 
     anchor = Anchor(
+        PageGeometry("p1.jpg", 2544, 4642),
         report_line=OrientationLine(
             index=10,
             box=[220, 481, 790, 494],
@@ -762,8 +768,6 @@ def test_anchor_disjoint_positional_with_unrelated_reading_keeps_the_report_box(
             orientation=0,
         ),
         text="Last term I was called upon to play in the Orchestra",
-        width=2544,
-        height=4642,
     )
     assert anchor.box == [559.68, 2232.802, 2009.76, 2293.148]
     assert anchor.box_source == "report"
@@ -777,6 +781,7 @@ def test_anchor_report_box_still_refines_an_agreeing_positional_box() -> None:
     from pipeline.layout import Anchor
 
     anchor = Anchor(
+        PageGeometry("p1.jpg", 2544, 4642),
         report_line=OrientationLine(
             index=10,
             box=[220, 481, 790, 494],
@@ -795,8 +800,6 @@ def test_anchor_report_box_still_refines_an_agreeing_positional_box() -> None:
             orientation=0,
         ),
         text="Last term I was called upon to play in the Orchestra",
-        width=2544,
-        height=4642,
     )
     assert anchor.box == [559.68, 2232.802, 2009.76, 2293.148]
     assert anchor.box_source == "report"
@@ -812,26 +815,26 @@ def test_dedupe_drops_fragment_duplicates_by_content() -> None:
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        [
-            DetectionPass(
-                degrees=0,
-                lines=[
-                    Detection(box=[100, 100, 500, 140], text="Printed in Great Britain", score=0.98, words=[]),
-                    # the fragment, far away
-                    Detection(box=[600, 300, 700, 340], text="Printed", score=0.97, words=[]),
-                ],
-            ),
-            DetectionPass(
-                degrees=270,
-                lines=[
-                    Detection(box=[100, 500, 200, 900], text="BARLOW HOUSE,", score=0.99, words=[]),
-                    Detection(box=[400, 500, 500, 900], text="HOUSE,", score=0.95, words=[]),  # the fragment
-                ],
-            ),
-        ],
+        MultiInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            [
+                DetectionPass(
+                    degrees=0,
+                    lines=[
+                        Detection(box=[100, 100, 500, 140], text="Printed in Great Britain", score=0.98, words=[]),
+                        # the fragment, far away
+                        Detection(box=[600, 300, 700, 340], text="Printed", score=0.97, words=[]),
+                    ],
+                ),
+                DetectionPass(
+                    degrees=270,
+                    lines=[
+                        Detection(box=[100, 500, 200, 900], text="BARLOW HOUSE,", score=0.99, words=[]),
+                        Detection(box=[400, 500, 500, 900], text="HOUSE,", score=0.95, words=[]),  # the fragment
+                    ],
+                ),
+            ],
+        )
     )
     texts = [ln.text for ln in layout.lines]
     assert "Printed" not in texts
@@ -849,14 +852,16 @@ def test_dedupe_never_drops_the_anchored_report_lines() -> None:
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        [],
-        report_lines=[
-            OrientationLine(index=0, box=[100, 100, 900, 140], degrees=0, text="POST CARD."),
-            OrientationLine(index=1, box=[100, 101, 900, 160], degrees=0, text="ONLY THE ADDRESS TO BE WRITTEN HERE."),
-        ],
+        MultiInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            [],
+            report_lines=[
+                OrientationLine(index=0, box=[100, 100, 900, 140], degrees=0, text="POST CARD."),
+                OrientationLine(
+                    index=1, box=[100, 101, 900, 160], degrees=0, text="ONLY THE ADDRESS TO BE WRITTEN HERE."
+                ),
+            ],
+        )
     )
     texts = [ln.text for ln in layout.lines]
     assert "POST CARD." in texts  # a real line survives even when its box overlaps
@@ -872,25 +877,25 @@ def test_multi_layout_uses_the_guess_text_located_by_the_report() -> None:
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        [
-            DetectionPass(
-                degrees=0,
-                lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
-            ),
-            DetectionPass(
-                degrees=270,
-                lines=[Detection(box=[501, 201, 899, 399], text="mallowfie", score=0.9, words=[])],
-            ),
-        ],
-        report_lines=[
-            OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
-            OrientationLine(index=1, box=[500, 200, 900, 400], degrees=270),
-            OrientationLine(index=2, box=[0, 0, 0, 0], degrees=0),  # not located
-        ],
-        vlm_text="POST CARD\nWe are from Mallowfield\na line the report could not locate",
+        MultiInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            [
+                DetectionPass(
+                    degrees=0,
+                    lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
+                ),
+                DetectionPass(
+                    degrees=270,
+                    lines=[Detection(box=[501, 201, 899, 399], text="mallowfie", score=0.9, words=[])],
+                ),
+            ],
+            report_lines=[
+                OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
+                OrientationLine(index=1, box=[500, 200, 900, 400], degrees=270),
+                OrientationLine(index=2, box=[0, 0, 0, 0], degrees=0),  # not located
+            ],
+            vlm_text="POST CARD\nWe are from Mallowfield\na line the report could not locate",
+        )
     )
     texts = [ln.text for ln in layout.lines]
     assert texts[0] == "POST CARD"
@@ -1174,19 +1179,19 @@ def test_multi_layout_orders_zero_first_then_each_next_direction() -> None:
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        200,
-        100,
-        [
-            DetectionPass(
-                degrees=270,
-                lines=[Detection(box=[10, 10, 20, 20], text="BARLOW, MALLOWFIELD", score=0.9, words=[])],
-            ),
-            DetectionPass(
-                degrees=0,
-                lines=[Detection(box=[1, 1, 5, 5], text="We are from Mallowfield", score=0.95, words=[])],
-            ),
-        ],
+        MultiInputs(
+            PageGeometry("p1.jpg", 200, 100),
+            [
+                DetectionPass(
+                    degrees=270,
+                    lines=[Detection(box=[10, 10, 20, 20], text="BARLOW, MALLOWFIELD", score=0.9, words=[])],
+                ),
+                DetectionPass(
+                    degrees=0,
+                    lines=[Detection(box=[1, 1, 5, 5], text="We are from Mallowfield", score=0.95, words=[])],
+                ),
+            ],
+        )
     )
     assert [line.text for line in layout.lines] == ["We are from Mallowfield", "BARLOW, MALLOWFIELD"]
     assert [line.orientation for line in layout.lines] == [0, 270]
@@ -1201,23 +1206,23 @@ def test_multi_layout_keeps_only_the_best_reading_of_a_region() -> None:
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        200,
-        100,
-        [
-            DetectionPass(
-                degrees=90,
-                lines=[Detection(box=[10, 10, 20, 60], text="MHOTH", score=0.9, words=[])],
-            ),
-            DetectionPass(
-                degrees=270,
-                lines=[Detection(box=[10, 10, 20, 60], text="BARLOW, MALLOWFIELD", score=0.9, words=[])],
-            ),
-            DetectionPass(
-                degrees=0,
-                lines=[Detection(box=[30, 30, 40, 80], text="With Greetings", score=0.95, words=[])],
-            ),
-        ],
+        MultiInputs(
+            PageGeometry("p1.jpg", 200, 100),
+            [
+                DetectionPass(
+                    degrees=90,
+                    lines=[Detection(box=[10, 10, 20, 60], text="MHOTH", score=0.9, words=[])],
+                ),
+                DetectionPass(
+                    degrees=270,
+                    lines=[Detection(box=[10, 10, 20, 60], text="BARLOW, MALLOWFIELD", score=0.9, words=[])],
+                ),
+                DetectionPass(
+                    degrees=0,
+                    lines=[Detection(box=[30, 30, 40, 80], text="With Greetings", score=0.95, words=[])],
+                ),
+            ],
+        )
     )
     texts = [line.text for line in layout.lines]
     assert "MHOTH" not in texts
@@ -1554,14 +1559,13 @@ class TestRecognizeExtra:
             return "the true text" if len(recognized) == 1 else None
 
         layout = multi_layout(
-            "p1.jpg",
-            200,
-            200,
-            passes,
-            report_lines=[OrientationLine(index=0, box=[50, 50, 750, 150], degrees=0, text="anchored line")],
-            vlm_text="anchored line",
-            image=image,
-            recognize=fake_recognize,
+            MultiInputs(
+                PageGeometry("p1.jpg", 200, 200),
+                passes,
+                report_lines=[OrientationLine(index=0, box=[50, 50, 750, 150], degrees=0, text="anchored line")],
+                vlm_text="anchored line",
+                clip=ClipSeam(image, fake_recognize),
+            )
         )
         texts = [ln.text for ln in layout.lines]
         assert "anchored line" in texts
@@ -1582,27 +1586,27 @@ def test_multi_layout_trusts_clip_report_degrees_over_the_pass() -> None:
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        [
-            DetectionPass(
-                degrees=0,
-                lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
-            ),
-            DetectionPass(
-                degrees=90,
-                lines=[Detection(box=[501, 201, 999, 252], text="my first Theory", score=0.9, words=[])],
-            ),
-        ],
-        report_lines=[
-            OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
-            # the clip classifier located the line at 0 (it IS horizontal);
-            # the 90° pass merely read the mirrored frame
-            OrientationLine(index=1, box=[500, 200, 1000, 252], degrees=0),
-        ],
-        vlm_text="POST CARD\nmy first Theory lesson to",
-        trust_report_degrees=True,
+        MultiInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            [
+                DetectionPass(
+                    degrees=0,
+                    lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
+                ),
+                DetectionPass(
+                    degrees=90,
+                    lines=[Detection(box=[501, 201, 999, 252], text="my first Theory", score=0.9, words=[])],
+                ),
+            ],
+            report_lines=[
+                OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
+                # the clip classifier located the line at 0 (it IS horizontal);
+                # the 90° pass merely read the mirrored frame
+                OrientationLine(index=1, box=[500, 200, 1000, 252], degrees=0),
+            ],
+            vlm_text="POST CARD\nmy first Theory lesson to",
+            trust_report_degrees=True,
+        )
     )
     line = [ln for ln in layout.lines if "Theory" in ln.text][0]
     assert line.orientation == 0, f"the located degrees must win over the pass, was {line.orientation}"
@@ -1618,23 +1622,23 @@ def test_multi_layout_uses_the_match_box_when_the_report_box_misses_the_ink() ->
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        [
-            DetectionPass(
-                degrees=0,
-                lines=[
-                    # the rec found the text HERE
-                    Detection(box=[100, 400, 480, 440], text="P.S. I had a whole Grade 3A", score=0.95, words=[]),
-                ],
-            ),
-        ],
-        report_lines=[
-            # the report claims the line ~200px ABOVE the actual text
-            OrientationLine(index=0, box=[100, 150, 480, 190], degrees=0),
-        ],
-        vlm_text="P.S. I had a whole Grade 3A",
+        MultiInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            [
+                DetectionPass(
+                    degrees=0,
+                    lines=[
+                        # the rec found the text HERE
+                        Detection(box=[100, 400, 480, 440], text="P.S. I had a whole Grade 3A", score=0.95, words=[]),
+                    ],
+                ),
+            ],
+            report_lines=[
+                # the report claims the line ~200px ABOVE the actual text
+                OrientationLine(index=0, box=[100, 150, 480, 190], degrees=0),
+            ],
+            vlm_text="P.S. I had a whole Grade 3A",
+        )
     )
     line = layout.lines[0]
     assert line.box == [100, 400, 480, 440], f"the rec match's box must win, was {line.box}"
@@ -1649,21 +1653,21 @@ def test_multi_layout_rejects_an_inconsistent_report_angle_on_a_wide_box() -> No
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        [
-            DetectionPass(
-                degrees=90,
-                lines=[
-                    # wide: horizontal text
-                    Detection(box=[100, 200, 601, 251], text="my first Theory lesson", score=0.9, words=[]),
-                ],
-            ),
-        ],
-        report_lines=[OrientationLine(index=0, box=[100, 200, 601, 251], degrees=90)],
-        vlm_text="my first Theory lesson",
-        trust_report_degrees=True,
+        MultiInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            [
+                DetectionPass(
+                    degrees=90,
+                    lines=[
+                        # wide: horizontal text
+                        Detection(box=[100, 200, 601, 251], text="my first Theory lesson", score=0.9, words=[]),
+                    ],
+                ),
+            ],
+            report_lines=[OrientationLine(index=0, box=[100, 200, 601, 251], degrees=90)],
+            vlm_text="my first Theory lesson",
+            trust_report_degrees=True,
+        )
     )
     line = layout.lines[0]
     assert line.orientation == 0, f"the wide box must force 0, was {line.orientation}"
@@ -1677,19 +1681,19 @@ def test_multi_layout_extras_force_the_aspect_consistent_orientation() -> None:
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        [
-            DetectionPass(
-                degrees=90,
-                lines=[
-                    # wide -> horizontal
-                    Detection(box=[100, 100, 351, 220], text="When Dr W. saw & di", score=0.9, words=[]),
-                ],
-            ),
-        ],
-        report_lines=None,
+        MultiInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            [
+                DetectionPass(
+                    degrees=90,
+                    lines=[
+                        # wide -> horizontal
+                        Detection(box=[100, 100, 351, 220], text="When Dr W. saw & di", score=0.9, words=[]),
+                    ],
+                ),
+            ],
+            report_lines=None,
+        )
     )
     line = layout.lines[0]
     assert line.orientation == 0, f"the wide extra box must force 0, was {line.orientation}"
@@ -1705,28 +1709,28 @@ def test_build_layout_leaves_a_wildly_oversized_positional_box_boxless() -> None
     from pipeline.layout import build_layout
 
     layout = build_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        "a real line\n③",
-        [
-            Detection(box=[100, 100, 600, 140], text="a real line", score=0.95, words=[]),
-            Detection(box=[50, 500, 602, 589], text="garbage", score=0.9, words=[]),  # 552px wide
-        ],
+        SingleInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            "a real line\n③",
+            [
+                Detection(box=[100, 100, 600, 140], text="a real line", score=0.95, words=[]),
+                Detection(box=[50, 500, 602, 589], text="garbage", score=0.9, words=[]),  # 552px wide
+            ],
+        )
     )
     by_text = {ln.text: ln for ln in layout.lines}
     assert by_text["a real line"].box == [100, 100, 600, 140]
     assert by_text["③"].box is None, "the absurd positional box must be dropped, not assigned"
     # the drop is per-line: a plausible positional box still anchors
     layout2 = build_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        "a real line\nN.B",
-        [
-            Detection(box=[100, 100, 600, 140], text="a real line", score=0.95, words=[]),
-            Detection(box=[50, 500, 150, 540], text="garbage", score=0.9, words=[]),  # 100px for 3 chars
-        ],
+        SingleInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            "a real line\nN.B",
+            [
+                Detection(box=[100, 100, 600, 140], text="a real line", score=0.95, words=[]),
+                Detection(box=[50, 500, 150, 540], text="garbage", score=0.9, words=[]),  # 100px for 3 chars
+            ],
+        )
     )
     by2 = {ln.text: ln for ln in layout2.lines}
     assert by2["N.B"].box == [50, 500, 150, 540]
@@ -1743,22 +1747,22 @@ def test_multi_layout_report_box_anchors_over_a_positional_match() -> None:
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        [
-            DetectionPass(
-                degrees=0,
-                lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
-            ),
-        ],
-        report_lines=[
-            OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
-            # the report located line 1 at the left margin; the positional
-            # match box is the unrelated BARLOW detection
-            OrientationLine(index=1, box=[50, 400, 100, 500], degrees=0),
-        ],
-        vlm_text="POST CARD\ncritic's view. To quote:",
+        MultiInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            [
+                DetectionPass(
+                    degrees=0,
+                    lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
+                ),
+            ],
+            report_lines=[
+                OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
+                # the report located line 1 at the left margin; the positional
+                # match box is the unrelated BARLOW detection
+                OrientationLine(index=1, box=[50, 400, 100, 500], degrees=0),
+            ],
+            vlm_text="POST CARD\ncritic's view. To quote:",
+        )
     )
     by_text = {ln.text: ln for ln in layout.lines}
     critic = by_text["critic's view. To quote:"]
@@ -1777,22 +1781,24 @@ def test_multi_layout_false_content_match_cannot_override_the_report_box() -> No
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        3500,
-        2215,
-        [
-            DetectionPass(
-                degrees=0,
-                lines=[
-                    # the rec's noisy stamp reading
-                    Detection(box=[1998, 988, 3339, 1316], text="e r", score=0.95, words=[]),  # a 1341px merged band
-                ],
-            ),
-        ],
-        report_lines=[
-            OrientationLine(index=0, box=[900, 76, 950, 101], degrees=0),  # the located stamp text, tight
-        ],
-        vlm_text="E    R",
+        MultiInputs(
+            PageGeometry("p1.jpg", 3500, 2215),
+            [
+                DetectionPass(
+                    degrees=0,
+                    lines=[
+                        # the rec's noisy stamp reading
+                        Detection(
+                            box=[1998, 988, 3339, 1316], text="e r", score=0.95, words=[]
+                        ),  # a 1341px merged band
+                    ],
+                ),
+            ],
+            report_lines=[
+                OrientationLine(index=0, box=[900, 76, 950, 101], degrees=0),  # the located stamp text, tight
+            ],
+            vlm_text="E    R",
+        )
     )
     line = layout.lines[0]
     assert line.text == "E    R"
@@ -1810,21 +1816,21 @@ def test_multi_layout_drops_the_box_when_no_candidate_holds_the_text() -> None:
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        3500,
-        2215,
-        [
-            DetectionPass(
-                degrees=0,
-                lines=[
-                    Detection(box=[1998, 988, 3339, 1316], text="e r", score=0.95, words=[]),
-                ],
-            ),
-        ],
-        report_lines=[
-            OrientationLine(index=0, box=[821, 76, 964, 101], degrees=0),  # 501px for 'E    R' — still too loose
-        ],
-        vlm_text="E    R",
+        MultiInputs(
+            PageGeometry("p1.jpg", 3500, 2215),
+            [
+                DetectionPass(
+                    degrees=0,
+                    lines=[
+                        Detection(box=[1998, 988, 3339, 1316], text="e r", score=0.95, words=[]),
+                    ],
+                ),
+            ],
+            report_lines=[
+                OrientationLine(index=0, box=[821, 76, 964, 101], degrees=0),  # 501px for 'E    R' — still too loose
+            ],
+            vlm_text="E    R",
+        )
     )
     assert layout.lines[0].box is None, "no candidate holds the text — boxless, flagged"
 
@@ -1843,16 +1849,16 @@ def test_build_layout_keeps_the_transcription_order_for_margin_blocks() -> None:
     from pipeline.layout import build_layout
 
     layout = build_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        "P.S. line one\ntheory paper\nPostmark 27.9.63\nQueen's House",
-        [
-            Detection(box=[100, 100, 300, 140], text="P.S. line one", score=0.95, words=[]),
-            Detection(box=[100, 150, 300, 190], text="theory paper", score=0.95, words=[]),
-            Detection(box=[400, 102, 600, 142], text="Postmark", score=0.95, words=[]),
-            Detection(box=[400, 152, 600, 192], text="Queen's House", score=0.95, words=[]),
-        ],
+        SingleInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            "P.S. line one\ntheory paper\nPostmark 27.9.63\nQueen's House",
+            [
+                Detection(box=[100, 100, 300, 140], text="P.S. line one", score=0.95, words=[]),
+                Detection(box=[100, 150, 300, 190], text="theory paper", score=0.95, words=[]),
+                Detection(box=[400, 102, 600, 142], text="Postmark", score=0.95, words=[]),
+                Detection(box=[400, 152, 600, 192], text="Queen's House", score=0.95, words=[]),
+            ],
+        )
     )
     texts = [ln.text for ln in layout.lines]
     # the transcription order — NOT the reading-start interleave
@@ -1869,27 +1875,27 @@ def test_multi_layout_keeps_the_physical_reading_order() -> None:
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        [
-            DetectionPass(
-                degrees=270,
-                lines=[
-                    # the 270° message at the bottom-right
-                    Detection(box=[700, 400, 900, 900], text="message line", score=0.9, words=[]),
-                ],
-            ),
-            DetectionPass(
-                degrees=0,
-                lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
-            ),
-        ],
-        report_lines=[
-            OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
-            OrientationLine(index=1, box=[700, 400, 900, 900], degrees=270),
-        ],
-        vlm_text="POST CARD\nmessage line",
+        MultiInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            [
+                DetectionPass(
+                    degrees=270,
+                    lines=[
+                        # the 270° message at the bottom-right
+                        Detection(box=[700, 400, 900, 900], text="message line", score=0.9, words=[]),
+                    ],
+                ),
+                DetectionPass(
+                    degrees=0,
+                    lines=[Detection(box=[101, 51, 299, 99], text="POST CARD", score=0.99, words=[])],
+                ),
+            ],
+            report_lines=[
+                OrientationLine(index=0, box=[100, 50, 300, 100], degrees=0),
+                OrientationLine(index=1, box=[700, 400, 900, 900], degrees=270),
+            ],
+            vlm_text="POST CARD\nmessage line",
+        )
     )
     texts = [ln.text for ln in layout.lines]
     # the 270° message reads upright with its reading-start ABOVE the
@@ -1929,27 +1935,29 @@ def test_multi_layout_keeps_text_order_when_orientations_resolve_single() -> Non
     from pipeline.layout import multi_layout
 
     layout = multi_layout(
-        "p1.jpg",
-        1000,
-        1000,
-        [
-            DetectionPass(
-                degrees=90,
-                lines=[
-                    # the rec read the horizontal lines during the 90° pass
-                    Detection(box=[100, 100, 300, 140], text="P.S. line one", score=0.9, words=[]),
-                    Detection(box=[100, 150, 300, 190], text="theory paper", score=0.9, words=[]),
-                    Detection(box=[400, 102, 600, 142], text="Postmark", score=0.9, words=[]),
-                ],
-            ),
-        ],
-        report_lines=[
-            OrientationLine(index=0, box=[100, 100, 300, 140], degrees=0),
-            OrientationLine(index=1, box=[100, 150, 300, 190], degrees=0),
-            OrientationLine(index=2, box=[400, 102, 600, 142], degrees=90),  # a garbage label — aspect-corrected to 0
-        ],
-        vlm_text="P.S. line one\ntheory paper\nPostmark",
-        trust_report_degrees=True,
+        MultiInputs(
+            PageGeometry("p1.jpg", 1000, 1000),
+            [
+                DetectionPass(
+                    degrees=90,
+                    lines=[
+                        # the rec read the horizontal lines during the 90° pass
+                        Detection(box=[100, 100, 300, 140], text="P.S. line one", score=0.9, words=[]),
+                        Detection(box=[100, 150, 300, 190], text="theory paper", score=0.9, words=[]),
+                        Detection(box=[400, 102, 600, 142], text="Postmark", score=0.9, words=[]),
+                    ],
+                ),
+            ],
+            report_lines=[
+                OrientationLine(index=0, box=[100, 100, 300, 140], degrees=0),
+                OrientationLine(index=1, box=[100, 150, 300, 190], degrees=0),
+                OrientationLine(
+                    index=2, box=[400, 102, 600, 142], degrees=90
+                ),  # a garbage label — aspect-corrected to 0
+            ],
+            vlm_text="P.S. line one\ntheory paper\nPostmark",
+            trust_report_degrees=True,
+        )
     )
     texts = [ln.text for ln in layout.lines]
     assert texts == ["P.S. line one", "theory paper", "Postmark"], texts

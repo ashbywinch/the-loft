@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from loft.live.live_store import LiveStore
 from loft.live.migrate import VerificationInputs, migrate, verify
-from loft.live.store import LiveStore
 from loft.live.verify import tree_digest
 from tools.loft_paths import LoftPaths
 

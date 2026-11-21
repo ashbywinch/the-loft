@@ -30,8 +30,8 @@ from pipeline.model.vlm import VlmError, extract_json, transcribe_image_vlm
 from pipeline.page_classification import PageClassification
 from pipeline.registry import RegistryError, load_batch
 from pipeline.store import PipelineStore
+from tools.disk_store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 from tools.loft_paths import LoftPaths
-from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 
 
 class PageKinds:

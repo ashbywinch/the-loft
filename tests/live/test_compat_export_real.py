@@ -22,11 +22,11 @@ import pytest
 
 from loft.live.compat import CompatibilityExport
 from loft.live.import_identity import _latest, import_identities
-from loft.live.store import LiveStore
+from loft.live.live_store import LiveStore
 from tools.archive import Archive
+from tools.disk_store import DiskStore
 from tools.loft_paths import LoftPaths
 from tools.records import OrgsTable, PeopleTable, PlacesTable, ThemesTable
-from tools.store import DiskStore
 
 ARCHIVE = LoftPaths.ARCHIVE_DIR
 TABLES = {

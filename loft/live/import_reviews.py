@@ -15,13 +15,13 @@ from pathlib import Path
 
 from loft.live.backup import check_marker
 from loft.live.errors import LiveError
-from loft.live.protocols import ItemStore
+from loft.live.item_store import ItemStore
+from loft.live.live_store import LiveStore
 from loft.live.review_row import ReviewRow, ReviewRows
 from loft.live.reviews import Reviews
-from loft.live.store import LiveStore
 from tools.archive import Archive
+from tools.disk_store import DiskStore
 from tools.records import ImportsTable, Session
-from tools.store import DiskStore
 
 
 class ReviewImportError(LiveError):

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from pipeline.api.approval import ApprovalContext, DocumentFacts, agreement_for, approve_page
 from tools.archive import Archive
-from tools.store import DiskStore
+from tools.disk_store import DiskStore
 
 
 def _batch(tmp_path: Path) -> tuple[Path, Path]:

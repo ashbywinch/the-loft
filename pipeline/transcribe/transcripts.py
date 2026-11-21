@@ -52,7 +52,7 @@ from document.transcript import Transcript, TranscriptError
 from document.word import Word
 from document.words import Words
 from pipeline.detect.reader import reading_for_page
-from pipeline.model.config import ModelConfig
+from pipeline.model.model_config import ModelConfig
 from pipeline.model.token_usage import TokenUsage
 from pipeline.model.vlm import VlmOptions, transcribe_images_vlm
 from pipeline.model.vlm_answer import VlmAnswer
@@ -430,12 +430,14 @@ class _AlonePage:
     call: Callable[..., VlmAnswer] | None
     ordered: list[Row]
 
+    CONTEXT_ROWS = 6  # the rows above this one shown to the model: the line's run, not the page
+
     def text_of(self, row: Row, above: list[RowReading]) -> str:
         """One row transcribed from a masked crop of its own words only — no
         neighbour's ink, nothing else in the image to confuse it with."""
         path = self.out_dir / f"{self.stem}.row-{row.number}.jpg"
         self.masked_row(row, self.image, self.ordered).save(path, quality=90)
-        read_above = "\n".join(f"row {one.number}: {one.text}" for one in above[-6:])
+        read_above = "\n".join(f"row {one.number}: {one.text}" for one in above[-_AlonePage.CONTEXT_ROWS :])
         prompt = (
             f"This is ONE row of a handwritten letter: row {row.number}, alone. Transcribe exactly what it says, "
             "word for word, keeping any crossing-out as ~~word~~ and any underline as ~word~. If the piece begins or "

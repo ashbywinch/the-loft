@@ -35,6 +35,8 @@ class LiveDatabase:
         "PRAGMA recursive_triggers = ON",
     )
 
+    TEMP_NAME_BYTES = 8  # 64 random bits: two concurrent inits never pick the same hidden name
+
     def __init__(self, connection: sqlite3.Connection) -> None:
         self.connection = connection
 
@@ -52,7 +54,7 @@ class LiveDatabase:
         # Build a hidden sibling and publish it only when the whole schema
         # verifies: a kill mid-init leaves no half-created `loft.db` to trick
         # the next run into "already exists — refusing to overwrite".
-        temporary = path.with_name(f".{path.name}.{os.urandom(8).hex()}.init")
+        temporary = path.with_name(f".{path.name}.{os.urandom(LiveDatabase.TEMP_NAME_BYTES).hex()}.init")
         connection = sqlite3.connect(temporary, isolation_level=None, check_same_thread=False)
         connection.row_factory = sqlite3.Row
         try:

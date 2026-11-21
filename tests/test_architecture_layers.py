@@ -116,4 +116,4 @@ def test_sqlite3_is_confined_to_loft_live() -> None:
             if re.search(r"^\s*(?:import sqlite3\b|from sqlite3\b)", text, re.MULTILINE):
                 offenders.append(str(path.relative_to(root)))
     assert offenders == [], f"sqlite3 is legal only under loft/live/: {offenders}"
-    assert (allowed / "database.py").is_file(), "the live database package must exist"
+    assert (allowed / "live_database.py").is_file(), "the live database package must exist"

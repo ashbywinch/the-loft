@@ -136,20 +136,3 @@ class PlaceholderPhoto:
     @staticmethod
     def svg(label: str, hue: str = "sky") -> str:
         return svg_photo(label, hue)
-
-
-class PlaceholderObject:
-    """The generic object stand-in — a framed item. Never a family-specific
-    shape: the app knows artifact types, not the family's objects."""
-
-    @staticmethod
-    def svg(label: str, year: str) -> str:
-        return svg_object(label, year)
-
-
-class PlaceholderAvatar:
-    """The avatar stand-in for a person without a real portrait."""
-
-    @staticmethod
-    def svg(initials: str, hue: str) -> str:
-        return svg_avatar(initials, hue)

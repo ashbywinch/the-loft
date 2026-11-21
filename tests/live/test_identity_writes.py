@@ -16,8 +16,8 @@ from typing import Any
 import pytest
 
 from loft.live.errors import Conflict, NotFound, StaleVersion
+from loft.live.live_store import LiveStore
 from loft.live.memory import MemoryLiveStore
-from loft.live.store import LiveStore
 from tools.records import GonePerson, Item, Person, Place, Relationship
 from tools.theme import Theme
 

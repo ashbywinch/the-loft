@@ -24,6 +24,7 @@ from pipeline.rows.page_visuals import (
     PagePainter,
     dashed_hline,
     halo_text,
+    kilobytes,
     scaled_crop,
     stack_sheets,
 )
@@ -33,6 +34,9 @@ SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented
 
 class Config:
     """This script's fixed inputs and outputs."""
+
+    CUT_LABEL_RIGHT = 120  # px from the crop's right edge: where the cut's label starts
+    CUT_LABEL_ABOVE = 26  # px above the cut row: the label's top edge
 
     OUT = Path(__file__).resolve().parent / "evidence" / "cut-zooms.jpg"
     # (x0, y0, x1, y1, scale) page px, cut rows (page y), caption lines
@@ -72,12 +76,15 @@ def _main() -> int:
                 y = (row - y0) * scale + bar_h
                 dashed_hline(draw, DashRule(0, crop.width, y))
                 halo_text(
-                    draw, Point(x=crop.width - 120, y=y - 26), f"cut y{row:.0f}", fill=Colour(red=200, green=0, blue=0)
+                    draw,
+                    Point(x=crop.width - Config.CUT_LABEL_RIGHT, y=y - Config.CUT_LABEL_ABOVE),
+                    f"cut y{row:.0f}",
+                    fill=Colour(red=200, green=0, blue=0),
                 )
         sheets.append(sheet)
     out = Config.OUT
     out.write_bytes(PagePainter.review_image(stack_sheets([x.sheet for x in sheets])))
-    print(f"cut zooms -> {out} ({out.stat().st_size // 1024}KB)")
+    print(f"cut zooms -> {out} ({kilobytes(out.stat().st_size)}KB)")
     return 0
 
 

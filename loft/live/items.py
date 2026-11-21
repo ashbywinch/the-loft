@@ -14,7 +14,7 @@ from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 from loft.live import item_row
-from loft.live.content import ContentStore
+from loft.live.content_store import ContentStore
 from loft.live.errors import Conflict, NotFound, StaleVersion
 from loft.live.item_row import AssetRecord, ItemAsset, ItemContent, ItemProjection, ItemRef, ItemState, RowPosition
 from tools.records import Item, split_content

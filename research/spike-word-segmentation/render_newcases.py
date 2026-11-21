@@ -21,13 +21,17 @@ from document.colour import Colour
 from document.point import Point
 from pipeline.detect.mark import Components, find_marks
 from pipeline.detect.reader import artifacts, ink_mask
-from pipeline.rows.page_visuals import CaptionSheet, Crop, PagePainter, halo_text, scaled_crop
+from pipeline.rows.page_visuals import CaptionSheet, Crop, PagePainter, halo_text, kilobytes, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 
 
 class Config:
     """This script's fixed inputs and outputs."""
+
+    LABEL_INSET_X = 2  # px right of a box's corner: the label's left edge
+    MARK_LABEL_ABOVE = 28  # px above the mark's box: the mark's own label
+    PIECE_LABEL_ABOVE = 26  # px above a piece's box: the piece's label
 
     OUTDIR = Path(__file__).resolve().parent / "evidence"
     STAGED = OUTDIR / "marks-wholepage-numbering.json"
@@ -76,12 +80,8 @@ def _main() -> int:
             return (v - _y0) * _s + _b
 
         draw.rectangle([px(red[0]), py(red[1]), px(red[2]), py(red[3])], outline=(200, 0, 0, 255), width=3)
-        halo_text(
-            draw,
-            Point(x=px(red[0]) + 2, y=py(red[1]) - 28),
-            f"render {render_id}",
-            fill=Colour(red=200, green=0, blue=0),
-        )
+        mark_label = Point(x=px(red[0]) + Config.LABEL_INSET_X, y=py(red[1]) - Config.MARK_LABEL_ABOVE)
+        halo_text(draw, mark_label, f"render {render_id}", fill=Colour(red=200, green=0, blue=0))
         for s in sorted(band, key=lambda s: s.x0):
             bx0, by0, bx1, by1 = (
                 s.x0 * Components.SCALE,
@@ -91,10 +91,11 @@ def _main() -> int:
             )
             colour = (0, 140, 0) if s.id == mark_id else (140, 140, 140)
             draw.rectangle([px(bx0), py(by0), px(bx1), py(by1)], outline=colour + (255,), width=2)
-            halo_text(draw, Point(x=px(bx0) + 2, y=py(by0) - 26), s.id, fill=Colour(*colour))
+            piece_label = Point(x=px(bx0) + Config.LABEL_INSET_X, y=py(by0) - Config.PIECE_LABEL_ABOVE)
+            halo_text(draw, piece_label, s.id, fill=Colour(*colour))
         out = Config.OUTDIR / f"newcase-{render_id}.jpg"
         out.write_bytes(PagePainter.review_image(sheet.sheet))
-        print(f"render {render_id} in mark {mark_id} -> {out} ({out.stat().st_size // 1024}KB)")
+        print(f"render {render_id} in mark {mark_id} -> {out} ({kilobytes(out.stat().st_size)}KB)")
     return 0
 
 

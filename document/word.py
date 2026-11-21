@@ -34,6 +34,8 @@ class Word:
 
     # x height: this wide for its height is a rule, not a word
     RULE_ASPECT: ClassVar[float] = 8.0
+    # x height: this narrow for its height is one glyph (an 'I', a digit)
+    LETTER_ASPECT: ClassVar[float] = 0.75
 
     def __init__(
         self,
@@ -113,7 +115,7 @@ class Word:
         """A single glyph box (an 'I', a digit): narrower than it is tall.
         Its x-height measurement is a guess, not a word's - the page discards
         it when it averages its own size."""
-        return self.width < 0.75 * self.height
+        return self.width < self.LETTER_ASPECT * self.height
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> Word:

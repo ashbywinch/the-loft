@@ -15,11 +15,12 @@ from pathlib import Path
 import pytest
 
 from loft.live.compat import CompatibilityExport
-from loft.live.import_identity import sync_identities
-from loft.live.store import LiveStore
+from loft.live.import_identity import sync_from_archive
+from loft.live.live_store import LiveStore
 from tools.archive import Archive
+from tools.disk_store import DiskStore
+from tools.memory_store import MemoryStore
 from tools.records import Org, OrgsTable, PeopleTable, Person, Place, PlacesTable, Relationship, ThemesTable
-from tools.store import DiskStore, MemoryStore
 from tools.theme import Theme
 
 
@@ -262,7 +263,7 @@ def test_the_exporter_reports_the_tables_it_could_not_build(tmp_path: Path) -> N
     assert not archive.store.exists("people.json")
 
 
-def test_sync_identities_catches_up_and_never_regresses(tmp_path: Path) -> None:
+def test_the_identity_catch_up_never_regresses(tmp_path: Path) -> None:
     """The flip starts with an import of the surface's records the old path
     wrote since — and a record the DB already holds is never overwritten."""
     old = tmp_path / "archive"
@@ -277,7 +278,7 @@ def test_sync_identities_catches_up_and_never_regresses(tmp_path: Path) -> None:
         )
     store = _store(tmp_path)
     try:
-        first = sync_identities(store, old)
+        first = sync_from_archive(store, archive)
         assert first.counts["people"] == 2
         assert store.people.require("p-alex").status == "proposed"
         # the family confirms Alex through the service …
@@ -287,11 +288,11 @@ def test_sync_identities_catches_up_and_never_regresses(tmp_path: Path) -> None:
         archive.save_identity(
             "people", PeopleTable(people=(proposed.as_confirmed(), confirmed, newcomer), relationships=())
         )
-        second = sync_identities(store, old)
+        second = sync_from_archive(store, archive)
         assert second.operations == ("person p-robin",)
         assert store.people.require("p-alex").status == "confirmed"  # the newer DB record survives
         assert store.people.require("p-robin").status == "proposed"
-        assert sync_identities(store, old).operations == ()
+        assert sync_from_archive(store, archive).operations == ()
         assert store.verify_chain() == ()
     finally:
         store.close()

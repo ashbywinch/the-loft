@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from pipeline.store import PipelineStore
-from tools.store import StoreError
+from tools.file_store import StoreError
 
 
 def test_writes_are_versioned(tmp_path: Path) -> None:

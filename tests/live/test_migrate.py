@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from loft.live.import_identity import import_identities
+from loft.live.live_store import LiveStore
 from loft.live.migrate import VerificationInputs, migrate, verify
-from loft.live.store import LiveStore
 from loft.live.verify import Projections, tree_digest
 
 

@@ -19,8 +19,7 @@ from loft.live.aliases import Aliases
 from loft.live.batch_row import BatchBundle, BatchProjection
 from loft.live.batches import Batches, batch_from_payload
 from loft.live.change import Change, ChangeContext
-from loft.live.content import ContentStore
-from loft.live.database import LiveDatabase
+from loft.live.content_store import ContentStore
 from loft.live.document_row import DocumentBundle, DocumentProjection
 from loft.live.documents import Documents, document_from_payload
 from loft.live.event import event_hash
@@ -28,8 +27,10 @@ from loft.live.identities import Identities
 from loft.live.identity import ORG, PLACE, RELATIONSHIP, THEME, Collection, Kind
 from loft.live.item_row import RowPosition
 from loft.live.items import Items, payload_assets, payload_contents
+from loft.live.live_database import LiveDatabase
+from loft.live.page_commit import page_from_payload
 from loft.live.page_row import PageProjection
-from loft.live.pages import Pages, page_from_payload
+from loft.live.pages import Pages
 from loft.live.people import People
 from loft.live.review_row import ReviewProjection, ReviewRow, session_from_payload
 from loft.live.reviews import Reviews
@@ -107,13 +108,13 @@ class LiveStore:
         self.connection.execute("DELETE FROM person_residences")
         self.connection.execute("DELETE FROM people")
         self.connection.execute("DELETE FROM aliases WHERE loser_kind = 'person'")
+        projection = person_row.PersonProjection(self.connection)
         for row in self.connection.execute("SELECT * FROM events WHERE entity_kind = 'person' ORDER BY seq").fetchall():
             event = dict(row)
             if event["entity_version"] is None:
                 continue
             if event["event_type"] == "deleted":
-                self.connection.execute("DELETE FROM people WHERE person_id = ?", (event["entity_id"],))
-                self.connection.execute("DELETE FROM person_residences WHERE person_id = ?", (event["entity_id"],))
+                projection.delete(event["entity_id"])
                 continue
             payload = json.loads(event["payload"])
             if event["event_type"] == "merged":
@@ -129,9 +130,8 @@ class LiveStore:
                 )
             else:
                 person = Person.from_dict(payload)
-            current = person_row.read_row(self.connection, person.id)
-            person_row.write_row(
-                self.connection,
+            current = projection.get(person.id)
+            projection.write(
                 person,
                 person_row.RowPosition(
                     version=int(event["entity_version"]),

@@ -164,6 +164,9 @@ class _Claims:
     TOUCH_FRACTION = 0.38  # x the writing height: how far a line's stroke claims a word
     SPACING_RATIO = 1.6  # x the writing height: where one row ends and the next begins
     BUTT_GAP_MIN = 4.0  # px floor for a butting adjacency — physical, never unit-dependent razor
+    BUTT_GAP_DIVISOR = 8  # of the writing height: how close two boxes are to butting up
+    SAME_LINE_DIVISOR = 4  # of the writing height: baselines this close are one line
+    HOST_OVERLAP_SHARE = 0.5  # of a word's height: overlap with a row makes it the host
     MAX_LINE_SLOPE_DEG = 6.0  # a drawn line runs along the writing (the jig's A5: ~0–2.4° observed)
 
     def __init__(
@@ -382,7 +385,7 @@ class _Claims:
             )
             if overlap / word.height > best:
                 best, host = overlap / word.height, owner
-        return host if best >= 0.5 else None
+        return host if best >= _Claims.HOST_OVERLAP_SHARE else None
 
     def _discount_annotations(self, owner_of: list[int | None]) -> None:
         """Unclaim the marks that float clear of the drawn line (user
@@ -521,7 +524,7 @@ class _Claims:
         # pixels, too tight for a split piece's real gap — butting is a
         # physical adjacency, never smaller than a few px (PR review,
         # 2026-09-19).
-        return gap is not None and gap <= max(self.unit / 8, _Claims.BUTT_GAP_MIN)
+        return gap is not None and gap <= max(self.unit / _Claims.BUTT_GAP_DIVISOR, _Claims.BUTT_GAP_MIN)
 
     def _same_line(self, index: int, candidate: int) -> bool:
         """Roughly the same baseline — the measured baseline when the words
@@ -530,8 +533,8 @@ class _Claims:
         word = self.words[index]
         other = self.words[candidate]
         if word.baseline is not None and other.baseline is not None:
-            return abs(other.baseline - word.baseline) <= self.unit / 4
-        return abs(other.cy - word.cy) <= self.unit / 4
+            return abs(other.baseline - word.baseline) <= self.unit / _Claims.SAME_LINE_DIVISOR
+        return abs(other.cy - word.cy) <= self.unit / _Claims.SAME_LINE_DIVISOR
 
 
 @dataclass(frozen=True)
@@ -618,6 +621,13 @@ class _MapStyle:
     chip_radius: int = 6
     chip_font: int = 28
 
+    # The chip's own geometry, in sheet px: a white label just left of the row's
+    # band, its number inset so the chip never grows with the text's bbox.
+    CHIP_RIGHT_INSET = 22  # px left of the band's left edge: the chip's right edge
+    CHIP_TEXT_PAD = 4  # px: the number's inset inside the chip, on each side
+    CHIP_HALF_HEIGHT = 14  # px: half the chip's height, centred on the row
+    CHIP_TEXT_TOP = 12  # px above the row's centre: the number's top edge
+
     def colour(self, index: int) -> Colour:
         palette = [
             Colour(red=200, green=40, blue=40, alpha=self.tint),
@@ -661,14 +671,26 @@ def render_map(page: Image.Image, rows: list[Row], path: Path, view: MapView) ->
         cy = (row.band.y0 + row.band.y1) / 2 - window.y0
         text = str(row.number)
         tb = label_layer.textbbox((0, 0), text, font=font)
+        text_width = tb[2] - tb[0]
+        right = cx * scale - _MapStyle.CHIP_RIGHT_INSET
         label_layer.rounded_rectangle(
-            (cx * scale - 30 - (tb[2] - tb[0]), cy * scale - 14, cx * scale - 22, cy * scale + 14),
+            (
+                right - text_width - 2 * _MapStyle.CHIP_TEXT_PAD,
+                cy * scale - _MapStyle.CHIP_HALF_HEIGHT,
+                right,
+                cy * scale + _MapStyle.CHIP_HALF_HEIGHT,
+            ),
             radius=style.chip_radius,
             fill=(255, 255, 255),
             outline=(60, 60, 60),
             width=2,
         )
-        label_layer.text((cx * scale - 26 - (tb[2] - tb[0]), cy * scale - 12), text, fill=(20, 20, 20), font=font)
+        label_layer.text(
+            (right - text_width - _MapStyle.CHIP_TEXT_PAD, cy * scale - _MapStyle.CHIP_TEXT_TOP),
+            text,
+            fill=(20, 20, 20),
+            font=font,
+        )
     if word_numbers:
         for (bx0, by0, bx1, by1), number in word_numbers.items():
             left = (bx0 - window.x0) * scale

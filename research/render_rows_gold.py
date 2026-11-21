@@ -27,7 +27,7 @@ from document.row_adjustments import RowAdjustments
 from document.word import Word
 from pipeline.detect.reader import reading_for_page
 from pipeline.layout_line import LayoutLine
-from pipeline.rows.page_visuals import CaptionSheet, PagePainter, stack_sheets
+from pipeline.rows.page_visuals import CaptionSheet, PagePainter, kilobytes, stack_sheets
 from pipeline.rows.render import render_rows
 from pipeline.rows.row_score import RowScore
 from pipeline.rows.row_set import RowSet
@@ -67,7 +67,8 @@ def adjudicated_words(words: Sequence[Word], gold: Sequence[Row]) -> dict[int, i
                 v = iou(bx.rect, wd.rect)
                 if v > best:
                     best, bi = v, i
-            if best >= 0.5 and bi is not None:
+            match_overlap = 0.5  # IoU: a box this close to the gold box IS that box
+            if best >= match_overlap and bi is not None:
                 out[bi] = r_i
     return out
 
@@ -85,9 +86,7 @@ def score(label: str, word_row: dict[int, int], n_rows: int, word_adj: dict[int,
         pair[r] = best
     judged = {i: a for i, a in word_adj.items() if word_row.get(i) is not None}
     right = sum(1 for i, a in judged.items() if pair.get(word_row[i]) == a)
-    print(
-        f"{label}: rows={n_rows} | words in the correct row: {right}/{len(judged)} ({100 * right / len(judged):.1f}%)"
-    )
+    print(f"{label}: rows={n_rows} | words in the correct row: {right}/{len(judged)} ({right / len(judged):.1%})")
     return RowScore(correct=right, judged=len(judged))
 
 
@@ -149,13 +148,14 @@ def _panels(
     22px caption on a 2544px page is an illegible 8px in the delivered
     file)."""
     page = Image.open(scan).convert("RGB")
+    panel_width = 1000  # px: a panel is fitted to the phone's width before it is captioned
     panels = []
     for rowset in rowsets:
         drawn = render_rows(page, list(rowset.rows), strokes)
-        fitted = drawn.resize((1000, int(drawn.height * 1000 / drawn.width)), Image.Resampling.LANCZOS)
+        fitted = drawn.resize((panel_width, int(drawn.height * panel_width / drawn.width)), Image.Resampling.LANCZOS)
         sheet = CaptionSheet.captioned_sheet(fitted, [rowset.title])
         panels.append(sheet.sheet)
-    return stack_sheets(panels, max_width=1000)
+    return stack_sheets(panels, max_width=panel_width)
 
 
 # a report script: main is a flat sequence of measurement + panel steps over
@@ -195,7 +195,7 @@ def main() -> None:
         RowSet(
             title=(
                 f"THE PROPOSAL — tools/reader.py reading_for_page (no lines drawn)  |  {len(proposal)} rows, "
-                f"{p.correct}/{p.judged} words in the correct row ({100 * p.correct / p.judged:.1f}%)"
+                f"{p.correct}/{p.judged} words in the correct row ({p.correct / p.judged:.1%})"
             ),
             rows=[
                 _row(k + 1, sorted(i for i, r in proposal_row.items() if r == k), words) for k in range(len(proposal))
@@ -205,14 +205,14 @@ def main() -> None:
             title=(
                 f"THE CORRECTION — tools/rows.py rows.adjust (your {len(lines)} drawn lines)  |  "
                 f"{len(built)} rows, {c.correct}/{c.judged} words in the correct row "
-                f"({100 * c.correct / c.judged:.1f}%)"
+                f"({c.correct / c.judged:.1%})"
             ),
             rows=[_row(k + 1, built_words(k), words) for k in range(len(built))],
         ),
     ]
     contact = _panels(SCAN, strokes, rowsets)
     OUT.write_bytes(PagePainter.review_image(contact))
-    print(f"wrote {OUT}: {OUT.stat().st_size // 1024} KB, {contact.width}x{contact.height}")
+    print(f"wrote {OUT}: {kilobytes(OUT.stat().st_size)} KB, {contact.width}x{contact.height}")
 
 
 if __name__ == "__main__":

@@ -22,7 +22,7 @@ from document.point import Point
 from pipeline.detect.mark import Components, find_marks
 from pipeline.detect.reader import LineFitter, artifacts, ink_mask, split_shapes
 from pipeline.detect.ruler import Ruler, writing_scale
-from pipeline.rows.page_visuals import CaptionSheet, Crop, PagePainter, halo_text, scaled_crop, stack_sheets
+from pipeline.rows.page_visuals import CaptionSheet, Crop, PagePainter, halo_text, kilobytes, scaled_crop, stack_sheets
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 if not SCAN.exists():
@@ -31,6 +31,8 @@ if not SCAN.exists():
 
 class Config:
     """This script's fixed inputs and outputs."""
+
+    PIECE_LABEL_ABOVE = 26  # px above the piece's box: its label
 
     FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "page01-wordseg"
     OUT = Path(__file__).resolve().parent / "evidence" / "piece-boxes.jpg"
@@ -104,11 +106,11 @@ def _main() -> int:
                 (piece.y1 * Components.SCALE - y0) * zoom + bar_h,
             ]
             draw.rectangle(rect, outline=colour + (255,), width=2)
-            halo_text(draw, Point(x=rect[0] + 2, y=rect[1] - 26), label, fill=Colour(*colour))
+            halo_text(draw, Point(x=rect[0] + 2, y=rect[1] - Config.PIECE_LABEL_ABOVE), label, fill=Colour(*colour))
         sheets.append(sheet)
         print(f"{mark_id}: {len(pieces)} pieces, boxed {[b[0] for b in boxes]}")
     Config.OUT.write_bytes(PagePainter.review_image(stack_sheets([x.sheet for x in sheets])))
-    print(f"piece boxes -> {Config.OUT} ({Config.OUT.stat().st_size // 1024}KB)")
+    print(f"piece boxes -> {Config.OUT} ({kilobytes(Config.OUT.stat().st_size)}KB)")
     return 0
 
 

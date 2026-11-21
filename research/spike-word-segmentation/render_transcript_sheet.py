@@ -43,6 +43,8 @@ class Config:
     # that do not fit wrap UNDER their own entry, never clipped and never overlapping
     TEXT_SIZE = 36  # px: the reading's own size, level with its row
     NUMBER_SIZE = 40  # px: the row number in the gutter
+    LINE_LEADING = 8  # px added to the text size: one entry's line height
+    WRAP_INDENT = 6  # spaces a wrapped line is indented under its entry
 
 
 OUT = Path("research/spike-word-segmentation/rows-transcript-sheet.jpg")
@@ -96,7 +98,7 @@ def main() -> None:
     # package's own drawing — no second convention lives in this script
     highlighted = NumberedRows.draw_numbers(render_rows(page, rows), rows)
     text_font = _font(Config.TEXT_SIZE)
-    height = Config.TEXT_SIZE + 8
+    height = Config.TEXT_SIZE + Config.LINE_LEADING
     entries: list[list[str]] = []
     for row in rows:
         text = readings.texts.get(row.number) or "(no reading)"
@@ -104,7 +106,8 @@ def main() -> None:
         wrapped = textwrap.wrap(
             text, max(1, (Config.COLUMN - 2 * Config.MARGIN - _width(text_font, prefix)) // (Config.TEXT_SIZE // 2))
         )
-        entries.append([prefix + (wrapped[0] if wrapped else "")] + [" " * 6 + line for line in wrapped[1:]])
+        indent = " " * Config.WRAP_INDENT
+        entries.append([prefix + (wrapped[0] if wrapped else "")] + [indent + line for line in wrapped[1:]])
     sheet = Image.new(
         "RGB",
         (page.width + Config.COLUMN, max(page.height, sum(len(e) for e in entries) * height + 2 * Config.MARGIN)),

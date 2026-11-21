@@ -24,7 +24,7 @@ from document.colour import Colour
 from document.rectangle import Rectangle
 from pipeline.detect.mark import Components, find_marks
 from pipeline.detect.reader import artifacts, ink_mask
-from pipeline.rows.page_visuals import PagePainter
+from pipeline.rows.page_visuals import PagePainter, kilobytes
 from tools.word_numbering import draw_numbering, number_words, place_numbering
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
@@ -88,7 +88,7 @@ def _main() -> int:
     layout = place_numbering(numbered, section, 1.0)
     img = draw_numbering(page, layout)
     Config.OUT.write_bytes(PagePainter.review_image(img))
-    print(f"marks wholepage: {len(shapes)} marks -> {Config.OUT} ({Config.OUT.stat().st_size // 1024}KB)")
+    print(f"marks wholepage: {len(shapes)} marks -> {Config.OUT} ({kilobytes(Config.OUT.stat().st_size)}KB)")
     print(f"numbering staged -> {Config.STAGED}")
     return 0
 

@@ -23,7 +23,15 @@ from document.rectangle import Rectangle
 from pipeline.detect.mark import Components, find_marks
 from pipeline.detect.reader import LineFitter, artifacts, ink_mask, split_shapes
 from pipeline.detect.ruler import Ruler, writing_scale
-from pipeline.rows.page_visuals import Crop, PagePainter, SplitCase, contiguous_runs, split_sheet, stack_sheets
+from pipeline.rows.page_visuals import (
+    Crop,
+    PagePainter,
+    SplitCase,
+    contiguous_runs,
+    kilobytes,
+    split_sheet,
+    stack_sheets,
+)
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 
@@ -74,8 +82,14 @@ def _case_geometry(shape, per_row, pieces):
     # are dropped ink, not cuts, and drawing them buries the real one.
     bounds = [int(round((a.y1 + b.y0) / 2)) for a, b in zip(pieces, pieces[1:], strict=False)]
 
+    profile_rows = 3  # rows either side of a cut: the window its profile string shows
+
     def profile(cy):
-        return " ".join(f"{y * Components.SCALE:.0f}:{len(per_row[y])}" for y in range(cy - 3, cy + 4) if y in per_row)
+        return " ".join(
+            f"{y * Components.SCALE:.0f}:{len(per_row[y])}"
+            for y in range(cy - profile_rows, cy + profile_rows + 1)
+            if y in per_row
+        )
 
     pieces_arg = [
         (
@@ -144,13 +158,15 @@ def _main() -> int:
         data = PagePainter.review_image(sheet)
         (Config.OUTDIR / f"{name}.jpg").write_bytes(data)
         review_names.append((name, Config.CASES[name][2], len(data)))
-        print(f"{name}_review -> {Config.OUTDIR / f'{name}.jpg'} ({len(data) // 1024}KB)")
+        print(f"{name}_review -> {Config.OUTDIR / f'{name}.jpg'} ({kilobytes(len(data))}KB)")
     total = sum(n for _, _, n in review_names)
-    assert total < 1_200_000, f"review page weighs {total // 1024}KB, budget is 1200KB"
+    review_budget = 1_200_000  # bytes: the review page's weight budget (1200 KiB)
+    assert total < review_budget, f"review page weighs {kilobytes(total)}KB, budget is 1200KB"
     contact = stack_sheets([Image.open(Config.OUTDIR / f"{name}.jpg") for name, _, _ in review_names])
     contact.save(Config.OUTDIR / "all_cases.jpg", quality=70)
     print(
-        f"all_cases -> {Config.OUTDIR / 'all_cases.jpg'} ({(Config.OUTDIR / 'all_cases.jpg').stat().st_size // 1024}KB)"
+        f"all_cases -> {Config.OUTDIR / 'all_cases.jpg'} "
+        f"({kilobytes((Config.OUTDIR / 'all_cases.jpg').stat().st_size)}KB)"
     )
     return 0
 

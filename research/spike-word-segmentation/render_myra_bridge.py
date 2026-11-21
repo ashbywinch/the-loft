@@ -18,7 +18,7 @@ from PIL import Image
 
 from document.colour import Colour
 from document.point import Point
-from pipeline.rows.page_visuals import CaptionSheet, Crop, PagePainter, halo_text, scaled_crop
+from pipeline.rows.page_visuals import CaptionSheet, Crop, PagePainter, halo_text, kilobytes, scaled_crop
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
 if not SCAN.exists():
@@ -27,6 +27,9 @@ if not SCAN.exists():
 
 class Config:
     """This script's fixed inputs and outputs."""
+
+    LABEL_INSET_X = 8  # px right of the stroke's corner: the label's left edge
+    LABEL_ABOVE = 12  # px above it: the label's top edge
 
     OUT = Path(__file__).resolve().parent / "evidence" / "myra-bridge.jpg"
     STROKE = (1918.0, 2550.0, 1934.0, 2556.0)
@@ -61,12 +64,12 @@ def _main() -> int:
     )
     halo_text(
         draw,
-        Point(x=px(Config.STROKE[2]) + 8, y=py(Config.STROKE[1]) - 12),
+        Point(x=px(Config.STROKE[2]) + Config.LABEL_INSET_X, y=py(Config.STROKE[1]) - Config.LABEL_ABOVE),
         "this stroke",
         fill=Colour(red=200, green=0, blue=0),
     )
     Config.OUT.write_bytes(PagePainter.review_image(sheet.sheet))
-    print(f"bridge -> {Config.OUT} ({Config.OUT.stat().st_size // 1024}KB)")
+    print(f"bridge -> {Config.OUT} ({kilobytes(Config.OUT.stat().st_size)}KB)")
     return 0
 
 

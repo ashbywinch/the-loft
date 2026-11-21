@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from PIL import Image
 
 from document.rectangle import Rectangle
-from pipeline.rows.page_visuals import CaptionSheet, PagePainter
+from pipeline.rows.page_visuals import CaptionSheet, PagePainter, kilobytes
 from tools.word_numbering import render_numbered, unplaced
 
 SCAN = Path("/run/media/ashby/One Touch/Loft/work/adopt-20260813-201004/oriented/page-01.jpg")
@@ -67,7 +67,9 @@ def _draw(path: Path, title: str, boxes: list[Rectangle]) -> None:
     sheet.sheet.save(path.with_suffix(".png"))
     path.write_bytes(PagePainter.review_image(sheet.sheet, width=1400, quality=74))
     missing = unplaced(rendered.chips)
-    print(f"{path.name} -> {path} ({path.stat().st_size // 1024}KB); {len(boxes)} boxes, {len(missing)} chips unplaced")
+    print(
+        f"{path.name} -> {path} ({kilobytes(path.stat().st_size)}KB); {len(boxes)} boxes, {len(missing)} chips unplaced"
+    )
 
 
 @dataclass(frozen=True)
@@ -98,7 +100,7 @@ def _draw_half(path: Path, boxes: list[Rectangle], half: _Half) -> None:
     sheet.sheet.save(path.with_suffix(".png"))
     path.write_bytes(PagePainter.review_image(sheet.sheet, width=1400, quality=74))
     missing = unplaced(rendered.chips)
-    print(f"{path.name} -> {path.stat().st_size // 1024}KB; {len(inside)} boxes, {len(missing)} chips unplaced")
+    print(f"{path.name} -> {kilobytes(path.stat().st_size)}KB; {len(inside)} boxes, {len(missing)} chips unplaced")
 
 
 def _main() -> int:

@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from PIL import Image
 
-from pipeline.rows.page_visuals import PagePainter, stack_sheets
+from pipeline.rows.page_visuals import PagePainter, kilobytes, stack_sheets
 
 
 class Config:
@@ -38,7 +38,7 @@ def _main() -> int:
         contact = stack_sheets(sheets)
         out = Config.OUT / f"{name}.jpg"
         out.write_bytes(PagePainter.review_image(contact))
-        print(f"{name} <- {members} -> {out} ({out.stat().st_size // 1024}KB)")
+        print(f"{name} <- {members} -> {out} ({kilobytes(out.stat().st_size)}KB)")
     return 0
 
 

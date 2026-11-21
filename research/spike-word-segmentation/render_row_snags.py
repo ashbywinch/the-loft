@@ -84,7 +84,7 @@ def numbers_of(word_ids: list[int]) -> dict[tuple[float, float, float, float], i
     return {Config.box_of()[rid]: rid for rid in word_ids}
 
 
-def pair(name: str, window: Rectangle, scale: float, word_ids: list[int]) -> None:
+def pair(name: str, window: Rectangle, *, scale: float, word_ids: list[int]) -> None:
     page = Image.open(SCAN).convert("RGB")
     view = MapView(window, scale, word_numbers=numbers_of(word_ids))
     user_map = render_map(page, adjudicated_rows(), Config.OUT / (name + ".u.jpg"), view)
@@ -93,20 +93,47 @@ def pair(name: str, window: Rectangle, scale: float, word_ids: list[int]) -> Non
     user_sheet = user_cap.sheet
     lib_cap = CaptionSheet.captioned_sheet(lib_map, ["the library's rows (`rows.adjust)`"])
     lib_sheet = lib_cap.sheet
-    width = user_sheet.width + lib_sheet.width + 10
+    gutter = 10  # px: the white margin the pair is laid out with
+    library_gap = 8  # px after the user sheet: where the library sheet starts
+    library_x = user_sheet.width + library_gap
+    width = user_sheet.width + lib_sheet.width + gutter
     height = max(user_sheet.height, lib_sheet.height)
     sheet = Image.new("RGB", (width, height), (255, 255, 255))
     sheet.paste(user_sheet, (0, 0))
-    sheet.paste(lib_sheet, (user_sheet.width + 8, 0))
+    sheet.paste(lib_sheet, (library_x, 0))
     (Config.OUT / (name + ".jpg")).write_bytes(PagePainter.review_image(sheet))
     print("saved", name)
 
 
-pair("row-snag-q1-v3", Rectangle(x0=500, y0=3180, x1=1960, y1=3270), 2.5, list(range(174, 191)))
-pair("row-snag-q2-v3", Rectangle(x0=1900, y0=2520, x1=2060, y1=2640), 5.0, [60, 68, 69, 70])
+pair(
+    "row-snag-q1-v3",
+    Rectangle(x0=500, y0=3180, x1=1960, y1=3270),
+    scale=2.5,
+    # the row's word ids, in the fixture's order (the sibling panels' style)
+    word_ids=[
+        174,
+        175,
+        176,
+        177,
+        178,
+        179,
+        180,
+        181,
+        182,
+        183,
+        184,
+        185,
+        186,
+        187,
+        188,
+        189,
+        190,
+    ],
+)
+pair("row-snag-q2-v3", Rectangle(x0=1900, y0=2520, x1=2060, y1=2640), scale=5.0, word_ids=[60, 68, 69, 70])
 pair(
     "row-snag-q3-v3",
     Rectangle(x0=540, y0=4470, x1=2010, y1=4640),
-    2.2,
-    [306, 415, 413, 416, 425, 428, 430, 455, 419, 422, 426],
+    scale=2.2,
+    word_ids=[306, 415, 413, 416, 425, 428, 430, 455, 419, 422, 426],
 )

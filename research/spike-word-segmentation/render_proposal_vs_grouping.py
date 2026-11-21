@@ -24,7 +24,7 @@ from document.word import Word
 from pipeline.detect.reader import reading_for_page
 from pipeline.layout_line import LayoutLine
 from pipeline.rows.box_difference import BoxDifference
-from pipeline.rows.page_visuals import CaptionSheet, stack_sheets
+from pipeline.rows.page_visuals import CaptionSheet, kilobytes, stack_sheets
 from pipeline.rows.render import render_rows
 from pipeline.rows.row_set import RowSet
 from pipeline.rows.rows import Rows
@@ -41,6 +41,7 @@ class Config:
     """This script's fixed inputs and outputs."""
 
     SPACING = 67.6
+    SEARCH_STEP = 100  # px: how far the band search slides its window
 
 
 PAGE_SIZE = PageSize.from_dict(json.loads(BOXES.read_text(encoding="utf-8"))["page"])
@@ -94,7 +95,7 @@ def _band_where_they_part(a_boxes: list[Rectangle], b_boxes: list[Rectangle], he
 
     low = min(b.y0 for b in b_boxes)
     high = max(b.y1 for b in b_boxes)
-    top = max((y for y in range(int(low), int(high) - height + 1, 100)), key=extra)
+    top = max((y for y in range(int(low), int(high) - height + 1, Config.SEARCH_STEP)), key=extra)
     return Span(start=top, end=top + height)
 
 
@@ -144,14 +145,14 @@ def _both_proposals() -> _Comparison:
         RowSet(
             title=(
                 f"A — the line measurer (what the app shows today)  |  {len(a_rows)} rows, "
-                f"{a.correct}/{a.judged} words in your row ({100 * a.correct / a.judged:.1f}%)"
+                f"{a.correct}/{a.judged} words in your row ({a.correct / a.judged:.1%})"
             ),
             rows=a_rows,
         ),
         RowSet(
             title=(
                 f"B — the word grouping (what the object model says)  |  {len(b_rows)} rows, "
-                f"{b.correct}/{b.judged} words in your row ({100 * b.correct / b.judged:.1f}%)"
+                f"{b.correct}/{b.judged} words in your row ({b.correct / b.judged:.1%})"
             ),
             rows=b_rows,
         ),
@@ -165,7 +166,7 @@ def main() -> None:
 
     contact = gold._panels(SCAN, [], rowsets)
     contact.save(OUT, quality=82)
-    print(f"wrote {OUT}: {OUT.stat().st_size // 1024} KB, {contact.width}x{contact.height}")
+    print(f"wrote {OUT}: {kilobytes(OUT.stat().st_size)} KB, {contact.width}x{contact.height}")
 
     window = _band_where_they_part(a_boxes, b_boxes)
     here = [b for b in b_boxes if b.y0 >= window.start and b.y1 <= window.end]
@@ -174,7 +175,7 @@ def main() -> None:
     zoom = _zoom_panels(SCAN, window, rowsets, width=1100)
     zoom.save(ZOOM, quality=85)
     print(
-        f"wrote {ZOOM}: {ZOOM.stat().st_size // 1024} KB, {zoom.width}x{zoom.height}"
+        f"wrote {ZOOM}: {kilobytes(ZOOM.stat().st_size)} KB, {zoom.width}x{zoom.height}"
         f" | window y{window.start:.0f}-{window.end:.0f}"
     )
 

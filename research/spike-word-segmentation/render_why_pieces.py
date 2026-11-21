@@ -40,6 +40,8 @@ class Config:
         "why-334": ((1470.0, 4520.0), (1380.0, 4410.0, 1560.0, 4600.0), 5.0),
     }
     COLOURS = ((0, 0, 200), (0, 150, 0), (200, 0, 0), (150, 0, 180))
+    LABEL_INSET_X = 4  # px right of a box's corner: the note's left edge
+    LABEL_ABOVE = 26  # px above a piece's or a boundary's box: its note
 
 
 def _size(piece) -> str:
@@ -119,7 +121,12 @@ def _main() -> int:
                 width=3,
             )
             label = f"P{index + 1} {_size(piece)} {_verdict(piece, unit)}"
-            halo_text(draw, Point(x=mapping.x(piece.x0) + 4, y=mapping.y(piece.y0) - 26), label, fill=Colour(*colour))
+            halo_text(
+                draw,
+                Point(x=mapping.x(piece.x0) + Config.LABEL_INSET_X, y=mapping.y(piece.y0) - Config.LABEL_ABOVE),
+                label,
+                fill=Colour(*colour),
+            )
             print(f"  {name} P{index + 1}: {_size(piece)} {_verdict(piece, unit)}")
 
         for above, below in zip(segments, segments[1:], strict=False):
@@ -127,7 +134,7 @@ def _main() -> int:
             note = "waist: cut" if waist else f"no waist (runs {runs.get(above.y1, 0)}/{runs.get(below.y0, 0)}): merged"
             halo_text(
                 draw,
-                Point(x=mapping.x(mark.x0) + 4, y=mapping.y(below.y0) - 26),
+                Point(x=mapping.x(mark.x0) + Config.LABEL_INSET_X, y=mapping.y(below.y0) - Config.LABEL_ABOVE),
                 note,
                 fill=Colour(red=120, green=60, blue=0),
             )

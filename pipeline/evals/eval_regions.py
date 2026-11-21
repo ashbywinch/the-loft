@@ -91,12 +91,13 @@ def ink_y_range(image: Path) -> InkRows:
 
 @dataclass(frozen=True)
 class RegionsReport:
-    """The column-region run's ledger: what the page read as, what failed,
-    what it cost."""
+    """The column-region run's ledger: what the page read as, what failed (a
+    region, or a rotated re-read whose upright read stood in), what it cost."""
 
     page: str
     regions: int
     failed_regions: int
+    re_read_failures: list[str]
     lines: int
     boxless: int
     tokens: int
@@ -108,6 +109,7 @@ class RegionsReport:
             "page": self.page,
             "regions": self.regions,
             "failed_regions": self.failed_regions,
+            "re_read_failures": self.re_read_failures,
             "lines": self.lines,
             "boxless": self.boxless,
             "tokens": self.tokens,
@@ -134,6 +136,7 @@ def run(
     regions = column_regions(image_path)
     tokens = 0
     failed = 0
+    re_read_failures: list[str] = []
     lines: list[LayoutLine] = []
     started = monotonic()
     with tempfile.TemporaryDirectory() as tmp:
@@ -155,6 +158,8 @@ def run(
             if read is None:
                 failed += 1
                 continue
+            if read.failure is not None:
+                re_read_failures.append(f"region {i}: {read.failure}")
             tokens += read.tokens
             for line in read.lines:
                 lines.append(
@@ -179,6 +184,7 @@ def run(
         page=page,
         regions=len(regions),
         failed_regions=failed,
+        re_read_failures=re_read_failures,
         lines=len(lines),
         boxless=sum(1 for line in lines if not line.box),
         tokens=tokens,

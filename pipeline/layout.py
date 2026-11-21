@@ -310,35 +310,16 @@ class Layout:
         layout.box_space = Layout.BOX_SPACE_ORIGINAL
         return layout
 
-    # the multi-path build's inputs mirror multi_layout's — a parameter object would obscure the combined pass
+    # the multi-path's inputs ARE a record (MultiInputs) — the page geometry,
+    # the orientation passes, the report evidence, the guess text and the clip
+    # seam travel together through the assembly
     @classmethod
-    def multi(
-        cls,
-        page: str,
-        width: int,
-        height: int,
-        passes: list[DetectionPass],
-        report_lines: list[OrientationLine] | None = None,
-        vlm_text: str | None = None,
-        image: Path | None = None,
-        recognize: Callable[[Path], str | None] | None = None,
-        trust_report_degrees: bool = False,
-    ) -> Layout:
+    def multi(cls, inputs: MultiInputs) -> Layout:
         """The multi-orientation layout: a detection pass at each reported
         orientation, the guess text anchored at the report's per-line
         boxes, the extras re-read from their own upright clips."""
-        layout = multi_layout(
-            page,
-            width,
-            height,
-            passes,
-            report_lines=report_lines,
-            vlm_text=vlm_text,
-            image=image,
-            recognize=recognize,
-            trust_report_degrees=trust_report_degrees,
-        )
-        layout.box_space = Layout.BOX_SPACE_ORIGINAL
+        layout = MultiAssembly(inputs).layout()
+        layout.box_space = cls.BOX_SPACE_ORIGINAL
         return layout
 
     @classmethod
@@ -1193,13 +1174,38 @@ class MultiAssembly:
         """Assemble the combined lines: the report-anchored lines plus
         their extras, or the rec-based fallback when no report was given.
         The caller applies the dedupe, ordering and re-indexing to the
-        returned lines."""
+        returned lines (``layout`` is that completed pass)."""
         if self._inputs.report_lines:
             self._anchor()
             self._add_extras()
         else:
             self.lines = self._rec_fallback()
         return self.lines
+
+    def layout(self) -> Layout:
+        """The combined layout the review reads: the assembled lines
+        deduped, ordered and re-indexed for the surface, stamped with the
+        page identity the inputs carry."""
+        lines = dedupe_regions(self.build())
+        # The reading order (2026-08-20, user's requirement): a page whose
+        # lines resolve to ONE orientation reads in the TRANSCRIPTION order —
+        # the model read the page block-by-block, so the margin blocks never
+        # interleave (page-03: a single-orientation letter took the multi
+        # path on the report's garbage degrees; the aspect rule resolved
+        # every line to 0). A genuinely multi-orientation page reads by the
+        # physical reading-start sort in the dominant frame (the postcard:
+        # the transcription order scrambled the multi reading).
+        lines = _order_layout_lines(lines)
+        for i, line in enumerate(lines):
+            line.index = i
+        geometry = self._inputs.geometry
+        return Layout(
+            page=geometry.page,
+            width=geometry.width,
+            height=geometry.height,
+            lines=lines,
+            unmatched=[],
+        )
 
 
 # the combined layout's heterogeneous inputs — the page identity, geometry, the passes, the report, the text
@@ -1230,20 +1236,7 @@ def multi_layout(
     region keeps only its best reading (dedupe_regions)."""
     clip = ClipSeam(image, recognize) if image is not None and recognize is not None else None
     inputs = MultiInputs(PageGeometry(page, width, height), passes, report_lines, vlm_text, clip, trust_report_degrees)
-    lines = MultiAssembly(inputs).build()
-    lines = dedupe_regions(lines)
-    # The reading order (2026-08-20, user's requirement): a page whose
-    # lines resolve to ONE orientation reads in the TRANSCRIPTION order —
-    # the model read the page block-by-block, so the margin blocks never
-    # interleave (page-03: a single-orientation letter took the multi
-    # path on the report's garbage degrees; the aspect rule resolved
-    # every line to 0). A genuinely multi-orientation page reads by the
-    # physical reading-start sort in the dominant frame (the postcard:
-    # the transcription order scrambled the multi reading).
-    lines = _order_layout_lines(lines)
-    for i, line in enumerate(lines):
-        line.index = i
-    return Layout(page=page, width=width, height=height, lines=lines, unmatched=[])
+    return MultiAssembly(inputs).layout()
 
 
 def load_orientation_hint(path: Path) -> list[int]:

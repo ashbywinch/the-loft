@@ -234,9 +234,7 @@ class BatchReadings:
             return reading
         layout = load_layout_store(PipelineStore(self.work_dir), str(layout_path.relative_to(self.work_dir)))
         if journal_path.exists():
-            layout = _recover_crashed_layout(
-                journal_path, layout, layout_path, image_path, page, self.work_dir, self.batch_id
-            )
+            layout = _recover_crashed_layout(journal_path, self, layout, page)
         return layout
 
 
@@ -514,7 +512,7 @@ def apply_row_adjustments(
     rows = builder.adjust(adjustments)
     violations = tuple(builder.validate(traces))
     adjustments_json = json.dumps(adjustments.to_dict(), ensure_ascii=False, indent=1)
-    if archive is not None and archive.page_writes is not None:
+    if archive is not None and archive.page_work is not None:
         archive.correct_page_rows(page_id_of(batch_id, page), (adjustments_json + "\n").encode("utf-8"), actor=actor)
     else:
         atomic_write(readings.adjustments_path(page), adjustments_json + "\n")
@@ -671,17 +669,18 @@ def draft_payloads(batch_id: str, work_dir: Path) -> list[dict[str, Any]]:
 
 def _recover_crashed_layout(
     journal_path: Path,
+    readings: BatchReadings,
     layout: Layout,
-    layout_path: Path,
-    image_path: Path,
     page: str,
-    work_dir: Path,
-    batch_id: str,
 ) -> Layout:
     """Complete a half-rotated crash from the journal — rebuild the layout to
     the recorded intent so the boxes never silently misalign. An unreadable
     journal abandons recovery (logged) and the stale layout stands; the
-    caller computes the delta from it."""
+    caller computes the delta from it. The page's files derive from the
+    readings record: its layout beside the guess, its image in the oriented
+    leg."""
+    layout_path = readings.guess_dir / Path(page).with_suffix(".layout.json")
+    image_path = readings.artefacts.oriented(page)
     try:
         journal = json.loads(journal_path.read_text(encoding="utf-8"))
         intended = int(journal.get("rotation", 0)) % Rotation.FULL_DEGREES
@@ -711,7 +710,7 @@ def _recover_crashed_layout(
                         int(layout.height or image.height),
                     )
                     vlm_text = "\n".join(line.text for line in layout.lines)
-                    selfreport_path = BatchReadings(work_dir, batch_id).artefacts.marker(page, "selfreport")
+                    selfreport_path = readings.artefacts.marker(page, "selfreport")
                     selfreport = (
                         [UnsureWord.from_dict(entry) for entry in json.loads(selfreport_path.read_text())]
                         if selfreport_path.exists()
@@ -726,7 +725,10 @@ def _recover_crashed_layout(
                         selfreport=selfreport,
                     )
                     layout.extra["rotation"] = intended
-                    layout.write_store(PipelineStore(work_dir), str(layout_path.relative_to(work_dir)))
+                    layout.write_store(
+                        PipelineStore(readings.work_dir),
+                        str(layout_path.relative_to(readings.work_dir)),
+                    )
     except (OSError, json.JSONDecodeError, ValueError) as e:
         logger.warning("sync: unreadable rotation journal %s — recovery abandoned: %s", journal_path, e)
         journal_path.unlink(missing_ok=True)
@@ -990,10 +992,7 @@ def _reread_page(
     run: Any,
     artefacts: BatchArtefacts,
     page: str,
-    *,
-    transcribe: Any,
-    rows_text: Callable[[Path, Path], dict[int, str]] | None,
-    reading: Callable[[Any], Any] | None,
+    read: _PageRead,
 ) -> None:
     """Delete the page's read receipts and run the batch's own read for it.
 
@@ -1011,9 +1010,9 @@ def _reread_page(
         (artefacts.guess_dir / Path(page).with_suffix(suffix)).unlink(missing_ok=True)
     route = PageKinds.read_route(classification_of(artefacts).get(page, {}))
     if route == "direct":
-        run.printed_pages([page], _transcribe=transcribe or printed_transcript, provisional_boundary=False)
+        run.printed_pages([page], _transcribe=read.transcribe or printed_transcript, provisional_boundary=False)
     elif route == "structured":
-        run.structured_pages([page], _transcribe=transcribe or structured_transcript, provisional_boundary=False)
+        run.structured_pages([page], _transcribe=read.transcribe or structured_transcript, provisional_boundary=False)
     elif route == "rows":
         # the cycle breaker, again: the row read's default reader lives in chain
         # lucidlint: ignore inline-import the cycle breaker: chain imports sync for BatchReadings
@@ -1021,8 +1020,8 @@ def _reread_page(
 
         run.read_pages(
             [page],
-            _reading=reading or reading_for_page,
-            _rows_text=rows_text or row_transcripts,
+            _reading=read.reading or reading_for_page,
+            _rows_text=read.rows_text or row_transcripts,
         )
         _restore_rotation(rows_path, rotation)
 
@@ -1035,28 +1034,46 @@ class _PageImage:
     image_path: Path
 
 
+@dataclass(frozen=True)
+class _PageRead:
+    """A re-read's injectable seams — the text recognisers and the row
+    reader. Absent members take the batch's own default, the same read the
+    first pass ran."""
+
+    transcribe: Any = None
+    rows_text: Callable[[Path, Path], dict[int, str]] | None = None
+    reading: Callable[[Any], Any] | None = None
+
+
+@dataclass(frozen=True)
+class _PageSidecars:
+    """A re-read's sidecar seams: the self-report and orientation generators,
+    and the standing knowledge their prompts cite."""
+
+    selfreport: Callable[..., list[UnsureWord]] | None = None
+    orientation_report_fn: Callable[[Path, str], dict[str, Any]] | None = None
+    people: list[str] | None = None
+    places: list[str] | None = None
+
+
 def _write_page_sidecars(
     artefacts: BatchArtefacts,
     image: _PageImage,
-    *,
-    selfreport: Callable[..., list[UnsureWord]] | None,
-    orientation_report_fn: Callable[[Path, str], dict[str, Any]] | None,
-    people: list[str] | None,
-    places: list[str] | None,
+    sidecars: _PageSidecars,
 ) -> None:
     """The review surface's per-page sidecars, from the new text."""
     new_text = artefacts.text(image.page).read_text(encoding="utf-8")
     report = (
-        selfreport(image.image_path, new_text, people=people, places=places)
-        if selfreport
-        else selfreport_words(image.image_path, new_text, people=people, places=places)
+        sidecars.selfreport(image.image_path, new_text, people=sidecars.people, places=sidecars.places)
+        if sidecars.selfreport
+        else selfreport_words(image.image_path, new_text, people=sidecars.people, places=sidecars.places)
     )
     atomic_write(
         artefacts.marker(image.page, "selfreport"),
         json.dumps([word.to_dict() for word in report], ensure_ascii=False, indent=1) + "\n",
     )
     # a multi-direction orientation report writes the sidecar the review reads
-    _write_multi_sidecar(image.page, image.image_path, artefacts.guess_dir, new_text, orientation_report_fn)
+    _write_multi_sidecar(image.page, image.image_path, artefacts.guess_dir, new_text, sidecars.orientation_report_fn)
 
 
 def reprocess_page_transcription(
@@ -1096,14 +1113,21 @@ def reprocess_page_transcription(
         raise ValueError(f"no such page: {page}")
     try:
         run = _batch_run(batch_id, work_dir, registry_dir=registry_dir, archive_dir=archive_dir)
-        _reread_page(run, artefacts, page, transcribe=transcribe, rows_text=rows_text, reading=reading)
+        _reread_page(
+            run,
+            artefacts,
+            page,
+            _PageRead(transcribe=transcribe, rows_text=rows_text, reading=reading),
+        )
         _write_page_sidecars(
             artefacts,
             _PageImage(page, image_path),
-            selfreport=selfreport,
-            orientation_report_fn=orientation_report_fn,
-            people=people,
-            places=places,
+            _PageSidecars(
+                selfreport=selfreport,
+                orientation_report_fn=orientation_report_fn,
+                people=people,
+                places=places,
+            ),
         )
         set_page_job(batch_id, page, None, work_dir)
     # lucidlint: ignore broad-except the stage's terminal boundary — mark failed on ANY error, then re-raise

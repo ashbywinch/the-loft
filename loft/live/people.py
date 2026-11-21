@@ -14,9 +14,10 @@ from typing import TYPE_CHECKING, Any
 
 from loft.live import person_row
 from loft.live.aliases import Aliases
+from loft.live.determination import Determination
 from loft.live.errors import Conflict, NotFound, StaleVersion
 from loft.live.identity import relationship_id
-from loft.live.identity_map import BasisKinds, basis_after, renders_estimated
+from loft.live.identity_map import BasisKinds, basis_after
 from tools.gone_person import GonePerson
 from tools.records import Person
 
@@ -30,10 +31,11 @@ class People:
     def __init__(self, connection: sqlite3.Connection, change: Change | None = None) -> None:
         self.connection = connection
         self.change = change
+        self.rows = person_row.PersonProjection(connection)
         self.aliases = Aliases(connection)
 
     def get(self, person_id: str) -> Person | None:
-        return person_row.read_row(self.connection, person_id)
+        return self.rows.get(person_id)
 
     def all(self) -> tuple[Person, ...]:
         """Every person in the archive's own order — the create sequence, so a
@@ -55,18 +57,19 @@ class People:
         return person
 
     def save(self, person: Person, base: int | None = None) -> Person:
-        """Write a create (base None) or a supersede, version-checked."""
+        """Write a create (base None) or a supersede, version-checked.
+
+        A supersede requires the record it replaces (`require`, the same
+        read every verb below starts with); a create must not find one."""
         if self.change is None:
             raise Conflict("people.save needs a change")
-        current = self.get(person.id)
         if base is None:
-            if current is not None:
+            if self.get(person.id) is not None:
                 raise Conflict(f"person {person.id} exists")
             event_type = "created"
             version = 1
         else:
-            if current is None:
-                raise NotFound(f"no person {person.id}")
+            current = self.require(person.id)
             if current.version != base:
                 raise StaleVersion(current=current, base=base)
             event_type = "superseded"
@@ -80,8 +83,7 @@ class People:
             payload=payload,
         )
         saved = replace(person, version=version)
-        person_row.write_row(
-            self.connection,
+        self.rows.write(
             saved,
             person_row.RowPosition(
                 version=version,
@@ -122,37 +124,9 @@ class People:
         )
 
     def resolve(self, person_id: str, decision: str, basis: dict[str, str] | None = None) -> Person | GonePerson | None:
-        """One review determination, applied to the record as it stands.
-
-        ``attested`` confirms; ``estimated`` confirms with the reviewer's own
-        recollection (``estimated`` is a rendering, not a status);
-        ``pending`` changes nothing; ``delete`` removes the record and its
-        edges. A determination that leaves the record identical writes
-        nothing; a determination for an id the table does not hold returns
-        None (TECHSPEC/05 §18.2).
-        """
-        current = self.get(person_id)
-        if current is None or current.status == "rejected":
-            return current  # a rejected proposal is terminal (TECHSPEC/05 §18.2)
-        if decision == "pending":
-            return current
-        if decision == "delete":
-            self.delete(person_id)
-            return GonePerson(person_id)
-        if decision == "attested":
-            if current.status != "proposed" and not renders_estimated(current.basis):
-                return current
-            return self._save_if_changed(
-                current, replace(current, status="confirmed", basis=basis_after(current.basis, BasisKinds.KNOWN))
-            )
-        if decision == "estimated":
-            if basis is None or not str(basis.get("text", "")).strip():
-                raise ValueError(f"estimated needs a basis: {person_id}")
-            return self._save_if_changed(
-                current,
-                replace(current, status="confirmed", basis=basis_after(current.basis, BasisKinds.RECOLLECTED, basis)),
-            )
-        raise ValueError(f"unknown decision: {decision!r}")
+        """One review determination, applied to the record as it stands —
+        ``Determination`` owns the four dispositions (TECHSPEC/05 §18.2)."""
+        return Determination(decision, basis).apply(self, person_id, gone=GonePerson)
 
     def reject(self, person_id: str) -> Person:
         """End a proposal: the row stays marked ``rejected`` (terminal) and
@@ -170,7 +144,7 @@ class People:
         ``delete``. The log keeps the record it deletes; its edges go too."""
         current = self.require(person_id)
         self._write_event(current, "deleted")
-        person_row.delete_row(self.connection, person_id)
+        self.rows.delete(person_id)
         self._delete_edges(person_id)
 
     def merge(self, loser_id: str, survivor_id: str, by: str) -> Person:
@@ -224,8 +198,7 @@ class People:
             entity_version=version,
             payload=json.dumps(payload_record, sort_keys=True, separators=(",", ":"), ensure_ascii=False),
         )
-        person_row.write_row(
-            self.connection,
+        self.rows.write(
             record,
             person_row.RowPosition(
                 version=version,
@@ -236,11 +209,6 @@ class People:
             base=person.version,
         )
         return event
-
-    def _save_if_changed(self, current: Person, updated: Person) -> Person:
-        if updated == current:
-            return current
-        return self.save(updated, base=current.version)
 
     def _delete_edges(self, person_id: str) -> None:
         change = self._change()

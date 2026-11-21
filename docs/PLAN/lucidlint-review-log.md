@@ -190,15 +190,50 @@ plus `pipeline/api/server.py`'s route envelopes at the time of writing. The
 rule stays config-ignored so the gate's verdict is not polluted by its own
 bug; the config note points here.
 
-### 2.3 `class-module` (12 findings) — config-ignored for `tools/**`
+### 2.3 `class-module` (22 findings) — 11 moved, 11 scoped (re-judged 2026-11-21)
 
-The tool wants each one-class module renamed to match its class
-(`htr.py` → `htrerror.py`, `sync.py` → `outbox.py`, `review.py` →
-`_chat.py`). Every flagged module is named after its **domain noun** (the
-repo standard: "Name tools and modules after domain nouns") and holds the
-noun's exception or helper class — the standards' own stated exception to
-"each class in its own module" (closely related, one reason to change).
-Renaming would destroy the domain naming.
+The global entry was deleted and every finding judged from the module, not
+from the rule's wording. The test that decided it: **a one-class module has no
+group to sanction**, so a name that does not match its class there is always a
+rename; the standards' exception ("a module grouping closely related models
+that share one reason to change", `docs/coding-standards.md`) only ever
+covers a genuine grouping — a class that is the module's noun, or that
+noun's record, exception or small helper.
+
+**Moved** (the module was a grab-bag, or the class had its own noun and its
+own reason to change) — the previous commit:
+
+| finding | moved to |
+|---|---|
+| `loft/live/compat_proposed.py` | `proposed_compatibility.py` — one class, named after the file |
+| `loft/live/compat_reviews.py` | `imports_compatibility.py` — same |
+| `loft/live/content.py` | `content_store.py` — same |
+| `loft/live/database.py` | `live_database.py` — same |
+| `loft/live/store.py` | `live_store.py` — same |
+| `loft/live/compat_items.py` | `item_compatibility.py` — the file names its class; `ItemExportError` stays (the export's own failure) |
+| `loft/live/protocols.py` | `identity_store.py` + `item_store.py` + `page_store.py` — one protocol per module, the ladder widening one write path at a time |
+| `pipeline/artefacts.py` | `batch_artefacts.py` — one class, named after the file |
+| `pipeline/orient.py` | `page_orientation.py` — one class; the old name was a verb, which the standards forbid for a module |
+| `pipeline/model/config.py` | `model_config.py` — one class, named after the file |
+| `pipeline/api/text_gzip.py` | `text_gzip_middleware.py` — one class, named after the file |
+| `tools/store.py` | `file_store.py` (`FileStore` + its two errors) + `disk_store.py` + `memory_store.py` — each implementation has its own reason to change (the standards: "extract once a class grows non-trivial behaviour") |
+| `tools/fiction.py` | `house_fiction.py` — one class, named after the file |
+
+**Kept** — each entry in `.lucidlint.toml` names its noun and the class that
+is that noun's record, exception or small helper: `document/document.py`
+(Document + DocumentLine), `document/stages.py` (the stage vocabulary: Stage,
+its StageFacts, and PageStatus, bound by one table), `document/word.py` (Word
++ WordMeasurements), `loft/live/aliases.py` (the alias projection: Alias,
+Aliases, MemoryAliases), `loft/live/document_row.py` (the documents table's
+records, row mapping and projection), `loft/live/errors.py` (the live error
+family), `loft/live/item_compatibility.py` (ItemCompatibility +
+ItemExportError), `loft/live/memory.py` (the memory double and its content
+seam), `loft/live/page_writes.py` (PageWrites + PageWork, one operation),
+`pipeline/detect/line.py` (Line + its measuring Frame), `tools/file_store.py`
+(FileStore + its two refusals).
+
+The rule stays ON everywhere else: a new multi-class module fails the gate
+until it is judged the same way.
 
 ### 2.4 `vague-name` (6 findings) — the four store modules, scoped
 
@@ -210,9 +245,11 @@ Re-checked 2026-11-20 with the global entry deleted: the rule reports six
 findings, every one a store class — `LiveStore`, `MemoryLiveStore`
 (`loft/live/`), `PipelineStore` (`pipeline/store.py`), `FileStore`,
 `DiskStore`, `MemoryStore` (`tools/store.py`). The sanction is the whole
-answer, so the entry moved from the global list to the four modules: the
-rule is ON for every other class in the tree, and a new vague name fails
-the gate.
+answer, so the entry moved from the global list to the modules: the rule is
+ON for every other class in the tree, and a new vague name fails the gate.
+Re-checked 2026-11-21 with the store split (§2.3): the scoped entries are
+`loft/live/live_store.py`, `loft/live/memory.py`, `pipeline/store.py`,
+`tools/file_store.py`, `tools/disk_store.py` and `tools/memory_store.py`.
 
 ### 2.5 `latent-class` (5 findings) — per-site suppression
 
@@ -378,7 +415,7 @@ files are excluded from the branch's commits too. Flagged for the user.
 | detached-method | 24 | @staticmethod |
 | duplicate | 18 | shared helpers extracted |
 | unused | 33 | dead code deleted, seams documented, false positives suppressed |
-| class-module | 12 | config-ignored with reason (§2.3) |
+| class-module | 22 | 11 moved to a module named for the class, 11 scoped with the noun-and-class reason (§2.3) |
 | vague-name | 3 | config-ignored with reason (§2.4) |
 | fakefs | 139 | config-ignored with reason (§2.1) |
 | conditional-polymorphism | 3 | all in untracked files — out of scope (§3.5) |

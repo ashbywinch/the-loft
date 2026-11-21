@@ -44,6 +44,11 @@ from tools.box import overlap
 from tools.loft_paths import LoftPaths
 from tools.text import normalize
 
+# What a crop read means when the caller states nothing: the vision model at the
+# client's gateway endpoint and key. Named here so the call site says it, and a
+# reader need not open VlmOptions to learn what a bare options object means.
+DEFAULT_CROP_READ = VlmOptions()
+
 
 def _accumulate_bounds(xs: list[float], ys: list[float], item: LayoutLine | UnmatchedLine) -> None:
     """One boxed record's ink extent joins the bounds accumulators."""
@@ -259,8 +264,8 @@ def run(
     """Read the page's crops, stitch, and report — the geometry
     experiment's ledger for one page. ``options`` is the read's config; None
     is the crop read's own — the vision model at the gateway's default
-    endpoint and key (``VlmOptions()``, the client's defaults)."""
-    read_options = options or VlmOptions()
+    endpoint and key (``DEFAULT_CROP_READ``, the crop read's defaults)."""
+    read_options = options or DEFAULT_CROP_READ
     image_path = BatchArtefacts(work_dir, batch_id).oriented(f"{page}.jpg")
     store = PipelineStore(work_dir)
     layout = load_layout_store(store, f"{batch_id}/ocr-guess/{page}.layout.json")

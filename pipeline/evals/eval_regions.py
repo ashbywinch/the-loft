@@ -150,7 +150,7 @@ def run(
                 image_path,
                 Path(tmp),
                 i,
-                VlmOptions(model=model, base_url=base_url or "", api_key=api_key),
+                VlmOptions(model=model, base_url=base_url, api_key=api_key),
             )
             if read is None:
                 failed += 1

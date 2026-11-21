@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -59,6 +61,29 @@ def _precision_of(text: str) -> str:
     return {4: "year", 7: "month", 10: "exact"}.get(len(text.strip()), "year")
 
 
+@contextmanager
+def _one_transaction(connection: sqlite3.Connection) -> Iterator[None]:
+    """The guard around a pair of statements that must land together.
+
+    The connection is autocommit (``database.py`` opens it with
+    ``isolation_level=None``), so without this the person row and its
+    residences would each commit on their own and a failure between them
+    would leave one half written. A caller that already holds a transaction —
+    a change's ``BEGIN IMMEDIATE``, the replay's — is joined, never nested
+    (SQLite refuses a second ``BEGIN``); a standalone write owns one and rolls
+    it back on any exception."""
+    if connection.in_transaction:
+        yield
+        return
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        connection.execute("ROLLBACK")
+        raise
+    connection.execute("COMMIT")
+
+
 class PersonProjection:
     """One connection's person rows: the reader, the guarded writer and the
     delete — the items' and pages' projection shape."""
@@ -74,32 +99,38 @@ class PersonProjection:
         return from_row(row, self._residences(person_id))
 
     def write(self, person: Person, position: RowPosition, *, base: int | None) -> None:
-        """Upsert the row behind the version guard; a zero-row result is stale."""
-        cursor = self.connection.execute(
-            """INSERT INTO people (person_id, name, years, relation, bio, email, pronouns, hue, status,
-                                   dob_json, dod_json, aliases_json, occupations_json, basis_json,
-                                   version, event_no, event_seq, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT (person_id) DO UPDATE SET
-                 name = excluded.name, years = excluded.years, relation = excluded.relation,
-                 bio = excluded.bio, email = excluded.email, pronouns = excluded.pronouns,
-                 hue = excluded.hue, status = excluded.status, dob_json = excluded.dob_json,
-                 dod_json = excluded.dod_json, aliases_json = excluded.aliases_json,
-                 occupations_json = excluded.occupations_json, basis_json = excluded.basis_json,
-                 version = excluded.version, event_no = excluded.event_no,
-                 event_seq = excluded.event_seq, updated_at = excluded.updated_at
-               WHERE people.version IS ?""",
-            (*to_row(person, position), base),
-        )
-        if cursor.rowcount == 0:
-            current = self.get(person.id)
-            raise StaleVersion(current=current, base=base)
-        self._write_residences(person)
+        """Upsert the row behind the version guard; a zero-row result is stale.
+        The row and its residences are one unit: a residence the table refuses
+        leaves the row as it was."""
+        with _one_transaction(self.connection):
+            cursor = self.connection.execute(
+                """INSERT INTO people (person_id, name, years, relation, bio, email, pronouns, hue, status,
+                                       dob_json, dod_json, aliases_json, occupations_json, basis_json,
+                                       version, event_no, event_seq, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT (person_id) DO UPDATE SET
+                     name = excluded.name, years = excluded.years, relation = excluded.relation,
+                     bio = excluded.bio, email = excluded.email, pronouns = excluded.pronouns,
+                     hue = excluded.hue, status = excluded.status, dob_json = excluded.dob_json,
+                     dod_json = excluded.dod_json, aliases_json = excluded.aliases_json,
+                     occupations_json = excluded.occupations_json, basis_json = excluded.basis_json,
+                     version = excluded.version, event_no = excluded.event_no,
+                     event_seq = excluded.event_seq, updated_at = excluded.updated_at
+                   WHERE people.version IS ?""",
+                (*to_row(person, position), base),
+            )
+            if cursor.rowcount == 0:
+                current = self.get(person.id)
+                raise StaleVersion(current=current, base=base)
+            self._write_residences(person)
 
     def delete(self, person_id: str) -> None:
-        """Remove the person and their residences — the delete determination."""
-        self.connection.execute("DELETE FROM person_residences WHERE person_id = ?", (person_id,))
-        self.connection.execute("DELETE FROM people WHERE person_id = ?", (person_id,))
+        """Remove the person and their residences — the delete determination,
+        one unit: a refused person delete keeps the residences it would have
+        orphaned."""
+        with _one_transaction(self.connection):
+            self.connection.execute("DELETE FROM person_residences WHERE person_id = ?", (person_id,))
+            self.connection.execute("DELETE FROM people WHERE person_id = ?", (person_id,))
 
     def _write_residences(self, person: Person) -> None:
         self.connection.execute("DELETE FROM person_residences WHERE person_id = ?", (person.id,))

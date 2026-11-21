@@ -1077,3 +1077,51 @@ entry remains in `.lucidlint.toml` — the last seven findings are fixed in
 the code and the rule is on everywhere. `make lucidlint` reports 0 new
 actions with every entry for the rule deleted, `make typecheck` is clean and
 `make test` is green (1190 pytest, 2 skipped; 420 vitest) after each commit.
+
+## 2026-11-21 — every magic number named, the global ignore deleted
+
+`magic-number` was the one family suppressed repo-wide at 0.7.1. The entry is
+gone and the 149 findings this tree reported are fixed in code: no
+`magic-number` entry remains in `.lucidlint.toml`, per module or repo-wide.
+The baseline's `config_ignored` tally said 204 — that count is not recomputed
+on the current tree; the live run after deleting the entry reported 149.
+
+The rule's own shape decided the scope:
+
+- **A class already owned the work** → the number became a class constant
+  beside its siblings: the row palette's recipe (`RenderStyle.HUE_STEP`,
+  `SATURATION`, `VALUE`), `Mark`'s streak/bar/foot-band/valley measures,
+  `_Claims`' overlap share and divisors, `PagePainter`'s ink level and
+  stroke-label geometry, `Layout`'s four reading directions, `NumberedRows`'
+  margin allowance and pointer divisor, `Word.LETTER_ASPECT`, `Colour`'s
+  `MAX_CHANNEL`, `_MapStyle`'s chip geometry, `_AlonePage.CONTEXT_ROWS`.
+- **A pure helper with one reader** → a function-local constant, the
+  standards' stated exception: `tools/box.py`'s axis half-turn and slacks,
+  `has_ink`'s ink delta, `gates.py`'s advance calibration (`_Advance`, the
+  `_Claims` pattern), `cluster_rows`' fallbacks, `run_plan`'s
+  milliseconds-per-second.
+- **A number the language can name for itself** → no constant invented:
+  percentages print with `:.1%` instead of `100 * a / b`, the log's tab
+  separator is `"\t"`, the ink histogram is iterated instead of indexed to
+  256, and `bare[:-4]` became the archive's own stem/suffix rule.
+- **One home for a value two modules spell** → `Layout.NORMALIZED_BOX_SCALE`
+  for the model's 0-1000 box frame (the evals now import it),
+  `RegionGate.REGION_OVERLAP_SHARE` for Gate E's bar (the correction that
+  applies it reads it), `tools.box.is_vertical` for the two extent rules'
+  vertical test, and `page_visuals.kilobytes` for the experiment logs' size
+  idiom (11 sites across 10 scripts).
+
+Two findings were data, not measures, and are named at their call sites
+instead of as constants: `render_row_snags.py`'s three panels now pass
+`scale=`/`word_ids=` — a zoom and a row's word ids are fixture data, and the
+keyword states which is which, as `Rectangle(x0=…)` already does.
+
+Tool note for the author: `latent-class`/`closures` counts a multi-line
+`halo_text(...)` call as an inner function (a one-line call on the same file
+is clean), which the research scripts work around by naming the `Point`
+first. Not suppressed — recorded here.
+
+Gate after the sweep: `make lucidlint` 0 new actions with the entry deleted,
+`make typecheck` clean, `make test` green (1190 pytest, 2 skipped; 420
+vitest). The commits are one per module group: document, tools, detect, rows,
+the pipeline seams, evals, loft/live, research, then this config change.

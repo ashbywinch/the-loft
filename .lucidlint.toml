@@ -31,9 +31,16 @@
 # SearchQueryArgs, which the rule still reports against each other. The
 # reasoning: docs/PLAN/lucidlint-review-log.md §1.7. A real fork is still a
 # review finding.
+#
+# magic-number: no longer ignored (2026-11-21) — the findings the rule
+# reported on this tree (149 live; the 0.7.1 baseline's count was 204 against
+# an older tree) were fixed, not suppressed. Every number now states what it
+# measures, on the class that owns the work — or as a function-local where the
+# measure belongs to one pure helper (docs/coding-standards.md: "a pure helper
+# with one reader keeps its measure local to the function"). No per-module
+# entry survives; the sweep's shape is in docs/PLAN/lucidlint-review-log.md.
 ignore = [
     "record-shape",
-    "magic-number",
     "duplicate-module",
 ]
 # noqa: no longer ignored (2026-10-17) — every `# noqa` site now carries its

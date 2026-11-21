@@ -639,3 +639,34 @@ def test_every_mark_indexes_the_lines_the_writing_keeps(tmp_path: Path) -> None:
 
     assert {mark.line for mark in marks} == {0}, "a mark points at a line the writing dropped"
     assert len(kept_line.shapes) == len(marks), "the kept line lost the marks it holds"
+
+
+def _mark(x0: float, y0: float, x1: float, y1: float) -> Mark:
+    """A shape with a box and nothing else — `covered_by` reads geometry only."""
+    return Mark(
+        x0=x0,
+        y0=y0,
+        x1=x1,
+        y1=y1,
+        baseline=y1,
+        waistline=y0,
+        area=(x1 - x0) * (y1 - y0),
+        cx=(x0 + x1) / 2,
+        pix=(np.zeros(0, dtype=np.int64), np.zeros(0, dtype=np.int64)),
+    )
+
+
+def test_a_sparsely_sampled_drag_covers_the_words_between_its_points() -> None:
+    """A fast drag is sampled at a few points far apart. Testing the points
+    alone covered only the shapes under its ENDPOINTS, so the words it ran
+    through in between went unnamed and the line claimed the wrong row (or
+    none at all). The test is over the stroke's segments."""
+    from document.point import Point
+    from pipeline.detect.reader import covered_by
+
+    shape = _mark(10, 0, 20, 20)  # half-resolution: page x 20..40, y 0..40
+    stroke = [Point(0, 10), Point(80, 10)]  # samples either side of the word
+    assert covered_by(stroke, [shape], 0.0) == [shape]
+    # a stroke running beside the word, not through it, still covers nothing
+    beside = [Point(0, 200), Point(80, 200)]
+    assert covered_by(beside, [shape], 0.0) == []

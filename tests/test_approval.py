@@ -11,6 +11,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from pipeline.api.approval import ApprovalContext, DocumentFacts, agreement_for, approve_page
 from tools.archive import Archive
 from tools.store import DiskStore
@@ -108,3 +110,27 @@ def test_re_approving_a_page_supersedes_the_same_item(tmp_path: Path) -> None:
     assert _item_text(archive, second.item_id) == "PAGE ONE, CORRECTED"
     agreement = agreement_for("p1.jpg", "adopt-0001", work)
     assert agreement is not None and agreement.text == "PAGE ONE, CORRECTED"
+
+
+def test_an_unknown_page_is_refused_before_it_mints_an_item(tmp_path: Path) -> None:
+    """A page the batch does not hold used to become its own fabricated
+    document: the approval wrote an agreement marker, minted an archive item
+    and appended a boundary to the registry — a reviewer typo became archive
+    content. The approval must refuse it and leave both untouched."""
+    work, registry = _batch(tmp_path)
+    archive = Archive(DiskStore(tmp_path / "archive"))
+    before = json.loads((registry / "adopt-0001.json").read_text())
+
+    with pytest.raises(ValueError, match="not in batch"):
+        approve_page(
+            "adopt-0001",
+            "p9.jpg",
+            "PAGE NINE",
+            context=ApprovalContext(archive, work, registry),
+            facts=DocumentFacts(title="A letter", date="1915-05-02", date_precision="exact"),
+        )
+
+    assert archive.item_ids() == []
+    assert not (work / "adopt-0001" / "ocr-guess" / "p9.agreed.json").exists()
+    after = json.loads((registry / "adopt-0001.json").read_text())
+    assert after["boundaries"] == before["boundaries"]

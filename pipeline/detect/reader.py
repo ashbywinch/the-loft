@@ -271,16 +271,39 @@ def line_pieces(pieces: list[Mark], unit: float) -> list[Mark]:
 
 
 def covered_by(stroke: list[Point], shapes: list[Mark], touch: float) -> list[Mark]:
-    """The shapes a traced line passes over — how a stroke names its line."""
-    return [
-        shape
-        for shape in shapes
-        if any(
-            shape.x0 - touch <= point.x / Components.SCALE <= shape.x1 + touch
-            and shape.y0 - touch <= point.y / Components.SCALE <= shape.y1 + touch
-            for point in stroke
-        )
-    ]
+    """The shapes a traced line passes over — how a stroke names its line.
+
+    The test runs over the stroke's SEGMENTS, not its sampled points: a fast
+    drag lands a handful of points far apart, and testing the points alone
+    covered only the words under its endpoints — the line then named the wrong
+    row, or none (review, 2026-11-14)."""
+    points = [(point.x / Components.SCALE, point.y / Components.SCALE) for point in stroke]
+    # one point is a degenerate segment: a tap still names the word under it
+    segments = list(zip(points, points[1:], strict=False)) or list(zip(points, points, strict=True))
+    return [shape for shape in shapes if any(_segment_meets(a, b, shape, touch) for a, b in segments)]
+
+
+def _segment_meets(a: tuple[float, float], b: tuple[float, float], shape: Mark, touch: float) -> bool:
+    """Does the segment a→b enter the shape's box (the slab test), a stroke's
+    touch wider on every side?
+
+    Each edge is one constraint on the segment's parameter t ∈ [0, 1] —
+    ``t·p ≥ q`` — so the box is entered when one t satisfies all four."""
+    (ax, ay), (bx, by) = a, b
+    dx, dy = bx - ax, by - ay
+    x0, y0, x1, y1 = shape.x0 - touch, shape.y0 - touch, shape.x1 + touch, shape.y1 + touch
+    low, high = 0.0, 1.0  # the segment's own range
+    for p, q in ((dx, x0 - ax), (-dx, ax - x1), (dy, y0 - ay), (-dy, ay - y1)):
+        if p == 0:
+            if q > 0:
+                return False  # parallel to the slab, and outside it
+        elif p > 0:
+            low = max(low, q / p)
+        else:
+            high = min(high, q / p)
+        if low > high:
+            return False
+    return True
 
 
 def _nearest_line(shape: Mark, lines: list[Line]) -> int:

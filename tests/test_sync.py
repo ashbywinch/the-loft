@@ -62,6 +62,27 @@ def test_validate_confirmation_rejects_bad_shapes() -> None:
         ConfirmationPayload.validate(_confirmation(pages=[]))
 
 
+def test_validate_confirmation_rejects_a_page_that_is_not_a_name() -> None:
+    """A page name becomes a path segment in the drafts read. A name carrying
+    a separator or ".." was accepted by the wire and then failed the read, so
+    one hostile entry made /drafts answer 400 for the whole batch."""
+    for bad in ("../p1.jpg", "sub/p1.jpg", "..", "p1.jpg\u0000", ""):
+        with pytest.raises(ValueError, match="pages"):
+            ConfirmationPayload.validate(_confirmation(pages=["p1.jpg", bad]))
+    # a non-string is no name at all
+    with pytest.raises(ValueError, match="pages"):
+        ConfirmationPayload.validate(_confirmation(pages=["p1.jpg", 7]))
+
+
+def test_validate_confirmation_keeps_the_phone_export_spelling() -> None:
+    """A duplicate export arrives as "name~2.jpg" — the page-name guard must
+    accept the real scan, not just reject the hostile name."""
+    assert ConfirmationPayload.validate(_confirmation(pages=["p1.jpg", "p1~2.jpg"]))["pages"] == [
+        "p1.jpg",
+        "p1~2.jpg",
+    ]
+
+
 def test_validate_confirmation_rejects_non_integer_doc_index() -> None:
     # a float (1e309 -> OverflowError in the receiver's int()) or a bool
     # would 500 instead of 400

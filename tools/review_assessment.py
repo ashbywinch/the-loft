@@ -1,15 +1,16 @@
-"""The verdict one review turn states: whether the reviewer's answer
+"""The two records of one review turn: the answer the model states, and the
+evidence the turn produced around it.
+
+``StatementAssessment`` is the answer — whether the reviewer's statement
 addresses the claim under review, whether it contradicts the archive's
 attested facts, the reviewer's own certainty, the findings the tools
-surfaced, and the genealogist's next question.
-
-The verdict is the investigation's one outcome — the eval's conditions and
-the review transcript both read it, so this class owns its wire form: the
-keys the model's verdict schema states, in its order, plus the model's final
-raw output, the tool trace, and the two prompt texts (the completeness
-property: everything the model produced is kept). Any key the model's
-verdict JSON carried that this class does not model is kept in ``extra``,
-never dropped.
+surfaced, and the genealogist's next question. Its JSON schema IS the
+request: pydantic renders the class docstring as the schema's own
+``description``, so those words are model-facing and the member descriptions
+are the instructions. ``ReviewTurn`` is that answer plus everything the turn
+produced: the model's raw output, the tool trace, both prompt texts, and any
+key the wire carried that the assessment does not declare (the completeness
+property: everything the model produced is kept, never dropped).
 """
 
 from __future__ import annotations
@@ -89,7 +90,7 @@ class StatementAssessment(BaseModel):
     )
 
 
-# The keys the verdict's wire carries — every other key of a model turn is
+# The keys the turn's wire carries — every other key of a model turn is
 # unmodeled and rides in ``extra``.
 VERDICT_KEYS = frozenset(
     {
@@ -109,13 +110,12 @@ VERDICT_KEYS = frozenset(
 
 @dataclass(frozen=True)
 class ReviewTurn:
-    """The record of one review turn.
+    """The record of one review turn: `StatementAssessment`'s answer plus the
+    evidence the turn produced.
 
-    `StatementAssessment` above is the model's answer: its JSON schema *is* the request,
-    so it holds only what the model states. This holds that answer plus
-    everything the turn produced around it — the raw output, the tool trace,
-    both prompt texts, and any key the wire carried that the model does not
-    declare. The fields are flattened for callers that read one answer.
+    The evidence is the model's raw output, the tool trace, both prompt texts,
+    and any key the wire carried that the assessment does not declare. The
+    fields are flattened for callers that read one answer.
     """
 
     relevant: str = ""
@@ -145,7 +145,7 @@ class ReviewTurn:
 
     @classmethod
     def from_dict(cls, raw: dict[str, Any]) -> ReviewTurn:
-        """The verdict a wire record states — the known keys normalized (the
+        """The turn a wire record states — the known keys normalized (the
         vocabularies are lowercase, the prose trimmed), a finding with no
         text dropped, and every unmodeled key kept in ``extra``."""
         contradiction = raw.get("contradiction")
@@ -170,7 +170,7 @@ class ReviewTurn:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """The verdict as its wire record — the schema's keys in its order,
+        """The turn as its wire record — the schema's keys in its order,
         then the unmodeled keys the model carried."""
         out: dict[str, Any] = {
             "relevant": self.relevant,

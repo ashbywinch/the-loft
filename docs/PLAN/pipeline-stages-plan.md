@@ -60,7 +60,7 @@ because evaluation is the chain's, not the tools drawer's.
 | `tools/eval_*.py` (the chain's) | `pipeline/evals/` |
 
 `tools/` keeps only the small CLI utilities (archive stores, projection,
-`atomic`, `attestation`, `gates`, `loft_paths`, `pii_markers`, the
+`atomic`, `gates`, `loft_paths`, `pii_markers`, the
 memory/capture flow, the export and demo-data generators, `cli.py`).
 
 `app/`, `tests/`, `research/`, `docs/`, `scripts/` are unchanged in kind;

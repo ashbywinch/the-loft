@@ -40,6 +40,10 @@ from tools.memory import Assessor, Knowledge
 from tools.records import Item, Person
 from tools.review_verdict import ReviewVerdict
 
+# A red condition here is a defect in the prompt, not variance: the repair
+# discipline (and the moves that are prohibited) is docs/testing-standards.md
+# § "When a real-model eval fails".
+
 
 @pytest.fixture(scope="session")
 def client() -> AIClient:

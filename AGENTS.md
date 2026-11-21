@@ -72,6 +72,7 @@ Instructions for AI agents working in this repo. Humans can read this too.
 | The one-time migration from the file archive to the database | `docs/TECHSPEC/11-migration.md` |
 | The human archive — the dated document tree, the scan image leg, the sha/phash re-find | `docs/TECHSPEC/07-exports.md` §18.8; `docs/object-model.md` (the model summary) |
 | Test conventions | `docs/testing-standards.md` |
+| A real-model eval went red, or a condition is flaky | `docs/testing-standards.md` § "When a real-model eval fails" — the prompt is the fix; never re-run, sample around, or weaken the gate |
 | Documentation conventions | `docs/writing-documentation.md` |
 | Writing or editing a prompt (the review, memory, transcription instructions) | `skill://prompt-craft`; the form rules are `docs/writing-documentation.md` |
 | Documentation structure — the required doc set, folder rules, discoverability | `docs/documentation-structure.md` |

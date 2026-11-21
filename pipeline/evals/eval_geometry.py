@@ -19,7 +19,7 @@ from typing import Any
 
 from pipeline.detection import Detection
 from pipeline.detection_pass import DetectionPass
-from pipeline.layout import Layout
+from pipeline.layout import Layout, MultiInputs, PageGeometry, SingleInputs
 from pipeline.layout_line import LayoutLine
 from pipeline.model.orientation_line import OrientationLine
 from tools.box import overlap
@@ -108,12 +108,12 @@ class Fixture:
         """The current pipeline: the transcription's own boxes (the marker
         geometry) anchor the single-orientation layout."""
         return Layout.single(
-            "p1.jpg",
-            self.width,
-            self.height,
-            self._vlm_text(),
-            self.detections,
-            vlm_boxes=self.marker_boxes,
+            SingleInputs(
+                PageGeometry("p1.jpg", self.width, self.height),
+                self._vlm_text(),
+                self.detections,
+                vlm_boxes=self.marker_boxes,
+            )
         )
 
     def rec_only(self) -> Layout:
@@ -121,12 +121,12 @@ class Fixture:
         the marker geometry (no vlm_boxes) — the misplaced-marker
         failing's proposed fix."""
         return Layout.single(
-            "p1.jpg",
-            self.width,
-            self.height,
-            self._vlm_text(),
-            self.detections,
-            vlm_boxes=None,
+            SingleInputs(
+                PageGeometry("p1.jpg", self.width, self.height),
+                self._vlm_text(),
+                self.detections,
+                vlm_boxes=None,
+            )
         )
 
     def multi(self) -> Layout:
@@ -147,13 +147,13 @@ class Fixture:
         ]
         passes = [DetectionPass(degrees=0, lines=self.detections)]
         return Layout.multi(
-            "p1.jpg",
-            self.width,
-            self.height,
-            passes,
-            report_lines=report_lines,
-            vlm_text=self._vlm_text(),
-            trust_report_degrees=True,
+            MultiInputs(
+                PageGeometry("p1.jpg", self.width, self.height),
+                passes,
+                report_lines,
+                self._vlm_text(),
+                trust_report_degrees=True,
+            )
         )
 
     def crop_grid(self) -> Layout:
@@ -495,13 +495,13 @@ class ClipLocation:
         vlm_text = "\n".join(t.text for t in fixture.truth)
         passes = [DetectionPass(degrees=0, lines=fixture.detections)]
         return Layout.multi(
-            "p1.jpg",
-            fixture.width,
-            fixture.height,
-            passes,
-            report_lines=report_lines or None,
-            vlm_text=vlm_text,
-            trust_report_degrees=True,
+            MultiInputs(
+                PageGeometry("p1.jpg", fixture.width, fixture.height),
+                passes,
+                report_lines or None,
+                vlm_text,
+                trust_report_degrees=True,
+            )
         )
 
 

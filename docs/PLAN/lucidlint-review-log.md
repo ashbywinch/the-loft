@@ -200,11 +200,19 @@ noun's exception or helper class — the standards' own stated exception to
 "each class in its own module" (closely related, one reason to change).
 Renaming would destroy the domain naming.
 
-### 2.4 `vague-name` (3 findings) — config-ignored for `tools/**`
+### 2.4 `vague-name` (6 findings) — the four store modules, scoped
 
 The tool's vague-name list includes "Store". The repo standard sanctions
 `Store` as a domain noun ("plus Store, Records, Projection, AiClient").
 The tool's list collides with the house vocabulary.
+
+Re-checked 2026-11-20 with the global entry deleted: the rule reports six
+findings, every one a store class — `LiveStore`, `MemoryLiveStore`
+(`loft/live/`), `PipelineStore` (`pipeline/store.py`), `FileStore`,
+`DiskStore`, `MemoryStore` (`tools/store.py`). The sanction is the whole
+answer, so the entry moved from the global list to the four modules: the
+rule is ON for every other class in the tree, and a new vague name fails
+the gate.
 
 ### 2.5 `latent-class` (5 findings) — per-site suppression
 
@@ -819,3 +827,216 @@ against the coding standards rather than waved through:
   and a real archive tree on `tmp_path`: append-only writes, sqlite
   semantics and the versioned file chain are the subject, exactly the
   `tests/**` exception the testing standards state.
+
+## 2026-11-20 — three families fixed rather than ignored
+
+The user's rule for this pass: fix the findings, never baseline them, never
+suppress them. Three families, one commit each.
+
+- **`feature-envy` — `loft/live/pages.py` (`Pages.save`).** The save read
+  `change` ten times against its own state six: the blob puts, the one page
+  event and the projection row were the page's write living inside the
+  collection. It is `PageCommit` now (`loft/live/page_commit.py`): the page,
+  the base it checks and the version it becomes are its own state, the change
+  is the transaction it commits through, and the event's wire form
+  (`page_payload`/`page_from_payload`) moved with it. Both suppressions — the
+  config scope and the inline comment — said the same thing and are gone.
+- **`assembly-class` — `tools/records.py`.** Stale: the raw-record refactor
+  (965de0b, `RecordField`) dissolved the two latent classes the entry covered
+  (`_dated` at 77, `from_dict` at 1057 when the rule is run against the
+  parent commit). Nothing to fix; the entry is deleted rather than left as
+  invisible debt.
+- **`partition` — four findings.** Each named a cohesive group of methods
+  that touched none of their class's fields, and each became the type the
+  group was named for:
+  - `loft/live/people.py` — the review's four dispositions are
+    `Determination` (`loft/live/determination.py`), one implementation for
+    every identity collection; `People.resolve` and the memory twin read
+    through it, and `Identities.resolve_place` no longer carries its own copy
+    of the ladder. `People.save` also reads a supersede through `require`
+    (the same read every verb starts with) instead of re-testing `get`.
+  - `pipeline/detect/reader.py` — `Writing`'s cut is `WordCut`
+    (`word_cut.py`) and the rows-against-lines reading is `RowFit`
+    (`row_fit.py`); `Writing` keeps the measurement. The 2026-09-18 decision
+    row is reversed on the owner, not the insight (see design-decisions).
+  - `tools/gedcom_document.py` — the reading half is `GedcomRecords`: a
+    parsed file's records, as the island's wire shapes. `GedcomDocument` holds
+    the shapes and renders them.
+  - `tools/archive.py` — **the page path was fixed** (`PageWork` in
+    `page_writes.py`: the bound service and the compatibility export are one
+    operation) and the **remaining split is a stop, named**: the live verbs
+    and the file path they fall back to until E2 touch disjoint
+    collaborators, so `Archive` reads as the two halves of its own migration.
+    The facade's public verbs are pinned by the suite and the server, so
+    splitting them off would either move the API between objects or turn the
+    verbs into one-line delegators — a second facade the migration would
+    undo. The entry stays, with the reason written at it.
+  - `loft/live/store.py` — the entry was **stale** (the rule reports nothing
+    on `LiveStore`): deleted.
+
+## 2026-11-20 — the names and signatures (vague-name, long-param-list)
+
+The second pass of the same rule: fix the findings, never baseline, never
+suppress — except a name the house itself sanctions.
+
+**`vague-name` — kept, and narrowed.** The rule's list includes "Store",
+which `docs/coding-standards.md` sanctions ("plus Store, Records, Projection,
+AiClient"). With the global entry deleted the rule reports six findings, all
+six a store class (`LiveStore`, `MemoryLiveStore`, `PipelineStore`,
+`FileStore`, `DiskStore`, `MemoryStore`). Renaming any of them would leave the
+house vocabulary, so the entry moved from the global list to the four modules
+that hold them: the rule is ON for every other class, and a new vague name
+still fails the gate (§2.4).
+
+**`long-param-list` — 13 acknowledged, 12 reported, 5 fixed, 7 stopped.**
+
+The five fixed (the record was already in the domain for three of them):
+
+- `Layout.multi` (9) → takes `MultiInputs`, the record the assembly was
+  already built from (`PageGeometry`, the passes, the report evidence, the
+  guess text, the `ClipSeam`). `MultiAssembly.layout()` now owns the whole
+  completion — build, dedupe, order, re-index — so `multi_layout` and
+  `Layout.multi` are the same pass with the record as the seam.
+- `_recover_crashed_layout` (7) → `(journal_path, readings, layout, page)`.
+  `BatchReadings` is the (work_dir, batch_id) pair it threaded, and the
+  page's layout and image paths derive from it exactly as the caller had
+  computed them.
+- `_reread_page` (6) → `(run, artefacts, page, read)`, where `_PageRead` is
+  the three injectable readers (transcribe, rows_text, reading).
+- `_write_page_sidecars` (6) → `(artefacts, image, sidecars)`, where
+  `_PageSidecars` is the two generators and the standing knowledge their
+  prompts cite.
+- `pipeline/evals/eval_crop_grid.run` (6) → `(artefacts, page, cols, rows,
+  options)`. `BatchArtefacts` is the batch target every path in the run was
+  rebuilt from; the scope's entry is deleted (stale).
+
+The seven stopped, each for the same cause — **the suite pins the call
+shape**, and this change keeps the tests untouched:
+
+| finding | params | the pin |
+|---|---|---|
+| `Layout.single` | 7 | `test_layout.py:358` — five positional; `:228` `selfreport=` |
+| `build_layout` | 7 | `test_layout.py`/`test_sync.py`/`test_server.py` — five positional + `selfreport=`/`vlm_boxes=` |
+| `Anchor.__init__` | 6 | `test_layout.py:709/746/779` — `width=`/`height=` |
+| `multi_layout` | 9 | `test_layout.py` — page/width/height/passes positional + keywords |
+| `record_confirmation` | 10 | `test_sync.py`/`test_adopt.py` — four positional + `archive=`/`title=`/`date=`/`registry_dir=` |
+| `reprocess_page_transcription` | 13 | `test_sync.py` — three positional + `transcribe=`/`rows_text=`/`registry_dir=` |
+| `decide_identification` | 6 | `test_archive.py` — five positional + `actor=` |
+
+Every one of them has its record already named in the code
+(`PageGeometry`, `MultiInputs`, `Determination`, `_PageRead`/`_PageSidecars`),
+so the fix is mechanical: change the def and each call site together. It is
+not done here because that means editing the tests, which this change keeps
+out of scope. The entries stay, scoped to the modules that hold the stopped
+findings, with the reason at each (`.lucidlint.toml`), and this table is the
+follow-up list.
+
+`tools/gedcom_document.py`'s `long-param-list` entry was stale (the rule
+reports nothing there) and is deleted; the module keeps its `god-class`
+entry, which still applies.
+
+## 2026-11-20 — the last seven signatures, with their call sites
+
+The follow-up the previous pass stopped on: the seven `long-param-list`
+findings whose fix is a signature change, and therefore an edit to every
+call site the suite pins. This time the tests move with the definitions —
+constructing the record is the only thing that changes in them; no
+assertion, case or expectation is touched. One commit per coherent group.
+
+The `.lucidlint.toml` entries that acknowledged the seven are deleted, not
+narrowed: the rule is on for these modules again, and the gate is green
+with it on.
+
+**`pipeline/layout.py` — the four entry points (one group).**
+
+| finding | was | now |
+|---|---|---|
+| `Layout.single` | 7 | `single(inputs: SingleInputs)` |
+| `build_layout` | 7 | `build_layout(inputs: SingleInputs)` |
+| `Anchor.__init__` | 6 | `Anchor(geometry: PageGeometry, report_line, match, text, *, trust_report_degrees=False)` |
+| `multi_layout` | 9 | `multi_layout(inputs: MultiInputs)` |
+
+`PageGeometry` (page, width, height) is the record the layout passes
+thread; `Anchor` now takes it whole instead of the width/height pair, and
+`anchor_guess_lines` passes its geometry straight through.
+`multi_layout`'s nine heterogeneous arguments are `MultiInputs` — the record
+`Layout.multi` already took — and `ClipSeam` is built at the call site
+instead of from an `(image, recognize)` pair inside the function.
+
+`build_layout`/`Layout.single` exposed a second finding the moment the
+geometry went in: taking `PageGeometry` first made them the third free
+function doing so, and `strewing` asked for a `PageGeometry` class holding
+`build_layout`, `_anchored_lines` and `anchor_guess_lines` as methods. That
+class is wrong — a frozen value record does not own the layout pass — but
+the group is real: the single path's inputs are one page's read, exactly as
+the multi path's are. They travel as `SingleInputs` (the geometry, the
+guess text, the detections, the self-report, the marker boxes) — the
+parameter object the rule asked for in the first place, and the twin of
+`MultiInputs`. The two remaining functions that take `PageGeometry` first
+(`anchor_guess_lines`, `_anchored_lines`) are the shared line-anchoring
+passes both paths call; the rule is silent on two.
+
+Test call sites updated: `tests/pipeline/test_layout.py` (17 `build_layout`,
+1 `Layout.single`, 18 `multi_layout`, 3 `Anchor`), `tests/test_sync.py` (6
+`build_layout`), `tests/pipeline/test_server.py` (2 `build_layout`), and the
+evals' fixture `pipeline/evals/eval_geometry.py` (2 `Layout.single`). The
+`Anchor` sites keep `report_line=`/`match=`/`text=` and gain the geometry as
+the first argument; every `multi_layout` site gains `MultiInputs` around
+arguments it already passed, and the one clip-seam site passes
+`ClipSeam(image, recognize)` where it used to pass the pair.
+
+**`pipeline/api/sync.py` — the review's two writers.**
+
+- `record_confirmation` (10) → `record_confirmation(confirmation:
+  ConfirmationRequest, *, archive, registry_dir=…, actor="import")`. The
+  reviewed document already had its record — the request the sync receiver
+  parses (`ConfirmationRequest`: the batch, the document's index and
+  boundary, the corrected text, and the title/date/date_precision that mint
+  the item). The write adds only what the request cannot know: the archive
+  it mints into, the registry directory, and who made the call. The server
+  already held the record and unpacked it into six positional arguments —
+  it now passes it. The type is imported under `TYPE_CHECKING`: the request
+  module reads this one's payload guard (`ConfirmationPayload`), so the
+  runtime import goes one way and the annotation is the only other use.
+- `reprocess_page_transcription` (13) → `reprocess_page_transcription(
+  batch_id, page, work_dir, *, reread: PageReread | None = None)`. The
+  readers and the sidecar generators were already records (`PageRead`,
+  `PageSidecars` — now public, because the server and the suite construct
+  them); what was still strewn across the signature is the batch's trees
+  and the two records together, so `PageReread` holds them: registry and
+  archive dirs, the readers, the sidecar generators. Absent members take the
+  batch's own defaults, exactly as the absent keyword arguments did.
+
+`label` is gone: it was accepted and never read (the server looked the
+batch's label up and passed it in; nothing in the function or its callees
+used it). Deleting the dead parameter is what the signature's dissolution
+made visible — it stays dead state in a record otherwise — and the server's
+lookup goes with it. Nothing observable changes: no test passed it, and
+`make test` is the proof.
+
+Test call sites updated: `tests/test_sync.py` (5 `record_confirmation`, 3
+`reprocess_page_transcription`), `tests/pipeline/test_adopt.py` (1
+`record_confirmation`).
+
+**`tools/archive.py` — the identification decision.**
+
+`decide_identification` (6) → `decide_identification(item_id, kind,
+record_id, determination: Determination, *, actor="import")`. The four
+dispositions and the basis were already a record in the live layer —
+`loft.live.determination.Determination` (decision + basis), the four verbs
+the identity tables resolve — and the archive's verb took the same two
+values apart. It now takes the record; `actor` stays beside it because who
+made the call is not part of the determination. The decision guard (an
+unknown verb raises) is unchanged.
+
+Test call sites updated: `tests/test_archive.py` (10). The server's
+decide route builds `Determination(fields.decision, basis)` where it used
+to pass the two values.
+
+---
+
+With the three commits the rule is clean repo-wide: no `long-param-list`
+entry remains in `.lucidlint.toml` — the last seven findings are fixed in
+the code and the rule is on everywhere. `make lucidlint` reports 0 new
+actions with every entry for the rule deleted, `make typecheck` is clean and
+`make test` is green (1190 pytest, 2 skipped; 420 vitest) after each commit.

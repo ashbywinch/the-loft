@@ -113,6 +113,7 @@ def test_register_adopted_preserves_confirmed_content_on_change(tmp_path: Path) 
     them cleared — the change is flagged for a manual review."""
     from PIL import Image
 
+    from pipeline.api.confirmation_request import ConfirmationRequest
     from pipeline.api.sync import record_confirmation
     from pipeline.boundary import Boundary
     from tools.archive import Archive
@@ -123,14 +124,16 @@ def test_register_adopted_preserves_confirmed_content_on_change(tmp_path: Path) 
     result = register_adopted(folder, label="Box 1", registry_dir=registry)
     record = json.loads(result.path.read_text(encoding="utf-8"))
     record_confirmation(
-        record["batch_id"],
-        1,
-        Boundary(pages=["a.jpg"]),
-        "Chère Maman.",
+        ConfirmationRequest(
+            record["batch_id"],
+            1,
+            Boundary(pages=["a.jpg"]),
+            "Chère Maman.",
+            title="A letter",
+            date="1963-05-14",
+            date_precision="exact",
+        ),
         archive=Archive(DiskStore(tmp_path / "archive")),
-        title="A letter",
-        date="1963-05-14",
-        date_precision="exact",
         registry_dir=registry,
     )
 

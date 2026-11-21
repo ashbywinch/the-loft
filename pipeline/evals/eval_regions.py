@@ -28,6 +28,7 @@ from pipeline.evals.eval_crop_grid import read_crop
 from pipeline.evals.eval_geometry import CropReading
 from pipeline.layout import Layout
 from pipeline.layout_line import LayoutLine
+from pipeline.model.vlm import VlmOptions
 from tools.loft_paths import LoftPaths
 
 
@@ -144,7 +145,13 @@ def run(
                 float(ink.bottom - ink.top),
                 [],
             )
-            read = read_crop(crop, image_path, Path(tmp), i, model, base_url or "", api_key)
+            read = read_crop(
+                crop,
+                image_path,
+                Path(tmp),
+                i,
+                VlmOptions(model=model, base_url=base_url or "", api_key=api_key),
+            )
             if read is None:
                 failed += 1
                 continue

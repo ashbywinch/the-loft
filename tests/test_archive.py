@@ -12,6 +12,7 @@ from typing import override
 import pytest
 
 from loft.live.compat import CompatibilityExport
+from loft.live.determination import Determination
 from loft.live.import_identity import sync_from_archive
 from loft.live.memory import MemoryLiveStore
 from pipeline.identification import Identification
@@ -948,7 +949,7 @@ def test_attested_confirms_the_record_and_the_documents_mention() -> None:
     archive, _ = _identified_archive()
     _ = archive.record_identification(_proposal())
 
-    record = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "attested")
+    record = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", Determination("attested"))
 
     assert isinstance(record, Place) and record.status == "confirmed"
     item = archive.get_item("doc-1971-05-01")
@@ -964,7 +965,9 @@ def test_an_estimated_mention_records_the_familys_words() -> None:
     _ = archive.record_identification(_proposal())
     basis = {"text": "we spent summers there", "by": "Alex", "when": "2026-10-29"}
 
-    record = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "estimated", basis)
+    record = archive.decide_identification(
+        "doc-1971-05-01", "place", "pl-mallowfield", Determination("estimated", basis)
+    )
 
     assert isinstance(record, Place) and record.status == "estimated"
     assert record.basis == basis
@@ -976,7 +979,7 @@ def test_deleting_a_mention_drops_an_unreferenced_proposal() -> None:
     archive, _ = _identified_archive()
     _ = archive.record_identification(_proposal())
 
-    gone = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "delete")
+    gone = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", Determination("delete"))
 
     assert isinstance(gone, GonePlace) and gone.id == "pl-mallowfield"
     item = archive.get_item("doc-1971-05-01")
@@ -991,7 +994,7 @@ def test_deleting_a_mention_never_deletes_a_confirmed_person() -> None:
     archive, _ = _identified_archive()
     _ = archive.record_identification(_proposal())
 
-    kept = archive.decide_identification("doc-1971-05-01", "person", "p-fern", "delete")
+    kept = archive.decide_identification("doc-1971-05-01", "person", "p-fern", Determination("delete"))
 
     assert isinstance(kept, Person) and kept.id == "p-fern"
     item = archive.get_item("doc-1971-05-01")
@@ -1007,7 +1010,10 @@ def test_a_confirmed_person_stays_a_fact_when_the_mention_is_guessed() -> None:
     _ = archive.record_identification(_proposal())
 
     record = archive.decide_identification(
-        "doc-1971-05-01", "person", "p-fern", "estimated", {"text": "I think so", "by": "Alex", "when": "2026-10-29"}
+        "doc-1971-05-01",
+        "person",
+        "p-fern",
+        Determination("estimated", {"text": "I think so", "by": "Alex", "when": "2026-10-29"}),
     )
 
     assert isinstance(record, Person) and record.status == "confirmed"
@@ -1033,7 +1039,7 @@ def test_deleting_a_mention_keeps_a_proposal_another_item_still_names() -> None:
         )
     )
 
-    kept = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "delete")
+    kept = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", Determination("delete"))
 
     assert isinstance(kept, Place) and kept.status == "proposed"
     places = archive.get_identity("places")
@@ -1047,7 +1053,7 @@ def test_pending_changes_nothing() -> None:
     _ = archive.record_identification(_proposal())
     before = store.read("assets/doc-1971-05-01/item-2.json")
 
-    record = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "pending")
+    record = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", Determination("pending"))
 
     assert isinstance(record, Place) and record.status == "proposed"
     assert store.read("assets/doc-1971-05-01/item-2.json") == before  # no new version, nothing rewritten
@@ -1055,7 +1061,7 @@ def test_pending_changes_nothing() -> None:
 
 def test_deciding_an_unknown_entity_returns_none() -> None:
     archive, _ = _identified_archive()
-    assert archive.decide_identification("doc-1971-05-01", "person", "p-ghost", "attested") is None
+    assert archive.decide_identification("doc-1971-05-01", "person", "p-ghost", Determination("attested")) is None
 
 
 # -- B1: the identity half writes through the live store ---------------------
@@ -1089,7 +1095,9 @@ def test_a_live_identification_writes_the_proposals_through_the_service() -> Non
 def test_a_live_identification_decision_writes_the_record_and_the_compat_table() -> None:
     archive, _, live = _live_archive()
     _ = archive.record_identification(_proposal())
-    record = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "attested", actor="p-fern")
+    record = archive.decide_identification(
+        "doc-1971-05-01", "place", "pl-mallowfield", Determination("attested"), actor="p-fern"
+    )
     assert isinstance(record, Place) and record.status == "confirmed"
     stored = live.places.require("pl-mallowfield")
     assert isinstance(stored, Place) and stored.status == "confirmed"
@@ -1104,7 +1112,9 @@ def test_a_live_identification_decision_writes_the_record_and_the_compat_table()
 def test_a_live_identification_delete_ends_the_proposal_through_the_service() -> None:
     archive, _, live = _live_archive()
     _ = archive.record_identification(_proposal())
-    record = archive.decide_identification("doc-1971-05-01", "place", "pl-mallowfield", "delete", actor="p-fern")
+    record = archive.decide_identification(
+        "doc-1971-05-01", "place", "pl-mallowfield", Determination("delete"), actor="p-fern"
+    )
     assert isinstance(record, GonePlace)
     stored = live.places.require("pl-mallowfield")
     assert isinstance(stored, Place) and stored.status == "rejected"  # the row stays in the log

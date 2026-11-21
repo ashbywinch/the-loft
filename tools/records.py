@@ -79,9 +79,16 @@ TRecord = TypeVar("TRecord")
 
 @dataclass(frozen=True)
 class RecordField:
-    """One named field of a record's raw wire mapping — the mapping and the
-    key that names the field travel as one value, so every parse helper takes
-    the field instead of the same pair of parameters."""
+    """One field of a record's raw wire mapping, read in the shapes that field
+    takes: text, a closed vocabulary, a dated fact, a basis, or a table of
+    records.
+
+    The class is cohesive because every method reads THIS field — the same
+    mapping and the same key — in one of its wire shapes. A rule about the
+    record that only happens to read a field (which item kinds may carry a
+    flag) is the record's vocabulary, not the field's shape: it lives with the
+    record (``ItemFlag``), never here.
+    """
 
     raw: Mapping[str, Any]
     key: str

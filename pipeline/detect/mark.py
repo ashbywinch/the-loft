@@ -65,6 +65,8 @@ class Mark:
 
     STREAK_TALL = 40  # 1/2 px: a run this tall and ≤3 wide is a scan line
     STREAK_WIDE = 60  # 1/2 px: a run this wide and ≤4 tall is a rule
+    STREAK_THIN = 4  # 1/2 px: any shorter run is writing, however wide
+    STREAK_NARROW = 3  # 1/2 px: any thinner run is writing, however tall
     RULE_TOUCH = 0.15  # of its width: a line is nearly disconnected from the writing
     LINE_GAP = 0.75  # × the writing's height: a line further below it is not underscoring it
     LINE_ALIGN = 0.2  # of the writing's width: an underline matches it, a rule does not
@@ -75,6 +77,14 @@ class Mark:
     WORD_EMPTY_MAX = 0.25  # of its columns, under a full line: disconnected ascender
     BAND_RUN = 0.6  # of a mark's width: rows running this far are a line's ink
     RULE_LONG = 70  # 1/2 px: a line spans more than a word; a word's tail does not
+    BAR_FRACTION = 0.15  # of the word's width: a run this broad is a bar, an underline or a loop's rim
+    FOOT_BAND_GAP = 0.25  # of the word's height: a broad band this near the foot is welded to it
+    FOOT_BAND_THICKNESS = 0.35  # of the word's height: thicker than this and the band is the word's body
+    VALLEY_WINDOW = 6  # 1/2 px above the foot band: the rows the valley between letters and underline lies in
+    VALLEY_SHARE = 0.2  # of the peak row's ink: a denser valley is the word's own bottom-heavy body
+    BODY_DENSITY = 3  # × the valley's ink: a row this dense above it is the letters' body
+    PROFILE_HALF = 0.5  # of the peak row's ink: the profile walk stops where the body ends
+    THICK_FRINGE = 2  # 1/2 px either side of a thick band: its fringe is not the writing's feet
 
     x0: float
     y0: float
@@ -106,7 +116,8 @@ class Mark:
     def is_streak(self) -> bool:
         """A long thin run of ink is a scan line or a rule, never writing."""
         width, height = self.x1 - self.x0, self.y1 - self.y0
-        return (width > Mark.STREAK_WIDE and height <= 4) or (height > Mark.STREAK_TALL and width <= 3)
+        run_is_rule = width > Mark.STREAK_WIDE and height <= Mark.STREAK_THIN
+        return run_is_rule or (height > Mark.STREAK_TALL and width <= Mark.STREAK_NARROW)
 
     def rows(self) -> dict[int, list[int]]:
         """The shape's ink by row — how a straddling shape is cut between lines."""
@@ -332,7 +343,7 @@ class Ink:
         runs = self.longest_runs()
         broad = {y for y, run in runs.items() if run >= Ink.BROAD_FRACTION * span}
         thick: set[int] = {y for y in broad if any(near in broad for near in (y - 1, y + 1))}
-        return set(range(min(thick) - 2, max(thick) + 3)) if thick else set()
+        return set(range(min(thick) - Mark.THICK_FRINGE, max(thick) + Mark.THICK_FRINGE + 1)) if thick else set()
 
     def baseline_row(self) -> int:
         """The row a word's letters stand on: the modal BOTTOM ink row per column.
@@ -356,12 +367,12 @@ class Ink:
         peak_row = int(np.argmax(intensities))
         top, bottom = int(ys.min()), int(ys.max())
         row_runs = self.longest_runs()
-        broad = {y for y, run in row_runs.items() if run >= max(0.15 * span, Ink.UNDERLINE_RUN)}
+        broad = {y for y, run in row_runs.items() if run >= max(Mark.BAR_FRACTION * span, Ink.UNDERLINE_RUN)}
         bands = _consecutive_bands(broad)
         band_at_foot = bool(
             bands
-            and (bottom - bands[-1].bottom) <= 0.25 * (bottom - top)
-            and (bands[-1].bottom - bands[-1].top) <= 0.35 * (bottom - top)
+            and (bottom - bands[-1].bottom) <= Mark.FOOT_BAND_GAP * (bottom - top)
+            and (bands[-1].bottom - bands[-1].top) <= Mark.FOOT_BAND_THICKNESS * (bottom - top)
         )
         if band_at_foot:
             seam = self._letters_on_top_of(bands[-1], intensities, peak_row, top)
@@ -388,13 +399,13 @@ class Ink:
         word's own body, not an underline."""
         band_top = band.top
         valley = (
-            min(range(max(top, band_top - 6), band_top), key=lambda y: intensities[y])
-            if band_top > max(top, band_top - 6)
+            min(range(max(top, band_top - Mark.VALLEY_WINDOW), band_top), key=lambda y: intensities[y])
+            if band_top > max(top, band_top - Mark.VALLEY_WINDOW)
             else top
         )
-        if intensities[valley] > 0.2 * intensities[peak_row]:
+        if intensities[valley] > Mark.VALLEY_SHARE * intensities[peak_row]:
             return None  # the valley is shallow: this is the word's own body
-        body_floor = max(3 * intensities[valley], 1)
+        body_floor = max(Mark.BODY_DENSITY * intensities[valley], 1)
         return next(
             (y for y in range(valley - 1, top - 1, -1) if intensities[y] >= body_floor),
             valley,
@@ -436,10 +447,10 @@ class Ink:
         span = float(xs.max() - xs.min() + 1)
         forbidden = set()
         row_runs = self.longest_runs()
-        broad = {y for y, run in row_runs.items() if run >= max(0.15 * span, Ink.UNDERLINE_RUN)}
+        broad = {y for y, run in row_runs.items() if run >= max(Mark.BAR_FRACTION * span, Ink.UNDERLINE_RUN)}
         bands2 = _consecutive_bands(broad)
         top, bottom = int(ys.min()), int(ys.max())
-        if bands2 and (bottom - bands2[-1].bottom) <= 0.25 * (bottom - top):
+        if bands2 and (bottom - bands2[-1].bottom) <= Mark.FOOT_BAND_GAP * (bottom - top):
             # only the foot band (a welded underline) leaves the crown profile;
             # a mid-word bar (the f's crossbar) is the word's own geometry
             forbidden = {y for y in range(bands2[-1].top - 2, bottom + 1)}
@@ -455,7 +466,7 @@ class Ink:
             return 0
         peak = int(np.argmax(counts))
         waistline = peak
-        while waistline > 0 and counts[waistline - 1] > counts[peak] * 0.5:
+        while waistline > 0 and counts[waistline - 1] > counts[peak] * Mark.PROFILE_HALF:
             waistline -= 1
         return waistline
 

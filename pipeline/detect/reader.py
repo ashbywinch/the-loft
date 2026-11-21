@@ -49,7 +49,8 @@ def ink_mask(page: Image.Image) -> np.ndarray:
     g = np.asarray(page.convert("L").resize((page.width // Components.SCALE, page.height // Components.SCALE))).astype(
         int
     )
-    bg = np.asarray(Image.fromarray(g.astype(np.uint8)).filter(ImageFilter.MedianFilter(17))).astype(int)
+    paper = Image.fromarray(g.astype(np.uint8)).filter(ImageFilter.MedianFilter(Reading.PAPER_WINDOW))
+    bg = np.asarray(paper).astype(int)
     return (bg - g) > Reading.INK_DELTA
 
 
@@ -366,6 +367,8 @@ class Strokes:
     A stroke IS a line — the reviewer drew it along one — and strokes that name
     the same line and overlap along it are one group, one traced box."""
 
+    OVERLAP_SHARE = 0.5  # of the shorter run: two strokes this overlapped name one line
+
     def __init__(self, raw: list[Stroke], page_size: PageSize) -> None:
         width, height = page_size.width, page_size.height
         # A drawn point cannot be off the page: the sketch records normalized
@@ -441,7 +444,7 @@ class Strokes:
     def _overlap(self, one: int, other: int) -> bool:
         """Whether two strokes share enough of their run along the line."""
         one_span, other_span = self._xspan(one), self._xspan(other)
-        return min(one_span.end, other_span.end) - max(one_span.start, other_span.start) > 0.5 * min(
+        return min(one_span.end, other_span.end) - max(one_span.start, other_span.start) > Strokes.OVERLAP_SHARE * min(
             one_span.end - one_span.start, other_span.end - other_span.start
         )
 
@@ -595,6 +598,7 @@ class Reading:
 
     TRACE = Path(os.environ.get("LOFT_TRACE_DIR", "/tmp/trace"))
     INK_DELTA = 25  # grey levels below the local paper level = ink
+    PAPER_WINDOW = 17  # px: the median window that estimates the paper around each pixel
     MIN_BOX_PX = 20  # full-res px: a leftover sliver thinner than this is noise
     WAIST_RUN = 10  # columns: a cut row running this far is a band of ink, not a stroke tip
     WAIST_OVERLAP = 0.5  # of the shorter longest-run: this much overlap is one band

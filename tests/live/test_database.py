@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from loft.live.database import LiveDatabase
+from loft.live.live_database import LiveDatabase
 from loft.live.schema import SchemaError
 
 

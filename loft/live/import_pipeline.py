@@ -22,8 +22,8 @@ from loft.live.batch_row import BatchState, ScanState, page_id_of, scan_state
 from loft.live.document_row import DocumentPage, DocumentState
 from loft.live.errors import LiveError
 from loft.live.identity_map import date_value
+from loft.live.live_store import LiveStore
 from loft.live.page_row import PageRow, PageState, reading_blob, reading_rows
-from loft.live.store import LiveStore
 from pipeline.api.sync import BatchReadings
 from pipeline.batch_record import BatchRecord
 from pipeline.registry import list_batches

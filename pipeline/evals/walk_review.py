@@ -16,7 +16,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from pipeline.artefacts import BatchArtefacts
+from pipeline.batch_artefacts import BatchArtefacts
 from pipeline.layout import Layout, load_layout_store
 from pipeline.store import PipelineStore
 from tools.loft_paths import LoftPaths

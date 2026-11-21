@@ -19,7 +19,7 @@ from typing import Any
 
 from PIL import Image
 
-from pipeline.model.config import ModelConfig
+from pipeline.model.model_config import ModelConfig
 from pipeline.model.vlm import VlmError, extract_json, transcribe_image_vlm
 
 

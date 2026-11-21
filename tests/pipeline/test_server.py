@@ -22,9 +22,10 @@ from pipeline.api.server import ServerConfig, create_server
 from pipeline.api.sync import Outbox
 from pipeline.registry import load_batch
 from tools.archive import Archive
+from tools.file_store import ImmutableStoreError
 from tools.memory import ElicitationError
+from tools.memory_store import MemoryStore
 from tools.records import Item, validate_identity
-from tools.store import ImmutableStoreError, MemoryStore
 
 
 def make_app_data(tmp_path: Path) -> Path:
@@ -1696,18 +1697,18 @@ def test_sync_rotate_accepts_the_desired_zero(server: ServerFixture) -> None:
     from PIL import Image
 
     from pipeline.detection import Detection
-    from pipeline.layout import build_layout
+    from pipeline.layout import PageGeometry, SingleInputs, build_layout
 
     _seed_sync_batch(server)
     oriented = server.work_dir / "adopt-0001" / "oriented"
     oriented.mkdir(parents=True)
     Image.new("RGB", (100, 200), "white").save(oriented / "p1.jpg")
     build_layout(
-        "p1.jpg",
-        100,
-        200,
-        "Chère Maman.",
-        [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
+        SingleInputs(
+            PageGeometry("p1.jpg", 100, 200),
+            "Chère Maman.",
+            [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
+        )
     ).write(server.work_dir / "adopt-0001" / "ocr-guess" / "p1.layout.json")
     status, body = server.post("/api/sync/batch/adopt-0001/page/p1.jpg/rotate", {"quarters": 0})
     assert status == 200
@@ -1727,7 +1728,7 @@ def test_sync_reread_retries_a_failed_re_read_without_reorienting(tmp_path: Path
 
     from pipeline.api.sync import page_job_state, set_page_job
     from pipeline.detection import Detection
-    from pipeline.layout import build_layout
+    from pipeline.layout import PageGeometry, SingleInputs, build_layout
 
     fixture = ServerFixture(make_app_data(tmp_path), MemoryStore(), _reprocess=lambda b, p: None)
     _seed_sync_batch(fixture)
@@ -1736,11 +1737,11 @@ def test_sync_reread_retries_a_failed_re_read_without_reorienting(tmp_path: Path
     Image.new("RGB", (100, 200), "white").save(oriented / "p1.jpg")
     layout_path = fixture.work_dir / "adopt-0001" / "ocr-guess" / "p1.layout.json"
     build_layout(
-        "p1.jpg",
-        100,
-        200,
-        "Chère Maman.",
-        [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
+        SingleInputs(
+            PageGeometry("p1.jpg", 100, 200),
+            "Chère Maman.",
+            [Detection(box=[0, 100, 50, 120], text="noise", score=0.4, words=[])],
+        )
     ).write(layout_path)
     set_page_job("adopt-0001", "p1.jpg", "failed", fixture.work_dir)
     status, body = fixture.post("/api/sync/batch/adopt-0001/page/p1.jpg/reread", {})

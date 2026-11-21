@@ -16,7 +16,7 @@ import json
 import os
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from time import monotonic
 from typing import Any
@@ -24,15 +24,15 @@ from typing import Any
 from PIL import Image
 
 from document.rectangle import Rectangle
-from pipeline.artefacts import BatchArtefacts
+from pipeline.batch_artefacts import BatchArtefacts
 from pipeline.evals.eval_geometry import CropLine, CropReading, PageSize, assemble_crop_grid, grid_crops
 from pipeline.layout import Layout, load_layout_store
 from pipeline.layout_line import LayoutLine
-from pipeline.model.ai_client import AIClient
-from pipeline.model.config import ModelConfig
+from pipeline.model.model_config import ModelConfig
 from pipeline.model.transcription import Transcription
 from pipeline.model.vlm import (
     VlmError,
+    VlmOptions,
     VlmPrompts,
     parse_transcription_response,
     transcribe_image_vlm,
@@ -73,20 +73,14 @@ class CropRead:
     tokens: int
 
 
-def _read_transcription(path: Path, model: str, base_url: str, api_key: str | None) -> VlmAnswer:
+def _read_transcription(path: Path, options: VlmOptions) -> VlmAnswer:
     """The VLM call for one crop image (upright or rotated): the model's
     answer and what the call cost."""
-    return transcribe_image_vlm(
-        path,
-        model=model,
-        system=VlmPrompts.transcription_system_with_context(),
-        base_url=base_url,
-        api_key=api_key,
-        # the crop read's completion is ~1-4k tokens; 64000 (the
-        # full-page location budget) EXCEEDS the glm-4.5v's 65536
-        # context once the image is in.
-        max_tokens=8000,
-    )
+    # the crop read's completion is ~1-4k tokens; 64000 (the
+    # full-page location budget) EXCEEDS the glm-4.5v's 65536
+    # context once the image is in.
+    crop_read = replace(options, system=VlmPrompts.transcription_system_with_context(), max_tokens=8000)
+    return crop_read.run(transcribe_image_vlm, path)
 
 
 def _fail_crop_read(index: int, reason: str) -> None:
@@ -101,9 +95,7 @@ def read_crop(
     image_path: Path,
     tmp: Path,
     index: int,
-    model: str,
-    base_url: str,
-    api_key: str | None,
+    options: VlmOptions,
 ) -> CropRead | None:
     """Read ONE crop with the VLM — the text + the crop-local boxes.
     When the upright read's boxes are TALLER than wide (the text is
@@ -117,7 +109,7 @@ def read_crop(
         im.crop(box).save(crop_path)
     t0 = monotonic()
     try:
-        answer = _read_transcription(crop_path, model, base_url, api_key)
+        answer = _read_transcription(crop_path, options)
         reading = parse_transcription_response(answer.answer)
     except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
         print(f"crop {index} FAILED: {str(exc)[:120]}", file=sys.stderr)
@@ -136,7 +128,7 @@ def read_crop(
         # parse that did not happen (the fallback is the upright read)
         rotated_read: tuple[VlmAnswer, Transcription] | None = None
         try:
-            answer2 = _read_transcription(rotated, model, base_url, api_key)
+            answer2 = _read_transcription(rotated, options)
             rotated_read = (answer2, parse_transcription_response(answer2.answer))
         # lucidlint: ignore swallow a failed re-read keeps the upright read (the fallback)
         except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
@@ -257,20 +249,19 @@ class CropGridReport:
 
 
 def run(
-    batch_id: str,
+    artefacts: BatchArtefacts,
     page: str,
-    work_dir: Path,
     cols: int = 2,
     rows: int = 3,
-    model: str = ModelConfig.VISION_MODEL,
-    base_url: str = AIClient.DEFAULT_BASE_URL,
-    api_key: str | None = None,
+    options: VlmOptions | None = None,
 ) -> CropGridReport:
     """Read the page's crops, stitch, and report — the geometry
-    experiment's ledger for one page."""
-    image_path = BatchArtefacts(work_dir, batch_id).oriented(f"{page}.jpg")
-    store = PipelineStore(work_dir)
-    layout = load_layout_store(store, f"{batch_id}/ocr-guess/{page}.layout.json")
+    experiment's ledger for one page. The batch's artefacts name every path
+    the run reads and writes, so the target travels as the one record."""
+    read_options = options or VlmOptions()
+    image_path = artefacts.oriented(f"{page}.jpg")
+    store = PipelineStore(artefacts.work_dir)
+    layout = load_layout_store(store, f"{artefacts.batch_id}/ocr-guess/{page}.layout.json")
     with Image.open(image_path) as im:
         width, height = im.size
     bounds = _content_bounds(layout)
@@ -283,7 +274,7 @@ def run(
     started = monotonic()
     with tempfile.TemporaryDirectory() as tmp:
         for i, crop in enumerate(crops):
-            read = read_crop(crop, image_path, Path(tmp), i, model, base_url, api_key)
+            read = read_crop(crop, image_path, Path(tmp), i, read_options)
             if read is None:
                 failed += 1
                 continue
@@ -310,10 +301,10 @@ def run(
     )
     # the model-scoped saves — the trial runs several models on the same
     # page; each keeps its own assembled layout + report
-    slug = model.replace("/", "-").replace("@", "")
-    out = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-{slug}.json"
+    slug = read_options.model.replace("/", "-").replace("@", "")
+    out = artefacts.guess_dir / f"{page}.cropgrid-{slug}.json"
     out.write_text(json.dumps(assembled.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
-    report_path = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-report-{slug}.json"
+    report_path = artefacts.guess_dir / f"{page}.cropgrid-report-{slug}.json"
     report_path.write_text(json.dumps(report.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
     return report
 
@@ -333,15 +324,18 @@ def main(argv: list[str] | None = None) -> int:
         help="the API key (default: the gateway token; set OPENROUTER_API_KEY for OpenRouter)",
     )
     args = parser.parse_args(argv)
+    options = VlmOptions(
+        model=args.model,
+        api_key=args.api_key or os.environ.get("OPENROUTER_API_KEY"),
+    )
+    if args.base_url:
+        options = replace(options, base_url=args.base_url)
     report = run(
-        args.batch_id,
+        BatchArtefacts(args.work_dir, args.batch_id),
         args.page,
-        args.work_dir,
         args.cols,
         args.rows,
-        model=args.model,
-        base_url=args.base_url,
-        api_key=args.api_key or os.environ.get("OPENROUTER_API_KEY"),
+        options,
     )
     print(json.dumps(report.to_dict(), indent=1))
     return 0

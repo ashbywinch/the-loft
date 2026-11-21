@@ -17,8 +17,8 @@ from typing import Any, cast
 from loft.live.backup import check_marker
 from loft.live.identity import relationship_id
 from loft.live.identity_map import disposition_of
-from loft.live.protocols import IdentityStore
-from loft.live.store import LiveStore
+from loft.live.identity_store import IdentityStore
+from loft.live.live_store import LiveStore
 from tools.records import (
     Org,
     OrgsTable,
@@ -169,16 +169,6 @@ def import_identities(
     """Import people, relationships, places, orgs and themes from the archive."""
     check_marker(backup_marker)
     return _import(store, _read_tables(archive), dry_run=dry_run)
-
-
-def sync_identities(store: LiveStore, archive: Path) -> IdentityReport:
-    """Catch the DB up with the old tree — the flip's opening import (B1).
-
-    The backup marker guards the first full migration, not this catch-up: the
-    DB already exists and is backed up. Records the store holds are skipped,
-    so a newer DB record is never regressed.
-    """
-    return _import(store, _read_tables(archive))
 
 
 def sync_from_archive(store: IdentityStore, archive: Any) -> IdentityReport:

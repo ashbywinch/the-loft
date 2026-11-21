@@ -20,9 +20,9 @@ from pathlib import Path
 import pytest
 
 from loft.live.compat_pages import PageCompatibility
+from loft.live.live_store import LiveStore
 from loft.live.page_row import PageState
 from loft.live.page_writes import PageWrites
-from loft.live.store import LiveStore
 from tools.loft_paths import LoftPaths
 
 BATCH = "adopt-20260813-201004"

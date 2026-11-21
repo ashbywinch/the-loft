@@ -82,7 +82,7 @@ section)" — one copy, tooling-checked.
 
 **People and places in examples are fictional.** Use the Barlow family —
 Aria, Jack, Meg, Harry, Nora, Lily and Pip Barlow, with Mrs Rosa Quinn,
-Mallowfield and Riverfield (`tools/fiction.py`; the convention in
+Mallowfield and Riverfield (`tools/house_fiction.py`; the convention in
 `docs/coding-standards.md`) — never a name from the archive. Prefer the named fiction to a redacted blank: a reader
 learns the shape from a plausible example, and the fiction cannot leak.
 

@@ -17,9 +17,9 @@ from pathlib import Path
 import pytest
 
 from tools.archive import Archive
+from tools.disk_store import DiskStore
 from tools.loft_paths import LoftPaths
 from tools.records import Item
-from tools.store import DiskStore
 
 REPO = Path(__file__).resolve().parents[1]
 

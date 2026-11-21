@@ -10,7 +10,7 @@ append-only and versioned; `save_identity` owns the chain.
 
 from __future__ import annotations
 
-from loft.live.protocols import ItemStore
+from loft.live.item_store import ItemStore
 from tools.archive import Archive
 from tools.records import ImportsTable
 

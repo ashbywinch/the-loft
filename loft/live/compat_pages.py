@@ -20,7 +20,7 @@ from document.row_adjustments import RowAdjustments
 from document.traces import Traces
 from document.words import Words
 from loft.live.errors import LiveError
-from loft.live.protocols import PageStore
+from loft.live.page_store import PageStore
 from pipeline.api.sync import BatchReadings
 from pipeline.rows.rows import Row, Rows
 from pipeline.rows_reading import RowsReading

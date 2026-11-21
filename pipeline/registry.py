@@ -11,8 +11,8 @@ from pathlib import Path
 
 from pipeline.batch_record import BatchRecord
 from pipeline.store import VERSION_SUFFIX, PipelineStore
+from tools.file_store import StoreError
 from tools.loft_paths import LoftPaths
-from tools.store import StoreError
 
 _BATCH_ID = re.compile(r"^[A-Za-z0-9-]+$")
 

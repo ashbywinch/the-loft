@@ -11,7 +11,7 @@ import pytest
 from PIL import Image
 
 from pipeline.model.vlm import VlmError
-from pipeline.orient import PageOrientation
+from pipeline.page_orientation import PageOrientation
 
 
 def _page(tmp_path: Path, size: tuple[int, int] = (60, 40)) -> Path:

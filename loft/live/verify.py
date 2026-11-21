@@ -17,11 +17,11 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from loft.live.batch_row import page_id_of
-from loft.live.store import LiveStore
+from loft.live.live_store import LiveStore
 from pipeline.registry import list_batches
 from tools.archive import Archive
+from tools.disk_store import DiskStore
 from tools.records import ImportsTable, OrgsTable, PeopleTable, PlacesTable, ThemesTable
-from tools.store import DiskStore
 
 
 @dataclass(frozen=True)

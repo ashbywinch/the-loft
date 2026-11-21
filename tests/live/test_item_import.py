@@ -14,7 +14,7 @@ import pytest
 from loft.live.errors import LiveError
 from loft.live.import_identity import import_identities
 from loft.live.import_items import ItemImportError, import_items
-from loft.live.store import LiveStore
+from loft.live.live_store import LiveStore
 
 SVG = b"<svg xmlns='http://www.w3.org/2000/svg'><rect width='1' height='1'/></svg>"
 

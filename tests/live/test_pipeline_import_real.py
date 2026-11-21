@@ -18,7 +18,7 @@ import pytest
 from loft.live.import_identity import import_identities
 from loft.live.import_items import import_items
 from loft.live.import_pipeline import import_pipeline
-from loft.live.store import LiveStore
+from loft.live.live_store import LiveStore
 from pipeline.registry import list_batches
 from pipeline.store import PipelineStore
 from tools.loft_paths import LoftPaths

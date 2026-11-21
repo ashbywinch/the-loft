@@ -18,9 +18,9 @@ from loft.live.batch_row import BatchState, ScanState
 from loft.live.document_row import DocumentState
 from loft.live.errors import Conflict, StaleVersion
 from loft.live.items import ContentInput
+from loft.live.live_store import LiveStore
 from loft.live.memory import MemoryLiveStore
 from loft.live.page_row import PageState
-from loft.live.store import LiveStore
 from tools.records import Item, Org, Person, Place, Relationship, Session
 from tools.theme import Theme
 

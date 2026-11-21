@@ -14,7 +14,7 @@ import json
 from typing import Any
 
 from loft.live.errors import LiveError
-from loft.live.protocols import ItemStore
+from loft.live.item_store import ItemStore
 from tools.archive import Archive
 from tools.records import Item
 

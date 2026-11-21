@@ -17,10 +17,10 @@ from pathlib import Path
 import pytest
 
 from tools.archive import Archive
+from tools.disk_store import DiskStore
 from tools.loft_paths import LoftPaths
 from tools.projection import DeriveError, Projection, projection_json, resolved_items
 from tools.records import Item, Person, Place, validate_identity
-from tools.store import DiskStore
 
 
 def make_archive(root: Path) -> Archive:

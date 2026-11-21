@@ -1,6 +1,6 @@
 """The house fiction: the Barlow cast's integrity, and its fictionality.
 
-`tools/fiction.py` is the one set of fictional names for fixtures, prompts,
+`tools/house_fiction.py` is the one set of fictional names for fixtures, prompts,
 eval inputs, docs and fake instances. Two things must hold: the cast is
 internally coherent (ids, relationships, places), and no real family marker
 appears anywhere in the module.
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from tools.fiction import HouseFiction
+from tools.house_fiction import HouseFiction
 from tools.loft_paths import LoftPaths
 from tools.pii_markers import family_markers, file_offenders
 from tools.records import RELATIONSHIP_KINDS, is_valid_record_id
@@ -57,5 +57,5 @@ def test_the_cast_is_coherent() -> None:
 def test_the_standards_name_the_fiction_source() -> None:
     standards = (ROOT / "docs/coding-standards.md").read_text(encoding="utf-8")
     writing = (ROOT / "docs/writing-documentation.md").read_text(encoding="utf-8")
-    assert "tools/fiction.py" in standards
-    assert "tools/fiction.py" in writing
+    assert "tools/house_fiction.py" in standards
+    assert "tools/house_fiction.py" in writing

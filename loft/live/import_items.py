@@ -17,14 +17,14 @@ from loft.live import item_row
 from loft.live.backup import check_marker
 from loft.live.errors import LiveError
 from loft.live.identity_map import disposition_of
+from loft.live.item_store import ItemStore
 from loft.live.items import ContentInput, default_trust
-from loft.live.protocols import ItemStore
-from loft.live.store import LiveStore
+from loft.live.live_store import LiveStore
 from tools.archive import Archive
+from tools.disk_store import DiskStore
 from tools.records import Item, split_content
 from tools.ref import Ref
 from tools.split_item import SplitItem
-from tools.store import DiskStore
 
 
 class ItemImportError(LiveError):

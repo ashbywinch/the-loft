@@ -66,7 +66,7 @@ text.
    postcard faces down the row chain, and photographs/drawings nowhere.
    the removed OCR path (`pipeline/ocr.py`, the tesseract arbiter and the density route) and the
    guess stage are gone; orientation is the vision model's own call
-   (`pipeline/orient.py`), and a page's text is its read's text.
+   (`pipeline/page_orientation.py`), and a page's text is its read's text.
 3. A postcard face's two orientations want per-region detection or the human's
    own lines; the reviewer's drawn lines already express "these words are one
    row", so the human path needs no new machinery. Not built yet.

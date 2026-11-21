@@ -18,7 +18,6 @@ from __future__ import annotations
 import base64
 import json
 import logging
-import re
 import sys
 import urllib.request
 from collections.abc import Callable
@@ -30,9 +29,9 @@ from pipeline.model.ai_client import AIClient, find_api_key
 from pipeline.model.chat_message import ChatMessage
 from pipeline.model.chat_request import ChatRequest
 from pipeline.model.chat_response import ChatResponse
-from pipeline.model.config import ModelConfig
 from pipeline.model.http_headers import HttpHeaders
 from pipeline.model.image_content import ImageContent
+from pipeline.model.model_config import ModelConfig
 from pipeline.model.orientation_report import OrientationReport
 from pipeline.model.text_content import TextContent
 from pipeline.model.token_usage import TokenUsage
@@ -95,12 +94,6 @@ class VlmPrompts:
         'Return ONLY JSON: {{"unsure": [{{"line": <line number>, "word": "the '
         'word exactly as transcribed"}}]}}. If everything reads confidently, the '
         "list is short or empty."
-    )
-
-    ANGLE_PROMPT = (
-        "What is the rotation angle of the text in this image, in degrees "
-        "clockwise from upright (0 = the text reads left-to-right with the "
-        "image upright)? Reply with just the number."
     )
 
     _ORIENTATION_SYSTEM = "You analyse document layouts precisely. Reply with the requested JSON only."
@@ -455,25 +448,6 @@ def _vision_post(
         # lucidlint: ignore broad-except the module's contract — every failure surfaces as VlmError
         except Exception as exc:  # network or API errors surface loudly
             raise VlmError(f"vision model call failed: {exc}") from exc
-
-
-def line_orientation_degrees(crop: Path, *, max_tokens: int = 4000, timeout: float = 120.0) -> float:
-    """The exact clockwise angle of one clipped text line, in degrees.
-    A single line crop is a trivial task for the model — ~600 total tokens,
-    ~6s — vs the full-page location call that burned 64K reasoning tokens
-    with zero content. The exact value disambiguates the
-    90-vs-270 flip the rounded question never could."""
-    answer = transcribe_image_vlm(
-        crop,
-        system="You measure text orientation precisely.",
-        user_text=VlmPrompts.ANGLE_PROMPT,
-        max_tokens=max_tokens,
-        timeout=timeout,
-    )
-    match = re.search(r"-?\d+(?:\.\d+)?", answer.answer)
-    if not match:
-        raise VlmError(f"could not parse an angle from the model's answer: {answer.answer[:80]!r}")
-    return float(match.group(0)) % 360
 
 
 def selfreport_words(

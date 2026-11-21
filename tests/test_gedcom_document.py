@@ -18,8 +18,8 @@ from tools.gedcom_date import GedcomDate
 from tools.gedcom_document import GedcomDocument
 from tools.gedcom_person import GedcomPerson
 from tools.gedcom_shapes import GedcomShapes
+from tools.memory_store import MemoryStore
 from tools.records import ImportsTable, Item, PeopleTable, PlacesTable, ThemesTable
-from tools.store import MemoryStore
 
 # the archive's own records for the export tests: the confirmed family (mum,
 # dad, kid) plus a proposed stranger, and the town mum lived in

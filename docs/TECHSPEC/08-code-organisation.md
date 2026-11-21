@@ -203,12 +203,12 @@ blob.
 | Today | Target |
 |---|---|
 | `tools/archive.py` (the file store's facade) | `loft/records/` — the entities and the `Records` aggregate; `loft/archive/` — the exporter and importer |
-| `tools/store.py`, `tools/atomic.py` | `loft/live/content.py` (content-addressed blobs) and the exporter's atomic writes |
+| `tools/file_store.py`, `tools/disk_store.py`, `tools/memory_store.py`, `tools/atomic.py` | `loft/live/content_store.py` (content-addressed blobs) and the exporter's atomic writes |
 | `pipeline/api/server.py` | `loft/app/` surfaces; they call `LiveStore`, never SQL |
 | `pipeline/api/sync.py` | `loft/pipeline/sync.py` — the sync agent; it applies commands through the service's local API |
 | `pipeline/worker.py` | `loft/pipeline/worker.py`; it writes through the service's local API |
 | `pipeline/registry.py`, `pipeline/store.py` | the `batches`/`scans` projections and the content store (`loft/live/`); the old work files are read once by the migration, then gone |
-| `pipeline/artefacts.py` | `loft/pipeline/artefacts.py` — the derivative path layout (oriented image, view image); not state |
+| `pipeline/batch_artefacts.py` | `loft/pipeline/batch_artefacts.py` — the derivative path layout (oriented image, view image); not state |
 | `tools/records.py` | `loft/records/` entities (one class per file) |
 | `tools/review.py` | `loft/review/` — `ReviewChat`, `ReviewDecision`, `ReviewSession`, `Claim` |
 | `document/` | `loft/document/` |

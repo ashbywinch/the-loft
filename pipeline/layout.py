@@ -59,9 +59,9 @@ from pipeline.model.unsure_word import UnsureWord
 from pipeline.unmatched_line import UnmatchedLine
 from tools.atomic import atomic_write
 from tools.box import aspect_consistent, overlap
+from tools.disk_store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 from tools.gates import text_extent_violation, validate_layout
 from tools.reading import order_lines
-from tools.store import DiskStore  # noqa: F401 — the architecture test's store-layer marker
 from tools.text import is_struck, jaccard, normalize, vlm_line_words, words
 
 
@@ -292,53 +292,26 @@ class Layout:
     # the store's ``revision`` — carried through so a rewrite loses nothing.
     extra: dict[str, Any] = field(default_factory=dict)
 
-    # the single-path build's inputs mirror build_layout's — a parameter object would obscure the pure pass
+    # the single path's inputs ARE a record (SingleInputs) — the geometry, the
+    # guess text, the detections and the two evidence sources
     @classmethod
-    def single(
-        cls,
-        page: str,
-        width: int,
-        height: int,
-        vlm_text: str,
-        detections: list[Detection],
-        selfreport: list[UnsureWord] | None = None,
-        vlm_boxes: dict[int, list[float]] | None = None,
-    ) -> Layout:
+    def single(cls, inputs: SingleInputs) -> Layout:
         """The single-orientation layout: the guess text anchored at the
         transcription's own boxes, the rec association filling the rest."""
-        layout = build_layout(page, width, height, vlm_text, detections, selfreport=selfreport, vlm_boxes=vlm_boxes)
+        layout = build_layout(inputs)
         layout.box_space = Layout.BOX_SPACE_ORIGINAL
         return layout
 
-    # the multi-path build's inputs mirror multi_layout's — a parameter object would obscure the combined pass
+    # the multi-path's inputs ARE a record (MultiInputs) — the page geometry,
+    # the orientation passes, the report evidence, the guess text and the clip
+    # seam travel together through the assembly
     @classmethod
-    def multi(
-        cls,
-        page: str,
-        width: int,
-        height: int,
-        passes: list[DetectionPass],
-        report_lines: list[OrientationLine] | None = None,
-        vlm_text: str | None = None,
-        image: Path | None = None,
-        recognize: Callable[[Path], str | None] | None = None,
-        trust_report_degrees: bool = False,
-    ) -> Layout:
+    def multi(cls, inputs: MultiInputs) -> Layout:
         """The multi-orientation layout: a detection pass at each reported
         orientation, the guess text anchored at the report's per-line
         boxes, the extras re-read from their own upright clips."""
-        layout = multi_layout(
-            page,
-            width,
-            height,
-            passes,
-            report_lines=report_lines,
-            vlm_text=vlm_text,
-            image=image,
-            recognize=recognize,
-            trust_report_degrees=trust_report_degrees,
-        )
-        layout.box_space = Layout.BOX_SPACE_ORIGINAL
+        layout = MultiAssembly(inputs).layout()
+        layout.box_space = cls.BOX_SPACE_ORIGINAL
         return layout
 
     @classmethod
@@ -461,16 +434,23 @@ class Layout:
 _LAYOUT_KEYS = frozenset({"page", "width", "height", "box_space", "lines", "unmatched"})
 
 
-# detections, self-report, VLM boxes — each consumed once by the pure pass; no second function shares the group
-def build_layout(
-    page: str,
-    width: int,
-    height: int,
-    vlm_text: str,
-    detections: list[Detection],
-    selfreport: list[UnsureWord] | None = None,
-    vlm_boxes: dict[int, list[float]] | None = None,
-) -> Layout:
+@dataclass(frozen=True)
+class SingleInputs:
+    """A single-orientation page's layout inputs — the page's geometry, the
+    guess's transcription, the detector's lines, and the two evidence
+    sources the confidence reads (the model's self-report, the model's own
+    per-line boxes). The twin of ``MultiInputs``: one record the pass reads
+    whole."""
+
+    geometry: PageGeometry
+    vlm_text: str
+    detections: list[Detection]
+    selfreport: list[UnsureWord] | None = None
+    vlm_boxes: dict[int, list[float]] | None = None
+
+
+# the single path's inputs ARE a record (SingleInputs) — the twin of multi_layout's MultiInputs
+def build_layout(inputs: SingleInputs) -> Layout:
     """The per-page layout the review surface reads.
 
     Anchors each VLM transcription line to its box — the VLM's OWN
@@ -484,12 +464,14 @@ def build_layout(
     the detection stage asserts that before handing them over (a future
     engine change must fail loudly, not silently misalign).
     """
+    geometry, vlm_text, detections = inputs.geometry, inputs.vlm_text, inputs.detections
+    vlm_boxes = inputs.vlm_boxes
     vlm_lines = [line for line in vlm_text.split("\n") if line.strip()]
     association = associate_lines(vlm_lines, detections)
     matches, unmatched = association.matches, association.unmatched
     by_index = {match.vlm_index: match for match in matches}
     # the self-report cites 1-based line numbers; the layout lines are 0-based
-    report_by_line = _selfreport_by_line(selfreport, len(vlm_lines))
+    report_by_line = _selfreport_by_line(inputs.selfreport, len(vlm_lines))
     lines: list[LayoutLine] = []
     for vi, line in enumerate(vlm_lines):
         vw = vlm_line_words(line)
@@ -501,11 +483,10 @@ def build_layout(
             # single path anchored them unconditionally and the stage's
             # drops patched the symptom).
             anchor = Anchor(
+                geometry,
                 OrientationLine(index=vi, box=vlm_boxes[vi], degrees=0),
                 by_index.get(vi),
                 line,
-                width,
-                height,
             )
             words_out = _words_out(
                 vw,
@@ -568,9 +549,9 @@ def build_layout(
     # (The MULTI path — multi_layout — keeps the physical sort: the
     # transcription order scrambled the postcard's multi reading.)
     return Layout(
-        page=page,
-        width=width,
-        height=height,
+        page=geometry.page,
+        width=geometry.width,
+        height=geometry.height,
         lines=lines,
         unmatched=[UnmatchedLine(box=det["box"], text=det["text"], conf=0.0) for det in unmatched],
     )
@@ -788,25 +769,25 @@ class Anchor:
     text (the 90-vs-270 flip's ground truth), then the report's
     estimate, then 0."""
 
-    # the geometry resolution's six inputs — the report line, the match, the text, the page geometry, the trust
-    # flag; a parameter object would obscure the pure decision (the same why as multi_layout's)
+    # the resolution reads the page's geometry and the line's evidence: the
+    # report line, the match, the text, and the trust flag for the report's
+    # measured degrees
     def __init__(
         self,
+        geometry: PageGeometry,
         report_line: OrientationLine | None,
         match: LineMatch | None,
         text: str,
-        width: int,
-        height: int,
+        *,
         trust_report_degrees: bool = False,
     ) -> None:
+        self._geometry = geometry
         (
             self._report_line,
             self._match,
             self._text,
-            self._width,
-            self._height,
             self._trust_report_degrees,
-        ) = report_line, match, text, width, height, trust_report_degrees
+        ) = report_line, match, text, trust_report_degrees
         self._box: list[float] | None = None
         self._orientation = 0
         self._resolve()
@@ -838,7 +819,7 @@ class Anchor:
 
     def _resolve(self) -> None:
         report_line, match, text = self._report_line, self._match, self._text
-        width, height = self._width, self._height
+        width, height = self._geometry.width, self._geometry.height
         self._box_source: str = LayoutLine.BOX_SOURCE_POSITIONAL  # the provenance of the chosen box
         report_box = report_line.box if report_line else None
         if not (report_box and (report_box[2] > report_box[0] or report_box[3] > report_box[1])):
@@ -980,12 +961,11 @@ def anchor_guess_lines(
     for i, line_text in enumerate(guess_lines):
         is_confirmed = i in confirmed
         anchor = Anchor(
+            geometry,
             by_index.get(i),
             match_by_index.get(i),
             line_text,
-            geometry.width,
-            geometry.height,
-            trust_report_degrees,
+            trust_report_degrees=trust_report_degrees,
         )
         lines.append(
             LayoutLine(
@@ -1193,7 +1173,7 @@ class MultiAssembly:
         """Assemble the combined lines: the report-anchored lines plus
         their extras, or the rec-based fallback when no report was given.
         The caller applies the dedupe, ordering and re-indexing to the
-        returned lines."""
+        returned lines (``layout`` is that completed pass)."""
         if self._inputs.report_lines:
             self._anchor()
             self._add_extras()
@@ -1201,19 +1181,34 @@ class MultiAssembly:
             self.lines = self._rec_fallback()
         return self.lines
 
+    def layout(self) -> Layout:
+        """The combined layout the review reads: the assembled lines
+        deduped, ordered and re-indexed for the surface, stamped with the
+        page identity the inputs carry."""
+        lines = dedupe_regions(self.build())
+        # The reading order (2026-08-20, user's requirement): a page whose
+        # lines resolve to ONE orientation reads in the TRANSCRIPTION order —
+        # the model read the page block-by-block, so the margin blocks never
+        # interleave (page-03: a single-orientation letter took the multi
+        # path on the report's garbage degrees; the aspect rule resolved
+        # every line to 0). A genuinely multi-orientation page reads by the
+        # physical reading-start sort in the dominant frame (the postcard:
+        # the transcription order scrambled the multi reading).
+        lines = _order_layout_lines(lines)
+        for i, line in enumerate(lines):
+            line.index = i
+        geometry = self._inputs.geometry
+        return Layout(
+            page=geometry.page,
+            width=geometry.width,
+            height=geometry.height,
+            lines=lines,
+            unmatched=[],
+        )
 
-# the combined layout's heterogeneous inputs — the page identity, geometry, the passes, the report, the text
-def multi_layout(
-    page: str,
-    width: int,
-    height: int,
-    passes: list[DetectionPass],
-    report_lines: list[OrientationLine] | None = None,
-    vlm_text: str | None = None,
-    image: Path | None = None,
-    recognize: Callable[[Path], str | None] | None = None,
-    trust_report_degrees: bool = False,
-) -> Layout:
+
+# the combined layout's inputs ARE the record — the geometry, the passes, the report, the text, the clip seam
+def multi_layout(inputs: MultiInputs) -> Layout:
     """The combined multi-orientation layout (PRD VR15).
 
     With the report's per-line geometry (``report_lines`` — box in the
@@ -1228,22 +1223,7 @@ def multi_layout(
     The lines order 0° first then each next direction; within a group the
     text order, then the extras by reading position; the same physical
     region keeps only its best reading (dedupe_regions)."""
-    clip = ClipSeam(image, recognize) if image is not None and recognize is not None else None
-    inputs = MultiInputs(PageGeometry(page, width, height), passes, report_lines, vlm_text, clip, trust_report_degrees)
-    lines = MultiAssembly(inputs).build()
-    lines = dedupe_regions(lines)
-    # The reading order (2026-08-20, user's requirement): a page whose
-    # lines resolve to ONE orientation reads in the TRANSCRIPTION order —
-    # the model read the page block-by-block, so the margin blocks never
-    # interleave (page-03: a single-orientation letter took the multi
-    # path on the report's garbage degrees; the aspect rule resolved
-    # every line to 0). A genuinely multi-orientation page reads by the
-    # physical reading-start sort in the dominant frame (the postcard:
-    # the transcription order scrambled the multi reading).
-    lines = _order_layout_lines(lines)
-    for i, line in enumerate(lines):
-        line.index = i
-    return Layout(page=page, width=width, height=height, lines=lines, unmatched=[])
+    return MultiAssembly(inputs).layout()
 
 
 def load_orientation_hint(path: Path) -> list[int]:

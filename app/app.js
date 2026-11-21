@@ -177,6 +177,11 @@ export async function boot() {
     } else if (!answer.signedIn) {
       document.getElementById("app").replaceChildren(gateScreen());
       return;
+    } else if (answer.notAMember) {
+      // a signed-in account that is not family: the private layer refused the
+      // projection, and the honest answer is who to ask, not "try reloading"
+      document.getElementById("app").replaceChildren(gateScreen({ notAMember: true }));
+      return;
     } else {
       Object.assign(state, answer.state);
       dataLoaded = true;

@@ -47,6 +47,7 @@ from pipeline.api.device_token_request import DeviceTokenRequest
 from pipeline.api.grant_answer import GrantAnswer
 from pipeline.api.login_answer import LoginAnswer
 from pipeline.api.me_answer import MeAnswer
+from pipeline.api.members import is_member
 from pipeline.api.minted_session import MintedSession
 from pipeline.api.oauth_client import OAuthClient
 from pipeline.api.oauth_request import OAuthRequest
@@ -136,8 +137,9 @@ def _client_config() -> OAuthClient | None:
     )
 
 
-def _make_session_cookie(user: SessionUser) -> str:
-    """The signed session cookie carrying the verified identity."""
+def session_cookie(user: SessionUser) -> str:
+    """The signed session cookie carrying the verified identity — the one way a
+    session is minted (the OAuth callback, the device flow, the tests)."""
     return _serializer().dumps(user.to_dict())
 
 
@@ -230,7 +232,7 @@ def me_payload(archive: Archive, session: SessionUser | None) -> MeAnswer:
     person the email maps to (null when the account isn't in the archive)."""
     if session is None:
         return MeAnswer.anonymous()
-    return MeAnswer.signed_in(session, person_for_email(archive, session.email))
+    return MeAnswer.signed_in(session, person_for_email(archive, session.email), is_member(session))
 
 
 def callback_error_url(error: str) -> str:

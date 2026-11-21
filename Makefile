@@ -57,7 +57,7 @@ app-build:
 	@$(NPM) run build
 
 serve: setup
-	@./scripts/loft serve --host 0.0.0.0 --port 8000 --reload
+	@set -a; [ -f .env ] && . ./.env; set +a; ./scripts/loft serve --host 0.0.0.0 --port 8000 --reload
 
 
 lint: setup

@@ -152,19 +152,6 @@ class RecordField:
             raise ValueError(f"duplicate {label} ids: {dupes}")
         return records
 
-    def story_flag(self, item_type: str, *, story_message: str, allow_story: bool) -> Any:
-        """One story flag (clarification, reflection, evidence): absent or a
-        boolean, and the flag's own story rule must hold — the write seam
-        fails loudly on anything else."""
-        value = self.raw.get(self.key)
-        if value is None:
-            return None
-        if not isinstance(value, bool):
-            raise ValueError(f"{self.key} must be a boolean")
-        if (item_type == "story") != allow_story:
-            raise ValueError(story_message)
-        return value
-
 
 # The record statuses (people, places, orgs, and relationships). The
 # vocabulary is GEDCOM-flavoured; the meanings are strict:
@@ -937,6 +924,43 @@ def split_content(item: Item) -> SplitItem:
 
 
 @dataclass(frozen=True)
+class ItemFlag:
+    """One flag a memory's sidecar may state (docs/PRD/MEMORIES.md — "a flag,
+    not a new type"): the key that names it, whether a story is the item that
+    carries it, and the words a misplaced flag fails with. The rule is the
+    item's vocabulary, so it lives here; a raw-field reader only supplies the
+    value."""
+
+    key: str
+    on_story: bool
+    misplaced: str
+
+    def read(self, raw: Mapping[str, Any], item_type: str) -> bool | None:
+        """The flag as the item states it — absent or a boolean, and only on
+        the item kinds that may carry it; the write seam fails loudly on
+        anything else."""
+        value = raw.get(self.key)
+        if value is None:
+            return None
+        if not isinstance(value, bool):
+            raise ValueError(f"{self.key} must be a boolean")
+        if (item_type == "story") != self.on_story:
+            raise ValueError(self.misplaced)
+        return value
+
+
+# The memory's three flags: a story-shaped record may be a clarification
+# fragment (it attests a person or an item) or a reflection (it mentions
+# someone or somewhere); evidence is the other side — an account, a fragment
+# or a reflection is evidence, and a story never is.
+CLARIFICATION_FLAG = ItemFlag("clarification", on_story=True, misplaced="only a story can be a clarification fragment")
+REFLECTION_FLAG = ItemFlag("reflection", on_story=True, misplaced="only a story can be a reflection")
+EVIDENCE_FLAG = ItemFlag(
+    "evidence", on_story=False, misplaced="a story is never evidence — accounts, fragments and reflections are"
+)
+
+
+@dataclass(frozen=True)
 class Item:
     # The item's primary content, held outside the sidecar (docs/TECHSPEC.md
     # §3): a story is story.txt, a letter or document's transcription is
@@ -1105,26 +1129,16 @@ class Item:
         identified = raw.get("identified")
         if identified is not None and not isinstance(identified, bool):
             raise ValueError("identified must be a boolean")
-        clarification = RecordField(raw, "clarification").story_flag(
-            item_type,
-            story_message="only a story can be a clarification fragment",
-            allow_story=True,
-        )
+        clarification = CLARIFICATION_FLAG.read(raw, item_type)
         if clarification is not None and not (raw.get("people") or raw.get("items")):
             raise ValueError("a clarification fragment must name what it attests (people or items)")
-        reflection = RecordField(raw, "reflection").story_flag(
-            item_type, story_message="only a story can be a reflection", allow_story=True
-        )
+        reflection = REFLECTION_FLAG.read(raw, item_type)
         if reflection is not None:
             if clarification:
                 raise ValueError("a story is a clarification or a reflection, not both")
             if not (raw.get("people") or raw.get("places")):
                 raise ValueError("a reflection must mention someone or somewhere (people or places)")
-        evidence = RecordField(raw, "evidence").story_flag(
-            item_type,
-            story_message="a story is never evidence — accounts, fragments and reflections are",
-            allow_story=False,
-        )
+        evidence = EVIDENCE_FLAG.read(raw, item_type)
         if evidence is not None and not (raw.get("people") or raw.get("places") or raw.get("items")):
             raise ValueError("an evidence record must attest someone or somewhere (people, places or items)")
         return item

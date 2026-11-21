@@ -384,8 +384,8 @@ good.
   `capture_document()`, `capture_memory()`), `Memory` (the narrator's
   capture flow), `GedcomDocument` (the interchange format:
   `from_text()`/`to_text()` — `import` is a keyword), `Server` (`serve()`),
-  `Placeholder` (the stand-in family: `PlaceholderPaper`, `PlaceholderPhoto`,
-  `PlaceholderObject`, `PlaceholderAvatar`), plus `Store`, `Records`,
+  `Placeholder` (the stand-in family: `PlaceholderPaper`, `PlaceholderPhoto`),
+  plus `Store`, `Records`,
   `Projection` (the derived `app/data`), `AiClient`. Never name a module
   after a verb ("publish", "derive", "import"), a transport medium
   ("email"), or out-of-domain jargon ("elicitation" — the UI's word is

@@ -71,6 +71,9 @@ already tried it and learned why it failed. Append chronologically.
 
 ### The clip-location batch-size sweep (ClipLocation + the cost model)
 
+- The harness (`eval_geometry.py`'s `ClipLocation`, the cost model and
+  `batch_sweep`) was uncalled and deleted; the findings below are its
+  record.
 - The idea: replace the flaky full-page location call with per-batch
   clip-location calls (N lines per call; the model returns each clip's
   box + angle). The batch size is the experimental variable.
@@ -442,7 +445,8 @@ want of a full-page fallback (`prep_panel(None)`); good layouts
 overwritten by worse re-runs (a stored layout that validates clean now
 skips); orientation hardcoded 0 failing Gate A on tall boxes
 (`orientation_from_aspect` added beside its inverse `aspect_consistent`,
-with the both-agree property test).
+with the both-agree property test — the helper was uncalled and deleted
+2026-11-21; the Gate A rule it served is `aspect_consistent`).
 
 **Run results across the three runs:**
 

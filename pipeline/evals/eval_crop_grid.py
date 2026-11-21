@@ -72,11 +72,27 @@ def _content_bounds(layout: Layout) -> Rectangle:
 
 @dataclass(frozen=True)
 class CropRead:
-    """One crop's read: the crop-local lines it yielded and what the read
-    cost (both reads' tokens when the crop was rotated and re-read)."""
+    """One crop's read: the crop-local lines it yielded, what the read cost
+    (both reads' tokens when the crop was rotated and re-read), and the
+    rotated re-read's failure when that read did not land — the lines are the
+    upright read's then, and the caller is told why."""
 
     lines: list[CropLine]
     tokens: int
+    failure: str | None = None
+
+
+@dataclass(frozen=True)
+class RotatedRead:
+    """A rotated crop's re-read: the transcription it landed on and what the
+    call cost, or the failure that kept it from landing. The failure is a
+    value, never an exception, because the read's fallback is the upright read
+    the caller already holds — a caller that never learns the re-read failed
+    would read a vertical crop as if it had been re-read."""
+
+    reading: Transcription | None
+    tokens: int
+    failure: str | None
 
 
 def _read_transcription(path: Path, options: VlmOptions) -> VlmAnswer:
@@ -87,6 +103,19 @@ def _read_transcription(path: Path, options: VlmOptions) -> VlmAnswer:
     # context once the image is in.
     crop_read = replace(options, system=VlmPrompts.transcription_system_with_context(), max_tokens=8000)
     return crop_read.run(transcribe_image_vlm, path)
+
+
+def _read_rotated(path: Path, options: VlmOptions) -> RotatedRead:
+    """The rotated crop's re-read: its transcription and cost, or the failure
+    that kept them from forming. A malformed answer and a dead call are the
+    same answer to this read — the fallback — but the failure is returned so
+    the run can report it instead of the page silently reading upright-only."""
+    try:
+        answer = _read_transcription(path, options)
+        reading = parse_transcription_response(answer.answer)
+        return RotatedRead(reading=reading, tokens=answer.usage.tokens, failure=None)
+    except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
+        return RotatedRead(reading=None, tokens=0, failure=f"{type(exc).__name__}: {exc}")
 
 
 def _fail_crop_read(index: int, reason: str) -> None:
@@ -108,7 +137,8 @@ def read_crop(
     vertical — a postcard message), the crop is rotated +90° so the
     text is horizontal and re-read; the boxes are remapped back into
     the crop frame. None when the call failed or the model gave no
-    geometry."""
+    geometry. A rotated re-read that does not land leaves the upright
+    read in place and its failure on the result (``CropRead.failure``)."""
     box = (int(crop.x), int(crop.y), int(crop.x + crop.w), int(crop.y + crop.h))
     crop_path = tmp / f"crop-{index}.png"
     with Image.open(image_path) as im:
@@ -125,30 +155,26 @@ def read_crop(
         return _fail_crop_read(index, "no geometry from the model")
     text, boxes = reading.text, reading.boxes
     rotated_ok = False
+    failure: str | None = None
     if _vertical_boxes(boxes):
-        rotated = tmp / f"crop-{index}-rot.png"
+        rotated_path = tmp / f"crop-{index}-rot.png"
         with Image.open(crop_path) as im:
-            im.rotate(90, expand=True).save(rotated)
-        # the answer and its parse travel as one pair: a failed re-read leaves
-        # NOTHING behind, so the upright read's answer is never paired with a
-        # parse that did not happen (the fallback is the upright read)
-        rotated_read: tuple[VlmAnswer, Transcription] | None = None
-        try:
-            answer2 = _read_transcription(rotated, options)
-            rotated_read = (answer2, parse_transcription_response(answer2.answer))
-        # lucidlint: ignore swallow a failed re-read keeps the upright read (the fallback)
-        except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
-            print(f"crop {index} rotated read FAILED: {str(exc)[:120]}", file=sys.stderr)
-        if rotated_read is not None:
-            answer2, reading2 = rotated_read
-            if reading2.boxes and reading2.text:
+            im.rotate(90, expand=True).save(rotated_path)
+        rotated = _read_rotated(rotated_path, options)
+        failure = rotated.failure
+        if rotated.reading is not None:
+            if rotated.reading.boxes and rotated.reading.text:
                 # the +90 rotation's inverse: the rotated frame's height is
                 # the crop's width (pinned empirically)
                 rot_h = int(crop.w)
-                boxes = {li: remap_rotated(b, int(crop.h), rot_h) for li, b in reading2.boxes.items()}
-                text, tokens = reading2.text, tokens + answer2.usage.tokens
+                boxes = {li: remap_rotated(b, int(crop.h), rot_h) for li, b in rotated.reading.boxes.items()}
+                text, tokens = rotated.reading.text, tokens + rotated.tokens
                 rotated_ok = True
                 print(f"crop {index}: vertical text — rotated +90 and re-read", file=sys.stderr)
+            else:
+                # the re-read answered but measured nothing usable: the
+                # upright read stands in, and the result says so
+                failure = "the rotated read gave no usable lines"
     if not text:
         return _fail_crop_read(index, "no readable text")
     # the rotated re-read's lines carry the crop's text orientation: the
@@ -161,7 +187,7 @@ def read_crop(
         f"{monotonic() - t0:.1f}s, {tokens} tokens",
         file=sys.stderr,
     )
-    return CropRead(lines=lines, tokens=tokens)
+    return CropRead(lines=lines, tokens=tokens, failure=failure)
 
 
 def _vertical_boxes(boxes: dict[int, list[float]]) -> bool:
@@ -220,14 +246,16 @@ def _anchor_agreement(assembled: Layout, layout: Layout) -> AnchorAgreement:
 
 @dataclass(frozen=True)
 class CropGridReport:
-    """The crop-grid run's ledger: how the page was read, what failed, what
-    it cost, and how the stitched boxes agree with the current layout."""
+    """The crop-grid run's ledger: how the page was read, what failed (a crop,
+    or a rotated re-read whose upright read stood in), what it cost, and how
+    the stitched boxes agree with the current layout."""
 
     page: str
     cols: int
     rows: int
     crops: int
     failed_crops: int
+    re_read_failures: list[str]
     lines: int
     boxless: int
     tokens: int
@@ -244,6 +272,7 @@ class CropGridReport:
             "rows": self.rows,
             "crops": self.crops,
             "failed_crops": self.failed_crops,
+            "re_read_failures": self.re_read_failures,
             "lines": self.lines,
             "boxless": self.boxless,
             "tokens": self.tokens,
@@ -279,6 +308,7 @@ def run(
         crop.y += bounds.y0
     tokens = 0
     failed = 0
+    re_read_failures: list[str] = []
     started = monotonic()
     with tempfile.TemporaryDirectory() as tmp:
         for i, crop in enumerate(crops):
@@ -286,6 +316,8 @@ def run(
             if read is None:
                 failed += 1
                 continue
+            if read.failure is not None:
+                re_read_failures.append(f"crop {i}: {read.failure}")
             crop.lines = read.lines
             tokens += read.tokens
     elapsed = monotonic() - started
@@ -299,6 +331,7 @@ def run(
         rows=rows,
         crops=len(crops),
         failed_crops=failed,
+        re_read_failures=re_read_failures,
         lines=len(assembled.lines),
         boxless=len(boxless),
         tokens=tokens,

@@ -368,6 +368,23 @@ and never restate the reviewer's statement back to yourself. If you
 catch yourself repeating a step, stop and emit the verdict."""
 
 
+def _correction(raw: str) -> str:
+    """The user turn that asks for the verdict again after a reply that was
+    neither a tool call nor the complete verdict.
+
+    It states no shape. The shape lives in the system text, and every call
+    sends that text again, so a copy here would be a second rendering that can
+    drift from the model. The turn keeps the model's own reasoning and points
+    it back at the answer it already has the instructions for.
+    """
+    return (
+        "\n\n[your previous answer] "
+        + raw
+        + "\n\nThat was neither a tool call nor the complete verdict. Keep the reasoning "
+        "above and return the complete verdict JSON now."
+    )
+
+
 def _investigation_prompt(claim: str, who: str, facts: ReviewContext, conversation: str) -> tuple[str, str]:
     """The two prompts of one investigation: the system text, and the opening
     user text the loop then grows with the tool results.
@@ -566,11 +583,6 @@ def investigate(
         turn = ReviewTurn.from_dict(parsed_dict)
         if turn.complete:
             return replace(turn, raw=raw, trace=tuple(trace), prompt=base_prompt, final_prompt=user)
-        user += (
-            "\n\n[your previous answer] "
-            + raw
-            + "\n\nThat was neither a tool call nor the complete verdict. Keep the reasoning "
-            "above and return the complete verdict JSON now."
-        )
+        user += _correction(raw)
     # pragma: no cover  # defensive: the bounded loop must conclude
     raise ElicitationError("investigation did not conclude")

@@ -108,7 +108,12 @@ class PageKinds:
 
     @staticmethod
     def classify_page(
-        image: Path, *, max_tokens: int = 1000, timeout: float = 120.0, urlopen: Any = None
+        image: Path,
+        *,
+        max_tokens: int = 1000,
+        timeout: float = 120.0,
+        api_key: str | None = None,
+        urlopen: Any = None,
     ) -> PageClassification:
         """The page's content kind, named by the vision model that reads the
         image itself — one small call per raw page, thinking off, so the answer
@@ -119,6 +124,7 @@ class PageKinds:
             user_text=PageKinds.PAGE_KIND_PROMPT,
             max_tokens=max_tokens,
             timeout=timeout,
+            api_key=api_key,
             urlopen=urlopen,
         )
         raw = extract_json(answer.answer)

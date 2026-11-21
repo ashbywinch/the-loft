@@ -41,17 +41,24 @@ def _answer(content: str) -> bytes:
     return json.dumps({"choices": [{"message": {"content": content}, "finish_reason": "stop"}]}).encode()
 
 
+# the call's key is a seam like its transport: a unit test must never depend on
+# the environment holding one (CI ran `make coverage` with a secret because of it)
+KEY = "test-key"
+
+
 def test_the_rotation_is_the_models_answer(tmp_path: Path) -> None:
     page = _page(tmp_path)
-    assert PageOrientation.rotation(page, urlopen=lambda *a, **k: _Response(_answer('{"rotate": 90}'))) == 90
+    assert (
+        PageOrientation.rotation(page, api_key=KEY, urlopen=lambda *a, **k: _Response(_answer('{"rotate": 90}'))) == 90
+    )
 
 
 def test_an_unusable_answer_is_refused(tmp_path: Path) -> None:
     page = _page(tmp_path)
     with pytest.raises(VlmError):
-        PageOrientation.rotation(page, urlopen=lambda *a, **k: _Response(_answer('{"rotate": 45}')))
+        PageOrientation.rotation(page, api_key=KEY, urlopen=lambda *a, **k: _Response(_answer('{"rotate": 45}')))
     with pytest.raises(VlmError):
-        PageOrientation.rotation(page, urlopen=lambda *a, **k: _Response(_answer("upright, I think")))
+        PageOrientation.rotation(page, api_key=KEY, urlopen=lambda *a, **k: _Response(_answer("upright, I think")))
 
 
 def test_orient_pages_turns_each_page_and_keeps_its_name(tmp_path: Path) -> None:

@@ -515,36 +515,115 @@ class GedcomDocument:
     """The GEDCOM 7 interchange format — a document object holding the
     records.
 
-    ``from_text`` parses a GEDCOM 7 file into this document — the read
-    produces archive wire shapes from the document's OWN state
-    (``wire_shapes``) — and ``to_text`` re-emits the confirmed subset as
-    GEDCOM 7.0; nothing pending leaves. ``from_archive`` builds the
-    document from the live archive's identity tables (the archive's
-    story notes and estimate evidence ride the records); ``from_shapes``
-    from a folder's record files (the GEDCOM island). ``import`` is a
-    Python keyword, so the methods are from_text/from_archive — the
-    object-model naming rule.
+    ``from_text`` reads a GEDCOM 7.0 file (``GedcomRecords``, the reading
+    half) into the island's shapes; ``to_text`` re-emits the confirmed subset
+    as GEDCOM 7.0, nothing pending leaving. ``from_archive`` builds the
+    document from the live archive's identity tables (the archive's story
+    notes and estimate evidence ride the records); ``from_shapes`` from a
+    folder's record files (the GEDCOM island). ``import`` is a Python
+    keyword, so the methods are from_text/from_archive — the object-model
+    naming rule.
     """
 
     def __init__(self, shapes: GedcomShapes, *, archive: Archive | None = None) -> None:
         self._shapes = shapes
-        self._records: list[Any] = []  # the parsed GEDCOM state (shape-built documents carry none)
         self._archive = archive  # the archive-only note sources (stories, estimate evidence)
 
     @classmethod
     def from_text(cls, text: str) -> GedcomDocument:
-        """GEDCOM 7.0 text -> a document. The file alone is the whole
-        state: the document parses INTO ITSELF — the records are its
-        state and the wire shapes derive from them; places come from the
-        file's own PLAC records and payloads, never from an external
-        place set."""
-        doc = cls(GedcomShapes())
-        doc._records = gedcom7.loads(text)
-        doc._shapes = doc._shapes_from_records()
-        return doc
+        """GEDCOM 7.0 text -> a document: the file's records, as shapes."""
+        return cls(GedcomRecords.from_text(text).shapes())
 
-    def _shapes_from_records(self) -> GedcomShapes:
-        """The document's OWN records -> the island's record set: people (id
+    @classmethod
+    def from_archive(cls, archive: Archive) -> GedcomDocument:
+        """The archive's identity tables -> a document — the archive
+        export path (stories and estimate evidence ride the records)."""
+        people = archive.get_identity("people")
+        places = archive.get_identity("places")
+        if people is None or places is None:
+            raise RuntimeError("archive needs people and places identity tables")
+        return cls(GedcomShapes.from_archive(people, places), archive=archive)
+
+    @classmethod
+    def from_shapes(cls, shapes: GedcomShapes) -> GedcomDocument:
+        """A folder's record files (people.json + places.json) -> a
+        document — the island export path. Self-contained: no archive
+        rides along."""
+        return cls(shapes)
+
+    def wire_shapes(self) -> GedcomShapes:
+        """The folder's record set from this document's state — the
+        island folder's record files (people.json + places.json)."""
+        return self._shapes
+
+    def to_text(self) -> str:
+        """The confirmed subset as GEDCOM 7.0 text. Confirmed people and
+        edges export as facts; ESTIMATED records export too — a human's
+        guess is part of the family record — each annotated with a NOTE
+        carrying the evidence that produced it (the review conversation's
+        recorded basis); PENDING records — the island's _LOFT_STATUS, the
+        archive's proposed — stay out (2026-08-09, user)."""
+        export = _export_set(self._shapes)
+        families = _FamilyUnits(export.edges, self._archive).build()
+        notes_by_person = (
+            _story_notes(self._archive, export.exported_ids) if self._archive is not None else StoryNotes()
+        )
+        associations = _associations(export.edges, self._archive)
+
+        lines: list[str] = [
+            "0 HEAD",
+            "1 SOUR the-loft-export",
+            "2 VERS 0.1",
+            "1 GEDC",
+            "2 VERS 7.0",
+            "2 FORM LINEAGE-LINKED",
+            "1 CHAR UTF-8",
+        ]
+        # the places as standalone PLAC records — the round trip: the
+        # import's places must be re-emittable; nothing pending leaves
+        places_out = [place for place in self._shapes.places if place.status not in ("pending", "proposed")]
+        for i, place in enumerate(places_out, start=1):
+            lines += [f"0 @PL{i}@ PLAC", f"1 REFN {place.id}", f"1 NAME {place.name}"]
+
+        for fam in families:
+            lines += _family_lines(fam, export.by_id, export.xref)
+
+        for pid in sorted(export.exported_ids):
+            lines += _person_lines(
+                person=export.by_id[pid],
+                pid=pid,
+                xref=export.xref,
+                place_names=export.place_names,
+                notes=notes_by_person.for_person(pid),
+                associations=associations.for_person(pid),
+                archive=self._archive,
+            )
+
+        lines.append("0 TRLR")
+        return "\n".join(lines) + "\n"
+
+
+@final
+class GedcomRecords:
+    """A parsed GEDCOM 7.0 file's records, as the island's wire shapes.
+
+    The reading half of the text format: the file's records are this
+    reader's state and the wire shapes derive from them, so a document
+    built from a file and one built from a folder carry the same thing.
+    """
+
+    def __init__(self, records: list[Any]) -> None:
+        self._records = records
+
+    @classmethod
+    def from_text(cls, text: str) -> GedcomRecords:
+        """GEDCOM 7.0 text -> the file's records. The file alone is the whole
+        state; places come from the file's own PLAC records and payloads,
+        never from an external place set."""
+        return cls(gedcom7.loads(text))
+
+    def shapes(self) -> GedcomShapes:
+        """This reader's own records -> the island's record set: people (id
         from the first REFN, else the record's xref — a person without a
         REFN is not dropped, maximal70's I2/I3/I4 have none),
         relationships (FAM -> spouse/parent, ASSO -> the role/rela
@@ -571,7 +650,7 @@ class GedcomDocument:
         )
 
     def _parse_people(self) -> _People:
-        """The INDI + FAM records from the document's own state ->
+        """The INDI + FAM records from this reader's file ->
         _People: each person's first REFN (else the record's xref) is
         its archive id (the round-trip seam for the exporter), with NAME
         aliases beyond the first, BIRT/DEAT dates, occupations,
@@ -642,7 +721,7 @@ class GedcomDocument:
         return replace(person, dob=dob, dod=dod, occupations=tuple(occupations), residence=tuple(residence))
 
     def _parse_families(self) -> tuple[GedcomFamily, ...]:
-        """The FAM records from the document's own state -> family records:
+        """The FAM records from this reader's file -> family records:
         spouse members, children, and a dated marriage survives the
         round-trip (2026-08-06)."""
         families: list[GedcomFamily] = []
@@ -689,7 +768,7 @@ class GedcomDocument:
         return tuple(edges)
 
     def _parse_places(self) -> tuple[GedcomPlace, ...]:
-        """The file's places from the document's own state -> place
+        """The file's places from this reader's records -> place
         records: every distinct PLAC payload name anywhere in the file
         (a payload can sit under RESI, DEAT, MARR, SLGS, SOUR DATA —
         nested past the record's own children) plus the PLAC records'
@@ -717,71 +796,3 @@ class GedcomDocument:
             taken.add(pid)
             places.append(GedcomPlace(id=pid, name=name, status="pending" if name in pending else None))
         return tuple(places)
-
-    @classmethod
-    def from_archive(cls, archive: Archive) -> GedcomDocument:
-        """The archive's identity tables -> a document — the archive
-        export path (stories and estimate evidence ride the records)."""
-        people = archive.get_identity("people")
-        places = archive.get_identity("places")
-        if people is None or places is None:
-            raise RuntimeError("archive needs people and places identity tables")
-        return cls(GedcomShapes.from_archive(people, places), archive=archive)
-
-    @classmethod
-    def from_shapes(cls, shapes: GedcomShapes) -> GedcomDocument:
-        """A folder's record files (people.json + places.json) -> a
-        document — the island export path. Self-contained: no archive
-        rides along."""
-        return cls(shapes)
-
-    def wire_shapes(self) -> GedcomShapes:
-        """The folder's record set from this document's state — the
-        island folder's record files (people.json + places.json)."""
-        return self._shapes
-
-    def to_text(self) -> str:
-        """The confirmed subset as GEDCOM 7.0 text. Confirmed people and
-        edges export as facts; ESTIMATED records export too — a human's
-        guess is part of the family record — each annotated with a NOTE
-        carrying the evidence that produced it (the review conversation's
-        recorded basis); PENDING records — the island's _LOFT_STATUS, the
-        archive's proposed — stay out (2026-08-09, user)."""
-        export = _export_set(self._shapes)
-        families = _FamilyUnits(export.edges, self._archive).build()
-        notes_by_person = (
-            _story_notes(self._archive, export.exported_ids) if self._archive is not None else StoryNotes()
-        )
-        associations = _associations(export.edges, self._archive)
-
-        lines: list[str] = [
-            "0 HEAD",
-            "1 SOUR the-loft-export",
-            "2 VERS 0.1",
-            "1 GEDC",
-            "2 VERS 7.0",
-            "2 FORM LINEAGE-LINKED",
-            "1 CHAR UTF-8",
-        ]
-        # the places as standalone PLAC records — the round trip: the
-        # import's places must be re-emittable; nothing pending leaves
-        places_out = [place for place in self._shapes.places if place.status not in ("pending", "proposed")]
-        for i, place in enumerate(places_out, start=1):
-            lines += [f"0 @PL{i}@ PLAC", f"1 REFN {place.id}", f"1 NAME {place.name}"]
-
-        for fam in families:
-            lines += _family_lines(fam, export.by_id, export.xref)
-
-        for pid in sorted(export.exported_ids):
-            lines += _person_lines(
-                person=export.by_id[pid],
-                pid=pid,
-                xref=export.xref,
-                place_names=export.place_names,
-                notes=notes_by_person.for_person(pid),
-                associations=associations.for_person(pid),
-                archive=self._archive,
-            )
-
-        lines.append("0 TRLR")
-        return "\n".join(lines) + "\n"

@@ -11,7 +11,11 @@ from typing import NamedTuple
 
 
 class Colour(NamedTuple):
+    # an 8-bit channel's ceiling — full-intensity red, and an opaque alpha;
+    # the unit a 0-1 hue or saturation converts back to and divides by
+    MAX_CHANNEL = 255
+
     red: int
     green: int
     blue: int
-    alpha: int = 255
+    alpha: int = MAX_CHANNEL

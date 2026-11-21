@@ -43,6 +43,9 @@ class NumberedRows:
     _PILL_RADIUS = 12  # px: the pill's corner (`.rv-rownum`'s 10px at page scale)
     _PILL_PAD_X = 12  # px: air either side of the number
     _PILL_PAD_Y = 8  # px: air above and below it
+    # px of lane beyond a one-digit pill: the column starts clear of a pill
+    # carrying a second digit, so no lane 0 box has to be stepped outward
+    _MARGIN_ALLOWANCE = 12
     PILL_INSET = 6  # px: how far the pill's right edge sits left of the band
     _PAPER = Colour(red=255, green=255, blue=255)
     # the colour the bands are washed into when the page's own paper cannot be sampled
@@ -82,6 +85,13 @@ class NumberedRows:
     # the wash and introduces no colour of its own.
     _DIGIT_SATURATION = 0.75
     _DIGIT_VALUE = 0.42
+    # A background sample darker than this sums to is no background: a cropped
+    # canvas can carry the page's dark edge where the margin should be, and a
+    # hue washed into it would be a dark blob. Three channels, 150 average.
+    _MIN_BACKGROUND_SUM = 450
+    # the pointer's back edge covers the pill's middle half: it starts this
+    # fraction of the pill's height in from the top and from the bottom
+    _POINTER_ROOT_DIVISOR = 4
     # A number that cannot sit beside its row steps OUT into the margin, lane by
     # lane, and never up or down: a number level with the wrong row points at the
     # wrong row (the user saw 38 beside 39). The lanes run out at the page's edge.
@@ -234,7 +244,9 @@ class NumberedRows:
         font = NumberedRows._font()
         boxes: list[Rectangle] = []
         ink = [w.rect for r in rows for w in r.word_boxes]
-        margin = NumberedRows._margin_column(rows, width=cls._PILL_MIN_WIDTH + 2 * cls._PILL_PAD_X + 12)
+        margin = NumberedRows._margin_column(
+            rows, width=cls._PILL_MIN_WIDTH + 2 * cls._PILL_PAD_X + cls._MARGIN_ALLOWANCE
+        )
         for row in rows:
             measured = draw.textbbox((0, 0), str(row.number), font=font)
             width = max(cls._PILL_MIN_WIDTH, (measured[2] - measured[0]) + 2 * cls._PILL_PAD_X)
@@ -273,7 +285,7 @@ class NumberedRows:
         """The hue of the row at this index — the palette band's own, so a
         number and its band are one colour."""
         red, green, blue, _alpha = RenderStyle().colour(index)
-        return colorsys.rgb_to_hsv(red / 255, green / 255, blue / 255)[0]
+        return colorsys.rgb_to_hsv(red / Colour.MAX_CHANNEL, green / Colour.MAX_CHANNEL, blue / Colour.MAX_CHANNEL)[0]
 
     @classmethod
     def pill_colour(cls, index: int, background: Colour | None = None) -> Colour:
@@ -282,7 +294,7 @@ class NumberedRows:
         `render_rows` composites, which is what makes the chip and its band one
         colour instead of two nearly-matching ones."""
         red, green, blue, alpha = RenderStyle().colour(index)
-        share = alpha / 255
+        share = alpha / Colour.MAX_CHANNEL
         layers = zip((red, green, blue), (background or cls._PAPER)[:3], strict=True)
         mixed = [int(channel * share + paper * (1 - share)) for channel, paper in layers]
         first, second, third = mixed
@@ -313,14 +325,14 @@ class NumberedRows:
         sample = NumberedRows._rgb(canvas.convert("RGB").getpixel((x, y)))
         # a cropped canvas can carry the page's dark edge where the margin
         # should be, which is no background to wash a hue into
-        return sample if sum(sample) > 450 else Colour(red=255, green=255, blue=255)
+        return sample if sum(sample) > cls._MIN_BACKGROUND_SUM else Colour(red=255, green=255, blue=255)
 
     @classmethod
     def digit_colour(cls, index: int) -> Colour:
         """The same hue taken dark: it reads on the row's own wash and adds no
         colour that is not the row's."""
         red, green, blue = colorsys.hsv_to_rgb(cls.hue_of(index), cls._DIGIT_SATURATION, cls._DIGIT_VALUE)
-        return Colour(int(red * 255), int(green * 255), int(blue * 255))
+        return Colour(int(red * Colour.MAX_CHANNEL), int(green * Colour.MAX_CHANNEL), int(blue * Colour.MAX_CHANNEL))
 
     @classmethod
     def pointer_side(cls, box: Rectangle, row: Row) -> str:
@@ -372,8 +384,8 @@ class NumberedRows:
             draw.polygon(
                 [
                     (tip, centre_y),
-                    (root, top + (bottom - top) / 4),
-                    (root, bottom - (bottom - top) / 4),
+                    (root, top + (bottom - top) / cls._POINTER_ROOT_DIVISOR),
+                    (root, bottom - (bottom - top) / cls._POINTER_ROOT_DIVISOR),
                 ],
                 fill=fill,
                 outline=ink,

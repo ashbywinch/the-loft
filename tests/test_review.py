@@ -673,3 +673,39 @@ def test_the_prompt_states_every_confidence_value() -> None:
     assert seen["schema"] is None, "a response schema forbids the tool call this loop needs"
     missing = [value for value in CONFIDENCE_VALUES if value not in seen["prompt"]]
     assert not missing, f"values the parse accepts but the prompt never states: {missing}"
+
+
+def test_the_investigation_call_carries_no_response_schema() -> None:
+    """The loop calls `chat(system, user, thinking=True)` and passes nothing
+    else. A response schema pinned to the verdict forbids the tool call the
+    investigation is made of, so the prompt is the shape's only carrier; a
+    call site that sent one would stop the investigation at its first turn.
+    The fake records the call's own arguments — no schema keyword is among
+    them — rather than the protocol's defaults."""
+    calls: list[dict[str, Any]] = []
+
+    class _Client:
+        def chat(self, system: str, user: str, **kwargs: Any) -> str:
+            calls.append({"system": system, "user": user, **kwargs})
+            return json.dumps(
+                {
+                    "relevant": "true",
+                    "contradiction": {"found": "false", "detail": ""},
+                    "confidence": "think_so",
+                    "note": "",
+                    "findings": [],
+                    "question": "",
+                }
+            )
+
+    investigate(
+        _Client(),
+        text="Grandma said Walter was Pearl's brother.",
+        person=Person.from_dict({"id": "p-walter", "name": "Walter Whitlock", "relation": "sibling of Nora"}),
+        who="Aria",
+        facts=ReviewContext(people=(), items=(), relationships=()),
+    )
+
+    assert calls, "the investigation made no call"
+    assert all("schema" not in call for call in calls), "a response schema forbids the tool call this loop needs"
+    assert all(call["thinking"] is True for call in calls), "the loop's deliberation is a thinking call"

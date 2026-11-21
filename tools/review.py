@@ -368,52 +368,18 @@ and never restate the reviewer's statement back to yourself. If you
 catch yourself repeating a step, stop and emit the verdict."""
 
 
-# the reviewer identity, the facts context, the history — a parameter object would add ceremony at the DI boundary
-# lucidlint: ignore long-param-list the investigation's inputs — the client seam, the answer, the person under review,
-def investigate(
-    client: _Chat,
-    *,
-    text: str,
-    person: Person,
-    who: str,
-    facts: ReviewContext,
-    history: tuple[Message, ...] = (),
-) -> ReviewTurn:
-    """The tool-using review of a free-text answer (user): the
-    model can call the archive's read-only lookups to dig into the
-    reviewer's statement — follow the leads and surface what the archive
-    already attests — then return the ReviewTurn: the check's answers,
-    the findings the tools surfaced, and the genealogist's question. *history* is the
-    conversation so far (the messages, including the model's own previous
-    reasoning), rendered verbatim into the prompt — the model always sees
-    its own history, so a message that re-answers an earlier question is
-    recognised as such. The findings are the digging's results — shown to
-    the reviewer. The tools are read-only: the decisions stay in the app's
-    flow. The never-derive rule holds — the model reports what it finds,
-    it never invents a kinship. ``raw`` is the model's final raw output,
-    stored verbatim as the turn's thinking."""
-    text = str(text or "").strip()
-    if not text:
-        raise ElicitationError("no answer given")
-    # The claim is the APP's question about the document the family uploaded:
-    # the app has read it and is checking what it says. "The family is
-    # checking" would read as the family asking, and a statement about the
-    # document's own subject — a death in the war — would look like a
-    # different question entirely.
-    claim = f"whether {person.name} was related to the family"
-    if person.relation:
-        # family language, never the system's — the model echoes the claim's
-        # own words, and the persona rule forbids 'the import'/'proposes'/
-        # 'link' (the prompt must not model the jargon it forbids)
-        claim += f" — the record under review says: {person.relation}"
-    # the conversation renders uniformly and sits LAST in the prompt — the
-    # static (the reviewer, the claim, the facts, the instructions) comes
-    # before it, so the previous prompt's exact text is the current prompt's
-    # prefix and the model's prompt-cache reuses the whole thing
-    # (user: 'the exact same text goes back… cheaper if so,
-    # because of caching'). The latest line is part of the same render, so
-    # a message that re-answers an earlier question is seen in context.
-    conversation = render_history(history + (Message(role="user", text=text, when=""),))
+def _investigation_prompt(claim: str, who: str, facts: ReviewContext, conversation: str) -> tuple[str, str]:
+    """The two prompts of one investigation: the system text, and the opening
+    user text the loop then grows with the tool results.
+
+    The loop's model call carries NO response schema. A schema pinned to the
+    verdict forbids the tool call the investigation is made of, so the prompt
+    is the only carrier of the verdict's shape: rendered from
+    ``StatementAssessment``'s JSON schema, with each member's description
+    beside it, and ``ReviewTurn.complete`` enforces the closed vocabularies at
+    the parse. No field of the request enforces the member set — do not read
+    the call in the loop as if one does.
+    """
     user = "\n\n".join(
         [
             f"Reviewer: {who or 'unknown'}",
@@ -484,31 +450,72 @@ def investigate(
         "Do not reword a decided sentence, list alternative questions, or "
         "re-read your own draft."
     )
-    # The verdict's shape and its value meanings are the annotated model's,
-    # rendered as its JSON schema — the framework's convention, and the whole
-    # instruction: a value the model may return is described beside the member
-    # that takes it.
-    # The loop's call carries NO response schema — a schema pinned to the
-    # verdict forbids the tool call — so the prompt carries the shape. It is
-    # generated from the model once per call, never retyped.
+    # The verdict's shape and each member's meaning are the annotated model's,
+    # rendered once: the schema below states the shape, and the confidence
+    # member's own description states the value rules. A member or a value the
+    # parse does not know cannot be described here.
     confidence = StatementAssessment.model_fields["confidence"]
     verdict_rules = "\nConfidence is the reviewer's own certainty, read from their words: " + str(
         confidence.description
     )
     verdict_schema = StatementAssessment.model_json_schema()
 
-    # the verdict shape must be in the INITIAL prompt — the schema was only
-    # revealed in the correction branch, so every first call was rejected
-    # once before the shape appeared, doubling the cost of every exchange
-    # The shape is generated from the model, never retyped: until the loop's
-    # tools are native, the prompt is the only place the model can learn it
-    # (a response schema would forbid the tool call — see the call below).
     prompt += (
         "\n\nReturn ONLY the verdict JSON, in exactly this shape, with every key the "
         "schema spells, spelled the same way — no others, no misspellings, no missing "
         "keys (a misspelled key is a failed verdict):\n" + json.dumps(verdict_schema, indent=1)
     )
     prompt += verdict_rules
+    return prompt, user
+
+
+# the reviewer identity, the facts context, the history — a parameter object would add ceremony at the DI boundary
+# lucidlint: ignore long-param-list the investigation's inputs — the client seam, the answer, the person under review,
+def investigate(
+    client: _Chat,
+    *,
+    text: str,
+    person: Person,
+    who: str,
+    facts: ReviewContext,
+    history: tuple[Message, ...] = (),
+) -> ReviewTurn:
+    """The tool-using review of a free-text answer (user): the
+    model can call the archive's read-only lookups to dig into the
+    reviewer's statement — follow the leads and surface what the archive
+    already attests — then return the ReviewTurn: the check's answers,
+    the findings the tools surfaced, and the genealogist's question. *history* is the
+    conversation so far (the messages, including the model's own previous
+    reasoning), rendered verbatim into the prompt — the model always sees
+    its own history, so a message that re-answers an earlier question is
+    recognised as such. The findings are the digging's results — shown to
+    the reviewer. The tools are read-only: the decisions stay in the app's
+    flow. The never-derive rule holds — the model reports what it finds,
+    it never invents a kinship. ``raw`` is the model's final raw output,
+    stored verbatim as the turn's thinking."""
+    text = str(text or "").strip()
+    if not text:
+        raise ElicitationError("no answer given")
+    # The claim is the APP's question about the document the family uploaded:
+    # the app has read it and is checking what it says. "The family is
+    # checking" would read as the family asking, and a statement about the
+    # document's own subject — a death in the war — would look like a
+    # different question entirely.
+    claim = f"whether {person.name} was related to the family"
+    if person.relation:
+        # family language, never the system's — the model echoes the claim's
+        # own words, and the persona rule forbids 'the import'/'proposes'/
+        # 'link' (the prompt must not model the jargon it forbids)
+        claim += f" — the record under review says: {person.relation}"
+    # the conversation renders uniformly and sits LAST in the prompt — the
+    # static (the reviewer, the claim, the facts, the instructions) comes
+    # before it, so the previous prompt's exact text is the current prompt's
+    # prefix and the model's prompt-cache reuses the whole thing
+    # (user: 'the exact same text goes back… cheaper if so,
+    # because of caching'). The latest line is part of the same render, so
+    # a message that re-answers an earlier question is seen in context.
+    conversation = render_history(history + (Message(role="user", text=text, when=""),))
+    prompt, user = _investigation_prompt(claim, who, facts, conversation)
     tool_calls = 0
     trace: list[TraceStep] = []
     # the stable prompt — the static plus the conversation before the
@@ -520,10 +527,6 @@ def investigate(
         Investigation.MAX_STEPS + Investigation.VERDICT_AND_CORRECTION_TURNS
     ):  # the digs, plus the verdict and a correction
         try:
-            # No response schema here: the loop's turns are JSON either way —
-            # a tool call or the verdict — and a schema pinned to the verdict
-            # forbids the tool call, which stops the investigation dead. The
-            # prompt carries the value rules; the parse enforces them.
             raw = client.chat(prompt, user, thinking=True)
             parsed = json_object(raw)
         except AIClientError as e:

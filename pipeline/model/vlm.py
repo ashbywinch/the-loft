@@ -271,11 +271,21 @@ class VlmOptions:
     model: str = ModelConfig.VISION_MODEL
     system: str = VlmPrompts.SYSTEM
     user_text: str | None = None
-    base_url: str = AIClient.DEFAULT_BASE_URL
+    # the endpoint the caller states; None is the gateway default (resolved
+    # by ``endpoint``, AIClient's own rule) — an options value is never an
+    # empty URL
+    base_url: str | None = None
     api_key: str | None = None
     timeout: float = 900.0
     max_tokens: int = 64000
     urlopen: Callable[..., Any] | None = None
+
+    @property
+    def endpoint(self) -> str:
+        """The base URL the call goes to: the stated one, or the gateway's
+        default when the options name none — the same rule the client
+        applies, so a caller that names no endpoint gets the gateway."""
+        return self.base_url or AIClient.DEFAULT_BASE_URL
 
     def run(self, transcribe: Callable[..., VlmAnswer], image: Path) -> VlmAnswer:
         """This spec's call: the config travels as named arguments, so one
@@ -285,7 +295,7 @@ class VlmOptions:
             model=self.model,
             system=self.system,
             user_text=self.user_text,
-            base_url=self.base_url,
+            base_url=self.endpoint,
             api_key=self.api_key,
             timeout=self.timeout,
             max_tokens=self.max_tokens,
@@ -311,7 +321,7 @@ def transcribe_images_vlm(images: list[Path], *, options: VlmOptions | None = No
         user_content.append(TextContent(text=opts.user_text))
     return _content_and_usage(
         _vision_post(
-            base_url=opts.base_url,
+            base_url=opts.endpoint,
             key=opts.api_key or find_api_key(),
             payload=ChatRequest(
                 model=opts.model,

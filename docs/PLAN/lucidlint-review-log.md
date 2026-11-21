@@ -802,7 +802,7 @@ walks, all deterministic, and all would have fired unprompted.
 
 ## 2026-11-02 — why the artefact-layout duplication went unflagged
 
-The session centralised the stage layout (one `pipeline/artefacts.py`) after
+The session centralised the stage layout (one `pipeline/batch_artefacts.py` — `pipeline/artefacts.py` at the time) after
 finding `ocr-guess/...` and `oriented/...` spelled in eight modules, with two
 predicates for "has this page been read?" that disagreed. Lucidlint did not
 suggest it, and the reason is structural:
@@ -850,7 +850,7 @@ against the coding standards rather than waved through:
   §19.4 names one collection that owns both halves on purpose: the write half
   must be unreachable outside a `Change`, and splitting it would let a caller
   hold the writer without the transaction. Same judgment as
-  `loft/live/store.py` (`partition`) and `tools/gedcom_document.py`.
+  `loft/live/live_store.py` (`partition`) and `tools/gedcom_document.py`.
 - **`loft/live/person_row.py` — `data-clump`.** `(connection, person_id)` is
   the row's address in `read_row`, `delete_row` and `_residences`. A key type
   would wrap a connection handle and be unwrapped at each SQL call; the
@@ -908,7 +908,7 @@ suppress them. Three families, one commit each.
     splitting them off would either move the API between objects or turn the
     verbs into one-line delegators — a second facade the migration would
     undo. The entry stays, with the reason written at it.
-  - `loft/live/store.py` — the entry was **stale** (the rule reports nothing
+  - `loft/live/live_store.py` — the entry was **stale** (the rule reports nothing
     on `LiveStore`): deleted.
 
 ## 2026-11-20 — the names and signatures (vague-name, long-param-list)

@@ -416,7 +416,7 @@ class TestThinkingDisabled:
 
         body = json.dumps(TestThinkingDisabled._ok_body()).encode()
 
-        def fake_urlopen(request, timeout=None):
+        def fake_urlopen(request, timeout=None):  # noqa: ARG002 — the signature mirrors urllib.request.urlopen so a call-shape change fails here
             payload = json.loads(request.data.decode("utf-8"))
             calls.append(payload)
             if "reasoning" in payload:

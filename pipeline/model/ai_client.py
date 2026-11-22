@@ -214,9 +214,10 @@ class AIClient:
                     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
                     logger.warning(
                         "model %s served no reasoning for a thinking request "
-                        "(finish_reason=%r, response reasoning=%r, reasoning_tokens=%s) — "
+                        "(response_id=%r, finish_reason=%r, response reasoning=%r, reasoning_tokens=%s) — "
                         "deliberation was requested but not served",
                         self.model,
+                        data.get("id", "absent"),
                         finish_reason,
                         reasoning_field,
                         usage.get("reasoning_tokens", "absent"),

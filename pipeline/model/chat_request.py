@@ -49,7 +49,11 @@ class ChatRequest:
             # ``reasoning: {"enabled": true}`` returned thousands of
             # reasoning characters. The switch is the same field the cap
             # rides on, so the budget merges into this object.
-            out["reasoning"] = {"enabled": self.thinking}
-        if self.reasoning_budget is not None:
-            out["reasoning"] = {**out.get("reasoning", {}), "max_tokens": self.reasoning_budget}
+            reasoning: dict[str, Any] = {"enabled": bool(self.thinking)}
+            if self.reasoning_budget is not None:
+                reasoning["max_tokens"] = self.reasoning_budget
+            out["reasoning"] = reasoning
+        # a budget without a switch is not a request: it is dropped rather than
+        # sent as {"max_tokens": n}, which asks for a cap on a feature nobody
+        # enabled
         return out

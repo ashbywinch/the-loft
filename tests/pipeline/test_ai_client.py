@@ -99,6 +99,16 @@ def test_chat_sends_no_reasoning_budget_by_default() -> None:
     assert calls[1]["body"]["reasoning"] == {"enabled": True, "max_tokens": 6000}
 
 
+def test_a_budget_without_the_switch_sends_no_reasoning() -> None:
+    """A cap is not a request: with the switch absent, the budget is dropped
+    rather than sent as {"max_tokens": n}, which asks a gateway to cap a
+    feature nobody enabled."""
+    urlopen, calls = make_fake_urlopen([FakeResponse({"choices": [{"message": {"content": "ok"}}]})])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0, reasoning_budget=6000)
+    client.chat("s", "u")
+    assert "reasoning" not in calls[0]["body"]
+
+
 def gateway_response(content: str, *, reasoning: str | None, reasoning_tokens: int) -> dict[str, object]:
     """A reply shaped like the Cloudflare AI Gateway's: the reasoning in the
     message's ``reasoning`` field (null when the model did not deliberate)

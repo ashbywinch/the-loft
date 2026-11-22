@@ -205,27 +205,32 @@ def test_a_thinking_reply_with_no_reasoning_is_reported(caplog: pytest.LogCaptur
 
 
 def test_salvage_returns_none_when_the_reasoning_is_empty() -> None:
-    """The stop-empty recovery asks ``_salvage_reasoning`` for an answer; an
-    empty reasoning channel has none, so the caller gets None without a
-    hand-written truthiness guard of its own."""
+    """The stop-empty branch asks ``AIClient._salvage`` for an answer; an
+    empty, a non-reasoning or a prose-only reasoning channel has none, so the
+    decision is None without a hand-written truthiness guard of its own."""
+    client = AIClient(api_key="k")
+    assert client._salvage(Reasoning(enabled=True, text="")) is None
+    assert client._salvage(Reasoning(enabled=False, text='{"ok": true}')) is None
+    assert client._salvage(Reasoning(enabled=True, text="Let me weigh the evidence once more.")) is None
+
     urlopen, _ = make_fake_urlopen([FakeResponse(gateway_response('{"ok": true}', reasoning=None, reasoning_tokens=0))])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
     assert client.chat("s", "u", reasoning=True) == '{"ok": true}'
-    assert client._salvage_reasoning() is None
 
 
 def test_salvage_returns_the_answer_when_the_reasoning_carries_one() -> None:
     """The reasoning channel that parses as the JSON answer IS the answer —
-    ``_salvage_reasoning`` returns it, so the recovery substitutes it for the
+    ``AIClient._salvage`` returns it, so the recovery substitutes it for the
     empty completion."""
     verdict = '{"relevant": true, "contradiction": {"found": false, "detail": ""}}'
+    assert AIClient(api_key="k")._salvage(Reasoning(enabled=True, text=verdict)) == verdict
+
     stop_empty: dict[str, object] = {
         "choices": [{"message": {"content": "", "reasoning": verdict}, "finish_reason": "stop"}]
     }
     urlopen, _ = make_fake_urlopen([FakeResponse(stop_empty)])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
     assert client.chat("s", "u", reasoning=True) == verdict
-    assert client._salvage_reasoning() == verdict
 
 
 def test_chat_retries_transient_errors_with_backoff() -> None:

@@ -18,7 +18,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, final
+from typing import Any, Literal, final
 
 from pipeline.model.backoff import Backoff
 from pipeline.model.chat_message import ChatMessage
@@ -36,15 +36,106 @@ class AIClientError(RuntimeError):
 
 @dataclass(frozen=True)
 class _Reply:
-    """One parsed chat-completions response, as the client records it: the
-    message, why the choice stopped, the whole body (for its id and usage),
-    and whether the request asked for reasoning. The message arrives parsed
-    so ``_record_reasoning`` is the only reader of its reasoning field."""
+    """A response as the endpoint sent it: the assistant message, parsed, and
+    the whole body the response id and usage record live in."""
 
     message: Mapping[str, Any]
-    finish_reason: str
     body: Mapping[str, Any]
-    requested: bool
+
+
+@dataclass(frozen=True)
+class Attempt:
+    """One send's 200 response, parsed once by ``_read_attempt`` into the
+    single value the retry loop decides on: the reply, its reasoning, the
+    content, why the model stopped, the usage record, and the gateway's cache
+    verdict.
+
+    Every field a decision reads is here, so no branch of the loop reads a
+    value another branch assigned."""
+
+    reply: _Reply
+    reasoning: Reasoning
+    content: str
+    finish_reason: str
+    usage: dict[str, Any]
+    cache_status: str
+
+
+@dataclass(frozen=True)
+class _Rejected:
+    """A send the endpoint refused at the transport: the HTTP error, handled
+    by the same decision function as an attempt."""
+
+    error: urllib.error.HTTPError
+
+
+# The outcome of one send: the parsed attempt, or the refusal.
+_Outcome = Attempt | _Rejected
+
+
+@dataclass(frozen=True)
+class _Step:
+    """What the loop does with one send: the one decision, and the values
+    carrying it out. ``kind`` names the case; ``payload`` is the request the
+    next send uses; ``wait`` says the step takes a backoff slot; ``answer`` is
+    the text to return; ``error``/``cause`` the failure to raise;
+    ``burn_retried`` is the fresh-sample rescue's flag for the next
+    iteration."""
+
+    kind: Literal["return", "salvage", "burn", "retry", "ladder", "raise"]
+    payload: ChatRequest
+    wait: bool = False
+    answer: str = ""
+    error: str = ""
+    cause: BaseException | None = None
+    burn_retried: bool = False
+
+
+# The statuses that mean "the endpoint is busy, try again" and the statuses
+# that mean "this endpoint does not understand the request's reasoning params"
+# — named, so the ladder below reads as its rule.
+_TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 529})
+_REASONING_PARAM_STATUSES = frozenset({400, 422})
+
+
+def _api_error(error: urllib.error.HTTPError) -> str:
+    """The failure message for one refused send: the status and the body the
+    endpoint sent with it (a bad model name and an expired key both live
+    there)."""
+    return f"model API error {error.code}: {error.read().decode('utf-8', 'replace')[:200]}"
+
+
+def _read_attempt(body: Mapping[str, Any], headers: Mapping[str, str], requested: bool) -> Attempt:
+    """Parse one 200 response into the ``Attempt`` the loop decides on.
+
+    The content, the stop reason, the reasoning text (either channel a
+    provider uses — the gateway sends ``reasoning``, some providers
+    ``reasoning_content``), the usage record and the gateway's cache verdict
+    are read here, once, so every later question is a field on the value.
+
+    A body without a choice is the one malformed shape: it fails here, with
+    the body in the error, never as an AttributeError from a later reader.
+    A null (or non-dict) choice is not malformed — it is an empty completion
+    and keeps the empty-content path."""
+    try:
+        choice = body["choices"][0]
+    except (KeyError, IndexError, TypeError) as e:
+        raise AIClientError(f"unexpected API response: {json.dumps(body)[:300]}") from e
+    choice = choice if isinstance(choice, dict) else {}
+    message_field = choice.get("message")
+    message = message_field if isinstance(message_field, dict) else {}
+    raw_reasoning = message.get("reasoning")
+    if raw_reasoning is None:
+        raw_reasoning = message.get("reasoning_content")
+    usage_field = body.get("usage")
+    return Attempt(
+        reply=_Reply(message=message, body=body),
+        reasoning=Reasoning(enabled=requested, text=str(raw_reasoning or "")),
+        content=message.get("content") or "",
+        finish_reason=str(choice.get("finish_reason") or ""),
+        usage=usage_field if isinstance(usage_field, dict) else {},
+        cache_status=headers.get("cf-aig-cache-status", "n/a"),
+    )
 
 
 @final
@@ -117,7 +208,7 @@ class AIClient:
     @property
     def last_reasoning(self) -> str:
         """The last reply's deliberation text (``""`` when it carried none).
-        Kept as the compatibility view of ``_record_reasoning``'s result —
+        Kept as the compatibility view of the recorded attempt's reasoning —
         the trace and the evals read it."""
         return self._last_reasoning.text
 
@@ -172,164 +263,192 @@ class AIClient:
         return self._post(request)
 
     def _post(self, payload: ChatRequest) -> str:
-        """Send one chat-completions request with the retry/backoff loop."""
+        """Send one chat-completions request: send, read the attempt, act on
+        the one decision it yields, repeat.
+
+        The retry rules — the backoff budget, the parameter ladder, the
+        fresh-sample burn rescue, the stop-empty salvage — are branches of
+        ``_next_step``, each with the case it handles; this loop only carries
+        out the step that function returns."""
         backoff = Backoff(delay=2.0, attempt=0)
-        content = ""  # the completion content — set per attempt, used by the empty-path check
-        cache_status = "n/a"  # the gateway's cache verdict for this attempt
-        finish_reason = ""  # the response's finish_reason — set per attempt, used by the empty-path log
         burn_retried = False  # the fresh-sample rescue fires ONCE — a second burn is a persistent stall
         while True:
-            # Built per attempt, because a RETRY MUST BE A NEW SAMPLE. The
-            # gateway caches a completion by request body: re-sending the
-            # identical body replays the answer that just failed. Measured on
-            # an empty completion — three attempts, one response id,
-            # cf-aig-cache-status: HIT, byte-identical reasoning each time — so
-            # the retry could never rescue it. The VLM path skips the cache
-            # outright (a cached measurement is not a measurement); here the
-            # first attempt may cache, and only a retry must not.
-            request = urllib.request.Request(
-                f"{self.base_url}/chat/completions",
-                data=json.dumps(payload.to_dict()).encode("utf-8"),
-                headers=HttpHeaders(
-                    content_type="application/json",
-                    authorization=f"Bearer {self.api_key}",
-                    user_agent=HttpHeaders.USER_AGENT,
-                    skip_gateway_cache=self._fresh or backoff.attempt > 0,
-                ).to_dict(),
-                method="POST",
-            )
-            try:
-                with self._urlopen(request, timeout=self.timeout) as response:
-                    data = json.loads(response.read().decode("utf-8"))
-                    # the gateway says whether this answer came from its cache;
-                    # a HIT on a retry means the retry replayed, not re-sampled
-                    cache_status = response.headers.get("cf-aig-cache-status", "n/a")
-                try:
-                    choice = data["choices"][0]
-                    message = choice.get("message") if isinstance(choice, dict) else None
-                    # a choice can be a dict whose message is a non-dict (a string) —
-                    # .get on it would raise the uncaught AttributeError the null-
-                    # choice guard was meant to prevent
-                    message = message if isinstance(message, dict) else {}
-                    content = message.get("content") or ""
-                    # why the completion is empty is the diagnostic, not the
-                    # emptiness: finish_reason "length" with no content means
-                    # the model spent its whole output budget reasoning.
-                    finish_reason = str(choice.get("finish_reason") or "") if isinstance(choice, dict) else ""
-                except (KeyError, IndexError, TypeError) as e:
-                    raise AIClientError(f"unexpected API response: {json.dumps(data)[:300]}") from e
-                recorded = self._record_reasoning(
-                    _Reply(
-                        message=message,
-                        finish_reason=finish_reason,
-                        body=data,
-                        requested=payload.reasoning is not None and payload.reasoning.enabled,
-                    )
+            outcome = self._send(payload, skip_cache=self._fresh or backoff.attempt > 0)
+            step = self._next_step(outcome, payload, attempts_made=backoff.attempt, burn_retried=burn_retried)
+            if step.kind in ("return", "salvage"):
+                return step.answer
+            if step.kind == "raise":
+                raise AIClientError(step.error) from step.cause
+            payload = step.payload
+            burn_retried = step.burn_retried
+            if step.wait:
+                backoff = backoff.advance(self._sleep)
+
+    def _send(self, payload: ChatRequest, *, skip_cache: bool) -> _Outcome:
+        """Send one request and read its outcome: a 200 parsed into the
+        ``Attempt`` the loop decides on (and recorded for ``last_reasoning``),
+        or the endpoint's refusal.
+
+        The request is built per attempt, because a RETRY MUST BE A NEW
+        SAMPLE. The gateway caches a completion by request body: re-sending
+        the identical body replays the answer that just failed. Measured on an
+        empty completion — three attempts, one response id,
+        cf-aig-cache-status: HIT, byte-identical reasoning each time — so the
+        retry could never rescue it. The VLM path skips the cache outright (a
+        cached measurement is not a measurement); here the first attempt may
+        cache, and only a retry must not."""
+        request = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(payload.to_dict()).encode("utf-8"),
+            headers=HttpHeaders(
+                content_type="application/json",
+                authorization=f"Bearer {self.api_key}",
+                user_agent=HttpHeaders.USER_AGENT,
+                skip_gateway_cache=skip_cache,
+            ).to_dict(),
+            method="POST",
+        )
+        try:
+            with self._urlopen(request, timeout=self.timeout) as response:
+                attempt = _read_attempt(
+                    json.loads(response.read().decode("utf-8")),
+                    response.headers,
+                    payload.reasoning is not None and payload.reasoning.enabled,
                 )
-            except urllib.error.HTTPError as e:
-                if e.code in (429, 500, 502, 503, 529):
-                    if backoff.attempt >= self.max_retries:
-                        raise AIClientError(
-                            f"model API error {e.code}: {e.read().decode('utf-8', 'replace')[:200]}"
-                        ) from e
-                    backoff = backoff.advance(self._sleep)
-                    continue
-                if e.code in (400, 422) and payload.reasoning is not None:
-                    # model/endpoint doesn't understand the reasoning params —
-                    # retry without them; the fallback must NOT consume the
-                    # retry budget
-                    logger.warning(
-                        "model %s rejected the reasoning params (HTTP %d); retrying without them",
-                        self.model,
-                        e.code,
-                    )
-                    payload = replace(payload, reasoning=None)
-                    # temperature follows the reasoning state too: a rejected
-                    # reasoning param must not leave the retry running at the
-                    # reasoning 0.3 — it is a non-reasoning call at 0.0
-                    payload = replace(payload, temperature=0.0)
-                    continue
-                # any other status is a HARD client error — a bad model name,
-                # an expired key, a wrong endpoint. Report it with the body,
-                # once. Letting it fall through to the empty-completion path
-                # read a 400 "Invalid model name" as "empty response from API
-                # (finish_reason=n/a)" and retried it as if transient: the real
-                # failure stayed invisible for a whole session (2026-10-19).
-                raise AIClientError(f"model API error {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from e
-            if content and content.strip():
-                return content
-            if recorded.enabled and finish_reason == "length" and not burn_retried:
-                # the completion is a deliberation stall: the model circled
-                # its decisions and spent the whole budget reasoning without
-                # a verdict (measured: 16,000 reasoning tokens, content a
-                # single space; the captured reasoning re-reads one
-                # instruction line ~27 times). Decoding-side controls alone
-                # cannot stop the circling (arXiv:2602.14798); the fix that
-                # works keeps the reasoning and takes a FRESH sample
-                # (arXiv:2502.08235's sample-and-select). The first pass at
-                # this rescue added a tighter reasoning budget and a
-                # conclude-now nudge — measured on the CI gateway: the
-                # budget was ignored (the retry still burned the full
-                # budget) and the nudge made the model wrap up INSIDE its
-                # reasoning and emit no content (finish=stop, 273 reasoning
-                # chars, empty content — the budget-forcing failure mode).
-                # Thinking is never disabled and the prompt is never
-                # rewritten: only the sample changes.
+        except urllib.error.HTTPError as e:
+            return _Rejected(error=e)
+        self._record_reasoning(attempt)
+        return attempt
+
+    def _next_step(self, outcome: _Outcome, payload: ChatRequest, *, attempts_made: int, burn_retried: bool) -> _Step:
+        """What the loop does with one send — the only place a case is decided.
+
+        The cases, one branch each:
+
+        * refusal, transient status (429/5xx) with retry budget left — retry
+          on the backoff, because the endpoint is busy, not broken;
+        * refusal, transient status, budget exhausted — raise with the body,
+          because a status that persists is not transient;
+        * refusal, 400/422 to a request carrying reasoning — retry once
+          without the reasoning params and at the non-reasoning temperature,
+          taking no backoff slot, because the endpoint does not understand
+          them (the schema ladder) and that is not a failure;
+        * refusal, any other status — raise with the body, because a bad
+          model name or an expired key must never read as an empty completion;
+        * an attempt with content — return it;
+        * an attempt whose reasoning burned the whole output budget
+          (``length``) with the rescue unspent — retry once at a warmer
+          temperature with reasoning kept, because a deliberation stall needs
+          a fresh sample, never a rewritten prompt;
+        * an attempt with empty content whose stop/error reasoning IS the
+          structured answer — return the reasoning, because the provider put
+          the answer in the reasoning channel;
+        * any other empty attempt — retry on the backoff while the budget
+          lasts, else raise, because a 200 with no content is a transient
+          provider failure.
+        """
+        if isinstance(outcome, _Rejected):
+            error = outcome.error
+            if error.code in _TRANSIENT_STATUSES:
+                if attempts_made >= self.max_retries:
+                    return _Step(kind="raise", payload=payload, error=_api_error(error), cause=error)
+                return _Step(kind="retry", payload=payload, wait=True, burn_retried=burn_retried)
+            if error.code in _REASONING_PARAM_STATUSES and payload.reasoning is not None:
                 logger.warning(
-                    "chat: reasoning burned the output budget (finish_reason=length, %d reasoning tokens) — "
-                    "retrying on a fresh sample",
-                    len(recorded.text),
+                    "model %s rejected the reasoning params (HTTP %d); retrying without them",
+                    self.model,
+                    error.code,
                 )
-                # a different draw: the stall is stochastic, not a
-                # deterministic attractor (the temperature-0 loop class is
-                # already gone) — the new sample often concludes (2502.08235)
-                payload = replace(payload, temperature=0.5)
-                burn_retried = True
-                request.data = json.dumps(payload.to_dict()).encode("utf-8")
-                continue
-            if not content.strip() and finish_reason in ("stop", "error"):
-                # the provider put the structured answer in the reasoning
-                # channel and produced zero content — the captured reasoning
-                # IS the completion. Measured on the CI gateway, the
-                # verdict JSON lands in 'reasoning' with content=="" both
-                # on stop draws and on stream-failed completions
-                # (finish_reason=error, 9,852 reasoning chars, no content),
-                # which otherwise retry into the same provider hiccup.
-                # ``_salvage_reasoning`` decides: a parseable answer is
-                # recovered, deliberation prose (or no reasoning at all) is a
-                # genuine failure and keeps the retry path (review-bot finding
-                # on PR #62), and a non-reasoning call never salvages.
-                salvaged = self._salvage_reasoning()
-                if salvaged is not None:
-                    logger.warning(
-                        "chat: empty content with finish_reason=%s — the reasoning holds the answer; "
-                        "recovering it (reasoning_len=%d)",
-                        finish_reason,
-                        len(salvaged),
-                    )
-                    return salvaged
-            # a 200 with no content is a transient provider failure, not an
-            # answer. Log the response's actual signals so the failure mode
-            # is observable, then retry with the same backoff as a 5xx;
-            # exhaust the budget before failing.
+                # temperature follows the reasoning state too: a rejected
+                # reasoning param must not leave the retry running at the
+                # reasoning 0.3 — it is a non-reasoning call at 0.0
+                return _Step(
+                    kind="ladder",
+                    payload=replace(payload, reasoning=None, temperature=0.0),
+                    burn_retried=burn_retried,
+                )
+            # any other status is a HARD client error — a bad model name, an
+            # expired key, a wrong endpoint. Report it with the body, once.
+            # Letting it fall through to the empty-completion path read a 400
+            # "Invalid model name" as "empty response from API
+            # (finish_reason=n/a)" and retried it as if transient: the real
+            # failure stayed invisible for a whole session (2026-10-19).
+            return _Step(kind="raise", payload=payload, error=_api_error(error), cause=error)
+
+        attempt = outcome
+        if attempt.content.strip():
+            return _Step(kind="return", payload=payload, answer=attempt.content, burn_retried=burn_retried)
+        if attempt.reasoning.enabled and attempt.finish_reason == "length" and not burn_retried:
+            # the completion is a deliberation stall: the model circled its
+            # decisions and spent the whole budget reasoning without a verdict
+            # (measured: 16,000 reasoning tokens, content a single space; the
+            # captured reasoning re-reads one instruction line ~27 times).
+            # Decoding-side controls alone cannot stop the circling
+            # (arXiv:2602.14798); the fix that works keeps the reasoning and
+            # takes a FRESH sample (arXiv:2502.08235's sample-and-select). The
+            # first pass at this rescue added a tighter reasoning budget and a
+            # conclude-now nudge — measured on the CI gateway: the budget was
+            # ignored (the retry still burned the full budget) and the nudge
+            # made the model wrap up INSIDE its reasoning and emit no content
+            # (finish=stop, 273 reasoning chars, empty content — the
+            # budget-forcing failure mode). Thinking is never disabled and the
+            # prompt is never rewritten: only the sample changes.
             logger.warning(
-                "chat: empty completion (finish_reason=%s, content_len=%d, reasoning_len=%d, "
-                "gateway_cache=%s) — retrying",
-                finish_reason or "n/a",
-                len(content),
-                len(recorded.text),
-                cache_status,
+                "chat: reasoning burned the output budget (finish_reason=length, %d reasoning tokens) — "
+                "retrying on a fresh sample",
+                len(attempt.reasoning.text),
             )
-            if backoff.attempt >= self.max_retries:
-                raise AIClientError(f"empty response from API (finish_reason={finish_reason or 'n/a'})")
-            backoff = backoff.advance(self._sleep)
+            # a different draw: the stall is stochastic, not a deterministic
+            # attractor (the temperature-0 loop class is already gone) — the
+            # new sample often concludes (2502.08235)
+            return _Step(kind="burn", payload=replace(payload, temperature=0.5), burn_retried=True)
+        if attempt.finish_reason in ("stop", "error"):
+            # the provider put the structured answer in the reasoning channel
+            # and produced zero content — the reasoning IS the completion.
+            # Measured on the CI gateway, the verdict JSON lands in
+            # 'reasoning' with content=="" both on stop draws and on
+            # stream-failed completions (finish_reason=error, 9,852 reasoning
+            # chars, no content), which otherwise retry into the same provider
+            # hiccup. ``_salvage`` decides: a parseable answer is recovered,
+            # deliberation prose (or no reasoning at all) is a genuine failure
+            # and keeps the retry path (review-bot finding on PR #62), and a
+            # non-reasoning call never salvages.
+            salvaged = self._salvage(attempt.reasoning)
+            if salvaged is not None:
+                logger.warning(
+                    "chat: empty content with finish_reason=%s — the reasoning holds the answer; "
+                    "recovering it (reasoning_len=%d)",
+                    attempt.finish_reason,
+                    len(salvaged),
+                )
+                return _Step(kind="salvage", payload=payload, answer=salvaged, burn_retried=burn_retried)
+        # a 200 with no content is a transient provider failure, not an
+        # answer. Log the response's actual signals so the failure mode is
+        # observable, then retry with the same backoff as a 5xx; exhaust the
+        # budget before failing.
+        logger.warning(
+            "chat: empty completion (finish_reason=%s, content_len=%d, reasoning_len=%d, gateway_cache=%s) — retrying",
+            attempt.finish_reason or "n/a",
+            len(attempt.content),
+            len(attempt.reasoning.text),
+            attempt.cache_status,
+        )
+        if attempts_made >= self.max_retries:
+            return _Step(
+                kind="raise",
+                payload=payload,
+                error=f"empty response from API (finish_reason={attempt.finish_reason or 'n/a'})",
+                burn_retried=burn_retried,
+            )
+        return _Step(kind="retry", payload=payload, wait=True, burn_retried=burn_retried)
 
-    def _record_reasoning(self, reply: _Reply) -> Reasoning:
-        """Record one reply's reasoning and return the call's state.
+    def _record_reasoning(self, attempt: Attempt) -> None:
+        """Record one attempt's reasoning — ``last_reasoning`` reads it back.
 
-        This is the only reader of the response's reasoning field, in either
-        channel a provider uses (the gateway sends ``reasoning``; some
-        providers ``reasoning_content``).
+        The reasoning was parsed into ``attempt.reasoning`` by
+        ``_read_attempt``, in either channel a provider uses (the gateway
+        sends ``reasoning``; some providers ``reasoning_content``), so this is
+        the only assignment of the call's reasoning state.
 
         A reasoning request that comes back with no reasoning is a SILENT
         degradation: the gateway accepted the request and answered without
@@ -337,41 +456,35 @@ class AIClient:
         anyone noticing. Name the model, the response id, the finish reason
         and the reasoning length and token count — never the reasoning text,
         which is family content here."""
-        raw = reply.message.get("reasoning")
-        if raw is None:
-            raw = reply.message.get("reasoning_content")
-        recorded = Reasoning(enabled=reply.requested, text=str(raw or ""))
-        self._last_reasoning = recorded
-        if recorded.enabled and not recorded.has_text:
-            usage_field = reply.body.get("usage")
-            usage = usage_field if isinstance(usage_field, dict) else {}
+        self._last_reasoning = attempt.reasoning
+        if attempt.reasoning.enabled and not attempt.reasoning.has_text:
             logger.warning(
                 "model %s served no reasoning for a reasoning request "
                 "(response_id=%r, finish_reason=%r, reasoning_len=%d, reasoning_tokens=%s) — "
                 "deliberation was requested but not served",
                 self.model,
-                reply.body.get("id", "absent"),
-                reply.finish_reason,
-                len(recorded.text),
-                usage.get("reasoning_tokens", "absent"),
+                attempt.reply.body.get("id", "absent"),
+                attempt.finish_reason,
+                len(attempt.reasoning.text),
+                attempt.usage.get("reasoning_tokens", "absent"),
             )
-        return recorded
 
-    def _salvage_reasoning(self) -> str | None:
-        """The reasoning's answer, or None when there is none to salvage.
+    @staticmethod
+    def _salvage(reasoning: Reasoning) -> str | None:
+        """The reasoning's answer, or None when it holds none.
 
         The stop-empty recovery may only substitute the reasoning for a
         failed completion when that reasoning is a parseable JSON answer:
         deliberation prose is a genuine failure and keeps the retry path
         (review-bot finding on PR #62). A non-reasoning call is never
         salvaged, even if a provider sent a stray reasoning channel."""
-        if not self._last_reasoning.enabled or not self._last_reasoning.has_text:
+        if not reasoning.enabled or not reasoning.has_text:
             return None
         try:
-            json_object(self._last_reasoning.text)
+            json_object(reasoning.text)
         except AIClientError:
             return None
-        return self._last_reasoning.text
+        return reasoning.text
 
 
 def find_api_key(_env: Mapping[str, str] | None = None, _home: Path | None = None) -> str:

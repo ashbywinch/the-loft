@@ -55,7 +55,7 @@ def _relevant_sentences(text: str, needles: tuple[str, ...], limit: int = 3) -> 
 class _Chat(Protocol):
     # instance method using self
 
-    def chat(self, system: str, user: str, *, thinking: bool = False) -> str: ...
+    def chat(self, system: str, user: str, *, reasoning: bool = False) -> str: ...
 
 
 def _known_facts(facts: ReviewContext) -> str:
@@ -524,7 +524,7 @@ def investigate(
         Investigation.MAX_STEPS + Investigation.VERDICT_AND_CORRECTION_TURNS
     ):  # the digs, plus the verdict and a correction
         try:
-            raw = client.chat(prompt, user, thinking=True)
+            raw = client.chat(prompt, user, reasoning=True)
             parsed = json_object(raw)
         except AIClientError as e:
             raise ElicitationError(f"investigation failed: {e}") from e

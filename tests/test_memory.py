@@ -102,7 +102,7 @@ class FakeClient:
         self.calls: list[tuple[str, str]] = []
         self._pending_questions = '{"questions": []}'
 
-    def chat(self, system: str, user: str, *, thinking: bool = False) -> str:
+    def chat(self, system: str, user: str, *, reasoning: bool = False) -> str:
         self.calls.append((system, user))
         if "review pass" in system:
             return self.reviewer.pop(0)

@@ -91,22 +91,29 @@ def test_chat_sends_no_reasoning_budget_by_default() -> None:
     ``thinking: {"type": …}`` object, which the gateway silently ignored."""
     urlopen, calls = make_fake_urlopen([FakeResponse({"choices": [{"message": {"content": "ok"}}]}) for _ in range(2)])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
-    client.chat("s", "u", thinking=True)
+    client.chat("s", "u", reasoning=True)
     assert calls[0]["body"]["reasoning"] == {"enabled": True}
     assert "max_tokens" not in calls[0]["body"]["reasoning"]
     opted = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0, reasoning_budget=6000)
-    opted.chat("s", "u", thinking=True)
+    opted.chat("s", "u", reasoning=True)
     assert calls[1]["body"]["reasoning"] == {"enabled": True, "max_tokens": 6000}
 
 
 def test_a_budget_without_the_switch_sends_no_reasoning() -> None:
-    """A cap is not a request: with the switch absent, the budget is dropped
-    rather than sent as {"max_tokens": n}, which asks a gateway to cap a
-    feature nobody enabled."""
-    urlopen, calls = make_fake_urlopen([FakeResponse({"choices": [{"message": {"content": "ok"}}]})])
-    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0, reasoning_budget=6000)
-    client.chat("s", "u")
-    assert "reasoning" not in calls[0]["body"]
+    """A cap is not a request: with the switch absent (the retry path that
+    drops it), the budget is dropped too, rather than sent as
+    {"max_tokens": n} — a cap on a feature nobody enabled."""
+    from pipeline.model.chat_request import ChatMessage, ChatRequest
+
+    request = ChatRequest(
+        model="m",
+        messages=[ChatMessage(role="user", content="u")],
+        temperature=0.0,
+        max_tokens=10,
+        reasoning=None,
+        reasoning_budget=6000,
+    )
+    assert "reasoning" not in request.to_dict()
 
 
 def gateway_response(content: str, *, reasoning: str | None, reasoning_tokens: int) -> dict[str, object]:
@@ -141,7 +148,7 @@ def test_a_thinking_request_asks_for_reasoning_on_the_wire() -> None:
     urlopen, calls = make_fake_urlopen(
         [FakeResponse(gateway_response("ok", reasoning="I weighed the lead.", reasoning_tokens=12))]
     )
-    AIClient(api_key="k", urlopen=urlopen).chat("s", "u", thinking=True)
+    AIClient(api_key="k", urlopen=urlopen).chat("s", "u", reasoning=True)
     body = calls[0]["body"]
     assert body["reasoning"] == {"enabled": True}
     assert "thinking" not in body, "the gateway ignores the Anthropic-style thinking object"
@@ -156,7 +163,7 @@ def test_a_thinking_reply_carries_its_reasoning_and_no_warning(caplog: pytest.Lo
     )
     client = AIClient(model="deepseek/deepseek-v4-flash", api_key="k", urlopen=urlopen)
     with caplog.at_level(logging.WARNING, logger="pipeline.model.ai_client"):
-        assert client.chat("s", "u", thinking=True) == '{"ok": true}'
+        assert client.chat("s", "u", reasoning=True) == '{"ok": true}'
     assert client.last_reasoning == "I weighed the lead."
     assert "no reasoning" not in caplog.text
 
@@ -170,7 +177,7 @@ def test_a_thinking_reply_with_no_reasoning_is_reported(caplog: pytest.LogCaptur
     urlopen, _ = make_fake_urlopen([FakeResponse(gateway_response('{"ok": true}', reasoning=None, reasoning_tokens=0))])
     client = AIClient(model="deepseek/deepseek-v4-flash", api_key="k", urlopen=urlopen)
     with caplog.at_level(logging.WARNING, logger="pipeline.model.ai_client"):
-        assert client.chat("s", "u", thinking=True) == '{"ok": true}'
+        assert client.chat("s", "u", reasoning=True) == '{"ok": true}'
     assert client.last_reasoning == ""
     assert "deepseek/deepseek-v4-flash" in caplog.text
     assert "reasoning=None" in caplog.text
@@ -201,7 +208,7 @@ def test_chat_gives_up_after_max_retries() -> None:
 def test_chat_retries_without_reasoning_params_on_400() -> None:
     urlopen, calls = make_fake_urlopen([http_error(400), FakeResponse({"choices": [{"message": {"content": "ok"}}]})])
     client = AIClient(api_key="k", urlopen=urlopen, max_retries=0, _sleep=lambda _s: None)
-    assert client.chat("s", "u", thinking=True) == "ok"
+    assert client.chat("s", "u", reasoning=True) == "ok"
     retry = calls[1]["body"]
     assert "thinking" not in retry and "reasoning" not in retry  # both params dropped; retry budget untouched
     assert retry["temperature"] == 0.0  # the deterministic non-thinking path
@@ -301,7 +308,7 @@ def test_thinking_burn_retries_on_a_fresh_sample() -> None:
     good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
     urlopen, calls = make_fake_urlopen([FakeResponse(burned), FakeResponse(good)])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
-    assert client.chat("s", "u", thinking=True) == '{"ok": true}'
+    assert client.chat("s", "u", reasoning=True) == '{"ok": true}'
     assert len(calls) == 2
     assert calls[0]["body"]["reasoning"] == {"enabled": True}
     retry = calls[1]["body"]
@@ -322,7 +329,7 @@ def test_stop_empty_recovers_the_reasoning_answer() -> None:
     }
     urlopen, _ = make_fake_urlopen([FakeResponse(stop_empty)])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
-    assert client.chat("s", "u", thinking=True) == verdict
+    assert client.chat("s", "u", reasoning=True) == verdict
 
 
 def test_stop_empty_without_reasoning_still_retries() -> None:
@@ -332,7 +339,7 @@ def test_stop_empty_without_reasoning_still_retries() -> None:
     urlopen, _ = make_fake_urlopen([FakeResponse({"choices": [{"message": {"content": ""}, "finish_reason": "stop"}]})])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
     with pytest.raises(AIClientError, match="empty response from API"):
-        client.chat("s", "u", thinking=True)
+        client.chat("s", "u", reasoning=True)
 
 
 def test_stop_empty_with_prose_reasoning_still_retries() -> None:
@@ -351,7 +358,7 @@ def test_stop_empty_with_prose_reasoning_still_retries() -> None:
     urlopen, _ = make_fake_urlopen([FakeResponse(prose)])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
     with pytest.raises(AIClientError, match="empty response from API"):
-        client.chat("s", "u", thinking=True)
+        client.chat("s", "u", reasoning=True)
 
 
 def test_stop_empty_recovery_is_thinking_only() -> None:
@@ -379,7 +386,7 @@ def test_stream_failed_empty_recovery_with_an_answer_is_recovered() -> None:
     }
     urlopen, _ = make_fake_urlopen([FakeResponse(errored)])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
-    assert client.chat("s", "u", thinking=True) == "Let me weigh it…" + verdict
+    assert client.chat("s", "u", reasoning=True) == "Let me weigh it…" + verdict
 
 
 def test_json_object_takes_the_last_of_multiple_objects() -> None:
@@ -424,7 +431,7 @@ def test_burn_rescue_fires_once_then_terminates() -> None:
     good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
     urlopen, calls = make_fake_urlopen([FakeResponse(burned), FakeResponse(burned), FakeResponse(good)])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=2)
-    assert client.chat("s", "u", thinking=True) == '{"ok": true}'
+    assert client.chat("s", "u", reasoning=True) == '{"ok": true}'
     assert [c["body"]["temperature"] for c in calls] == [0.3, 0.5, 0.5]  # ONE fresh-sample retry, then backoff
 
 
@@ -436,7 +443,7 @@ def test_burn_rescue_fires_once_then_terminates_on_persistent_burns() -> None:
     urlopen, _ = make_fake_urlopen([FakeResponse(burned) for _ in range(3)])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
     with pytest.raises(AIClientError, match="empty response from API"):
-        client.chat("s", "u", thinking=True)
+        client.chat("s", "u", reasoning=True)
 
 
 def test_find_api_key_prefers_openai_api_key(tmp_path: Path) -> None:

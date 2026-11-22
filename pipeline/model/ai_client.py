@@ -60,7 +60,7 @@ class AIClient:
         max_retries: int = 2,
         urlopen: Callable[..., Any] | None = None,
         _sleep: Callable[[float], None] | None = None,
-        # the thinking-token cap for a reasoning call (OpenRouter's
+        # the reasoning-token cap for a reasoning call (OpenRouter's
         # normalized reasoning.max_tokens). OFF by default: measured on
         # the CI gateway (Cloudflare->openrouter->deepseek-v4-flash) the
         # param is not honored (a capped call burned ~16k reasoning
@@ -100,10 +100,10 @@ class AIClient:
         self._urlopen: Callable[..., Any] = urlopen or urllib.request.urlopen
         self._sleep: Callable[[float], None] = _sleep or time.sleep
 
-    def chat(self, system: str, user: str, *, thinking: bool = False) -> str:
+    def chat(self, system: str, user: str, *, reasoning: bool = False) -> str:
         """One text chat completion call; returns the assistant text.
 
-        *thinking* enables the model's reasoning: the review judgments
+        *reasoning* enables the model's reasoning: the review judgments
         flipped run to run at temperature 0 with it disabled, and the
         reasoning is captured in ``last_reasoning`` so a wrong judgment is
         diagnosable. Thinking needs output headroom — deepseek-v4-flash at
@@ -115,37 +115,37 @@ class AIClient:
                 ChatMessage(role="system", content=system),
                 ChatMessage(role="user", content=user),
             ],
-            # thinking needs room for the reasoning plus the JSON verdict;
+            # reasoning needs room for the reasoning plus the JSON verdict;
             # only used tokens are billed, so the headroom is free when the
             # model stops early. The length-empty burn is a deliberation
-            # STALL, not deep thinking: the model circles the same decisions
+            # STALL, not deep reasoning: the model circles the same decisions
             # until the budget runs out with no verdict (measured: 16,000
-            # reasoning tokens, content a single space; the captured thinking
+            # reasoning tokens, content a single space; the captured reasoning
             # re-reads one instruction line ~27 times). The burn retry below
             # takes a fresh sample — the reasoning budget alone cannot bound
             # the circling on every gateway (the CI gateway ignores
             # reasoning.max_tokens).
-            max_tokens=16000 if thinking else self.max_tokens,
+            max_tokens=16000 if reasoning else self.max_tokens,
             # reduces brittle failure modes caused by deterministic
             # repetition loops" (arXiv:2602.03664). A small temperature
             # breaks the attractor and gives the burn retry a genuinely
             # different sample (arXiv:2502.08235's sample-and-select); the
             # evals evaluate output properties, not draws, so this does not
-            # loosen the gates. The non-thinking (direct-answer) path stays
+            # loosen the gates. The non-reasoning (direct-answer) path stays
             # at 0 for the deterministic fallback.
-            temperature=0.3 if thinking else 0.0,
+            temperature=0.3 if reasoning else 0.0,
             # the model thinks its way to the structured verdict (see the
             # docstring); a model that rejects the param falls back below
             # (the 400/422 retry)
-            thinking=thinking,
+            reasoning=reasoning,
             # structured output: the API guarantees a syntactically valid JSON
             # response, eliminating truncated/bare-object responses
             json_response=True,
-            # the thinking-token cap — only when explicitly configured: the
+            # the reasoning-token cap — only when explicitly configured: the
             # CI gateway ignores the cap and reshapes the response (the JSON
             # lands in reasoning, content empty — the stop-empty cascade),
             # so the default is OFF; the local litellm path honors it.
-            reasoning_budget=self.reasoning_budget if thinking else None,
+            reasoning_budget=self.reasoning_budget if reasoning else None,
         )
         return self._post(request)
 
@@ -203,8 +203,8 @@ class AIClient:
                 if reasoning_field is None:
                     reasoning_field = message.get("reasoning_content")
                 self.last_reasoning = str(reasoning_field or "")
-                if payload.thinking is True and not self.last_reasoning:
-                    # a thinking request that comes back with no reasoning is
+                if payload.reasoning is True and not self.last_reasoning:
+                    # a reasoning request that comes back with no reasoning is
                     # a SILENT degradation: the gateway accepted the request
                     # and answered without deliberating, and weeks of evals
                     # measured the disable path without anyone noticing. Name
@@ -213,7 +213,7 @@ class AIClient:
                     # one) so the degradation is visible in the log.
                     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
                     logger.warning(
-                        "model %s served no reasoning for a thinking request "
+                        "model %s served no reasoning for a reasoning request "
                         "(response_id=%r, finish_reason=%r, response reasoning=%r, reasoning_tokens=%s) — "
                         "deliberation was requested but not served",
                         self.model,
@@ -230,7 +230,7 @@ class AIClient:
                         ) from e
                     backoff = backoff.advance(self._sleep)
                     continue
-                if e.code in (400, 422) and (payload.thinking is not None or payload.reasoning_budget is not None):
+                if e.code in (400, 422) and (payload.reasoning is not None or payload.reasoning_budget is not None):
                     # model/endpoint doesn't understand the reasoning params —
                     # retry without them; the fallback must NOT consume the
                     # retry budget
@@ -239,10 +239,10 @@ class AIClient:
                         self.model,
                         e.code,
                     )
-                    payload = replace(payload, thinking=None, reasoning_budget=None)
-                    # temperature follows the thinking state too: a rejected
-                    # thinking param must not leave the retry running at the
-                    # thinking 0.3 — it is a non-thinking call at 0.0
+                    payload = replace(payload, reasoning=None, reasoning_budget=None)
+                    # temperature follows the reasoning state too: a rejected
+                    # reasoning param must not leave the retry running at the
+                    # reasoning 0.3 — it is a non-reasoning call at 0.0
                     payload = replace(payload, temperature=0.0)
                     continue
                 # any other status is a HARD client error — a bad model name,
@@ -254,12 +254,12 @@ class AIClient:
                 raise AIClientError(f"model API error {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from e
             if content and content.strip():
                 return content
-            thinking_enabled = payload.thinking is True
-            if thinking_enabled and finish_reason == "length" and not burn_retried:
+            reasoning_enabled = payload.reasoning is True
+            if reasoning_enabled and finish_reason == "length" and not burn_retried:
                 # the completion is a deliberation stall: the model circled
                 # its decisions and spent the whole budget reasoning without
                 # a verdict (measured: 16,000 reasoning tokens, content a
-                # single space; the captured thinking re-reads one
+                # single space; the captured reasoning re-reads one
                 # instruction line ~27 times). Decoding-side controls alone
                 # cannot stop the circling (arXiv:2602.14798); the fix that
                 # works keeps the reasoning and takes a FRESH sample
@@ -268,12 +268,12 @@ class AIClient:
                 # conclude-now nudge — measured on the CI gateway: the
                 # budget was ignored (the retry still burned the full
                 # budget) and the nudge made the model wrap up INSIDE its
-                # thinking and emit no content (finish=stop, 273 reasoning
+                # reasoning and emit no content (finish=stop, 273 reasoning
                 # chars, empty content — the budget-forcing failure mode).
                 # Thinking is never disabled and the prompt is never
                 # rewritten: only the sample changes.
                 logger.warning(
-                    "chat: thinking burned the output budget (finish_reason=length, %d reasoning tokens) — "
+                    "chat: reasoning burned the output budget (finish_reason=length, %d reasoning tokens) — "
                     "retrying on a fresh sample",
                     len(self.last_reasoning),
                 )
@@ -287,7 +287,7 @@ class AIClient:
             if (
                 not content.strip()
                 and finish_reason in ("stop", "error")
-                and thinking_enabled
+                and reasoning_enabled
                 and self._reasoning_is_answer(self.last_reasoning)
             ):
                 # the provider put the structured answer in the reasoning

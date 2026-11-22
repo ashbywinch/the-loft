@@ -1044,7 +1044,7 @@ def test_review_reads_the_transcription_not_the_summary(server: ServerFixture) -
     seen: dict[str, str] = {}
 
     class FakeChat:
-        def chat(self, system: str, user: str, *, thinking: bool = False) -> str:  # noqa: ARG002 — the harness signature
+        def chat(self, system: str, user: str, *, reasoning: bool = False) -> str:  # noqa: ARG002 — the harness signature
             seen["user"] = user
             return (
                 '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
@@ -1117,7 +1117,7 @@ def test_review_reads_transcription_only_mentions(server: ServerFixture) -> None
     seen: dict[str, str] = {}
 
     class FakeChat:
-        def chat(self, system: str, user: str, *, thinking: bool = False) -> str:  # noqa: ARG002
+        def chat(self, system: str, user: str, *, reasoning: bool = False) -> str:  # noqa: ARG002
             seen["user"] = user
             return (
                 '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
@@ -1165,7 +1165,7 @@ def test_review_shortlist_matches_mentions_case_insensitively(server: ServerFixt
     seen: dict[str, str] = {}
 
     class FakeChat:
-        def chat(self, system: str, user: str, *, thinking: bool = False) -> str:  # noqa: ARG002
+        def chat(self, system: str, user: str, *, reasoning: bool = False) -> str:  # noqa: ARG002
             seen["user"] = user
             return (
                 '{"relevant": true, "contradiction": {"found": false, "detail": ""}, '
@@ -1227,7 +1227,7 @@ def test_review_text_keeps_the_words_when_the_model_call_fails(server: ServerFix
     _seed_pending(server)
 
     class FailingChat:
-        def chat(self, system: str, user: str, *, thinking: bool = False) -> str:  # noqa: ARG002
+        def chat(self, system: str, user: str, *, reasoning: bool = False) -> str:  # noqa: ARG002
             raise ElicitationError("the model is down")
 
     server2 = ServerFixture(server.data_dir, server.store, client=FailingChat())
@@ -2164,7 +2164,7 @@ class IdentifyChat:
     def __init__(self) -> None:
         self.calls = 0
 
-    def chat(self, system: str, user: str, *, thinking: bool = False) -> str:  # noqa: ARG002 — the harness signature
+    def chat(self, system: str, user: str, *, reasoning: bool = False) -> str:  # noqa: ARG002 — the harness signature
         self.calls += 1
         return json.dumps(
             {

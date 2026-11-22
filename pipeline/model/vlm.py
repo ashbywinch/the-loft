@@ -320,7 +320,7 @@ def transcribe_images_vlm(images: list[Path], *, options: VlmOptions | None = No
                 ],
                 temperature=0,
                 max_tokens=opts.max_tokens,
-                thinking=False,
+                reasoning=False,
             ),
             timeout=opts.timeout,
             urlopen=opts.urlopen,
@@ -369,7 +369,7 @@ def transcribe_image_vlm(
                 # budget reasoning and return empty content. A model that
                 # rejects the param gets one retry without it (the AIClient
                 # house pattern).
-                thinking=False,
+                reasoning=False,
             ),
             timeout=timeout,
             urlopen=urlopen,
@@ -439,10 +439,10 @@ def _vision_post(
                     raise VlmError(f"unexpected vision response: {json.dumps(body)[:300]}") from exc
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")[:300]
-            if e.code in (400, 422) and payload.thinking is not None:
+            if e.code in (400, 422) and payload.reasoning is not None:
                 # model doesn't understand the reasoning param — retry once
                 # without it (mirrors AIClient._post)
-                payload = replace(payload, thinking=None)
+                payload = replace(payload, reasoning=None)
                 logger.info(
                     "model %s rejected the reasoning param (HTTP %d); retrying without it",
                     payload.model,

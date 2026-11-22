@@ -120,7 +120,6 @@ def people_projection(archive: Archive) -> PeopleTable:
     by_name: dict[str, list[Person]] = {}
     # setdefault group-by in one pass keeps first-seen key order; a dict comprehension
     # cannot group without an O(n²) rescan or sorted+groupby changing the key order
-    # setdefault group-by — no one-pass dict comprehension
     for person in table.people:
         by_name.setdefault(person.name.strip().lower(), []).append(person)
     people = list(table.people)

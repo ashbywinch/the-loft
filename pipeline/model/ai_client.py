@@ -214,12 +214,12 @@ class AIClient:
                     usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
                     logger.warning(
                         "model %s served no reasoning for a reasoning request "
-                        "(response_id=%r, finish_reason=%r, response reasoning=%r, reasoning_tokens=%s) — "
+                        "(response_id=%r, finish_reason=%r, reasoning_len=%d, reasoning_tokens=%s) — "
                         "deliberation was requested but not served",
                         self.model,
                         data.get("id", "absent"),
                         finish_reason,
-                        reasoning_field,
+                        len(self.last_reasoning),
                         usage.get("reasoning_tokens", "absent"),
                     )
             except urllib.error.HTTPError as e:
@@ -288,6 +288,7 @@ class AIClient:
                 not content.strip()
                 and finish_reason in ("stop", "error")
                 and reasoning_enabled
+                and bool(self.last_reasoning)
                 and self._reasoning_is_answer(self.last_reasoning)
             ):
                 # the provider put the structured answer in the reasoning

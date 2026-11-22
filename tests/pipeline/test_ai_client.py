@@ -172,15 +172,16 @@ def test_a_thinking_reply_with_no_reasoning_is_reported(caplog: pytest.LogCaptur
     """The failure this fixes was SILENT: a thinking request came back with
     ``reasoning: null`` and ``reasoning_tokens: 0`` on every turn and
     nothing said so. A reply that carries no reasoning must now be reported,
-    naming the model and the response's own reasoning field (and the usage's
-    token count) — the flag an operator can read."""
+    naming the model, the response id, the finish reason and the reasoning
+    length (never the reasoning text itself, which is family content)."""
     urlopen, _ = make_fake_urlopen([FakeResponse(gateway_response('{"ok": true}', reasoning=None, reasoning_tokens=0))])
     client = AIClient(model="deepseek/deepseek-v4-flash", api_key="k", urlopen=urlopen)
     with caplog.at_level(logging.WARNING, logger="pipeline.model.ai_client"):
         assert client.chat("s", "u", reasoning=True) == '{"ok": true}'
     assert client.last_reasoning == ""
     assert "deepseek/deepseek-v4-flash" in caplog.text
-    assert "reasoning=None" in caplog.text
+    # the reasoning text itself is never logged — it is family content
+    assert "reasoning_len=0" in caplog.text
     assert "reasoning_tokens=0" in caplog.text
 
 

@@ -34,6 +34,7 @@ from pipeline.model.config import ModelConfig
 from pipeline.model.http_headers import HttpHeaders
 from pipeline.model.image_content import ImageContent
 from pipeline.model.orientation_report import OrientationReport
+from pipeline.model.reasoning import Reasoning
 from pipeline.model.text_content import TextContent
 from pipeline.model.token_usage import TokenUsage
 from pipeline.model.transcription import Transcription
@@ -320,7 +321,7 @@ def transcribe_images_vlm(images: list[Path], *, options: VlmOptions | None = No
                 ],
                 temperature=0,
                 max_tokens=opts.max_tokens,
-                reasoning=False,
+                reasoning=Reasoning(enabled=False),
             ),
             timeout=opts.timeout,
             urlopen=opts.urlopen,
@@ -369,7 +370,7 @@ def transcribe_image_vlm(
                 # budget reasoning and return empty content. A model that
                 # rejects the param gets one retry without it (the AIClient
                 # house pattern).
-                reasoning=False,
+                reasoning=Reasoning(enabled=False),
             ),
             timeout=timeout,
             urlopen=urlopen,

@@ -17,6 +17,9 @@ from typing import Any
 import pytest
 
 from pipeline.model.ai_client import AIClient, AIClientError, find_api_key, json_object
+from pipeline.model.chat_message import ChatMessage
+from pipeline.model.chat_request import ChatRequest
+from pipeline.model.reasoning import Reasoning
 
 
 class FakeResponse:
@@ -99,21 +102,34 @@ def test_chat_sends_no_reasoning_budget_by_default() -> None:
     assert calls[1]["body"]["reasoning"] == {"enabled": True, "max_tokens": 6000}
 
 
-def test_a_budget_without_the_switch_sends_no_reasoning() -> None:
-    """A cap is not a request: with the switch absent (the retry path that
-    drops it), the budget is dropped too, rather than sent as
-    {"max_tokens": n} — a cap on a feature nobody enabled."""
-    from pipeline.model.chat_request import ChatMessage, ChatRequest
+def test_a_budget_without_the_switch_is_refused_at_construction() -> None:
+    """A cap is not a request: a budget on a disabled reasoning state is
+    refused, not silently dropped, so a caller that set both sees the
+    mistake instead of a call that quietly ran without a cap. With no
+    reasoning state at all, no reasoning object goes on the wire."""
+    with pytest.raises(ValueError, match="budget"):
+        Reasoning(enabled=False, budget=6000)
 
     request = ChatRequest(
         model="m",
         messages=[ChatMessage(role="user", content="u")],
         temperature=0.0,
         max_tokens=10,
-        reasoning=None,
-        reasoning_budget=6000,
     )
     assert "reasoning" not in request.to_dict()
+
+
+def test_reasoning_text_rides_the_request_state_it_belongs_to() -> None:
+    """``with_text`` returns a new value with the reply's deliberation and
+    the same request state; ``has_text`` says whether the reply carried
+    any. The wire record is unchanged by recording a reply."""
+    asked = Reasoning(enabled=True, budget=6000)
+    replied = asked.with_text("I weighed the lead.")
+    assert not asked.has_text
+    assert replied.has_text
+    assert replied.text == "I weighed the lead."
+    assert replied.budget == 6000
+    assert replied.wire() == asked.wire() == {"enabled": True, "max_tokens": 6000}
 
 
 def gateway_response(content: str, *, reasoning: str | None, reasoning_tokens: int) -> dict[str, object]:
@@ -180,9 +196,36 @@ def test_a_thinking_reply_with_no_reasoning_is_reported(caplog: pytest.LogCaptur
         assert client.chat("s", "u", reasoning=True) == '{"ok": true}'
     assert client.last_reasoning == ""
     assert "deepseek/deepseek-v4-flash" in caplog.text
+    # the response id and finish reason let the warning be traced to its turn
+    assert "gen-fixture-0001" in caplog.text
+    assert "finish_reason='stop'" in caplog.text
     # the reasoning text itself is never logged — it is family content
     assert "reasoning_len=0" in caplog.text
     assert "reasoning_tokens=0" in caplog.text
+
+
+def test_salvage_returns_none_when_the_reasoning_is_empty() -> None:
+    """The stop-empty recovery asks ``_salvage_reasoning`` for an answer; an
+    empty reasoning channel has none, so the caller gets None without a
+    hand-written truthiness guard of its own."""
+    urlopen, _ = make_fake_urlopen([FakeResponse(gateway_response('{"ok": true}', reasoning=None, reasoning_tokens=0))])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
+    assert client.chat("s", "u", reasoning=True) == '{"ok": true}'
+    assert client._salvage_reasoning() is None
+
+
+def test_salvage_returns_the_answer_when_the_reasoning_carries_one() -> None:
+    """The reasoning channel that parses as the JSON answer IS the answer —
+    ``_salvage_reasoning`` returns it, so the recovery substitutes it for the
+    empty completion."""
+    verdict = '{"relevant": true, "contradiction": {"found": false, "detail": ""}}'
+    stop_empty: dict[str, object] = {
+        "choices": [{"message": {"content": "", "reasoning": verdict}, "finish_reason": "stop"}]
+    }
+    urlopen, _ = make_fake_urlopen([FakeResponse(stop_empty)])
+    client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
+    assert client.chat("s", "u", reasoning=True) == verdict
+    assert client._salvage_reasoning() == verdict
 
 
 def test_chat_retries_transient_errors_with_backoff() -> None:

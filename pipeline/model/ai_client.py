@@ -16,7 +16,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, final
 
@@ -25,12 +25,26 @@ from pipeline.model.chat_message import ChatMessage
 from pipeline.model.chat_request import ChatRequest
 from pipeline.model.config import ModelConfig
 from pipeline.model.http_headers import HttpHeaders
+from pipeline.model.reasoning import Reasoning
 
 logger = logging.getLogger(__name__)
 
 
 class AIClientError(RuntimeError):
     """Raised when the configured model endpoint cannot be used."""
+
+
+@dataclass(frozen=True)
+class _Reply:
+    """One parsed chat-completions response, as the client records it: the
+    message, why the choice stopped, the whole body (for its id and usage),
+    and whether the request asked for reasoning. The message arrives parsed
+    so ``_record_reasoning`` is the only reader of its reasoning field."""
+
+    message: Mapping[str, Any]
+    finish_reason: str
+    body: Mapping[str, Any]
+    requested: bool
 
 
 @final
@@ -94,11 +108,18 @@ class AIClient:
         # the last response's reasoning — captured so a failed judgment is
         # diagnosable from its trace (user: "we should be able
         # to read the model's thought process to understand why it got it
-        # wrong")
-        self.last_reasoning: str = ""
+        # wrong"). ``last_reasoning`` is the compatibility view of its text.
+        self._last_reasoning: Reasoning = Reasoning(enabled=False)
         # injectable for tests
         self._urlopen: Callable[..., Any] = urlopen or urllib.request.urlopen
         self._sleep: Callable[[float], None] = _sleep or time.sleep
+
+    @property
+    def last_reasoning(self) -> str:
+        """The last reply's deliberation text (``""`` when it carried none).
+        Kept as the compatibility view of ``_record_reasoning``'s result —
+        the trace and the evals read it."""
+        return self._last_reasoning.text
 
     def chat(self, system: str, user: str, *, reasoning: bool = False) -> str:
         """One text chat completion call; returns the assistant text.
@@ -109,6 +130,12 @@ class AIClient:
         diagnosable. Thinking needs output headroom — deepseek-v4-flash at
         3000 tokens spent the whole budget reasoning and returned empty
         content."""
+        # the request's reasoning state — the budget rides it only when the
+        # switch is on; Reasoning refuses a cap on a disabled request
+        request_reasoning = Reasoning(
+            enabled=reasoning,
+            budget=self.reasoning_budget if reasoning else None,
+        )
         request = ChatRequest(
             model=self.model,
             messages=[
@@ -137,15 +164,10 @@ class AIClient:
             # the model thinks its way to the structured verdict (see the
             # docstring); a model that rejects the param falls back below
             # (the 400/422 retry)
-            reasoning=reasoning,
+            reasoning=request_reasoning,
             # structured output: the API guarantees a syntactically valid JSON
             # response, eliminating truncated/bare-object responses
             json_response=True,
-            # the reasoning-token cap — only when explicitly configured: the
-            # CI gateway ignores the cap and reshapes the response (the JSON
-            # lands in reasoning, content empty — the stop-empty cascade),
-            # so the default is OFF; the local litellm path honors it.
-            reasoning_budget=self.reasoning_budget if reasoning else None,
         )
         return self._post(request)
 
@@ -196,32 +218,14 @@ class AIClient:
                     finish_reason = str(choice.get("finish_reason") or "") if isinstance(choice, dict) else ""
                 except (KeyError, IndexError, TypeError) as e:
                     raise AIClientError(f"unexpected API response: {json.dumps(data)[:300]}") from e
-                # the response's reasoning, in either channel a provider uses
-                # (the gateway sends `reasoning`; some providers
-                # `reasoning_content`)
-                reasoning_field = message.get("reasoning")
-                if reasoning_field is None:
-                    reasoning_field = message.get("reasoning_content")
-                self.last_reasoning = str(reasoning_field or "")
-                if payload.reasoning is True and not self.last_reasoning:
-                    # a reasoning request that comes back with no reasoning is
-                    # a SILENT degradation: the gateway accepted the request
-                    # and answered without deliberating, and weeks of evals
-                    # measured the disable path without anyone noticing. Name
-                    # the model and the response's own reasoning field (plus
-                    # the usage's reasoning token count when the API sends
-                    # one) so the degradation is visible in the log.
-                    usage = data.get("usage") if isinstance(data.get("usage"), dict) else {}
-                    logger.warning(
-                        "model %s served no reasoning for a reasoning request "
-                        "(response_id=%r, finish_reason=%r, reasoning_len=%d, reasoning_tokens=%s) — "
-                        "deliberation was requested but not served",
-                        self.model,
-                        data.get("id", "absent"),
-                        finish_reason,
-                        len(self.last_reasoning),
-                        usage.get("reasoning_tokens", "absent"),
+                recorded = self._record_reasoning(
+                    _Reply(
+                        message=message,
+                        finish_reason=finish_reason,
+                        body=data,
+                        requested=payload.reasoning is not None and payload.reasoning.enabled,
                     )
+                )
             except urllib.error.HTTPError as e:
                 if e.code in (429, 500, 502, 503, 529):
                     if backoff.attempt >= self.max_retries:
@@ -230,7 +234,7 @@ class AIClient:
                         ) from e
                     backoff = backoff.advance(self._sleep)
                     continue
-                if e.code in (400, 422) and (payload.reasoning is not None or payload.reasoning_budget is not None):
+                if e.code in (400, 422) and payload.reasoning is not None:
                     # model/endpoint doesn't understand the reasoning params —
                     # retry without them; the fallback must NOT consume the
                     # retry budget
@@ -239,7 +243,7 @@ class AIClient:
                         self.model,
                         e.code,
                     )
-                    payload = replace(payload, reasoning=None, reasoning_budget=None)
+                    payload = replace(payload, reasoning=None)
                     # temperature follows the reasoning state too: a rejected
                     # reasoning param must not leave the retry running at the
                     # reasoning 0.3 — it is a non-reasoning call at 0.0
@@ -254,8 +258,7 @@ class AIClient:
                 raise AIClientError(f"model API error {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from e
             if content and content.strip():
                 return content
-            reasoning_enabled = payload.reasoning is True
-            if reasoning_enabled and finish_reason == "length" and not burn_retried:
+            if recorded.enabled and finish_reason == "length" and not burn_retried:
                 # the completion is a deliberation stall: the model circled
                 # its decisions and spent the whole budget reasoning without
                 # a verdict (measured: 16,000 reasoning tokens, content a
@@ -275,7 +278,7 @@ class AIClient:
                 logger.warning(
                     "chat: reasoning burned the output budget (finish_reason=length, %d reasoning tokens) — "
                     "retrying on a fresh sample",
-                    len(self.last_reasoning),
+                    len(recorded.text),
                 )
                 # a different draw: the stall is stochastic, not a
                 # deterministic attractor (the temperature-0 loop class is
@@ -284,13 +287,7 @@ class AIClient:
                 burn_retried = True
                 request.data = json.dumps(payload.to_dict()).encode("utf-8")
                 continue
-            if (
-                not content.strip()
-                and finish_reason in ("stop", "error")
-                and reasoning_enabled
-                and bool(self.last_reasoning)
-                and self._reasoning_is_answer(self.last_reasoning)
-            ):
+            if not content.strip() and finish_reason in ("stop", "error"):
                 # the provider put the structured answer in the reasoning
                 # channel and produced zero content — the captured reasoning
                 # IS the completion. Measured on the CI gateway, the
@@ -298,16 +295,19 @@ class AIClient:
                 # on stop draws and on stream-failed completions
                 # (finish_reason=error, 9,852 reasoning chars, no content),
                 # which otherwise retry into the same provider hiccup.
-                # Gated on a parseable answer: deliberation prose with no
-                # JSON is a genuine failure and must keep the retry path
-                # (review-bot finding on PR #62).
-                logger.warning(
-                    "chat: empty content with finish_reason=%s — the reasoning holds the answer; "
-                    "recovering it (reasoning_len=%d)",
-                    finish_reason,
-                    len(self.last_reasoning),
-                )
-                return self.last_reasoning
+                # ``_salvage_reasoning`` decides: a parseable answer is
+                # recovered, deliberation prose (or no reasoning at all) is a
+                # genuine failure and keeps the retry path (review-bot finding
+                # on PR #62), and a non-reasoning call never salvages.
+                salvaged = self._salvage_reasoning()
+                if salvaged is not None:
+                    logger.warning(
+                        "chat: empty content with finish_reason=%s — the reasoning holds the answer; "
+                        "recovering it (reasoning_len=%d)",
+                        finish_reason,
+                        len(salvaged),
+                    )
+                    return salvaged
             # a 200 with no content is a transient provider failure, not an
             # answer. Log the response's actual signals so the failure mode
             # is observable, then retry with the same backoff as a 5xx;
@@ -317,24 +317,61 @@ class AIClient:
                 "gateway_cache=%s) — retrying",
                 finish_reason or "n/a",
                 len(content),
-                len(self.last_reasoning),
+                len(recorded.text),
                 cache_status,
             )
             if backoff.attempt >= self.max_retries:
                 raise AIClientError(f"empty response from API (finish_reason={finish_reason or 'n/a'})")
             backoff = backoff.advance(self._sleep)
 
-    @staticmethod
-    def _reasoning_is_answer(reasoning: str) -> bool:
-        """True when the reasoning channel holds the structured answer — a
-        parseable JSON object — rather than deliberation prose. The
-        stop-empty recovery must not substitute prose for a failed
-        completion (review-bot finding on PR #62)."""
+    def _record_reasoning(self, reply: _Reply) -> Reasoning:
+        """Record one reply's reasoning and return the call's state.
+
+        This is the only reader of the response's reasoning field, in either
+        channel a provider uses (the gateway sends ``reasoning``; some
+        providers ``reasoning_content``).
+
+        A reasoning request that comes back with no reasoning is a SILENT
+        degradation: the gateway accepted the request and answered without
+        deliberating, and weeks of evals measured the disable path without
+        anyone noticing. Name the model, the response id, the finish reason
+        and the reasoning length and token count — never the reasoning text,
+        which is family content here."""
+        raw = reply.message.get("reasoning")
+        if raw is None:
+            raw = reply.message.get("reasoning_content")
+        recorded = Reasoning(enabled=reply.requested, text=str(raw or ""))
+        self._last_reasoning = recorded
+        if recorded.enabled and not recorded.has_text:
+            usage_field = reply.body.get("usage")
+            usage = usage_field if isinstance(usage_field, dict) else {}
+            logger.warning(
+                "model %s served no reasoning for a reasoning request "
+                "(response_id=%r, finish_reason=%r, reasoning_len=%d, reasoning_tokens=%s) — "
+                "deliberation was requested but not served",
+                self.model,
+                reply.body.get("id", "absent"),
+                reply.finish_reason,
+                len(recorded.text),
+                usage.get("reasoning_tokens", "absent"),
+            )
+        return recorded
+
+    def _salvage_reasoning(self) -> str | None:
+        """The reasoning's answer, or None when there is none to salvage.
+
+        The stop-empty recovery may only substitute the reasoning for a
+        failed completion when that reasoning is a parseable JSON answer:
+        deliberation prose is a genuine failure and keeps the retry path
+        (review-bot finding on PR #62). A non-reasoning call is never
+        salvaged, even if a provider sent a stray reasoning channel."""
+        if not self._last_reasoning.enabled or not self._last_reasoning.has_text:
+            return None
         try:
-            json_object(reasoning)
+            json_object(self._last_reasoning.text)
         except AIClientError:
-            return False
-        return True
+            return None
+        return self._last_reasoning.text
 
 
 def find_api_key(_env: Mapping[str, str] | None = None, _home: Path | None = None) -> str:

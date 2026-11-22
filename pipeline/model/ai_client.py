@@ -198,12 +198,6 @@ class AIClient:
                 ).to_dict(),
                 method="POST",
             )
-            # initialised before the request so no path can read a value from
-            # a previous iteration or from a branch that did not assign it
-            recorded = Reasoning(
-                enabled=bool(payload.reasoning is not None and payload.reasoning.enabled),
-                text="",
-            )
             try:
                 with self._urlopen(request, timeout=self.timeout) as response:
                     data = json.loads(response.read().decode("utf-8"))

@@ -14,6 +14,7 @@ import sqlite3
 from dataclasses import dataclass, replace
 from typing import Any, ClassVar
 
+from loft.live.determination import Decision
 from loft.live.errors import StaleVersion
 from loft.live.person_row import RowPosition
 from loft.live.review_map import decision_disposition
@@ -57,7 +58,7 @@ class ReviewDecisionRow:
     ordinal: int
     subject_kind: str
     subject_id: str | None
-    decision: str
+    decision: Decision
     basis: dict[str, Any] | None
     actor_person_id: str
     at: str

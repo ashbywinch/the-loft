@@ -118,9 +118,11 @@ fold of merge/unmerge, so withdrawing a merge restores the original id. A
 in the log and the projection, excluded from browse and from reference
 resolution; a ref to it is a `loft verify` finding.
 
-**The review decides a disposition; the record stores it with its basis and
-confidence.** The disposition is `proposed | confirmed | rejected`. The basis
-is `document | knowledge | recollection | inference`; the confidence is
+**The review makes a decision; the record stores the disposition it writes, with
+its basis and confidence.** A decision is `attested | estimated | pending |
+delete` and is written to `review_decisions.decision`. The disposition it writes
+is `proposed | confirmed | rejected`, the record's `status` field (D48). The
+basis is `document | knowledge | recollection | inference`; the confidence is
 `certain | probable | possible`. Both live in `basis_json`.
 
 | The reviewer’s response | Record / link status | Basis | Confidence |
@@ -242,7 +244,7 @@ source. The mentions in `date_mentions_json` use the same value.
 | `review_sessions` | session id, kind, subject (batch/document/item/person/place), actor, status, current attempt, closed_at |
 | `claims` | the review queue: origin, subject, phase, state, evidence |
 | `review_messages` | the review chat, one row per message, with its human actor |
-| `review_decisions` | the reviewer's determinations: subject, disposition (`attested`/`pending`/`delete`), basis + confidence, actor |
+| `review_decisions` | the reviewer's determinations: subject, `decision` (`attested`/`estimated`/`pending`/`delete`; the migration maps `estimated` to `attested`, `review_map.decision_disposition`), basis + confidence, actor |
 | `assets` | the catalog: sha, kind, mime, size, relative path, derivative-of |
 | `aliases` | merged ids → survivor ids |
 | `withdrawals` | bad changes and their compensation change |

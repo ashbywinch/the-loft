@@ -1,9 +1,10 @@
 """The review's determination — one decision, applied to the record as it stands.
 
-A **decision** is the reviewer's act: ``attested``, ``estimated``, ``pending``
-or ``delete``. The record's **status** — ``proposed``/``confirmed``/
-``rejected``, the field `_status` reads — is what a decision writes. The two
-words name different things, and neither one names the other.
+The words have one owner each: a **decision** is `Decision` (one of the four,
+written to `review_decisions.decision`), the record's **status** is its own
+field (`proposed`/`confirmed`/`rejected`, what `_status` reads), and the
+migration's mapping between the old and target outcomes is
+`decision_disposition` in `review_map`.
 
 TECHSPEC/05 §18.2: ``attested`` confirms; ``estimated`` confirms on the
 reviewer's own recollection (``estimated`` is a rendering, not a status);

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from loft.live.determination import Decision
+
 
 class DecisionBases:
     """The two basis/confidence pairs the migration assigns."""
@@ -19,8 +21,11 @@ class DecisionBases:
     RECOLLECTED: dict[str, str] = {"basis": "recollection", "confidence": "possible"}
 
 
-def decision_disposition(decision: str, basis: dict[str, Any] | None = None) -> tuple[str, dict[str, Any] | None]:
-    """The target decision and its basis for one old review decision."""
+def decision_disposition(
+    decision: Decision, basis: dict[str, Any] | None = None
+) -> tuple[Decision, dict[str, Any] | None]:
+    """The target decision and its basis for one old review decision — the same
+    `Decision` set on both sides (``estimated`` maps to ``attested``)."""
     if decision == "estimated":
         return "attested", _with_basis(DecisionBases.RECOLLECTED, basis)
     if decision == "attested":

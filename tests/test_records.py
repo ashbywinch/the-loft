@@ -67,6 +67,40 @@ def test_person_requires_id_and_name() -> None:
         Person.from_dict({"id": "p-x", "name": ""})
 
 
+def test_a_basis_that_states_both_shapes_keeps_its_evidence() -> None:
+    """The basis field carries two shapes: the live model's disposition
+    (basis + confidence) and an identification's proposal (text). A value that
+    states both is read as the disposition and still keeps the evidence it
+    carries — nothing the field says is dropped."""
+    raw = {
+        "id": "p-meg",
+        "name": "Meg Barlow",
+        "basis": {
+            "basis": "recollection",
+            "confidence": "possible",
+            "text": "Meg said so",
+            "by": "Aria",
+            "when": "2026",
+        },
+    }
+    assert Person.from_dict(raw).basis == {
+        "basis": "recollection",
+        "confidence": "possible",
+        "text": "Meg said so",
+        "by": "Aria",
+        "when": "2026",
+    }
+
+
+def test_a_disposition_basis_needs_its_pair_and_a_proposal_needs_its_text() -> None:
+    """Each shape's required field is the one that tells the shapes apart, so a
+    value missing it is not silently read as the other shape."""
+    with pytest.raises(ValueError, match="basis and confidence are required"):
+        Person.from_dict({"id": "p-meg", "name": "Meg Barlow", "basis": {"basis": "recollection"}})
+    with pytest.raises(ValueError, match="the text is required"):
+        Person.from_dict({"id": "p-meg", "name": "Meg Barlow", "basis": {"by": "Aria"}})
+
+
 def test_relationship_validates_kind() -> None:
     Relationship.from_dict({"a": "p-a", "b": "p-b", "kind": "spouse", "label_a": "spouse", "label_b": "spouse"})
     with pytest.raises(ValueError, match="kind"):

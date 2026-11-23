@@ -21,6 +21,17 @@ def test_place_rejects_escaping_record_id() -> None:
         PlacesTable.from_dict({"places": [{"id": "a/b", "name": "X"}]})
 
 
+def test_a_confirmed_record_writes_no_status_on_the_wire() -> None:
+    """The identity wire's own rule: the status appears only when it is not
+    confirmed, so a confirmed record's dict has no `status` key — and the
+    ladder reads that absence as confirmed (`tests/live/test_determination.py`)."""
+    assert "status" not in Person.from_dict({"id": "p-aria", "name": "Aria Barlow"}).to_dict()
+    proposed = Person.from_dict({"id": "p-aria", "name": "Aria Barlow", "status": "proposed"})
+    assert proposed.to_dict()["status"] == "proposed"
+    rejected = Person.from_dict({"id": "p-aria", "name": "Aria Barlow", "status": "rejected"})
+    assert rejected.to_dict()["status"] == "rejected"
+
+
 def test_person_rejects_escaping_record_id() -> None:
     """The record id is the wire format's one filename source (avatar-<id>.svg,
     proposed/<id>.json) — a crafted id must fail parse, never reach a store

@@ -14,7 +14,6 @@ from dataclasses import replace
 import pytest
 
 from loft.live.determination import Determination
-from loft.live.identity_map import renders_estimated
 from tools.gone_person import GonePerson
 from tools.records import Person
 
@@ -61,20 +60,18 @@ def test_an_unknown_record_is_left_alone() -> None:
     assert (records.saves, records.deleted) == ([], [])
 
 
-def test_a_confirmed_record_carries_no_status_and_still_reads_confirmed() -> None:
-    """The wire's own rule: `Person.to_dict` omits `status` for a confirmed
-    record (the class docstring's "the status appears only when proposed"), so
-    the absence *is* the answer — and a rejected record never omits it, so the
-    ladder cannot revive one by reading a missing status."""
+def test_a_record_whose_wire_omits_status_is_read_as_confirmed() -> None:
+    """The wire's rule (`Person.to_dict` omits `status` when it is confirmed,
+    pinned in `tests/test_records.py`) meets the ladder here: a record parsed
+    without a status is confirmed, left alone by `attested` and never treated
+    as a proposal to re-confirm."""
     confirmed = Person.from_dict({"id": "p-aria", "name": "Aria Barlow"})
-    assert "status" not in confirmed.to_dict()
     records = FakeRecords(confirmed)
     resolved = _apply(records, "attested")
     assert isinstance(resolved, Person) and resolved.status == "confirmed"
     assert records.saves == []
 
     rejected = Person.from_dict({"id": "p-aria", "name": "Aria Barlow", "status": "rejected"})
-    assert rejected.to_dict()["status"] == "rejected"
     assert _apply(FakeRecords(rejected), "attested") == rejected
 
 
@@ -174,9 +171,3 @@ def test_an_unknown_decision_is_refused() -> None:
     with pytest.raises(ValueError, match="unknown decision"):
         _apply(records, "promote")
     assert (records.saves, records.deleted) == ([], [])
-
-
-def test_renders_estimated_is_total_on_a_missing_basis() -> None:
-    """The attested branch asks this of every record, so `None` must answer
-    False rather than raise — a record with no basis is not an estimate."""
-    assert renders_estimated(None) is False

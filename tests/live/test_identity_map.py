@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from loft.live.identity_map import date_value, disposition_of
+from loft.live.identity_map import date_value, disposition_of, renders_estimated
 
 
 def test_confirmed_is_knowledge_certain() -> None:
@@ -54,3 +54,10 @@ def test_approx_is_about_and_bounds_are_ranges() -> None:
 def test_period_and_phrase() -> None:
     assert date_value("1963", "period")["type"] == "period"
     assert date_value("1963", "exact", phrase="the summer of 1963")["phrase"] == "the summer of 1963"
+
+
+def test_renders_estimated_is_total_on_a_missing_basis() -> None:
+    """The determination's attested branch asks this of every record, so `None`
+    must answer False rather than raise — a record with no basis is not an
+    estimate."""
+    assert renders_estimated(None) is False

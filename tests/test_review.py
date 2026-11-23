@@ -71,7 +71,7 @@ class FakeClient:
         self.responses = responses
         self.calls: list[tuple[str, str]] = []
 
-    def chat(self, system: str, user: str, *, thinking: bool = False) -> str:
+    def chat(self, system: str, user: str, *, reasoning: bool = False) -> str:  # noqa: ARG002 — the signature mirrors AIClient.chat so a protocol change fails here
         self.calls.append((system, user))
         return self.responses.pop(0)
 

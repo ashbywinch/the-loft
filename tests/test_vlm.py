@@ -406,7 +406,9 @@ class TestThinkingDisabled:
         vlm.transcribe_image_vlm(
             self._png(tmp_path), model="dynamic/image", base_url="http://x/v1", api_key="k", urlopen=fake_urlopen
         )
-        assert captured["payload"]["thinking"] == {"type": "disabled"}
+        # the wire field the gateway honours is the normalized reasoning
+        # object; the Anthropic-style thinking object is silently ignored
+        assert captured["payload"]["reasoning"] == {"enabled": False}
 
     def test_model_rejecting_the_param_gets_one_retry_without(self, tmp_path: Path) -> None:
         calls: list[dict] = []
@@ -414,12 +416,12 @@ class TestThinkingDisabled:
 
         body = json.dumps(TestThinkingDisabled._ok_body()).encode()
 
-        def fake_urlopen(request, timeout=None):
+        def fake_urlopen(request, timeout=None):  # noqa: ARG002 — timeout is the client's own call shape (_vision_post calls urlopen(request, timeout=…)), kept so a change to that call fails here; the double answers at once, so it is never read
             payload = json.loads(request.data.decode("utf-8"))
             calls.append(payload)
-            if "thinking" in payload:
+            if "reasoning" in payload:
                 raise urllib.error.HTTPError(
-                    request.full_url, 400, "bad", {}, io.BytesIO(b'{"error": "unknown field thinking"}')
+                    request.full_url, 400, "bad", {}, io.BytesIO(b'{"error": "unknown field reasoning"}')
                 )
             return _BytesResponse(body)
 
@@ -427,8 +429,8 @@ class TestThinkingDisabled:
             self._png(tmp_path), model="dynamic/image", base_url="http://x/v1", api_key="k", urlopen=fake_urlopen
         )
         assert answer.answer == "transcribed line"
-        assert "thinking" in calls[0]
-        assert "thinking" not in calls[1]
+        assert "reasoning" in calls[0]
+        assert "reasoning" not in calls[1]
 
     def test_usage_carries_the_reasoning(self, tmp_path: Path) -> None:
         """The model's thinking is diagnosability data — reading the

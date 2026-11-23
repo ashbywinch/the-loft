@@ -149,6 +149,20 @@ def _fail_crop_read(index: int, reason: str) -> None:
     return None
 
 
+def _crop_image(image_path: Path, crop: CropReading, crop_path: Path) -> None:
+    """The crop's own image, cut from the page and saved — the call reads a file."""
+    box = (int(crop.x), int(crop.y), int(crop.x + crop.w), int(crop.y + crop.h))
+    with Image.open(image_path) as im:
+        im.crop(box).save(crop_path)
+
+
+def _rotated_image(crop_path: Path, rotated_path: Path) -> None:
+    """The crop image turned +90°, so its vertical text reads horizontally —
+    saved beside the upright crop, since the re-read is a call like the first."""
+    with Image.open(crop_path) as im:
+        im.rotate(90, expand=True).save(rotated_path)
+
+
 def _crop_lines(reading: _Reading) -> list[CropLine]:
     """The read's lines: its text split by the model's line indexes, each in the
     box it was given, carrying the orientation the read found — the +90
@@ -160,16 +174,11 @@ def _crop_lines(reading: _Reading) -> list[CropLine]:
     ]
 
 
-def _rotated_reading(
-    crop: CropReading, crop_path: Path, tmp: Path, index: int, options: VlmOptions, upright: _Reading
-) -> _Reading:
+def _rotated_reading(crop: CropReading, rotated_path: Path, options: VlmOptions, upright: _Reading) -> _Reading:
     """The vertical crop's re-read: the re-read's horizontal reading when it
     lands, or the upright one carrying the failure that kept it from landing.
     Both calls' tokens are the read's cost — the re-read that answered and
     measured nothing still cost them."""
-    rotated_path = tmp / f"crop-{index}-rot.png"
-    with Image.open(crop_path) as im:
-        im.rotate(90, expand=True).save(rotated_path)
     rotated = _read_rotated(rotated_path, options)
     cost = replace(upright, tokens=upright.tokens + rotated.tokens)
     if rotated.reading is None:
@@ -182,7 +191,6 @@ def _rotated_reading(
     # width (pinned empirically)
     rot_h = int(crop.w)
     boxes = {line: remap_rotated(box, int(crop.h), rot_h) for line, box in rotated.reading.boxes.items()}
-    print(f"crop {index}: vertical text — rotated +90 and re-read", file=sys.stderr)
     return _Reading(rotated.reading.text, boxes, cost.tokens, vertical=True)
 
 
@@ -203,10 +211,8 @@ def read_crop(
 
     ``page_options`` is the caller's page read config; the crop read states
     its own (``_crop_read_options``)."""
-    box = (int(crop.x), int(crop.y), int(crop.x + crop.w), int(crop.y + crop.h))
     crop_path = tmp / f"crop-{index}.png"
-    with Image.open(image_path) as im:
-        im.crop(box).save(crop_path)
+    _crop_image(image_path, crop, crop_path)
     options = _crop_read_options(page_options)
     t0 = monotonic()
     try:
@@ -219,12 +225,15 @@ def read_crop(
         return _fail_crop_read(index, "no geometry from the model")
     reading = _Reading(transcription.text, transcription.boxes, answer.usage.tokens)
     if _vertical_boxes(reading.boxes):
-        reading = _rotated_reading(crop, crop_path, tmp, index, options, reading)
+        rotated_path = tmp / f"crop-{index}-rot.png"
+        _rotated_image(crop_path, rotated_path)
+        print(f"crop {index}: vertical text — rotated +90 and re-read", file=sys.stderr)
+        reading = _rotated_reading(crop, rotated_path, options, reading)
     if not reading.text:
         return _fail_crop_read(index, "no readable text")
     lines = _crop_lines(reading)
     print(
-        f"crop {index} ({box[0]},{box[1]}) {crop.w:.0f}x{crop.h:.0f}: {len(lines)} lines, "
+        f"crop {index} ({int(crop.x)},{int(crop.y)}) {crop.w:.0f}x{crop.h:.0f}: {len(lines)} lines, "
         f"{monotonic() - t0:.1f}s, {reading.tokens} tokens",
         file=sys.stderr,
     )

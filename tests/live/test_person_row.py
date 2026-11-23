@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from loft.live import person_row
+from loft.live.errors import StaleVersion
 from loft.live.store import LiveStore
 from tools.records import Person
 
@@ -82,6 +83,20 @@ def test_a_change_keeps_the_pair_in_its_own_transaction(store: LiveStore) -> Non
     rather than nesting (a nested BEGIN is a Conflict, not an IntegrityError)."""
     with pytest.raises(sqlite3.IntegrityError), store.change(actor="p-editor") as change:
         change.people.save(_person(residence=TWICE_THE_SAME))
+    assert store.people.get("p-alex") is None
+    assert store.events_for("p-alex") == []
+    assert store.connection.in_transaction is False
+
+
+def test_a_stale_write_takes_the_whole_change_with_it(store: LiveStore) -> None:
+    """A change is one unit: a write the version guard refuses rolls back the
+    change's own earlier writes too — nothing is half-applied, and no event
+    survives the rollback. A per-row rollback inside the change would leave the
+    log and the projection disagreeing, which is the state the unit prevents."""
+    projection = person_row.PersonProjection(store.connection)
+    with pytest.raises(StaleVersion), store.change(actor="p-editor") as change:
+        change.people.save(_person(), base=None)  # the change's own write
+        projection.write(_person("Alexandra Hale"), _position(2), base=9)  # stale
     assert store.people.get("p-alex") is None
     assert store.events_for("p-alex") == []
     assert store.connection.in_transaction is False

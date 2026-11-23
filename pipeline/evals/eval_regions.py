@@ -134,8 +134,9 @@ def run(
         width, height = im.size
     ink = ink_y_range(image_path)
     regions = column_regions(image_path)
-    # the read's config is the run's, not the region's: one value travels
-    options = VlmOptions(model=model, base_url=base_url, api_key=api_key)
+    # the page read's config is the run's, not the region's: one value
+    # travels, and each crop read states its own config from it
+    page_options = VlmOptions(model=model, base_url=base_url, api_key=api_key)
     tokens = 0
     failed = 0
     re_read_failures: list[str] = []
@@ -150,7 +151,7 @@ def run(
                 float(ink.bottom - ink.top),
                 [],
             )
-            read = read_crop(crop, image_path, Path(tmp), i, options)
+            read = read_crop(crop, image_path, Path(tmp), i, page_options)
             if read is None:
                 failed += 1
                 continue
@@ -187,9 +188,9 @@ def run(
         elapsed_s=round(elapsed, 1),
     )
     artefacts = BatchArtefacts(work_dir, batch_id)
-    out = artefacts.guess_dir / f"{page}.regions-{options.model_slug}.json"
+    out = artefacts.guess_dir / f"{page}.regions-{page_options.model_slug}.json"
     out.write_text(json.dumps(assembled.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
-    report_path = artefacts.guess_dir / f"{page}.regions-report-{options.model_slug}.json"
+    report_path = artefacts.guess_dir / f"{page}.regions-report-{page_options.model_slug}.json"
     report_path.write_text(json.dumps(report.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
     return report
 

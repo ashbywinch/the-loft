@@ -37,7 +37,6 @@ from pipeline.model.vlm import (
     parse_transcription_response,
     transcribe_image_vlm,
 )
-from pipeline.model.vlm_answer import VlmAnswer
 from pipeline.store import PipelineStore
 from pipeline.unmatched_line import UnmatchedLine
 from tools.box import overlap
@@ -45,9 +44,9 @@ from tools.loft_paths import LoftPaths
 from tools.text import normalize
 
 # What a vision read means when the caller states nothing: the vision model's
-# options at the client's gateway endpoint and key. Named here so the call site
-# says it, and a reader need not open VlmOptions to learn what a bare options
-# object means.
+# options at the client's gateway endpoint, with the client's own key rule
+# (``find_api_key``). Named here so the call site says it, and a reader need
+# not open VlmOptions to learn what a bare options object means.
 DEFAULT_VISION_OPTIONS = VlmOptions()
 
 
@@ -83,6 +82,22 @@ class CropRead:
 
 
 @dataclass(frozen=True)
+class _Reading:
+    """One crop's text as a read yielded it, before the lines are cut: the text,
+    the box each of its lines sits in (the crop's frame), what the read cost,
+    whether the text is vertical on the page (the +90 re-read's is), and the
+    re-read's failure when it did not land. Every branch of the read returns
+    one of these, so the crop's text, boxes, cost and orientation cannot
+    diverge."""
+
+    text: str
+    boxes: dict[int, list[float]]
+    tokens: int
+    vertical: bool = False
+    failure: str | None = None
+
+
+@dataclass(frozen=True)
 class RotatedRead:
     """A rotated crop's re-read: the transcription it landed on and what the
     call cost, or the failure that kept it from landing. The failure is a
@@ -95,28 +110,36 @@ class RotatedRead:
     failure: str | None
 
 
-def _read_transcription(path: Path, options: VlmOptions) -> VlmAnswer:
-    """The VLM call for one crop image (upright or rotated): the model's
-    answer and what the call cost. The completion is capped at 8000 tokens — a
-    crop answers with the lines inside it, a few thousand tokens — rather than
-    inherit the page budget (``VlmOptions.max_tokens``, 64000), which is sized
-    for the full-page location call and on a 64k-context model leaves the image
-    no room at all."""
-    crop_read = replace(options, system=VlmPrompts.transcription_system_with_context(), max_tokens=8000)
-    return crop_read.run(transcribe_image_vlm, path)
+def _crop_read_options(page_options: VlmOptions) -> VlmOptions:
+    """The crop read's config, derived from the caller's page config: the
+    transcription context prompt (the known names and places help the read) and
+    the crop read's own completion budget. A crop answers with the lines inside
+    it — a few thousand tokens — so it does not read with the page's system
+    prompt or the page-location budget (``VlmOptions.max_tokens``, 64000), which
+    is sized for the full-page location call and on a 64k-context model leaves
+    the image no room at all."""
+    return replace(page_options, system=VlmPrompts.transcription_system_with_context(), max_tokens=8000)
 
 
 def _read_rotated(path: Path, options: VlmOptions) -> RotatedRead:
     """The rotated crop's re-read: its transcription and cost, or the failure
     that kept them from forming. A malformed answer and a dead call are the
     same answer to this read — the fallback — but the failure is returned so
-    the run can report it instead of the page silently reading upright-only."""
+    the run can report it instead of the page silently reading upright-only.
+
+    The call's failures are ``VlmError`` (the module's contract) and the
+    answer's are the parse's value errors; anything else is a bug in this
+    module and propagates. A call that landed and then failed to parse still
+    cost its tokens, so the cost is reported either way."""
     try:
-        answer = _read_transcription(path, options)
-        reading = parse_transcription_response(answer.answer)
-        return RotatedRead(reading=reading, tokens=answer.usage.tokens, failure=None)
-    except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
+        answer = options.run(transcribe_image_vlm, path)
+    except VlmError as exc:
         return RotatedRead(reading=None, tokens=0, failure=f"{type(exc).__name__}: {exc}")
+    try:
+        reading = parse_transcription_response(answer.answer)
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        return RotatedRead(reading=None, tokens=answer.usage.tokens, failure=f"{type(exc).__name__}: {exc}")
+    return RotatedRead(reading=reading, tokens=answer.usage.tokens, failure=None)
 
 
 def _fail_crop_read(index: int, reason: str) -> None:
@@ -126,12 +149,49 @@ def _fail_crop_read(index: int, reason: str) -> None:
     return None
 
 
+def _crop_lines(reading: _Reading) -> list[CropLine]:
+    """The read's lines: its text split by the model's line indexes, each in the
+    box it was given, carrying the orientation the read found — the +90
+    re-read's lines are vertical on the page, the upright read's are not."""
+    orientation = 90 if reading.vertical else 0
+    return [
+        CropLine(text=reading.text.split("\n")[index], box=reading.boxes[index], orientation=orientation)
+        for index in sorted(reading.boxes)
+    ]
+
+
+def _rotated_reading(
+    crop: CropReading, crop_path: Path, tmp: Path, index: int, options: VlmOptions, upright: _Reading
+) -> _Reading:
+    """The vertical crop's re-read: the re-read's horizontal reading when it
+    lands, or the upright one carrying the failure that kept it from landing.
+    Both calls' tokens are the read's cost — the re-read that answered and
+    measured nothing still cost them."""
+    rotated_path = tmp / f"crop-{index}-rot.png"
+    with Image.open(crop_path) as im:
+        im.rotate(90, expand=True).save(rotated_path)
+    rotated = _read_rotated(rotated_path, options)
+    cost = replace(upright, tokens=upright.tokens + rotated.tokens)
+    if rotated.reading is None:
+        return replace(cost, failure=rotated.failure)
+    if not (rotated.reading.boxes and rotated.reading.text):
+        # the re-read answered but measured nothing usable: the upright read
+        # stands in, and the result says so
+        return replace(cost, failure="the rotated read gave no usable lines")
+    # the +90 rotation's inverse: the rotated frame's height is the crop's
+    # width (pinned empirically)
+    rot_h = int(crop.w)
+    boxes = {line: remap_rotated(box, int(crop.h), rot_h) for line, box in rotated.reading.boxes.items()}
+    print(f"crop {index}: vertical text — rotated +90 and re-read", file=sys.stderr)
+    return _Reading(rotated.reading.text, boxes, cost.tokens, vertical=True)
+
+
 def read_crop(
     crop: CropReading,
     image_path: Path,
     tmp: Path,
     index: int,
-    options: VlmOptions,
+    page_options: VlmOptions,
 ) -> CropRead | None:
     """Read ONE crop with the VLM — the text + the crop-local boxes.
     When the upright read's boxes are TALLER than wide (the text is
@@ -139,56 +199,36 @@ def read_crop(
     text is horizontal and re-read; the boxes are remapped back into
     the crop frame. None when the call failed or the model gave no
     geometry. A rotated re-read that does not land leaves the upright
-    read in place and its failure on the result (``CropRead.failure``)."""
+    read in place and its failure on the result (``CropRead.failure``).
+
+    ``page_options`` is the caller's page read config; the crop read states
+    its own (``_crop_read_options``)."""
     box = (int(crop.x), int(crop.y), int(crop.x + crop.w), int(crop.y + crop.h))
     crop_path = tmp / f"crop-{index}.png"
     with Image.open(image_path) as im:
         im.crop(box).save(crop_path)
+    options = _crop_read_options(page_options)
     t0 = monotonic()
     try:
-        answer = _read_transcription(crop_path, options)
-        reading = parse_transcription_response(answer.answer)
+        answer = options.run(transcribe_image_vlm, crop_path)
+        transcription = parse_transcription_response(answer.answer)
     except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
         print(f"crop {index} FAILED: {str(exc)[:120]}", file=sys.stderr)
         return None
-    tokens = answer.usage.tokens
-    if reading.boxes is None:
+    if transcription.boxes is None:
         return _fail_crop_read(index, "no geometry from the model")
-    text, boxes = reading.text, reading.boxes
-    rotated_ok = False
-    failure: str | None = None
-    if _vertical_boxes(boxes):
-        rotated_path = tmp / f"crop-{index}-rot.png"
-        with Image.open(crop_path) as im:
-            im.rotate(90, expand=True).save(rotated_path)
-        rotated = _read_rotated(rotated_path, options)
-        failure = rotated.failure
-        if rotated.reading is not None:
-            if rotated.reading.boxes and rotated.reading.text:
-                # the +90 rotation's inverse: the rotated frame's height is
-                # the crop's width (pinned empirically)
-                rot_h = int(crop.w)
-                boxes = {li: remap_rotated(b, int(crop.h), rot_h) for li, b in rotated.reading.boxes.items()}
-                text, tokens = rotated.reading.text, tokens + rotated.tokens
-                rotated_ok = True
-                print(f"crop {index}: vertical text — rotated +90 and re-read", file=sys.stderr)
-            else:
-                # the re-read answered but measured nothing usable: the
-                # upright read stands in, and the result says so
-                failure = "the rotated read gave no usable lines"
-    if not text:
+    reading = _Reading(transcription.text, transcription.boxes, answer.usage.tokens)
+    if _vertical_boxes(reading.boxes):
+        reading = _rotated_reading(crop, crop_path, tmp, index, options, reading)
+    if not reading.text:
         return _fail_crop_read(index, "no readable text")
-    # the rotated re-read's lines carry the crop's text orientation: the
-    # +90 rotation makes them horizontal for the read, and the page-frame
-    # consumer needs to know they are vertical on the page
-    orientation = 90 if rotated_ok else 0
-    lines = [CropLine(text=text.split("\n")[li], box=boxes[li], orientation=orientation) for li in sorted(boxes)]
+    lines = _crop_lines(reading)
     print(
         f"crop {index} ({box[0]},{box[1]}) {crop.w:.0f}x{crop.h:.0f}: {len(lines)} lines, "
-        f"{monotonic() - t0:.1f}s, {tokens} tokens",
+        f"{monotonic() - t0:.1f}s, {reading.tokens} tokens",
         file=sys.stderr,
     )
-    return CropRead(lines=lines, tokens=tokens, failure=failure)
+    return CropRead(lines=lines, tokens=reading.tokens, failure=reading.failure)
 
 
 def _vertical_boxes(boxes: dict[int, list[float]]) -> bool:
@@ -293,9 +333,10 @@ def run(
     options: VlmOptions | None = None,
 ) -> CropGridReport:
     """Read the page's crops, stitch, and report — the geometry
-    experiment's ledger for one page. ``options`` is the read's config; None
-    is the crop read's own — the vision model's options at the gateway's
-    default endpoint and the client's own key rule (``find_api_key``)."""
+    experiment's ledger for one page. ``options`` is the page read's config;
+    None is the vision model's options at the gateway's default endpoint and
+    the client's own key rule (``find_api_key``). Each crop read states its own
+    config from it (``_crop_read_options``)."""
     read_options = options or DEFAULT_VISION_OPTIONS
     image_path = BatchArtefacts(work_dir, batch_id).oriented(f"{page}.jpg")
     store = PipelineStore(work_dir)

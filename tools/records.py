@@ -24,7 +24,7 @@ import re
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, replace
 from datetime import UTC
-from typing import Any, ClassVar, Literal, TypeVar, cast
+from typing import Any, ClassVar, Literal, Protocol, TypeVar, cast
 
 from tools.asset import Asset
 from tools.date_mention import DateMention
@@ -74,7 +74,16 @@ def is_valid_record_id(record_id: str) -> bool:
     return bool(RECORD_ID_RE.fullmatch(record_id))
 
 
-TRecord = TypeVar("TRecord")
+class Identified(Protocol):
+    """A record a raw field's list carries: one that has the id its table keys
+    on. The bound is the type system's, so a record class without ``id`` is
+    refused where its list is parsed, not at the first duplicate check."""
+
+    @property
+    def id(self) -> str: ...
+
+
+TRecord = TypeVar("TRecord", bound=Identified)
 
 
 @dataclass(frozen=True)
@@ -82,6 +91,12 @@ class RecordField:
     """One named field of a record's raw wire mapping — the mapping and the
     key that names the field travel as one value, so every parse helper takes
     the field instead of the same pair of parameters."""
+
+    # The evidence a basis carries beside its disposition or its stated text:
+    # the reviewer's own words, who recalled them, the date, a note. The live
+    # model's disposition filter (loft/live/identity_map.BasisKinds) keeps the
+    # same four, so the vocabulary has one home.
+    BASIS_EVIDENCE_FIELDS: ClassVar[tuple[str, ...]] = ("text", "by", "when", "note")
 
     raw: Mapping[str, Any]
     key: str
@@ -111,46 +126,65 @@ class RecordField:
         """The evidence the field states — a person's or place's ``basis``
         {text, by, when, note?}: for an estimate, the reviewer's own words;
         for an identification's proposal, the document's own words. An empty
-        text is not a basis (the field is absent or it says something)."""
-        basis = self.raw.get(self.key)
-        if basis is None:
+        text is not a basis (the field is absent or it says something).
+
+        The field carries one of two shapes, told apart by the keys only one
+        of them must carry: the live model's disposition basis (``basis`` and
+        ``confidence``) or an identification's proposal (``text``). A
+        disposition basis keeps every evidence field it carries, so a value
+        that states both shapes loses nothing."""
+        value = self.raw.get(self.key)
+        if value is None:
             return None
-        if "basis" in basis or "confidence" in basis:
-            # the live model's disposition basis: knowledge/recollection + certain/
-            # possible, with the reviewer's own words carried alongside
-            kind = str(basis.get("basis", "")).strip()
-            confidence = str(basis.get("confidence", "")).strip()
-            if not kind or not confidence:
-                raise ValueError(f"invalid {self.key}: {basis!r} — basis and confidence are required")
-            out = {"basis": kind, "confidence": confidence}
-            for field_name in ("text", "by", "when", "note"):
-                value = str(basis.get(field_name, "")).strip()
-                if value:
-                    out[field_name] = value
-            return out
-        text = str(basis.get("text", "")).strip()
-        if not text:
-            raise ValueError(f"invalid {self.key}: {basis!r} — the text is required")
-        return {
-            "text": text,
-            "by": str(basis.get("by", "")).strip(),
-            "when": str(basis.get("when", "")).strip(),
-            **({"note": str(basis["note"]).strip()} if basis.get("note") else {}),
-        }
+        if "basis" in value or "confidence" in value:
+            return _disposition_basis(self.key, value)
+        return _proposed_basis(self.key, value)
 
     def records(self, record_type: Callable[[dict[str, Any]], TRecord], label: str) -> tuple[TRecord, ...]:
         """Parse the field's records and enforce unique ids — the shared
-        construction of the people/places/orgs/themes/imports tables."""
+        construction of the people/places/orgs/themes/imports tables.
+        ``record_type`` is bounded by ``Identified``: a class that builds a
+        record without ``id`` does not typecheck at this call."""
         records = tuple(record_type(r) for r in self.raw.get(self.key, []))
-        # the constructor contract: every record class passed here (Person,
-        # Place, Org, Theme, Session) carries ``id`` — pyrefly cannot express
-        # that bound for frozen dataclasses, so the cast states the proven
-        # contract
-        ids = [cast(Any, r).id for r in records]
+        ids = [record.id for record in records]
         if len(ids) != len(set(ids)):
             dupes = sorted({i for i in ids if ids.count(i) > 1})
             raise ValueError(f"duplicate {label} ids: {dupes}")
         return records
+
+
+def _disposition_basis(key: str, value: Mapping[str, Any]) -> dict[str, str]:
+    """The live model's disposition basis — the basis/confidence pair the record
+    is held with (knowledge/recollection + certain/possible) — plus every
+    evidence field the value carries. The pair is required; an evidence field
+    joins it when it says something, so a value that states a proposal's text
+    as well keeps that text."""
+    kind = str(value.get("basis", "")).strip()
+    confidence = str(value.get("confidence", "")).strip()
+    if not kind or not confidence:
+        raise ValueError(f"invalid {key}: {value!r} — basis and confidence are required")
+    out = {"basis": kind, "confidence": confidence}
+    for field_name in RecordField.BASIS_EVIDENCE_FIELDS:
+        evidence = str(value.get(field_name, "")).strip()
+        if evidence:
+            out[field_name] = evidence
+    return out
+
+
+def _proposed_basis(key: str, value: Mapping[str, Any]) -> dict[str, str]:
+    """An identification's proposal — the document's own words, which the value
+    must state — with who/when written even when absent and the note when it has
+    one. A proposal has no disposition: the record it proposes is not held with
+    a basis/confidence pair yet."""
+    text = str(value.get("text", "")).strip()
+    if not text:
+        raise ValueError(f"invalid {key}: {value!r} — the text is required")
+    return {
+        "text": text,
+        "by": str(value.get("by", "")).strip(),
+        "when": str(value.get("when", "")).strip(),
+        **({"note": str(value["note"]).strip()} if value.get("note") else {}),
+    }
 
 
 # The record statuses (people, places, orgs, and relationships). The

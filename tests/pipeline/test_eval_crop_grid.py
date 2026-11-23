@@ -14,7 +14,7 @@ from typing import Any
 
 from PIL import Image
 
-from pipeline.evals.eval_crop_grid import DEFAULT_VISION_OPTIONS, read_crop, run
+from pipeline.evals.eval_crop_grid import DEFAULT_VISION_OPTIONS, ReadFailure, read_crop, run
 from pipeline.evals.eval_geometry import CropReading
 from pipeline.layout import Layout
 from pipeline.layout_line import LayoutLine
@@ -91,7 +91,7 @@ def test_a_failed_rotated_re_read_is_surfaced_and_keeps_the_upright_read(tmp_pat
     assert read is not None
     assert [line.text for line in read.lines] == ["the postcard's message"]
     assert read.lines[0].orientation == 0  # the upright read's line
-    assert read.failure == "VlmError: the rotated read died"
+    assert read.failure == ReadFailure("call", "VlmError: the rotated read died")
 
 
 def test_a_rotated_re_read_with_no_usable_lines_is_surfaced_too(tmp_path: Path) -> None:
@@ -108,7 +108,7 @@ def test_a_rotated_re_read_with_no_usable_lines_is_surfaced_too(tmp_path: Path) 
     assert len(calls) == 2
     assert read is not None
     assert [line.text for line in read.lines] == ["the postcard's message"]
-    assert read.failure == "the rotated read gave no usable lines"
+    assert read.failure == ReadFailure("answer", "the rotated read gave no usable lines")
     assert read.tokens == 22  # both calls' tokens — the answer cost them
 
 
@@ -152,7 +152,7 @@ def test_the_run_reports_the_failed_re_read(tmp_path: Path) -> None:
 
     assert len(calls) == 2
     assert report.failed_crops == 0
-    assert report.re_read_failures == ["crop 0: VlmError: the rotated read died"]
+    assert report.re_read_failures == ["crop 0: call: VlmError: the rotated read died"]
     assert report.lines == 1
     assert report.boxless == 0
     assert report.tokens == 11  # the upright read's own — the dead call cost nothing

@@ -19,7 +19,7 @@ import tempfile
 from dataclasses import dataclass, replace
 from pathlib import Path
 from time import monotonic
-from typing import Any
+from typing import Any, Literal
 
 from PIL import Image
 
@@ -70,6 +70,20 @@ def _content_bounds(layout: Layout) -> Rectangle:
 
 
 @dataclass(frozen=True)
+class ReadFailure:
+    """Why a crop's read did not land: the call died, or its answer did not
+    parse — and what the error said. The kind is a field, not a prefix inside
+    the message, so the run can tell a dead call from a bad answer without
+    reading prose, and a failure cannot be carried without one."""
+
+    kind: Literal["call", "answer"]
+    detail: str
+
+    def __str__(self) -> str:
+        return f"{self.kind}: {self.detail}"
+
+
+@dataclass(frozen=True)
 class CropRead:
     """One crop's read: the crop-local lines it yielded, what the read cost
     (both reads' tokens when the crop was rotated and re-read), and the
@@ -78,7 +92,7 @@ class CropRead:
 
     lines: list[CropLine]
     tokens: int
-    failure: str | None = None
+    failure: ReadFailure | None = None
 
 
 @dataclass(frozen=True)
@@ -94,7 +108,7 @@ class _Reading:
     boxes: dict[int, list[float]]
     tokens: int
     vertical: bool = False
-    failure: str | None = None
+    failure: ReadFailure | None = None
 
 
 @dataclass(frozen=True)
@@ -107,7 +121,7 @@ class RotatedRead:
 
     reading: Transcription | None
     tokens: int
-    failure: str | None
+    failure: ReadFailure | None
 
 
 def _crop_read_options(page_options: VlmOptions) -> VlmOptions:
@@ -134,11 +148,13 @@ def _read_rotated(path: Path, options: VlmOptions) -> RotatedRead:
     try:
         answer = options.run(transcribe_image_vlm, path)
     except VlmError as exc:
-        return RotatedRead(reading=None, tokens=0, failure=f"{type(exc).__name__}: {exc}")
+        return RotatedRead(reading=None, tokens=0, failure=ReadFailure("call", f"{type(exc).__name__}: {exc}"))
     try:
         reading = parse_transcription_response(answer.answer)
     except (ValueError, KeyError, IndexError, TypeError) as exc:
-        return RotatedRead(reading=None, tokens=answer.usage.tokens, failure=f"{type(exc).__name__}: {exc}")
+        return RotatedRead(
+            reading=None, tokens=answer.usage.tokens, failure=ReadFailure("answer", f"{type(exc).__name__}: {exc}")
+        )
     return RotatedRead(reading=reading, tokens=answer.usage.tokens, failure=None)
 
 
@@ -186,7 +202,7 @@ def _rotated_reading(crop: CropReading, rotated_path: Path, options: VlmOptions,
     if not (rotated.reading.boxes and rotated.reading.text):
         # the re-read answered but measured nothing usable: the upright read
         # stands in, and the result says so
-        return replace(cost, failure="the rotated read gave no usable lines")
+        return replace(cost, failure=ReadFailure("answer", "the rotated read gave no usable lines"))
     # the +90 rotation's inverse: the rotated frame's height is the crop's
     # width (pinned empirically)
     rot_h = int(crop.w)

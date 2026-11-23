@@ -73,13 +73,29 @@ class CropRead:
     tokens: int
 
 
-def _read_transcription(path: Path, options: VlmOptions) -> VlmAnswer:
+def trial_options(model: str, base_url: str | None = None, api_key: str | None = None) -> VlmOptions:
+    """One trial's read options: the model under trial, the key it reads with,
+    and the endpoint — the gateway's own unless a base URL is given.
+
+    ``None`` is the only spelling of "not given", so an absent flag cannot
+    override the endpoint the model config names. A blank base URL is not an
+    endpoint (it would reach the client as a request to the root of the
+    internet), so it is refused here rather than sent on."""
+    if base_url is not None and not base_url.strip():
+        raise ValueError("a blank base URL is not an endpoint — omit it for the gateway's")
+    options = VlmOptions(model=model, api_key=api_key)
+    if base_url is None:
+        return options
+    return replace(options, base_url=base_url)
+
+
+def _read_transcription(path: Path, trial: VlmOptions) -> VlmAnswer:
     """The VLM call for one crop image (upright or rotated): the model's
     answer and what the call cost."""
     # the crop read's completion is ~1-4k tokens; 64000 (the
     # full-page location budget) EXCEEDS the glm-4.5v's 65536
     # context once the image is in.
-    crop_read = replace(options, system=VlmPrompts.transcription_system_with_context(), max_tokens=8000)
+    crop_read = replace(trial, system=VlmPrompts.transcription_system_with_context(), max_tokens=8000)
     return crop_read.run(transcribe_image_vlm, path)
 
 
@@ -95,7 +111,7 @@ def read_crop(
     image_path: Path,
     tmp: Path,
     index: int,
-    options: VlmOptions,
+    trial: VlmOptions,
 ) -> CropRead | None:
     """Read ONE crop with the VLM — the text + the crop-local boxes.
     When the upright read's boxes are TALLER than wide (the text is
@@ -109,7 +125,7 @@ def read_crop(
         im.crop(box).save(crop_path)
     t0 = monotonic()
     try:
-        answer = _read_transcription(crop_path, options)
+        answer = _read_transcription(crop_path, trial)
         reading = parse_transcription_response(answer.answer)
     except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
         print(f"crop {index} FAILED: {str(exc)[:120]}", file=sys.stderr)
@@ -128,7 +144,7 @@ def read_crop(
         # parse that did not happen (the fallback is the upright read)
         rotated_read: tuple[VlmAnswer, Transcription] | None = None
         try:
-            answer2 = _read_transcription(rotated, options)
+            answer2 = _read_transcription(rotated, trial)
             rotated_read = (answer2, parse_transcription_response(answer2.answer))
         # lucidlint: ignore swallow a failed re-read keeps the upright read (the fallback)
         except (VlmError, ValueError, KeyError, IndexError, TypeError) as exc:
@@ -254,11 +270,11 @@ def run(
     work_dir: Path,
     cols: int = 2,
     rows: int = 3,
-    options: VlmOptions | None = None,
+    trial: VlmOptions | None = None,
 ) -> CropGridReport:
     """Read the page's crops, stitch, and report — the geometry
     experiment's ledger for one page."""
-    read_options = options or VlmOptions()
+    read_trial = trial or VlmOptions()
     image_path = BatchArtefacts(work_dir, batch_id).oriented(f"{page}.jpg")
     store = PipelineStore(work_dir)
     layout = load_layout_store(store, f"{batch_id}/ocr-guess/{page}.layout.json")
@@ -274,7 +290,7 @@ def run(
     started = monotonic()
     with tempfile.TemporaryDirectory() as tmp:
         for i, crop in enumerate(crops):
-            read = read_crop(crop, image_path, Path(tmp), i, read_options)
+            read = read_crop(crop, image_path, Path(tmp), i, read_trial)
             if read is None:
                 failed += 1
                 continue
@@ -301,7 +317,7 @@ def run(
     )
     # the model-scoped saves — the trial runs several models on the same
     # page; each keeps its own assembled layout + report
-    slug = read_options.model.replace("/", "-").replace("@", "")
+    slug = read_trial.model.replace("/", "-").replace("@", "")
     out = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-{slug}.json"
     out.write_text(json.dumps(assembled.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
     report_path = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-report-{slug}.json"
@@ -317,20 +333,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--rows", type=int, default=3)
     parser.add_argument("--work-dir", type=Path, default=LoftPaths.WORK_DIR)
     parser.add_argument("--model", default=ModelConfig.VISION_MODEL, help="the model to trial")
-    parser.add_argument("--base-url", default=None, help="the API base (default: the gateway)")
+    parser.add_argument("--base-url", default=None, help="the API base (default: the gateway; a blank one is refused)")
     parser.add_argument(
         "--api-key",
         default=None,
         help="the API key (default: the gateway token; set OPENROUTER_API_KEY for OpenRouter)",
     )
     args = parser.parse_args(argv)
-    options = VlmOptions(
-        model=args.model,
-        api_key=args.api_key or os.environ.get("OPENROUTER_API_KEY"),
-    )
-    if args.base_url:
-        options = replace(options, base_url=args.base_url)
-    report = run(args.batch_id, args.page, args.work_dir, args.cols, args.rows, options)
+    trial = trial_options(args.model, args.base_url, args.api_key or os.environ.get("OPENROUTER_API_KEY"))
+    report = run(args.batch_id, args.page, args.work_dir, args.cols, args.rows, trial)
     print(json.dumps(report.to_dict(), indent=1))
     return 0
 

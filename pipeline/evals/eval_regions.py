@@ -24,11 +24,10 @@ import numpy as np
 from PIL import Image
 
 from pipeline.artefacts import BatchArtefacts
-from pipeline.evals.eval_crop_grid import read_crop
+from pipeline.evals.eval_crop_grid import read_crop, trial_options
 from pipeline.evals.eval_geometry import CropReading
 from pipeline.layout import Layout
 from pipeline.layout_line import LayoutLine
-from pipeline.model.vlm import VlmOptions
 from tools.loft_paths import LoftPaths
 
 
@@ -132,6 +131,7 @@ def run(
         width, height = im.size
     ink = ink_y_range(image_path)
     regions = column_regions(image_path)
+    trial = trial_options(model, base_url, api_key)
     tokens = 0
     failed = 0
     lines: list[LayoutLine] = []
@@ -145,13 +145,7 @@ def run(
                 float(ink.bottom - ink.top),
                 [],
             )
-            read = read_crop(
-                crop,
-                image_path,
-                Path(tmp),
-                i,
-                VlmOptions(model=model, base_url=base_url or "", api_key=api_key),
-            )
+            read = read_crop(crop, image_path, Path(tmp), i, trial)
             if read is None:
                 failed += 1
                 continue

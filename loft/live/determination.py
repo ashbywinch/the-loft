@@ -13,13 +13,31 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
-from typing import Any, TypeVar
+from typing import Protocol, TypeVar
 
 from loft.live.identity_map import BasisKinds, basis_after, renders_estimated
 from tools.records import Person, Place
 
-Record = TypeVar("Record", Person, Place)
+Record = TypeVar("Record", bound=Person | Place)
 Gone = TypeVar("Gone")
+
+
+class Records(Protocol[Record]):
+    """What a determination needs from the collection holding the record.
+
+    The three verbs are the identity repositories' shared surface (`People`,
+    `Collection`, and the memory store's twin), so the determination's
+    vocabulary travels, not a class. `get` returns the record the projection
+    holds or ``None``: a ``GonePerson``/``GonePlace`` is what ``gone()`` makes
+    and is never stored, so the type leaves no way for a delete marker to
+    reach `_status`. The record and id are positional-only: each collection
+    names them for its own kind (`person_id`, `entity_id`)."""
+
+    def get(self, record_id: str, /) -> Record | None: ...
+
+    def save(self, record: Record, /, base: int | None = None) -> Record: ...
+
+    def delete(self, record_id: str, /) -> None: ...
 
 
 class Determination:
@@ -29,14 +47,13 @@ class Determination:
         self.decision = decision
         self.basis = basis
 
-    def apply(self, records: Any, record_id: str, *, gone: Callable[[str], Gone]) -> Any | Gone | None:
+    def apply(self, records: Records[Record], record_id: str, *, gone: Callable[[str], Gone]) -> Record | Gone | None:
         """The determination applied to the record as it stands — the updated
         record, the ``gone`` marker for a delete, or the record unchanged.
 
-        ``records`` is the collection holding it: the three verbs this needs —
-        ``get``, ``save(record, base)`` and ``delete`` — are the identity
-        repositories' shared surface (`People`, `Collection`, and the memory
-        store's twin), so the determination's vocabulary travels, not a class."""
+        ``records`` is typed by `Records`: the ladder can only ever read a
+        record the projection holds (or ``None``), so the delete marker this
+        method returns cannot come back in through `get`."""
         current = records.get(record_id)
         if current is None or _status(current) == "rejected":
             return current  # a rejected proposal is terminal (TECHSPEC/05 §18.2)

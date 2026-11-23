@@ -397,6 +397,19 @@ good.
   A name a reader can take at face value needs no entry, and the model's
   silence about a name is not a judgement on it.
 
+- **A reading is named for the step it performs over the noun it reads.**
+  The rule above names the entities; the things that read or write them
+  carry the verb the domain already uses: `RowFit` (a page's rows read
+  against its fitted lines), `WordCut` (the cut of a shape at a line
+  boundary, and the continuation that rejoins one word), `PageCommit` (one
+  page version's write inside a change), `PageWork` (the page's write and the
+  work files that follow it), `RecordField` (one field of a record's raw
+  mapping), `GedcomRecords` (a parsed file's records), `IdentityRecords`
+  (one identity collection's three verbs), `Determination` (the review's
+  decision applied to one record). These are not entities and are not found
+  in the PRD: they are the machinery over a domain noun, and each is pinned
+  by the suite named after it.
+
 - **A class names the object, never its serialisation — no `File` suffix.**
   Any object can be written to a file; "File" is the transport, not the
   concept. The type carries the thing (`Rows`, `RawWords`,

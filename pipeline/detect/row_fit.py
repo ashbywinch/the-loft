@@ -10,6 +10,8 @@ the underline's band are the same reading of rows against lines.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 
 from document.span import Span
@@ -20,7 +22,7 @@ from pipeline.detect.row_runs import RowRuns
 from pipeline.detect.segment import Segment
 
 
-def nearest_line(shape: Mark, lines: list[Line]) -> int:
+def nearest_line(shape: Mark, lines: Sequence[Line]) -> int:
     """The index of the line in `lines` this mark sits nearest — the index
     space of the list given, never of some wider fit it came from."""
     return min(range(len(lines)), key=lambda i: lines[i].distance(shape.cx, shape.baseline))
@@ -44,8 +46,10 @@ class RowFit:
     WAIST_RUN = 10  # columns: a cut row running this far is a band of ink, not a stroke tip
     WAIST_OVERLAP = 0.5  # of the shorter longest-run: this much overlap is one band
 
-    def __init__(self, lines: list[Line]) -> None:
-        self.lines = lines
+    def __init__(self, lines: Sequence[Line]) -> None:
+        """The fit over the lines as they stand at this moment: held as a
+        tuple, so a later re-fit cannot move a cut's proposals under it."""
+        self.lines: tuple[Line, ...] = tuple(lines)
 
     def line_of(self, shape: Mark) -> int:
         """The fitted line this mark sits nearest — its row in the writing,

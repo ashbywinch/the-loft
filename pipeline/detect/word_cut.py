@@ -11,6 +11,8 @@ cut frees is not writing: it leaves the marks and joins the strip.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from pipeline.detect.cut_verdict import CutVerdict
 from pipeline.detect.line import Line
 from pipeline.detect.mark import Components, Ink, Mark
@@ -33,11 +35,13 @@ class WordCut:
     page's own rows, ruler and other marks, never by the strip alone. The gap
     cut uses the word test with its two waived bars named at the call site."""
 
-    def __init__(self, marks: list[Mark], lines: list[Line], scale: Ruler) -> None:
-        self.marks = marks
-        self.lines = lines
+    def __init__(self, marks: Sequence[Mark], lines: Sequence[Line], scale: Ruler) -> None:
+        """The cut over the marks and lines as they stand: both are held as
+        tuples, so no later re-fit can change what a boundary was judged on."""
+        self.marks: tuple[Mark, ...] = tuple(marks)
+        self.lines: tuple[Line, ...] = tuple(lines)
         self.scale = scale
-        self.fit = RowFit(lines)
+        self.fit = RowFit(self.lines)
 
     def words(self) -> list[Mark]:
         """The marks, cut where the writing's geometry says each holds more

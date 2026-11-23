@@ -22,8 +22,9 @@ class PageState:
     """One page's current state — the image, orientation, category and stage.
 
     A page's version starts at 1 and only ever grows; a state carrying less is
-    not a page, so it is refused where the page is made rather than repaired
-    where the version is read."""
+    not a page, so it is refused where the page is made. The import's one
+    "no revision yet" rule lives at its own seam (`_revision` defaults to 1),
+    which is why nothing downstream repairs a zero."""
 
     page_id: str
     image_asset_id: str
@@ -35,8 +36,8 @@ class PageState:
     event_seq: int = 0
 
     def __post_init__(self) -> None:
-        if self.revision < 0:
-            raise ValueError(f"page {self.page_id} has a negative revision: {self.revision}")
+        if self.revision < 1:
+            raise ValueError(f"page {self.page_id} must carry a version, not {self.revision}")
 
 
 @dataclass(frozen=True)

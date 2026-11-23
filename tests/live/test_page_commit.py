@@ -68,22 +68,27 @@ def test_a_create_appends_one_event_and_writes_the_row(store: LiveStore) -> None
     assert store.verify_chain() == ()
 
 
-def test_a_page_cannot_be_built_at_a_negative_revision() -> None:
-    """A page's version starts at 1 and only grows: `PageState` refuses a
-    negative one where the page is made, so `_version`'s create rule (`> 0`,
-    else 1) never has a corrupt value to repair."""
-    with pytest.raises(ValueError, match="negative revision"):
+def test_a_page_cannot_be_built_below_its_first_version() -> None:
+    """A page's version starts at 1 and only grows: `PageState` refuses 0 as
+    well as a negative one where the page is made, so `_version`'s create case
+    is the page's own version rather than a repair of a zero."""
+    with pytest.raises(ValueError, match="must carry a version"):
+        _page(revision=0)
+    with pytest.raises(ValueError, match="must carry a version"):
         _page(revision=-1)
 
 
-def test_a_create_without_a_revision_starts_at_one(store: LiveStore) -> None:
-    """The import's revision wins when it has one, and a page whose reading
-    carries none starts at 1 — the `> 0` guard in `_version`, so no page is
-    ever created at version 0."""
-    with store.change(actor="import") as change:
-        saved = _commit(change, revision=0).commit(reading=_reading())
+def test_a_commit_stores_the_reading_and_the_adjustment_together(store: LiveStore) -> None:
+    """One commit can carry both: the reading blob and the reviewer's
+    correction are stored in the same version, and the rows derive from the
+    reading."""
+    with store.change(actor="review") as change:
+        saved = _commit(change).commit(reading=_reading(), adjustment=b'{"lines": []}', adjustment_at="2026-01-01")
     assert saved.revision == 1
-    assert [event["event_type"] for event in store.events_for(PAGE_ID, entity_kind="page")] == ["created"]
+    reading = store.pages.reading(PAGE_ID)
+    assert reading is not None and reading.rows == 1
+    adjustment = store.pages.adjustment(PAGE_ID)
+    assert adjustment is not None and store.content.get(adjustment.sha256) == b'{"lines": []}'
 
 
 def test_a_create_stores_the_reading_blob_and_counts_it(store: LiveStore) -> None:

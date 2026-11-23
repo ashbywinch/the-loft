@@ -81,13 +81,15 @@ class PageCommit:
         return saved
 
     def _version(self) -> tuple[str, int]:
-        """The event type and the version it becomes: created without a base,
-        superseded with one — checked against the page as it stands."""
+        """The event type and the version it becomes: created at the page's own
+        version, superseded at the base plus one — checked against the page as
+        it stands. A page cannot carry a version below 1 (`PageState`), so a
+        create has nothing to repair."""
         current = self.projection.get(self.page.page_id)
         if self.base is None:
             if current is not None:
                 raise Conflict(f"page {self.page.page_id} exists")
-            return "created", self.page.revision if self.page.revision > 0 else 1
+            return "created", self.page.revision
         if current is None:
             raise NotFound(f"no page {self.page.page_id}")
         if current.revision != self.base:

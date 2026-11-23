@@ -18,7 +18,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Literal, final
+from typing import Any, final
 
 from pipeline.model.backoff import Backoff
 from pipeline.model.chat_message import ChatMessage
@@ -35,83 +35,75 @@ class AIClientError(RuntimeError):
 
 
 @dataclass(frozen=True)
-class _Reply:
-    """A response as the endpoint sent it: the assistant message, parsed, and
-    the whole body the response id and usage record live in."""
-
-    message: Mapping[str, Any]
-    body: Mapping[str, Any]
-
-
-@dataclass(frozen=True)
 class Attempt:
-    """One send's 200 response, parsed once by ``_read_attempt`` into the
-    single value the retry loop decides on: the reply, its reasoning, the
-    content, why the model stopped, the usage record, and the gateway's cache
-    verdict.
+    """One send's answer, parsed once by ``_parse_attempt`` into the single
+    value the retry loop decides on: the content, the reasoning, why the model
+    stopped, the usage record, the gateway's cache verdict, and the response id
+    that names the generation.
 
     Every field a decision reads is here, so no branch of the loop reads a
     value another branch assigned."""
 
-    reply: _Reply
     reasoning: Reasoning
     content: str
     finish_reason: str
     usage: dict[str, Any]
     cache_status: str
+    response_id: str
+
+
+# What one send came back as: the endpoint's answer, parsed, or its refusal.
+_SendResult = Attempt | urllib.error.HTTPError
 
 
 @dataclass(frozen=True)
-class _Rejected:
-    """A send the endpoint refused at the transport: the HTTP error, handled
-    by the same decision function as an attempt."""
+class _Answer:
+    """The decision is done, well: this is the text ``chat`` returns."""
 
-    error: urllib.error.HTTPError
-
-
-# The outcome of one send: the parsed attempt, or the refusal.
-_Outcome = Attempt | _Rejected
+    text: str
 
 
 @dataclass(frozen=True)
-class _Step:
-    """What the loop does with one send: the one decision, and the values
-    carrying it out. ``kind`` names the case; ``payload`` is the request the
-    next send uses; ``wait`` says the step takes a backoff slot; ``answer`` is
-    the text to return; ``error``/``cause`` the failure to raise;
-    ``burn_retried`` is the fresh-sample rescue's flag for the next
-    iteration."""
+class _Failure:
+    """The decision is done, badly: raise this message, caused by ``cause``."""
 
-    kind: Literal["return", "salvage", "burn", "retry", "ladder", "raise"]
-    payload: ChatRequest
-    wait: bool = False
-    answer: str = ""
-    error: str = ""
+    message: str
     cause: BaseException | None = None
-    burn_retried: bool = False
+
+
+@dataclass(frozen=True)
+class _NextSend:
+    """The decision is not done: send ``request`` next. ``uses_backoff`` says
+    the send waits out a backoff slot first; ``fresh_sample_taken`` carries the
+    fresh-sample rescue's flag into the next decision."""
+
+    request: ChatRequest
+    uses_backoff: bool = False
+    fresh_sample_taken: bool = False
 
 
 # The statuses that mean "the endpoint is busy, try again" and the statuses
 # that mean "this endpoint does not understand the request's reasoning params"
-# — named, so the ladder below reads as its rule.
-_TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 529})
-_REASONING_PARAM_STATUSES = frozenset({400, 422})
+# — named, so the decision below reads as its rule.
+_RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 529})
+_REASONING_REFUSED_STATUSES = frozenset({400, 422})
 
 
-def _api_error(error: urllib.error.HTTPError) -> str:
-    """The failure message for one refused send: the status and the body the
+def _failure_message(error: urllib.error.HTTPError) -> str:
+    """The message a refused send fails with: the status and the body the
     endpoint sent with it (a bad model name and an expired key both live
     there)."""
     return f"model API error {error.code}: {error.read().decode('utf-8', 'replace')[:200]}"
 
 
-def _read_attempt(body: Mapping[str, Any], headers: Mapping[str, str], requested: bool) -> Attempt:
+def _parse_attempt(body: Mapping[str, Any], headers: Mapping[str, str], requested: bool) -> Attempt:
     """Parse one 200 response into the ``Attempt`` the loop decides on.
 
     The content, the stop reason, the reasoning text (either channel a
     provider uses — the gateway sends ``reasoning``, some providers
-    ``reasoning_content``), the usage record and the gateway's cache verdict
-    are read here, once, so every later question is a field on the value.
+    ``reasoning_content``), the usage record, the response id and the
+    gateway's cache verdict are read here, once, so every later question is a
+    field on the value.
 
     A body without a choice is the one malformed shape: it fails here, with
     the body in the error, never as an AttributeError from a later reader.
@@ -129,12 +121,12 @@ def _read_attempt(body: Mapping[str, Any], headers: Mapping[str, str], requested
         raw_reasoning = message.get("reasoning_content")
     usage_field = body.get("usage")
     return Attempt(
-        reply=_Reply(message=message, body=body),
         reasoning=Reasoning(enabled=requested, text=str(raw_reasoning or "")),
         content=message.get("content") or "",
         finish_reason=str(choice.get("finish_reason") or ""),
         usage=usage_field if isinstance(usage_field, dict) else {},
         cache_status=headers.get("cf-aig-cache-status", "n/a"),
+        response_id=str(body.get("id") or "absent"),
     )
 
 
@@ -208,8 +200,8 @@ class AIClient:
     @property
     def last_reasoning(self) -> str:
         """The last reply's deliberation text (``""`` when it carried none).
-        Kept as the compatibility view of the recorded attempt's reasoning —
-        the trace and the evals read it."""
+        Kept as the compatibility view of the last attempt's reasoning — the
+        trace and the evals read it."""
         return self._last_reasoning.text
 
     def chat(self, system: str, user: str, *, reasoning: bool = False) -> str:
@@ -235,18 +227,18 @@ class AIClient:
             ],
             # reasoning needs room for the reasoning plus the JSON verdict;
             # only used tokens are billed, so the headroom is free when the
-            # model stops early. The length-empty burn is a deliberation
-            # STALL, not deep reasoning: the model circles the same decisions
-            # until the budget runs out with no verdict (measured: 16,000
-            # reasoning tokens, content a single space; the captured reasoning
-            # re-reads one instruction line ~27 times). The burn retry below
-            # takes a fresh sample — the reasoning budget alone cannot bound
-            # the circling on every gateway (the CI gateway ignores
-            # reasoning.max_tokens).
+            # model stops early. A length-limited empty answer is a
+            # deliberation STALL, not deep reasoning: the model circles the
+            # same decisions until the budget runs out with no verdict
+            # (measured: 16,000 reasoning tokens, content a single space; the
+            # captured reasoning re-reads one instruction line ~27 times). The
+            # fresh-sample retry below takes a new draw — the reasoning budget
+            # alone cannot bound the circling on every gateway (the CI gateway
+            # ignores reasoning.max_tokens).
             max_tokens=16000 if reasoning else self.max_tokens,
             # reduces brittle failure modes caused by deterministic
             # repetition loops" (arXiv:2602.03664). A small temperature
-            # breaks the attractor and gives the burn retry a genuinely
+            # breaks the attractor and gives the fresh-sample retry a genuinely
             # different sample (arXiv:2502.08235's sample-and-select); the
             # evals evaluate output properties, not draws, so this does not
             # loosen the gates. The non-reasoning (direct-answer) path stays
@@ -263,31 +255,36 @@ class AIClient:
         return self._post(request)
 
     def _post(self, payload: ChatRequest) -> str:
-        """Send one chat-completions request: send, read the attempt, act on
-        the one decision it yields, repeat.
+        """Send one chat-completions request: send, decide what came back,
+        carry out the decision, repeat.
 
-        The retry rules — the backoff budget, the parameter ladder, the
-        fresh-sample burn rescue, the stop-empty salvage — are branches of
+        The retry rules — the backoff budget, the reasoning-drop retry, the
+        fresh-sample rescue, the stop-empty recovery — are branches of
         ``_next_step``, each with the case it handles; this loop only carries
-        out the step that function returns."""
+        out the decision that function returns."""
         backoff = Backoff(delay=2.0, attempt=0)
-        burn_retried = False  # the fresh-sample rescue fires ONCE — a second burn is a persistent stall
+        # the fresh-sample rescue fires ONCE — a second stall is a persistent one
+        fresh_sample_taken = False
         while True:
-            outcome = self._send(payload, skip_cache=self._fresh or backoff.attempt > 0)
-            step = self._next_step(outcome, payload, attempts_made=backoff.attempt, burn_retried=burn_retried)
-            if step.kind in ("return", "salvage"):
-                return step.answer
-            if step.kind == "raise":
-                raise AIClientError(step.error) from step.cause
-            payload = step.payload
-            burn_retried = step.burn_retried
-            if step.wait:
+            step = self._next_step(
+                self._send(payload, skip_cache=self._fresh or backoff.attempt > 0),
+                payload,
+                attempts_made=backoff.attempt,
+                fresh_sample_taken=fresh_sample_taken,
+            )
+            if isinstance(step, _Answer):
+                return step.text
+            if isinstance(step, _Failure):
+                raise AIClientError(step.message) from step.cause
+            payload = step.request
+            fresh_sample_taken = step.fresh_sample_taken
+            if step.uses_backoff:
                 backoff = backoff.advance(self._sleep)
 
-    def _send(self, payload: ChatRequest, *, skip_cache: bool) -> _Outcome:
-        """Send one request and read its outcome: a 200 parsed into the
-        ``Attempt`` the loop decides on (and recorded for ``last_reasoning``),
-        or the endpoint's refusal.
+    def _send(self, payload: ChatRequest, *, skip_cache: bool) -> _SendResult:
+        """Send one request and read what came back: a 200 parsed into the
+        ``Attempt`` the loop decides on (and taken as ``last_reasoning``), or
+        the endpoint's refusal.
 
         The request is built per attempt, because a RETRY MUST BE A NEW
         SAMPLE. The gateway caches a completion by request body: re-sending
@@ -310,50 +307,53 @@ class AIClient:
         )
         try:
             with self._urlopen(request, timeout=self.timeout) as response:
-                attempt = _read_attempt(
+                attempt = _parse_attempt(
                     json.loads(response.read().decode("utf-8")),
                     response.headers,
                     payload.reasoning is not None and payload.reasoning.enabled,
                 )
-        except urllib.error.HTTPError as e:
-            return _Rejected(error=e)
-        self._record_reasoning(attempt)
+        except urllib.error.HTTPError as refusal:
+            # the endpoint refused the send; ``_next_step`` decides what that means
+            return refusal
+        self._take_reasoning(attempt)
         return attempt
 
-    def _next_step(self, outcome: _Outcome, payload: ChatRequest, *, attempts_made: int, burn_retried: bool) -> _Step:
+    def _next_step(
+        self, send_result: _SendResult, payload: ChatRequest, *, attempts_made: int, fresh_sample_taken: bool
+    ) -> _Answer | _Failure | _NextSend:
         """What the loop does with one send — the only place a case is decided.
 
         The cases, one branch each:
 
-        * refusal, transient status (429/5xx) with retry budget left — retry
-          on the backoff, because the endpoint is busy, not broken;
-        * refusal, transient status, budget exhausted — raise with the body,
+        * refusal, a retryable status (429/5xx) with retry budget left — send
+          again on the backoff, because the endpoint is busy, not broken;
+        * refusal, a retryable status, budget exhausted — fail with the body,
           because a status that persists is not transient;
-        * refusal, 400/422 to a request carrying reasoning — retry once
+        * refusal, 400/422 to a request carrying reasoning — send once more
           without the reasoning params and at the non-reasoning temperature,
-          taking no backoff slot, because the endpoint does not understand
-          them (the schema ladder) and that is not a failure;
-        * refusal, any other status — raise with the body, because a bad
-          model name or an expired key must never read as an empty completion;
-        * an attempt with content — return it;
-        * an attempt whose reasoning burned the whole output budget
-          (``length``) with the rescue unspent — retry once at a warmer
-          temperature with reasoning kept, because a deliberation stall needs
-          a fresh sample, never a rewritten prompt;
+          taking no backoff slot, because the endpoint does not understand them
+          and that is not a failure;
+        * refusal, any other status — fail with the body, because a bad model
+          name or an expired key must never read as an empty completion;
+        * an attempt with content — answer with it;
+        * an attempt whose reasoning burned the whole output budget (``length``)
+          with the rescue unspent — send once more at a warmer temperature with
+          reasoning kept, because a deliberation stall needs a fresh sample,
+          never a rewritten prompt;
         * an attempt with empty content whose stop/error reasoning IS the
-          structured answer — return the reasoning, because the provider put
-          the answer in the reasoning channel;
-        * any other empty attempt — retry on the backoff while the budget
-          lasts, else raise, because a 200 with no content is a transient
+          structured answer — answer with the reasoning, because the provider
+          put the answer in the reasoning channel;
+        * any other empty attempt — send again on the backoff while the budget
+          lasts, else fail, because a 200 with no content is a transient
           provider failure.
         """
-        if isinstance(outcome, _Rejected):
-            error = outcome.error
-            if error.code in _TRANSIENT_STATUSES:
+        if isinstance(send_result, urllib.error.HTTPError):
+            error = send_result
+            if error.code in _RETRYABLE_STATUSES:
                 if attempts_made >= self.max_retries:
-                    return _Step(kind="raise", payload=payload, error=_api_error(error), cause=error)
-                return _Step(kind="retry", payload=payload, wait=True, burn_retried=burn_retried)
-            if error.code in _REASONING_PARAM_STATUSES and payload.reasoning is not None:
+                    return _Failure(_failure_message(error), cause=error)
+                return _NextSend(payload, uses_backoff=True, fresh_sample_taken=fresh_sample_taken)
+            if error.code in _REASONING_REFUSED_STATUSES and payload.reasoning is not None:
                 logger.warning(
                     "model %s rejected the reasoning params (HTTP %d); retrying without them",
                     self.model,
@@ -362,10 +362,9 @@ class AIClient:
                 # temperature follows the reasoning state too: a rejected
                 # reasoning param must not leave the retry running at the
                 # reasoning 0.3 — it is a non-reasoning call at 0.0
-                return _Step(
-                    kind="ladder",
-                    payload=replace(payload, reasoning=None, temperature=0.0),
-                    burn_retried=burn_retried,
+                return _NextSend(
+                    replace(payload, reasoning=None, temperature=0.0),
+                    fresh_sample_taken=fresh_sample_taken,
                 )
             # any other status is a HARD client error — a bad model name, an
             # expired key, a wrong endpoint. Report it with the body, once.
@@ -373,12 +372,12 @@ class AIClient:
             # "Invalid model name" as "empty response from API
             # (finish_reason=n/a)" and retried it as if transient: the real
             # failure stayed invisible for a whole session (2026-10-19).
-            return _Step(kind="raise", payload=payload, error=_api_error(error), cause=error)
+            return _Failure(_failure_message(error), cause=error)
 
-        attempt = outcome
+        attempt = send_result
         if attempt.content.strip():
-            return _Step(kind="return", payload=payload, answer=attempt.content, burn_retried=burn_retried)
-        if attempt.reasoning.enabled and attempt.finish_reason == "length" and not burn_retried:
+            return _Answer(attempt.content)
+        if attempt.reasoning.enabled and attempt.finish_reason == "length" and not fresh_sample_taken:
             # the completion is a deliberation stall: the model circled its
             # decisions and spent the whole budget reasoning without a verdict
             # (measured: 16,000 reasoning tokens, content a single space; the
@@ -401,7 +400,7 @@ class AIClient:
             # a different draw: the stall is stochastic, not a deterministic
             # attractor (the temperature-0 loop class is already gone) — the
             # new sample often concludes (2502.08235)
-            return _Step(kind="burn", payload=replace(payload, temperature=0.5), burn_retried=True)
+            return _NextSend(replace(payload, temperature=0.5), fresh_sample_taken=True)
         if attempt.finish_reason in ("stop", "error"):
             # the provider put the structured answer in the reasoning channel
             # and produced zero content — the reasoning IS the completion.
@@ -409,19 +408,19 @@ class AIClient:
             # 'reasoning' with content=="" both on stop draws and on
             # stream-failed completions (finish_reason=error, 9,852 reasoning
             # chars, no content), which otherwise retry into the same provider
-            # hiccup. ``_salvage`` decides: a parseable answer is recovered,
-            # deliberation prose (or no reasoning at all) is a genuine failure
-            # and keeps the retry path (review-bot finding on PR #62), and a
-            # non-reasoning call never salvages.
-            salvaged = self._salvage(attempt.reasoning)
-            if salvaged is not None:
+            # hiccup. ``_answer_from_reasoning`` decides: a parseable answer is
+            # recovered, deliberation prose (or no reasoning at all) is a
+            # genuine failure and keeps the retry path (review-bot finding on
+            # PR #62), and a non-reasoning call is never recovered.
+            answer = self._answer_from_reasoning(attempt.reasoning)
+            if answer is not None:
                 logger.warning(
                     "chat: empty content with finish_reason=%s — the reasoning holds the answer; "
                     "recovering it (reasoning_len=%d)",
                     attempt.finish_reason,
-                    len(salvaged),
+                    len(answer),
                 )
-                return _Step(kind="salvage", payload=payload, answer=salvaged, burn_retried=burn_retried)
+                return _Answer(answer)
         # a 200 with no content is a transient provider failure, not an
         # answer. Log the response's actual signals so the failure mode is
         # observable, then retry with the same backoff as a 5xx; exhaust the
@@ -434,28 +433,24 @@ class AIClient:
             attempt.cache_status,
         )
         if attempts_made >= self.max_retries:
-            return _Step(
-                kind="raise",
-                payload=payload,
-                error=f"empty response from API (finish_reason={attempt.finish_reason or 'n/a'})",
-                burn_retried=burn_retried,
-            )
-        return _Step(kind="retry", payload=payload, wait=True, burn_retried=burn_retried)
+            return _Failure(f"empty response from API (finish_reason={attempt.finish_reason or 'n/a'})")
+        return _NextSend(payload, uses_backoff=True, fresh_sample_taken=fresh_sample_taken)
 
-    def _record_reasoning(self, attempt: Attempt) -> None:
-        """Record one attempt's reasoning — ``last_reasoning`` reads it back.
+    def _take_reasoning(self, attempt: Attempt) -> None:
+        """Take this attempt's reasoning as the call's — ``last_reasoning``
+        reads its text back.
 
         The reasoning was parsed into ``attempt.reasoning`` by
-        ``_read_attempt``, in either channel a provider uses (the gateway
+        ``_parse_attempt``, in either channel a provider uses (the gateway
         sends ``reasoning``; some providers ``reasoning_content``), so this is
         the only assignment of the call's reasoning state.
 
-        A reasoning request that comes back with no reasoning is a SILENT
+        A reasoning request that is served no reasoning is a SILENT
         degradation: the gateway accepted the request and answered without
         deliberating, and weeks of evals measured the disable path without
-        anyone noticing. Name the model, the response id, the finish reason
-        and the reasoning length and token count — never the reasoning text,
-        which is family content here."""
+        anyone noticing. Name the model, the response id, the finish reason and
+        the reasoning length and token count — never the reasoning text, which
+        is family content here."""
         self._last_reasoning = attempt.reasoning
         if attempt.reasoning.enabled and not attempt.reasoning.has_text:
             logger.warning(
@@ -463,21 +458,21 @@ class AIClient:
                 "(response_id=%r, finish_reason=%r, reasoning_len=%d, reasoning_tokens=%s) — "
                 "deliberation was requested but not served",
                 self.model,
-                attempt.reply.body.get("id", "absent"),
+                attempt.response_id,
                 attempt.finish_reason,
                 len(attempt.reasoning.text),
                 attempt.usage.get("reasoning_tokens", "absent"),
             )
 
     @staticmethod
-    def _salvage(reasoning: Reasoning) -> str | None:
-        """The reasoning's answer, or None when it holds none.
+    def _answer_from_reasoning(reasoning: Reasoning) -> str | None:
+        """The answer the reasoning channel holds, or None when it holds none.
 
-        The stop-empty recovery may only substitute the reasoning for a
-        failed completion when that reasoning is a parseable JSON answer:
-        deliberation prose is a genuine failure and keeps the retry path
-        (review-bot finding on PR #62). A non-reasoning call is never
-        salvaged, even if a provider sent a stray reasoning channel."""
+        The stop-empty recovery may only substitute the reasoning for a failed
+        completion when that reasoning is a parseable JSON answer: deliberation
+        prose is a genuine failure and keeps the retry path (review-bot finding
+        on PR #62). A non-reasoning call is never recovered, even if a provider
+        sent a stray reasoning channel."""
         if not reasoning.enabled or not reasoning.has_text:
             return None
         try:

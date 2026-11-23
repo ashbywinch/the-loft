@@ -204,26 +204,27 @@ def test_a_thinking_reply_with_no_reasoning_is_reported(caplog: pytest.LogCaptur
     assert "reasoning_tokens=0" in caplog.text
 
 
-def test_salvage_returns_none_when_the_reasoning_is_empty() -> None:
-    """The stop-empty branch asks ``AIClient._salvage`` for an answer; an
-    empty, a non-reasoning or a prose-only reasoning channel has none, so the
-    decision is None without a hand-written truthiness guard of its own."""
+def test_the_answer_in_reasoning_is_none_when_the_reasoning_holds_none() -> None:
+    """The stop-empty branch asks ``AIClient._answer_from_reasoning`` for an
+    answer; an empty, a non-reasoning or a prose-only reasoning channel holds
+    none, so the answer is None without a hand-written truthiness guard of its
+    own."""
     client = AIClient(api_key="k")
-    assert client._salvage(Reasoning(enabled=True, text="")) is None
-    assert client._salvage(Reasoning(enabled=False, text='{"ok": true}')) is None
-    assert client._salvage(Reasoning(enabled=True, text="Let me weigh the evidence once more.")) is None
+    assert client._answer_from_reasoning(Reasoning(enabled=True, text="")) is None
+    assert client._answer_from_reasoning(Reasoning(enabled=False, text='{"ok": true}')) is None
+    assert client._answer_from_reasoning(Reasoning(enabled=True, text="Let me weigh the evidence once more.")) is None
 
     urlopen, _ = make_fake_urlopen([FakeResponse(gateway_response('{"ok": true}', reasoning=None, reasoning_tokens=0))])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
     assert client.chat("s", "u", reasoning=True) == '{"ok": true}'
 
 
-def test_salvage_returns_the_answer_when_the_reasoning_carries_one() -> None:
-    """The reasoning channel that parses as the JSON answer IS the answer —
-    ``AIClient._salvage`` returns it, so the recovery substitutes it for the
-    empty completion."""
+def test_the_answer_in_reasoning_is_the_text_when_it_parses_as_json() -> None:
+    """The reasoning channel that parses as the JSON answer holds the answer —
+    ``AIClient._answer_from_reasoning`` returns it, so the recovery
+    substitutes it for the empty completion."""
     verdict = '{"relevant": true, "contradiction": {"found": false, "detail": ""}}'
-    assert AIClient(api_key="k")._salvage(Reasoning(enabled=True, text=verdict)) == verdict
+    assert AIClient(api_key="k")._answer_from_reasoning(Reasoning(enabled=True, text=verdict)) == verdict
 
     stop_empty: dict[str, object] = {
         "choices": [{"message": {"content": "", "reasoning": verdict}, "finish_reason": "stop"}]
@@ -345,17 +346,17 @@ def test_chat_gives_up_on_persistent_empty_completions() -> None:
         client.chat("s", "u")
 
 
-def test_thinking_burn_retries_on_a_fresh_sample() -> None:
-    """A thinking completion that stalls (finish_reason "length", zero
+def test_a_stalled_reasoning_call_retries_on_a_fresh_sample() -> None:
+    """A reasoning completion that stalls (finish_reason "length", zero
     content) is retried ONCE with the reasoning KEPT: a fresh temperature
     sample and nothing else — no budget change, no prompt rewrite — free
     of the retry budget (arXiv:2502.08235's sample-and-select; the
     measured CI failure: a tighter budget was ignored by the gateway and
     a conclude-now nudge made the model wrap up inside its thinking and
     emit no content)."""
-    burned: dict[str, object] = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
+    stalled: dict[str, object] = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
     good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
-    urlopen, calls = make_fake_urlopen([FakeResponse(burned), FakeResponse(good)])
+    urlopen, calls = make_fake_urlopen([FakeResponse(stalled), FakeResponse(good)])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
     assert client.chat("s", "u", reasoning=True) == '{"ok": true}'
     assert len(calls) == 2
@@ -471,25 +472,25 @@ def test_find_api_key_ignores_the_loft_legacy_env(tmp_path: Path) -> None:
         find_api_key(_env={"LOFT_AI_KEY": "stale-token"}, _home=tmp_path)
 
 
-def test_burn_rescue_fires_once_then_terminates() -> None:
+def test_the_fresh_sample_rescue_fires_once_then_terminates() -> None:
     """The fresh-sample rescue is bounded to ONE attempt — a second
-    length-burn is a persistent stall and must take the terminating
+    length-limited stall is a persistent one and must take the terminating
     backoff path, never loop unboundedly (review-bot finding on PR #62:
     the unbound branch would re-issue forever with no counter)."""
-    burned: dict[str, object] = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
+    stalled: dict[str, object] = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
     good: dict[str, object] = {"choices": [{"message": {"content": '{"ok": true}'}}]}
-    urlopen, calls = make_fake_urlopen([FakeResponse(burned), FakeResponse(burned), FakeResponse(good)])
+    urlopen, calls = make_fake_urlopen([FakeResponse(stalled), FakeResponse(stalled), FakeResponse(good)])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=2)
     assert client.chat("s", "u", reasoning=True) == '{"ok": true}'
     assert [c["body"]["temperature"] for c in calls] == [0.3, 0.5, 0.5]  # ONE fresh-sample retry, then backoff
 
 
-def test_burn_rescue_fires_once_then_terminates_on_persistent_burns() -> None:
-    """Two burns with no recovery exhaust the retry budget — the give-up
+def test_the_fresh_sample_rescue_gives_up_on_a_persistent_stall() -> None:
+    """Two stalls with no recovery exhaust the retry budget — the give-up
     contract holds even when the stall persists (never an infinite
     loop)."""
-    burned: dict[str, object] = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
-    urlopen, _ = make_fake_urlopen([FakeResponse(burned) for _ in range(3)])
+    stalled: dict[str, object] = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}]}
+    urlopen, _ = make_fake_urlopen([FakeResponse(stalled) for _ in range(3)])
     client = AIClient(api_key="k", urlopen=urlopen, _sleep=lambda s: None, max_retries=0)
     with pytest.raises(AIClientError, match="empty response from API"):
         client.chat("s", "u", reasoning=True)

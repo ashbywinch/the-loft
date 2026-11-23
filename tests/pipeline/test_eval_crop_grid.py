@@ -80,7 +80,9 @@ def test_the_default_options_are_the_vision_models_gateway_read() -> None:
 def test_a_failed_rotated_re_read_is_surfaced_and_keeps_the_upright_read(tmp_path: Path) -> None:
     """The re-read dies: the crop still reads (the upright lines), and the
     result carries the failure — a caller can tell the page was read
-    upright-only and why, instead of the exception vanishing."""
+    upright-only and why, instead of the exception vanishing. The text is
+    vertical on the page either way: the upright read's tall boxes are what
+    sent the crop to the re-read, so its lines keep orientation 90."""
     page = tmp_path / "page.png"
     Image.new("RGB", (100, 100), "white").save(page)
     calls, urlopen = _upright_then(VERTICAL)
@@ -90,7 +92,7 @@ def test_a_failed_rotated_re_read_is_surfaced_and_keeps_the_upright_read(tmp_pat
     assert len(calls) == 2  # the upright read, then the rotated re-read
     assert read is not None
     assert [line.text for line in read.lines] == ["the postcard's message"]
-    assert read.lines[0].orientation == 0  # the upright read's line
+    assert read.lines[0].orientation == 90  # vertical on the page, whichever read it
     assert read.failure == ReadFailure("call", "VlmError: the rotated read died")
 
 

@@ -96,13 +96,24 @@ class CropRead:
 
 
 @dataclass(frozen=True)
+class CropFrame:
+    """The crop image's own pixel frame: the width and height the page was cut
+    at. The model measures its boxes in this frame and the +90 remap maps back
+    into it — one frame, so the cut and the remap cannot disagree by the
+    truncation of the crop's float bounds."""
+
+    width: int
+    height: int
+
+
+@dataclass(frozen=True)
 class _Reading:
     """One crop's text as a read yielded it, before the lines are cut: the text,
     the box each of its lines sits in (the crop's frame), what the read cost,
-    whether the text is vertical on the page (the +90 re-read's is), and the
-    re-read's failure when it did not land. Every branch of the read returns
-    one of these, so the crop's text, boxes, cost and orientation cannot
-    diverge."""
+    whether the text runs vertically on the page (what sent the crop to the
+    +90 re-read, and true whichever read the lines come from), and the re-read's
+    failure when it did not land. Every branch of the read returns one of
+    these, so the crop's text, boxes, cost and orientation cannot diverge."""
 
     text: str
     boxes: dict[int, list[float]]
@@ -131,7 +142,11 @@ def _crop_read_options(page_options: VlmOptions) -> VlmOptions:
     it — a few thousand tokens — so it does not read with the page's system
     prompt or the page-location budget (``VlmOptions.max_tokens``, 64000), which
     is sized for the full-page location call and on a 64k-context model leaves
-    the image no room at all."""
+    the image no room at all.
+
+    Everything else is the page config's and travels with it: the model, the
+    endpoint (``page_options.endpoint``), the key, the timeout, the urlopen
+    seam. The crop read changes what it reads with, not what it reads."""
     return replace(page_options, system=VlmPrompts.transcription_system_with_context(), max_tokens=8000)
 
 
@@ -160,11 +175,14 @@ def _fail_crop_read(index: int, reason: str) -> None:
     return None
 
 
-def _crop_image(image_path: Path, crop: CropReading, crop_path: Path) -> None:
-    """The crop's own image, cut from the page and saved — the call reads a file."""
+def _crop_image(image_path: Path, crop: CropReading, crop_path: Path) -> CropFrame:
+    """The crop's own image, cut from the page and saved — the call reads a file.
+    Returns the frame it was cut at: the pixel rectangle the model measures its
+    boxes in, and the one the +90 remap maps back into."""
     box = (int(crop.x), int(crop.y), int(crop.x + crop.w), int(crop.y + crop.h))
     with Image.open(image_path) as im:
         im.crop(box).save(crop_path)
+    return CropFrame(width=box[2] - box[0], height=box[3] - box[1])
 
 
 def _rotated_image(crop_path: Path, rotated_path: Path) -> None:
@@ -185,11 +203,13 @@ def _crop_lines(reading: _Reading) -> list[CropLine]:
     ]
 
 
-def _rotated_reading(crop: CropReading, rotated_path: Path, options: VlmOptions, upright: _Reading) -> _Reading:
+def _rotated_reading(frame: CropFrame, rotated_path: Path, options: VlmOptions, upright: _Reading) -> _Reading:
     """The vertical crop's re-read: the re-read's horizontal reading when it
     lands, or the upright one carrying the failure that kept it from landing.
     Both calls' tokens are the read's cost — the re-read that answered and
-    measured nothing still cost them."""
+    measured nothing still cost them. The reading stays vertical on the page
+    whichever text wins: the upright read's boxes are the tall ones that sent
+    the crop here."""
     rotated = _read_rotated(rotated_path, options)
     cost = replace(upright, tokens=upright.tokens + rotated.tokens)
     if rotated.reading is None:
@@ -200,9 +220,8 @@ def _rotated_reading(crop: CropReading, rotated_path: Path, options: VlmOptions,
         return replace(cost, failure=ReadFailure("answer", "the rotated read gave no usable lines"))
     # the +90 rotation's inverse: the rotated frame's height is the crop's
     # width (pinned empirically)
-    rot_h = int(crop.w)
-    boxes = {line: remap_rotated(box, int(crop.h), rot_h) for line, box in rotated.reading.boxes.items()}
-    return _Reading(rotated.reading.text, boxes, cost.tokens, vertical=True)
+    boxes = {line: remap_rotated(box, frame.height, frame.width) for line, box in rotated.reading.boxes.items()}
+    return _Reading(rotated.reading.text, boxes, cost.tokens, vertical=upright.vertical)
 
 
 def read_crop(
@@ -223,7 +242,7 @@ def read_crop(
     ``page_options`` is the caller's page read config; the crop read states
     its own (``_crop_read_options``)."""
     crop_path = tmp / f"crop-{index}.png"
-    _crop_image(image_path, crop, crop_path)
+    frame = _crop_image(image_path, crop, crop_path)
     options = _crop_read_options(page_options)
     t0 = monotonic()
     try:
@@ -236,10 +255,13 @@ def read_crop(
         return _fail_crop_read(index, "no geometry from the model")
     reading = _Reading(transcription.text, transcription.boxes, answer.usage.tokens)
     if _vertical_boxes(reading.boxes):
+        # the text runs vertically on the page — that is what sends the crop to
+        # the +90 re-read, and it stays true whichever read the lines come from
+        reading = replace(reading, vertical=True)
         rotated_path = tmp / f"crop-{index}-rot.png"
         _rotated_image(crop_path, rotated_path)
         print(f"crop {index}: vertical text — rotated +90 and re-read", file=sys.stderr)
-        reading = _rotated_reading(crop, rotated_path, options, reading)
+        reading = _rotated_reading(frame, rotated_path, options, reading)
     if not reading.text:
         return _fail_crop_read(index, "no readable text")
     lines = _crop_lines(reading)

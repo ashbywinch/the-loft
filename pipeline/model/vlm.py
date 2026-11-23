@@ -34,6 +34,7 @@ from pipeline.model.config import ModelConfig
 from pipeline.model.http_headers import HttpHeaders
 from pipeline.model.image_content import ImageContent
 from pipeline.model.orientation_report import OrientationReport
+from pipeline.model.reasoning import Reasoning
 from pipeline.model.text_content import TextContent
 from pipeline.model.token_usage import TokenUsage
 from pipeline.model.transcription import Transcription
@@ -320,7 +321,7 @@ def transcribe_images_vlm(images: list[Path], *, options: VlmOptions | None = No
                 ],
                 temperature=0,
                 max_tokens=opts.max_tokens,
-                thinking=False,
+                reasoning=Reasoning(enabled=False),
             ),
             timeout=opts.timeout,
             urlopen=opts.urlopen,
@@ -369,7 +370,7 @@ def transcribe_image_vlm(
                 # budget reasoning and return empty content. A model that
                 # rejects the param gets one retry without it (the AIClient
                 # house pattern).
-                thinking=False,
+                reasoning=Reasoning(enabled=False),
             ),
             timeout=timeout,
             urlopen=urlopen,
@@ -406,7 +407,7 @@ def _vision_post(
     urlopen: Callable[..., Any] | None,
 ) -> ChatResponse:
     """POST one chat-completions payload. On a 400/422 that the model
-    blames on the ``thinking`` param, retry once without it; every other
+    blames on the ``reasoning`` param, retry once without it; every other
     failure surfaces as VlmError (the module's contract)."""
     do_open = urlopen or urllib.request.urlopen
     while True:
@@ -439,12 +440,12 @@ def _vision_post(
                     raise VlmError(f"unexpected vision response: {json.dumps(body)[:300]}") from exc
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", errors="replace")[:300]
-            if e.code in (400, 422) and payload.thinking is not None:
-                # model doesn't understand the thinking param — retry once
+            if e.code in (400, 422) and payload.reasoning is not None:
+                # model doesn't understand the reasoning param — retry once
                 # without it (mirrors AIClient._post)
-                payload = replace(payload, thinking=None)
+                payload = replace(payload, reasoning=None)
                 logger.info(
-                    "model %s rejected the thinking param (HTTP %d); retrying without it",
+                    "model %s rejected the reasoning param (HTTP %d); retrying without it",
                     payload.model,
                     e.code,
                 )

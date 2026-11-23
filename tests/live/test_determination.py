@@ -10,33 +10,37 @@ through its callers.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import override
+from typing import TypeVar, override
 
 import pytest
 
 from loft.live.determination import Determination, IdentityRecords
 from tools.gone_person import GonePerson
-from tools.records import Person
+from tools.gone_place import GonePlace
+from tools.records import Person, Place
+
+Record = TypeVar("Record", bound=Person | Place)
 
 
-class FakeRecords(IdentityRecords[Person]):
-    """One person in a dict — the three verbs `Determination` uses, and a log
-    of what it was asked to write. It subclasses the protocol, so the type
+class FakeRecords(IdentityRecords[Record]):
+    """Records in a dict — the three verbs `Determination` uses, and a log of
+    what it was asked to write. It subclasses the protocol, so the type
     checker holds a fake to the same three verbs as the real collections
     (`testing-standards.md`: "fakes subclass the real classes so type checking
-    still holds")."""
+    still holds"), and it is generic over the two record kinds for the same
+    reason the ladder is."""
 
-    def __init__(self, *people: Person) -> None:
-        self.rows = {person.id: person for person in people}
-        self.saves: list[tuple[Person, int | None]] = []
+    def __init__(self, *records: Record) -> None:
+        self.rows: dict[str, Record] = {record.id: record for record in records}
+        self.saves: list[tuple[Record, int | None]] = []
         self.deleted: list[str] = []
 
     @override
-    def get(self, record_id: str) -> Person | None:
+    def get(self, record_id: str) -> Record | None:
         return self.rows.get(record_id)
 
     @override
-    def save(self, record: Person, base: int | None = None) -> Person:
+    def save(self, record: Record, base: int | None = None) -> Record:
         self.saves.append((record, base))
         self.rows[record.id] = record
         return record
@@ -178,3 +182,18 @@ def test_an_unknown_decision_is_refused() -> None:
     with pytest.raises(ValueError, match="unknown decision"):
         _apply(records, "promote")
     assert (records.saves, records.deleted) == ([], [])
+
+
+def test_a_place_is_confirmed_on_the_version_it_read() -> None:
+    """The ladder is generic over the two record kinds: a place's status and
+    basis go through the same arms, and `_status` reads the same field — so the
+    Place arm is pinned here, not only through `Identities.resolve_place`."""
+    place = Place.from_dict({"id": "pl-marlock", "name": "Marlock", "status": "proposed"})
+    places: FakeRecords[Place] = FakeRecords(place)
+
+    resolved = Determination("attested").apply(places, "pl-marlock", gone=GonePlace)
+
+    assert isinstance(resolved, Place)
+    assert resolved.status == "confirmed"
+    assert resolved.basis == {"basis": "knowledge", "confidence": "certain"}
+    assert places.saves == [(resolved, 0)]

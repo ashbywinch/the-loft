@@ -416,7 +416,7 @@ class TestThinkingDisabled:
 
         body = json.dumps(TestThinkingDisabled._ok_body()).encode()
 
-        def fake_urlopen(request, timeout=None):  # noqa: ARG002 — the signature mirrors urllib.request.urlopen so a call-shape change fails here
+        def fake_urlopen(request, timeout=None):  # noqa: ARG002 — timeout is the client's own call shape (_vision_post calls urlopen(request, timeout=…)), kept so a change to that call fails here; the double answers at once, so it is never read
             payload = json.loads(request.data.decode("utf-8"))
             calls.append(payload)
             if "reasoning" in payload:

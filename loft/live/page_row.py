@@ -19,7 +19,11 @@ from loft.live.person_row import RowPosition
 
 @dataclass(frozen=True)
 class PageState:
-    """One page's current state — the image, orientation, category and stage."""
+    """One page's current state — the image, orientation, category and stage.
+
+    A page's version starts at 1 and only ever grows; a state carrying less is
+    not a page, so it is refused where the page is made rather than repaired
+    where the version is read."""
 
     page_id: str
     image_asset_id: str
@@ -29,6 +33,10 @@ class PageState:
     category: str
     status: str
     event_seq: int = 0
+
+    def __post_init__(self) -> None:
+        if self.revision < 0:
+            raise ValueError(f"page {self.page_id} has a negative revision: {self.revision}")
 
 
 @dataclass(frozen=True)

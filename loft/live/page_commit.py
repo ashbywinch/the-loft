@@ -95,18 +95,24 @@ class PageCommit:
         return "superseded", self.base + 1
 
     def _reading(self, reading: dict[str, Any] | None, version: int) -> tuple[ReadingState | None, tuple[PageRow, ...]]:
-        """The reading blob, stored and counted — the rows derive from it."""
+        """The reading blob, stored and counted — the rows derive from it.
+
+        The reading arrives in the blob's own wire shape (the read stage's
+        output, `reading_blob`'s), so its fields are read once here, before the
+        blob is built: the words and the correction are the caller's, and the
+        blob is their constructor's."""
         if reading is None:
             return None, ()
+        words = list(reading.get("words") or [])
+        corrected = str(reading.get("corrected") or "")
         blob = reading_blob(
             self.page.page_id,
             reading,
-            list(reading.get("words") or []),
+            words,
             rotation=self.page.rotation,
             revision=version,
         )
         sha = self.change.content.put(_canonical_bytes(blob), mime="application/json")
-        corrected = str(blob.get("corrected", ""))
         rows = reading_rows(self.page.page_id, blob, revision=version, corrected=bool(corrected))
         state = ReadingState(
             page_id=self.page.page_id,

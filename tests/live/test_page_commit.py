@@ -68,6 +68,14 @@ def test_a_create_appends_one_event_and_writes_the_row(store: LiveStore) -> None
     assert store.verify_chain() == ()
 
 
+def test_a_page_cannot_be_built_at_a_negative_revision() -> None:
+    """A page's version starts at 1 and only grows: `PageState` refuses a
+    negative one where the page is made, so `_version`'s create rule (`> 0`,
+    else 1) never has a corrupt value to repair."""
+    with pytest.raises(ValueError, match="negative revision"):
+        _page(revision=-1)
+
+
 def test_a_create_without_a_revision_starts_at_one(store: LiveStore) -> None:
     """The import's revision wins when it has one, and a page whose reading
     carries none starts at 1 — the `> 0` guard in `_version`, so no page is

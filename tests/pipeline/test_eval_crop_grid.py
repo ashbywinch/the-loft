@@ -97,7 +97,8 @@ def test_a_failed_rotated_re_read_is_surfaced_and_keeps_the_upright_read(tmp_pat
 def test_a_rotated_re_read_with_no_usable_lines_is_surfaced_too(tmp_path: Path) -> None:
     """A re-read that answers but measures nothing is the same fallback — the
     upright read stands in, and the result says so rather than reporting a
-    rotation that never happened."""
+    rotation that never happened. The answer cost its tokens, so the read's
+    cost counts both calls."""
     page = tmp_path / "page.png"
     Image.new("RGB", (100, 100), "white").save(page)
     calls, urlopen = _upright_then(json.dumps({"lines": []}), dead=False)
@@ -108,6 +109,7 @@ def test_a_rotated_re_read_with_no_usable_lines_is_surfaced_too(tmp_path: Path) 
     assert read is not None
     assert [line.text for line in read.lines] == ["the postcard's message"]
     assert read.failure == "the rotated read gave no usable lines"
+    assert read.tokens == 22  # both calls' tokens — the answer cost them
 
 
 def test_a_landed_rotated_re_read_replaces_the_upright_read(tmp_path: Path) -> None:

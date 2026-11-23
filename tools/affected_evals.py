@@ -34,11 +34,12 @@ class AffectedEvals:
 
 
 def _git_base() -> str:
-    for ref in ("origin/main",):
-        result = subprocess.run(["git", "rev-parse", "--verify", "-q", ref], capture_output=True, text=True)
-        if result.returncode == 0:
-            return ref
-    return "HEAD"
+    """The base the diff is taken against: `origin/main` when the
+    remote-tracking ref resolves, else HEAD — one ref, not a list, because a
+    fallback would hide a misnamed remote."""
+    base = "origin/main"
+    probe = subprocess.run(["git", "rev-parse", "--verify", "-q", base], capture_output=True, text=True)
+    return base if probe.returncode == 0 else "HEAD"
 
 
 def affected_markers() -> str:

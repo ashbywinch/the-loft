@@ -278,6 +278,23 @@ class TestVlmOptions:
         # rule) — a caller that resolves an absent flag to "" still reaches it
         assert VlmOptions(base_url="").endpoint == AIClient.DEFAULT_BASE_URL
 
+    def test_a_blank_model_is_refused(self) -> None:
+        # a read with no model has nothing to call: the value cannot be built,
+        # so no caller can name a trial (or an output file) after nothing
+        with pytest.raises(ValueError, match="needs a model"):
+            VlmOptions(model="")
+        with pytest.raises(ValueError, match="needs a model"):
+            VlmOptions(model="   ")
+
+    def test_the_model_slug_names_the_trials_files(self) -> None:
+        """The experiments save one reading per model, so the model's name is
+        the file's own part; a name that reduces to nothing cannot name a file."""
+        assert VlmOptions(model="z-ai/glm-4.6v").model_slug == "z-ai-glm-4.6v"
+        assert VlmOptions(model="openai/gpt@2026").model_slug == "openai-gpt2026"
+        unnamed = VlmOptions(model="@")
+        with pytest.raises(ValueError, match="names no output file"):
+            _ = unnamed.model_slug
+
 
 class TestTranscribeWithFallbacks:
     """The escalation ladder: each variant is one transcribe_image_vlm

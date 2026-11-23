@@ -74,7 +74,13 @@ class Pages:
         adjustment: bytes | None = None,
         adjustment_at: str = "",
     ) -> PageState:
-        """Write a page and its reading; the rows derive from the reading blob."""
+        """Write a page and its reading; the rows derive from the reading blob.
+
+        The four optional arguments are this collection's write API — the
+        reading the read stage saves and the correction the review surface
+        saves — and each is one step of the commit (`PageCommit._reading`,
+        `_adjustment`), which is where the write itself lives. `correct` is the
+        other path: a correction-only supersede that leaves the reading alone."""
         change = self.change
         if change is None:
             raise Conflict("pages.save needs a change")

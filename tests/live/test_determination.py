@@ -10,31 +10,38 @@ through its callers.
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import override
 
 import pytest
 
-from loft.live.determination import Determination
+from loft.live.determination import Determination, IdentityRecords
 from tools.gone_person import GonePerson
 from tools.records import Person
 
 
-class FakeRecords:
+class FakeRecords(IdentityRecords[Person]):
     """One person in a dict — the three verbs `Determination` uses, and a log
-    of what it was asked to write."""
+    of what it was asked to write. It subclasses the protocol, so the type
+    checker holds a fake to the same three verbs as the real collections
+    (`testing-standards.md`: "fakes subclass the real classes so type checking
+    still holds")."""
 
     def __init__(self, *people: Person) -> None:
         self.rows = {person.id: person for person in people}
         self.saves: list[tuple[Person, int | None]] = []
         self.deleted: list[str] = []
 
+    @override
     def get(self, record_id: str) -> Person | None:
         return self.rows.get(record_id)
 
+    @override
     def save(self, record: Person, base: int | None = None) -> Person:
         self.saves.append((record, base))
         self.rows[record.id] = record
         return record
 
+    @override
     def delete(self, record_id: str) -> None:
         self.deleted.append(record_id)
         self.rows.pop(record_id, None)

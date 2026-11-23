@@ -61,9 +61,12 @@ def test_an_unknown_record_is_left_alone() -> None:
     assert (records.saves, records.deleted) == ([], [])
 
 
-def test_a_rejected_proposal_is_terminal() -> None:
+@pytest.mark.parametrize("decision", ["attested", "estimated", "pending", "delete"])
+def test_a_rejected_proposal_is_terminal_whatever_the_decision(decision: str) -> None:
+    """A rejected proposal is terminal before the decision is even read: no
+    disposition revives it, and none writes over it."""
     records = FakeRecords(_person("rejected"))
-    resolved = _apply(records, "attested")
+    resolved = _apply(records, decision)
     assert isinstance(resolved, Person) and resolved.status == "rejected"
     assert (records.saves, records.deleted) == ([], [])
 

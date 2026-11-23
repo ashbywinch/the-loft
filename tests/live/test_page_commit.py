@@ -132,3 +132,16 @@ def test_the_adjustment_is_stored_as_the_pages_correction(store: LiveStore) -> N
     assert adjustment is not None
     assert adjustment.sha256 == hashlib.sha256(drawn).hexdigest()
     assert adjustment.updated_at == "2026-01-01T00:00:00+00:00"
+
+
+def test_an_adjustment_without_a_reading_is_stored_on_its_own(store: LiveStore) -> None:
+    """The import pipeline saves a page whose correction exists before any
+    reading does (`PagePlan.reading` is None when the reading file is absent),
+    so the two are independent arguments of one commit."""
+    drawn = b'{"lines":[]}'
+    with store.change(actor="import") as change:
+        _commit(change).commit(adjustment=drawn, adjustment_at="2026-01-01T00:00:00+00:00")
+    adjustment = store.pages.adjustment(PAGE_ID)
+    assert adjustment is not None and adjustment.sha256 == hashlib.sha256(drawn).hexdigest()
+    assert store.pages.reading(PAGE_ID) is None
+    assert store.pages.rows(PAGE_ID) == ()

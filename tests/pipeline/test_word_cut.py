@@ -87,6 +87,12 @@ def _split_shape() -> Mark:
     return _mark(_block(80, 99, 0, 45) + _block(140, 150, 60, 69), "w")
 
 
+def _one_line_split_shape() -> Mark:
+    """The same narrow bottom piece, on the upper line: the boundary's own
+    line is line 0."""
+    return _mark(_block(80, 99, 0, 45) + _block(100, 110, 60, 69), "w")
+
+
 def _below() -> Segment:
     return Segment(line=1, y0=140, y1=150)
 
@@ -108,6 +114,18 @@ def test_a_full_word_beneath_is_a_different_word_not_a_continuation() -> None:
     full_word = _mark(_block(150, 175, 60, 105), "other")
     assert full_word.is_word_shaped(SCALE.unit)
     assert WordCut([shape, full_word], LINES, SCALE)._continuation(shape, _below()) is None
+
+
+def test_a_continuation_must_sit_on_the_boundarys_own_line() -> None:
+    """The same word's rest is on the line the boundary is on; ink at the edge
+    that has moved to the next line is a different row's word."""
+    shape = _one_line_split_shape()
+    below = Segment(line=0, y0=100, y1=110)
+    same_line = _mark(_block(110, 118, 60, 105), "cont")
+    wrong_line = _mark(_block(110, 124, 60, 105), "cont")
+    assert not same_line.is_word_shaped(SCALE.unit) and not wrong_line.is_word_shaped(SCALE.unit)
+    assert WordCut([shape, same_line], LINES, SCALE)._continuation(shape, below) is same_line
+    assert WordCut([shape, wrong_line], LINES, SCALE)._continuation(shape, below) is None
 
 
 def test_the_split_words_rest_is_joined_to_its_piece_and_not_boxed_apart() -> None:

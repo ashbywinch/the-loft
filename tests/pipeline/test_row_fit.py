@@ -119,6 +119,30 @@ def test_a_cut_through_one_continuous_band_of_ink_is_not_a_cut() -> None:
     assert fit.segments(shape) == [Segment(line=0, y0=80, y1=140)]
 
 
+# -- the underline's band ---------------------------------------------------
+
+
+def test_a_band_of_full_width_rows_is_cut_into_its_own_segment() -> None:
+    """Rows whose runs span most of the mark's width are a stroke's ink, not
+    writing: the segment they fall inside is split around them so the strip
+    can classify and remove the band (the underline welded under its words)."""
+    fit = RowFit([Line(a=0.0, b=100.0)])
+    shape = _mark(_block(80, 99, 0, 9) + _block(100, 105, 0, 45) + _block(106, 120, 0, 9))
+    assert fit.segments(shape) == [
+        Segment(line=0, y0=80, y1=99),
+        Segment(line=0, y0=100, y1=105),
+        Segment(line=0, y0=106, y1=120),
+    ]
+
+
+def test_one_wide_row_is_a_strokes_ink_not_a_band() -> None:
+    """A single stray long row is a letter's stroke: a band is at least two
+    rows, so the segment is left whole."""
+    fit = RowFit([Line(a=0.0, b=100.0)])
+    shape = _mark(_block(80, 99, 0, 9) + _block(100, 100, 0, 45) + _block(101, 120, 0, 9))
+    assert fit.segments(shape) == [Segment(line=0, y0=80, y1=120)]
+
+
 # -- the gap between stacked words ------------------------------------------
 
 

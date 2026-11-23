@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, cast
+
+from loft.live.determination import DECISIONS, Decision
 
 
 @dataclass(frozen=True)
@@ -23,7 +25,7 @@ class ReviewDecideRequest:
 
     session_id: str
     person_id: str
-    decision: Literal["attested", "estimated", "pending", "delete"]
+    decision: Decision
     basis: dict[str, Any] | None = None
 
     @classmethod
@@ -31,7 +33,7 @@ class ReviewDecideRequest:
         """The decision a client states."""
         person_id = str(raw.get("person_id", ""))
         decision = str(raw.get("decision", ""))
-        if not person_id or decision not in ("attested", "estimated", "pending", "delete"):
+        if not person_id or decision not in DECISIONS:
             raise ValueError("person_id and a valid decision (attested/estimated/pending/delete) are required")
         basis = raw.get("basis")
         if basis is not None and not isinstance(basis, dict):
@@ -42,6 +44,6 @@ class ReviewDecideRequest:
         return cls(
             session_id=session_id,
             person_id=person_id,
-            decision=cast(Literal["attested", "estimated", "pending", "delete"], decision),
+            decision=cast(Decision, decision),
             basis=basis,
         )

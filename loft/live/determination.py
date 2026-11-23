@@ -18,13 +18,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
-from typing import Protocol, TypeVar
+from typing import Literal, Protocol, TypeVar, cast, get_args
 
 from loft.live.identity_map import BasisKinds, basis_after, renders_estimated
 from tools.records import Person, Place
 
 Record = TypeVar("Record", bound=Person | Place)
 Gone = TypeVar("Gone")
+
+#: The reviewer's four decisions — the closed set the review offers.
+Decision = Literal["attested", "estimated", "pending", "delete"]
+DECISIONS = get_args(Decision)  # the same four, spelled once
 
 
 class IdentityRecords(Protocol[Record]):
@@ -51,7 +55,12 @@ class Determination:
     or delete — the ladder every identity collection reads through."""
 
     def __init__(self, decision: str, basis: dict[str, str] | None = None) -> None:
-        self.decision = decision
+        """One decision and its basis. The decision crosses JSON at the API, so
+        the closed set is checked at the door: an unknown decision is refused
+        here, whatever record the determination is later applied to."""
+        if decision not in DECISIONS:
+            raise ValueError(f"unknown decision: {decision!r}")
+        self.decision: Decision = cast(Decision, decision)  # the check above is the proof
         self.basis = basis
 
     def apply(

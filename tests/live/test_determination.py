@@ -167,10 +167,13 @@ def test_delete_removes_the_record_and_returns_the_marker() -> None:
 
 
 def test_an_unknown_decision_is_refused() -> None:
-    records = FakeRecords(_person())
+    """At the door: the closed set is checked when the determination is made,
+    so an unknown decision cannot pass quietly through a record that is not
+    there (the ladder would otherwise return None before reaching any arm)."""
+    records = FakeRecords()
     with pytest.raises(ValueError, match="unknown decision"):
         _apply(records, "promote")
-    assert records.saves == []
+    assert (records.saves, records.deleted) == ([], [])
 
 
 def test_renders_estimated_is_total_on_a_missing_basis() -> None:

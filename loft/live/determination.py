@@ -1,5 +1,10 @@
 """The review's determination — one decision, applied to the record as it stands.
 
+A **decision** is the reviewer's act: ``attested``, ``estimated``, ``pending``
+or ``delete``. A **disposition** is what the record stores afterwards
+(``proposed``/``confirmed``/``rejected``, `_status`). The two words are not
+interchangeable, and neither is a synonym for the other.
+
 TECHSPEC/05 §18.2: ``attested`` confirms; ``estimated`` confirms on the
 reviewer's own recollection (``estimated`` is a rendering, not a status);
 ``pending`` decides nothing; ``delete`` ends the record and its edges. A
@@ -22,8 +27,9 @@ Record = TypeVar("Record", bound=Person | Place)
 Gone = TypeVar("Gone")
 
 
-class Records(Protocol[Record]):
-    """What a determination needs from the collection holding the record.
+class IdentityRecords(Protocol[Record]):
+    """What a determination needs from an identity collection — the collection
+    holding a person or a place.
 
     The three verbs are the identity repositories' shared surface (`People`,
     `Collection`, and the memory store's twin), so the determination's
@@ -41,19 +47,22 @@ class Records(Protocol[Record]):
 
 
 class Determination:
-    """One reviewer decision — the four dispositions shared by every record."""
+    """One reviewer decision, applied to a record: attested, estimated, pending
+    or delete — the ladder every identity collection reads through."""
 
     def __init__(self, decision: str, basis: dict[str, str] | None = None) -> None:
         self.decision = decision
         self.basis = basis
 
-    def apply(self, records: Records[Record], record_id: str, *, gone: Callable[[str], Gone]) -> Record | Gone | None:
+    def apply(
+        self, records: IdentityRecords[Record], record_id: str, *, gone: Callable[[str], Gone]
+    ) -> Record | Gone | None:
         """The determination applied to the record as it stands — the updated
         record, the ``gone`` marker for a delete, or the record unchanged.
 
-        ``records`` is typed by `Records`: the ladder can only ever read a
-        record the projection holds (or ``None``), so the delete marker this
-        method returns cannot come back in through `get`."""
+        ``records`` is typed by `IdentityRecords`: the ladder can only ever
+        read a record the projection holds (or ``None``), so the delete marker
+        this method returns cannot come back in through `get`."""
         current = records.get(record_id)
         if current is None or _status(current) == "rejected":
             return current  # a rejected proposal is terminal (TECHSPEC/05 §18.2)

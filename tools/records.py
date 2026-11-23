@@ -97,6 +97,11 @@ class RecordField:
     # model's disposition filter (loft/live/identity_map.BasisKinds) keeps the
     # same four, so the vocabulary has one home.
     BASIS_EVIDENCE_FIELDS: ClassVar[tuple[str, ...]] = ("text", "by", "when", "note")
+    # The evidence fields an identification's proposal writes even when it
+    # states nothing (its wire shape carries its table's empty columns); the
+    # proposal's text is required, and every other field of the vocabulary
+    # joins a basis only when it says something.
+    PROPOSAL_WRITTEN_WHEN_EMPTY: ClassVar[tuple[str, ...]] = ("by", "when")
 
     raw: Mapping[str, Any]
     key: str
@@ -173,18 +178,19 @@ def _disposition_basis(key: str, value: Mapping[str, Any]) -> dict[str, str]:
 
 def _proposed_basis(key: str, value: Mapping[str, Any]) -> dict[str, str]:
     """An identification's proposal — the document's own words, which the value
-    must state — with who/when written even when absent and the note when it has
-    one. A proposal has no disposition: the record it proposes is not held with
-    a basis/confidence pair yet."""
-    text = str(value.get("text", "")).strip()
-    if not text:
+    must state — with the fields its wire shape always carries (who and when,
+    empty or not) and every other evidence field it states. A proposal has no
+    disposition: the record it proposes is not held with a basis/confidence
+    pair yet. Both shapes read ``BASIS_EVIDENCE_FIELDS``, so a field added to
+    the vocabulary is written by the proposal as well as the disposition."""
+    if not str(value.get("text", "")).strip():
         raise ValueError(f"invalid {key}: {value!r} — the text is required")
-    return {
-        "text": text,
-        "by": str(value.get("by", "")).strip(),
-        "when": str(value.get("when", "")).strip(),
-        **({"note": str(value["note"]).strip()} if value.get("note") else {}),
-    }
+    out: dict[str, str] = {}
+    for field_name in RecordField.BASIS_EVIDENCE_FIELDS:
+        stated = str(value.get(field_name, "")).strip()
+        if stated or field_name in RecordField.PROPOSAL_WRITTEN_WHEN_EMPTY:
+            out[field_name] = stated
+    return out
 
 
 # The record statuses (people, places, orgs, and relationships). The

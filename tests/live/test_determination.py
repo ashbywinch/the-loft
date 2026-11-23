@@ -15,6 +15,7 @@ from typing import TypeVar, override
 import pytest
 
 from loft.live.determination import Determination, IdentityRecords
+from loft.live.errors import StaleVersion
 from tools.gone_person import GonePerson
 from tools.gone_place import GonePlace
 from tools.records import Person, Place
@@ -63,6 +64,39 @@ def _apply(records: FakeRecords, decision: str, basis: dict[str, str] | None = N
 
 
 # -- the edges: nothing to decide, or nothing left to decide ------------------
+
+
+def test_the_gone_marker_is_made_only_for_a_delete() -> None:
+    """`gone` is the delete's marker: no other decision calls it, so a
+    determination that keeps the record cannot hand a tombstone back."""
+    calls: list[str] = []
+
+    def gone(record_id: str) -> GonePerson:
+        calls.append(record_id)
+        return GonePerson(record_id)
+
+    for decision in ("attested", "estimated", "pending"):
+        basis = {"text": "She told me so", "by": "Aria", "when": "2026-08-09"} if decision == "estimated" else None
+        resolved = Determination(decision, basis).apply(FakeRecords(_person()), "p-aria", gone=gone)
+        assert isinstance(resolved, Person)
+    assert calls == []
+
+    resolved = Determination("delete").apply(FakeRecords(_person()), "p-aria", gone=gone)
+    assert resolved == GonePerson("p-aria")
+    assert calls == ["p-aria"]
+
+
+def test_a_stale_save_propagates() -> None:
+    """The save is on the version the ladder read: a store that finds the
+    record moved on raises, and the determination does not swallow it."""
+
+    class StaleRecords(FakeRecords[Person]):
+        @override
+        def save(self, record: Person, base: int | None = None) -> Person:
+            raise StaleVersion(current=record, base=base)
+
+    with pytest.raises(StaleVersion):
+        _apply(StaleRecords(_person("proposed", version=3)), "attested")
 
 
 def test_an_unknown_record_is_left_alone() -> None:

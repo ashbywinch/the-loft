@@ -27,6 +27,13 @@ detector boxes the page, the reviewer corrects it.
 | boxes | one box per line-run: that line's ink, split where a gap is a column break, bounded by the distance to the neighbouring baselines |
 | strokes | a stroke **is** a line: it names the line it was drawn along; a trace replaces the detector's box over the span it defines |
 
+The code's names for those stages: the rows-against-lines reading — which line a
+mark belongs to, the segments the fit proposes and the gap it finds — is
+`RowFit` (`pipeline/detect/row_fit.py`); the cut of a shape at a line boundary,
+and the continuation that rejoins one word split across two components, is
+`WordCut` (`pipeline/detect/word_cut.py`). `Writing` keeps the page's
+measurement and hands those two the marks and lines as they stand.
+
 Layer by layer check: the page's scale comes from `tools/pagescale.py` — the
 writing's own height (the median height of its ink shapes) times the ratio
 between line spacing and writing height, the ratio measured from the reviewer's

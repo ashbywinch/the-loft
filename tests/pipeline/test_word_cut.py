@@ -61,6 +61,19 @@ def test_a_mark_spanning_two_lines_is_two_words() -> None:
     assert [(word.y0, word.y1, word.line) for word in words] == [(80.0, 120.0, 0), (121.0, 140.0, 1)]
 
 
+def test_a_mark_spanning_three_lines_is_three_words() -> None:
+    """The cut iterates past the first boundary: one word per fitted line, in
+    reading order, each on its own line."""
+    lines = [Line(a=0.0, b=100.0), Line(a=0.0, b=140.0), Line(a=0.0, b=180.0)]
+    shape = _mark(_block(85, 115, 0, 45) + _block(125, 155, 60, 105) + _block(165, 195, 120, 165), "w")
+    words = WordCut([shape], lines, SCALE).words()
+    assert [(word.y0, word.y1, word.line) for word in words] == [
+        (85.0, 115.0, 0),
+        (125.0, 155.0, 1),
+        (165.0, 195.0, 2),
+    ]
+
+
 def test_a_word_on_one_line_is_one_word() -> None:
     words = WordCut([_mark(_block(80, 99, 0, 45), "one")], [Line(a=0.0, b=100.0)], SCALE).words()
     assert [(word.y0, word.y1) for word in words] == [(80.0, 99.0)]

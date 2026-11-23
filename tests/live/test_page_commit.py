@@ -68,6 +68,16 @@ def test_a_create_appends_one_event_and_writes_the_row(store: LiveStore) -> None
     assert store.verify_chain() == ()
 
 
+def test_a_create_without_a_revision_starts_at_one(store: LiveStore) -> None:
+    """The import's revision wins when it has one, and a page whose reading
+    carries none starts at 1 — the `> 0` guard in `_version`, so no page is
+    ever created at version 0."""
+    with store.change(actor="import") as change:
+        saved = _commit(change, revision=0).commit(reading=_reading())
+    assert saved.revision == 1
+    assert [event["event_type"] for event in store.events_for(PAGE_ID, entity_kind="page")] == ["created"]
+
+
 def test_a_create_stores_the_reading_blob_and_counts_it(store: LiveStore) -> None:
     with store.change(actor="import") as change:
         _commit(change).commit(reading=_reading())

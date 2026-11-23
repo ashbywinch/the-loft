@@ -21,6 +21,22 @@ def test_place_rejects_escaping_record_id() -> None:
         PlacesTable.from_dict({"places": [{"id": "a/b", "name": "X"}]})
 
 
+def test_a_basis_missing_its_kind_or_confidence_is_refused() -> None:
+    """The live model's basis is the pair — `RecordField.basis` refuses half of
+    one rather than storing a kind with no confidence (or the reverse) as an
+    estimate's evidence."""
+    for half in ({"basis": "knowledge"}, {"confidence": "certain"}):
+        with pytest.raises(ValueError, match="basis and confidence are required"):
+            Person.from_dict({"id": "p-aria", "name": "Aria Barlow", "basis": half})
+
+
+def test_a_basis_in_neither_shape_is_refused_for_its_text() -> None:
+    """Neither `basis`/`confidence` nor a text: the older format's rule is the
+    one that applies, and it says the text is required."""
+    with pytest.raises(ValueError, match="the text is required"):
+        Person.from_dict({"id": "p-aria", "name": "Aria Barlow", "basis": {"by": "Aria"}})
+
+
 def test_a_confirmed_record_writes_no_status_on_the_wire() -> None:
     """The identity wire's own rule: the status appears only when it is not
     confirmed, so a confirmed record's dict has no `status` key — and the

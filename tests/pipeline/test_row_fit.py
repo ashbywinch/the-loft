@@ -110,6 +110,18 @@ def test_the_fit_cuts_where_the_ink_moves_to_another_line() -> None:
     assert fit.segments(shape) == [Segment(line=0, y0=80, y1=120), Segment(line=1, y0=121, y1=140)]
 
 
+def test_a_mark_on_three_lines_is_cut_where_the_ink_moves_each_time() -> None:
+    """Three blocks on three fitted lines: the cut is proposed at both
+    changes, not only at the first — the row loop keeps iterating after a cut."""
+    fit = RowFit([Line(a=0.0, b=100.0), Line(a=0.0, b=140.0), Line(a=0.0, b=180.0)])
+    shape = _mark(_block(80, 90, 0, 45) + _block(130, 139, 60, 105) + _block(170, 179, 120, 165))
+    assert fit.segments(shape) == [
+        Segment(line=0, y0=80, y1=90),
+        Segment(line=1, y0=130, y1=139),
+        Segment(line=2, y0=170, y1=179),
+    ]
+
+
 def test_a_cut_through_one_continuous_band_of_ink_is_not_a_cut() -> None:
     """Both cut rows carry long runs that overlap column-wise: the fit sliced
     a band of ink mid-body, and the pieces stay one segment (the waist rule,

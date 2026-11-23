@@ -91,7 +91,11 @@ def trial_options(model: str, base_url: str | None = None, api_key: str | None =
 
 def _read_transcription(path: Path, trial: VlmOptions) -> VlmAnswer:
     """The VLM call for one crop image (upright or rotated): the model's
-    answer and what the call cost."""
+    answer and what the call cost.
+
+    A crop is not a page, so the read is its own call: the crop's transcription
+    prompt and its own token budget replace the trial's, and the model, the
+    endpoint and the key stay the trial's."""
     # the crop read's completion is ~1-4k tokens; 64000 (the
     # full-page location budget) EXCEEDS the glm-4.5v's 65536
     # context once the image is in.
@@ -268,13 +272,13 @@ def run(
     batch_id: str,
     page: str,
     work_dir: Path,
+    trial: VlmOptions,
     cols: int = 2,
     rows: int = 3,
-    trial: VlmOptions | None = None,
 ) -> CropGridReport:
     """Read the page's crops, stitch, and report — the geometry
-    experiment's ledger for one page."""
-    read_trial = trial or VlmOptions()
+    experiment's ledger for one page, under one trial (the model, its key and
+    its endpoint; `trial_options` builds one)."""
     image_path = BatchArtefacts(work_dir, batch_id).oriented(f"{page}.jpg")
     store = PipelineStore(work_dir)
     layout = load_layout_store(store, f"{batch_id}/ocr-guess/{page}.layout.json")
@@ -290,7 +294,7 @@ def run(
     started = monotonic()
     with tempfile.TemporaryDirectory() as tmp:
         for i, crop in enumerate(crops):
-            read = read_crop(crop, image_path, Path(tmp), i, read_trial)
+            read = read_crop(crop, image_path, Path(tmp), i, trial)
             if read is None:
                 failed += 1
                 continue
@@ -317,7 +321,7 @@ def run(
     )
     # the model-scoped saves — the trial runs several models on the same
     # page; each keeps its own assembled layout + report
-    slug = read_trial.model.replace("/", "-").replace("@", "")
+    slug = trial.model.replace("/", "-").replace("@", "")
     out = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-{slug}.json"
     out.write_text(json.dumps(assembled.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
     report_path = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-report-{slug}.json"
@@ -341,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     trial = trial_options(args.model, args.base_url, args.api_key or os.environ.get("OPENROUTER_API_KEY"))
-    report = run(args.batch_id, args.page, args.work_dir, args.cols, args.rows, trial)
+    report = run(args.batch_id, args.page, args.work_dir, trial, args.cols, args.rows)
     print(json.dumps(report.to_dict(), indent=1))
     return 0
 

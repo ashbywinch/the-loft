@@ -71,17 +71,22 @@ class Determination:
         if self.decision == "delete":
             records.delete(record_id)
             return gone(record_id)
-        updated = self._confirmed(current, record_id)
-        if updated is None or updated == current:
+        confirmed = self._confirmed(current, record_id)
+        if confirmed == current:
             return current
-        return records.save(updated, base=current.version)
+        return records.save(confirmed, base=current.version)
 
-    def _confirmed(self, current: Record, record_id: str) -> Record | None:
-        """The record after an attested/estimated determination — None when the
-        decision leaves an already-confirmed record as it stands."""
+    def _confirmed(self, current: Record, record_id: str) -> Record:
+        """The record after an attested/estimated determination — the record
+        itself when the decision leaves it as it stands.
+
+        A determination always has an answer, so there is no absent case to
+        read: every refusal raises (`estimated` without a basis, an unknown
+        decision), and "nothing to write" is the record coming back unchanged,
+        which the caller tests for itself."""
         if self.decision == "attested":
             if current.status != "proposed" and not renders_estimated(current.basis):
-                return None
+                return current
             return replace(current, status="confirmed", basis=basis_after(current.basis, BasisKinds.KNOWN))
         if self.decision == "estimated":
             if self.basis is None or not str(self.basis.get("text", "")).strip():

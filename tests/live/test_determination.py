@@ -61,6 +61,23 @@ def test_an_unknown_record_is_left_alone() -> None:
     assert (records.saves, records.deleted) == ([], [])
 
 
+def test_a_confirmed_record_carries_no_status_and_still_reads_confirmed() -> None:
+    """The wire's own rule: `Person.to_dict` omits `status` for a confirmed
+    record (the class docstring's "the status appears only when proposed"), so
+    the absence *is* the answer — and a rejected record never omits it, so the
+    ladder cannot revive one by reading a missing status."""
+    confirmed = Person.from_dict({"id": "p-aria", "name": "Aria Barlow"})
+    assert "status" not in confirmed.to_dict()
+    records = FakeRecords(confirmed)
+    resolved = _apply(records, "attested")
+    assert isinstance(resolved, Person) and resolved.status == "confirmed"
+    assert records.saves == []
+
+    rejected = Person.from_dict({"id": "p-aria", "name": "Aria Barlow", "status": "rejected"})
+    assert rejected.to_dict()["status"] == "rejected"
+    assert _apply(FakeRecords(rejected), "attested") == rejected
+
+
 @pytest.mark.parametrize("decision", ["attested", "estimated", "pending", "delete"])
 def test_a_rejected_proposal_is_terminal_whatever_the_decision(decision: str) -> None:
     """A rejected proposal is terminal before the decision is even read: no

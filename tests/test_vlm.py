@@ -451,3 +451,12 @@ class TestThinkingDisabled:
             urlopen=fake_urlopen,
         )
         assert answer.usage.reasoning == "I cannot see the image, so I will estimate."
+
+
+def test_the_api_key_is_not_in_the_options_repr() -> None:
+    """The options object travels into log lines and exception text; the key
+    must not ride along in its repr."""
+    options = VlmOptions(api_key="sk-the-secret")
+
+    assert "sk-the-secret" not in repr(options)
+    assert options.api_key == "sk-the-secret"

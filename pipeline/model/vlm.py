@@ -22,7 +22,7 @@ import re
 import sys
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -272,7 +272,7 @@ class VlmOptions:
     system: str = VlmPrompts.SYSTEM
     user_text: str | None = None
     base_url: str = AIClient.DEFAULT_BASE_URL
-    api_key: str | None = None
+    api_key: str | None = field(default=None, repr=False)  # never in a repr: it reaches log lines
     timeout: float = 900.0
     max_tokens: int = 64000
     urlopen: Callable[..., Any] | None = None

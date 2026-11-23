@@ -97,10 +97,11 @@ class RotatedRead:
 
 def _read_transcription(path: Path, options: VlmOptions) -> VlmAnswer:
     """The VLM call for one crop image (upright or rotated): the model's
-    answer and what the call cost."""
-    # the crop read's completion is ~1-4k tokens; 64000 (the
-    # full-page location budget) EXCEEDS the glm-4.5v's 65536
-    # context once the image is in.
+    answer and what the call cost. The completion is capped at 8000 tokens — a
+    crop answers with the lines inside it, a few thousand tokens — rather than
+    inherit the page budget (``VlmOptions.max_tokens``, 64000), which is sized
+    for the full-page location call and on a 64k-context model leaves the image
+    no room at all."""
     crop_read = replace(options, system=VlmPrompts.transcription_system_with_context(), max_tokens=8000)
     return crop_read.run(transcribe_image_vlm, path)
 
@@ -294,7 +295,7 @@ def run(
     """Read the page's crops, stitch, and report — the geometry
     experiment's ledger for one page. ``options`` is the read's config; None
     is the crop read's own — the vision model's options at the gateway's
-    default endpoint and key (``DEFAULT_VISION_OPTIONS``)."""
+    default endpoint and the client's own key rule (``find_api_key``)."""
     read_options = options or DEFAULT_VISION_OPTIONS
     image_path = BatchArtefacts(work_dir, batch_id).oriented(f"{page}.jpg")
     store = PipelineStore(work_dir)
@@ -342,10 +343,10 @@ def run(
     )
     # the model-scoped saves — the trial runs several models on the same
     # page; each keeps its own assembled layout + report
-    slug = read_options.model.replace("/", "-").replace("@", "")
-    out = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-{slug}.json"
+    artefacts = BatchArtefacts(work_dir, batch_id)
+    out = artefacts.guess_dir / f"{page}.cropgrid-{read_options.model_slug}.json"
     out.write_text(json.dumps(assembled.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
-    report_path = BatchArtefacts(work_dir, batch_id).guess_dir / f"{page}.cropgrid-report-{slug}.json"
+    report_path = artefacts.guess_dir / f"{page}.cropgrid-report-{read_options.model_slug}.json"
     report_path.write_text(json.dumps(report.to_dict(), indent=1, ensure_ascii=False), encoding="utf-8")
     return report
 

@@ -280,12 +280,29 @@ class VlmOptions:
     max_tokens: int = 64000
     urlopen: Callable[..., Any] | None = None
 
+    def __post_init__(self) -> None:
+        """An options value always names the model it reads with: a blank
+        model is not "the default", it is a call with nothing to call."""
+        if not self.model or not self.model.strip():
+            raise ValueError("VlmOptions needs a model — an unnamed read has nothing to call")
+
     @property
     def endpoint(self) -> str:
         """The base URL the call goes to: the stated one, or the gateway's
         default when the options name none — the same rule the client
         applies, so a caller that names no endpoint gets the gateway."""
         return self.base_url or AIClient.DEFAULT_BASE_URL
+
+    @property
+    def model_slug(self) -> str:
+        """The model's name as a filename part — the experiments run several
+        models on one page, and each trial's reading and report are named for
+        the model they measured. A name that reduces to nothing cannot name a
+        file, so it is refused rather than written unnamed."""
+        slug = self.model.replace("/", "-").replace("@", "")
+        if not slug:
+            raise ValueError(f"the model {self.model!r} names no output file")
+        return slug
 
     def run(self, transcribe: Callable[..., VlmAnswer], image: Path) -> VlmAnswer:
         """This spec's call: the config travels as named arguments, so one

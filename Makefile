@@ -61,13 +61,13 @@ serve: setup
 
 
 lint: setup
-	@$(RUFF) check tools/ tests/
+	@$(RUFF) check .
 	@$(PYTHON) -m compileall -q tools/  # a parse error survives ruff/pyrefly — compile it (2026-08-06)
 	@$(PYTHON) -c "from pathlib import Path; css = Path('app/styles.css').read_text(); a, b = css.count('{'), css.count('}'); assert a == b, f'app/styles.css has {a} open and {b} close braces — an unclosed block swallows everything after it (2026-08-16: a mangled .rv-txa block hid the portrait media query and most review styles)'"
 	@$(NPM) run lint
 
 lint-github: setup
-	@$(RUFF) check tools/ tests/ --output-format=github
+	@$(RUFF) check . --output-format=github
 	@$(NPM) run lint
 
 typecheck: setup

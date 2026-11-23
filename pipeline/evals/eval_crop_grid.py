@@ -136,26 +136,21 @@ def _crop_read_options(page_options: VlmOptions) -> VlmOptions:
 
 
 def _read_rotated(path: Path, options: VlmOptions) -> RotatedRead:
-    """The rotated crop's re-read: its transcription and cost, or the failure
-    that kept them from forming. A malformed answer and a dead call are the
-    same answer to this read — the fallback — but the failure is returned so
-    the run can report it instead of the page silently reading upright-only.
+    """The rotated crop's re-read: its transcription and cost, or the call's
+    failure. The failure is returned, not raised, because the read's fallback
+    is the upright read the caller already holds — a caller that never learns
+    the re-read failed would read a vertical crop as if it had been re-read.
 
-    The call's failures are ``VlmError`` (the module's contract) and the
-    answer's are the parse's value errors; anything else is a bug in this
-    module and propagates. A call that landed and then failed to parse still
-    cost its tokens, so the cost is reported either way."""
+    The call's failures are ``VlmError`` (the module's contract). The parse
+    cannot fail: ``parse_transcription_response`` returns a value for every
+    answer — plain text when the model wrote no JSON, no boxes when it measured
+    none (its own docstring) — so a raise from it is a bug in this module and
+    propagates rather than reading as a model failure."""
     try:
         answer = options.run(transcribe_image_vlm, path)
     except VlmError as exc:
         return RotatedRead(reading=None, tokens=0, failure=ReadFailure("call", f"{type(exc).__name__}: {exc}"))
-    try:
-        reading = parse_transcription_response(answer.answer)
-    except (ValueError, KeyError, IndexError, TypeError) as exc:
-        return RotatedRead(
-            reading=None, tokens=answer.usage.tokens, failure=ReadFailure("answer", f"{type(exc).__name__}: {exc}")
-        )
-    return RotatedRead(reading=reading, tokens=answer.usage.tokens, failure=None)
+    return RotatedRead(reading=parse_transcription_response(answer.answer), tokens=answer.usage.tokens, failure=None)
 
 
 def _fail_crop_read(index: int, reason: str) -> None:

@@ -566,7 +566,7 @@ def test_auth_callback_decodes_the_percent_encoded_code(server: ServerFixture) -
     # the decode path by driving the callback with a real encoded shape
     class NoRedirect(urllib.request.HTTPRedirectHandler):
         @override
-        def redirect_request(self, *args, **kwargs):  # noqa: ARG002
+        def redirect_request(self, *args, **kwargs):  # noqa: ARG002 — the override's one job is to refuse every redirect, so it reads no argument
             return None
 
     opener = urllib.request.build_opener(NoRedirect)

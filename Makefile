@@ -91,7 +91,7 @@ coverage: setup lint typecheck
 # Cloudflare gateway, so no run can silently use a local proxy (and PYTHONPATH
 # is set once, for every child). See the script's header.
 evals: setup
-	@scripts/model-env.sh $(PYTHON) -m pytest -m eval -q
+	@scripts/model-env.sh $(PYTHON) -m pytest -m eval -q $(ARGS)
 
 # lucidlint (github.com/ashbywinch/lucidlint) — the deterministic code-health
 # gate, wired from its own repo per the project decision (2026-08-16, user):

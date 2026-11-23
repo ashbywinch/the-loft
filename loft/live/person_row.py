@@ -126,6 +126,9 @@ class PersonProjection:
             )
 
     def _residences(self, person_id: str) -> list[dict[str, str]]:
+        """The person's residences, in the record's own shape — an absent end
+        date reads as the empty string the wire carries, never ``None`` (a
+        residence without an end is one still running)."""
         rows = self.connection.execute(
             "SELECT place_id, from_date, to_date, status FROM person_residences WHERE person_id = ? ORDER BY rowid",
             (person_id,),

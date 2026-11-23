@@ -7,7 +7,18 @@ from __future__ import annotations
 import pytest
 
 from tools.asset import Asset
-from tools.records import Item, Org, OrgsTable, PeopleTable, Person, Place, PlacesTable, Relationship, validate_identity
+from tools.records import (
+    Item,
+    Org,
+    OrgsTable,
+    PeopleTable,
+    Person,
+    Place,
+    PlacesTable,
+    RecordField,
+    Relationship,
+    validate_identity,
+)
 from tools.ref import Ref
 
 
@@ -90,6 +101,28 @@ def test_a_basis_that_states_both_shapes_keeps_its_evidence() -> None:
         "by": "Aria",
         "when": "2026",
     }
+
+
+def test_a_proposal_basis_writes_the_evidence_vocabulary() -> None:
+    """The vocabulary is one tuple, read by both basis shapes: the proposal
+    writes who and when even when it states neither (its wire shape carries the
+    empty columns) and every other field it states — so a field added to the
+    tuple cannot be written by the disposition shape and dropped here."""
+    stated = Person.from_dict(
+        {
+            "id": "p-aria",
+            "name": "Aria Barlow",
+            "basis": {"text": "the letter's own words", "by": "Aria", "when": "1962", "note": "a note"},
+        }
+    )
+    assert set(stated.basis or {}) == set(RecordField.BASIS_EVIDENCE_FIELDS)
+
+    bare = Person.from_dict({"id": "p-aria", "name": "Aria Barlow", "basis": {"text": "a memory"}})
+    assert bare.basis == {"text": "a memory", "by": "", "when": ""}
+
+    # the always-written set is part of the vocabulary, or it would name a
+    # field no shape writes
+    assert set(RecordField.PROPOSAL_WRITTEN_WHEN_EMPTY) <= set(RecordField.BASIS_EVIDENCE_FIELDS)
 
 
 def test_a_disposition_basis_needs_its_pair_and_a_proposal_needs_its_text() -> None:

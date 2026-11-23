@@ -1,9 +1,9 @@
 """The review's determination — one decision, applied to the record as it stands.
 
 A **decision** is the reviewer's act: ``attested``, ``estimated``, ``pending``
-or ``delete``. A **disposition** is what the record stores afterwards
-(``proposed``/``confirmed``/``rejected``, `_status`). The two words are not
-interchangeable, and neither is a synonym for the other.
+or ``delete``. The record's **status** — ``proposed``/``confirmed``/
+``rejected``, the field `_status` reads — is what a decision writes. The two
+words name different things, and neither one names the other.
 
 TECHSPEC/05 §18.2: ``attested`` confirms; ``estimated`` confirms on the
 reviewer's own recollection (``estimated`` is a rendering, not a status);
@@ -95,5 +95,5 @@ class Determination:
 
 
 def _status(record: Person | Place) -> str:
-    """The record's disposition — a missing status is an asserted record."""
+    """The record's status — a missing one is an asserted record."""
     return str(record.to_dict().get("status", "confirmed"))

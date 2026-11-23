@@ -1,6 +1,6 @@
 """The review's determination — one decision, applied to the record as it stands.
 
-The four dispositions, and the edges that decide whether anything is written
+The four decisions, and the edges that decide whether anything is written
 at all. `tests/live/test_identity_writes.py` drives the same ladder through
 the collections on both stores; this suite names the class that holds it, so
 a change to the shared ladder fails here by name rather than three times
@@ -64,7 +64,7 @@ def test_an_unknown_record_is_left_alone() -> None:
 @pytest.mark.parametrize("decision", ["attested", "estimated", "pending", "delete"])
 def test_a_rejected_proposal_is_terminal_whatever_the_decision(decision: str) -> None:
     """A rejected proposal is terminal before the decision is even read: no
-    disposition revives it, and none writes over it."""
+    decision revives it, and none writes over it."""
     records = FakeRecords(_person("rejected"))
     resolved = _apply(records, decision)
     assert isinstance(resolved, Person) and resolved.status == "rejected"

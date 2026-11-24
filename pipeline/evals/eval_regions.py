@@ -24,7 +24,7 @@ import numpy as np
 from PIL import Image
 
 from pipeline.artefacts import BatchArtefacts
-from pipeline.evals.eval_crop_grid import read_crop
+from pipeline.evals.eval_crop_grid import ReadFailure, read_crop
 from pipeline.evals.eval_geometry import CropReading
 from pipeline.layout import Layout
 from pipeline.layout_line import LayoutLine
@@ -152,7 +152,7 @@ def run(
                 [],
             )
             read = read_crop(crop, image_path, Path(tmp), i, page_options)
-            if read is None:
+            if isinstance(read, ReadFailure):
                 failed += 1
                 continue
             if read.failure is not None:

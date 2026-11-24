@@ -1,6 +1,8 @@
-"""The crop-grid run's rotated re-read: a failure is a value on the result,
-never a silent fallback — the crop's lines are the upright read's, and the
-run's report says which crop's re-read did not land, and why.
+"""The crop-grid run's read boundary: a crop's read is a `CropRead` — a read
+that happened — or the `ReadFailure` that kept it from happening; never `None`,
+so no caller can hold a read that never was. A failed rotated re-read stays a
+value on the result, never a silent fallback — the crop's lines are the upright
+read's, and the run's report says which crop's re-read did not land, and why.
 
 No model calls: the client is the VLM seam's own `urlopen` injection (DI, never
 a monkeypatch) — the upright read lands, the rotated re-read raises.
@@ -14,7 +16,7 @@ from typing import Any
 
 from PIL import Image
 
-from pipeline.evals.eval_crop_grid import DEFAULT_VISION_OPTIONS, ReadFailure, read_crop, run
+from pipeline.evals.eval_crop_grid import DEFAULT_VISION_OPTIONS, CropRead, ReadFailure, read_crop, run
 from pipeline.evals.eval_geometry import CropReading
 from pipeline.layout import Layout
 from pipeline.layout_line import LayoutLine
@@ -90,10 +92,10 @@ def test_a_failed_rotated_re_read_is_surfaced_and_keeps_the_upright_read(tmp_pat
     read = read_crop(CropReading(0.0, 0.0, 100.0, 100.0, []), page, tmp_path, 0, _options(urlopen))
 
     assert len(calls) == 2  # the upright read, then the rotated re-read
-    assert read is not None
+    assert isinstance(read, CropRead)
     assert [line.text for line in read.lines] == ["the postcard's message"]
     assert read.lines[0].orientation == 90  # vertical on the page, whichever read it
-    assert read.failure == ReadFailure("call", "VlmError: the rotated read died")
+    assert read.failure == ReadFailure(kind="call", detail="VlmError: the rotated read died")
 
 
 def test_a_rotated_re_read_with_no_usable_lines_is_surfaced_too(tmp_path: Path) -> None:
@@ -108,9 +110,9 @@ def test_a_rotated_re_read_with_no_usable_lines_is_surfaced_too(tmp_path: Path) 
     read = read_crop(CropReading(0.0, 0.0, 100.0, 100.0, []), page, tmp_path, 0, _options(urlopen))
 
     assert len(calls) == 2
-    assert read is not None
+    assert isinstance(read, CropRead)
     assert [line.text for line in read.lines] == ["the postcard's message"]
-    assert read.failure == ReadFailure("answer", "the rotated read gave no usable lines")
+    assert read.failure == ReadFailure(kind="answer", detail="the rotated read gave no usable lines")
     assert read.tokens == 22  # both calls' tokens — the answer cost them
 
 
@@ -126,7 +128,7 @@ def test_a_landed_rotated_re_read_replaces_the_upright_read(tmp_path: Path) -> N
     read = read_crop(CropReading(0.0, 0.0, 100.0, 100.0, []), page, tmp_path, 0, _options(urlopen))
 
     assert len(calls) == 2
-    assert read is not None
+    assert isinstance(read, CropRead)
     assert read.failure is None
     assert [line.text for line in read.lines] == ["the postcard's message"]
     assert read.lines[0].orientation == 90  # vertical on the page, read horizontally
@@ -158,3 +160,54 @@ def test_the_run_reports_the_failed_re_read(tmp_path: Path) -> None:
     assert report.lines == 1
     assert report.boxless == 0
     assert report.tokens == 11  # the upright read's own — the dead call cost nothing
+
+
+def test_a_dead_upright_read_is_the_crops_own_failure(tmp_path: Path) -> None:
+    """The upright call dies: `read_crop` returns the failure — a `ReadFailure`,
+    not a `CropRead` — so no caller can hold a read that never happened. The
+    kind says the call died, and the run counts the crop failed."""
+    page = tmp_path / "page.png"
+    Image.new("RGB", (100, 100), "white").save(page)
+
+    def urlopen(request: Any, timeout: float | None = None) -> _Response:
+        raise VlmError("the upright read died")
+
+    read = read_crop(CropReading(0.0, 0.0, 100.0, 100.0, []), page, tmp_path, 0, _options(urlopen))
+
+    assert read == ReadFailure(kind="call", detail="VlmError: the upright read died")
+
+
+def test_an_image_that_cannot_be_cut_is_a_failure_value_not_an_exception(tmp_path: Path) -> None:
+    """A missing (or corrupt) page image is the crop's failure too: the image
+    helper's `OSError` is caught at the read's one boundary and returned as an
+    `image` failure, so one bad crop cannot crash the run. No model call is
+    made — there is no crop image to send."""
+    called: list[int] = []
+
+    def urlopen(request: Any, timeout: float | None = None) -> _Response:
+        called.append(1)
+        return _Response(VERTICAL)
+
+    read = read_crop(CropReading(0.0, 0.0, 100.0, 100.0, []), tmp_path / "missing.png", tmp_path, 0, _options(urlopen))
+
+    assert isinstance(read, ReadFailure)
+    assert read.kind == "image"
+    assert "FileNotFoundError" in read.detail
+    assert called == []  # the image failed before any call
+
+
+def test_a_landed_re_read_is_remapped_into_the_frame_the_crop_was_cut_at(tmp_path: Path) -> None:
+    """The crop is not square: 200 wide × 100 tall, so its +90 rotation is
+    100 × 200 and a swapped frame would put the remapped box in the wrong
+    aspect. The full rotated frame maps back onto the full crop frame — the
+    cut and the remap use the one frame `_crop_image` returned."""
+    page = tmp_path / "page.png"
+    Image.new("RGB", (200, 100), "white").save(page)
+    full_rotated_frame = json.dumps({"lines": [{"text": "the postcard's message", "box": [0, 0, 1000, 1000]}]})
+    calls, urlopen = _upright_then(full_rotated_frame, dead=False)
+
+    read = read_crop(CropReading(0.0, 0.0, 200.0, 100.0, []), page, tmp_path, 0, _options(urlopen))
+
+    assert len(calls) == 2
+    assert isinstance(read, CropRead)
+    assert read.lines[0].box == [0.0, 0.0, 200.0, 100.0]

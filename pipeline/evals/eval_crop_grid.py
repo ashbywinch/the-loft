@@ -97,6 +97,11 @@ class CropRead:
     rotated re-read's failure when that read did not land — the lines are the
     upright read's then, and the caller is told why."""
 
+    # the read's completion budget: a crop answers with the lines inside it — a
+    # few thousand tokens; the page options' budget is the location call's and
+    # on a 64k-context model leaves the crop image no room at all
+    _MAX_TOKENS = 8000
+
     lines: list[CropLine]
     tokens: int
     failure: ReadFailure | None = None
@@ -111,8 +116,8 @@ class _RotatedCrop:
     re-derived from the crop's float bounds."""
 
     path: Path
-    width: int
-    height: int
+    pixel_width: int
+    pixel_height: int
 
     @classmethod
     def saved_at(cls, crop_path: Path, rotated_path: Path) -> _RotatedCrop:
@@ -174,7 +179,7 @@ class _Reading:
 def _crop_read_options(page_options: VlmOptions) -> VlmOptions:
     """The crop read's config, derived from the caller's page config: the
     transcription context prompt (the known names and places help the read) and
-    the crop read's own completion budget (``crop_read_max_tokens``). A crop
+    the crop read's own completion budget (``CropRead._MAX_TOKENS``). A crop
     answers with the lines inside it — a few thousand tokens — so it does not
     read with the page's system prompt or the page-location budget
     (``VlmOptions.max_tokens``, 64000), which is sized for the full-page
@@ -186,13 +191,10 @@ def _crop_read_options(page_options: VlmOptions) -> VlmOptions:
     timeout, the urlopen seam. The crop read changes what it reads with, not
     what it reads. ``VlmOptions`` is frozen and every field is a scalar or a
     callable, so ``replace`` copies the config without aliasing mutable state."""
-    # the crop read's budget: a crop's answer is the lines inside it, so a few
-    # thousand tokens — a page-sized budget leaves a 64k-context model no image
-    crop_read_max_tokens = 8000
     return replace(
         page_options,
         system=VlmPrompts.transcription_system_with_context(),
-        max_tokens=crop_read_max_tokens,
+        max_tokens=CropRead._MAX_TOKENS,
     )
 
 
@@ -244,6 +246,13 @@ def _rotated_reading(rotated: _RotatedCrop, options: VlmOptions, upright: _Readi
     stay vertical on the page whichever text wins, because the upright read's
     boxes are the tall ones that sent the crop here.
 
+    ``options`` is the crop read's own config (``_crop_read_options``), never
+    the page's: the re-read is another read of the same crop.
+
+    ``parse_transcription_response`` has no failing arm — a malformed answer is
+    a reading without boxes, not an exception — so the re-read's only expected
+    failures are the call's and the rotation's.
+
     Both calls' tokens are the read's cost — the re-read that answered and
     measured nothing still cost them."""
     answer = options.run(transcribe_image_vlm, rotated.path)
@@ -252,7 +261,9 @@ def _rotated_reading(rotated: _RotatedCrop, options: VlmOptions, upright: _Readi
     lines = parsed.boxed_lines()
     if not lines:
         return replace(cost, failure=ReadFailure(kind="answer", detail="the rotated read gave no usable lines"))
-    remapped = [TranscribedLine(line.text, remap_rotated(line.box, rotated.width, rotated.height)) for line in lines]
+    remapped = [
+        TranscribedLine(line.text, remap_rotated(line.box, rotated.pixel_width, rotated.pixel_height)) for line in lines
+    ]
     return replace(cost, lines=remapped)
 
 
@@ -284,7 +295,10 @@ def read_crop(
 
     ``page_options`` is the caller's page read config; the crop read states
     its own (``_crop_read_options``)."""
-    crop_path = tmp / f"crop-{index}.png"
+    # the call resolves the MIME type from the suffix, so the images it writes
+    # and the names it passes name the one format
+    crop_suffix = ".png"
+    crop_path = tmp / f"crop-{index}{crop_suffix}"
     options = _crop_read_options(page_options)
     t0 = monotonic()
     try:
@@ -301,7 +315,7 @@ def read_crop(
     if reading.vertical:
         # the text runs vertically on the page — that is what sends the crop to
         # the +90 re-read, and it stays true whichever read the lines come from
-        rotated_path = tmp / f"crop-{index}-rot.png"
+        rotated_path = tmp / f"crop-{index}-rot{crop_suffix}"
         print(f"crop {index}: vertical text — rotated +90 and re-read", file=sys.stderr)
         try:
             rotated = _RotatedCrop.saved_at(crop_path, rotated_path)

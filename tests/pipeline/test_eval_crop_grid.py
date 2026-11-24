@@ -116,6 +116,24 @@ def test_a_rotated_re_read_with_no_usable_lines_is_surfaced_too(tmp_path: Path) 
     assert read.tokens == 22  # both calls' tokens — the answer cost them
 
 
+def test_a_malformed_rotated_answer_falls_back_instead_of_crashing(tmp_path: Path) -> None:
+    """The re-read's answer is parsed by a total conversion: a truncated JSON
+    echo and plain text both become a `Transcription` (no failing arm), so the
+    crop falls back to the upright read with an `answer` failure. No JSON or
+    parse exception can escape the crop run — the failure is the call's, never
+    the answer's."""
+    page = tmp_path / "page.png"
+    Image.new("RGB", (100, 100), "white").save(page)
+    calls, urlopen = _upright_then('{"lines": [{"text": ', dead=False)  # the truncated JSON echo
+
+    read = read_crop(CropReading(0.0, 0.0, 100.0, 100.0, []), page, tmp_path, 0, _options(urlopen))
+
+    assert len(calls) == 2
+    assert isinstance(read, CropRead)
+    assert [line.text for line in read.lines] == ["the postcard's message"]
+    assert read.failure == ReadFailure(kind="answer", detail="the rotated read gave no usable lines")
+
+
 def test_a_landed_rotated_re_read_replaces_the_upright_read(tmp_path: Path) -> None:
     """The re-read that lands is not a failure: its horizontal reading is the
     crop's, the box is remapped into the crop frame, and both calls' tokens are

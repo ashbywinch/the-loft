@@ -227,6 +227,26 @@ class TestParseTranscriptionResponse:
         # falls back to the detector's association
         assert reading.boxes == {0: [10.0, 10.0, 900.0, 100.0], 1: [10.0, 110.0, 900.0, 200.0]}
 
+    def test_zero_area_boxes_dropped(self) -> None:
+        """A box with no area is not a measurement: a zero-width box would make
+        `_is_vertical` read `height > 0` and call upright text vertical. The
+        transcription keeps only boxes that enclose area, so no reader has to
+        guard against the degenerate shape."""
+        from pipeline.model.vlm import parse_transcription_response
+
+        text = json.dumps(
+            {
+                "lines": [
+                    {"text": "a real line", "box": [10, 10, 900, 100]},
+                    {"text": "a zero-width sliver", "box": [500, 200, 500, 400]},
+                    {"text": "a reversed box", "box": [900, 500, 100, 600]},
+                ]
+            }
+        )
+        reading = parse_transcription_response(text)
+        assert reading.text == "a real line\na zero-width sliver\na reversed box"
+        assert reading.boxes == {0: [10.0, 10.0, 900.0, 100.0]}
+
 
 class TestTranscriptionProblem:
     """Why a transcription response cannot build a layout — the retry

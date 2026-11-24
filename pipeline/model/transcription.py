@@ -69,7 +69,10 @@ class Transcription:
         """The transcription from the model's "lines" array — blank lines
         carry no box (the .txt's own split skips them too, so the indexes
         stay aligned). None when an entry is not a usable object — the
-        caller falls back to the plain-text form."""
+        caller falls back to the plain-text form. A box is kept only when it
+        encloses area (``x1 > x0`` and ``y1 > y0``): a zero-width or reversed
+        box is not a measurement, and a bare height would read as vertical
+        text downstream."""
         texts: list[str] = []
         boxes: dict[int, list[float]] = {}
         for entry in entries:
@@ -85,6 +88,10 @@ class Transcription:
                 isinstance(box, list)
                 and len(box) == Transcription._BOX_COORDINATE_COUNT
                 and all(isinstance(v, (int, float)) and v == v for v in box)
+                # a box with no area measured nothing: it would otherwise make
+                # a width-0 line read as "taller than wide" (vertical text)
+                and box[2] > box[0]
+                and box[3] > box[1]
             ):
                 boxes[index] = [float(v) for v in box]
         return cls("\n".join(texts), _drop_degenerate_boxes(boxes) or None)

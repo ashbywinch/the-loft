@@ -139,6 +139,9 @@ class PersonProjection:
             start = str(residence.get("from", ""))
             end = str(residence.get("to", ""))
             status = str(residence.get("status", "confirmed"))
+            # The residence's own basis, when its record carries one — writing
+            # None unconditionally would drop provenance on every update.
+            basis = residence.get("basis")
             self.connection.execute(
                 """INSERT INTO person_residences (person_id, place_id, date_json, from_date, to_date,
                                                   from_precision, to_precision, status, basis_json)
@@ -152,22 +155,36 @@ class PersonProjection:
                     _precision_of(start),
                     _precision_of(end) if end else None,
                     status,
-                    None,
+                    json.dumps(basis, sort_keys=True) if basis else None,
                 ),
             )
 
-    def _residences(self, person_id: str) -> list[dict[str, str]]:
+    def _residences(self, person_id: str) -> list[dict[str, Any]]:
+        """The person's residences as their records carried them.
+
+        A residence's basis round-trips: the column is written from the record
+        and read back here, so an update neither invents nor loses provenance.
+        """
         rows = self.connection.execute(
-            "SELECT place_id, from_date, to_date, status FROM person_residences WHERE person_id = ? ORDER BY rowid",
+            "SELECT place_id, from_date, to_date, status, basis_json"
+            " FROM person_residences WHERE person_id = ? ORDER BY rowid",
             (person_id,),
         ).fetchall()
-        return [
-            {"place": row["place_id"], "from": row["from_date"], "to": row["to_date"] or "", "status": row["status"]}
-            for row in rows
-        ]
+        residences: list[dict[str, Any]] = []
+        for row in rows:
+            residence: dict[str, Any] = {
+                "place": row["place_id"],
+                "from": row["from_date"],
+                "to": row["to_date"] or "",
+                "status": row["status"],
+            }
+            if row["basis_json"]:
+                residence["basis"] = json.loads(row["basis_json"])
+            residences.append(residence)
+        return residences
 
 
-def from_row(row: sqlite3.Row, residences: list[dict[str, str]] | None = None) -> Person:
+def from_row(row: sqlite3.Row, residences: list[dict[str, Any]] | None = None) -> Person:
     def decoded(value: str | None) -> Any:
         return None if value is None else json.loads(value)
 

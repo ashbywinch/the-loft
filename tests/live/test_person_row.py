@@ -12,6 +12,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -39,7 +40,7 @@ def _position(version: int) -> person_row.RowPosition:
     )
 
 
-def _person(name: str = "Alex Hale", residence: tuple[dict[str, str], ...] = ()) -> Person:
+def _person(name: str = "Alex Hale", residence: tuple[dict[str, Any], ...] = ()) -> Person:
     return Person.from_dict({"id": "p-alex", "name": name, "status": "confirmed", "residence": list(residence)})
 
 
@@ -50,6 +51,18 @@ def test_a_refused_residence_leaves_no_new_person_row(store: LiveStore) -> None:
     assert projection.get("p-alex") is None
     assert store.connection.execute("SELECT COUNT(*) FROM person_residences").fetchone()[0] == 0
     assert store.connection.in_transaction is False
+
+
+def test_a_residences_basis_survives_the_write(store: LiveStore) -> None:
+    """A residence's provenance is the record's, not the projection's: the
+    column is written from the residence and read back, so a rewrite cannot
+    silently drop it."""
+    attested = {**MALLOWFIELD, "basis": {"text": "the 1960 letter", "by": "Nora", "when": "1960"}}
+    projection = person_row.PersonProjection(store.connection)
+    projection.write(_person(residence=(attested,)), _position(1), base=None)
+    stored = projection.get("p-alex")
+    assert stored is not None
+    assert stored.residence == (attested,)
 
 
 def test_a_refused_residence_keeps_the_person_it_would_replace(store: LiveStore) -> None:
@@ -76,6 +89,7 @@ def test_a_refused_person_delete_keeps_the_residences_it_would_orphan(store: Liv
     kept = projection.get("p-alex")
     assert kept is not None
     assert kept.residence == (MALLOWFIELD,)
+    assert store.connection.in_transaction is False
 
 
 def test_a_change_keeps_the_pair_in_its_own_transaction(store: LiveStore) -> None:

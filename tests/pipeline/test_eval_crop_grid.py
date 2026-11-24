@@ -211,3 +211,36 @@ def test_a_landed_re_read_is_remapped_into_the_frame_the_crop_was_cut_at(tmp_pat
     assert len(calls) == 2
     assert isinstance(read, CropRead)
     assert read.lines[0].box == [0.0, 0.0, 200.0, 100.0]
+
+
+def test_the_frame_is_the_pixel_crop_the_model_reads_not_the_float_bounds(tmp_path: Path) -> None:
+    """A crop's bounds are floats, but the file the model reads is the pixel
+    rectangle the cut made: 0.6 + 199.8 → the 200-pixel edge, not 199.8 (nor
+    the 199 its truncation suggests). The full rotated frame maps back onto
+    that 200 × 99 image, so the answer's box is the saved file's own frame."""
+    page = tmp_path / "page.png"
+    Image.new("RGB", (201, 100), "white").save(page)
+    full_rotated_frame = json.dumps({"lines": [{"text": "the postcard's message", "box": [0, 0, 1000, 1000]}]})
+    calls, urlopen = _upright_then(full_rotated_frame, dead=False)
+
+    read = read_crop(CropReading(0.6, 0.5, 199.8, 99.4, []), page, tmp_path, 0, _options(urlopen))
+
+    assert len(calls) == 2
+    assert isinstance(read, CropRead)
+    assert read.lines[0].box == [0.0, 0.0, 200.0, 99.0]
+
+
+def test_a_crop_that_cannot_be_saved_is_a_failure_value_not_a_read(tmp_path: Path) -> None:
+    """A crop that could not be written has no file to send, so there is no
+    read to carry: the save's `OSError` reaches `read_crop`'s one boundary and
+    becomes the crop's own `image` failure."""
+    page = tmp_path / "page.png"
+    Image.new("RGB", (100, 100), "white").save(page)
+
+    def urlopen(request: Any, timeout: float | None = None) -> _Response:
+        raise AssertionError("no call without a crop file")
+
+    read = read_crop(CropReading(0.0, 0.0, 100.0, 100.0, []), page, tmp_path / "missing", 0, _options(urlopen))
+
+    assert isinstance(read, ReadFailure)
+    assert read.kind == "image"

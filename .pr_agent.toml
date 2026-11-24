@@ -11,16 +11,19 @@ extra_headers = '{"cf-aig-request-timeout": "1800000", "cf-aig-max-attempts": "0
 
 [config]
 model = "openai/dynamic/fallback2"  # the handler strips the "openai/" prefix and sends "dynamic/fallback2" to api_base — the gateway's fallback2 DYNAMIC ROUTE (OpenCode primary → DeepSeek fallback). A raw provider model id (deepseek/deepseek-v4-flash, until 2026-10-17) bypasses the route: no failover, and the provider's "Insufficient Balance" killed every review (2026-10-17). The 2026-09-23 401 came from the missing [openai] custom_llm_provider, not the prefix.
-custom_model_max_tokens = 128000
-max_model_tokens = 128000
+# The route answers deepseek-v4-flash, whose output ceiling is far below 128k;
+# claiming 128k made pr-agent ask for a review longer than the model can emit
+# and the answer was truncated (measured: #134, run 44736435686).
+custom_model_max_tokens = 1000000
+max_model_tokens = 1000000
 ai_timeout = 1800
 fallback_models = []
 repo_context_from_default_branch = true  # the standards come from main: a PR must not supply the rule it is judged by
 # The renderer caps rendered context at repo_context_max_lines (default 500) and
 # STOPS at the first file that overruns - every later file is dropped silently.
-# These files are ~2398 lines together. Raise this whenever the list grows.
+# These files are ~2864 lines together. Raise this whenever the list grows.
 # See pr_agent/algo/repo_context.py.
-repo_context_max_lines = 2700
+repo_context_max_lines = 3200
 repo_context_files = [
     "docs/PRD/PRD.md",
     "docs/coding-standards.md",
@@ -29,6 +32,8 @@ repo_context_files = [
     "docs/documentation-structure.md",
     "docs/ux-standards.md",
     "docs/UX.md",
+    "docs/TECHSPEC.md",
+    "docs/object-model.md",
 ]
 
 
@@ -49,7 +54,19 @@ num_max_findings = 50
 # Publish each finding as a verified inline review comment (the pinned action
 # implements get_persistent_comment_bodies/get_recent_inline_comment_bodies).
 inline_key_issues = true
-extra_instructions = "Check the PR against each file in repo_context_files. Before checking compliance, derive the domain glossary from docs/PRD/PRD.md and docs/TECHSPEC.md (entities, actions, personas, states, object model), then read the diff against it two ways. Vocabulary: a domain-level name (class, module, public entry point, domain-typed field) using technical or vague words instead of the documented term is a finding. Latent concepts: domain behaviour smeared across several functions or buried inside one, owned by no identifier, is equally a finding — draw it out under a glossary name, proposing a new glossary term where none fits. Generic helper, plumbing, and config-key names are not glossary checks.  Report every violation as its own finding with path:line and the rule it breaks; never report something as compliant unless you checked it against the file that states the rule. Flag violations as findings, not just notes: style and semantic deviations from docs/coding-standards.md, test-standard deviations from docs/testing-standards.md, requirement deviations from docs/PRD/PRD.md (a change that violates a stated requirement, constraint, persona, or JTBD is a finding), documentation-standard deviations from docs/writing-documentation.md (docs failing the documentation-quality checklist — context efficiency, density, no-duplication, one topic per file), folder-structure deviations from docs/documentation-structure.md (missing or malformed required docs — PRD with JTBD/personas/constraints/user requirements, TECHSPEC with choices/spikes/diagrams, UX.md, PLAN with the software's phase inputs/outputs and quality gates — every doc discoverable from AGENTS.md, skills exempt from reachability since the harness discovers them), and UX deviations from docs/ux-standards.md. Structural findings the standards name are findings too: a missed class (bare dict/tuple/list in a record position), a name that violates the object model or domain-noun rules, and separation-of-concerns violations. Suppression comments are findings when their why fails the evidence bar in docs/coding-standards.md ('Suppressions carry checkable evidence') — review every exemption form that section names (`lucidlint: ignore`, `ignore-file`, `# type: ignore`, `#[allow(...)]`, `# noqa`), not only the lucidlint ones."
+extra_instructions = """
+- **Scope.** Read the diff against the files in repo_context_files. Cite the file that states a rule when you invoke it, and never call something compliant without checking it there. Each violation is its own finding with path:line.
+- **Vocabulary.** Glossary: docs/PRD/PRD.md and docs/object-model.md. Judge a name in the domain of the code that holds it — the reader, the layout, the live store and the evals each own their terms. Report a name that contradicts the model, or that is not a term of its domain where one exists. Never report absence: the model holds the concepts a reader cannot infer and the word two concepts might share, not every identifier.
+- **Latent concepts.** Report domain behaviour smeared across functions, or buried in one with no identifier owning it, and propose the term that names it.
+- **Requirements.** Report a change that violates a stated requirement, constraint, persona or job in docs/PRD/PRD.md.
+- **Coding standards.** Report style and semantic deviations from docs/coding-standards.md.
+- **Tests.** Report deviations from docs/testing-standards.md.
+- **Documentation.** Report docs that fail the quality checklist in docs/writing-documentation.md: context efficiency, density, no duplication, one topic per file.
+- **Folder structure.** Report a missing or malformed required doc in docs/documentation-structure.md. Every doc must be reachable from AGENTS.md; skills are exempt because the harness discovers them.
+- **UX.** Report deviations from docs/ux-standards.md.
+- **Structure.** Report a missed class (a bare dict, tuple or list in a record position), a name that violates the object model, and a separation-of-concerns violation.
+- **Suppressions.** Report a suppression whose why fails the evidence bar in docs/coding-standards.md, in every form that section names (`lucidlint: ignore`, `ignore-file`, `# type: ignore`, `#[allow(...)]`, `# noqa`). Only code that carries one is checked; asking for one where none exists is not a finding.
+"""
 
 
 [pr_code_suggestions]

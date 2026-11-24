@@ -14,6 +14,10 @@ Status: **current**. The live architecture — the DB, the pipeline, the
 export and the code layout — is `docs/TECHSPEC/00`, `04`, `05`, `07`, `08`
 and `11`; this document names the domain objects and their chain.
 
+An entry is owed to a term a reader cannot infer, or to the one word two
+concepts might share; names a reader can take at face value are left out on
+purpose, so this is not a list of every identifier.
+
 ## The rule that started this
 
 `latent-class` findings: "introduce a record named with a domain noun, with

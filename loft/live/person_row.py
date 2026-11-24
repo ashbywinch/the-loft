@@ -63,25 +63,29 @@ def _precision_of(text: str) -> str:
 
 @contextmanager
 def _one_transaction(connection: sqlite3.Connection) -> Iterator[None]:
-    """The guard around a pair of statements that must land together.
+    """Make the statements inside land together, or not at all.
 
     The connection is autocommit (``database.py`` opens it with
     ``isolation_level=None``), so without this the person row and its
-    residences would each commit on their own and a failure between them
-    would leave one half written. A caller that already holds a transaction —
-    a change's ``BEGIN IMMEDIATE``, the replay's — is joined, never nested
-    (SQLite refuses a second ``BEGIN``); a standalone write owns one and rolls
-    it back on any exception."""
-    if connection.in_transaction:
-        yield
-        return
-    connection.execute("BEGIN IMMEDIATE")
+    residences would commit separately and a failure between them would leave
+    one half written. A caller already inside a transaction — a change's
+    ``BEGIN IMMEDIATE``, the replay's — is joined, never nested (SQLite
+    refuses a second ``BEGIN``); there the caller owns the commit and the
+    rollback. This guard adds a rollback only when it opened the transaction
+    itself, and lets every exception through either way.
+    """
+    owns = not connection.in_transaction
+    if owns:
+        connection.execute("BEGIN IMMEDIATE")
     try:
         yield
     except BaseException:
-        connection.execute("ROLLBACK")
+        if owns:
+            connection.execute("ROLLBACK")
         raise
-    connection.execute("COMMIT")
+    else:
+        if owns:
+            connection.execute("COMMIT")
 
 
 class PersonProjection:
@@ -99,9 +103,14 @@ class PersonProjection:
         return from_row(row, self._residences(person_id))
 
     def write(self, person: Person, position: RowPosition, *, base: int | None) -> None:
-        """Upsert the row behind the version guard; a zero-row result is stale.
-        The row and its residences are one unit: a residence the table refuses
-        leaves the row as it was."""
+        """Upsert the row behind the version guard, with its residences, as one unit.
+
+        A zero-row result means the row moved or is gone: both are
+        ``StaleVersion``, carrying the row as it now stands (``None`` when it
+        is gone). ``People.save`` refuses a gone row as ``NotFound`` before it
+        gets here, so a caller meets ``StaleVersion`` only for a version that
+        changed underneath it.
+        """
         with _one_transaction(self.connection):
             cursor = self.connection.execute(
                 """INSERT INTO people (person_id, name, years, relation, bio, email, pronouns, hue, status,
@@ -120,9 +129,8 @@ class PersonProjection:
                 (*to_row(person, position), base),
             )
             if cursor.rowcount == 0:
-                current = self.get(person.id)
-                raise StaleVersion(current=current, base=base)
-            self._write_residences(person)
+                raise StaleVersion(current=self.get(person.id), base=base)
+            self._replace_residences(person)
 
     def delete(self, person_id: str) -> None:
         """Remove the person and their residences — the delete determination,
@@ -132,7 +140,11 @@ class PersonProjection:
             self.connection.execute("DELETE FROM person_residences WHERE person_id = ?", (person_id,))
             self.connection.execute("DELETE FROM people WHERE person_id = ?", (person_id,))
 
-    def _write_residences(self, person: Person) -> None:
+    def _replace_residences(self, person: Person) -> None:
+        """Make the stored rows match the record's tuple: the record is the
+        truth, so a residence it no longer lists is removed rather than left
+        behind, and one it lists is written with the basis the record carries.
+        """
         self.connection.execute("DELETE FROM person_residences WHERE person_id = ?", (person.id,))
         for residence in person.residence:
             place = str(residence.get("place", ""))

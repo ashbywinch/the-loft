@@ -14,7 +14,7 @@ pipeline's enhancement decisions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import ceil
+from math import ceil, isfinite
 from typing import Any
 
 from pipeline.detection import Detection
@@ -63,6 +63,17 @@ class CropReading:
     w: float
     h: float
     lines: list[CropLine]
+
+    def __post_init__(self) -> None:
+        """A crop is a finite rectangle that encloses area: a NaN, an infinity,
+        or a zero/negative side is not a region the page can be cut at. The
+        edge float that would make ``int()`` raise or PIL refuse is refused
+        here, where the crop is built — not deep in the reader as an exception
+        the image boundary does not expect."""
+        if not all(isfinite(v) for v in (self.x, self.y, self.w, self.h)):
+            raise ValueError(f"a crop's rectangle must be finite: {(self.x, self.y, self.w, self.h)}")
+        if self.w <= 0 or self.h <= 0:
+            raise ValueError(f"a crop must enclose area: {self.w}x{self.h}")
 
 
 @dataclass(frozen=True)

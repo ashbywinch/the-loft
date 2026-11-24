@@ -14,6 +14,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from PIL import Image
 
 from pipeline.evals.eval_crop_grid import DEFAULT_VISION_OPTIONS, CropRead, ReadFailure, read_crop, run
@@ -246,6 +247,21 @@ def test_the_frame_is_the_pixel_crop_the_model_reads_not_the_float_bounds(tmp_pa
     assert len(calls) == 2
     assert isinstance(read, CropRead)
     assert read.lines[0].box == [0.0, 0.0, 200.0, 99.0]
+
+
+def test_a_crop_that_is_not_a_rectangle_cannot_be_built() -> None:
+    """A crop's rectangle is finite and encloses area: the edge float that
+    would make `int()` raise (nan/inf) or PIL refuse (a zero or negative side)
+    is refused where the crop is built, so the image boundary only ever sees
+    the `OSError` it owns."""
+    with pytest.raises(ValueError, match="finite"):
+        CropReading(float("nan"), 0.0, 10.0, 10.0, [])
+    with pytest.raises(ValueError, match="finite"):
+        CropReading(0.0, 0.0, float("inf"), 10.0, [])
+    with pytest.raises(ValueError, match="enclose area"):
+        CropReading(0.0, 0.0, 0.0, 10.0, [])
+    with pytest.raises(ValueError, match="enclose area"):
+        CropReading(0.0, 0.0, 10.0, -1.0, [])
 
 
 def test_a_crop_that_cannot_be_saved_is_a_failure_value_not_a_read(tmp_path: Path) -> None:
